@@ -59,9 +59,10 @@ does `doctor` fail or warn on over-granted privileges (P5), keep 11.2 support
 `plan` (J2), warning code registry (J3), host/pid in output (J4), OpenTelemetry
 (J5), resumable streams (J6).
 
-**Testing (04):** does an 11g XE image exist (T1), testcontainers or compose
-(T2), LocalStack tier (T3), OCI Vault cost in a test loop (T4), CI provider (T5),
-real standby for the read-only refusal (T6), Oracle reset strategy (T7).
+**Testing (04):** testcontainers or compose (T2), LocalStack tier (T3), OCI Vault
+cost in a test loop (T4), CI provider (T5), real standby for the read-only
+refusal (T6), Oracle reset strategy (T7). *T1 resolved 2026-08-08: the 11g XE
+image exists and works, so 11.2 stays tier 2.*
 
 **UC-1:** default verification method and the privilege it implies (Q1), where
 the advisory lock lives (Q2), how many `previous` generations to keep (Q3),
@@ -89,9 +90,7 @@ positive.
 2. **Q2** — advisory lock in the vault or in the database.
 3. **C1–C6** — the configuration questions, since the YAML schema is the next
    thing that becomes code.
-4. **T1** — whether a pullable Oracle 11g XE image exists. Five minutes of
-   checking, and it decides whether the 11.2 support target (D7) costs nothing or
-   becomes maintainer-only.
+*(T1 was here and is now answered: the image exists, 11.2 support costs nothing.)*
 
 ## Verify before implementing
 

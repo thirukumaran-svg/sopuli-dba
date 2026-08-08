@@ -112,6 +112,8 @@ services:
     environment:
       ORACLE_PASSWORD: sopuli-test
     ports: ["1523:1521"]
+    volumes:
+      - ./oracle-init:/container-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh"]
       interval: 10s
@@ -120,20 +122,24 @@ services:
       start_period: 180s
 
   # 11g XE — non-CDB, 30-byte passwords, 10G/11G verifiers, DBA_AUDIT_TRAIL.
-  # VERIFY THIS TAG EXISTS (04-testing.md T1). If it does not, Oracle 11.2 coverage
-  # moves to the maintainer tier and must be built from oracle/docker-images.
+  # Tag verified 2026-08-08 (04-testing.md T1): pulls, starts in ~15 s, accepts
+  # the init profiles. Ships pre-built datafiles, so it is the FASTEST Oracle in
+  # this stack, not the slowest — hence the short start_period.
+  # Connects as SID XE, not a PDB service name. linux/amd64 only.
   oracle-xe11:
-    image: gvenzl/oracle-xe:11-slim
+    image: gvenzl/oracle-xe:11.2.0.2-slim
     profiles: [tier2]
     environment:
       ORACLE_PASSWORD: sopuli-test
     ports: ["1524:1521"]
+    volumes:
+      - ./oracle-init:/container-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh"]
       interval: 10s
       timeout: 5s
       retries: 60
-      start_period: 180s
+      start_period: 30s
 
   # ------------------------------------------------------------------ NNE ---
   # Approximates the OCI constraint locally: the server REQUIRES Native Network

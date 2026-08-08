@@ -24,18 +24,19 @@ everything else.
 | oracle-free | 1521 | 23ai/26ai Free — CDB + PDB, rollover |
 | oracle-xe21 | 1522 | 21c XE |
 | oracle-xe18 | 1523 | 18c XE — no rollover, a deliberate negative case |
-| oracle-xe11 | 1524 | 11g XE — non-CDB, 30-byte passwords (**tag unverified**) |
+| oracle-xe11 | 1524 | 11g XE — non-CDB, SID `XE` not a PDB service; 30-byte passwords; amd64 only |
 | oracle-nne | 1525 | NNE required; thin mode must fail with `DPY-3001` |
 | toxiproxy | 8474 | fault injection in front of DB and vault |
 
 ## Before trusting any of this
 
-1. **Confirm `gvenzl/oracle-xe:11-slim` exists** (04-testing.md T1). It decides
-   whether Oracle 11.2 support is cheap or maintainer-only, and it is the single
-   highest-value thing to check first.
-2. Confirm the `sqlnet.ora` mount path for the NNE service — it is image- and
+1. Confirm the `sqlnet.ora` mount path for the NNE service — it is image- and
    version-specific.
-3. Confirm which LocalStack tier includes Secrets Manager (T3).
+2. Confirm which LocalStack tier includes Secrets Manager (T3).
+
+*(T1 — whether `gvenzl/oracle-xe:11-slim` exists — is settled: it does, it starts
+in ~15 s, and `oracle-init/01_test_profiles.sql` runs against it. Oracle 11.2
+support is cheap and stays in tier 2.)*
 
 ## What is *not* here, on purpose
 

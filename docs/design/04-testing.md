@@ -34,15 +34,22 @@ This is also why the matrix is capability-driven rather than version-driven (§3
 | Oracle 23ai/26ai Free | `gvenzl/oracle-free`, or `container-registry.oracle.com/database/free` | CDB+PDB, common users, password rollover, schema privileges (P7 test) |
 | Oracle 21c XE | `gvenzl/oracle-xe:21` | CDB+PDB on an older line, unified auditing |
 | Oracle 18c XE | `gvenzl/oracle-xe:18` | 12.2+ password length, no rollover — good negative case |
-| Oracle 11g XE | `gvenzl/oracle-xe:11` *(verify this tag exists)* | non-CDB, 30-byte passwords, 10G/11G verifiers, `DBA_AUDIT_TRAIL` |
+| Oracle 11g XE | `gvenzl/oracle-xe:11.2.0.2-slim` | non-CDB, 30-byte passwords, 10G/11G verifiers, `DBA_AUDIT_TRAIL` |
 | PostgreSQL 13–18 | `postgres:<v>` | the second driver, when it exists |
 | SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | third driver, later |
 | HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
 | File / age backend | none needed | the non-production store |
 
-If the 11g XE tag does not exist, 11.2 moves to the maintainer tier and is built
-from `oracle/docker-images`. That single fact decides whether the 11.2 support
-target (D7) is cheap or expensive — **check it first.**
+The 11g XE tag exists and works, so 11.2 support (D7) is cheap: it stays a tier-2
+compose service and never needs building from `oracle/docker-images`. Verified
+2026-08-08 against `gvenzl/oracle-xe:11.2.0.2-slim`
+(`sha256:a546a62d6574d125c6520011cad328748c869038d52cd94ca4eb0fed7407d1fe`) —
+starts clean as `Oracle Database 11g Express Edition Release 11.2.0.2.0`, non-CDB,
+SID `XE`, `AL32UTF8`. See §8 T1.
+
+The image is published for **linux/amd64 only**. That is a second, independent
+reason Apple Silicon cannot exercise 11.2 locally, on top of the 23.x-client
+limitation in D7.
 
 ### Maintainer-only tier
 
@@ -137,8 +144,9 @@ inner development loop tolerable. Every pure-logic concern above (precedence,
 templating, charsets, redaction) is deliberately testable without a database,
 which is a reason to keep those layers free of I/O.
 
-**Container lifecycle.** Oracle containers take minutes to start. Do not create
-one per test. One long-running container per version per session; reset state
+**Container lifecycle.** Most Oracle containers take minutes to start — 11g XE
+slim is the exception, ready in about 15 seconds because it ships pre-built
+datafiles. Do not create one per test. One long-running container per version per session; reset state
 between tests by dropping and recreating the test accounts and profiles, not the
 container. `testcontainers-python` handles session-scoped containers; a
 `compose.yaml` plus fixtures works equally well and is easier to run by hand.
@@ -249,7 +257,7 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 
 | # | Question | Leaning |
 |---|---|---|
-| T1 | Does `gvenzl/oracle-xe:11` exist? | **check first** — it decides whether 11.2 support (D7) is cheap or maintainer-only |
+| ~~T1~~ | ~~Does `gvenzl/oracle-xe:11` exist?~~ | **resolved 2026-08-08: yes.** `11.2.0.2-slim` pulls, starts in ~15 s and accepts the test profiles. 11.2 stays tier 2; D7 is cheap. amd64-only. See §2 |
 | T2 | `testcontainers-python` or `compose.yaml` + fixtures? | compose, for a tool whose users are DBAs who will want to run the stack by hand; testcontainers if session management gets fiddly |
 | T3 | Is LocalStack Secrets Manager in the community tier? | verify before committing to it as the AWS path |
 | T4 | Does OCI Vault cost enough to matter in a test loop? | check pricing; if so, tier 3 only and reuse one secret |
