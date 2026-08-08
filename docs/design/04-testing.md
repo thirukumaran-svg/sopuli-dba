@@ -1,0 +1,258 @@
+# sopuli-dba — Testing strategy
+
+Status: draft / sketch. Nothing here has been run.
+Depends on: `00-principles.md` (P1 capabilities), `../use-cases/uc-01-app-credential-sync.md` §11
+
+---
+
+## 1. The constraint that shapes everything
+
+**Contributors cannot pull an Oracle Enterprise Edition image.** Images built
+from Oracle installation binaries may not be redistributed, so a public CI job
+cannot `docker pull` a 19c image and neither can anyone who forks the repo.
+
+Three consequences, and they are easier to design for now than to retrofit:
+
+1. The **public test suite must be fully green on freely pullable images alone**
+   (23ai/26ai Free, 21c XE, 18c XE, PostgreSQL, HashiCorp Vault). If a
+   contributor's PR cannot go green on their own machine, they stop contributing.
+2. Everything version-specific must **skip, not fail**, when its environment is
+   absent. A skipped test reports *why* it skipped.
+3. The versions only the maintainer can run — built 19c, 11.2, real OCI — form a
+   **pre-release matrix**, not a per-commit one.
+
+This is also why the matrix is capability-driven rather than version-driven (§3).
+
+---
+
+## 2. Environment inventory
+
+### Freely pullable — the public tier
+
+| Environment | Image | Covers |
+|---|---|---|
+| Oracle 23ai/26ai Free | `gvenzl/oracle-free`, or `container-registry.oracle.com/database/free` | CDB+PDB, common users, password rollover, schema privileges (P7 test) |
+| Oracle 21c XE | `gvenzl/oracle-xe:21` | CDB+PDB on an older line, unified auditing |
+| Oracle 18c XE | `gvenzl/oracle-xe:18` | 12.2+ password length, no rollover — good negative case |
+| Oracle 11g XE | `gvenzl/oracle-xe:11` *(verify this tag exists)* | non-CDB, 30-byte passwords, 10G/11G verifiers, `DBA_AUDIT_TRAIL` |
+| PostgreSQL 13–18 | `postgres:<v>` | the second driver, when it exists |
+| SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | third driver, later |
+| HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
+| File / age backend | none needed | the non-production store |
+
+If the 11g XE tag does not exist, 11.2 moves to the maintainer tier and is built
+from `oracle/docker-images`. That single fact decides whether the 11.2 support
+target (D7) is cheap or expensive — **check it first.**
+
+### Maintainer-only tier
+
+| Environment | How | Why it cannot be public |
+|---|---|---|
+| Oracle 19c EE | built from `oracle/docker-images` + downloaded binaries | not redistributable |
+| Oracle 19.12+ | patched 19c — needs a support licence | rollover is unavailable on the buildable 19.3 base |
+| Real 19c / 26ai / ADB | personal OCI tenancy | NNE, thick mode, Autonomous behaviour |
+| OCI Vault | personal OCI tenancy | no faithful local emulator |
+
+### Emulators — smoke tests only
+
+`localstack` (Secrets Manager — confirm which tier), `lowkey-vault` (Azure Key
+Vault, has a Python example), `cameritelabs/oci-emulator` and Floci (OCI). Treat
+all of these as "the code path runs" evidence. **The authoritative test for a
+cloud store is the real service**, which is what the OCI tenancy is for. Emulator
+fidelity is unknown and unowned; never let a green emulator test be the reason a
+release is cut.
+
+### Two Oracle behaviours containers do not give you
+
+- **Gradual password rollover** needs 19.12+. The buildable 19c base is 19.3.
+  Rollover therefore gets tested on 23ai Free (public tier) and on real OCI 19c
+  (maintainer tier), and *nowhere in between*.
+- **Native Network Encryption**, the thing that forces thick mode, is properly
+  exercised only against a real NNE-required server. It can be **approximated
+  locally**: set `SQLNET.ENCRYPTION_SERVER = required` in a container's
+  `sqlnet.ora` and assert that a thin-mode connection fails with `DPY-3001` and
+  that the tool's diagnostics say something useful. That covers the failure path;
+  the success path still needs real OCI.
+
+---
+
+## 3. Capability-driven matrix
+
+Tests declare the capabilities they need. The harness probes each target once per
+session, and skips with a reason when a capability is absent.
+
+```python
+@requires_capability("password_rollover")
+def test_rotate_keeps_old_password_valid_during_window(oracle_target, vault):
+    ...
+
+@requires_capability("offline_verify")
+def test_check_hash_mode_makes_no_login_attempt(oracle_target):
+    ...
+
+@requires_no_capability("password_rollover")
+def test_rotate_falls_back_to_staged_strategy(oracle_target):
+    ...
+```
+
+Two things this buys beyond convenience:
+
+- **The test suite validates the capability model itself.** If a driver claims
+  `password_rollover` on 18c XE, the rollover test runs and fails there — which
+  is the bug. Version-keyed skips would have hidden it.
+- **New environments cost nothing.** Point the harness at a new container or a
+  real database and the right subset runs. Adding 23ai did not require editing
+  test files.
+
+Report the resolved matrix at the end of a run, so "green" is never ambiguous:
+
+```
+capabilities exercised
+                       23ai Free  21c XE  18c XE  11g XE  OCI 19c
+container_scope            ✓         ✓       ✓       –        ✓
+common_users               ✓         ✓       ✓       –        ✓
+password_rollover          ✓         –       –       –        ✓
+offline_verify             ✓         ✓       ✓       ✓        ✓
+password_reuse_policy      ✓         ✓       ✓       ✓        ✓
+
+23 tests skipped (capability absent), 0 skipped (environment unavailable)
+```
+
+The second skip count is the one to watch: capability skips are correct, missing
+environments are a coverage gap.
+
+---
+
+## 4. Tiers
+
+| Tier | Runs | Where | Budget | Contents |
+|---|---|---|---|---|
+| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction |
+| 1 | every PR | public CI | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
+| 2 | nightly | public CI | < 30 min | 21c XE, 18c XE, 11g XE, PostgreSQL matrix; fault injection |
+| 3 | pre-release | maintainer | manual | built 19c, real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
+
+Tier 0 needs no containers at all and should stay that way — it is what makes the
+inner development loop tolerable. Every pure-logic concern above (precedence,
+templating, charsets, redaction) is deliberately testable without a database,
+which is a reason to keep those layers free of I/O.
+
+**Container lifecycle.** Oracle containers take minutes to start. Do not create
+one per test. One long-running container per version per session; reset state
+between tests by dropping and recreating the test accounts and profiles, not the
+container. `testcontainers-python` handles session-scoped containers; a
+`compose.yaml` plus fixtures works equally well and is easier to run by hand.
+
+---
+
+## 5. What gets tested
+
+### Pure logic (tier 0, no database)
+
+- config validation: unknown keys, both `accounts:` and `applications:` present,
+  duplicate generated target names, unresolved `{placeholder}`, an `overrides`
+  key naming a target that is not generated
+- target-set expansion: per-outer-value inner dimensions, override application,
+  label assignment
+- precedence: every layer in P3, including the safety ratchet and the
+  third-party-env ranking
+- SecretRef parsing, including `#field/json/pointer` and `@version=`/`@stage=`
+- password generation: charset, first character, byte length in a given database
+  character set, composition requirements
+- redaction: the serialiser cannot emit a secret value
+
+### Against a database (tiers 1–3)
+
+Carried over from UC-1 §11, with the environment each one needs:
+
+| Test | Needs |
+|---|---|
+| UC-1 happy path: generate → apply → verify → promote | any |
+| Idempotency: every command twice, second reports `unchanged` | any |
+| Drift: change a password out of band, `check` reports DRIFT, exit 3 | any |
+| **Lockout regression**: profile with `FAILED_LOGIN_ATTEMPTS 3`, run `check` against a drifted account 5×, assert the account never locks | any |
+| Verify-function: profile with `ora12c_strong_verify_function` and a violating policy — bounded regeneration, then a clear error carrying the server message | any |
+| Password reuse: `PASSWORD_REUSE_MAX`, assert no blind retry on ORA-28007 | any |
+| 30-byte limit and 10G/11G verifiers | 11g XE / 18c XE |
+| Common user + `CONTAINER=ALL`, and refusal outside `CDB$ROOT` | any CDB |
+| Rollover: both passwords valid during the window; `finish-rollover` ends it | 23ai Free, real 19.12+ |
+| Rollover *absent*: `--strategy rollover` fails at plan time, not execution | 18c XE, 11g XE |
+| Standby refusal: `OPEN MODE = READ ONLY` detected before any DDL | real OCI |
+| NNE: thin mode fails with `DPY-3001`, diagnostics are useful | container with `SQLNET.ENCRYPTION_SERVER=required` |
+| Schema-privilege probe (P7): does `GRANT ALTER USER ON SCHEMA` work? | 26ai |
+| Shared JSON document: writing one account's password leaves siblings byte-identical | any + Vault |
+| KV v1 degradation: no versioning, staging emulated in payload, and the tool says so | Vault KV v1 mount |
+
+### Fault injection (tier 2)
+
+The UC-1 §8 failure table is a test list. Each row asserts the documented
+recovery, not merely that the tool did not crash:
+
+| Injection | Assert |
+|---|---|
+| kill the process between `password_set` and `vault_promote` | `pending` still holds the new value; `check` reports `PENDING_APPLY`; `promote` completes it |
+| vault unreachable mid-run | nothing applied, or applied-but-not-promoted; never silently promoted |
+| close a PDB mid-run (multi-target) | partial success, exit 4, other targets untouched; `apply --repair` fixes it |
+| revoke `ALTER USER` mid-run | clean authorization error, no half-written state |
+| two `rotate` runs on one account concurrently | one loses the lock with exit 7; final state consistent |
+| vault returns a stale read after write | post-verify catches it and reports rather than promoting |
+
+Mechanics: `docker pause`/`stop` for the database, and a TCP proxy (toxiproxy or
+equivalent) between the tool and both the database and the vault for latency,
+truncation and connection-drop faults. Process kills are easiest driven from the
+`jsonl` event stream — wait for `seq` of `password.applied`, then `SIGKILL`.
+That the event stream makes this testable is a good sign the stream is right.
+
+---
+
+## 6. Release gates
+
+Not tests that can be skipped. A release does not happen if any of these is red.
+
+1. **Redaction.** Run the full suite at `--log-level debug`, then grep every
+   artefact — stdout, stderr, log files, JSON output, audit records — for every
+   generated password. Zero hits.
+2. **Password leakage into Oracle.** Rotate a throwaway account with a known
+   password on each supported major version, then query `V$SQL` and
+   `UNIFIED_AUDIT_TRAIL` and grep the trace directory (queries in
+   `sql/oracle/01_audit_policy.sql` §3). Whatever it finds goes in the README —
+   this is the empirical check that `02-oracle-privileges.md` §4 refuses to
+   assume.
+3. **Schema conformance.** Every sample and recorded output validates against the
+   published JSON Schema. Already wired: the schemas and example in
+   `docs/schemas/` validate today.
+4. **Lockout.** The lockout regression test passes on every Oracle version in the
+   matrix. A tool that locks production accounts while checking them is worse
+   than no tool.
+5. **Idempotency.** Every command twice, everywhere, `changed: false` on the
+   second run.
+
+---
+
+## 7. Test data and fixtures
+
+- **Never a real account name, host, tenant or path.** Fixtures use the same
+  fictional vocabulary as `01-configuration.md`: application `acme`, accounts
+  `acme_*_user`, tenants `alpha…theta`, hosts under `example.com`, documentation
+  IPs from `192.0.2.0/24`.
+- Each test creates its own accounts under a per-run prefix and drops them
+  afterwards, so a failed run leaves nothing that breaks the next one.
+- Profiles used by tests (`FAILED_LOGIN_ATTEMPTS 3`, rollover configured, verify
+  function attached) are created by the harness, never assumed to exist.
+- The Vault dev container starts empty; every test seeds what it needs. No shared
+  fixture state between tests — this is a concurrency-sensitive tool and shared
+  fixtures would hide exactly the bugs worth finding.
+
+---
+
+## 8. Open questions
+
+| # | Question | Leaning |
+|---|---|---|
+| T1 | Does `gvenzl/oracle-xe:11` exist? | **check first** — it decides whether 11.2 support (D7) is cheap or maintainer-only |
+| T2 | `testcontainers-python` or `compose.yaml` + fixtures? | compose, for a tool whose users are DBAs who will want to run the stack by hand; testcontainers if session management gets fiddly |
+| T3 | Is LocalStack Secrets Manager in the community tier? | verify before committing to it as the AWS path |
+| T4 | Does OCI Vault cost enough to matter in a test loop? | check pricing; if so, tier 3 only and reuse one secret |
+| T5 | Public CI provider | GitHub Actions; Oracle Free containers run on amd64 hosted runners |
+| T6 | Do we need a real Data Guard standby to test the read-only refusal? | probably: a closed PDB is not the same failure. Defer until a driver bug argues for it |
+| T7 | Snapshot/restore for faster Oracle resets | start with drop-and-recreate; revisit if tier 2 exceeds its budget |

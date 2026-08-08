@@ -1,0 +1,173 @@
+{
+  "schema_version": "1.0",
+  "tool": {
+    "name": "sopuli",
+    "version": "0.1.0",
+    "driver_versions": {
+      "oracle": "python-oracledb 2.5.1 thick, client 21.13"
+    }
+  },
+  "command": "creds.check",
+  "invocation": {
+    "correlation_id": "9f1c2e7a-4d3b-4a51-9d2c-0b7f8e6a1234",
+    "started_at": "2026-08-04T06:00:00Z",
+    "finished_at": "2026-08-04T06:00:03Z",
+    "duration_ms": 3142,
+    "actor": {
+      "os_user": "svc_sopuli",
+      "host": "dba-runner-01",
+      "vault_identity": "approle:sopuli-ci",
+      "scheduled": true
+    },
+    "dry_run": false,
+    "profile": "prod",
+    "config_files": ["/etc/sopuli/config.yaml"],
+    "selection": {
+      "applications": ["orders-app"],
+      "accounts": [],
+      "targets": [],
+      "groups": [],
+      "select": { "env": "prod" },
+      "all": false,
+      "limit": null
+    },
+    "options": {
+      "verify.method": { "value": "hash", "source": "profile", "source_detail": "policies.app-standard.verify.scheduled_method" },
+      "vault.addr": { "value": "https://vault.example.com:8200", "source": "env", "source_detail": "SOPULI_VAULT_ADDR" }
+    }
+  },
+  "plan": {
+    "units": [
+      {
+        "account": "ORDERS_APP",
+        "target": "cdb1-pdb-orders",
+        "intent": ["verify"],
+        "secret": { "vault": "hcv-prod", "path": "apps/orders/prod/db/ORDERS_APP", "field": "password", "version": 7, "stage": "current" }
+      },
+      {
+        "account": "ORDERS_APP",
+        "target": "cdb1-pdb-billing",
+        "intent": ["verify"],
+        "secret": { "vault": "hcv-prod", "path": "apps/orders/prod/db/ORDERS_APP", "field": "password", "version": 7, "stage": "current" }
+      }
+    ],
+    "shared_secrets": [
+      {
+        "secret": { "vault": "hcv-prod", "path": "apps/orders/prod/db/ORDERS_APP", "field": "password" },
+        "targets": ["cdb1-pdb-orders", "cdb1-pdb-billing"]
+      }
+    ],
+    "confirmation_required": false,
+    "blast_radius": { "targets": 2, "accounts": 1, "environments": ["prod"] }
+  },
+  "results": [
+    {
+      "account": "ORDERS_APP",
+      "target": "cdb1-pdb-orders",
+      "scope": {
+        "labels": { "target_set": "appdb", "env": "prod", "tenant": "orders" },
+        "type": "pdb",
+        "container": "ORDERS",
+        "db_unique_name": "CDB1_FRA",
+        "db_version": "19.22.0.0.0",
+        "open_mode": "READ WRITE",
+        "read_write": true,
+        "privilege_model": "direct",
+        "over_granted": [],
+        "offline_verify_available": true,
+        "capabilities": ["container_scope", "password_rollover", "offline_verify", "expire_password"]
+      },
+      "secret": { "vault": "hcv-prod", "path": "apps/orders/prod/db/ORDERS_APP", "field": "password", "version": 7, "stage": "current", "updated_at": "2026-07-23T09:12:33Z" },
+      "state": "IN_SYNC",
+      "changed": false,
+      "actions": [{ "kind": "verify", "applied": true, "detail": "verifier comparison via SYS.USER$, no login attempt", "duration_ms": 41 }],
+      "verification": {
+        "method": "hash",
+        "result": "pass",
+        "latency_ms": 41,
+        "lcount": 0,
+        "failed_login_attempts_limit": "10",
+        "lockout_margin_hit": false,
+        "previous_password_accepted": null
+      },
+      "rollover": { "active": false, "ends_at": "2026-07-24T09:12:33Z", "profile_rollover_time": "1" },
+      "password_age_days": 12.9,
+      "started_at": "2026-08-04T06:00:00Z",
+      "duration_ms": 1204,
+      "error": null,
+      "warnings": []
+    },
+    {
+      "account": "ORDERS_APP",
+      "target": "cdb1-pdb-billing",
+      "scope": {
+        "labels": { "target_set": "appdb", "env": "prod", "tenant": "billing" },
+        "type": "pdb",
+        "container": "BILLING",
+        "db_unique_name": "CDB1_FRA",
+        "db_version": "19.22.0.0.0",
+        "open_mode": "READ WRITE",
+        "read_write": true,
+        "privilege_model": "direct",
+        "over_granted": ["SELECT ANY DICTIONARY"],
+        "offline_verify_available": true,
+        "capabilities": ["container_scope", "offline_verify", "expire_password"]
+      },
+      "secret": { "vault": "hcv-prod", "path": "apps/orders/prod/db/ORDERS_APP", "field": "password", "version": 7, "stage": "current", "updated_at": "2026-07-23T09:12:33Z" },
+      "state": "DRIFT",
+      "changed": false,
+      "actions": [{ "kind": "verify", "applied": true, "detail": "hash comparison returned NOMATCH", "duration_ms": 38 }],
+      "verification": {
+        "method": "hash",
+        "result": "fail",
+        "latency_ms": 38,
+        "lcount": 0,
+        "failed_login_attempts_limit": "10",
+        "lockout_margin_hit": false,
+        "previous_password_accepted": null
+      },
+      "rollover": null,
+      "password_age_days": 94.2,
+      "started_at": "2026-08-04T06:00:01Z",
+      "duration_ms": 1893,
+      "error": null,
+      "warnings": [
+        {
+          "level": "warning",
+          "code": "SOPULI-W014",
+          "message": "profile DEFAULT has PASSWORD_ROLLOVER_TIME 0; zero-downtime rotation is unavailable on this target",
+          "target": "cdb1-pdb-billing",
+          "account": "ORDERS_APP"
+        },
+        {
+          "level": "warning",
+          "code": "SOPULI-W002",
+          "message": "service account holds SELECT ANY DICTIONARY, which the tool does not need; grant SELECT ON SYS.USER$ specifically instead",
+          "target": "cdb1-pdb-billing",
+          "account": null
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "ok": 1,
+    "changed": 0,
+    "unchanged": 2,
+    "drift": 1,
+    "unverifiable": 0,
+    "skipped": 0,
+    "failed": 0,
+    "by_state": { "IN_SYNC": 1, "DRIFT": 1 }
+  },
+  "diagnostics": [
+    {
+      "level": "info",
+      "code": "SOPULI-I002",
+      "message": "one secret backs 2 targets; a rotation will change both",
+      "target": null,
+      "account": "ORDERS_APP"
+    }
+  ],
+  "exit_code": 3
+}

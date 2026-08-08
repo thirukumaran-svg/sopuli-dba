@@ -1,0 +1,181 @@
+# sopuli-dba test stack
+#
+# STATUS: DRAFT. Never run. Image tags are unverified — see docs/design/04-testing.md §8 T1.
+#
+# Profiles keep the inner loop fast:
+#   docker compose --profile tier0 up -d     # Vault + PostgreSQL, seconds
+#   docker compose --profile tier1 up -d     # + Oracle 23ai Free, ~1-2 min first start
+#   docker compose --profile tier2 up -d     # + older Oracle lines, several minutes
+#   docker compose --profile nne   up -d     # Oracle with Native Network Encryption required
+#
+# Oracle containers are slow to start and are deliberately long-running: tests reset
+# state by dropping and recreating accounts, never by recreating the container.
+
+name: sopuli-test
+
+services:
+
+  # ---------------------------------------------------------------- vault ---
+  # Dev mode: in-memory, root token known, unsealed. Never resembles production,
+  # which is the point — production auth paths are exercised against real OCI.
+  vault:
+    image: hashicorp/vault:latest
+    profiles: [tier0, tier1, tier2, nne]
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: sopuli-test-root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports: ["8200:8200"]
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Mounts BOTH KV versions, so the store-capability degradation paths
+  # (00-principles P2) are covered in one container.
+  vault-init:
+    image: hashicorp/vault:latest
+    profiles: [tier0, tier1, tier2, nne]
+    depends_on:
+      vault: { condition: service_healthy }
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: sopuli-test-root
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        vault secrets enable -path=kv   -version=2 kv || true
+        vault secrets enable -path=kv1  -version=1 kv || true
+        echo "kv (v2) and kv1 (v1) mounted"
+    restart: "no"
+
+  # ------------------------------------------------------------- postgres ---
+  # Tier 0 driver work and the fast inner loop. Cheap enough to run a matrix.
+  postgres:
+    image: postgres:16-alpine
+    profiles: [tier0, tier1, tier2]
+    environment:
+      POSTGRES_PASSWORD: sopuli-test
+      POSTGRES_DB: sopuli
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # --------------------------------------------------------------- oracle ---
+  # 23ai/26ai Free: CDB + PDB, common users, gradual password rollover.
+  # The only Oracle a contributor can definitely pull, so tier 1 lives here and
+  # the public suite must be green on it alone.
+  oracle-free:
+    image: gvenzl/oracle-free:latest
+    profiles: [tier1, tier2]
+    environment:
+      ORACLE_PASSWORD: sopuli-test
+      APP_USER: sopuli_probe
+      APP_USER_PASSWORD: sopuli-test
+    ports: ["1521:1521"]
+    volumes:
+      - ./oracle-init:/container-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+
+  # 21c XE — an older CDB line.
+  oracle-xe21:
+    image: gvenzl/oracle-xe:21-slim
+    profiles: [tier2]
+    environment:
+      ORACLE_PASSWORD: sopuli-test
+    ports: ["1522:1521"]
+    volumes:
+      - ./oracle-init:/container-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+
+  # 18c XE — 12.2+ password lengths, no rollover. A useful negative case:
+  # `--strategy rollover` must fail at plan time here, not at execution.
+  oracle-xe18:
+    image: gvenzl/oracle-xe:18-slim
+    profiles: [tier2]
+    environment:
+      ORACLE_PASSWORD: sopuli-test
+    ports: ["1523:1521"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 180s
+
+  # 11g XE — non-CDB, 30-byte passwords, 10G/11G verifiers, DBA_AUDIT_TRAIL.
+  # VERIFY THIS TAG EXISTS (04-testing.md T1). If it does not, Oracle 11.2 coverage
+  # moves to the maintainer tier and must be built from oracle/docker-images.
+  oracle-xe11:
+    image: gvenzl/oracle-xe:11-slim
+    profiles: [tier2]
+    environment:
+      ORACLE_PASSWORD: sopuli-test
+    ports: ["1524:1521"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 180s
+
+  # ------------------------------------------------------------------ NNE ---
+  # Approximates the OCI constraint locally: the server REQUIRES Native Network
+  # Encryption, so a thin-mode connection must fail with DPY-3001. This covers the
+  # failure path and the diagnostics; the success path still needs real OCI.
+  oracle-nne:
+    image: gvenzl/oracle-free:latest
+    profiles: [nne]
+    environment:
+      ORACLE_PASSWORD: sopuli-test
+    ports: ["1525:1521"]
+    volumes:
+      - ./oracle-init/sqlnet-nne.ora:/opt/oracle/oradata/dbconfig/FREE/sqlnet.ora:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+
+  # ------------------------------------------------------------ fault net ---
+  # TCP proxy in front of the database and the vault, for the fault-injection
+  # cases in 04-testing.md §5: latency, truncation, connection drops.
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:latest
+    profiles: [tier2]
+    ports:
+      - "8474:8474"   # control API
+      - "21521:21521" # -> oracle-free:1521
+      - "18200:18200" # -> vault:8200
+
+  # ------------------------------------------------- emulators (smoke only) --
+  # Never authoritative. A green run here is "the code path executes", nothing
+  # more; the real services are the release evidence.
+  localstack:
+    image: localstack/localstack:latest
+    profiles: [emulators]
+    environment:
+      SERVICES: secretsmanager
+    ports: ["4566:4566"]
+
+  lowkey-vault:
+    image: nagyesta/lowkey-vault:latest
+    profiles: [emulators]
+    ports: ["8443:8443"]

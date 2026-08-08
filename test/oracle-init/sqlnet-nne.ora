@@ -1,0 +1,12 @@
+# Forces Native Network Encryption on the server side, approximating the OCI
+# constraint locally. With this in place a thin-mode python-oracledb connection
+# must fail with DPY-3001, which is the failure path the tool has to diagnose
+# clearly. The success path still needs a real OCI database.
+#
+# STATUS: DRAFT, never run. The mount path in compose.yaml is image-specific and
+# needs checking against the image actually used.
+
+SQLNET.ENCRYPTION_SERVER = required
+SQLNET.ENCRYPTION_TYPES_SERVER = (AES256, AES192, AES128)
+SQLNET.CRYPTO_CHECKSUM_SERVER = required
+SQLNET.CRYPTO_CHECKSUM_TYPES_SERVER = (SHA256)

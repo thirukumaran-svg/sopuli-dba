@@ -1,0 +1,360 @@
+# sopuli-dba — Oracle privileges and grants
+
+Status: draft / sketch. **The SQL in `sql/oracle/` is unrun and untested.**
+Depends on: `00-principles.md`, `../use-cases/uc-01-app-credential-sync.md`
+
+---
+
+## 1. The model: direct `ALTER USER`
+
+The tool connects as an account holding the `ALTER USER` system privilege. That
+is the whole privilege model. Install is a handful of grants, not a deployment.
+
+### Why not something narrower
+
+Through 21c there is nothing narrower to have. `ALTER USER` has **no object
+scope** — there is no `GRANT ALTER USER ON ORDERS_APP`. Any account that can
+change one user's password can change every user's password in that container,
+including `SYS`.
+
+23ai/26ai adds **schema privileges**, which are worth checking before accepting
+that as permanent — see the test in §2.1. The expectation is that they do not
+help here, but it is cheap to confirm and the answer changes the model if it goes
+the other way.
+
+The alternative is a definer-rights package that owns the privilege and exposes
+only whitelisted operations. That was the earlier draft of this document, and it
+was rejected on cost:
+
+- a package to install, version and upgrade in **every PDB**, since a single
+  common package in the root would itself need root-wide reach
+- a server-side whitelist to maintain in parallel with the tool's own config
+- version skew between tool and package as a new class of operational failure
+- all of it in exchange for constraining an operator who already holds SYSDBA
+
+sopuli-dba is a tool for DBAs to do faster and more reliably what they already do
+by hand. A DBA rotating a password with `sqlplus` today has strictly more power
+than the tool is being given. Requiring an in-database framework to hand them a
+subset of what they already have is friction without a corresponding gain.
+
+The reasoning is recorded in
+[`../decisions/adr-001-privilege-model.md`](../decisions/adr-001-privilege-model.md);
+the package implementation itself has been deleted rather than carried as dead
+code. §6 describes the one situation where it may earn its cost back.
+
+---
+
+## 2. The grants
+
+### 2.1 First: test schema privileges on 26ai (open, cheap, decision-changing)
+
+Oracle 23ai introduced schema-level privilege grants:
+
+```sql
+GRANT SELECT ANY TABLE ON SCHEMA hr TO analyst;
+```
+
+This scopes an `ANY`-form privilege to the objects of a single schema, and covers
+objects created later without re-granting. It is exactly the shape of thing that
+would let this tool hold a narrow grant.
+
+**The expectation is that it does not extend to `ALTER USER`,** for two reasons:
+
+1. Schema privileges scope privileges over *objects inside* a schema — tables,
+   views, sequences, procedures. `ALTER USER` does not act on an object in a
+   schema; it acts on the account as a security principal. The documented
+   examples are all `SELECT/INSERT/UPDATE/DELETE ANY TABLE`,
+   `SELECT ANY SEQUENCE`, `EXECUTE ANY PROCEDURE`.
+2. `ALTER USER` is not an `ANY`-form privilege at all, so there is no natural
+   syntax for it.
+
+Oracle publishes an explicit list of system and administrative privileges
+excluded from schema privileges, in *Configuring Privilege and Role
+Authorization*. That list is where the definitive answer lives.
+
+**Test to run on 26ai:**
+
+```sql
+-- expect a syntax/privilege error, most likely ORA-00990
+GRANT ALTER USER ON SCHEMA orders_app TO sopuli_svc;
+
+-- and confirm nothing landed
+SELECT * FROM dba_schema_privs WHERE grantee = 'SOPULI_SVC';
+```
+
+**If it fails** (expected): nothing changes, and this section becomes a recorded
+"we checked" rather than an assumption.
+
+**If it succeeds**: it reopens the whole privilege model in a good way. A service
+account could then hold `ALTER USER` scoped to just the application schemas it
+manages, giving the least-privilege property the definer-rights package was
+supposed to provide — with no package, no per-PDB install, and no version skew.
+That would be worth taking, with the caveats that it is 23ai+ only (so every
+older target still needs the broad grant) and that the config's declared accounts
+would want to stay aligned with whatever is granted.
+
+Until tested, treat the direct grant in §1 as the model.
+
+### Non-CDB, or a single PDB with local users
+
+```sql
+CREATE USER sopuli_svc IDENTIFIED BY "…" DEFAULT TABLESPACE users;
+
+GRANT CREATE SESSION TO sopuli_svc;
+GRANT ALTER USER     TO sopuli_svc;
+
+-- dictionary reads
+GRANT SELECT ON SYS.DBA_USERS      TO sopuli_svc;
+GRANT SELECT ON SYS.DBA_PROFILES   TO sopuli_svc;
+GRANT SELECT ON SYS.V_$DATABASE    TO sopuli_svc;
+GRANT SELECT ON SYS.V_$INSTANCE    TO sopuli_svc;
+```
+
+`SELECT_CATALOG_ROLE` covers all four in one grant and is a reasonable
+convenience choice — it reaches the `DBA_*` and `V$` views but **not** base
+tables such as `SYS.USER$`. The explicit list is the documented default because
+it makes a privilege review trivial; the role is fine if your site prefers it.
+
+### CDB with common users — one grant covers every container
+
+This is where the direct model pays off most obviously:
+
+```sql
+-- in CDB$ROOT
+CREATE USER c##sopuli_svc IDENTIFIED BY "…" CONTAINER=ALL;
+
+GRANT CREATE SESSION TO c##sopuli_svc CONTAINER=ALL;
+GRANT ALTER USER     TO c##sopuli_svc CONTAINER=ALL;
+GRANT SELECT ON SYS.DBA_USERS    TO c##sopuli_svc CONTAINER=ALL;
+GRANT SELECT ON SYS.DBA_PROFILES TO c##sopuli_svc CONTAINER=ALL;
+GRANT SELECT ON SYS.V_$DATABASE  TO c##sopuli_svc CONTAINER=ALL;
+GRANT SELECT ON SYS.V_$INSTANCE  TO c##sopuli_svc CONTAINER=ALL;
+GRANT SELECT ON SYS.V_$PDBS      TO c##sopuli_svc;   -- root only
+```
+
+One statement set, every PDB covered, new PDBs inherit it. Compare with a package
+install per PDB, repeated on every plug-in and clone.
+
+Two additional grants depending on how the tool connects:
+
+```sql
+-- only if the tool switches containers on an existing session rather than
+-- connecting to each PDB service directly
+GRANT SET CONTAINER TO c##sopuli_svc CONTAINER=ALL;
+
+-- to manage the common user itself with CONTAINER=ALL
+-- (already covered by ALTER USER above; noted because the *session* must be in
+--  CDB$ROOT for the CONTAINER=ALL clause to be legal)
+```
+
+### Choosing common vs per-PDB local
+
+Both are supported; it is a blast-radius decision, not a capability one.
+
+| | one common `C##SOPULI_SVC` | a local `SOPULI_SVC` per PDB |
+|---|---|---|
+| Install effort | one grant set | N grant sets |
+| New PDB | inherits automatically | needs provisioning |
+| Reach of one stolen credential | every PDB in the CDB | that one PDB |
+| Credentials to store in the vault | one | N |
+| Fits | one team owns the whole CDB | PDBs owned by different teams or tenants |
+
+Recommendation: common user when one DBA team owns the CDB, which is the usual
+case. Per-PDB local users when PDBs have different owners — there the isolation
+is worth the extra provisioning, and the tool's config already models targets
+individually.
+
+### Verification without a login attempt (`check --method hash`)
+
+UC-1 §7 offers hash comparison so that scheduled checks cannot burn through
+`FAILED_LOGIN_ATTEMPTS` and lock a production account. It reads
+`SYS.USER$.SPARE4`, which needs an explicit grant:
+
+```sql
+GRANT SELECT ON SYS.USER$ TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
+```
+
+Under the package model this grant was the thing to avoid — it exposes every
+password verifier in the database to a low-privilege account. Under the direct
+model that objection largely evaporates: an account holding `ALTER USER` can
+already set any password it likes, so being able to read the verifiers adds
+little to what it can do. The residual concern is different in kind rather than
+degree — verifiers are *offline-attackable*, so a stolen dump of them is useful
+to an attacker who never touches the database again. Weigh that against the
+lockout risk of login-based checks and decide per site.
+
+The same grant provides `USER$.LCOUNT`, the current failed-login counter, which
+is what lets `check` refuse an attempt when an account is near its threshold.
+Without it, `--method login` runs with weaker guards. This is the one place where
+the read grant genuinely changes behaviour and not just performance.
+
+**Still unresolved regardless of grants:** the `T:` (12C, PBKDF2-SHA512) verifier
+layout in `SPARE4` must be reproduced client-side for hash mode to work at all.
+Prototype it against a throwaway 19c before committing `--method hash` to the
+CLI. If it does not reproduce reliably, drop hash mode and rely on `--method
+login` with the `LCOUNT` guard.
+
+---
+
+## 3. What must not be granted
+
+| Not granted | Why |
+|---|---|
+| `SELECT ANY DICTIONARY` | includes `SYS.USER$` *and* everything else; if hash mode is wanted, grant `SELECT ON SYS.USER$` specifically |
+| `DBA`, `PDB_DBA`, `CDB_DBA` | the tool needs `ALTER USER`, not a role that carries a hundred other privileges |
+| `SYSDBA` / `SYSOPER` | never; the tool has no operation that requires it |
+| `ALTER PROFILE` | see UC-1 Q4 — the tool reports the DDL needed to enable password rollover rather than changing a shared profile itself |
+| `CREATE USER` / `DROP USER` | account provisioning is out of scope for UC-1 |
+| `ALTER SYSTEM`, `GRANT ANY *`, `BECOME USER` | no operation needs them |
+
+`sopuli doctor --check-privileges` reports what the service account actually
+holds and flags anything on this list. Over-granting is the common failure when
+someone is debugging a permissions problem at 17:00 on a Friday; the tool should
+notice and say so rather than quietly benefit from it.
+
+---
+
+## 4. Guardrails, now client-side
+
+Dropping the package moves the account-safety checks into the tool. They stop
+being a security boundary — a compromised service credential bypasses them
+entirely — and become what they realistically were for an operator with SYSDBA
+anyway: **protection against typos and against a config change with a wider blast
+radius than intended.** Worth keeping, worth being honest about.
+
+Before any `ALTER USER`, the tool refuses when the target account:
+
+1. is not among the config's declared `accounts` (inline, or in an `applications`
+   entry) — the config *is* the whitelist, just advisory rather than enforced
+2. has `DBA_USERS.ORACLE_MAINTAINED = 'Y'` — covers SYS, SYSTEM, DBSNMP,
+   GSMADMIN_INTERNAL and the rest without a hand-maintained list going stale
+3. appears in `V$PWFILE_USERS`
+4. holds `DBA`, `PDB_DBA`, `CDB_DBA`, or `AUDIT_ADMIN`
+5. is on a literal deny list, for 11.2 where `ORACLE_MAINTAINED` does not exist
+
+`--force` overrides 2–5 for the case where a DBA deliberately manages something
+unusual. It is recorded in the audit event and in the JSON output; it never
+overrides 1, because acting on an account absent from the config would make the
+tool's own audit trail meaningless.
+
+### Statement construction
+
+The password cannot be a bind variable — DDL takes literals — so the tool builds:
+
+```sql
+ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
+```
+
+- **Passwords containing `"` are rejected, not escaped.** Oracle quoted
+  identifiers have no escape sequence for a double quote; there is no correct
+  escaping, so refusal is the only safe handling. The `alnum_safe` charset
+  default already excludes it.
+- Control characters and `CHR(0)` are rejected; byte length is checked against
+  the target's limit (30 vs 128) in the database character set.
+- The username in the statement is the spelling read back from `DBA_USERS` after
+  validation, never the raw string from config.
+- `CONTAINER=ALL` is appended only when the session is in `CDB$ROOT` **and** the
+  account is a `C##` common user; otherwise the tool refuses rather than letting
+  Oracle produce a confusing error.
+
+### Where the password text can surface
+
+| Surface | Expectation | Action |
+|---|---|---|
+| `V$SQL` / AWR | Oracle is understood to mask passwords in `CREATE/ALTER USER` | **verify empirically per version — release gate, not an assumption** |
+| Unified audit `SQL_TEXT` | expected to be redacted for these statements | same: test it |
+| SQL trace / 10046 | not redacted | the tool never enables trace on its own sessions; a DBA who traces this session captures the password |
+| Network | encrypted when NNE or TLS is in use | `sopuli doctor` warns on an unencrypted connection |
+| Tool's own output and logs | redacted at the sink | covered by the redaction release gate, UC-1 §11 |
+
+The probe queries are in `sql/oracle/01_audit_policy.sql` §3. Run them on 11.2,
+19c and 23ai; whatever they find goes in the README.
+
+---
+
+## 5. Auditing
+
+With no package there is no `SOPULI_AUDIT` table, so the database-side trail is
+unified auditing alone — which is the authoritative one anyway, since it does not
+depend on the tool behaving.
+
+```sql
+CREATE AUDIT POLICY sopuli_pol
+  ACTIONS ALTER USER, CREATE USER, DROP USER;
+AUDIT POLICY sopuli_pol;
+```
+
+Given `ALTER USER` is now the whole privilege model, this policy is not optional
+housekeeping — it is the compensating control. Enable it before the first
+rotation, not after the first incident.
+
+**Correlation still works.** The tool calls
+`DBMS_SESSION.SET_IDENTIFIER(<correlation_id>)` on every connection, so its UUID
+lands in `UNIFIED_AUDIT_TRAIL.CLIENT_ID`. That is the join between the tool's
+JSON output, the database trail, and the vault's secret metadata — the property
+that made the package's local audit table useful is preserved without the table:
+
+```sql
+SELECT event_timestamp, dbusername, action_name, object_name, return_code
+  FROM unified_audit_trail
+ WHERE client_id = '9f1c2e7a-4d3b-4a51-9d2c-0b7f8e6a1234'
+ ORDER BY event_timestamp;
+```
+
+On 11.2, fall back to `AUDIT ALTER USER` and `DBA_AUDIT_TRAIL`, where
+`CLIENT_ID` also exists.
+
+Worth auditing alongside it: failed logons by the service account, which is what
+credential probing looks like.
+
+---
+
+## 6. When the package would be worth reconsidering
+
+Not now, and possibly never — but the distinction is worth recording, because it
+is about the *stored* credential rather than the operator.
+
+An interactive DBA already holds SYSDBA, so granting the tool `ALTER USER` gives
+away nothing. An **unattended scheduled runner** is different: its credential sits
+in a CI system, a container, or a systemd unit, authenticated by machine identity
+and used without a human present. If that credential is stolen it is a full
+database compromise, and it has a broader exposure surface than a DBA's own
+login.
+
+UC-1 §S2 assumes exactly this — nightly `check`, weekly `rotate` from a scheduler.
+So the honest position is: direct grants for the interactive and initial case;
+revisit the package **only if** unattended rotation in a hostile-ish environment
+becomes a real deployment pattern, and only for that runner's credential. A
+sensible middle option if it comes to that is a read-only service account for
+scheduled `check` plus an `ALTER USER` account used only by `apply`/`rotate`.
+
+Filed as an option, not a plan. If it is ever taken up, write the package fresh
+against the design as it stands then — the earlier draft was never executed and
+is not worth recovering.
+
+---
+
+## 7. Files
+
+| File | Purpose |
+|---|---|
+| `sql/oracle/00_install.sql` | create the service account and grant it, with non-CDB / common-user / per-PDB variants |
+| `sql/oracle/01_audit_policy.sql` | unified audit policy, correlation queries, password-leak probes |
+| `sql/oracle/99_uninstall.sql` | remove the account and policies |
+| `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to revisit |
+
+All scripts are idempotent and report what they did.
+
+---
+
+## 8. Open questions
+
+| # | Question | Leaning |
+|---|---|---|
+| P1 | Common `C##` service user or per-PDB local, as the documented default? | common, with per-PDB documented for multi-tenant ownership |
+| P2 | Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard? | yes for scheduled use; the lockout protection is worth more than the verifier exposure once `ALTER USER` is already granted |
+| P3 | Should `--force` exist at all? | yes, audited — DBAs manage odd accounts and a tool that cannot be overridden gets worked around |
+| P4 | One service account per database, or per application? | per database; the config's declared accounts provide the finer scoping |
+| P5 | Does `doctor` fail or warn on over-granted privileges? | warn; failing would block someone mid-incident |
+| P6 | 11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases? | keep for now, drop if it starts costing real complexity |
+| P7 | Do 23ai schema privileges cover `ALTER USER`? (§2.1) | expected no; **Ville to test on 26ai**. If yes, adopt scoped grants for 23ai+ targets and keep the broad grant as the pre-23ai fallback |

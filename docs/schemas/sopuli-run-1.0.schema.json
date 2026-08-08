@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vronkko/sopuli-dba/schemas/sopuli-run-1.0.schema.json",
+  "title": "sopuli-dba run result",
+  "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "command", "invocation", "summary", "exit_code"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$",
+      "description": "Major bumps are breaking. Consumers must accept unknown properties within the same major."
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "const": "sopuli" },
+        "version": { "type": "string" },
+        "driver_versions": {
+          "type": "object",
+          "description": "e.g. {\"oracle\": \"python-oracledb 2.5.1 thick, client 21.13\"}",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "command": {
+      "type": "string",
+      "description": "Dotted command path.",
+      "enum": [
+        "creds.generate", "creds.apply", "creds.check", "creds.rotate",
+        "creds.status", "creds.promote", "creds.finish-rollover",
+        "config.validate", "config.show", "doctor", "admin.install"
+      ]
+    },
+    "invocation": { "$ref": "#/$defs/invocation" },
+    "plan": { "$ref": "#/$defs/plan" },
+    "results": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/result" }
+    },
+    "summary": { "$ref": "#/$defs/summary" },
+    "diagnostics": {
+      "type": "array",
+      "description": "Run-level messages not attributable to a single result.",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    },
+    "exit_code": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "description": "Mirrors the process exit code. See docs/design/00-principles.md P5."
+    }
+  },
+
+  "$defs": {
+
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, always UTC with a trailing Z."
+    },
+
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correlation_id", "started_at", "finished_at", "duration_ms", "actor", "dry_run"],
+      "properties": {
+        "correlation_id": {
+          "type": "string",
+          "description": "UUID. Also set as the Oracle client identifier via DBMS_SESSION.SET_IDENTIFIER, so it lands in UNIFIED_AUDIT_TRAIL.CLIENT_ID, and written into the vault secret metadata. One id ties all three trails together."
+        },
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "finished_at": { "$ref": "#/$defs/timestamp" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "actor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os_user", "host"],
+          "properties": {
+            "os_user": { "type": "string" },
+            "host": { "type": "string" },
+            "vault_identity": {
+              "type": ["string", "null"],
+              "description": "e.g. \"approle:sopuli-ci\" or \"oci:instance-principal\". Never a token."
+            },
+            "scheduled": {
+              "type": "boolean",
+              "description": "True when --scheduled was passed; changes verification defaults."
+            }
+          }
+        },
+        "dry_run": { "type": "boolean" },
+        "profile": { "type": ["string", "null"] },
+        "config_files": { "type": "array", "items": { "type": "string" } },
+        "selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The selectors as given, before resolution.",
+          "properties": {
+            "applications": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Application entry names. Empty in a single-application config, where the binding is inline at the top level."
+            },
+            "accounts": { "type": "array", "items": { "type": "string" } },
+            "targets": { "type": "array", "items": { "type": "string" } },
+            "groups": { "type": "array", "items": { "type": "string" } },
+            "select": {
+              "type": "object",
+              "description": "Label filters as given, e.g. {\"env\": \"dev\", \"tenant\": \"beta\"}.",
+              "additionalProperties": { "type": "string" }
+            },
+            "all": { "type": "boolean" },
+            "limit": { "type": ["integer", "null"] }
+          }
+        },
+        "options": {
+          "type": "object",
+          "description": "Effective option values that changed behaviour, each with the precedence layer it came from.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "source"],
+            "properties": {
+              "value": {},
+              "source": {
+                "type": "string",
+                "enum": ["cli", "env", "env_thirdparty", "profile", "object", "defaults", "builtin"]
+              },
+              "source_detail": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["units"],
+      "description": "What the run intended to do, emitted identically for --dry-run and for a real run.",
+      "properties": {
+        "units": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["account", "target", "intent"],
+            "properties": {
+              "account": { "type": "string" },
+              "target": { "type": "string" },
+              "intent": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/action_kind" }
+              },
+              "secret": { "$ref": "#/$defs/secret_ref" }
+            }
+          }
+        },
+        "shared_secrets": {
+          "type": "array",
+          "description": "Where one secret backs several targets, so the operator can see it is deliberate.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["secret", "targets"],
+            "properties": {
+              "secret": { "$ref": "#/$defs/secret_ref" },
+              "targets": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "confirmation_required": { "type": "boolean" },
+        "blast_radius": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "targets": { "type": "integer" },
+            "accounts": { "type": "integer" },
+            "environments": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+
+    "secret_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vault", "path"],
+      "description": "Addresses a secret. Never carries a value.",
+      "properties": {
+        "vault": { "type": "string" },
+        "path": { "type": "string" },
+        "field": { "type": ["string", "null"] },
+        "pointer": { "type": ["string", "null"], "description": "JSON pointer within the field." },
+        "version": { "type": ["integer", "null"] },
+        "stage": { "type": ["string", "null"], "enum": ["current", "pending", "previous", null] },
+        "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What the tool found when it connected — observed, not configured.",
+      "properties": {
+        "labels": {
+          "type": "object",
+          "description": "Labels carried by the target, including the dimension values a target_set generated it from, e.g. {\"target_set\": \"appdb\", \"env\": \"qa\", \"tenant\": \"delta\"}. Consumers can group results by these without parsing target names.",
+          "additionalProperties": { "type": "string" }
+        },
+        "type": { "type": "string", "enum": ["non_cdb", "cdb_root", "pdb", "app_root", "app_pdb", "unknown"] },
+        "container": { "type": ["string", "null"] },
+        "db_unique_name": { "type": ["string", "null"] },
+        "db_version": { "type": ["string", "null"] },
+        "open_mode": { "type": ["string", "null"] },
+        "read_write": { "type": ["boolean", "null"] },
+        "privilege_model": {
+          "type": ["string", "null"],
+          "enum": ["direct", "self", "package", null],
+          "description": "How the tool is privileged on this target. \"direct\" = the service account holds ALTER USER (the standard model). \"self\" = connected as the account itself. \"package\" = the optional definer-rights package, not part of the standard install."
+        },
+        "over_granted": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Privileges the service account holds that the tool does not need, e.g. SELECT ANY DICTIONARY or DBA. Reported as a warning, never fatal."
+        },
+        "offline_verify_available": {
+          "type": ["boolean", "null"],
+          "description": "True when SELECT ON SYS.USER$ is granted, enabling check --method hash and the LCOUNT lockout guard."
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Capability names the driver reported for this target."
+        }
+      }
+    },
+
+    "action_kind": {
+      "type": "string",
+      "enum": [
+        "none",
+        "generate",
+        "vault_write_pending",
+        "vault_promote",
+        "vault_rollback",
+        "password_set",
+        "rollover_start",
+        "rollover_finish",
+        "account_unlock",
+        "attribute_set",
+        "verify"
+      ]
+    },
+
+    "state": {
+      "type": "string",
+      "enum": [
+        "IN_SYNC",
+        "DRIFT",
+        "PENDING_APPLY",
+        "ROLLOVER_ACTIVE",
+        "ACCOUNT_MISSING",
+        "LOCKED",
+        "EXPIRED",
+        "UNVERIFIABLE",
+        "SKIPPED",
+        "ERROR"
+      ]
+    },
+
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "result"],
+      "properties": {
+        "method": { "type": "string", "enum": ["login", "hash", "both", "none"] },
+        "result": { "type": "string", "enum": ["pass", "fail", "skipped", "unavailable"] },
+        "latency_ms": { "type": ["integer", "null"] },
+        "lcount": {
+          "type": ["integer", "null"],
+          "description": "Failed-login counter at the time of the check, when readable."
+        },
+        "failed_login_attempts_limit": { "type": ["string", "null"] },
+        "lockout_margin_hit": {
+          "type": "boolean",
+          "description": "True when the tool declined to attempt a login because the account was near its lockout threshold."
+        },
+        "previous_password_accepted": {
+          "type": ["boolean", "null"],
+          "description": "Populated only with --include-previous."
+        }
+      }
+    },
+
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account", "target", "state", "changed"],
+      "properties": {
+        "account": { "type": "string" },
+        "target": { "type": "string" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "secret": { "$ref": "#/$defs/secret_ref" },
+        "state": { "$ref": "#/$defs/state" },
+        "changed": {
+          "type": "boolean",
+          "description": "False for a no-op. Idempotent re-runs report changed=false."
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "applied"],
+            "properties": {
+              "kind": { "$ref": "#/$defs/action_kind" },
+              "applied": { "type": "boolean" },
+              "detail": { "type": ["string", "null"] },
+              "duration_ms": { "type": ["integer", "null"] }
+            }
+          }
+        },
+        "verification": { "$ref": "#/$defs/verification" },
+        "rollover": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "active": { "type": "boolean" },
+            "ends_at": { "$ref": "#/$defs/timestamp" },
+            "profile_rollover_time": { "type": ["string", "null"] }
+          }
+        },
+        "password_age_days": { "type": ["number", "null"] },
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "duration_ms": { "type": ["integer", "null"] },
+        "error": { "$ref": "#/$defs/error" },
+        "warnings": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } }
+      }
+    },
+
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["category", "message"],
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "config", "selection", "connectivity", "authentication", "authorization",
+            "capability", "policy", "vault", "database", "lock", "internal"
+          ]
+        },
+        "code": {
+          "type": ["string", "null"],
+          "description": "Vendor code where one exists, e.g. \"ORA-01017\" or \"SOPULI-20001\"."
+        },
+        "message": { "type": "string", "description": "Redacted. Never contains a secret." },
+        "hint": { "type": ["string", "null"], "description": "What the operator should do next." },
+        "retryable": { "type": "boolean" },
+        "target_capability": {
+          "type": ["string", "null"],
+          "description": "Set when category is \"capability\": the capability that was missing."
+        }
+      }
+    },
+
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "message"],
+      "properties": {
+        "level": { "type": "string", "enum": ["info", "warning", "error"] },
+        "code": { "type": ["string", "null"] },
+        "message": { "type": "string" },
+        "target": { "type": ["string", "null"] },
+        "account": { "type": ["string", "null"] }
+      }
+    },
+
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "ok", "changed", "failed"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "ok": { "type": "integer", "minimum": 0 },
+        "changed": { "type": "integer", "minimum": 0 },
+        "unchanged": { "type": "integer", "minimum": 0 },
+        "drift": { "type": "integer", "minimum": 0 },
+        "unverifiable": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "by_state": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}
