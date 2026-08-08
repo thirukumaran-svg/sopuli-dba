@@ -84,20 +84,43 @@ END;
 
 -- 5. Report what this container actually supports, so a test run can be read
 --    against the capability matrix without guessing.
-SET LINESIZE 160
-COLUMN feature FORMAT A34
-COLUMN value   FORMAT A60
+--
+--    This is a PL/SQL block, not a query, for the same reason steps 2 and 4 are:
+--    parts of it are unavailable on older lines and a reporting failure must
+--    never abort container init. Two 11g constraints are load-bearing here and
+--    were both confirmed against 11.2.0.2 (04-testing.md T1):
+--      * LISTAGG(DISTINCT ...) is 19c+ — ORA-30482 below it, including on 18c.
+--        Take the DISTINCT in a subquery instead.
+--      * SYS_CONTEXT('USERENV','CON_NAME') raises ORA-02003 on a non-CDB.
+DECLARE
+  l_value VARCHAR2(200);
+BEGIN
+  FOR r IN (SELECT banner FROM v$version WHERE ROWNUM = 1) LOOP
+    DBMS_OUTPUT.PUT_LINE('banner              : ' || r.banner);
+  END LOOP;
 
-SELECT 'banner'                       AS feature, banner AS value FROM v$version WHERE ROWNUM = 1
-UNION ALL
-SELECT 'container', SYS_CONTEXT('USERENV','CON_NAME') FROM dual
-UNION ALL
-SELECT 'profiles created',
-       LISTAGG(DISTINCT profile, ', ') WITHIN GROUP (ORDER BY profile)
-  FROM dba_profiles WHERE profile LIKE 'SOPULI%'
-UNION ALL
-SELECT 'rollover supported',
-       CASE WHEN EXISTS (SELECT 1 FROM dba_profiles
-                          WHERE resource_name = 'PASSWORD_ROLLOVER_TIME')
-            THEN 'yes' ELSE 'no' END
-  FROM dual;
+  BEGIN
+    SELECT SYS_CONTEXT('USERENV','CON_NAME') INTO l_value FROM dual;
+  EXCEPTION
+    WHEN OTHERS THEN
+      l_value := 'n/a (non-CDB)';
+  END;
+  DBMS_OUTPUT.PUT_LINE('container           : ' || l_value);
+
+  SELECT LISTAGG(profile, ', ') WITHIN GROUP (ORDER BY profile)
+    INTO l_value
+    FROM (SELECT DISTINCT profile FROM dba_profiles WHERE profile LIKE 'SOPULI%');
+  DBMS_OUTPUT.PUT_LINE('profiles created    : ' || NVL(l_value, '(none)'));
+
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM dba_profiles
+                            WHERE resource_name = 'PASSWORD_ROLLOVER_TIME')
+              THEN 'yes' ELSE 'no' END
+    INTO l_value
+    FROM dual;
+  DBMS_OUTPUT.PUT_LINE('rollover supported  : ' || l_value);
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Reporting is diagnostic only; never let it fail the init script.
+    DBMS_OUTPUT.PUT_LINE('capability report incomplete: ' || SQLERRM);
+END;
+/
