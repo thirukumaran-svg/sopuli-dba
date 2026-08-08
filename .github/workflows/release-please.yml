@@ -1,0 +1,29 @@
+name: release-please
+
+# Maintains a standing release PR against main: accumulated changelog plus the
+# version bump. Merging that PR is the explicit act that cuts the tag and the
+# GitHub Release — nothing here tags directly. See docs/workflow.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# A push landing while a previous run is still open would otherwise race on the
+# release PR. Never cancel in progress: a cancelled run can leave the PR stale.
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

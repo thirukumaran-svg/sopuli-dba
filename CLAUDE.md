@@ -23,6 +23,7 @@ so — that is a design decision, not an implementation detail.
 | `docs/design/04-testing.md` | anything touching tests or the test stack |
 | `docs/use-cases/uc-01-app-credential-sync.md` | the credential sync/rotate feature — the only use case in scope |
 | `docs/decisions/adr-001-privilege-model.md` | before proposing a definer-rights package (it was considered and rejected) |
+| `docs/workflow.md` | branching, commit format, and release process |
 
 ---
 
