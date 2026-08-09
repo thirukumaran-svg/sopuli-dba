@@ -24,6 +24,11 @@ classifiers = [
 ]
 dependencies = [
   "click>=8.1",
+  "pyyaml>=6.0",
+  # P4's config permission check needs the file's DACL, and os.stat() cannot
+  # see it -- st_mode is 0o666 for essentially every file on Windows. See
+  # docs/decisions/adr-004-yaml-parser.md.
+  "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +36,10 @@ dev = [
   "pytest>=8.0",
   "jsonschema>=4.20",
   "types-jsonschema>=4.20",
+  "types-pyyaml>=6.0",
+  # Stubs are platform-independent, so mypy checks the Windows-only branch of
+  # config/permissions.py on Linux too.
+  "types-pywin32>=306",
   "ruff>=0.6",
   "mypy>=1.11",
 ]

@@ -28,6 +28,7 @@ from typing import Any, TypeVar
 
 import click
 
+from sopuli.config import ConfigError
 from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
 from sopuli.output.document import RunDocument, Summary
@@ -138,6 +139,13 @@ def main() -> None:
         cli.main(standalone_mode=True)
     except SystemExit:
         raise
+    except ConfigError as exc:
+        # A bad config file is a usage error, not a failure (P5): it exits 2
+        # alongside "you typed the command wrong", so a scheduler can tell
+        # "fix your file" from "something broke". The error already knows its
+        # own location and hint -- printing it is all that is left to do.
+        click.echo(f"sopuli: {exc}", err=True)
+        raise SystemExit(exc.exit_code) from exc
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all at the boundary
         # TODO(#4 follow-up): map driver and vault errors to their categories
         # here, carrying the vendor code and a hint (see CLAUDE.md, Style).

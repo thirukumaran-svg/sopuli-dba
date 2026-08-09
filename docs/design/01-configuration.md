@@ -473,6 +473,30 @@ resolved value is the *safest* of all layers — lowest `max_targets`, union of
 
 ---
 
+## 8a. The file itself
+
+Before any key is looked at, the file has to be one the tool will read at all.
+Implemented in `sopuli/config/loading.py`; decided in
+[ADR-004](../decisions/adr-004-yaml-parser.md).
+
+| Rule | Why |
+|---|---|
+| `version:` is required, and must be a number this build knows | A file with no version cannot be migrated later — nothing distinguishes "written before versioning" from "written for a version we do not have" |
+| The root must be a mapping | A list or a bare scalar is a different file, not an empty config |
+| UTF-8, with or without a BOM | Notepad writes a BOM and offers no way not to, and Windows is a supported tier |
+| Parsed with `safe_load` only | A config file may arrive from a shared drive; the default loader would construct Python objects from tags in it |
+| **Duplicate keys are an error** | Stock YAML keeps the last one silently. Invariant 5 makes this file the whitelist, and a whitelist that can lose half its entries without saying so is not one |
+| **`yes` / `no` / `on` / `off` stay strings** | PyYAML is YAML 1.1, where they are booleans. Tenants, environments and PDB suffixes are bare words here, and each flows into a rendered secret path — a tenant called `no` becoming `False` would surface only as a wrong path |
+
+Anchors and merge keys (`<<:`) work normally; a merged-in key does not count as
+a duplicate.
+
+Errors name a location. Parse errors carry a line and column; validation errors
+carry a key path (`applications[1].secret_template`). "invalid config" is not an
+error message for a file this long.
+
+---
+
 ## 9. Validation rules worth enforcing early
 
 - unknown keys → error, not warning
@@ -487,7 +511,19 @@ resolved value is the *safest* of all layers — lowest `max_targets`, union of
 - `charset: printable_ascii` on a target detected below 12.2 → warning
 - `rotation.strategy: rollover` on a target without the `password_rollover`
   capability → error at plan time, not at execution time
-- config file readable by others → refuse to run (P4)
+- config file **accessible** to others → refuse to run (P4). Wider than "readable"
+  on purpose: the file holds no secrets (C5), so the risk it carries is
+  *tampering*, and a group-writable config is the worse version of that — anyone
+  who can write it can repoint `secret_template` at a path they control, and the
+  tool will faithfully rotate a production password into it — no read access
+  required. POSIX therefore refuses any `0o077` bit, and Windows refuses any ACE
+  granting read *or* write to a SID outside {owner, `OWNER RIGHTS`,
+  `CREATOR OWNER`, `SYSTEM`, `Administrators`}. `OWNER RIGHTS` (`S-1-3-4`) and
+  `CREATOR OWNER` (`S-1-3-0`) are not accounts — they resolve to whoever owns
+  the file, and a file created under `%TEMP%` commonly inherits the former and
+  no explicit ACE for the user at all. Rights that grant neither content access
+  nor control — `READ_CONTROL`, `SYNCHRONIZE`, `FILE_READ_ATTRIBUTES` — do not
+  count, so the check fires on real exposure rather than on incidental bits
 
 ---
 

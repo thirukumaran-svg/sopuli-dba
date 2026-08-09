@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import click
 import pytest
@@ -15,6 +16,7 @@ from click.testing import CliRunner
 
 from sopuli import cli as cli_module
 from sopuli.cli import cli
+from sopuli.config import ConfigError
 from sopuli.exit_codes import ExitCode
 from sopuli.version import get_version
 
@@ -95,6 +97,38 @@ def test_main_configures_the_streams_before_dispatching(
 
     assert exit_info.value.code == ExitCode.SUCCESS
     assert calls == ["streams"]
+
+
+def test_a_config_error_exits_two_and_keeps_its_location(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """P5 puts config validation on 2 with usage errors, not on 1 with failures.
+
+    A scheduler branches on that: "fix your file" and "something broke" call for
+    different people. The boundary is monkeypatched rather than driven through a
+    real command because no command loads config yet -- what is under test is the
+    mapping from exception to exit code, and that exists now.
+    """
+
+    def explode(**_: object) -> None:
+        raise ConfigError(
+            "unsupported config version 4",
+            source=Path("sopuli.yaml"),
+            line=1,
+            hint="this build understands: 1",
+        )
+
+    monkeypatch.setattr(cli_module.cli, "main", explode)
+    monkeypatch.setattr(sys, "argv", ["sopuli", "config", "show"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli_module.main()
+
+    assert exit_info.value.code == ExitCode.USAGE
+    captured = capsys.readouterr()
+    assert "sopuli.yaml:1: unsupported config version 4" in captured.err
+    assert "hint: this build understands: 1" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_config_show_succeeds_in_json_mode(runner: CliRunner) -> None:

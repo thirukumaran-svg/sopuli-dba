@@ -23,6 +23,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | `../sql/oracle/01_audit_policy.sql` | Unified audit policies, correlation queries, password-leak release-gate probes |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
 | [decisions/adr-001-privilege-model.md](decisions/adr-001-privilege-model.md) | Why direct `ALTER USER`, what was rejected, and the two triggers for revisiting |
+| [decisions/adr-004-yaml-parser.md](decisions/adr-004-yaml-parser.md) | PyYAML on a hardened `SafeLoader`, why not ruamel, and the pywin32 dependency for the P4 permission check |
 | `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 
