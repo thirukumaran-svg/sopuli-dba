@@ -261,6 +261,6 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 | T2 | `testcontainers-python` or `compose.yaml` + fixtures? | compose, for a tool whose users are DBAs who will want to run the stack by hand; testcontainers if session management gets fiddly |
 | T3 | Is LocalStack Secrets Manager in the community tier? | verify before committing to it as the AWS path |
 | T4 | Does OCI Vault cost enough to matter in a test loop? | check pricing; if so, tier 3 only and reuse one secret |
-| T5 | Public CI provider | GitHub Actions; Oracle Free containers run on amd64 hosted runners |
+| ~~T5~~ | ~~Public CI provider~~ | **resolved 2026-08-09: GitHub Actions.** Tier 0 runs in `.github/workflows/ci.yml`; the repository and release-please were already there, so a second provider would have bought nothing. Oracle Free containers run on amd64 hosted runners when tier 1 arrives. One constraint found while wiring it: branch protection is unavailable on a private repo on the free plan, so CI reports but cannot block — see `../workflow.md` |
 | T6 | Do we need a real Data Guard standby to test the read-only refusal? | probably: a closed PDB is not the same failure. Defer until a driver bug argues for it |
 | T7 | Snapshot/restore for faster Oracle resets | start with drop-and-recreate; revisit if tier 2 exceeds its budget |

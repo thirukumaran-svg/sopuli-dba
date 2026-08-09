@@ -27,7 +27,8 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 
 Both schemas validate as Draft 2020-12, and the example validates against the run
-schema. That check belongs in CI from the first commit.
+schema. That is no longer an assertion in prose: `tests/test_schemas.py` checks
+it, and CI runs it on every push and pull request (invariant 12).
 
 ## Conventions
 
@@ -63,9 +64,10 @@ or `rich` (ADR-003, issue #15; also gated on the first command with real results
 to display)**.
 
 **Testing (04):** testcontainers or compose (T2), LocalStack tier (T3), OCI Vault
-cost in a test loop (T4), CI provider (T5), real standby for the read-only
-refusal (T6), Oracle reset strategy (T7). *T1 resolved 2026-08-08: the 11g XE
-image exists and works, so 11.2 stays tier 2.*
+cost in a test loop (T4), real standby for the read-only refusal (T6), Oracle
+reset strategy (T7). *T1 resolved 2026-08-08: the 11g XE image exists and works,
+so 11.2 stays tier 2. T5 resolved 2026-08-09: GitHub Actions, tier 0 wired in
+`.github/workflows/ci.yml`.*
 
 **UC-1:** default verification method and the privilege it implies (Q1), where
 the advisory lock lives (Q2), how many `previous` generations to keep (Q3),

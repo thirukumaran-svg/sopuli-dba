@@ -35,6 +35,38 @@ parsed` and moves on. Nothing fails; the release is just quietly wrong. So the
 PR title has to be a valid Conventional Commit even when the branch's own
 commits are not.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs tier 0 (`design/04-testing.md` §4) on every push
+to `main` and every pull request: `ruff check`, `ruff format --check`, `mypy`,
+`pytest`, and a smoke check that the installed `sopuli` binary runs. No
+containers, under a minute.
+
+- **`ruff` runs once**, on Linux. It is deterministic — same answer on every OS
+  and interpreter — so six identical failures would be noise, not coverage.
+- **`mypy` runs on the whole matrix**, unlike `ruff`, because it is not
+  OS-independent: it narrows `sys.platform` to the platform it runs on, so
+  Windows-only branches are dead code to a Linux run and never get checked
+  there.
+- **The matrix is Python 3.11/3.12/3.13 × Linux/Windows.** 3.11 because
+  `requires-python` allows it; Windows because the cp1252 stream-encoding bug
+  (#12) was invisible on Linux and P4 requires identical behaviour on both.
+  macOS is out, per D5.
+
+### "main is always green" is discipline, not enforcement
+
+The rule at the top of this document is not enforced by the platform. **Branch
+protection is unavailable on a private repository on the free plan** —
+`/branches/main/protection` returns 403, "Upgrade to GitHub Pro or make this
+repository public". So CI reports a status, and nothing stops a red PR being
+merged anyway.
+
+This is recorded rather than assumed closed. The workflow exists now so that
+closing the gap later is a settings change and not a project: when the repository
+goes public (or the plan changes), add `lint` and the `test` cells as required
+status checks. Those job names are the contract — renaming a job silently
+disables the requirement that names it.
+
 ## Releases
 
 - Versioning stays `0.x.y` until we explicitly decide to cut 1.0 — no

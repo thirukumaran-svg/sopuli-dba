@@ -1,0 +1,103 @@
+name: ci
+
+# Tier 0 only (docs/design/04-testing.md §4): every commit, under a minute, no
+# containers. Tier 1 needs Oracle Free and Vault from test/compose.yaml plus the
+# capability probing in test/capabilities.py, neither of which exists yet, and
+# gets its own workflow with its own budget when it does.
+#
+# docs/workflow.md says "main is always green" as a binding rule. Until this
+# existed, nothing checked it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only. This workflow reports; it never writes to the repository.
+permissions:
+  contents: read
+
+# Safe to cancel, unlike release-please, where a cancelled run can leave a stale
+# release PR. Here a superseded run is only telling us about a commit that is no
+# longer the tip.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # bash on Windows too, so a step cannot pass on one OS and fail on the other
+    # for a quoting reason that has nothing to do with the code (P4).
+    shell: bash
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]"
+
+      # Formatting and lint are deterministic: same answer on every OS and every
+      # interpreter, so running them once is running them enough. Six identical
+      # red crosses for one stray blank line is noise, not coverage.
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+  test:
+    # Python 3.11 is in the matrix because requires-python allows it and the code
+    # already uses StrEnum and datetime.UTC, both 3.11-only. Windows is in it
+    # because the cp1252 stream-encoding bug (#12, fixed in #14) was Windows-only
+    # and invisible on Linux, and P4 requires identical behaviour on both.
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      # One failing cell must not hide the others: knowing whether a break is
+      # Windows-only or 3.11-only is most of the diagnosis.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]"
+
+      # mypy lives here rather than in the lint job because it is *not*
+      # OS-independent: it narrows `sys.platform` to the platform it runs on, so
+      # the Windows branch of sopuli/output/color.py is dead code to a Linux run
+      # and never gets checked there. Running it on both is what covers
+      # platform-conditional code.
+      - name: mypy
+        run: mypy
+
+      - name: pytest
+        run: pytest
+
+      # "main is always green -- tests pass, *and the tool works*". A broken
+      # console-script entry point or a missing package in the wheel passes every
+      # unit test, because they import sopuli rather than run it.
+      - name: the installed binary runs
+        run: |
+          sopuli --version
+          sopuli config show --output json > /dev/null
