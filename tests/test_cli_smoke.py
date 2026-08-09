@@ -7,11 +7,13 @@ invokes commands directly, so asserting an exact exit code costs nothing.
 from __future__ import annotations
 
 import json
+import sys
 
 import click
 import pytest
 from click.testing import CliRunner
 
+from sopuli import cli as cli_module
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
 from sopuli.version import get_version
@@ -41,14 +43,17 @@ def test_config_show_succeeds_in_text_mode(runner: CliRunner) -> None:
 
 
 def test_human_output_is_ascii(runner: CliRunner) -> None:
-    """P4: identical behaviour on every platform.
+    """The tool's own prose stays ASCII.
 
-    On Windows, redirected stdout uses cp1252 rather than UTF-8 (an attached
-    console is fine -- this is a redirection problem, and redirection is how
-    scheduled runs are captured). Characters inside cp1252 reach a UTF-8 reader
-    as mojibake; characters outside it raise UnicodeEncodeError and kill the
-    command. So the tool's own prose stays ASCII until the stream encoding is
-    handled.
+    This started as a workaround for the stream encoding bug and outlived it.
+    The streams are UTF-8 now (``sopuli.output.stream``), so this is no longer
+    about what can be written -- it is about decoration being opt-in and
+    deliberate. Box drawing and status glyphs belong to the presentation layer,
+    where the choice to use them is made once and can be turned off; an em dash
+    that arrived in a message because it looked nice is not that choice.
+
+    User-supplied text -- account names, ORA- messages -- is exempt: it passes
+    through as it came, which is exactly what the encoding fix makes safe.
     """
     result = runner.invoke(cli, ["config", "show"])
     result.output.encode("ascii")  # raises UnicodeEncodeError if it is not
@@ -58,7 +63,8 @@ def test_all_help_text_is_ascii(runner: CliRunner) -> None:
     """The same rule for every command's help, including ones added later.
 
     Command help comes from docstrings, where an em dash is easy to type
-    without thinking about the stream it will be written to.
+    without thinking about it. This is the test that makes the convention hold
+    as the command tree grows.
     """
     offenders = []
     for path in _command_paths(cli):
@@ -68,6 +74,27 @@ def test_all_help_text_is_ascii(runner: CliRunner) -> None:
         except UnicodeEncodeError:
             offenders.append(" ".join(path) or "sopuli")
     assert not offenders, f"non-ASCII help text in: {offenders}"
+
+
+def test_main_configures_the_streams_before_dispatching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The encoding fix has to run at the process boundary, not inside a verb.
+
+    ``CliRunner`` invokes commands directly and never reaches ``main``, so
+    without this the wiring could be deleted and every other test would stay
+    green. Order matters as much as the call: click can write a usage error to
+    stderr before any command body runs.
+    """
+    calls: list[str] = []
+    monkeypatch.setattr(cli_module, "configure_streams", lambda: calls.append("streams"))
+    monkeypatch.setattr(sys, "argv", ["sopuli", "config", "show"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli_module.main()
+
+    assert exit_info.value.code == ExitCode.SUCCESS
+    assert calls == ["streams"]
 
 
 def test_config_show_succeeds_in_json_mode(runner: CliRunner) -> None:

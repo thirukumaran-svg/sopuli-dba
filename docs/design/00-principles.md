@@ -251,10 +251,23 @@ equivalent.
 | Secret in memory | best-effort zeroing, documented as best-effort | same |
 | Path handling | never string-concatenate paths | same |
 | Line endings | write LF, read LF/CRLF | same |
+| Stream encoding | UTF-8 on stdin/stdout/stderr, forced at startup | same — a *redirected* stream otherwise uses the locale codepage |
 | Keyring | Secret Service / libsecret; macOS Keychain | Credential Manager / DPAPI |
 | Oracle client | Instant Client + `LD_LIBRARY_PATH` | Instant Client on `PATH` + VC++ redistributable |
 | Terminal | ANSI colour, off when not a TTY or `NO_COLOR` | same, with VT mode enabled; plain fallback |
 | Exit codes | identical numeric set on all platforms | same |
+
+The stream encoding row is the one that has actually bitten. On Windows an
+attached console is UTF-8, but a *redirected* stream falls back to the locale
+codepage — and redirection is how a scheduled run is captured
+(`sopuli creds check > nightly.log`). Under cp1252 an em dash reaches a UTF-8
+reader as mojibake, and anything outside the codepage — box drawing, a check
+mark, an arrow — raises `UnicodeEncodeError` and kills the command mid-write.
+The tool therefore forces UTF-8 on all three standard streams at startup, before
+any argument parsing, so that a usage error is written correctly too. stdin is
+included because the failure there is the quiet one: a password read under
+cp1252 becomes a *different* password with no error at all, surfacing much later
+as an authentication failure.
 
 Because Instant Client is required at runtime on every platform, packaging is
 "install the client, then install sopuli" regardless of implementation language.

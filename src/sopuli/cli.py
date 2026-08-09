@@ -31,6 +31,7 @@ import click
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import RunDocument, Summary
 from sopuli.output.emit import Emitter, OutputMode
+from sopuli.output.stream import configure_streams
 from sopuli.version import get_version
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -86,15 +87,11 @@ def config_show(output_mode: str, dry_run: bool) -> None:
     document = RunDocument.start("config.show", dry_run=dry_run)
     document.finish(ExitCode.SUCCESS, Summary(total=0, ok=0, changed=0, failed=0))
 
-    # Human output stays ASCII until the stream encoding is fixed. On Windows,
-    # redirected stdout (`sopuli ... > run.log`, or any pipe) uses cp1252 rather
-    # than UTF-8 -- an attached console is fine, this is a redirection problem.
-    # Characters inside cp1252 survive as bytes a UTF-8 reader shows as mojibake;
-    # characters outside it raise UnicodeEncodeError and kill the command.
-    # click.echo does not protect against either. P4 requires the same behaviour
-    # everywhere, so ASCII is the safe floor. The real fix is reconfiguring
-    # stdout to UTF-8, which the text output contract needs anyway.
-    # JSON is unaffected: json.dumps escapes non-ASCII by default.
+    # The tool's own prose stays ASCII by convention, even though the streams
+    # are UTF-8 now (sopuli.output.stream): decoration should be opt-in and
+    # deliberate, not an em dash that arrived in a docstring by accident.
+    # Anything a user supplies -- an account name, an ORA- message -- passes
+    # through unchanged.
     text = (
         "No configuration loaded.\n"
         "Config file discovery is not implemented yet - see "
@@ -110,7 +107,15 @@ def main() -> None:
     table already specifies, so that path is left alone. This wrapper exists for
     the other one: an unexpected exception should reach the user as a message
     and exit 1, never as a traceback.
+
+    Stream encoding is settled here rather than inside a command because it is a
+    property of the process, not of any one verb: by the time a command runs,
+    click may already have written a usage error to a cp1252 stderr. Tests that
+    drive commands through ``CliRunner`` bypass this deliberately -- their
+    streams are UTF-8 already, and ``tests/test_stream_encoding.py`` exercises
+    the real thing through a real pipe.
     """
+    configure_streams()
     try:
         cli.main(standalone_mode=True)
     except SystemExit:

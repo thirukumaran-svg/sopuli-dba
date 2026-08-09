@@ -27,6 +27,28 @@ Three output modes:
 the same `summary` and `exit_code` as the `json` document, so a consumer can use
 either without a second code path.
 
+### Encoding, on every mode
+
+**All three standard streams are UTF-8**, forced at startup regardless of the
+platform's locale and regardless of `PYTHONIOENCODING`. See P4 in
+`00-principles.md` for why — the short version is that redirected stdout on
+Windows is cp1252, and that turns a status glyph into a crashed command rather
+than a cosmetic problem.
+
+JSON output was never exposed to this: `json.dumps` escapes non-ASCII by
+default, so the document is ASCII on the wire whatever the stream does. The rule
+exists for `--output text`, and for the error and diagnostic messages that carry
+a server's own wording back to the user.
+
+**The tool's own prose stays ASCII by convention**, enforced across the whole
+command tree by `tests/test_cli_smoke.py`. This is not a limitation left over
+from the encoding problem — it is the rule that keeps decoration deliberate.
+Box drawing, status glyphs and any other non-ASCII presentation belong to the
+text renderer, where the choice is made once and can be switched off; they do
+not belong in a message because someone typed a nicer dash. Text that came from
+outside — an account name, an `ORA-` message, a vault path — is passed through
+unchanged, which is precisely what the UTF-8 streams make safe.
+
 ---
 
 ## 2. The run document
