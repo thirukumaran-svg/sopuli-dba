@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/futville/sopuli-dba/compare/v0.2.0...v0.3.0) (2026-08-09)
+
+
+### Features
+
+* load and validate the config file layer ([#22](https://github.com/futville/sopuli-dba/issues/22)) ([4dbae7e](https://github.com/futville/sopuli-dba/commit/4dbae7eedee1990dc8592682d81bc9781a273273))
+
 ## [0.2.0](https://github.com/futville/sopuli-dba/compare/v0.1.1...v0.2.0) (2026-08-09)
 
 
