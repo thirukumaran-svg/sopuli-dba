@@ -40,6 +40,60 @@ default, so the document is ASCII on the wire whatever the stream does. The rule
 exists for `--output text`, and for the error and diagnostic messages that carry
 a server's own wording back to the user.
 
+### Colour
+
+Colour is a property of a run, resolved once, and asked for rather than decided
+at each call site — `Emitter.use_color()` is the single answer. Precedence, in
+order:
+
+| # | Rule | Result |
+|---|---|---|
+| 1 | `--output json` | never coloured, whatever else says |
+| 2 | `--color never` | off |
+| 3 | `--color always` | on |
+| 4 | `SOPULI_NO_COLOR` or `NO_COLOR` set and not empty | off |
+| 5 | `TERM=dumb` | off |
+| 6 | stdout is not a TTY | off |
+| 7 | Windows console where VT mode cannot be enabled | off (P4's plain fallback) |
+| 8 | otherwise | on |
+
+Three of those are decisions rather than transcription.
+
+**An explicit flag beats the environment** (rules 2 and 3 above 4). This follows
+P3, where the command line outranks the environment, and it is the reason
+`--color always` exists at all: a CI job whose log viewer renders ANSI has no
+TTY, so autodetection strips exactly the output that was wanted. It does not
+contradict invariant 10 — that ratchet governs *safety* settings, and nothing
+becomes more dangerous because it is red.
+
+**`--output json` is not negotiable** (rule 1 above 3). The document is a
+versioned contract (invariant 12); a consumer must never have to strip escape
+sequences before parsing.
+
+**Set-and-not-empty**, per no-color.org, so `NO_COLOR=0` still disables colour.
+That reads wrong and is correct: presence is the signal, and treating `0` as
+"yes please" would break every consumer that follows the convention.
+
+When colour is off, escape sequences are **stripped at the serialiser** rather
+than avoided upstream — the same shape as redaction, and for the same reason. A
+guarantee held in one place cannot be lost by a call site that forgot, and a
+vendor message may arrive already decorated.
+
+### What colour is allowed to mean
+
+Two rules, both binding on the renderer that ADR-003 selects:
+
+**The palette maps onto the JSON vocabulary** — `state`, `by_state`, `drift`,
+`unverifiable`, `failed`, and the `state` enum in the run schema. The human and
+machine views must not be able to describe the same run differently. Inventing a
+separate set of visual categories produces two vocabularies that will drift.
+
+**Meaning is never carried by colour alone.** Drift has its own exit code (3)
+because schedulers alert on it; a human needs that distinction without colour
+too — a symbol or a word, with colour as reinforcement. This makes the
+`NO_COLOR` path lossless rather than degraded, and it is the accessibility
+floor.
+
 **The tool's own prose stays ASCII by convention**, enforced across the whole
 command tree by `tests/test_cli_smoke.py`. This is not a limitation left over
 from the encoding problem — it is the rule that keeps decoration deliberate.

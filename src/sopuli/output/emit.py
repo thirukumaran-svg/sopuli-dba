@@ -8,6 +8,11 @@ Two rules are enforced structurally here rather than by convention:
 * **Buffering (J1).** ``--output json`` writes one document when the run
   completes. A truncated JSON document is worse than none; streaming is what
   ``jsonl`` is for.
+* **Colour is asked for, not decided.** :meth:`Emitter.use_color` is the single
+  answer for a run, so no command works out for itself whether ``NO_COLOR`` is
+  set, and the machine-readable stream cannot acquire escape sequences. When the
+  answer is no, :meth:`Emitter.emit` strips ANSI rather than trusting callers to
+  have avoided it.
 
 ``jsonl`` is deliberately not offered yet: no command streams anything, and an
 output mode that silently behaves like ``json`` would be a lie in the contract.
@@ -17,12 +22,16 @@ It arrives with the first command that has per-target events to emit.
 from __future__ import annotations
 
 import json
+import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, TextIO
 
+import click
+
+from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.document import to_rfc3339
 from sopuli.secrets import REDACTED, Secret
 
@@ -57,14 +66,21 @@ def render_json(document: RunDocument) -> str:
 
 @dataclass
 class Emitter:
-    """Holds the resolved output mode for a run.
+    """Holds the resolved output mode and colour choice for a run.
 
     The stream is resolved at write time, not at construction: capturing
     ``sys.stdout`` early would break under test runners that replace it.
+
+    Colour lives here rather than at the call sites for the same reason
+    redaction does. A command asks the emitter whether it may decorate; it never
+    works that out itself, so there is no code path where a new command forgets
+    to check ``NO_COLOR``.
     """
 
     mode: OutputMode = OutputMode.TEXT
     stream: TextIO | None = None
+    color_choice: ColorChoice = ColorChoice.AUTO
+    _color: bool | None = field(default=None, init=False, repr=False)
 
     def _out(self) -> TextIO:
         return self.stream if self.stream is not None else sys.stdout
@@ -73,9 +89,44 @@ class Emitter:
     def is_json(self) -> bool:
         return self.mode is OutputMode.JSON
 
+    def use_color(self) -> bool:
+        """Whether this run's output may carry ANSI escape sequences.
+
+        Resolved once and remembered. Deciding per write would call ``isatty``
+        on every line, and — worse — could answer differently within one run if
+        the stream were swapped underneath it.
+
+        ``--output json`` is forced off here rather than inside
+        :func:`~sopuli.output.color.resolve_color`: the machine stream is a
+        contract (invariant 12) and a consumer parsing it must never have to
+        strip escape sequences first. ``--color always`` does not override this,
+        because it is not a preference about JSON.
+        """
+        if self._color is not None:
+            return self._color
+        if self.is_json:
+            self._color = False
+        else:
+            self._color = resolve_color(self.color_choice, stream=self._out(), env=os.environ)
+        return self._color
+
     def emit(self, document: RunDocument, text: str) -> None:
-        """Write the run: the JSON document, or the human text, never both."""
+        """Write the run: the JSON document, or the human text, never both.
+
+        When colour is off, escape sequences are stripped here rather than
+        avoided upstream. That is the same shape as redaction: a guarantee held
+        at the serialiser cannot be lost by a call site that forgot. ``NO_COLOR``
+        promises that no ANSI reaches the stream, and this is what makes that
+        true of anything the renderer produces -- and of a vendor message that
+        arrives already decorated.
+
+        Stripping only ever removes, so it commits to nothing that ADR-003 has
+        to decide. ``click.unstyle`` is the existing CLI dependency's own
+        function for it, not a display-library choice.
+        """
         if self.is_json:
             print(render_json(document), file=self._out())
-        else:
-            print(text.rstrip("\n"), file=self._out())
+            return
+        if not self.use_color():
+            text = click.unstyle(text)
+        print(text.rstrip("\n"), file=self._out())

@@ -58,7 +58,9 @@ does `doctor` fail or warn on over-granted privileges (P5), keep 11.2 support
 
 **JSON output (03):** buffering policy for `--output json` (J1), always emit
 `plan` (J2), warning code registry (J3), host/pid in output (J4), OpenTelemetry
-(J5), resumable streams (J6).
+(J5), resumable streams (J6), **which library renders text tables — `click.style`
+or `rich` (ADR-003, issue #15; also gated on the first command with real results
+to display)**.
 
 **Testing (04):** testcontainers or compose (T2), LocalStack tier (T3), OCI Vault
 cost in a test loop (T4), CI provider (T5), real standby for the read-only

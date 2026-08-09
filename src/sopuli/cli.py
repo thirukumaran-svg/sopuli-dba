@@ -29,6 +29,7 @@ from typing import Any, TypeVar
 import click
 
 from sopuli.exit_codes import ExitCode
+from sopuli.output.color import ColorChoice
 from sopuli.output.document import RunDocument, Summary
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.stream import configure_streams
@@ -45,6 +46,12 @@ def common_options(func: F) -> F:
     ``--dry-run`` is here from the start because invariant 8 requires every
     mutating command to support it. Nothing mutates yet, so it only reaches the
     run document — but no future command has to remember to add the flag.
+
+    ``--color`` is an *override*, not a ratchet: the command line simply wins
+    over the environment (P3). ``--dry-run`` will need the opposite treatment
+    when option precedence lands (#10), because invariant 10 says a safety
+    setting may only move toward safe. The two are listed together here so that
+    the difference is visible rather than assumed.
     """
     dry_run = click.option(
         "--dry-run",
@@ -60,7 +67,15 @@ def common_options(func: F) -> F:
         show_default=True,
         help="Output format. Scripts should consume json, never text.",
     )
-    return output(dry_run(func))
+    color = click.option(
+        "--color",
+        "color_choice",
+        type=click.Choice([c.value for c in ColorChoice]),
+        default=ColorChoice.AUTO.value,
+        show_default=True,
+        help="Colour in text output. auto follows the terminal; NO_COLOR disables it.",
+    )
+    return color(output(dry_run(func)))
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
@@ -76,14 +91,17 @@ def config_group() -> None:
 
 @config_group.command("show")
 @common_options
-def config_show(output_mode: str, dry_run: bool) -> None:
+def config_show(output_mode: str, dry_run: bool, color_choice: str) -> None:
     """Show the effective configuration.
 
     Placeholder: there is no configuration loader yet (01-configuration.md).
     It reports an empty run so that the routing, the exit code and both output
     modes are exercised end to end.
     """
-    emitter = Emitter(mode=OutputMode(output_mode))
+    emitter = Emitter(
+        mode=OutputMode(output_mode),
+        color_choice=ColorChoice(color_choice),
+    )
     document = RunDocument.start("config.show", dry_run=dry_run)
     document.finish(ExitCode.SUCCESS, Summary(total=0, ok=0, changed=0, failed=0))
 

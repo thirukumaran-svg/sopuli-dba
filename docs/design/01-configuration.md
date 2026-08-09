@@ -353,7 +353,7 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 | `SOPULI_ORACLE_CLIENT_LIB_DIR` | Oracle client directory for thick mode |
 | `SOPULI_OUTPUT` | `text` \| `json` \| `jsonl` |
 | `SOPULI_LOG_LEVEL` | log level |
-| `SOPULI_NO_COLOR` / `NO_COLOR` | disable colour |
+| `SOPULI_NO_COLOR` / `NO_COLOR` | disable colour — set and not empty, whatever the value. Outranked by an explicit `--color always`; see `03-json-output.md` §1 for the full precedence |
 | `SOPULI_DRY_RUN` | force dry-run globally (safety ratchet: no flag turns it off) |
 
 Honoured third-party variables, ranked *below* their `SOPULI_*` equivalent:

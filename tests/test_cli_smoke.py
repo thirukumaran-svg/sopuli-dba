@@ -157,6 +157,40 @@ def test_unknown_output_mode_is_a_usage_error(runner: CliRunner) -> None:
     assert result.exit_code == ExitCode.USAGE
 
 
+@pytest.mark.parametrize("choice", ["auto", "always", "never"])
+def test_every_color_choice_is_accepted(runner: CliRunner, choice: str) -> None:
+    result = runner.invoke(cli, ["config", "show", "--color", choice])
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+def test_unknown_color_choice_is_a_usage_error(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["config", "show", "--color", "beige"])
+    assert result.exit_code == ExitCode.USAGE
+
+
+def test_color_always_does_not_reach_the_json_document(runner: CliRunner) -> None:
+    """Invariant 12: the machine stream is a contract.
+
+    ``CliRunner`` gives a non-TTY stream, so plain autodetection would pass this
+    even if the rule were missing -- ``--color always`` is what makes it a real
+    assertion. If an escape sequence ever leaks in, ``json.loads`` fails here
+    rather than in someone's `jq` pipeline.
+    """
+    result = runner.invoke(cli, ["config", "show", "--output", "json", "--color", "always"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "\x1b" not in result.output
+    json.loads(result.output)
+
+
+def test_text_output_is_not_coloured_when_piped(runner: CliRunner) -> None:
+    """The default path for a scheduled run: redirected, so no decoration."""
+    result = runner.invoke(cli, ["config", "show"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "\x1b" not in result.output
+
+
 # --------------------------------------------------------------- invariant 1 ---
 
 SECRET_LIKE = ("password", "passwd", "secret", "token", "credential", "apikey", "api-key")
