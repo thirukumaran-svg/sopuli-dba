@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sopuli-dba"
+# Seeded at 0.0.0 to match .release-please-manifest.json. release-please owns
+# this field from here on — do not bump it by hand (docs/workflow.md).
+version = "0.0.0"
+description = "Manage database account credentials with a vault as the master record"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["oracle", "dba", "credentials", "vault", "rotation"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: System Administrators",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Database",
+]
+dependencies = [
+  "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "jsonschema>=4.20",
+  "types-jsonschema>=4.20",
+  "ruff>=0.6",
+  "mypy>=1.11",
+]
+
+[project.scripts]
+# D1: the binary is `sopuli`; the distribution is `sopuli-dba`.
+sopuli = "sopuli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sopuli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+# `ruff format .` would otherwise rewrite Python snippets inside the design
+# documents, and the draft sketch in `test/` — which is the container test
+# stack (compose, init SQL), not this project's unit tests. Those live in
+# `tests/`. Both are out of scope for the formatter until they become real code.
+extend-exclude = ["docs", "test"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "PT", "RET", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "tests"]
+strict = true
