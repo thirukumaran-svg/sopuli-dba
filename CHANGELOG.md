@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/futville/sopuli-dba/compare/v0.1.0...v0.1.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* write UTF-8 to stdin, stdout and stderr regardless of redirection ([#14](https://github.com/futville/sopuli-dba/issues/14)) ([9e41cda](https://github.com/futville/sopuli-dba/commit/9e41cda86e0e57e3d2c56811fb32cab0a06c35c2))
+
 ## 0.1.0 (2026-08-09)
 
 
