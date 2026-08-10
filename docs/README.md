@@ -48,8 +48,11 @@ stays in scope, unreachable from Apple Silicon (D7).
 **Configuration (01):** ~~naming of the binding section~~ (C1 — **decided:
 `applications`, with an inline single-application form**), label selector syntax
 (C2), template expressiveness (C3), per-account overrides (C4), config encryption
-(C5, proposed out of scope), mirrored vault writes (C6), target-set nesting depth
-(C7), labels on explicit targets (C8).
+(C5, proposed out of scope), mirrored vault writes (C6), ~~target-set nesting
+depth~~ (C7 — **decided: two levels, write a second set**), ~~labels on explicit
+targets~~ (C8 — **decided: allowed**), **how the file points at vault auth
+material and the database admin credential (C9, issue #27 — the loader refuses
+those keys rather than inventing them)**.
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
 documented default (P1), grant `SELECT ON SYS.USER$` by default (P2), whether

@@ -27,6 +27,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from sopuli.config.errors import ConfigError, KeyPath
+from sopuli.config.model import Pairs
 
 #: How each Python type reads in an error message. `bool` is listed before `int`
 #: because it is a subclass of it and would otherwise be described as a number.
@@ -87,6 +88,92 @@ def optional_string(container: dict[str, Any], key: str, *, at: KeyPath) -> str 
     return string(container[key], at=at.key(key))
 
 
+def required_string(
+    container: dict[str, Any], key: str, *, at: KeyPath, hint: str | None = None
+) -> str:
+    """A string that has to be there."""
+    if key not in container:
+        raise ConfigError("must be given", at=at.key(key), hint=hint)
+    return string(container[key], at=at.key(key))
+
+
+def choice(value: Any, *, allowed: Iterable[str], at: KeyPath, noun: str) -> str:
+    """A string from a closed set.
+
+    Closed rather than free-form wherever the value selects behaviour -- a
+    driver, a scope, an auth method. A free string means ``scope: cdb-root``
+    loads happily and the tool then connects somewhere other than where the
+    author meant, which is the class of failure invariant 5 and §9 exist to stop.
+    Widening a set is a one-line change once the reference names the new value.
+    """
+    text = string(value, at=at)
+    permitted = tuple(allowed)
+    if text not in permitted:
+        raise ConfigError(
+            f"unknown {noun} {text!r}",
+            at=at,
+            hint=f"known: {', '.join(permitted)}",
+        )
+    return text
+
+
+def optional_bool(container: dict[str, Any], key: str, *, at: KeyPath) -> bool | None:
+    """A boolean if the key is present, ``None`` if it is not.
+
+    Only a real boolean is accepted. ``readonly: "true"`` is a string, and
+    treating a non-empty string as truthy would mean ``readonly: "false"``
+    silently turning writes off -- or, worse, some future flag silently turning a
+    guard off.
+    """
+    if key not in container:
+        return None
+    value = container[key]
+    if not isinstance(value, bool):
+        raise ConfigError(
+            f"must be true or false, not {describe(value)}",
+            at=at.key(key),
+            hint="unquoted `true` or `false`; the hardened loader keeps `yes`/`no` as strings",
+        )
+    return value
+
+
+def optional_int(container: dict[str, Any], key: str, *, at: KeyPath) -> int | None:
+    """An integer if the key is present, ``None`` if it is not.
+
+    ``bool`` is rejected explicitly because it is a subclass of ``int``:
+    ``kv_version: true`` would otherwise be read as version 1.
+    """
+    if key not in container:
+        return None
+    value = container[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"must be a number, not {describe(value)}", at=at.key(key))
+    return value
+
+
+def pairs(value: Any, *, at: KeyPath) -> Pairs:
+    """A mapping of names to string values, sorted for determinism.
+
+    Labels and label matches are both this shape. Sorting is what makes error
+    messages and plan output depend on the estate rather than on YAML key order.
+    """
+    labels = mapping(value, at=at)
+    return tuple(sorted((key, string(item, at=at.key(key))) for key, item in labels.items()))
+
+
+def label_selector(value: Any, *, at: KeyPath) -> Pairs:
+    """A label match that has to select *something*.
+
+    The same shape as a target's ``labels:``, with one rule added: it may not be
+    empty. A group or an override whose match is ``{}`` applies to every target
+    in the estate, which is never what was meant by writing an exception.
+    """
+    selected = pairs(value, at=at)
+    if not selected:
+        raise ConfigError("must name at least one label", at=at)
+    return selected
+
+
 def string_list(value: Any, *, at: KeyPath) -> tuple[str, ...]:
     """Require a list of non-empty strings, reporting the offending element.
 
@@ -97,7 +184,9 @@ def string_list(value: Any, *, at: KeyPath) -> tuple[str, ...]:
     return tuple(string(item, at=at.index(index)) for index, item in enumerate(items))
 
 
-def reject_unknown_keys(container: dict[str, Any], *, allowed: Iterable[str], at: KeyPath) -> None:
+def reject_unknown_keys(
+    container: dict[str, Any], *, allowed: Iterable[str], at: KeyPath, hint: str | None = None
+) -> None:
     """§9: unknown keys are an error, not a warning.
 
     A typo in a credential tool must never be silently ignored (P3). ``secret_tmplate``
@@ -105,7 +194,9 @@ def reject_unknown_keys(container: dict[str, Any], *, allowed: Iterable[str], at
     is the failure mode with the worst consequences.
 
     The message lists what *was* allowed, sorted. A rejection that does not say
-    what the alternatives were leaves someone guessing at spelling.
+    what the alternatives were leaves someone guessing at spelling. Pass ``hint``
+    where the key is not a typo but something the reference has not specified
+    yet, and listing the known keys would answer the wrong question.
     """
     permitted = set(allowed)
     unknown = sorted(key for key in container if key not in permitted)
@@ -115,5 +206,5 @@ def reject_unknown_keys(container: dict[str, Any], *, allowed: Iterable[str], at
     raise ConfigError(
         f"unknown {'keys' if len(unknown) > 1 else 'key'} {named}",
         at=at,
-        hint=f"known keys here: {', '.join(sorted(permitted))}",
+        hint=hint if hint is not None else f"known keys here: {', '.join(sorted(permitted))}",
     )

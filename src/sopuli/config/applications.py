@@ -24,6 +24,7 @@ from typing import Any
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
+    label_selector,
     mapping,
     optional_string,
     reject_unknown_keys,
@@ -31,7 +32,7 @@ from sopuli.config.fields import (
     string,
     string_list,
 )
-from sopuli.config.model import Application, OracleOptions, Override, Pairs, TargetSelector
+from sopuli.config.model import Application, OracleOptions, Override, TargetSelector
 
 #: What the inline form may carry at the top level -- the four keys §1's skeleton
 #: lists, plus `secret` as the documented alternative to `secret_template` (§3).
@@ -242,15 +243,7 @@ def _build_targets(raw: Any, *, at: KeyPath) -> TargetSelector:
         )
     if "group" in selector:
         return TargetSelector(group=string(selector["group"], at=at.key("group")))
-    return TargetSelector(match=_build_pairs(selector["match"], at=at.key("match")))
-
-
-def _build_pairs(raw: Any, *, at: KeyPath) -> Pairs:
-    """A label selector: a mapping of label name to value, sorted for determinism."""
-    labels = mapping(raw, at=at)
-    if not labels:
-        raise ConfigError("must name at least one label", at=at)
-    return tuple(sorted((key, string(value, at=at.key(key))) for key, value in labels.items()))
+    return TargetSelector(match=label_selector(selector["match"], at=at.key("match")))
 
 
 def _build_oracle(raw: Any, *, at: KeyPath) -> OracleOptions:
@@ -297,7 +290,7 @@ def _build_override(raw: Any, *, at: KeyPath) -> Override:
         )
 
     return Override(
-        where=_build_pairs(patch["where"], at=at.key("where")),
+        where=label_selector(patch["where"], at=at.key("where")),
         vault=optional_string(patch, "vault", at=at),
         secret=secret,
         secret_template=secret_template,

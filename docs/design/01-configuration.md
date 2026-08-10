@@ -129,7 +129,7 @@ targets:
     admin: { username: C##SOPULI_SVC, auth: prompt }
     oracle: { scope: cdb_root }
 
-# ~35 PDB targets, generated. See §4.
+# 21 PDB targets, generated: 6 dev + 8 qa + 7 prod. See §4.
 target_sets:
   appdb:
     type: oracle
@@ -284,6 +284,80 @@ sopuli creds rotate --app acme --select env=dev    # --app is an accepted alias
 
 ---
 
+## 3a. The estate: vaults, targets, groups
+
+§2 shows these in use; this says what the fields are. Implemented in
+`sopuli/config/vaults.py`, `targets.py`, `target_sets.py` and `groups.py`.
+
+### `vaults:` — a mapping of name to store
+
+| Key | Meaning |
+|---|---|
+| `type` | **required** — the backend: `hashicorp`, `oci`, `file`, `keyring` (P2). AWS and Azure are listed there as "later" and are refused until they exist |
+| `addr` | backend address, where the backend has one |
+| `mount` | KV mount point (HashiCorp) |
+| `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
+| `auth` | `{ method: ... }` — see below |
+| `non_production` | marks a store that must never master a `prod` target (§9). Absent means production |
+
+Only `type` is required. A file backend has no address, and P2 puts per-backend
+validation behind the store interface, so demanding a HashiCorp shape of every
+entry would be exactly the top-level vendor bias P1 forbids.
+
+`auth.method` is one of the methods P2 names: `token`, `approle`, `kubernetes`,
+`oidc`, `userpass`, `instance_principal`, `resource_principal`, `config_file`,
+`session_token`. **No other key is accepted inside `auth:` yet** — see C9.
+
+### `targets:` — a list of endpoints
+
+The same field set describes a `target_sets:` template, which is why one reader
+builds both: a field an explicit target has and a generated one does not would be
+something the estate can express and the set silently cannot.
+
+| Key | Meaning |
+|---|---|
+| `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
+| `type` | **required** — the driver selector (P1). Only `oracle` exists; a target the tool cannot drive is refused while the file is being written, not at the first connection |
+| `dsn` | **required** — `host:port/service`, or a TNS alias |
+| `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§5) |
+| `vault` | which store masters passwords here |
+| `admin` | `{ username, auth }` — the credential that reaches the database. `auth` is one of P2's bootstrap sources: `external`, `vault`, `prompt`, `env`. There is no password field, and there will not be one (P2). `vault` has nowhere yet to name *which* ref — see C9 |
+| `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. `scope` is `cdb_root` or `pdb`; a non-CDB database omits the block. How the two keys constrain each other is not decided — see C9 |
+| `labels` | free labels for selection (C8). A generated target gets its dimension values as labels automatically |
+| `safety` | a `safety:` block (§8) |
+
+A block that is present and empty — `oracle: {}`, `admin: {}` — is an error.
+Absent and empty mean the same thing to the tool, so the difference between them
+is a sentence somebody started and did not finish.
+
+`type`, `oracle.scope` and `admin.auth` are closed sets. A free string there
+means `scope: cdb-root` loads happily and the tool then operates in a different
+container from the one that was meant — and this file is the whitelist
+(invariant 5). Widening a set is a one-line change once the reference names the
+new value.
+
+### `groups:` — a mapping of name to selection
+
+| Key | Meaning |
+|---|---|
+| `match` | **required** — the labels a target must carry. May not be empty: a group matching everything is `--all` with a name that hides what it does |
+| `safety` | a `safety:` block, so a whole population can be marked `readonly` in one place |
+
+### `safety:`, wherever it appears
+
+| Key | Meaning |
+|---|---|
+| `max_targets` | at least 1. Use `readonly: true` to block changes entirely — `max_targets: 0` is far more likely to be a slip that then blocks every run |
+| `confirm_environments` | environments that always require confirmation |
+| `readonly` | refuse every mutation |
+
+Every field is optional, and an unset one stays unset rather than taking the
+built-in default. §8 resolves safety by taking the *safest* of all layers rather
+than the last one, and "safest of all layers" needs to know which layers said
+nothing.
+
+---
+
 ## 4. Target templating (`target_sets`)
 
 Listing 35 PDBs by hand is not viable, and the list changes when a tenant is
@@ -294,18 +368,34 @@ one or more dimensions.
 
 1. `for_each` has exactly **one outer dimension** — its key names the dimension
    (`env` above), and its values are maps of variables.
-2. Inside an outer value, any variable whose value is a **list becomes an inner
-   dimension**, expanded per outer value. That is what allows a different tenant
-   list per environment.
+2. Inside an outer value, **at most one** variable whose value is a list becomes
+   the **inner dimension**, expanded per outer value. That is what allows a
+   different tenant list per environment. A value may have none, in which case it
+   generates a single target.
 3. Every combination produces one target. `name` must render uniquely; a
    collision is a validation error.
 4. Every `{placeholder}` in `name`, `dsn` and other string fields is substituted
    from the dimension values and variables in scope. An unresolved placeholder is
    an error, never an empty string.
 5. `overrides` patch generated targets **by rendered name**, after generation.
+   Any key may be patched except `name` itself — the rendered name is the key the
+   patch is found by.
 6. Nesting stops at two levels. If you need three, write a second target set —
    this is deliberate, because a general templating language in a credential tool
-   is a debugging liability.
+   is a debugging liability. Concretely, all three of these are errors rather
+   than something quietly flattened: a second list variable in one value, a
+   variable whose value is a mapping, and a list of lists.
+7. Where a value has an inner dimension, it must be the **same variable in every
+   value** of the outer one. Dimension values become labels, so a set where `dev`
+   expands over `tenant` and `qa` over `shard` is two populations that no single
+   `--select` can address, written as though it were one estate. The remedy is
+   rule 6's: write a second target set.
+
+Variables are substituted as written, so `port: 1521` and `port: "1521"` render
+identically. Two things to know: a boolean is refused rather than stringified
+(`pdb_suffix: true` would render as `True`), and an unquoted value with a leading
+zero is a YAML 1.1 octal — `port: 0640` is the number 416. Quote anything whose
+digits matter.
 
 ### Labels
 
@@ -526,6 +616,11 @@ error message for a file this long.
   filter the declared set and cannot extend it, not even under `--force`. A
   patchable `accounts` would be a label match buried in a long file that adds to
   the whitelist; what the tool manages has to be readable from `accounts:` alone
+- two `targets:` entries with the same `name` → error. `--target` becomes
+  ambiguous, and the second would shadow the first everywhere a name is looked up
+- a `for_each` with more or fewer than one outer dimension, or with two list
+  variables in one value → error (§4 rules 1 and 6), rather than a set that
+  generates a surprising number of targets
 - a target with `environment: prod` referencing a vault marked
   `non_production: true` → error
 - a `target_set` whose `name` renders a duplicate → error, listing the collision
@@ -561,5 +656,6 @@ error message for a file this long.
 | C4 | Per-account overrides inside an application entry | the `overrides: [{where: …}]` mechanism covers per-label cases; per-*account* exceptions are still unsolved |
 | C5 | Config encryption at rest | out of scope; config holds no secrets by construction |
 | C6 | Multiple vaults for one application (mirror writes) | defer to a later use case |
-| C7 | Should `target_sets` allow more than two nesting levels? | no — write a second set |
-| C8 | Do explicit `targets:` need labels, or is `environment` enough? | allow `labels:` on them, so mixed estates select uniformly |
+| C7 | ~~Should `target_sets` allow more than two nesting levels?~~ | **decided: no** — write a second set. §4 rules 2, 6 and 7 are what that costs |
+| C8 | ~~Do explicit `targets:` need labels, or is `environment` enough?~~ | **decided: labels are allowed on them**, so mixed estates select uniformly |
+| C9 | How does the file point at vault auth material, and at the database admin credential? | unresolved — P2 names the methods and forbids plaintext material in the file, but nothing names the keys. The loader accepts `auth.method` and refuses every other key rather than inventing a schema the vault layer must then live with. Also covers the `oracle.scope` vocabulary, of which only `cdb_root` and `pdb` are written down, and whether `scope` and `container` constrain each other — §2 shows `cdb_root` without a container and `pdb` with one, but never says that is a rule, and `container` is also the `{container}` token in a secret template (§6). Issue #27 |

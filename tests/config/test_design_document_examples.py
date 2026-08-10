@@ -25,7 +25,7 @@ import pytest
 
 from sopuli.config.applications import build_applications
 from sopuli.config.errors import ConfigError
-from sopuli.config.loading import load_document
+from sopuli.config.loading import build_config, load_document
 from sopuli.config.yaml_loader import parse_yaml
 
 REFERENCE = Path(__file__).resolve().parents[2] / "docs" / "design" / "01-configuration.md"
@@ -105,6 +105,57 @@ def test_the_two_application_example_builds_all_three_entries() -> None:
     assert reporting.secret == "reporting/{env}/db#password"
     assert monitoring.targets.names == ("cdb-root-dev",)
     assert monitoring.oracle.container_clause == "ALL"
+
+
+def test_the_worked_example_builds_the_estate_it_describes() -> None:
+    """§2 is 129 lines of estate that nothing had ever built.
+
+    Parsing proves the YAML is well formed; this proves the sections mean what
+    the document says they do -- three vaults, the CDB root as an explicit
+    target, one set expanding `env` over its own tenant list per environment,
+    and two groups. Every field name in the reference is asserted here by being
+    *read*, which is what turns the document into a specification rather than an
+    illustration.
+    """
+    complete = next(block for _, block in _blocks() if "runtime:" in block)
+
+    config = build_config(parse_yaml(complete))
+
+    assert [vault.name for vault in config.vaults] == ["vault-dev", "vault-test", "vault-prod"]
+    assert config.vaults[0].auth is not None
+    assert config.vaults[0].auth.method == "token"
+    assert config.vaults[0].kv_version == 2
+
+    (cdb_root,) = config.targets
+    assert cdb_root.name == "cdb-root-dev"
+    assert cdb_root.oracle.scope == "cdb_root"
+    assert cdb_root.admin is not None
+    assert cdb_root.admin.auth == "prompt"
+
+    (appdb,) = config.target_sets
+    assert appdb.template.name == "appdb-{env}-{tenant}"
+    assert appdb.for_each.dimension == "env"
+    assert [value.value for value in appdb.for_each.values] == ["dev", "qa", "prod"]
+    assert [
+        len(value.inner.values) for value in appdb.for_each.values if value.inner is not None
+    ] == [6, 8, 7]
+    assert [name for name, _ in appdb.overrides] == ["appdb-qa-delta", "appdb-qa-epsilon"]
+
+    assert [group.name for group in config.groups] == ["dev-pdbs", "prod-pdbs"]
+    assert config.groups[1].match == (("env", "prod"), ("target_set", "appdb"))
+
+
+def test_the_two_application_example_declares_no_estate() -> None:
+    """§3 is a fragment showing only `applications:`. Building it must not
+    invent an estate to go with it -- a config that declares no targets is legal,
+    and the commands that need some say so themselves."""
+    block = next(block for _, block in _blocks() if "monitoring" in block)
+
+    config = build_config({"version": 1, **parse_yaml(block)})
+
+    assert config.targets == ()
+    assert config.vaults == ()
+    assert len(config.applications) == 3
 
 
 def test_the_skeleton_is_illustrative_rather_than_loadable() -> None:

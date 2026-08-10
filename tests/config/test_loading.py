@@ -1,4 +1,4 @@
-"""The file layer end to end: `load_document`.
+"""The file layer end to end: `load_document`, and `load_config` on top of it.
 
 Fixtures use the fictional vocabulary the provenance note in
 ``01-configuration.md`` requires -- application ``acme``, accounts
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.loading import SUPPORTED_VERSIONS, load_document
+from sopuli.config.loading import SUPPORTED_VERSIONS, load_config, load_document
 
 MINIMAL = "version: 1\n"
 
@@ -222,3 +222,32 @@ def test_permissions_are_checked_before_the_file_is_read(
         load_document(path)
 
     assert order == ["permissions"]
+
+
+# ---------------------------------------------------------- load_config ---
+
+
+def test_load_config_builds_the_whole_file(write_config: Callable[[str], Path]) -> None:
+    """`load_document` returns raw data; `load_config` is the two layers joined."""
+    config = load_config(write_config(WORKED_EXAMPLE))
+
+    assert config.version == 1
+    assert [vault.name for vault in config.vaults] == ["vault-dev"]
+    assert [target.name for target in config.targets] == ["cdb-root-dev"]
+    assert [application.label for application in config.applications] == ["the inline application"]
+
+
+def test_a_validation_error_names_the_file_it_came_from(
+    write_config: Callable[[str], Path],
+) -> None:
+    """The builders work on raw data and have never seen a filename. Attaching it
+    once, at the boundary, is what stops every message being `unknown key` with
+    no clue which of several layered `--config` files said it."""
+    path = write_config("version: 1\nvaults:\n  vault-dev:\n    type: hashicrop\n")
+
+    with pytest.raises(ConfigError) as caught:
+        load_config(path)
+
+    rendered = str(caught.value)
+    assert str(path) in rendered
+    assert "vaults.vault-dev.type" in rendered

@@ -14,10 +14,16 @@ import pytest
 
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.fields import (
+    choice,
     describe,
+    label_selector,
     mapping,
+    optional_bool,
+    optional_int,
     optional_string,
+    pairs,
     reject_unknown_keys,
+    required_string,
     sequence,
     string,
     string_list,
@@ -108,6 +114,76 @@ def test_optional_string_still_validates_when_present() -> None:
     assert str(caught.value).startswith("applications[1].policy:")
 
 
+def test_required_string_says_where_it_is_missing() -> None:
+    with pytest.raises(ConfigError) as caught:
+        required_string({}, "type", at=AT, hint="one of: oracle")
+
+    rendered = str(caught.value)
+    assert "applications[1].type: must be given" in rendered
+    assert "one of: oracle" in rendered
+
+
+# ------------------------------------------------------------------ choice ---
+
+
+def test_choice_accepts_a_known_value() -> None:
+    assert choice("oracle", allowed=("oracle",), at=AT, noun="target type") == "oracle"
+
+
+def test_choice_names_the_value_and_the_alternatives() -> None:
+    """A closed set is only better than a free string if the rejection says what
+    the set was -- otherwise it is a guessing game about spelling."""
+    with pytest.raises(ConfigError) as caught:
+        choice("hashicrop", allowed=("hashicorp", "oci"), at=AT, noun="vault type")
+
+    rendered = str(caught.value)
+    assert "unknown vault type 'hashicrop'" in rendered
+    assert "known: hashicorp, oci" in rendered
+
+
+# --------------------------------------------------------- bools and ints ---
+
+
+def test_optional_bool_returns_none_when_absent() -> None:
+    assert optional_bool({}, "readonly", at=AT) is None
+
+
+@pytest.mark.parametrize("value", ["true", "yes", 1], ids=["string", "word", "number"])
+def test_optional_bool_rejects_anything_that_is_not_one(value: Any) -> None:
+    """`readonly: "false"` is a non-empty string. Anything that reads truthiness
+    instead of the type would turn a guard off in the file that asked for it."""
+    with pytest.raises(ConfigError) as caught:
+        optional_bool({"readonly": value}, "readonly", at=AT)
+
+    assert "must be true or false" in str(caught.value)
+
+
+def test_optional_int_rejects_a_boolean() -> None:
+    """`bool` subclasses `int`: `kv_version: true` would otherwise be version 1."""
+    with pytest.raises(ConfigError) as caught:
+        optional_int({"kv_version": True}, "kv_version", at=AT)
+
+    assert "must be a number, not a boolean" in str(caught.value)
+
+
+# ---------------------------------------------------------------- pairs ---
+
+
+def test_pairs_are_sorted_rather_than_left_in_yaml_order() -> None:
+    """Determinism: error messages and plan output should depend on the estate,
+    not on which order somebody happened to type two labels in."""
+    assert pairs({"tier": "gold", "env": "prod"}, at=AT) == (("env", "prod"), ("tier", "gold"))
+
+
+def test_pairs_may_be_empty_but_a_selector_may_not() -> None:
+    assert pairs({}, at=AT) == ()
+
+    with pytest.raises(ConfigError) as caught:
+        label_selector({}, at=AT)
+
+    assert "must name at least one label" in str(caught.value)
+
+
 # --------------------------------------------------------------- sequences ---
 
 
@@ -149,6 +225,19 @@ def test_an_unknown_key_is_an_error_not_a_warning() -> None:
     rendered = str(caught.value)
     assert "unknown key 'secret_tmplate'" in rendered
     assert "known keys here: secret_template" in rendered
+
+
+def test_a_hint_may_replace_the_list_of_known_keys() -> None:
+    """Where the key is not a typo but something the reference has not specified
+    yet, listing the known keys answers the wrong question."""
+    with pytest.raises(ConfigError) as caught:
+        reject_unknown_keys(
+            {"role_id": "0000"}, allowed=("method",), at=AT, hint="not specified yet -- see #27"
+        )
+
+    rendered = str(caught.value)
+    assert "not specified yet -- see #27" in rendered
+    assert "known keys here" not in rendered
 
 
 def test_several_unknown_keys_are_reported_together() -> None:

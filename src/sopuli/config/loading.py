@@ -32,8 +32,12 @@ from typing import Any
 from sopuli.config.applications import build_applications
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.fields import describe, reject_unknown_keys
+from sopuli.config.groups import build_groups
 from sopuli.config.model import Config
 from sopuli.config.permissions import check_permissions
+from sopuli.config.target_sets import build_target_sets
+from sopuli.config.targets import build_targets
+from sopuli.config.vaults import build_vaults
 from sopuli.config.yaml_loader import parse_yaml
 
 _VERSION = ROOT.key("version")
@@ -51,9 +55,10 @@ ENCODING = "utf-8-sig"
 #: unknown key an error rather than a warning, and P3 is explicit that "a typo in
 #: a credential tool must never be silently ignored".
 #:
-#: The estate sections are listed but not yet modelled -- their *interiors* are
-#: still raw. Recognising the names now is what stops `target_set:` (singular)
-#: from being silently ignored while the sections that read it are written.
+#: `policies`, `defaults`, `profiles` and `runtime` are listed but not yet
+#: modelled -- their *interiors* are still raw. Recognising the names is what
+#: stops `polices:` from being silently ignored while the section that reads it
+#: is written.
 TOP_LEVEL_KEYS = (
     "version",
     "runtime",
@@ -110,14 +115,31 @@ def load_config(path: Path) -> Config:
     document = load_document(path)
     try:
         reject_unknown_keys(document, allowed=TOP_LEVEL_KEYS, at=ROOT)
-        applications = build_applications(document)
+        config = build_config(document)
     except ConfigError as error:
         # The builders work on raw data and have never seen a filename. Filling
         # it in here means every message says which file, without threading a
         # path through every function that reads a key.
         error.source = path
         raise
-    return Config(version=document["version"], applications=applications)
+    return config
+
+
+def build_config(document: dict[str, Any]) -> Config:
+    """Validate raw data into a :class:`Config`, with no filesystem involved.
+
+    Sections are built estate-first so that the first error a half-finished file
+    produces is about the estate it declares rather than about the application
+    bound to it.
+    """
+    return Config(
+        version=document["version"],
+        vaults=build_vaults(document),
+        targets=build_targets(document),
+        target_sets=build_target_sets(document),
+        groups=build_groups(document),
+        applications=build_applications(document),
+    )
 
 
 def _read(path: Path) -> str:
