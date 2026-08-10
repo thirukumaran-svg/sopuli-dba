@@ -42,9 +42,22 @@ applications:
     secret_template: "..."
 ```
 
-The two forms are mutually exclusive: using both top-level `accounts:` and
-`applications:` is a validation error. The inline form is exactly sugar for a
-single unnamed application entry — everything below applies to both.
+The two forms are mutually exclusive: any of the inline binding keys —
+`accounts`, `secret`, `secret_template`, `policy`, `overrides` — alongside
+`applications:` is a validation error, not only `accounts:`. A leftover
+top-level `secret_template:` after a file is converted would otherwise be
+silently ignored, which is the mistake §1 calls the one with the worst
+consequences.
+
+The inline form is exactly sugar for a single unnamed application entry —
+everything below applies to both, with one boundary worth knowing:
+
+**The inline form carries only those five keys.** `targets`, `vault`, `oracle`
+and `name` are available only inside `applications:`, because at the top level
+`targets:` already means the estate's explicit target list and cannot also mean
+one application's target selector. An inline application therefore applies to
+all targets, which is the documented default anyway; needing any of those keys
+is the point at which a file moves to the `applications:` form.
 
 ### What an application entry actually is
 
@@ -260,14 +273,14 @@ sopuli creds rotate --app acme --select env=dev    # --app is an accepted alias
 
 | Key | Meaning |
 |---|---|
-| `name` | required in the `applications:` form; absent in the inline form |
+| `name` | required and unique in the `applications:` form; absent in the inline form — it is what `--application` selects on |
 | `accounts` | list of database usernames |
 | `targets` | list of target names, `{ group: NAME }`, or `{ match: {...} }`; defaults to all targets |
 | `vault` | store name; defaults to the target's vault, then `defaults.vault` |
-| `secret` / `secret_template` | SecretRef, literal or templated (§6) |
+| `secret` / `secret_template` | SecretRef, literal or templated (§6). Mutually exclusive: one entry uses one of them |
 | `policy` | policy name |
 | `oracle` | vendor-specific options, e.g. `container_clause` |
-| `overrides` | list of `{ where: {labels}, ...keys }` patches applied to matching targets |
+| `overrides` | list of `{ where: {labels}, ...keys }` patches applied to matching targets. `where` is required, and the patchable keys are `vault`, `secret`, `secret_template`, `policy` and `oracle` — **not `accounts`**, see §9 |
 
 ---
 
@@ -501,7 +514,18 @@ error message for a file this long.
 
 - unknown keys → error, not warning
 - both top-level `accounts:` and `applications:` present → error
-- a `secret_template` that cannot produce distinct refs for distinct scopes → error
+- a secret ref that cannot produce **distinct refs for distinct accounts** → error.
+  Concretely: more than one account declared, and neither `{account}`,
+  `{account_lower}` nor `{account_upper}` appears in `secret` / `secret_template`.
+  The second password written would overwrite the first, and whichever
+  application reads the first is locked out at the next rotation. This is about
+  *accounts*, not scopes — one account sharing a password across eleven PDBs is
+  legal and often intended (§6), and is surfaced in plan output rather than
+  refused
+- an `overrides` entry patching `accounts` → error. Invariant 5 says selectors
+  filter the declared set and cannot extend it, not even under `--force`. A
+  patchable `accounts` would be a label match buried in a long file that adds to
+  the whitelist; what the tool manages has to be readable from `accounts:` alone
 - a target with `environment: prod` referencing a vault marked
   `non_production: true` → error
 - a `target_set` whose `name` renders a duplicate → error, listing the collision

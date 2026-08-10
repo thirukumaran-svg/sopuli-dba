@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from sopuli.config.applications import build_applications
+from sopuli.config.errors import ConfigError
 from sopuli.config.loading import load_document
 from sopuli.config.yaml_loader import parse_yaml
 
@@ -60,6 +62,62 @@ def test_the_worked_example_is_a_loadable_document(write_config: Callable[[str],
 
     assert document["accounts"][0] == "acme_web_user"
     assert document["target_sets"]["appdb"]["for_each"]["env"]["prod"]["tenant"][0] == "alpha"
+
+
+def test_the_worked_example_builds_the_application_it_describes() -> None:
+    """§2 says in prose what it declares; this asserts the code agrees.
+
+    Parsing only proves the YAML is well formed. The document's claim is that
+    those six accounts are one unnamed application mastered by one template with
+    a dev exception -- which is a statement about the schema layer, not the
+    parser.
+    """
+    complete = next(block for _, block in _blocks() if "runtime:" in block)
+
+    (application,) = build_applications(parse_yaml(complete))
+
+    assert application.is_inline
+    assert application.accounts == (
+        "acme_web_user",
+        "acme_api_user",
+        "acme_batch_user",
+        "acme_integration_user",
+        "acme_search_user",
+        "acme_svc_user",
+    )
+    assert application.secret_template == "tenants/{tenant}#DB_CREDENTIALS/{account}"
+    assert application.policy == "app-standard"
+    assert [override.where for override in application.overrides] == [(("env", "dev"),)]
+
+
+def test_the_two_application_example_builds_all_three_entries() -> None:
+    """§3's example is the one that shows every field of an entry in use --
+    `targets:` as a group and as a list, `secret` beside `secret_template`, and
+    the Oracle `container_clause`. If the field table and the builder disagree,
+    it shows up here."""
+    block = next(block for _, block in _blocks() if "monitoring" in block)
+
+    applications = build_applications(parse_yaml(block))
+
+    assert [application.name for application in applications] == ["acme", "reporting", "monitoring"]
+    acme, reporting, monitoring = applications
+    assert acme.targets.group == "prod-pdbs"
+    assert reporting.secret == "reporting/{env}/db#password"
+    assert monitoring.targets.names == ("cdb-root-dev",)
+    assert monitoring.oracle.container_clause == "ALL"
+
+
+def test_the_skeleton_is_illustrative_rather_than_loadable() -> None:
+    """§1's skeleton lists key names with empty placeholders (`accounts: []`).
+
+    It parses, and it deliberately does not build -- an empty account list is a
+    half-finished binding. Recorded rather than left as a surprise, so the next
+    person does not "fix" the document to satisfy a test.
+    """
+    skeleton = next(block for _, block in _blocks() if "# named secret stores" in block)
+
+    with pytest.raises(ConfigError):
+        build_applications(parse_yaml(skeleton))
 
 
 def test_the_worked_example_survives_the_boolean_narrowing() -> None:

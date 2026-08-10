@@ -19,14 +19,21 @@ exit code.
 """
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.loading import SUPPORTED_VERSIONS, load_document
+from sopuli.config.loading import SUPPORTED_VERSIONS, load_config, load_document
+from sopuli.config.model import Application, Config, OracleOptions, Override, TargetSelector
 from sopuli.config.permissions import check_permissions
 
 __all__ = [
     "ROOT",
     "SUPPORTED_VERSIONS",
+    "Application",
+    "Config",
     "ConfigError",
     "KeyPath",
+    "OracleOptions",
+    "Override",
+    "TargetSelector",
     "check_permissions",
+    "load_config",
     "load_document",
 ]

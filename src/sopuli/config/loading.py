@@ -29,7 +29,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sopuli.config.applications import build_applications
 from sopuli.config.errors import ROOT, ConfigError
+from sopuli.config.fields import describe, reject_unknown_keys
+from sopuli.config.model import Config
 from sopuli.config.permissions import check_permissions
 from sopuli.config.yaml_loader import parse_yaml
 
@@ -43,6 +46,32 @@ SUPPORTED_VERSIONS = (1,)
 #: Notepad writes a BOM and gives no way to turn it off, and Windows is a
 #: supported tier. `utf-8-sig` accepts a file with or without one.
 ENCODING = "utf-8-sig"
+
+#: Every section name a config file may use at the top level. §9 makes an
+#: unknown key an error rather than a warning, and P3 is explicit that "a typo in
+#: a credential tool must never be silently ignored".
+#:
+#: The estate sections are listed but not yet modelled -- their *interiors* are
+#: still raw. Recognising the names now is what stops `target_set:` (singular)
+#: from being silently ignored while the sections that read it are written.
+TOP_LEVEL_KEYS = (
+    "version",
+    "runtime",
+    "defaults",
+    "vaults",
+    "targets",
+    "target_sets",
+    "groups",
+    "policies",
+    "profiles",
+    # The application binding, in either shape (§1).
+    "applications",
+    "accounts",
+    "secret",
+    "secret_template",
+    "policy",
+    "overrides",
+)
 
 
 def load_document(path: Path) -> dict[str, Any]:
@@ -68,6 +97,27 @@ def load_document(path: Path) -> dict[str, Any]:
     document = _require_mapping(parse_yaml(_read(path), source=path), path)
     _require_supported_version(document, path)
     return document
+
+
+def load_config(path: Path) -> Config:
+    """Read a config file and validate it into typed objects.
+
+    The two steps stay separate because they fail for different reasons and are
+    worth testing apart: :func:`load_document` is about the file, this is about
+    what is written in it. Anything raised here already knows which key it is
+    complaining about.
+    """
+    document = load_document(path)
+    try:
+        reject_unknown_keys(document, allowed=TOP_LEVEL_KEYS, at=ROOT)
+        applications = build_applications(document)
+    except ConfigError as error:
+        # The builders work on raw data and have never seen a filename. Filling
+        # it in here means every message says which file, without threading a
+        # path through every function that reads a key.
+        error.source = path
+        raise
+    return Config(version=document["version"], applications=applications)
 
 
 def _read(path: Path) -> str:
@@ -97,7 +147,7 @@ def _require_mapping(document: Any, path: Path) -> dict[str, Any]:
         )
     if not isinstance(document, dict):
         raise ConfigError(
-            f"config file must contain a mapping of keys, not {_describe(document)}",
+            f"config file must contain a mapping of keys, not {describe(document)}",
             source=path,
         )
     return document
@@ -120,7 +170,7 @@ def _require_supported_version(document: dict[str, Any], path: Path) -> None:
     # satisfy `version in SUPPORTED_VERSIONS` and load as version 1.
     if isinstance(version, bool) or not isinstance(version, int):
         raise ConfigError(
-            f"version must be a number, not {_describe(version)}",
+            f"version must be a number, not {describe(version)}",
             source=path,
             at=_VERSION,
             hint=f"supported: {supported}",
@@ -133,17 +183,3 @@ def _require_supported_version(document: dict[str, Any], path: Path) -> None:
         at=_VERSION,
         hint=f"this build understands: {supported}",
     )
-
-
-def _describe(value: Any) -> str:
-    """Name a value's type the way a YAML author thinks of it."""
-    names = {
-        dict: "a mapping",
-        list: "a list",
-        str: "a string",
-        bool: "a boolean",
-        int: "a number",
-        float: "a number",
-        type(None): "nothing",
-    }
-    return names.get(type(value), type(value).__name__)
