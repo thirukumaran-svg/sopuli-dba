@@ -124,7 +124,7 @@ def test_an_account_token_satisfies_the_rule(template: str) -> None:
 
 
 def test_several_accounts_without_an_account_token_are_refused() -> None:
-    """§9, read as being about accounts rather than scopes.
+    """§10, read as being about accounts rather than scopes.
 
     Two accounts on one ref means the second password written overwrites the
     first, and whichever application reads the first is locked out at the next
@@ -154,7 +154,7 @@ def test_a_literal_secret_with_several_accounts_is_refused() -> None:
 
 
 def test_one_account_may_share_a_ref_with_nothing() -> None:
-    """A single account needs no distinguishing token -- and §6 is explicit that
+    """A single account needs no distinguishing token -- and §7 is explicit that
     one account sharing a password across many PDBs is legal and often
     intended, so the rule must not reach targets."""
     application = only(named(accounts=["report_reader"], secret="reporting/db#password"))
@@ -309,7 +309,7 @@ def test_oracle_options_are_read() -> None:
 
 def test_an_unknown_oracle_option_is_refused() -> None:
     """An untyped bag would accept `container_clase: ALL` and silently do
-    nothing, which is exactly what §9 exists to prevent."""
+    nothing, which is exactly what §10 exists to prevent."""
     with pytest.raises(ConfigError) as caught:
         build_applications(named(oracle={"container_clase": "ALL"}))
 

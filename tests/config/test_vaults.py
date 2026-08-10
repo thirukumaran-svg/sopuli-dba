@@ -184,7 +184,7 @@ def test_an_auth_block_must_name_a_method() -> None:
 
 
 def test_non_production_defaults_to_false() -> None:
-    """§9 refuses a prod target pointed at a non-production store. Defaulting the
+    """§10 refuses a prod target pointed at a non-production store. Defaulting the
     other way would fire that rule on every vault nobody has labelled yet."""
     assert only(**{"vault-dev": HASHICORP}).non_production is False
 

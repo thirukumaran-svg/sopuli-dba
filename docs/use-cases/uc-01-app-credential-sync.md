@@ -508,7 +508,7 @@ is the UC-1 specific list.
 
 | # | Question | Notes / leaning |
 |---|---|---|
-| Q1 | Should `check` default to `hash` or `login`? | leaning `login` interactively, `hash` for `--scheduled`; needs a decision because it changes the privilege ask |
+| Q1 | Should `check` default to `hash` or `login`? | leaning `login` interactively, `hash` under an unattended profile (`01-configuration.md` §5); needs a decision because it changes the privilege ask |
 | Q2 | Where does the advisory lock live? | vault (works cross-platform, survives DB outage) vs `DBMS_LOCK` (no extra vault write). Leaning vault. |
 | Q3 | How many generations of `previous` to keep? | one, plus whatever the store's native versioning gives for free |
 | Q4 | Does the tool ever alter a *profile* to enable rollover? | leaning no by default — profiles are shared; report the needed DDL instead |

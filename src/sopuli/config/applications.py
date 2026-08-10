@@ -67,7 +67,7 @@ ORACLE_KEYS = ("container_clause",)
 TARGET_SELECTOR_KEYS = ("group", "match")
 
 #: `{account}`, `{account_lower}`, `{account_upper}` -- the tokens that make a
-#: rendered ref differ between two accounts. §6 fixes the token list (C3: no
+#: rendered ref differ between two accounts. §7 fixes the token list (C3: no
 #: arbitrary expressions), so matching them literally is enough.
 ACCOUNT_TOKEN = re.compile(r"\{account(_lower|_upper)?\}")
 
@@ -199,8 +199,8 @@ def _build_secret(entry: dict[str, Any], *, at: KeyPath) -> tuple[str | None, st
 def _require_distinguishable_accounts(application: Application, *, at: KeyPath) -> None:
     """More than one account must not resolve to one secret ref.
 
-    This is §9's "cannot produce distinct refs" rule, read as being about
-    *accounts*. §6 is explicit that one account sharing a password across eleven
+    This is §10's "cannot produce distinct refs" rule, read as being about
+    *accounts*. §7 is explicit that one account sharing a password across eleven
     PDBs is "legal and often intended", so the rule cannot be about targets --
     but two *accounts* landing on the same ref is never intended: whichever is
     written second overwrites the first, and the application that reads the first

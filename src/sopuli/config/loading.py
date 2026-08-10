@@ -14,7 +14,7 @@ has to translate an ``OSError`` or a ``yaml.YAMLError`` into something a user ca
 act on.
 
 The result is **raw data** -- nested dicts and lists. Turning it into typed
-objects, and enforcing the §9 rules, is the next piece of work. Keeping the two
+objects, and enforcing the §10 rules, is the next piece of work. Keeping the two
 apart means the file layer can be tested with a two-line document, and the
 schema layer can be tested without touching a filesystem at all
 (``04-testing.md`` §4).
@@ -51,7 +51,7 @@ SUPPORTED_VERSIONS = (1,)
 #: supported tier. `utf-8-sig` accepts a file with or without one.
 ENCODING = "utf-8-sig"
 
-#: Every section name a config file may use at the top level. §9 makes an
+#: Every section name a config file may use at the top level. §10 makes an
 #: unknown key an error rather than a warning, and P3 is explicit that "a typo in
 #: a credential tool must never be silently ignored".
 #:

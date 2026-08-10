@@ -297,7 +297,7 @@ def test_a_patch_is_validated_like_the_field_it_patches() -> None:
 
 
 def test_whether_an_override_names_a_real_target_is_not_checked_here() -> None:
-    """§9 says an override naming a target the set does not generate is an error
+    """§10 says an override naming a target the set does not generate is an error
     -- that is what catches a rename. It needs the set expanded, so it belongs
     with expansion; recorded here so its absence is deliberate rather than
     forgotten."""

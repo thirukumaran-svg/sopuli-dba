@@ -5,7 +5,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | Document | Contents |
 |---|---|
 | [design/00-principles.md](design/00-principles.md) | P1 multi-product DB support (Oracle first), P2 multi-vault support, P3 config file + precedence, P4 cross-platform, P5 cross-cutting behaviour and exit codes |
-| [design/01-configuration.md](design/01-configuration.md) | YAML schema in two shapes (single application inline, `applications:` for several), target templating with labels, environment variables, SecretRef syntax, password charsets, precedence |
+| [design/01-configuration.md](design/01-configuration.md) | YAML schema in two shapes (single application inline, `applications:` for several), the estate sections, target templating with labels, profiles (run context), environment variables, SecretRef syntax, password charsets, precedence |
 | [design/02-oracle-privileges.md](design/02-oracle-privileges.md) | The grant model: direct `ALTER USER`, common vs per-PDB service accounts, client-side guardrails, auditing |
 | [design/03-json-output.md](design/03-json-output.md) | The `--output json` / `--output jsonl` contract, redaction, stability policy, `jq` recipes |
 | [design/04-testing.md](design/04-testing.md) | What can and cannot be containerised, capability-driven matrix, tiering, fault injection, release gates |
@@ -52,7 +52,9 @@ stays in scope, unreachable from Apple Silicon (D7).
 depth~~ (C7 — **decided: two levels, write a second set**), ~~labels on explicit
 targets~~ (C8 — **decided: allowed**), **how the file points at vault auth
 material and the database admin credential (C9, issue #27 — the loader refuses
-those keys rather than inventing them)**.
+those keys rather than inventing them)**, ~~what profiles are for~~ (C10 —
+**decided: run context, not target selection**), composable profiles (C11,
+proposed no), a built-in `interactive` profile (C12, leaning no).
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
 documented default (P1), grant `SELECT ON SYS.USER$` by default (P2), whether

@@ -7,7 +7,7 @@ Two layers, deliberately separable:
   the document is a versioned mapping. It returns raw data.
 * **The schema layer** -- :func:`~sopuli.config.loading.build_config` turns that
   raw data into the typed structures in ``01-configuration.md`` and enforces the
-  §9 rules that do not need target expansion.
+  §10 rules that do not need target expansion.
 
 The split is not just tidiness. The file layer is the only part that touches a
 filesystem, so keeping it separate is what lets the schema layer be tested with

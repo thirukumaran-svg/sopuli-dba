@@ -171,7 +171,7 @@ def test_an_empty_block_is_refused_even_though_omitting_it_is_fine(block: str) -
 def test_how_scope_and_container_constrain_each_other_is_not_decided_here() -> None:
     """§2 writes `cdb_root` without a container and `pdb` with one, but never says
     that is a rule -- and `container` is also the `{container}` token in a secret
-    template (§6), so it carries information beyond which container to connect
+    template (§7), so it carries information beyond which container to connect
     to. P1 puts per-vendor validation behind the driver. Recorded as C9 / #27
     rather than guessed at, and pinned here so the absence is deliberate.
     """
@@ -214,7 +214,7 @@ def test_an_admin_password_has_nowhere_to_go() -> None:
 
 def test_admin_may_omit_the_username() -> None:
     """External authentication has no username to give (P2 ranks it first), and
-    §5 lets `SOPULI_DB_ADMIN_USER` supply one per execution context."""
+    §6 lets `SOPULI_DB_ADMIN_USER` supply one per execution context."""
     target = only(admin={"auth": "external"})
 
     assert target.admin is not None

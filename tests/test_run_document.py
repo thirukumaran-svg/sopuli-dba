@@ -85,4 +85,4 @@ def test_actor_never_carries_a_token() -> None:
     """The schema permits vault_identity but it must be an identity, not a secret."""
     document = RunDocument.start("config.show").finish(ExitCode.SUCCESS).to_dict()
     actor = document["invocation"]["actor"]
-    assert set(actor) <= {"os_user", "host", "vault_identity", "scheduled"}
+    assert set(actor) <= {"os_user", "host", "vault_identity", "unattended"}

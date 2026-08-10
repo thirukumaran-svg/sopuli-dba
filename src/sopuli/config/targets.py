@@ -168,7 +168,7 @@ def _reject_empty(block: dict[str, Any], *, at: KeyPath, block_name: str) -> Non
     What is *not* checked is how ``scope`` and ``container`` constrain each
     other. §2 writes ``cdb_root`` without a container and ``pdb`` with one, but
     the reference never says whether that is a rule -- and ``container`` is also
-    the ``{container}`` token in a secret template (§6), so it carries
+    the ``{container}`` token in a secret template (§7), so it carries
     information beyond which container to connect to. P1 puts per-vendor
     validation behind the driver. Recorded in C9 / issue #27 rather than guessed.
     """

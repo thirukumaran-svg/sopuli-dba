@@ -143,7 +143,7 @@ from:
 
 ```json
 "verify.method": { "value": "hash", "source": "profile",
-                   "source_detail": "policies.app-standard.verify.scheduled_method" }
+                   "source_detail": "profiles.scheduled.verify.method" }
 ```
 
 This is the machine-readable form of `config show --explain` (P3). When someone
@@ -264,7 +264,7 @@ that captured only stdout can still branch correctly.
 The pairing that makes scheduling work:
 
 ```bash
-sopuli creds check --application orders-app --scheduled --output json > result.json
+sopuli creds check --application orders-app --profile scheduled --output json > result.json
 case $? in
   0) ;;                                     # in sync, say nothing
   3) alert "credential drift" < result.json ;;   # distinct: DRIFT, not a failure
@@ -324,6 +324,14 @@ Both schemas set `additionalProperties: false` so the tool's own tests catch
 accidental additions — but *consumers* must ignore unknown properties, and the
 docs say so explicitly. The strictness is a producer-side guard, not a
 consumer-side requirement.
+
+**One rename has happened under 1.0, deliberately.** `actor.scheduled` became
+`actor.unattended` when run context moved into profiles
+(`01-configuration.md` §5). By the rule above that is a major change, and it was
+made in place anyway: no released build ever emitted the property — it is written
+only when true and nothing ever set it — so there is no consumer to overlap with.
+The rule holds from the first release that emits a populated `actor`; this is the
+grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.

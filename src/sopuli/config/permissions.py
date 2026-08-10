@@ -8,7 +8,7 @@ rotate a production password and write it there. Invariant 6 makes the vault the
 master record; this file decides which vault entry that is.
 
 That is why the POSIX check is on ``0o077`` -- any group or other access -- and
-not only on the read bits that ``01-configuration.md`` §9 names. Refusing a
+not only on the read bits that ``01-configuration.md`` §10 names. Refusing a
 world-*readable* file while accepting a group-*writable* one would be guarding
 the smaller problem. The doc has been updated to match.
 

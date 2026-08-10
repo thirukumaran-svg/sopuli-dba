@@ -103,7 +103,7 @@ def choice(value: Any, *, allowed: Iterable[str], at: KeyPath, noun: str) -> str
     Closed rather than free-form wherever the value selects behaviour -- a
     driver, a scope, an auth method. A free string means ``scope: cdb-root``
     loads happily and the tool then connects somewhere other than where the
-    author meant, which is the class of failure invariant 5 and §9 exist to stop.
+    author meant, which is the class of failure invariant 5 and §10 exist to stop.
     Widening a set is a one-line change once the reference names the new value.
     """
     text = string(value, at=at)
@@ -187,7 +187,7 @@ def string_list(value: Any, *, at: KeyPath) -> tuple[str, ...]:
 def reject_unknown_keys(
     container: dict[str, Any], *, allowed: Iterable[str], at: KeyPath, hint: str | None = None
 ) -> None:
-    """§9: unknown keys are an error, not a warning.
+    """§10: unknown keys are an error, not a warning.
 
     A typo in a credential tool must never be silently ignored (P3). ``secret_tmplate``
     that is quietly dropped means the tool falls back to some other secret, which

@@ -17,10 +17,10 @@
       "os_user": "svc_sopuli",
       "host": "dba-runner-01",
       "vault_identity": "approle:sopuli-ci",
-      "scheduled": true
+      "unattended": true
     },
     "dry_run": false,
-    "profile": "prod",
+    "profile": "scheduled",
     "config_files": ["/etc/sopuli/config.yaml"],
     "selection": {
       "applications": ["orders-app"],
@@ -32,7 +32,7 @@
       "limit": null
     },
     "options": {
-      "verify.method": { "value": "hash", "source": "profile", "source_detail": "policies.app-standard.verify.scheduled_method" },
+      "verify.method": { "value": "hash", "source": "profile", "source_detail": "profiles.scheduled.verify.method" },
       "vault.addr": { "value": "https://vault.example.com:8200", "source": "env", "source_detail": "SOPULI_VAULT_ADDR" }
     }
   },

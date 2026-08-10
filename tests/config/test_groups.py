@@ -2,7 +2,7 @@
 
 A group is a name for a label selection. The `safety:` tests are here rather than
 in a file of their own because a group is the smallest section that carries one,
-and §8 gives the block the same meaning wherever it appears.
+and §9 gives the block the same meaning wherever it appears.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def test_a_group_may_carry_a_safety_block() -> None:
 
 
 def test_unset_safety_fields_stay_none_rather_than_defaulting() -> None:
-    """§8: safety does not follow last-one-wins -- the resolved value is the
+    """§9: safety does not follow last-one-wins -- the resolved value is the
     safest of all layers. A layer that says nothing has to be distinguishable
     from one that sets the built-in default, or "safest" cannot be computed."""
     group = only(safety={"readonly": True})
@@ -97,7 +97,7 @@ def test_unset_safety_fields_stay_none_rather_than_defaulting() -> None:
 
 
 def test_a_target_may_carry_one_too() -> None:
-    """§8 allows a safety block under defaults, a target, a group or a profile.
+    """§9 allows a safety block under defaults, a target, a group or a profile.
     One reader, so they cannot drift apart."""
     (target,) = build_targets(
         {

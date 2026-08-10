@@ -216,7 +216,7 @@ def _build_overrides(raw: Any, *, at: KeyPath) -> tuple[tuple[str, TargetPatch],
     """``overrides:`` -- patches keyed by *rendered* target name (§4 rule 5).
 
     Whether a key names a target the set generates cannot be known until
-    expansion, so the check §9 asks for -- an override naming a target that is
+    expansion, so the check §10 asks for -- an override naming a target that is
     not generated is an error, which is what catches a rename -- lives with it.
     """
     if raw is None:

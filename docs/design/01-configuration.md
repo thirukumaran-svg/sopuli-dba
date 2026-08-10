@@ -20,7 +20,7 @@ target_sets: {}     # generated database endpoints (§4)
 groups: {}          # named sets of targets
 policies: {}        # password + rotation policies
 defaults: {}        # inherited settings
-profiles: {}        # named overlays (dev / test / prod)
+profiles: {}        # how this run is invoked (interactive / ci / scheduled) — §5
 
 # --- the single application, inline ---
 accounts: []            # which database accounts the tool manages
@@ -188,11 +188,22 @@ policies:
       keep_previous: true
       max_age_days: 90
     verify:
-      method: login
-      scheduled_method: hash
+      method: login              # profiles may override this — see §5
       lockout_margin: 2
     account:
       unlock_if_locked: false
+
+# How a run is invoked, as opposed to what it points at. See §5.
+profiles:
+  ci:
+    verify: { method: hash }     # no login attempts from an unattended runner
+    output: json
+    confirm: false
+    safety: { max_targets: 200 }
+  scheduled:
+    verify: { method: hash }
+    output: jsonl
+    log_level: warning
 
 # ---------------------------------------------------------------------------
 # The single application. No `applications:` wrapper, no name to invent.
@@ -223,11 +234,16 @@ sopuli creds check  --select env=dev               # all dev PDBs
 sopuli creds rotate --select env=dev,tenant=beta
 sopuli creds rotate --group prod-pdbs --confirm
 sopuli creds apply  --target appdb-qa-delta --account acme_web_user
+
+sopuli creds check --profile scheduled             # same targets, different behaviour
 ```
 
 Note what the config bought: `sopuli creds check` with no arguments is
 meaningful, because `accounts` + `secret_template` + the generated targets say
 what *should* be true.
+
+Note also what the last line does **not** do: `--profile scheduled` changes how
+the run behaves, not which targets it touches. That distinction is §5.
 
 ---
 
@@ -277,10 +293,10 @@ sopuli creds rotate --app acme --select env=dev    # --app is an accepted alias
 | `accounts` | list of database usernames |
 | `targets` | list of target names, `{ group: NAME }`, or `{ match: {...} }`; defaults to all targets |
 | `vault` | store name; defaults to the target's vault, then `defaults.vault` |
-| `secret` / `secret_template` | SecretRef, literal or templated (§6). Mutually exclusive: one entry uses one of them |
+| `secret` / `secret_template` | SecretRef, literal or templated (§7). Mutually exclusive: one entry uses one of them |
 | `policy` | policy name |
 | `oracle` | vendor-specific options, e.g. `container_clause` |
-| `overrides` | list of `{ where: {labels}, ...keys }` patches applied to matching targets. `where` is required, and the patchable keys are `vault`, `secret`, `secret_template`, `policy` and `oracle` — **not `accounts`**, see §9 |
+| `overrides` | list of `{ where: {labels}, ...keys }` patches applied to matching targets. `where` is required, and the patchable keys are `vault`, `secret`, `secret_template`, `policy` and `oracle` — **not `accounts`**, see §10 |
 
 ---
 
@@ -298,7 +314,7 @@ sopuli creds rotate --app acme --select env=dev    # --app is an accepted alias
 | `mount` | KV mount point (HashiCorp) |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
 | `auth` | `{ method: ... }` — see below |
-| `non_production` | marks a store that must never master a `prod` target (§9). Absent means production |
+| `non_production` | marks a store that must never master a `prod` target (§10). Absent means production |
 
 Only `type` is required. A file backend has no address, and P2 puts per-backend
 validation behind the store interface, so demanding a HashiCorp shape of every
@@ -319,12 +335,12 @@ something the estate can express and the set silently cannot.
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
 | `type` | **required** — the driver selector (P1). Only `oracle` exists; a target the tool cannot drive is refused while the file is being written, not at the first connection |
 | `dsn` | **required** — `host:port/service`, or a TNS alias |
-| `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§5) |
+| `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
 | `admin` | `{ username, auth }` — the credential that reaches the database. `auth` is one of P2's bootstrap sources: `external`, `vault`, `prompt`, `env`. There is no password field, and there will not be one (P2). `vault` has nowhere yet to name *which* ref — see C9 |
 | `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. `scope` is `cdb_root` or `pdb`; a non-CDB database omits the block. How the two keys constrain each other is not decided — see C9 |
 | `labels` | free labels for selection (C8). A generated target gets its dimension values as labels automatically |
-| `safety` | a `safety:` block (§8) |
+| `safety` | a `safety:` block (§9) |
 
 A block that is present and empty — `oracle: {}`, `admin: {}` — is an error.
 Absent and empty mean the same thing to the tool, so the difference between them
@@ -352,7 +368,7 @@ new value.
 | `readonly` | refuse every mutation |
 
 Every field is optional, and an unset one stays unset rather than taking the
-built-in default. §8 resolves safety by taking the *safest* of all layers rather
+built-in default. §9 resolves safety by taking the *safest* of all layers rather
 than the last one, and "safest of all layers" needs to know which layers said
 nothing.
 
@@ -440,14 +456,126 @@ act on is always inspectable without connecting to anything.
 
 ---
 
-## 5. Environment variables
+## 5. Profiles — how a run is invoked
+
+### The distinction that makes them coherent
+
+**`environment` and labels describe what you are pointing at. A profile describes
+where you are running from.**
+
+`--profile scheduled` never changes which targets or accounts are in scope. It
+changes how the tool behaves while it works on them: whether it may prompt,
+whether it verifies by login or by hash comparison, what it prints, how loudly it
+logs.
+
+This is the one thing to get right, because a selector-shaped option that is not
+a selector is a bad footgun in a tool that rotates credentials. Hence the naming
+rule below.
+
+### Why the concept exists at all
+
+The same config is used from a laptop, from a CI job, and from a scheduler, and
+those three want genuinely different behaviour:
+
+| | interactive | ci | scheduled |
+|---|---|---|---|
+| may prompt for confirmation | yes | no | no |
+| verification method | `login` | `hash` | `hash` |
+| output | text | json | jsonl |
+| blast-radius guard | tight, a human is watching | wide, the plan is reviewed in the PR | wide |
+
+Without profiles this lives in environment variables scattered across a workflow
+file — unversioned, unreviewed, and invisible when someone asks why the nightly
+run behaved differently from the one they just did by hand.
+
+The clearest evidence the need is real: an earlier draft had
+`policies.*.verify.scheduled_method`, which is run-context configuration hiding
+inside a password policy because there was nowhere else to put it. That key is
+gone; a profile overriding `verify.method` replaces it.
+
+### What a profile may contain
+
+A closed list. Anything else is a validation error.
+
+| Key | Effect |
+|---|---|
+| `vault` | which named store to use |
+| `vault.auth` | how to authenticate to it — token interactively, AppRole in CI |
+| `verify.method` | `login` \| `hash` \| `both` \| `none` |
+| `verify.lockout_margin` | how close to `FAILED_LOGIN_ATTEMPTS` to stop trying |
+| `safety.*` | `max_targets`, `confirm_environments`, `readonly` |
+| `confirm` | whether interactive confirmation is possible at all |
+| `output` | `text` \| `json` \| `jsonl` |
+| `log_level`, `log_file` | |
+| `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs |
+| `rotation.strategy` | e.g. force `staged` where no human can watch a rollover |
+
+### What a profile may not contain
+
+Rejected at validation, with a message naming the key:
+
+- `accounts`, `applications`, `secret`, `secret_template` — the account→secret
+  binding is the safety-critical part and must not vary by how you invoked the
+  tool. This is the same rule as §6's "not overridable" list, for the same reason.
+- `targets`, `target_sets`, `groups`, or anything that selects — a profile is not
+  a selector.
+- `environment` on any target — you cannot relabel prod as dev by choosing a
+  profile.
+- `policies.*.password.*` — a weaker password policy is a reviewed config change,
+  never a side effect of running from CI.
+
+### Resolution rules
+
+1. **Exactly one profile is active.** Selected by `--profile NAME`, else
+   `SOPULI_PROFILE`, else `defaults.profile`, else none. Multiple profiles do not
+   compose; if you want a variant, write it out.
+2. **No inheritance.** Profiles are flat and independent. A three-line duplicate
+   is cheaper to read than an inheritance graph in a credential tool.
+3. **Keys sit directly in the profile**, mirroring the shape they have under
+   `defaults`.
+4. **Precedence layer 3**, between environment variables and per-object settings
+   — see §9. A CLI flag or a `SOPULI_*` variable still wins over the profile.
+5. **The safety ratchet still applies.** A profile may make `safety` stricter but
+   never looser than any other layer. `profiles.ci.safety.max_targets: 200` only
+   takes effect if no other layer sets something lower; `readonly: true` anywhere
+   cannot be undone by a profile.
+6. **Selecting an undefined profile is an error**, not a silent fallback to
+   defaults. A typo in `--profile` must not quietly give you interactive
+   behaviour in a scheduler.
+
+### Naming
+
+Name profiles after **invocation context**: `interactive`, `ci`, `scheduled`,
+`maintenance`. Never after an environment.
+
+Validation **warns** when a profile name matches any target's `environment`
+value, because `--profile prod` reads like a target selector and is not one. It
+is a warning rather than an error only because a site may have a legitimate
+reason; the warning text says what the flag actually does.
+
+### Reporting
+
+The active profile appears in `config show --explain` and in the JSON output's
+`invocation.profile`, and every setting it supplied is attributed to it:
+
+```
+verify.method      = hash    [profile scheduled]
+output             = jsonl   [profile scheduled]
+safety.max_targets = 1       [defaults]        ← profile asked for 200, ratchet held
+```
+
+That last line is the case worth being able to see.
+
+---
+
+## 6. Environment variables
 
 Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 
 | Variable | Overrides |
 |---|---|
 | `SOPULI_CONFIG` | config file path |
-| `SOPULI_PROFILE` | active profile |
+| `SOPULI_PROFILE` | active profile (§5) — the usual way a CI job or scheduler selects one |
 | `SOPULI_VAULT` | default vault name |
 | `SOPULI_VAULT_ADDR` | address of the active vault |
 | `SOPULI_VAULT_TOKEN` | token for the active vault |
@@ -475,7 +603,7 @@ Honoured third-party variables, ranked *below* their `SOPULI_*` equivalent:
 
 ---
 
-## 6. SecretRef syntax
+## 7. SecretRef syntax
 
 One string addresses a value in any backend:
 
@@ -517,7 +645,7 @@ the same secret — application settings and the like — are never touched.
 
 ---
 
-## 7. Password charsets
+## 8. Password charsets
 
 | Name | Contents | Notes |
 |---|---|---|
@@ -540,7 +668,7 @@ Independent of charset:
 
 ---
 
-## 8. Precedence, restated with examples
+## 9. Precedence, restated with examples
 
 Order (highest first): **CLI → `SOPULI_*` env → third-party env → profile →
 named object → `defaults` → built-in**.
@@ -557,6 +685,16 @@ $ sopuli creds check
 $ unset SOPULI_VAULT_ADDR
 $ sopuli creds check
 → vault-a   [env VAULT_ADDR, third-party]
+```
+
+A profile sits below both, so a flag still wins over it:
+
+```
+$ sopuli creds check --profile scheduled              # profile sets verify.method: hash
+→ hash    [profile scheduled]
+
+$ sopuli creds check --profile scheduled --method login
+→ login   [cli]      ← the operator at the keyboard is the more specific intent
 ```
 
 Safety ratchet:
@@ -576,7 +714,7 @@ resolved value is the *safest* of all layers — lowest `max_targets`, union of
 
 ---
 
-## 8a. The file itself
+## 9a. The file itself
 
 Before any key is looked at, the file has to be one the tool will read at all.
 Implemented in `sopuli/config/loading.py`; decided in
@@ -600,7 +738,7 @@ error message for a file this long.
 
 ---
 
-## 9. Validation rules worth enforcing early
+## 10. Validation rules worth enforcing early
 
 - unknown keys → error, not warning
 - both top-level `accounts:` and `applications:` present → error
@@ -610,7 +748,7 @@ error message for a file this long.
   The second password written would overwrite the first, and whichever
   application reads the first is locked out at the next rotation. This is about
   *accounts*, not scopes — one account sharing a password across eleven PDBs is
-  legal and often intended (§6), and is surfaced in plan output rather than
+  legal and often intended (§7), and is surfaced in plan output rather than
   refused
 - an `overrides` entry patching `accounts` → error. Invariant 5 says selectors
   filter the declared set and cannot extend it, not even under `--force`. A
@@ -627,6 +765,11 @@ error message for a file this long.
 - an `overrides` key naming a target the set does not generate → error (catches
   renames)
 - an unresolved `{placeholder}` anywhere → error, never an empty string
+- a profile containing a key outside the §5 whitelist → error, naming the key
+- `--profile` or `SOPULI_PROFILE` naming a profile that does not exist → error,
+  never a silent fallback to defaults
+- a profile name matching any target's `environment` value → warning, explaining
+  that a profile does not select targets
 - `charset: printable_ascii` on a target detected below 12.2 → warning
 - `rotation.strategy: rollover` on a target without the `password_rollover`
   capability → error at plan time, not at execution time
@@ -646,7 +789,7 @@ error message for a file this long.
 
 ---
 
-## 10. Open decisions
+## 11. Open decisions
 
 | # | Question | Current proposal |
 |---|---|---|
@@ -658,4 +801,7 @@ error message for a file this long.
 | C6 | Multiple vaults for one application (mirror writes) | defer to a later use case |
 | C7 | ~~Should `target_sets` allow more than two nesting levels?~~ | **decided: no** — write a second set. §4 rules 2, 6 and 7 are what that costs |
 | C8 | ~~Do explicit `targets:` need labels, or is `environment` enough?~~ | **decided: labels are allowed on them**, so mixed estates select uniformly |
-| C9 | How does the file point at vault auth material, and at the database admin credential? | unresolved — P2 names the methods and forbids plaintext material in the file, but nothing names the keys. The loader accepts `auth.method` and refuses every other key rather than inventing a schema the vault layer must then live with. Also covers the `oracle.scope` vocabulary, of which only `cdb_root` and `pdb` are written down, and whether `scope` and `container` constrain each other — §2 shows `cdb_root` without a container and `pdb` with one, but never says that is a rule, and `container` is also the `{container}` token in a secret template (§6). Issue #27 |
+| C9 | How does the file point at vault auth material, and at the database admin credential? | unresolved — P2 names the methods and forbids plaintext material in the file, but nothing names the keys. The loader accepts `auth.method` and refuses every other key rather than inventing a schema the vault layer must then live with. Also covers the `oracle.scope` vocabulary, of which only `cdb_root` and `pdb` are written down, and whether `scope` and `container` constrain each other — §2 shows `cdb_root` without a container and `pdb` with one, but never says that is a rule, and `container` is also the `{container}` token in a secret template (§7). Issue #27 |
+| C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
+| C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
+| C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |

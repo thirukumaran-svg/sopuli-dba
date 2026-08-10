@@ -41,7 +41,7 @@ class OracleOptions:
 
     Only ``container_clause`` is documented, so only it is modelled -- an
     untyped bag would accept ``container_clase: ALL`` and silently do nothing,
-    which is the failure §9 exists to prevent.
+    which is the failure §10 exists to prevent.
     """
 
     container_clause: str | None = None
@@ -133,10 +133,10 @@ class Application:
 
 @dataclass(frozen=True)
 class Safety:
-    """A ``safety:`` block, which §8 allows under ``defaults``, a target, a group
+    """A ``safety:`` block, which §9 allows under ``defaults``, a target, a group
     or a profile.
 
-    Every field is optional, and that is load-bearing rather than lazy. §8 says
+    Every field is optional, and that is load-bearing rather than lazy. §9 says
     safety settings do *not* follow last-one-wins: the resolved value is the
     safest of all layers -- the lowest ``max_targets``, the union of
     ``confirm_environments``, ``readonly`` if any layer sets it. A layer that
@@ -188,7 +188,7 @@ class AdminCredential:
     """``admin:`` on a target -- the credential the tool uses to reach the database.
 
     Both fields are optional: P2 puts external authentication (a wallet, where
-    there is no username to give) first among the bootstrap sources, and §5 lets
+    there is no username to give) first among the bootstrap sources, and §6 lets
     ``SOPULI_DB_ADMIN_USER`` supply the username per execution context. Storing
     the admin *password* in the config file is not supported at all (P2), so
     there is no field for one.

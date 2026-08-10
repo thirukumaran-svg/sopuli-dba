@@ -93,7 +93,7 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
         mount=optional_string(entry, "mount", at=at),
         kv_version=_build_kv_version(entry, at=at),
         auth=_build_auth(entry.get("auth"), at=at.key("auth")),
-        # Absent means production. §9 refuses a prod target pointed at a
+        # Absent means production. §10 refuses a prod target pointed at a
         # non-production store, and defaulting the other way would make that
         # rule fire on every vault nobody has labelled yet.
         non_production=optional_bool(entry, "non_production", at=at) or False,

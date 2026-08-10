@@ -218,7 +218,7 @@ def test_known_keys_pass() -> None:
 
 
 def test_an_unknown_key_is_an_error_not_a_warning() -> None:
-    """§9, and P3: "a typo in a credential tool must never be silently ignored"."""
+    """§10, and P3: "a typo in a credential tool must never be silently ignored"."""
     with pytest.raises(ConfigError) as caught:
         reject_unknown_keys({"secret_tmplate": "x"}, allowed=("secret_template",), at=AT)
 

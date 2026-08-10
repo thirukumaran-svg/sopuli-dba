@@ -51,14 +51,20 @@ class Actor:
     os_user: str
     host: str
     vault_identity: str | None = None
-    scheduled: bool = False
+    #: Whether the run could have prompted, not which flag was passed. There was
+    #: a `--scheduled` flag and an `actor.scheduled` to match it; both are gone.
+    #: `01-configuration.md` §5 puts run context in a profile, and the thing a
+    #: reader of the output actually wants to know is whether anybody could have
+    #: been asked -- which stays true when a run is unattended for some other
+    #: reason, such as a closed stdin.
+    unattended: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"os_user": self.os_user, "host": self.host}
         if self.vault_identity is not None:
             data["vault_identity"] = self.vault_identity
-        if self.scheduled:
-            data["scheduled"] = self.scheduled
+        if self.unattended:
+            data["unattended"] = self.unattended
         return data
 
 

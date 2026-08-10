@@ -1,6 +1,6 @@
 """Building a ``safety:`` block.
 
-§8 allows one under ``defaults``, a target, a group or a profile, and says they
+§9 allows one under ``defaults``, a target, a group or a profile, and says they
 are the one thing in the file that does *not* follow last-one-wins: the resolved
 value is the safest of all layers -- the lowest ``max_targets``, the union of
 ``confirm_environments``, ``readonly`` if any layer sets it (P3, invariant 10).

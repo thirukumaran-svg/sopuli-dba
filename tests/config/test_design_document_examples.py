@@ -171,6 +171,31 @@ def test_the_skeleton_is_illustrative_rather_than_loadable() -> None:
         build_applications(parse_yaml(skeleton))
 
 
+def test_every_section_the_config_layer_cites_exists() -> None:
+    """Section numbers rot silently, and this document has already been renumbered
+    once -- inserting §5 (profiles) pushed everything below it down one.
+
+    Every ``§N`` in ``sopuli/config/`` refers to this document and nothing else,
+    so the attribution is safe to automate. A docstring pointing at §9 for a rule
+    that moved to §10 is worse than no citation: it sends a reader to a section
+    that exists and says something different.
+    """
+    sections = set(re.findall(r"^## ([0-9]+[a-z]?)\.", REFERENCE.read_text(encoding="utf-8"), re.M))
+    assert {"1", "5", "9a", "11"} <= sections, "the document's own headings changed shape"
+
+    layer = Path(__file__).resolve().parents[2] / "src" / "sopuli" / "config"
+    cited: dict[str, set[str]] = {}
+    for module in sorted(layer.glob("*.py")):
+        for section in re.findall(r"§([0-9]+[a-z]?)", module.read_text(encoding="utf-8")):
+            cited.setdefault(section, set()).add(module.name)
+
+    assert cited, "no citations found -- the regex or the layout moved"
+    dangling = {
+        section: sorted(where) for section, where in cited.items() if section not in sections
+    }
+    assert not dangling, f"citations of sections that do not exist: {dangling}"
+
+
 def test_the_worked_example_survives_the_boolean_narrowing() -> None:
     """`pdb_suffix: dev` and friends are bare words in exactly the position the
     Norway problem bites. None of them may come back as a boolean."""

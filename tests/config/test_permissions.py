@@ -52,7 +52,7 @@ def test_owner_only_is_accepted(config_file: Path) -> None:
 @posix_only
 @pytest.mark.parametrize("mode", [0o640, 0o604, 0o644, 0o660, 0o666, 0o777])
 def test_any_group_or_other_access_is_refused(config_file: Path, mode: int) -> None:
-    """Wider than §9's "readable", and deliberately so.
+    """Wider than §10's "readable", and deliberately so.
 
     A group-*writable* config is the worse problem: anyone who can write it can
     repoint secret_template at a path they control, and the tool will rotate a

@@ -183,11 +183,17 @@ precedence order applies everywhere**, and the tool can print it.
 ```
 1. Command-line option              --vault-addr https://…
 2. Environment variable             SOPULI_VAULT_ADDR
-3. Profile block in config          profiles.prod.vault.addr
+3. Profile block in config          profiles.ci.vault.addr
 4. Target/vault-level setting       vaults.hcv-prod.addr
 5. Top-level defaults in config     defaults.vault.addr
 6. Built-in default                 (compiled into the tool)
 ```
+
+A profile is named after **how the run was invoked** — `interactive`, `ci`,
+`scheduled` — never after an environment. `--profile prod` reads like a target
+selector and is not one; profiles change behaviour, never scope.
+`01-configuration.md` §5 is the specification, and validation warns on a profile
+named after any target's `environment`.
 
 Rationale for env above config: config files are committed and shared; env is set
 per execution context (CI job, container) and must be able to redirect a shared
@@ -209,14 +215,22 @@ Two deliberate exceptions, documented as such:
 layer it came from:
 
 ```
-vault.addr        = https://vault.example.com:8200    [env SOPULI_VAULT_ADDR]
-vault.auth.method = approle                          [config vaults.hcv-prod]
-db.timeout_s      = 30                               [built-in default]
-targets           = 4 targets from group "prod-pdbs" [cli --group]
+vault.addr         = https://vault.example.com:8200   [env SOPULI_VAULT_ADDR]
+vault.auth.method  = approle                          [config vaults.hcv-prod]
+verify.method      = hash                             [profile ci]
+db.timeout_s       = 30                               [built-in default]
+targets            = 4 targets from group "prod-pdbs" [cli --group]
+safety.max_targets = 1                                [defaults]
+                     ↑ profile ci asked for 200; safety only ratchets toward safe
 ```
 
 Secret values are always redacted here. Anything resolved from a source the tool
 considers low-assurance is marked.
+
+The `safety.max_targets` line is the one worth being able to see. A setting that
+was *requested* and did not win is invisible in the result and obvious in this
+view, which is the difference between "the ratchet works" as a claim and as
+something an operator can check.
 
 ### Config file discovery
 

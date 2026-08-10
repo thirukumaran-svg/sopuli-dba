@@ -85,9 +85,9 @@
               "type": ["string", "null"],
               "description": "e.g. \"approle:sopuli-ci\" or \"oci:instance-principal\". Never a token."
             },
-            "scheduled": {
+            "unattended": {
               "type": "boolean",
-              "description": "True when --scheduled was passed; changes verification defaults."
+              "description": "True when nobody could have been prompted. Not a flag: run context is a profile (01-configuration.md §5), and a run can be unattended for other reasons, such as a closed stdin."
             }
           }
         },

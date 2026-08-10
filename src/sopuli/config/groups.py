@@ -2,7 +2,7 @@
 
 A group is a name for a selection: ``prod-pdbs: { match: { target_set: appdb,
 env: prod } }``. It is what ``--group`` and an application's
-``targets: { group: NAME }`` refer to, and §8 allows it to carry a ``safety:``
+``targets: { group: NAME }`` refer to, and §9 allows it to carry a ``safety:``
 block so a whole population can be marked ``readonly`` in one place.
 
 Whether the labels a group matches on exist anywhere in the estate is not
