@@ -499,8 +499,8 @@ A closed list. Anything else is a validation error.
 
 | Key | Effect |
 |---|---|
-| `vault` | which named store to use |
-| `vault.auth` | how to authenticate to it — token interactively, AppRole in CI |
+| `vault` | which named store to use, by name |
+| `vault.auth` | how to authenticate to it — token interactively, AppRole in CI. **Not yet accepted**: `vault:` is a store name everywhere else in the file, and one key cannot be both. See C13 |
 | `verify.method` | `login` \| `hash` \| `both` \| `none` |
 | `verify.lockout_margin` | how close to `FAILED_LOGIN_ATTEMPTS` to stop trying |
 | `safety.*` | `max_targets`, `confirm_environments`, `readonly` |
@@ -508,7 +508,7 @@ A closed list. Anything else is a validation error.
 | `output` | `text` \| `json` \| `jsonl` |
 | `log_level`, `log_file` | |
 | `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs |
-| `rotation.strategy` | e.g. force `staged` where no human can watch a rollover |
+| `rotation.strategy` | e.g. force `staged` where no human can watch a rollover. Only `strategy` — `rollover_hours` and the rest describe the credential's lifecycle, which belongs to the estate |
 
 ### What a profile may not contain
 
@@ -765,7 +765,23 @@ error message for a file this long.
 - an `overrides` key naming a target the set does not generate → error (catches
   renames)
 - an unresolved `{placeholder}` anywhere → error, never an empty string
-- a profile containing a key outside the §5 whitelist → error, naming the key
+- a profile containing a key outside the §5 whitelist → error, naming the key.
+  The keys that would change *scope* — `accounts`, `applications`, `secret`,
+  `secret_template`, `targets`, `target_sets`, `groups`, `environment`,
+  `policies` — get their own message rather than "unknown key", because they are
+  a wrong model rather than a typo
+- a name that names nothing → error. Every `vault`, `policy`, `group` and
+  `profile` written anywhere in the file must be declared in the section that
+  declares them. A dangling `vault:` is the dangerous one: it does not stay
+  dangling, it falls back to `defaults.vault`, and the tool then rotates a
+  production password into whatever that is
+- `charset: custom` whose `allow:` contains `"` → error (invariant 11). The
+  generator applies that rule to what it produces; this applies it to the
+  alphabet it produces *from*, which is the only place a config file can name
+  the character
+- a `require:` block no password could satisfy → error: more characters demanded
+  than `length` allows, or `require: { special: N }` against a charset with no
+  special characters. Both would leave generation looping rather than failing
 - `--profile` or `SOPULI_PROFILE` naming a profile that does not exist → error,
   never a silent fallback to defaults
 - a profile name matching any target's `environment` value → warning, explaining
@@ -805,3 +821,4 @@ error message for a file this long.
 | C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
+| C13 | Is `vault:` under `defaults:` and in a profile a store *name* or a block? | unresolved — §3 and `SOPULI_VAULT` say name; P3's `defaults.vault.addr` and §5's `vault.auth` say block. The loader accepts the name form and refuses the block form rather than settling it in a diff. Overlaps C9. Issue #31 |

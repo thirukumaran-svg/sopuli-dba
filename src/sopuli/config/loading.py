@@ -14,7 +14,7 @@ has to translate an ``OSError`` or a ``yaml.YAMLError`` into something a user ca
 act on.
 
 The result is **raw data** -- nested dicts and lists. Turning it into typed
-objects, and enforcing the §10 rules, is the next piece of work. Keeping the two
+objects, and enforcing the §10 rules, is :func:`build_config`. Keeping the two
 apart means the file layer can be tested with a two-line document, and the
 schema layer can be tested without touching a filesystem at all
 (``04-testing.md`` §4).
@@ -26,15 +26,20 @@ the ordering is the only thing that makes the refusal mean anything.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from sopuli.config.applications import build_applications
+from sopuli.config.defaults import build_defaults, build_runtime
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.fields import describe, reject_unknown_keys
 from sopuli.config.groups import build_groups
 from sopuli.config.model import Config
 from sopuli.config.permissions import check_permissions
+from sopuli.config.policies import build_policies
+from sopuli.config.profiles import build_profiles
+from sopuli.config.references import check_references
 from sopuli.config.target_sets import build_target_sets
 from sopuli.config.targets import build_targets
 from sopuli.config.vaults import build_vaults
@@ -54,11 +59,6 @@ ENCODING = "utf-8-sig"
 #: Every section name a config file may use at the top level. §10 makes an
 #: unknown key an error rather than a warning, and P3 is explicit that "a typo in
 #: a credential tool must never be silently ignored".
-#:
-#: `policies`, `defaults`, `profiles` and `runtime` are listed but not yet
-#: modelled -- their *interiors* are still raw. Recognising the names is what
-#: stops `polices:` from being silently ignored while the section that reads it
-#: is written.
 TOP_LEVEL_KEYS = (
     "version",
     "runtime",
@@ -130,16 +130,22 @@ def build_config(document: dict[str, Any]) -> Config:
 
     Sections are built estate-first so that the first error a half-finished file
     produces is about the estate it declares rather than about the application
-    bound to it.
+    bound to it. Cross-section names are resolved last, once there is something
+    for every name to point at.
     """
-    return Config(
+    config = Config(
         version=document["version"],
         vaults=build_vaults(document),
         targets=build_targets(document),
         target_sets=build_target_sets(document),
         groups=build_groups(document),
+        policies=build_policies(document),
+        profiles=build_profiles(document),
+        defaults=build_defaults(document),
+        runtime=build_runtime(document),
         applications=build_applications(document),
     )
+    return replace(config, warnings=check_references(config))
 
 
 def _read(path: Path) -> str:

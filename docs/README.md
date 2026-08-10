@@ -54,7 +54,9 @@ targets~~ (C8 — **decided: allowed**), **how the file points at vault auth
 material and the database admin credential (C9, issue #27 — the loader refuses
 those keys rather than inventing them)**, ~~what profiles are for~~ (C10 —
 **decided: run context, not target selection**), composable profiles (C11,
-proposed no), a built-in `interactive` profile (C12, leaning no).
+proposed no), a built-in `interactive` profile (C12, leaning no), **whether `vault:`
+under `defaults`/`profiles` is a name or a block (C13, issue #31 — the loader
+refuses the block form)**.
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
 documented default (P1), grant `SELECT ON SYS.USER$` by default (P2), whether

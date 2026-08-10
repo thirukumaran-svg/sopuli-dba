@@ -40,6 +40,10 @@ targets:
     vault: vault-dev
     dsn: "db-dev.example.com:1521/CDBDEV.pdb.example.com"
 
+policies:
+  app-standard:
+    password: { length: 24, charset: alnum_safe }
+
 accounts:
   - acme_web_user
   - acme_api_user

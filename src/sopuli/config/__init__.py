@@ -14,10 +14,13 @@ filesystem, so keeping it separate is what lets the schema layer be tested with
 a dict and no I/O at all (``04-testing.md`` §4 makes that an architecture
 requirement, not a test convenience).
 
-Still raw, and still to come: ``policies``, ``defaults``, ``profiles`` and
-``runtime``; every cross-section name reference (a target naming a vault, an
-application naming a group or policy); and target-set expansion, which is what
-turns a :class:`~sopuli.config.model.TargetSet` into targets.
+Every section of ``01-configuration.md`` is now modelled, and every name written
+in one section is resolved against the section that declares it. What remains is
+target-set *expansion* -- rendering a :class:`~sopuli.config.model.TargetSet`
+into targets, and the rules that only make sense once it has been done.
+
+Not every finding is fatal. :attr:`~sopuli.config.model.Config.warnings` carries
+the ones §10 asks for as warnings rather than errors.
 
 Nothing here imports click. The loader is meant to be usable without the CLI
 wrapped around it, and errors are plain exceptions that the boundary maps to an
@@ -32,15 +35,25 @@ from sopuli.config.loading import (
     load_document,
 )
 from sopuli.config.model import (
+    AccountPolicy,
     AdminCredential,
     Application,
     Config,
+    ConfigWarning,
+    Defaults,
     DimensionValue,
     ForEach,
     Group,
     InnerDimension,
     OracleOptions,
+    OracleRuntime,
     Override,
+    PasswordPolicy,
+    Policy,
+    Profile,
+    ProfileDb,
+    RotationPolicy,
+    Runtime,
     Safety,
     Target,
     TargetOracle,
@@ -49,23 +62,34 @@ from sopuli.config.model import (
     TargetSet,
     Vault,
     VaultAuth,
+    VerifyPolicy,
 )
 from sopuli.config.permissions import check_permissions
 
 __all__ = [
     "ROOT",
     "SUPPORTED_VERSIONS",
+    "AccountPolicy",
     "AdminCredential",
     "Application",
     "Config",
     "ConfigError",
+    "ConfigWarning",
+    "Defaults",
     "DimensionValue",
     "ForEach",
     "Group",
     "InnerDimension",
     "KeyPath",
     "OracleOptions",
+    "OracleRuntime",
     "Override",
+    "PasswordPolicy",
+    "Policy",
+    "Profile",
+    "ProfileDb",
+    "RotationPolicy",
+    "Runtime",
     "Safety",
     "Target",
     "TargetOracle",
@@ -74,6 +98,7 @@ __all__ = [
     "TargetSet",
     "Vault",
     "VaultAuth",
+    "VerifyPolicy",
     "build_config",
     "check_permissions",
     "load_config",

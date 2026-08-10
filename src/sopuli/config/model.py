@@ -314,6 +314,148 @@ class Group:
     safety: Safety | None = None
 
 
+# -------------------------------------------------------------- policies ---
+
+
+@dataclass(frozen=True)
+class PasswordPolicy:
+    """``policies.*.password`` (§8).
+
+    ``allow`` belongs to ``charset: custom`` and to nothing else. §8's own words
+    for that charset are "you take responsibility", which is why the one rule
+    this layer enforces on it is invariant 11: a `"` in the allowed set is
+    refused rather than escaped, because Oracle quoted identifiers have no escape
+    for it.
+    """
+
+    length: int | None = None
+    charset: str | None = None
+    allow: str | None = None
+    first_char: str | None = None
+    #: ``require: { upper: 1, digit: 1 }`` as sorted pairs. See the module note.
+    require: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class RotationPolicy:
+    """``policies.*.rotation`` -- how a new password replaces the old one (UC-1 §6)."""
+
+    strategy: str | None = None
+    rollover_hours: int | None = None
+    keep_previous: bool | None = None
+    max_age_days: int | None = None
+
+
+@dataclass(frozen=True)
+class VerifyPolicy:
+    """``verify:`` -- how the tool confirms a password works.
+
+    Shared with :class:`Profile`, because §5 makes ``verify.method`` the
+    canonical example of run context: the same estate is verified by login from a
+    laptop and by hash comparison from a scheduler.
+    """
+
+    method: str | None = None
+    lockout_margin: int | None = None
+
+
+@dataclass(frozen=True)
+class AccountPolicy:
+    """``policies.*.account`` -- what the tool may do to the account itself."""
+
+    unlock_if_locked: bool | None = None
+
+
+@dataclass(frozen=True)
+class Policy:
+    """One entry in ``policies:`` -- password rules, rotation, verification."""
+
+    name: str
+    password: PasswordPolicy = field(default_factory=PasswordPolicy)
+    rotation: RotationPolicy = field(default_factory=RotationPolicy)
+    verify: VerifyPolicy = field(default_factory=VerifyPolicy)
+    account: AccountPolicy = field(default_factory=AccountPolicy)
+
+
+# ------------------------------------------------- profiles and the rest ---
+
+
+@dataclass(frozen=True)
+class ProfileDb:
+    """``db:`` inside a profile -- budgets that differ when nobody is waiting."""
+
+    connect_timeout_s: int | None = None
+    query_timeout_s: int | None = None
+
+
+@dataclass(frozen=True)
+class Profile:
+    """One entry in ``profiles:`` -- *where a run is invoked from* (§5).
+
+    Never what it points at. Every field here changes how the tool behaves while
+    it works; none of them changes which targets or accounts are in scope, and
+    the builder refuses the keys that would.
+    """
+
+    name: str
+    vault: str | None = None
+    verify: VerifyPolicy = field(default_factory=VerifyPolicy)
+    rotation_strategy: str | None = None
+    safety: Safety | None = None
+    confirm: bool | None = None
+    output: str | None = None
+    log_level: str | None = None
+    log_file: str | None = None
+    db: ProfileDb = field(default_factory=ProfileDb)
+
+
+@dataclass(frozen=True)
+class Defaults:
+    """``defaults:`` -- precedence layer 5 (P3), the bottom of the config file."""
+
+    vault: str | None = None
+    policy: str | None = None
+    profile: str | None = None
+    safety: Safety | None = None
+
+
+@dataclass(frozen=True)
+class OracleRuntime:
+    """``runtime.oracle`` -- where the Instant Client lives.
+
+    Not a database setting: thick mode is a runtime prerequisite on every
+    platform (P4, D3), so this is about the machine the tool runs on.
+    """
+
+    client_lib_dir: str | None = None
+
+
+@dataclass(frozen=True)
+class Runtime:
+    """``runtime:`` -- how this installation of the tool is set up."""
+
+    oracle: OracleRuntime = field(default_factory=OracleRuntime)
+
+
+@dataclass(frozen=True)
+class ConfigWarning:
+    """Something worth saying that is not worth refusing to run over.
+
+    §10 asks for warnings as well as errors, and they need somewhere to go that
+    is not stderr: the config layer does no I/O (``04-testing.md`` §4), and the
+    JSON contract has a ``diagnostics`` array these become. Same fields as
+    :class:`~sopuli.config.errors.ConfigError` so both render identically.
+    """
+
+    message: str
+    at: str
+    hint: str | None = None
+
+    def __str__(self) -> str:
+        rendered = f"{self.at}: {self.message}" if self.at else self.message
+        return f"{rendered}\n  hint: {self.hint}" if self.hint else rendered
+
+
 @dataclass(frozen=True)
 class Config:
     """One validated config file."""
@@ -324,3 +466,9 @@ class Config:
     targets: tuple[Target, ...] = ()
     target_sets: tuple[TargetSet, ...] = ()
     groups: tuple[Group, ...] = ()
+    policies: tuple[Policy, ...] = ()
+    profiles: tuple[Profile, ...] = ()
+    defaults: Defaults = field(default_factory=Defaults)
+    runtime: Runtime = field(default_factory=Runtime)
+    #: Non-fatal findings, in the order they were made. Empty for a clean file.
+    warnings: tuple[ConfigWarning, ...] = ()

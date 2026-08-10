@@ -145,17 +145,30 @@ def test_the_worked_example_builds_the_estate_it_describes() -> None:
     assert config.groups[1].match == (("env", "prod"), ("target_set", "appdb"))
 
 
-def test_the_two_application_example_declares_no_estate() -> None:
-    """§3 is a fragment showing only `applications:`. Building it must not
-    invent an estate to go with it -- a config that declares no targets is legal,
-    and the commands that need some say so themselves."""
-    block = next(block for _, block in _blocks() if "monitoring" in block)
+def test_the_two_application_example_sits_on_the_estate_from_2() -> None:
+    """§3 says of moving to `applications:` that "nothing else changes".
 
-    config = build_config({"version": 1, **parse_yaml(block)})
+    So the fragment is read the way the document means it: §2's file with its
+    binding replaced. That is also the only way its references resolve --
+    `group: prod-pdbs` and `policy: app-standard` are declared in §2 -- which
+    makes this the test that the reference's own two examples fit together.
+    """
+    estate = {
+        key: value
+        for key, value in parse_yaml(next(b for _, b in _blocks() if "runtime:" in b)).items()
+        if key not in ("accounts", "secret_template", "policy", "overrides")
+    }
+    fragment = parse_yaml(next(block for _, block in _blocks() if "monitoring" in block))
 
-    assert config.targets == ()
-    assert config.vaults == ()
-    assert len(config.applications) == 3
+    config = build_config({**estate, **fragment})
+
+    assert [application.name for application in config.applications] == [
+        "acme",
+        "reporting",
+        "monitoring",
+    ]
+    assert [group.name for group in config.groups] == ["dev-pdbs", "prod-pdbs"]
+    assert config.warnings == ()
 
 
 def test_the_skeleton_is_illustrative_rather_than_loadable() -> None:
