@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/futville/sopuli-dba/compare/v0.5.0...v0.6.0) (2026-08-10)
+
+
+### Features
+
+* model policies, profiles, defaults and runtime, and resolve every name ([#32](https://github.com/futville/sopuli-dba/issues/32)) ([d55ab8b](https://github.com/futville/sopuli-dba/commit/d55ab8b3b8ca3dcfe736f6e38f15c7cf5ce046b0))
+
 ## [0.5.0](https://github.com/futville/sopuli-dba/compare/v0.4.0...v0.5.0) (2026-08-10)
 
 
