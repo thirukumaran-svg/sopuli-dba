@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/futville/sopuli-dba/compare/v0.3.0...v0.4.0) (2026-08-10)
+
+
+### Features
+
+* model and validate the application binding ([#25](https://github.com/futville/sopuli-dba/issues/25)) ([34f6064](https://github.com/futville/sopuli-dba/commit/34f60644614dbcc5ab0edd41b120ccfc30b38c09))
+
 ## [0.3.0](https://github.com/futville/sopuli-dba/compare/v0.2.0...v0.3.0) (2026-08-09)
 
 
