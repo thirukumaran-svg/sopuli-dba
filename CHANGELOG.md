@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/futville/sopuli-dba/compare/v0.4.0...v0.5.0) (2026-08-10)
+
+
+### Features
+
+* model and validate the estate sections ([#28](https://github.com/futville/sopuli-dba/issues/28)) ([9c9be8a](https://github.com/futville/sopuli-dba/commit/9c9be8a8e581b8f1f38c2d6ce749fcb35c88aeff))
+
 ## [0.4.0](https://github.com/futville/sopuli-dba/compare/v0.3.0...v0.4.0) (2026-08-10)
 
 
