@@ -72,6 +72,7 @@ from sopuli.config.model import (
     VerifyPolicy,
 )
 from sopuli.config.permissions import check_permissions
+from sopuli.config.secret_refs import SecretRef, parse_secret_ref
 
 __all__ = [
     "CONFIG_ENV",
@@ -100,6 +101,7 @@ __all__ = [
     "RotationPolicy",
     "Runtime",
     "Safety",
+    "SecretRef",
     "Target",
     "TargetOracle",
     "TargetPatch",
@@ -118,5 +120,6 @@ __all__ = [
     "load_document",
     "load_documents",
     "merge_documents",
+    "parse_secret_ref",
     "search_path",
 ]

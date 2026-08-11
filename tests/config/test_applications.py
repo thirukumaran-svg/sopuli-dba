@@ -106,6 +106,42 @@ def test_an_application_may_omit_a_ref_entirely() -> None:
     assert only(inline()).secret_ref is None
 
 
+@pytest.mark.parametrize("key", ["secret", "secret_template"])
+def test_a_malformed_ref_is_refused_while_the_file_is_being_read(key: str) -> None:
+    """Both fields hold a §7 ref, so both are parsed here rather than at the
+    first rotation -- §1 calls this binding the safety-critical part, and the
+    failure at the far end of it is a password written where the application
+    does not read it."""
+    with pytest.raises(ConfigError) as caught:
+        build_applications(named(**{key: "tenants/beta#DB_CREDENTIALS/"}))
+
+    rendered = str(caught.value)
+    assert "empty pointer segment" in rendered
+    assert f"applications[0].{key}" in rendered
+
+
+def test_a_malformed_ref_in_an_override_is_refused_too() -> None:
+    """The override path is where a hand-edited exception lands, which makes it
+    likelier to be malformed than the entry it patches, not less."""
+    with pytest.raises(ConfigError) as caught:
+        build_applications(
+            named(
+                secret_template=TEMPLATE,
+                overrides=[{"where": {"env": "dev"}, "secret": "creds#password@versio=7"}],
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "unknown qualifier 'versio'" in rendered
+    assert "applications[0].overrides[0].secret" in rendered
+
+
+def test_a_templated_ref_is_accepted_with_its_tokens_intact() -> None:
+    """A template parses as the ref it will expand into. If it did not, §2's own
+    worked example would be unloadable."""
+    assert only(inline(secret_template=TEMPLATE)).secret_ref == TEMPLATE
+
+
 # ------------------------------------------- the account distinctness rule ---
 
 

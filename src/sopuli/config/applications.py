@@ -33,6 +33,7 @@ from sopuli.config.fields import (
     string_list,
 )
 from sopuli.config.model import Application, OracleOptions, Override, TargetSelector
+from sopuli.config.secret_refs import parse_secret_ref
 
 #: What the inline form may carry at the top level -- the four keys §1's skeleton
 #: lists, plus `secret` as the documented alternative to `secret_template` (§3).
@@ -193,7 +194,27 @@ def _build_secret(entry: dict[str, Any], *, at: KeyPath) -> tuple[str | None, st
             at=at,
             hint="`secret` is a literal ref; `secret_template` expands per account and label",
         )
+    _check_ref_syntax(secret, secret_template, at=at)
     return secret, secret_template
+
+
+def _check_ref_syntax(secret: str | None, template: str | None, *, at: KeyPath) -> None:
+    """Both fields hold a §7 ref, so both are parsed while the file is being read.
+
+    A template parses as the ref it will expand into -- the punctuation that
+    gives a ref its shape is literal, and the ``{tokens}`` sit inside the parts
+    (:mod:`sopuli.config.secret_refs`). So a malformed ref is caught here rather
+    than at the first rotation, which is worth the parse: §1 calls this binding
+    the safety-critical part, and the failure at the far end of it is a password
+    written where the application does not read it.
+
+    The parse result is discarded. Resolution needs an account and a target to
+    expand the tokens against, and re-parsing there costs nothing next to
+    keeping a half-resolved object on the model.
+    """
+    for key, value in (("secret", secret), ("secret_template", template)):
+        if value is not None:
+            parse_secret_ref(value, at=at.key(key))
 
 
 def _require_distinguishable_accounts(application: Application, *, at: KeyPath) -> None:
@@ -288,6 +309,7 @@ def _build_override(raw: Any, *, at: KeyPath) -> Override:
             "an override sets either `secret:` or `secret_template:`, not both",
             at=at,
         )
+    _check_ref_syntax(secret, secret_template, at=at)
 
     return Override(
         where=label_selector(patch["where"], at=at.key("where")),

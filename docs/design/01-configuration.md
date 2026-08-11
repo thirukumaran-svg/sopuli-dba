@@ -648,6 +648,34 @@ One string addresses a value in any backend:
 | `apps/orders/prod/db/creds#password@version=7` | pinned version (read-only contexts) |
 | `apps/orders/prod/db/creds#password@stage=PENDING` | staging label (OCI native, emulated elsewhere) |
 
+### Parsing it
+
+Implemented in `sopuli/config/secret_refs.py`, and parsed when the file is read
+rather than at the first rotation — §1 calls the account→secret binding the
+safety-critical part, and the failure at the far end of a malformed ref is a
+password written where the application does not read it.
+
+Three ambiguities have to be settled to parse the grammar at all. Each is
+settled the way that keeps a realistic ref working:
+
+| Written | Read as | Why |
+|---|---|---|
+| `vault-dev:path`, `vault:x` | vault prefix | a `:` **before the first `/` or `#`** |
+| `tenants/beta#DB:extra` | part of the field | otherwise this names a vault called `tenants/beta#DB` |
+| `apps/user@example.com/db` | part of the path | an `@` starts a qualifier only when what follows contains `=` |
+| `creds#password@versio=7` | **error** | a misspelt qualifier would otherwise become field text and address a different secret |
+| `#DB_CREDENTIALS/a/b` | field `DB_CREDENTIALS`, pointer `/a/b` | a field name is one segment; the rest addresses into its document |
+
+A pointer is an RFC 6901 pointer, so `a~1b` is the single key `a/b` and `~0` is a
+literal `~`. An empty segment (`#DB/`, `#DB/a//b`) is refused: the RFC allows a
+key named nothing, and a credential store has no such key, so it is a stray `/`.
+
+Only `version` and `stage` are qualifiers, and only one may appear — a pinned
+version and a stage select the same secret two different ways and nothing says
+which would win. Their *values* are carried as written: version numbering and
+the stage vocabulary belong to the backend, and P2 puts per-backend validation
+behind the store interface.
+
 **Templates** in `secret_template` expand from labels and built-ins:
 
 | Token | Meaning |
@@ -659,6 +687,13 @@ One string addresses a value in any backend:
 | `{container}` | Oracle PDB / container name |
 | `{application}` | application entry name (empty in the inline form) |
 | `{<label>}` | any label on the target, e.g. `{tenant}` |
+
+A template parses as the ref it will expand into: the punctuation that gives a
+ref its shape is literal, and the tokens sit inside the parts. So
+`tenants/{tenant}#DB_CREDENTIALS/{account}` is checked structurally at load. The
+one thing that cannot be checked early is a token whose *value* turns out to
+contain `:`, `#` or `/` — that changes the structure, and the labels are not
+known until target expansion.
 
 Rule: a template must resolve to **one** secret per (account × logical scope). If
 an account exists in eleven PDBs and the template mentions no distinguishing
@@ -807,6 +842,8 @@ error message for a file this long.
   renames)
 - an unresolved `{placeholder}` anywhere → error, never an empty string. So is an
   unbalanced or empty one, because there is no escape syntax to have meant
+- a `secret` / `secret_template` that is not a well-formed ref → error (§7),
+  wherever it is written, including inside an `overrides` entry
 - a `for_each` variable named after the dimension it sits under → error (§4);
   `{env}` with two meanings resolves to one of them and silently decides a
   rendered secret path
@@ -867,3 +904,4 @@ error message for a file this long.
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
 | C13 | Is `vault:` under `defaults:` and in a profile a store *name* or a block? | unresolved — §3 and `SOPULI_VAULT` say name; P3's `defaults.vault.addr` and §5's `vault.auth` say block. The loader accepts the name form and refuses the block form rather than settling it in a diff. Overlaps C9. Issue #31 |
+| C14 | What is the `@stage=` vocabulary, and who owns it? | unresolved — §7 writes one value, `PENDING`, and calls staging "OCI native, emulated elsewhere". UC-1 §2 names the states `current` / `pending` / `previous` as vault *fields*, in lower case. If the tool emulates staging on a store without it, those two spellings have to be reconciled and the set closed, or a typo selects a stage that silently does not exist. The parser carries the value as written rather than settling it, the same way `auth.method` is left to P2. Issue #40 |
