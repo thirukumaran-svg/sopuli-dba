@@ -243,6 +243,18 @@ First match wins; `--config` may be repeated to layer files:
    / `%APPDATA%\sopuli\config.yaml` (Windows)
 5. `/etc/sopuli/config.yaml` (Linux/macOS) / `%PROGRAMDATA%\sopuli\config.yaml` (Windows)
 
+**A path that was named behaves differently from one that was searched.** Steps 1
+and 2 name a file, and a named file that is missing is an error — never a reason
+to try step 3. A CI job whose `SOPULI_CONFIG` has a typo must not quietly run
+against the system config instead; that is the whole estate read from a file
+nobody chose. Steps 3 to 5 are searched, so an absent one is skipped, which is
+what "first match wins" means. An empty `SOPULI_CONFIG` counts as unset, and a
+Windows location whose variable is unset is left out rather than guessed at.
+
+Finding nothing at all is an error listing everywhere it looked. A command with
+no config has no whitelist, and invariant 5 makes that the one thing it cannot
+proceed without. Implemented in `sopuli/config/discovery.py`.
+
 Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.

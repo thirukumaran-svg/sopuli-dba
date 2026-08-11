@@ -97,7 +97,25 @@ jobs:
       # "main is always green -- tests pass, *and the tool works*". A broken
       # console-script entry point or a missing package in the wheel passes every
       # unit test, because they import sopuli rather than run it.
+      #
+      # The config file is written here rather than committed to the repository:
+      # a `sopuli.yaml` in the checkout is step 3 of P1's search path, so it
+      # would be found by anyone running the tool in a clone and would make the
+      # discovery tests depend on it existing.
+      #
+      # Not $RUNNER_TEMP. P4 refuses a config file anyone else can reach, and on
+      # a Windows runner $RUNNER_TEMP carries an inherited grant to
+      # BUILTIN\Users -- exactly the tampering risk the rule is about, since
+      # anyone who can write the file can repoint `secret_template` at a path
+      # they control. $TEMP is the user's own temp directory, which is where
+      # pytest's tmp_path already lives, so its ACL is the one the Windows test
+      # cells depend on today. chmod covers the other platform, where the
+      # runner's umask leaves the file group-readable.
       - name: the installed binary runs
         run: |
           sopuli --version
-          sopuli config show --output json > /dev/null
+          config="${TEMP:-/tmp}/sopuli-ci.yaml"
+          printf 'version: 1\n' > "$config"
+          chmod 600 "$config"
+          sopuli config show --config "$config" > /dev/null
+          sopuli config show --config "$config" --output json > /dev/null

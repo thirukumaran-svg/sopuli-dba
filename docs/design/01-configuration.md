@@ -735,7 +735,18 @@ exit 2
 ```
 
 Multiple `--config` files layer left to right (deep merge for maps, replace for
-lists). A `safety:` block may appear under `defaults`, a target, a group, or a
+lists). The asymmetry is deliberate: a mapping is a set of named settings, so an
+overlay that sets `vaults.vault-dev.addr` must not delete `vaults.vault-prod`,
+while a list is a whole answer — merging two `accounts:` lists would produce a
+whitelist that appears in no file (invariant 5).
+
+Each layer is a config file in its own right, `version:` included, and is checked
+on its own — permissions, encoding, parse, version — before anything is merged.
+So a file-level error still names its file. A *validation* error over several
+layers carries its key path but no filename: the value may have been written in
+one file and overridden in another, and naming either would be a guess.
+
+A `safety:` block may appear under `defaults`, a target, a group, or a
 profile, and unlike everything else these do **not** follow last-one-wins: the
 resolved value is the *safest* of all layers — lowest `max_targets`, union of
 `confirm_environments`, `readonly: true` if any layer sets it.

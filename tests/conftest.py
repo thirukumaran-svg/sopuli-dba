@@ -1,4 +1,11 @@
-"""Shared fixtures for the config tests."""
+"""Fixtures shared by the whole suite.
+
+`write_config` lives here rather than under `tests/config/` because the CLI
+tests need it too: every command now discovers and loads a config file, so a
+test that does not supply one is at the mercy of whatever `./sopuli.yaml` or
+`~/.config/sopuli/config.yaml` happens to exist on the machine running it.
+Passing `--config` at an explicit path is what keeps the suite deterministic.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +17,10 @@ import pytest
 
 #: Writes a config file and returns its path.
 WriteConfig = Callable[[str], Path]
+
+#: The smallest file the loader accepts. Enough for any test whose subject is
+#: the command rather than the configuration.
+MINIMAL_CONFIG = "version: 1\n"
 
 
 @pytest.fixture
@@ -31,3 +42,9 @@ def write_config(tmp_path: Path) -> WriteConfig:
         return path
 
     return write
+
+
+@pytest.fixture
+def config_file(write_config: WriteConfig) -> Path:
+    """A valid config file, for tests that need one to exist but do not care."""
+    return write_config(MINIMAL_CONFIG)

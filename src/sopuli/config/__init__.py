@@ -28,13 +28,17 @@ wrapped around it, and errors are plain exceptions that the boundary maps to an
 exit code.
 """
 
+from sopuli.config.discovery import CONFIG_ENV, discover, search_path
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at, expand_targets
 from sopuli.config.loading import (
     SUPPORTED_VERSIONS,
     build_config,
     load_config,
+    load_config_from,
     load_document,
+    load_documents,
+    merge_documents,
 )
 from sopuli.config.model import (
     AccountPolicy,
@@ -70,6 +74,7 @@ from sopuli.config.model import (
 from sopuli.config.permissions import check_permissions
 
 __all__ = [
+    "CONFIG_ENV",
     "ROOT",
     "SUPPORTED_VERSIONS",
     "AccountPolicy",
@@ -106,7 +111,12 @@ __all__ = [
     "build_config",
     "check_permissions",
     "declared_at",
+    "discover",
     "expand_targets",
     "load_config",
+    "load_config_from",
     "load_document",
+    "load_documents",
+    "merge_documents",
+    "search_path",
 ]

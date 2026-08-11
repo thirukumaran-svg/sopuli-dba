@@ -23,12 +23,13 @@ ever looks like a credential.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any, TypeVar
 
 import click
 
-from sopuli.config import ConfigError
+from sopuli.config import Config, ConfigError, discover, load_config_from
 from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
 from sopuli.output.document import RunDocument, Summary
@@ -54,6 +55,13 @@ def common_options(func: F) -> F:
     setting may only move toward safe. The two are listed together here so that
     the difference is visible rather than assumed.
     """
+    config = click.option(
+        "--config",
+        "config_paths",
+        multiple=True,
+        type=click.Path(path_type=Path),
+        help="Config file. Repeat to layer files left to right.",
+    )
     dry_run = click.option(
         "--dry-run",
         is_flag=True,
@@ -76,7 +84,7 @@ def common_options(func: F) -> F:
         show_default=True,
         help="Colour in text output. auto follows the terminal; NO_COLOR disables it.",
     )
-    return color(output(dry_run(func)))
+    return color(output(dry_run(config(func))))
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
@@ -92,31 +100,103 @@ def config_group() -> None:
 
 @config_group.command("show")
 @common_options
-def config_show(output_mode: str, dry_run: bool, color_choice: str) -> None:
+def config_show(
+    config_paths: tuple[Path, ...], output_mode: str, dry_run: bool, color_choice: str
+) -> None:
     """Show the effective configuration.
 
-    Placeholder: there is no configuration loader yet (01-configuration.md).
-    It reports an empty run so that the routing, the exit code and both output
-    modes are exercised end to end.
+    Offline in the strongest sense: it finds the file, validates it, and expands
+    the estate, without opening a socket to a vault or a database. What it
+    prints so far is a summary -- which files were read and what they declare.
+    Rendering the sections themselves is the next change.
+
+    A bad config file raises out of here rather than being caught and reported
+    as a run: the boundary in :func:`main` already maps it to exit 2, and
+    whether ``--output json`` should emit a run document for a usage error is
+    an open question (J7, issue #8) that this command must not answer by
+    accident.
     """
     emitter = Emitter(
         mode=OutputMode(output_mode),
         color_choice=ColorChoice(color_choice),
     )
     document = RunDocument.start("config.show", dry_run=dry_run)
-    document.finish(ExitCode.SUCCESS, Summary(total=0, ok=0, changed=0, failed=0))
 
-    # The tool's own prose stays ASCII by convention, even though the streams
-    # are UTF-8 now (sopuli.output.stream): decoration should be opt-in and
-    # deliberate, not an em dash that arrived in a docstring by accident.
-    # Anything a user supplies -- an account name, an ORA- message -- passes
-    # through unchanged.
-    text = (
-        "No configuration loaded.\n"
-        "Config file discovery is not implemented yet - see "
-        "docs/design/01-configuration.md."
+    paths = discover(config_paths)
+    config = load_config_from(paths)
+
+    targets = len(config.expanded_targets)
+    document.finish(
+        ExitCode.SUCCESS,
+        Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    emitter.emit(document, text)
+    emitter.emit(document, describe_config(paths, config))
+
+
+def describe_config(paths: Sequence[Path], config: Config) -> str:
+    """The text summary: where the config came from, and what it declares.
+
+    The tool's own prose stays ASCII by convention, even though the streams are
+    UTF-8 now (``sopuli.output.stream``): decoration should be opt-in and
+    deliberate, not an em dash that arrived in a docstring by accident. Anything
+    a user supplies -- a target name, a warning's key path -- passes through
+    unchanged.
+    """
+    lines = [f"config: {paths[0]}"]
+    lines.extend(f"        {path} (layered)" for path in paths[1:])
+    lines.append("")
+    lines.extend(_estate_summary(config))
+    lines.extend(_warning_summary(config))
+    lines.append("")
+    lines.append("This is a summary; the sections themselves are not rendered yet.")
+    return "\n".join(lines)
+
+
+def _estate_summary(config: Config) -> list[str]:
+    """What the file declares, counted.
+
+    The generated count is worth a line of its own because it is the number
+    nobody can work out by reading: `01-configuration.md` §4 says generation is
+    invisible until it goes wrong, and one target set is 35 targets or 34.
+    """
+    generated = sum(1 for target in config.expanded_targets if target.target_set is not None)
+    explicit = len(config.expanded_targets) - generated
+
+    targets = _count(len(config.expanded_targets), "target")
+    if config.target_sets:
+        sets = _count(len(config.target_sets), "target set")
+        targets = f"{targets} ({explicit} explicit, {generated} from {sets})"
+
+    declared = [
+        _count(len(config.vaults), "vault"),
+        _count(len(config.groups), "group"),
+        _count(len(config.policies), "policy", "policies"),
+        _count(len(config.profiles), "profile"),
+        _count(len(config.applications), "application"),
+    ]
+    return [targets, ", ".join(declared)]
+
+
+def _warning_summary(config: Config) -> list[str]:
+    """§10's warnings, in full.
+
+    A count alone would be worse than nothing: these are the findings the config
+    layer decided were not worth refusing to run over, which makes this the only
+    place anybody will read them.
+    """
+    if not config.warnings:
+        return []
+    return ["", f"{_count(len(config.warnings), 'warning')}:", *_indent(config.warnings)]
+
+
+def _indent(warnings: Sequence[Any]) -> list[str]:
+    return [f"  {line}" for warning in warnings for line in str(warning).splitlines()]
+
+
+def _count(number: int, noun: str, plural: str | None = None) -> str:
+    if number == 1:
+        return f"1 {noun}"
+    return f"{number} {plural if plural is not None else noun + 's'}"
 
 
 def main() -> None:

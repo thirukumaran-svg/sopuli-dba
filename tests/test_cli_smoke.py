@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import click
@@ -26,6 +27,18 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+@pytest.fixture
+def show(config_file: Path) -> list[str]:
+    """``config show`` against a config file that definitely exists.
+
+    Every command discovers a config now, so a bare ``config show`` in a test
+    would search the working directory and the user's config directory and
+    answer differently on the machine of anyone who happens to have one. Naming
+    the file is what keeps these tests about the CLI.
+    """
+    return ["config", "show", "--config", str(config_file)]
+
+
 def test_version_prints_package_version(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["--version"])
     assert result.exit_code == ExitCode.SUCCESS
@@ -38,13 +51,13 @@ def test_help_lists_the_config_noun(runner: CliRunner) -> None:
     assert "config" in result.output
 
 
-def test_config_show_succeeds_in_text_mode(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["config", "show"])
+def test_config_show_succeeds_in_text_mode(runner: CliRunner, show: list[str]) -> None:
+    result = runner.invoke(cli, show)
     assert result.exit_code == ExitCode.SUCCESS
     assert result.output.strip()
 
 
-def test_human_output_is_ascii(runner: CliRunner) -> None:
+def test_human_output_is_ascii(runner: CliRunner, show: list[str], config_file: Path) -> None:
     """The tool's own prose stays ASCII.
 
     This started as a workaround for the stream encoding bug and outlived it.
@@ -55,10 +68,16 @@ def test_human_output_is_ascii(runner: CliRunner) -> None:
     that arrived in a message because it looked nice is not that choice.
 
     User-supplied text -- account names, ORA- messages -- is exempt: it passes
-    through as it came, which is exactly what the encoding fix makes safe.
+    through as it came, which is exactly what the encoding fix makes safe. The
+    config path is exactly that, and it is now printed: it comes from
+    ``tmp_path``, so on a machine whose username is not ASCII this would fail on
+    text the rule does not cover. Removing it first is what keeps the assertion
+    about the prose around it.
     """
-    result = runner.invoke(cli, ["config", "show"])
-    result.output.encode("ascii")  # raises UnicodeEncodeError if it is not
+    result = runner.invoke(cli, show)
+
+    prose = result.output.replace(str(config_file), "")
+    prose.encode("ascii")  # raises UnicodeEncodeError if it is not
 
 
 def test_all_help_text_is_ascii(runner: CliRunner) -> None:
@@ -79,7 +98,7 @@ def test_all_help_text_is_ascii(runner: CliRunner) -> None:
 
 
 def test_main_configures_the_streams_before_dispatching(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, show: list[str]
 ) -> None:
     """The encoding fix has to run at the process boundary, not inside a verb.
 
@@ -90,7 +109,7 @@ def test_main_configures_the_streams_before_dispatching(
     """
     calls: list[str] = []
     monkeypatch.setattr(cli_module, "configure_streams", lambda: calls.append("streams"))
-    monkeypatch.setattr(sys, "argv", ["sopuli", "config", "show"])
+    monkeypatch.setattr(sys, "argv", ["sopuli", *show])
 
     with pytest.raises(SystemExit) as exit_info:
         cli_module.main()
@@ -100,59 +119,54 @@ def test_main_configures_the_streams_before_dispatching(
 
 
 def test_a_config_error_exits_two_and_keeps_its_location(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
 ) -> None:
     """P5 puts config validation on 2 with usage errors, not on 1 with failures.
 
     A scheduler branches on that: "fix your file" and "something broke" call for
-    different people. The boundary is monkeypatched rather than driven through a
-    real command because no command loads config yet -- what is under test is the
-    mapping from exception to exit code, and that exists now.
+    different people. Driven through a real command against a real bad file
+    rather than a monkeypatched boundary, now that `config show` loads one: what
+    matters is that a file the loader rejects reaches the user as a located
+    message and exit 2, with no traceback anywhere in the path.
     """
-
-    def explode(**_: object) -> None:
-        raise ConfigError(
-            "unsupported config version 4",
-            source=Path("sopuli.yaml"),
-            line=1,
-            hint="this build understands: 1",
-        )
-
-    monkeypatch.setattr(cli_module.cli, "main", explode)
-    monkeypatch.setattr(sys, "argv", ["sopuli", "config", "show"])
+    path = write_config("version: 4\n")
+    monkeypatch.setattr(sys, "argv", ["sopuli", "config", "show", "--config", str(path)])
 
     with pytest.raises(SystemExit) as exit_info:
         cli_module.main()
 
     assert exit_info.value.code == ExitCode.USAGE
     captured = capsys.readouterr()
-    assert "sopuli.yaml:1: unsupported config version 4" in captured.err
+    assert f"{path}:" in captured.err
+    assert "unsupported config version 4" in captured.err
     assert "hint: this build understands: 1" in captured.err
     assert "Traceback" not in captured.err
 
 
-def test_config_show_succeeds_in_json_mode(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["config", "show", "--output", "json"])
+def test_config_show_succeeds_in_json_mode(runner: CliRunner, show: list[str]) -> None:
+    result = runner.invoke(cli, [*show, "--output", "json"])
     assert result.exit_code == ExitCode.SUCCESS
     document = json.loads(result.output)
     assert document["command"] == "config.show"
     assert document["exit_code"] == ExitCode.SUCCESS
 
 
-def test_json_mode_emits_only_the_document(runner: CliRunner) -> None:
+def test_json_mode_emits_only_the_document(runner: CliRunner, show: list[str]) -> None:
     """Human text must not leak into the machine-readable stream."""
-    result = runner.invoke(cli, ["config", "show", "--output", "json"])
+    result = runner.invoke(cli, [*show, "--output", "json"])
     json.loads(result.output)  # raises if anything else was printed alongside
 
 
-def test_global_flag_works_after_the_verb(runner: CliRunner) -> None:
+def test_global_flag_works_after_the_verb(runner: CliRunner, show: list[str]) -> None:
     """The order a DBA actually types has to work.
 
     This is the reason common_options exists rather than options on the group:
     a group-level option is only accepted *before* the subcommand. Pinned so a
     later refactor cannot quietly move the flag back onto the group.
     """
-    result = runner.invoke(cli, ["config", "show", "--output", "json"])
+    result = runner.invoke(cli, [*show, "--output", "json"])
     assert result.exit_code == ExitCode.SUCCESS
     json.loads(result.output)
 
@@ -168,8 +182,8 @@ def test_global_flag_before_the_noun_is_a_clean_usage_error(runner: CliRunner) -
     assert "Traceback" not in result.output
 
 
-def test_dry_run_is_reflected_in_the_document(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["config", "show", "--dry-run", "--output", "json"])
+def test_dry_run_is_reflected_in_the_document(runner: CliRunner, show: list[str]) -> None:
+    result = runner.invoke(cli, [*show, "--dry-run", "--output", "json"])
     assert result.exit_code == ExitCode.SUCCESS
     assert json.loads(result.output)["invocation"]["dry_run"] is True
 
@@ -186,23 +200,23 @@ def test_unknown_verb_is_a_usage_error(runner: CliRunner) -> None:
     assert "Traceback" not in result.output
 
 
-def test_unknown_output_mode_is_a_usage_error(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["config", "show", "--output", "yaml"])
+def test_unknown_output_mode_is_a_usage_error(runner: CliRunner, show: list[str]) -> None:
+    result = runner.invoke(cli, [*show, "--output", "yaml"])
     assert result.exit_code == ExitCode.USAGE
 
 
 @pytest.mark.parametrize("choice", ["auto", "always", "never"])
-def test_every_color_choice_is_accepted(runner: CliRunner, choice: str) -> None:
-    result = runner.invoke(cli, ["config", "show", "--color", choice])
+def test_every_color_choice_is_accepted(runner: CliRunner, choice: str, show: list[str]) -> None:
+    result = runner.invoke(cli, [*show, "--color", choice])
     assert result.exit_code == ExitCode.SUCCESS
 
 
-def test_unknown_color_choice_is_a_usage_error(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["config", "show", "--color", "beige"])
+def test_unknown_color_choice_is_a_usage_error(runner: CliRunner, show: list[str]) -> None:
+    result = runner.invoke(cli, [*show, "--color", "beige"])
     assert result.exit_code == ExitCode.USAGE
 
 
-def test_color_always_does_not_reach_the_json_document(runner: CliRunner) -> None:
+def test_color_always_does_not_reach_the_json_document(runner: CliRunner, show: list[str]) -> None:
     """Invariant 12: the machine stream is a contract.
 
     ``CliRunner`` gives a non-TTY stream, so plain autodetection would pass this
@@ -210,19 +224,138 @@ def test_color_always_does_not_reach_the_json_document(runner: CliRunner) -> Non
     assertion. If an escape sequence ever leaks in, ``json.loads`` fails here
     rather than in someone's `jq` pipeline.
     """
-    result = runner.invoke(cli, ["config", "show", "--output", "json", "--color", "always"])
+    result = runner.invoke(cli, [*show, "--output", "json", "--color", "always"])
 
     assert result.exit_code == ExitCode.SUCCESS
     assert "\x1b" not in result.output
     json.loads(result.output)
 
 
-def test_text_output_is_not_coloured_when_piped(runner: CliRunner) -> None:
+def test_text_output_is_not_coloured_when_piped(runner: CliRunner, show: list[str]) -> None:
     """The default path for a scheduled run: redirected, so no decoration."""
-    result = runner.invoke(cli, ["config", "show"])
+    result = runner.invoke(cli, show)
 
     assert result.exit_code == ExitCode.SUCCESS
     assert "\x1b" not in result.output
+
+
+# ------------------------------------------------------------ config show ---
+
+ESTATE = """
+version: 1
+vaults:
+  vault-dev: { type: hashicorp, addr: "https://v.example.com" }
+targets:
+  - name: cdb-root-dev
+    type: oracle
+    dsn: db-dev.example.com:1521/CDBDEV.pdb.example.com
+target_sets:
+  appdb:
+    type: oracle
+    name: "appdb-{env}-{tenant}"
+    dsn: "{host}:1521/{tenant}.pdb.example.com"
+    environment: "{env}"
+    for_each:
+      env:
+        dev:
+          host: db-dev.example.com
+          tenant: [alpha, beta]
+"""
+
+
+def test_config_show_names_the_file_it_read(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """The first question anybody asks of a tool that reads a config: which one?"""
+    path = write_config(ESTATE)
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path)])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert f"config: {path}" in result.output
+
+
+def test_a_non_ascii_config_path_reaches_the_output_intact(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    """The other side of the ASCII rule, made real rather than assumed.
+
+    The tool's own prose is ASCII; anything a user supplies passes through as it
+    came, which is what the UTF-8 stream fix (#12) makes safe. A path is the
+    first piece of user-supplied text any command prints, and "Muller" is a
+    perfectly ordinary Windows username.
+    """
+    home = tmp_path / "Müller"
+    home.mkdir()
+    path = _write(home / "sopuli.yaml", "version: 1\n")
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path)])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert str(path) in result.output
+
+
+def test_config_show_counts_the_expanded_estate(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """One explicit target plus a set over two tenants. The generated count is
+    the number nobody can work out by reading the file."""
+    result = runner.invoke(cli, ["config", "show", "--config", str(write_config(ESTATE))])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "3 targets (1 explicit, 2 from 1 target set)" in result.output
+    assert "1 vault" in result.output
+
+
+def test_config_show_prints_warnings_in_full(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """§10's warnings have nowhere else to go: they are the findings the loader
+    decided were not worth refusing to run over, so a count alone would bury
+    them."""
+    path = write_config(f"{ESTATE}\nprofiles:\n  dev: {{ output: json }}\n")
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path)])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "1 warning:" in result.output
+    assert "named after an environment" in result.output
+
+
+def test_repeated_config_options_are_layered_in_order(runner: CliRunner, tmp_path: Path) -> None:
+    """§9: several `--config` files layer left to right, and the output has to
+    say so -- an estate assembled from two files is otherwise indistinguishable
+    from one file that says something surprising."""
+    base = _write(tmp_path / "base.yaml", ESTATE)
+    overlay = _write(tmp_path / "overlay.yaml", "version: 1\nvaults:\n  extra: { type: file }\n")
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(base), "--config", str(overlay)])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert f"config: {base}" in result.output
+    assert f"{overlay} (layered)" in result.output
+    assert "2 vaults" in result.output
+
+
+def test_a_named_config_that_does_not_exist_is_a_usage_error(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    """Never skipped in favour of the next candidate: a CI job whose path has a
+    typo must not quietly run against the system config instead."""
+    missing = tmp_path / "nope.yaml"
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(missing)], standalone_mode=False)
+
+    assert isinstance(result.exception, ConfigError)
+    assert "named by --config does not exist" in str(result.exception)
+    assert result.exception.exit_code == ExitCode.USAGE
+
+
+def _write(path: Path, text: str) -> Path:
+    path.write_text(text, encoding="utf-8")
+    if sys.platform != "win32":
+        path.chmod(0o600)
+    return path
 
 
 # --------------------------------------------------------------- invariant 1 ---

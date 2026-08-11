@@ -1,6 +1,8 @@
 """Getting a config file into memory as raw data, safely and in one place.
 
-This is the whole file layer, in the order the steps have to happen:
+Which file, and whether there are several, is
+:mod:`sopuli.config.discovery`. This is what happens to each one, in the order
+the steps have to happen:
 
 1. the file exists
 2. nobody else can get at it (P4 -- see :mod:`sopuli.config.permissions`)
@@ -26,12 +28,14 @@ the ordering is the only thing that makes the refusal mean anything.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from sopuli.config.applications import build_applications
 from sopuli.config.defaults import build_defaults, build_runtime
+from sopuli.config.discovery import CONFIG_ENV
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.expansion import expand_targets
 from sopuli.config.fields import describe, reject_unknown_keys
@@ -105,15 +109,79 @@ def load_document(path: Path) -> dict[str, Any]:
     return document
 
 
+def load_documents(paths: Sequence[Path]) -> dict[str, Any]:
+    """Read every layer and merge them left to right (§9).
+
+    Each file is checked on its own first -- permissions, encoding, parse,
+    ``version:`` -- so those errors still name the file they came from. Only
+    then are they merged, because a merged document has no filename.
+
+    Every layer is a config file in its own right, including its ``version:``.
+    A fragment with the key left off cannot be migrated later, which is the
+    reason §9a requires it, and that reason does not weaken when the fragment is
+    one of several.
+    """
+    return merge_documents([load_document(path) for path in paths])
+
+
+def merge_documents(documents: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Layer raw documents: deep merge for mappings, replace for everything else.
+
+    §9's rule, and the asymmetry in it is deliberate. A mapping is a set of
+    named settings, so a later file adding one should not delete the rest. A
+    list is a whole answer -- ``targets:``, ``accounts:`` -- and merging two
+    would produce an estate that appears in no file, which is a bad way to
+    discover what the tool is about to touch (invariant 5).
+    """
+    merged: dict[str, Any] = {}
+    for document in documents:
+        merged = _merge(merged, document)
+    return merged
+
+
+def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in overlay.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _merge(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_config(path: Path) -> Config:
-    """Read a config file and validate it into typed objects.
+    """Read one config file and validate it into typed objects.
 
     The two steps stay separate because they fail for different reasons and are
     worth testing apart: :func:`load_document` is about the file, this is about
     what is written in it. Anything raised here already knows which key it is
     complaining about.
     """
-    document = load_document(path)
+    return _validate(load_document(path), source=path)
+
+
+def load_config_from(paths: Sequence[Path]) -> Config:
+    """Read one or more layered config files and validate the result.
+
+    What :func:`~sopuli.config.discovery.discover` returns goes straight in
+    here. With several layers a validation error carries its key path but no
+    filename: the offending value may have been written in one file and
+    overridden in another, and naming either of them would be a guess. Errors
+    about a *file* -- unreadable, unparseable, unversioned -- are raised before
+    the merge and still say which one.
+    """
+    if not paths:
+        raise ConfigError(
+            "no config file to load",
+            hint=f"pass --config PATH, or set {CONFIG_ENV}",
+        )
+    if len(paths) == 1:
+        return load_config(paths[0])
+    return _validate(load_documents(paths), source=None)
+
+
+def _validate(document: dict[str, Any], *, source: Path | None) -> Config:
     try:
         reject_unknown_keys(document, allowed=TOP_LEVEL_KEYS, at=ROOT)
         config = build_config(document)
@@ -121,7 +189,8 @@ def load_config(path: Path) -> Config:
         # The builders work on raw data and have never seen a filename. Filling
         # it in here means every message says which file, without threading a
         # path through every function that reads a key.
-        error.source = path
+        if source is not None:
+            error.source = source
         raise
     return config
 

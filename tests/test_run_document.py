@@ -39,8 +39,16 @@ def _errors(validator: Draft202012Validator, document: dict[str, Any]) -> list[s
     return [f"{list(error.path)}: {error.message}" for error in validator.iter_errors(document)]
 
 
-def test_emitted_document_validates(validator: Draft202012Validator) -> None:
-    result = CliRunner().invoke(cli, ["config", "show", "--output", "json"])
+def test_emitted_document_validates(validator: Draft202012Validator, config_file: Path) -> None:
+    """Through a real command, against a real config file.
+
+    The file is named rather than discovered: `config show` searches the working
+    directory and the user's config directory now, and a contract test must not
+    depend on what the machine running it happens to have there.
+    """
+    result = CliRunner().invoke(
+        cli, ["config", "show", "--config", str(config_file), "--output", "json"]
+    )
     assert result.exit_code == ExitCode.SUCCESS
     assert _errors(validator, json.loads(result.output)) == []
 

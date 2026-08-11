@@ -212,7 +212,7 @@ def _warn_about_profile_names(config: Config) -> tuple[ConfigWarning, ...]:
                 message=f"profile {profile.name!r} is named after an environment",
                 at=str(ROOT.key("profiles").key(profile.name)),
                 hint=(
-                    f"`--profile {profile.name}` selects no targets — a profile changes how a "
+                    f"`--profile {profile.name}` selects no targets -- a profile changes how a "
                     "run behaves, not what it acts on (§5). Name it after where you are "
                     "running from: interactive, ci, scheduled"
                 ),
