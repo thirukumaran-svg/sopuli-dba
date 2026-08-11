@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/futville/sopuli-dba/compare/v0.6.0...v0.7.0) (2026-08-11)
+
+
+### Features
+
+* expand target sets into targets, with labels and overrides ([#35](https://github.com/futville/sopuli-dba/issues/35)) ([dfbab9b](https://github.com/futville/sopuli-dba/commit/dfbab9bef1531ff4eaef7cf70c4802da228615b3))
+
 ## [0.6.0](https://github.com/futville/sopuli-dba/compare/v0.5.0...v0.6.0) (2026-08-10)
 
 
