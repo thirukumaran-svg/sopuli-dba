@@ -228,7 +228,9 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    assume.
 3. **Schema conformance.** Every sample and recorded output validates against the
    published JSON Schema. Already wired: the schemas and example in
-   `docs/schemas/` validate today.
+   `docs/schemas/` validate today, the config schema is asserted to be what the
+   config layer generates, and `01-configuration.md`'s own worked example is
+   validated against it.
 4. **Lockout.** The lockout regression test passes on every Oracle version in the
    matrix. A tool that locks production accounts while checking them is worse
    than no tool.

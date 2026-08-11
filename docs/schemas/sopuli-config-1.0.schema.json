@@ -1,0 +1,843 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-config-1.0.schema.json",
+  "title": "sopuli-dba configuration",
+  "type": "object",
+  "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
+  "additionalProperties": false,
+  "required": [
+    "version"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [
+        1
+      ],
+      "description": "The config schema version this file is written for. Required: a file with no version cannot be migrated later (§9a)."
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtime"
+    },
+    "defaults": {
+      "$ref": "#/$defs/defaults"
+    },
+    "vaults": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/vault"
+      },
+      "description": "Named secret stores (§2)."
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/target"
+      },
+      "description": "Explicitly listed endpoints (§2)."
+    },
+    "target_sets": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/target_set"
+      },
+      "description": "Generated endpoints (§4)."
+    },
+    "groups": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/group"
+      },
+      "description": "Named label selections (§4)."
+    },
+    "policies": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/policy"
+      },
+      "description": "Password and rotation rules (§8)."
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/profile"
+      },
+      "description": "Run contexts (§5)."
+    },
+    "applications": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/application"
+      },
+      "description": "The binding, for one or more applications (§3).",
+      "minItems": 1
+    },
+    "accounts": {
+      "$ref": "#/$defs/accounts"
+    },
+    "secret": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A SecretRef (01-configuration.md §7): [vault:]path[#field][/pointer][@qualifier]. In `secret_template` the {tokens} are expanded per account and target."
+    },
+    "secret_template": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A SecretRef (01-configuration.md §7): [vault:]path[#field][/pointer][@qualifier]. In `secret_template` the {tokens} are expanded per account and target."
+    },
+    "policy": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The name of an entry in `policies:`."
+    },
+    "overrides": {
+      "$ref": "#/$defs/overrides"
+    }
+  },
+  "$defs": {
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "label_selector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minProperties": 1
+    },
+    "safety": {
+      "type": "object",
+      "description": "Safety settings only ratchet toward safe: the resolved value is the lowest max_targets, the union of confirm_environments, and readonly if any layer sets it (00-principles.md P3, invariant 10).",
+      "additionalProperties": false,
+      "properties": {
+        "max_targets": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "confirm_environments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "readonly": {
+          "type": "boolean"
+        }
+      }
+    },
+    "vault": {
+      "type": "object",
+      "description": "One named secret store. Only `type` is required: the backends differ enough that demanding a HashiCorp shape of every entry would be the vendor bias P1 forbids, so per-backend requirements live behind the store interface.",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "hashicorp",
+            "oci",
+            "file",
+            "keyring"
+          ]
+        },
+        "addr": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mount": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kv_version": {
+          "type": "integer",
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/vault_auth"
+        },
+        "non_production": {
+          "type": "boolean",
+          "description": "Absent means production. A target with environment: prod pointed at a store marked here is refused (§10)."
+        }
+      }
+    },
+    "vault_auth": {
+      "type": "object",
+      "description": "How to authenticate, never the material. The keys that point at the material are not specified yet -- see issue #27.",
+      "additionalProperties": false,
+      "required": [
+        "method"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "token",
+            "approle",
+            "kubernetes",
+            "oidc",
+            "userpass",
+            "instance_principal",
+            "resource_principal",
+            "config_file",
+            "session_token"
+          ]
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "description": "One database endpoint.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "dsn"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "oracle"
+          ]
+        },
+        "dsn": {
+          "type": "string",
+          "minLength": 1,
+          "description": "host:port/service, or a TNS alias."
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vault": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `vaults:`."
+        },
+        "admin": {
+          "$ref": "#/$defs/admin"
+        },
+        "oracle": {
+          "$ref": "#/$defs/target_oracle"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        },
+        "safety": {
+          "$ref": "#/$defs/safety"
+        }
+      }
+    },
+    "admin": {
+      "type": "object",
+      "description": "Which credential reaches the database, never the password: storing the admin password in the config file is not supported at all (P2).",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "auth": {
+          "type": "string",
+          "enum": [
+            "external",
+            "vault",
+            "prompt",
+            "env"
+          ]
+        }
+      }
+    },
+    "target_oracle": {
+      "type": "object",
+      "description": "Which container the tool connects to. Not an application's `oracle:` block, which carries `container_clause` -- same key name, different meaning.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "cdb_root",
+            "pdb"
+          ]
+        },
+        "container": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "target_set": {
+      "type": "object",
+      "description": "A target template plus the dimensions to expand it over (§4). Listing 35 PDBs by hand is not viable; this generates them.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "dsn",
+        "for_each"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name *template*, e.g. appdb-{env}-{tenant}. The key this entry is written under is the set's own name."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "oracle"
+          ]
+        },
+        "dsn": {
+          "type": "string",
+          "minLength": 1,
+          "description": "host:port/service, or a TNS alias."
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vault": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `vaults:`."
+        },
+        "admin": {
+          "$ref": "#/$defs/admin"
+        },
+        "oracle": {
+          "$ref": "#/$defs/target_oracle"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        },
+        "safety": {
+          "$ref": "#/$defs/safety"
+        },
+        "for_each": {
+          "$ref": "#/$defs/for_each"
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/target_patch"
+          },
+          "description": "Patches keyed by rendered target name (§4 rule 5)."
+        }
+      }
+    },
+    "target_patch": {
+      "type": "object",
+      "description": "What to change about one generated target. `name` is absent because the rendered name is the key this patch is found by, so patching it would make the key a lie.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "oracle"
+          ]
+        },
+        "dsn": {
+          "type": "string",
+          "minLength": 1,
+          "description": "host:port/service, or a TNS alias."
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vault": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `vaults:`."
+        },
+        "admin": {
+          "$ref": "#/$defs/admin"
+        },
+        "oracle": {
+          "$ref": "#/$defs/target_oracle"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        },
+        "safety": {
+          "$ref": "#/$defs/safety"
+        }
+      }
+    },
+    "for_each": {
+      "type": "object",
+      "description": "Exactly one outer dimension, named by its key; under it, one entry per value of that dimension, holding the variables in scope for it (§4 rule 1).",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": [
+                  "string",
+                  "number"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              }
+            ],
+            "description": "A scalar substituted into the templates, or a list -- which makes it the inner dimension, at most one per value (§4 rules 2 and 6)."
+          }
+        },
+        "minProperties": 1
+      }
+    },
+    "group": {
+      "type": "object",
+      "description": "A name for a label selection over the estate (§4).",
+      "additionalProperties": false,
+      "required": [
+        "match"
+      ],
+      "properties": {
+        "match": {
+          "$ref": "#/$defs/label_selector"
+        },
+        "safety": {
+          "$ref": "#/$defs/safety"
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "description": "Password rules, rotation strategy and verification, under one name.",
+      "additionalProperties": false,
+      "properties": {
+        "password": {
+          "$ref": "#/$defs/password_policy"
+        },
+        "rotation": {
+          "$ref": "#/$defs/rotation_policy"
+        },
+        "verify": {
+          "$ref": "#/$defs/verify_policy"
+        },
+        "account": {
+          "$ref": "#/$defs/account_policy"
+        }
+      }
+    },
+    "password_policy": {
+      "type": "object",
+      "description": "§8's charsets and the character classes a password must contain.",
+      "additionalProperties": false,
+      "properties": {
+        "length": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "charset": {
+          "type": "string",
+          "enum": [
+            "alnum",
+            "alnum_safe",
+            "printable_ascii",
+            "custom"
+          ]
+        },
+        "allow": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Belongs to `charset: custom` and to nothing else. May not contain \" -- Oracle quoted identifiers have no escape for it (invariant 11)."
+        },
+        "first_char": {
+          "type": "string",
+          "enum": [
+            "alpha"
+          ]
+        },
+        "require": {
+          "$ref": "#/$defs/require"
+        }
+      }
+    },
+    "require": {
+      "type": "object",
+      "description": "Minimum count per character class. A block no password of this length and charset could satisfy is refused by the validator, not here.",
+      "additionalProperties": false,
+      "properties": {
+        "upper": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lower": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "digit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "special": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "rotation_policy": {
+      "type": "object",
+      "description": "How a new password replaces the old one (UC-1 §6).",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "rollover",
+            "staged",
+            "direct"
+          ]
+        },
+        "rollover_hours": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "keep_previous": {
+          "type": "boolean"
+        },
+        "max_age_days": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "verify_policy": {
+      "type": "object",
+      "description": "How the tool confirms a password works. Shared with a profile, because the same estate is verified by login from a laptop and by hash comparison from a scheduler (§5).",
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "login",
+            "hash",
+            "both",
+            "none"
+          ]
+        },
+        "lockout_margin": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "account_policy": {
+      "type": "object",
+      "description": "What the tool may do to the account itself.",
+      "additionalProperties": false,
+      "properties": {
+        "unlock_if_locked": {
+          "type": "boolean"
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "description": "Where a run is invoked from -- `interactive`, `ci`, `scheduled` -- never what it points at. Everything here changes how the tool behaves; nothing here changes which targets or accounts are in scope (§5).",
+      "additionalProperties": false,
+      "properties": {
+        "vault": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `vaults:`."
+        },
+        "verify": {
+          "$ref": "#/$defs/verify_policy"
+        },
+        "rotation": {
+          "$ref": "#/$defs/profile_rotation"
+        },
+        "safety": {
+          "$ref": "#/$defs/safety"
+        },
+        "confirm": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "string",
+          "enum": [
+            "text",
+            "json",
+            "jsonl"
+          ]
+        },
+        "log_level": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warning",
+            "error",
+            "critical"
+          ]
+        },
+        "log_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "db": {
+          "$ref": "#/$defs/profile_db"
+        }
+      }
+    },
+    "profile_rotation": {
+      "type": "object",
+      "description": "Only `strategy`. The rest of a rotation policy describes the credential's lifecycle, which is a property of the estate rather than of the machine running the command.",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "rollover",
+            "staged",
+            "direct"
+          ]
+        }
+      }
+    },
+    "profile_db": {
+      "type": "object",
+      "description": "Budgets that differ when nobody is waiting.",
+      "additionalProperties": false,
+      "properties": {
+        "connect_timeout_s": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "query_timeout_s": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Precedence layer 5 (P3): the bottom of the config file.",
+      "additionalProperties": false,
+      "properties": {
+        "vault": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `vaults:`."
+        },
+        "policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "safety": {
+          "$ref": "#/$defs/safety"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "description": "How this installation of the tool is set up, not what it manages.",
+      "additionalProperties": false,
+      "properties": {
+        "oracle": {
+          "$ref": "#/$defs/runtime_oracle"
+        }
+      }
+    },
+    "runtime_oracle": {
+      "type": "object",
+      "description": "Where the Instant Client lives. Thick mode is a runtime prerequisite on every platform (P4, D3).",
+      "additionalProperties": false,
+      "properties": {
+        "client_lib_dir": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "application": {
+      "type": "object",
+      "description": "These accounts, in these targets, mastered by these secrets, under this policy -- the sentence §1 says the whole config exists to state.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "accounts"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What `--application` selects on."
+        },
+        "accounts": {
+          "$ref": "#/$defs/accounts"
+        },
+        "targets": {
+          "$ref": "#/$defs/application_targets"
+        },
+        "vault": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `vaults:`."
+        },
+        "secret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A SecretRef (01-configuration.md §7): [vault:]path[#field][/pointer][@qualifier]. In `secret_template` the {tokens} are expanded per account and target."
+        },
+        "secret_template": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A SecretRef (01-configuration.md §7): [vault:]path[#field][/pointer][@qualifier]. In `secret_template` the {tokens} are expanded per account and target."
+        },
+        "policy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `policies:`."
+        },
+        "oracle": {
+          "$ref": "#/$defs/oracle_options"
+        },
+        "overrides": {
+          "$ref": "#/$defs/overrides"
+        }
+      }
+    },
+    "accounts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "The database accounts this application owns. Invariant 5: the config is the whitelist, so nothing outside this list is ever touched.",
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "application_targets": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Target names, against the expanded estate."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "group"
+          ],
+          "properties": {
+            "group": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The name of an entry in `groups:`."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "match"
+          ],
+          "properties": {
+            "match": {
+              "$ref": "#/$defs/label_selector"
+            }
+          }
+        }
+      ],
+      "description": "Which targets this entry applies to. Absent means all of them."
+    },
+    "oracle_options": {
+      "type": "object",
+      "description": "How `ALTER USER` is written for these accounts. Not a target's `oracle:` block, which says which container to connect to.",
+      "additionalProperties": false,
+      "properties": {
+        "container_clause": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "overrides": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/override"
+      },
+      "description": "Per-label exceptions to this entry's own resolution (§2, §3)."
+    },
+    "override": {
+      "type": "object",
+      "description": "`accounts` is not patchable, and that is a rule rather than an omission: invariant 5 says selectors filter the declared set and cannot extend it, not even under --force.",
+      "additionalProperties": false,
+      "required": [
+        "where"
+      ],
+      "properties": {
+        "where": {
+          "$ref": "#/$defs/label_selector",
+          "description": "Which targets the patch applies to."
+        },
+        "vault": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `vaults:`."
+        },
+        "secret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A SecretRef (01-configuration.md §7): [vault:]path[#field][/pointer][@qualifier]. In `secret_template` the {tokens} are expanded per account and target."
+        },
+        "secret_template": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A SecretRef (01-configuration.md §7): [vault:]path[#field][/pointer][@qualifier]. In `secret_template` the {tokens} are expanded per account and target."
+        },
+        "policy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `policies:`."
+        },
+        "oracle": {
+          "$ref": "#/$defs/oracle_options"
+        }
+      }
+    }
+  }
+}

@@ -69,6 +69,37 @@ class Actor:
 
 
 @dataclass(frozen=True)
+class Diagnostic:
+    """One entry in ``diagnostics`` — a run-level message with no single result
+    to hang it on.
+
+    Where a config warning goes in ``--output json``. The config layer does no
+    I/O (``04-testing.md`` §4), so its findings cannot be printed where they are
+    made; they travel on the :class:`~sopuli.config.model.Config` and become
+    these at the boundary.
+
+    ``code``, ``target`` and ``account`` are omitted rather than nulled when
+    absent. The schema types them as nullable, so either would validate — but a
+    consumer testing ``"target" in diagnostic`` and a consumer testing
+    ``diagnostic["target"] is not None`` should not disagree, and omission is
+    what the rest of this module already does.
+    """
+
+    level: str
+    message: str
+    code: str | None = None
+    target: str | None = None
+    account: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"level": self.level, "message": self.message}
+        for key, value in (("code", self.code), ("target", self.target), ("account", self.account)):
+            if value is not None:
+                data[key] = value
+        return data
+
+
+@dataclass(frozen=True)
 class Summary:
     """``summary``. Only the four required counters are populated so far."""
 
@@ -103,6 +134,10 @@ class RunDocument:
     finished_at: datetime | None = None
     summary: Summary = field(default_factory=Summary)
     exit_code: int = 0
+    #: Run-level messages, in the order they were made. Emitted only when there
+    #: are any: the schema types it as an array, so an empty one would be noise
+    #: in every clean run and a null would fail validation.
+    diagnostics: list[Diagnostic] = field(default_factory=list)
     #: The ``config`` section, when the command produces one. Its shape belongs
     #: to the command that builds it (:mod:`sopuli.output.config_view`) rather
     #: than here, and is pinned by the schema and by
@@ -148,6 +183,8 @@ class RunDocument:
             "summary": self.summary.to_dict(),
             "exit_code": self.exit_code,
         }
+        if self.diagnostics:
+            document["diagnostics"] = [diagnostic.to_dict() for diagnostic in self.diagnostics]
         if self.config is not None:
             document["config"] = self.config
         return document

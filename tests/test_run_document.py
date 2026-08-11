@@ -17,7 +17,7 @@ from jsonschema import Draft202012Validator
 
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
-from sopuli.output.document import RunDocument, Summary, to_rfc3339, utc_now
+from sopuli.output.document import Diagnostic, RunDocument, Summary, to_rfc3339, utc_now
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.1.schema.json"
@@ -58,6 +58,34 @@ def test_document_from_the_builder_validates(validator: Draft202012Validator) ->
         ExitCode.SUCCESS, Summary(total=1, ok=1, changed=0, failed=0)
     )
     assert _errors(validator, document.to_dict()) == []
+
+
+def test_a_document_carrying_diagnostics_validates(validator: Draft202012Validator) -> None:
+    """``diagnostics`` is where a config warning goes in ``--output json``.
+
+    The schema requires ``level`` and ``message`` and forbids anything it does
+    not name, so the shape is not obvious enough to assume -- and this is the
+    only path by which a §10 warning reaches a machine reader.
+    """
+    document = RunDocument.start("config.validate")
+    document.diagnostics = [Diagnostic(level="warning", message="profile `prod` names nothing")]
+    document.finish(ExitCode.SUCCESS)
+
+    emitted = document.to_dict()
+
+    assert _errors(validator, emitted) == []
+    assert emitted["diagnostics"] == [
+        {"level": "warning", "message": "profile `prod` names nothing"}
+    ]
+
+
+def test_a_diagnostic_omits_the_fields_it_has_no_value_for() -> None:
+    """Same rule as the optional sections below, one level down: a run-level
+    message has no target and no account, and omitting them keeps a consumer
+    testing for presence and one testing for null from disagreeing."""
+    emitted = Diagnostic(level="warning", message="m").to_dict()
+
+    assert set(emitted) == {"level", "message"}
 
 
 def test_optional_sections_are_omitted_not_nulled() -> None:

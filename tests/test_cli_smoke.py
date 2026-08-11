@@ -400,6 +400,97 @@ def test_a_named_config_that_does_not_exist_is_a_usage_error(
     assert result.exception.exit_code == ExitCode.USAGE
 
 
+# -------------------------------------------------------- config validate ---
+
+
+def test_config_validate_accepts_a_good_file(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """P3 makes this a first-class command. What it reports on success is small
+    on purpose -- the interesting output is the one it does not produce -- but
+    the counts have to be there: a file that expands to no targets passes
+    validation and manages nothing."""
+    path = write_config(ESTATE)
+
+    result = runner.invoke(cli, ["config", "validate", "--config", str(path)])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert f"config: {path}" in result.output
+    assert "ok: 3 targets" in result.output
+
+
+def test_config_validate_exits_two_on_an_unknown_key(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+) -> None:
+    """P3's own sentence: "exits non-zero on unknown keys -- a typo in a
+    credential tool must never be silently ignored".
+
+    Driven through ``main`` rather than the runner, because the exit code is the
+    contract here and it is the boundary that maps a ConfigError onto it.
+    """
+    path = write_config("version: 1\ntargts: []\n")
+    monkeypatch.setattr(sys, "argv", ["sopuli", "config", "validate", "--config", str(path)])
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli_module.main()
+
+    assert exit_info.value.code == ExitCode.USAGE
+    captured = capsys.readouterr()
+    assert "unknown key 'targts'" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_config_validate_reports_warnings_both_ways(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """§10's warnings are findings the loader decided not to refuse to run over,
+    so they must survive into both views -- in full in the text, and as run-level
+    ``diagnostics`` in the document, which is the only path by which a scheduler
+    ever sees one."""
+    path = write_config(f"{ESTATE}\nprofiles:\n  dev: {{ output: json }}\n")
+    command = ["config", "validate", "--config", str(path)]
+
+    text = runner.invoke(cli, command)
+    document = json.loads(runner.invoke(cli, [*command, "--output", "json"]).output)
+
+    assert text.exit_code == ExitCode.SUCCESS
+    assert "1 warning:" in text.output
+    assert "named after an environment" in text.output
+    assert [entry["level"] for entry in document["diagnostics"]] == ["warning"]
+    assert "named after an environment" in document["diagnostics"][0]["message"]
+
+
+def test_config_validate_emits_no_diagnostics_for_a_clean_file(
+    runner: CliRunner, config_file: Path
+) -> None:
+    """A clean run carries no empty array. The schema types `diagnostics` as an
+    array, so an empty one would validate -- and would appear in every document
+    a scheduler ever parses, which is how a field stops being read."""
+    result = runner.invoke(
+        cli, ["config", "validate", "--config", str(config_file), "--output", "json"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    document = json.loads(result.output)
+    assert document["command"] == "config.validate"
+    assert "diagnostics" not in document
+
+
+def test_config_validate_shows_nothing_of_the_file_itself(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """`validate` and `show` are different questions, and the JSON says so: only
+    `show` carries a `config` section. Keeping validate's document empty of one
+    is what lets CI consume it without deciding whether it wanted the estate."""
+    path = write_config(ESTATE)
+
+    result = runner.invoke(cli, ["config", "validate", "--config", str(path), "--output", "json"])
+
+    assert "config" not in json.loads(result.output)
+
+
 def _write(path: Path, text: str) -> Path:
     path.write_text(text, encoding="utf-8")
     if sys.platform != "win32":

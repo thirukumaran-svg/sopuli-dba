@@ -12,6 +12,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
+# yaml-language-server: $schema=./sopuli-config-1.0.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -90,6 +91,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
+# yaml-language-server: $schema=./sopuli-config-1.0.schema.json
 version: 1
 
 runtime:
@@ -867,6 +869,124 @@ a duplicate.
 Errors name a location. Parse errors carry a line and column; validation errors
 carry a key path (`applications[1].secret_template`). "invalid config" is not an
 error message for a file this long.
+
+---
+
+## 9b. The published schema
+
+P3 requires a published JSON Schema. It is
+[`docs/schemas/sopuli-config-1.0.schema.json`](../schemas/sopuli-config-1.0.schema.json),
+Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
+from a YAML language server, it gives completion and inline errors while somebody
+is editing a 130-line file, which is worth more than the validation itself.
+
+**It is generated, not maintained.** `sopuli/config/schema.py` composes it from
+the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
+`CHARSETS`, `SUPPORTED_VERSIONS` and the rest — and refuses to generate at all if
+a section's keys and its type table disagree. Regenerate with:
+
+```
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.0.schema.json
+```
+
+`tests/config/test_schema.py` fails when the committed file is not what the model
+produces today, so a key cannot be added to a section without the schema moving
+with it. Two hand-written descriptions of one schema drift, and the one that
+drifts silently is the published one, because nothing runs it.
+
+The version in the filename is the schema contract's, not the config file's: a
+new optional key is a minor bump there and changes nothing about a file that says
+`version: 1`.
+
+**What it says.** Key names, JSON types, the closed sets, which keys are
+required, and `additionalProperties: false` — P3's "exits non-zero on unknown
+keys", in the form an editor can use. The shape rules of §4 are here too, since
+they are about shape: one outer dimension, one list per value.
+
+**What it deliberately does not say.** Every rule in §10 that relates two keys
+to each other stays with the hand-written validators, because those errors have
+to name the offending key and a `oneOf` failure reports every branch that did not
+match instead:
+
+| Rule | §10 |
+|---|---|
+| the inline form and `applications:` are mutually exclusive | yes |
+| `secret` and `secret_template` are mutually exclusive | §3 |
+| two accounts may not resolve to one secret ref | yes |
+| `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
+| `allow:` belongs to `charset: custom` | §8 |
+| every `vault`, `policy`, `group`, `profile` and target name must resolve | yes |
+| a `for_each`'s inner dimension must be one variable throughout | §4 |
+| a profile may not set a key that changes scope | §5 |
+
+So a file the schema accepts may still be refused by `sopuli config validate`,
+and that is the intended division rather than a gap. The schema is the fast,
+local, incomplete check; the tool is the complete one.
+
+### Pointing an editor at it
+
+A schema nothing is pointed at is a file in a directory. The association is made
+from the config file itself, with a comment on the first line:
+
+```yaml
+# yaml-language-server: $schema=./sopuli-config-1.0.schema.json
+version: 1
+```
+
+That comment is the [YAML Language Server][yamlls] convention, which is what the
+Red Hat **YAML** extension for VS Code uses, and what most other editors' YAML
+support is built on. Verified with that extension: hovering a key shows the
+description the generator wrote for it, and an unknown key is underlined where it
+was typed.
+
+**The path is relative to the YAML file**, not to the repository. Copy the schema
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.0.schema.json`
+is as valid as the form above.
+
+**The `$id` inside the schema is an identifier, not an address.** It reads like a
+URL because JSON Schema identifiers conventionally do, and it matches the sibling
+schemas — but nothing serves it, so it is not a value to paste after `$schema=`.
+Use a path to a local copy. (If the schema is ever served from somewhere stable,
+the URL form belongs here beside the path form, and this paragraph goes away.)
+
+**Every complete example in this documentation carries the comment.** Not
+decoration: the line is the only part of using the schema that has to be
+discovered rather than deduced, and a reader who copies a worked example as a
+starting file should get the editor support without having read this section.
+Fragments — an `applications:` block on its own, a `groups:` snippet — do not,
+because they are not files. `tests/config/test_design_document_examples.py`
+enforces the split, so an example added later cannot quietly drop the line, and a
+schema version bump has to be reflected in the examples that name it.
+
+[yamlls]: https://github.com/redhat-developer/yaml-language-server
+
+### `sopuli config validate`
+
+The command P3 names. It loads the file through the same path every other command
+does — discovery, the permission check, the hardened parser, the builders — and
+reports what it found:
+
+| Outcome | Exit | Output |
+|---|---|---|
+| the file loads | 0 | the files read, and how much they declare: targets, bindings, warnings |
+| §10 warnings | 0 | each warning in full, and `diagnostics[]` under `--output json` |
+| anything §9a or §10 refuses | 2 | the message, with its key path and its hint |
+
+Exit 2 rather than 1: P5 puts config validation with usage errors, so a scheduler
+can tell "fix your file" from "something broke". A bad file produces no run
+document even under `--output json`, which is not an oversight — whether a usage
+error should emit one is J7, and this command must not answer it by accident.
+
+It validates through the builders, not through the published schema above. The
+two are not equivalent and the stricter one wins; `jsonschema` stays a
+development dependency.
+
+Offline, like `config show`: no vault and no database is contacted.
+
+Secret refs are typed as strings. §7's grammar is parsed by
+`sopuli/config/secret_refs.py`, and a regex approximation of it in a published
+artefact would be a second parser that disagrees with the first in a way nobody
+notices until a rotation.
 
 ---
 

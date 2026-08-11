@@ -1,10 +1,15 @@
 # sopuli-dba — JSON output contract
 
 Status: draft / sketch, **partly implemented**. The run document, `--output
-text|json`, colour resolution and the `config` section are real and validated
-against the schema in CI (`sopuli/output/`). `--output jsonl`, `plan`, `results`
-and `diagnostics` are not written yet, so everything about them here is still a
-sketch.
+text|json`, colour resolution, the `config` section and `diagnostics` are real
+and validated against the schema in CI (`sopuli/output/`). `--output jsonl`,
+`plan` and `results` are not written yet, so everything about them here is still
+a sketch.
+
+`diagnostics` carries what §10 of `01-configuration.md` calls warnings: findings
+the loader decided not to refuse to run over. They are run-level because a config
+warning belongs to no single target, and `level` is `warning` for all of them so
+far — the config layer has no other severity to report.
 Schemas: [`../schemas/sopuli-run-1.1.schema.json`](../schemas/sopuli-run-1.1.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)

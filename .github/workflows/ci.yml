@@ -119,3 +119,5 @@ jobs:
           chmod 600 "$config"
           sopuli config show --config "$config" > /dev/null
           sopuli config show --config "$config" --output json > /dev/null
+          sopuli config validate --config "$config" > /dev/null
+          sopuli config validate --config "$config" --output json > /dev/null

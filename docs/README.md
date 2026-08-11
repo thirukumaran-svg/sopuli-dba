@@ -16,6 +16,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 
 | File | Purpose |
 |---|---|
+| [schemas/sopuli-config-1.0.schema.json](schemas/sopuli-config-1.0.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
 | [schemas/sopuli-run-1.1.schema.json](schemas/sopuli-run-1.1.schema.json) | JSON Schema (2020-12) for the `--output json` document |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
@@ -28,9 +29,21 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 
-Both schemas validate as Draft 2020-12, and the example validates against the run
-schema. That is no longer an assertion in prose: `tests/test_schemas.py` checks
-it, and CI runs it on every push and pull request (invariant 12).
+All three schemas validate as Draft 2020-12, and the example validates against the
+run schema. That is no longer an assertion in prose: `tests/test_schemas.py`
+checks it, and CI runs it on every push and pull request (invariant 12).
+
+To get completion and inline errors while editing a config, put
+`# yaml-language-server: $schema=./sopuli-config-1.0.schema.json` on the file's
+first line — see [design/01-configuration.md](design/01-configuration.md) §9b,
+which also explains why the schema's `$id` is not a URL to paste there.
+
+The config schema is generated rather than written, and
+`tests/config/test_schema.py` fails if the committed file is not what the config
+layer produces today. A key added to a section without the schema following it
+does not merge. What the schema deliberately leaves to the validators — the
+cross-key rules, whose errors have to name the offending key — is listed in
+[design/01-configuration.md](design/01-configuration.md) §9b.
 
 ## Conventions
 

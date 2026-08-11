@@ -1,9 +1,10 @@
 """The ``sopuli`` command line.
 
 Grammar is noun-verb (D2): ``sopuli <noun> <verb>``. Each noun is a
-:class:`click.Group`, each verb a command inside it. Only ``config show`` exists
-so far — it does no work, and is here so the shape is established once instead
-of being improvised by whichever command lands first.
+:class:`click.Group`, each verb a command inside it. Only the ``config`` verbs
+exist so far — neither touches a vault or a database, and both are here so the
+shape is established once instead of being improvised by whichever command lands
+first.
 
 Two things about the structure are deliberate:
 
@@ -32,8 +33,8 @@ import click
 from sopuli.config import ConfigError, discover, load_layers
 from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
-from sopuli.output.config_view import build_section, render_text
-from sopuli.output.document import RunDocument, Summary
+from sopuli.output.config_view import build_section, render_text, render_validation
+from sopuli.output.document import Diagnostic, RunDocument, Summary
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.stream import configure_streams
 from sopuli.version import get_version
@@ -147,6 +148,58 @@ def config_show(
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
     emitter.emit(document, render_text(paths, config, resolved=resolved))
+
+
+@config_group.command("validate")
+@common_options
+def config_validate(
+    config_paths: tuple[Path, ...],
+    output_mode: str,
+    dry_run: bool,
+    color_choice: str,
+) -> None:
+    """Check the configuration and say nothing else.
+
+    P3 makes this a first-class command: it "exits non-zero on unknown keys -- a
+    typo in a credential tool must never be silently ignored". Everything it does
+    is what ``load_layers`` already does; what it adds is a command whose *only*
+    job is that, so a file can be checked in CI without asking for output nobody
+    reads.
+
+    **Validated by the loader, not by the published schema.** The two are not
+    equivalent, and the stricter one wins:
+    ``docs/schemas/sopuli-config-1.0.schema.json`` is structural, deliberately
+    leaves the cross-key rules out (``01-configuration.md`` section 9b), and
+    ``jsonschema`` is a development dependency that must not become a runtime
+    one. The schema is the editor's fast local check; this is the complete one.
+
+    Offline, like ``config show``: no vault and no database is contacted, so it
+    is safe to point at a production config from a laptop.
+
+    A bad file raises out of here rather than being caught. The boundary in
+    :func:`main` maps it to exit 2, and whether ``--output json`` should emit a
+    run document for a usage error is an open question (J7, issue #8) that this
+    command must not answer by accident -- the same reason ``config show`` gives.
+    """
+    emitter = Emitter(
+        mode=OutputMode(output_mode),
+        color_choice=ColorChoice(color_choice),
+    )
+    document = RunDocument.start("config.validate", dry_run=dry_run)
+
+    paths = discover(config_paths)
+    _, config = load_layers(paths)
+
+    # A config warning is not attributable to one target, so it is run-level.
+    document.diagnostics = [
+        Diagnostic(level="warning", message=str(warning)) for warning in config.warnings
+    ]
+    targets = len(config.expanded_targets)
+    document.finish(
+        ExitCode.SUCCESS,
+        Summary(total=targets, ok=targets, changed=0, failed=0),
+    )
+    emitter.emit(document, render_validation(paths, config))
 
 
 def main() -> None:

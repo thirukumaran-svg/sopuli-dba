@@ -54,6 +54,38 @@ def render_text(paths: Sequence[Path], config: Config, *, resolved: bool) -> str
     return "\n".join(lines)
 
 
+def render_validation(paths: Sequence[Path], config: Config) -> str:
+    """The human view of ``config validate`` -- what was read, and what it holds.
+
+    Deliberately short. A validation that passed has nothing to show, and the
+    interesting output of this command is the one it does not produce: an error
+    naming a key. What is here is the two facts that make a pass meaningful --
+    which files were read, since discovery and layering are both invisible
+    otherwise, and how much the file turned out to declare, since a config that
+    expands to no targets at all passes validation and manages nothing.
+
+    Warnings are rendered in full by the same helper ``config show`` uses. §10
+    puts real findings behind them -- a profile named after an environment, a
+    charset a target may not support -- and a summary line would be the wrong
+    place to meet one.
+    """
+    lines = [f"config: {paths[0]}"]
+    lines.extend(f"        {path} (layered)" for path in paths[1:])
+    lines.append("")
+    lines.append(
+        "ok: "
+        + ", ".join(
+            (
+                _count(len(config.expanded_targets), "target"),
+                _count(len(config.bindings), "binding"),
+                _count(len(config.warnings), "warning"),
+            )
+        )
+    )
+    lines.extend(_warnings(config))
+    return "\n".join(lines)
+
+
 def build_section(
     paths: Sequence[Path], config: Config, document: dict[str, Any], *, resolved: bool
 ) -> dict[str, Any]:

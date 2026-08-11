@@ -26,16 +26,31 @@ import pytest
 from sopuli.config.applications import build_applications
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config, load_document
+from sopuli.config.schema import SCHEMA_FILENAME
 from sopuli.config.yaml_loader import parse_yaml
 
 REFERENCE = Path(__file__).resolve().parents[2] / "docs" / "design" / "01-configuration.md"
 
 YAML_BLOCK = re.compile(r"```yaml\n(.*?)```", re.DOTALL)
 
+#: What makes an example a whole file rather than a fragment: a `version:` at the
+#: left margin. §9a requires the key of every config file, so nothing else can be
+#: complete and nothing complete can be without it.
+TOP_LEVEL_VERSION = re.compile(r"^version:", re.MULTILINE)
+
+#: What §9b's examples put after `$schema=`. Relative to the YAML file, so this is
+#: the schema sitting beside the config -- the arrangement somebody copying a
+#: worked example will have.
+SCHEMA_POINTER = f"./{SCHEMA_FILENAME}"
+
 
 def _blocks() -> list[tuple[int, str]]:
     text = REFERENCE.read_text(encoding="utf-8")
     return [(index, match) for index, match in enumerate(YAML_BLOCK.findall(text))]
+
+
+def _blocks_text() -> list[str]:
+    return [block for _, block in _blocks()]
 
 
 def test_the_reference_has_examples_to_check() -> None:
@@ -47,6 +62,45 @@ def test_the_reference_has_examples_to_check() -> None:
 @pytest.mark.parametrize(("index", "block"), _blocks(), ids=lambda value: str(value)[:20])
 def test_every_yaml_example_parses(index: int, block: str) -> None:
     parse_yaml(block, source=REFERENCE)
+
+
+def test_every_complete_example_points_an_editor_at_the_schema() -> None:
+    """§9b: a complete example is something a reader copies as a starting file.
+
+    The ``# yaml-language-server:`` line is the only part of using the published
+    schema that has to be discovered rather than deduced, so an example that
+    omits it hands over a file with no editor support and no hint that any was
+    available. Fragments are exempt because they are not files.
+
+    The filename is asserted rather than just the comment: a schema version bump
+    renames the artefact, and an example still naming the old one would point at
+    a file that is not there -- which an editor reports as nothing at all rather
+    than as an error.
+    """
+    complete = [block for block in _blocks_text() if TOP_LEVEL_VERSION.search(block)]
+    assert complete, "no complete examples found -- the filter or the document moved"
+
+    missing = [
+        block.splitlines()[0]
+        for block in complete
+        if f"# yaml-language-server: $schema={SCHEMA_POINTER}" not in block
+    ]
+    assert not missing, f"complete examples without the §9b schema comment: {missing}"
+
+
+def test_no_fragment_carries_the_schema_comment() -> None:
+    """The other half of the rule, so it stays a distinction rather than a habit.
+
+    A fragment with the line would be telling a reader to point an editor at a
+    document that is not one, and the schema would reject it -- correctly, for
+    the missing `version:` -- which reads as the schema being wrong.
+    """
+    offenders = [
+        block.splitlines()[0]
+        for block in _blocks_text()
+        if "yaml-language-server" in block and not TOP_LEVEL_VERSION.search(block)
+    ]
+    assert not offenders, f"fragments must not carry the schema comment: {offenders}"
 
 
 def test_the_worked_example_is_a_loadable_document(write_config: Callable[[str], Path]) -> None:
