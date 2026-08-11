@@ -296,13 +296,55 @@ class TargetSet:
     Expansion does not happen here. ``template.name`` and ``template.dsn`` still
     contain ``{placeholder}`` tokens, and nothing in this object has been
     rendered, checked for a duplicate name, or matched against ``overrides``.
-    That is the next piece of work; this validates the shape it will read.
+    :mod:`sopuli.config.expansion` does that, and produces
+    :class:`ExpandedTarget`; this is the shape it reads.
     """
 
     name: str
     template: Target
     for_each: ForEach
     overrides: tuple[tuple[str, TargetPatch], ...] = ()
+
+
+@dataclass(frozen=True)
+class ExpandedTarget:
+    """One target the tool will actually act on, and where it came from (§4).
+
+    Provenance travels with the target rather than being reconstructed later.
+    §4 gives ``target list`` a SOURCE column for a reason: generation is
+    invisible until it goes wrong, and *why is this target here* is the first
+    question asked of a set that produced 34 targets where 35 were expected.
+
+    ``target`` is fully rendered -- no ``{placeholder}`` survives expansion --
+    and carries its dimension labels and any ``overrides:`` patch already
+    applied.
+    """
+
+    target: Target
+    #: The ``target_sets:`` entry that generated it. ``None`` for an explicit one.
+    target_set: str | None = None
+    #: Position in ``targets:``. ``None`` for a generated one.
+    index: int | None = None
+    #: Which of its keys came from an ``overrides:`` patch rather than from the
+    #: template, sorted. Kept per key rather than as one flag because an error
+    #: about a value has to point at the line that wrote it: a mistyped `vault:`
+    #: in an override reported against the template sends the reader to the one
+    #: place the name is spelled correctly.
+    patched: tuple[str, ...] = ()
+
+    @property
+    def name(self) -> str:
+        """The rendered target name -- what ``--target`` selects on."""
+        return self.target.name
+
+    @property
+    def overridden(self) -> bool:
+        """Whether an ``overrides:`` entry patched this target at all.
+
+        Exact rather than approximate: an empty patch is refused when the set is
+        read, so a patched key exists whenever an override applied.
+        """
+        return bool(self.patched)
 
 
 @dataclass(frozen=True)
@@ -465,6 +507,11 @@ class Config:
     vaults: tuple[Vault, ...] = ()
     targets: tuple[Target, ...] = ()
     target_sets: tuple[TargetSet, ...] = ()
+    #: The estate after §4 expansion: every explicit target, then every generated
+    #: one. Derived from the two fields above and built once, at load, so that
+    #: what a command acts on and what ``config show --resolved`` prints are the
+    #: same objects rather than two expansions that could differ.
+    expanded_targets: tuple[ExpandedTarget, ...] = ()
     groups: tuple[Group, ...] = ()
     policies: tuple[Policy, ...] = ()
     profiles: tuple[Profile, ...] = ()

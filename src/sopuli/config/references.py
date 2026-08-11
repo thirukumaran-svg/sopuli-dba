@@ -11,12 +11,13 @@ Deliberately last, and deliberately one pass. Doing half of these while only hal
 the sections existed would have meant writing the resolver twice, and it is
 easier to see that every reference is covered when they are in one list.
 
-**Templates are skipped, not resolved — but only inside a target set.** A set
-writes ``vault: "{vault}"``, whose value comes from a dimension variable, so that
-reference is left for expansion to check along with everything else about
-rendered names. The same string on an explicit target, an application or a
-profile has nothing to substitute from, and is an error rather than a hole in the
-resolver.
+**Targets are read after expansion, never before.** A set writes
+``vault: "{vault}"``, whose value comes from a dimension variable, so resolving
+the template would be resolving a name no store will ever have. Running after
+:mod:`sopuli.config.expansion` means every target here -- explicit or generated
+-- names a store literally. A ``{placeholder}`` reaching this module therefore
+comes from an application, a profile or ``defaults``, where there is nothing to
+substitute from, and is an error rather than a hole in the resolver.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
+from sopuli.config.expansion import declared_at
 from sopuli.config.model import Config, ConfigWarning
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
@@ -33,18 +35,10 @@ PRODUCTION = "prod"
 
 @dataclass(frozen=True)
 class _Reference:
-    """One name written somewhere, and where it was written.
-
-    ``templated`` marks the references that are allowed to contain a
-    ``{placeholder}`` -- which is only the ones inside a target set, where a
-    dimension variable will supply the value. Everywhere else a placeholder has
-    nothing to resolve from, so the flag has to travel with the reference rather
-    than be inferred from the string.
-    """
+    """One name written somewhere, and where it was written."""
 
     name: str
     at: KeyPath
-    templated: bool = False
 
 
 def check_references(config: Config) -> tuple[ConfigWarning, ...]:
@@ -72,16 +66,11 @@ def _check_vaults(config: Config) -> None:
 def _vault_references(config: Config) -> list[_Reference]:
     found: list[_Reference] = []
 
-    at = ROOT.key("targets")
-    for index, target in enumerate(config.targets):
-        if target.vault is not None:
-            found.append(_Reference(target.vault, at.index(index).key("vault")))
-
-    at = ROOT.key("target_sets")
-    for target_set in config.target_sets:
-        vault = target_set.template.vault
-        if vault is not None:
-            found.append(_Reference(vault, at.key(target_set.name).key("vault"), templated=True))
+    # The expanded estate covers `targets:` and `target_sets:` at once, and is
+    # the only form in which a generated target's store has a name to check.
+    for expanded in config.expanded_targets:
+        if expanded.target.vault is not None:
+            found.append(_Reference(expanded.target.vault, declared_at(expanded, "vault")))
 
     at = ROOT.key("applications")
     for index, application in enumerate(config.applications):
@@ -156,15 +145,10 @@ def _resolve(references: list[_Reference], declared: set[str], *, noun: str, sec
         if reference.name in declared:
             continue
         if "{" in reference.name:
-            if reference.templated:
-                # A target set's `vault: "{vault}"` resolves from a dimension
-                # variable. Which store that turns out to be is a question about
-                # a rendered target, so it belongs with expansion along with
-                # every other placeholder.
-                continue
-            # Everywhere else there is nothing to substitute from. Saying that
-            # is worth more than "no vault named '{vault}' is declared", which
-            # invites somebody to go and declare one.
+            # Targets have been expanded by now, so a placeholder here comes from
+            # somewhere with nothing to substitute from. Saying that is worth
+            # more than "no vault named '{vault}' is declared", which invites
+            # somebody to go and declare one.
             raise ConfigError(
                 f"{reference.name!r} contains a placeholder, and this is not a target set",
                 at=reference.at,
@@ -196,14 +180,14 @@ def _check_non_production_vaults(config: Config) -> None:
     if not non_production:
         return
 
-    at = ROOT.key("targets")
-    for index, target in enumerate(config.targets):
+    for expanded in config.expanded_targets:
+        target = expanded.target
         if target.environment != PRODUCTION or target.vault not in non_production:
             continue
         raise ConfigError(
             f"target {target.name!r} is {PRODUCTION} but its vault {target.vault!r} "
             f"is marked `non_production: true`",
-            at=at.index(index).key("vault"),
+            at=declared_at(expanded, "vault"),
             hint="point it at a production store, or drop the marking if it is wrong",
         )
 
@@ -238,24 +222,15 @@ def _warn_about_profile_names(config: Config) -> tuple[ConfigWarning, ...]:
 
 
 def _environments(config: Config) -> set[str]:
-    """Every environment value this file can be read to declare.
+    """Every environment value the estate actually declares.
 
-    Explicit targets give theirs literally. A target set's is usually the outer
-    dimension written back as a placeholder — ``environment: "{env}"`` over
-    ``for_each: { env: {dev, qa, prod} }`` — and recognising exactly that shape
-    is what makes the warning fire on the estate in §2 rather than on nothing.
-    Anything more elaborate is left to expansion.
+    Read from the expanded targets, because that is the only place a set's
+    ``environment: "{env}"`` has become ``dev``, ``qa``, ``prod``. Reading the
+    templates instead would mean recognising the one shape §2 happens to write,
+    and missing the warning on any set that composes its environment differently.
     """
-    found = {target.environment for target in config.targets if target.environment is not None}
-
-    for target_set in config.target_sets:
-        environment = target_set.template.environment
-        dimension = target_set.for_each.dimension
-        if environment is None:
-            continue
-        if environment == f"{{{dimension}}}":
-            found.update(value.value for value in target_set.for_each.values)
-        elif "{" not in environment:
-            found.add(environment)
-
-    return found
+    return {
+        expanded.target.environment
+        for expanded in config.expanded_targets
+        if expanded.target.environment is not None
+    }

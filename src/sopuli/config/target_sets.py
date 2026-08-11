@@ -12,10 +12,10 @@ What is deliberately absent, because it needs rendered names:
 * whether an ``overrides`` key names a target the set actually generates
   (§4 rule 5)
 
-Those are the target-expansion change. The rules kept here are the ones readable
-from the shape alone -- rules 1, 2 and 6 -- and they are worth having early
-because a malformed ``for_each`` is otherwise discovered as a strange number of
-generated targets rather than as an error.
+Those belong to :mod:`sopuli.config.expansion`. The rules kept here are the ones
+readable from the shape alone -- rules 1, 2, 6 and 7 -- and they are worth having
+early because a malformed ``for_each`` is otherwise discovered as a strange
+number of generated targets rather than as an error.
 
 The template is a :class:`~sopuli.config.model.Target` with its placeholders
 still in it, read by the same code as an explicit target. See

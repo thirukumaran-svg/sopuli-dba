@@ -145,6 +145,44 @@ def test_the_worked_example_builds_the_estate_it_describes() -> None:
     assert config.groups[1].match == (("env", "prod"), ("target_set", "appdb"))
 
 
+def test_the_worked_example_expands_into_the_estate_it_promises() -> None:
+    """§4 says a set exists because listing 35 PDBs by hand is not viable. This
+    is the assertion that it produced them, and produced the right ones.
+
+    §2 declares 6 dev, 8 qa and 7 prod tenants plus one explicit CDB root, and
+    two overrides by rendered name. Every rule §4 states about the result is
+    visible here: the cross product, the labels, the DSN template, and the
+    overridden DSN of the tenant that was migrated.
+    """
+    complete = next(block for _, block in _blocks() if "runtime:" in block)
+
+    config = build_config(parse_yaml(complete))
+    by_name = {expanded.name: expanded for expanded in config.expanded_targets}
+
+    assert len(config.expanded_targets) == 1 + 6 + 8 + 7
+    assert config.expanded_targets[0].name == "cdb-root-dev"
+
+    generated = by_name["appdb-prod-eta"]
+    assert generated.target_set == "appdb"
+    assert generated.target.dsn == "db-prod.example.com:1521/etaprod.pdb.example.com"
+    assert generated.target.environment == "prod"
+    assert generated.target.vault == "vault-prod"
+    assert generated.target.oracle.container == "etaprod"
+    assert generated.target.labels == (
+        ("env", "prod"),
+        ("target_set", "appdb"),
+        ("tenant", "eta"),
+    )
+    assert not generated.overridden
+
+    migrated = by_name["appdb-qa-delta"]
+    assert migrated.overridden
+    assert migrated.target.dsn == "192.0.2.75:1521/deltaqa.legacy.example.com"
+    # The override changed one key; everything else still comes from the template.
+    assert migrated.target.labels == (("env", "qa"), ("target_set", "appdb"), ("tenant", "delta"))
+    assert migrated.target.vault == "vault-test"
+
+
 def test_the_two_application_example_sits_on_the_estate_from_2() -> None:
     """§3 says of moving to `applications:` that "nothing else changes".
 

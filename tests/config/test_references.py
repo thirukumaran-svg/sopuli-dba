@@ -112,9 +112,10 @@ def test_the_inline_application_reports_its_reference_at_the_root() -> None:
     assert str(caught.value).startswith("policy:")
 
 
-def test_a_templated_vault_is_left_for_expansion() -> None:
-    """A target set's `vault: "{vault}"` resolves from a dimension variable.
-    Which store that turns out to be is a question about a rendered target."""
+def test_a_templated_vault_is_resolved_after_expansion() -> None:
+    """A target set's `vault: "{vault}"` resolves from a dimension variable, so
+    the name to check is the rendered one. The template keeps its placeholder;
+    the generated target names a store."""
     config = build_config(
         document(
             vaults=VAULTS,
@@ -131,6 +132,7 @@ def test_a_templated_vault_is_left_for_expansion() -> None:
     )
 
     assert config.target_sets[0].template.vault == "{vault}"
+    assert config.expanded_targets[0].target.vault == "vault-dev"
 
 
 @pytest.mark.parametrize(
@@ -144,12 +146,12 @@ def test_a_templated_vault_is_left_for_expansion() -> None:
     ids=["target", "application", "profile", "defaults"],
 )
 def test_a_placeholder_outside_a_target_set_is_refused(sections: dict[str, Any]) -> None:
-    """The exemption above is for target sets and nothing else.
+    """Substitution is for target sets and nothing else.
 
     An explicit target has no `for_each:` and therefore nothing to substitute
     from, so `{vault}` there is not deferred work -- it is a line copied out of a
-    target set that will never resolve. Exempting it by looking for a `{` in the
-    string would let any reference bypass resolution just by containing one.
+    target set that will never resolve. Skipping it because it contains a `{`
+    would let any reference bypass resolution just by containing one.
     """
     with pytest.raises(ConfigError) as caught:
         build_config(document(vaults=VAULTS, **sections))

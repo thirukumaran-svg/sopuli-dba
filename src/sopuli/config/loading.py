@@ -33,6 +33,7 @@ from typing import Any
 from sopuli.config.applications import build_applications
 from sopuli.config.defaults import build_defaults, build_runtime
 from sopuli.config.errors import ROOT, ConfigError
+from sopuli.config.expansion import expand_targets
 from sopuli.config.fields import describe, reject_unknown_keys
 from sopuli.config.groups import build_groups
 from sopuli.config.model import Config
@@ -130,8 +131,9 @@ def build_config(document: dict[str, Any]) -> Config:
 
     Sections are built estate-first so that the first error a half-finished file
     produces is about the estate it declares rather than about the application
-    bound to it. Cross-section names are resolved last, once there is something
-    for every name to point at.
+    bound to it. Target sets are then expanded, and cross-section names resolved
+    last -- in that order, because a set's ``vault: "{vault}"`` names nothing
+    until it has been rendered.
     """
     config = Config(
         version=document["version"],
@@ -145,6 +147,7 @@ def build_config(document: dict[str, Any]) -> Config:
         runtime=build_runtime(document),
         applications=build_applications(document),
     )
+    config = replace(config, expanded_targets=expand_targets(config))
     return replace(config, warnings=check_references(config))
 
 

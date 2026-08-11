@@ -413,6 +413,27 @@ identically. Two things to know: a boolean is refused rather than stringified
 zero is a YAML 1.1 octal — `port: 0640` is the number 416. Quote anything whose
 digits matter.
 
+### What substitution is, exactly
+
+Implemented in `sopuli/config/expansion.py`, and deliberately not a template
+language (C7): `{name}` is looked up in one flat scope and that is all there is.
+
+| | |
+|---|---|
+| **In scope** | the outer dimension (`{env}`), the scalar variables of the value being rendered, and the inner dimension's current value (`{tenant}`) |
+| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `oracle.container`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string with its braces intact |
+| **Not substituted in** | `type`, `oracle.scope`, `admin.auth`. They are closed sets, so a placeholder there is already refused when the set is read |
+| **No escaping** | there is no way to write a literal brace. An unbalanced or empty one (`{`, `{}`) is an error, not a literal |
+| **Shadowing** | a variable may not share the name of the dimension it sits under — `for_each: { env: { dev: { env: production } } }` gives `{env}` two meanings, and either choice silently decides a rendered secret path |
+
+An `overrides:` patch is rendered in the same scope as the target it patches, so
+a placeholder is resolved there too rather than reaching a DSN intact. A patch
+merges rather than replaces: `oracle: { container: X }` keeps the `scope:` the
+template set, `labels:` keeps the dimension labels `--select` found the target
+by, and a key the patch does not mention keeps its generated value. A `safety:`
+block written in a patch is not a way to relax one — §9 resolves the effective
+setting by taking the safest of all layers.
+
 ### Labels
 
 Each generated target carries its dimension values as **labels**
@@ -433,6 +454,13 @@ groups:
 Explicit `targets:` entries may carry `labels: {}` of their own, so the two kinds
 mix in one selection. `environment:` remains a first-class field rather than a
 label, because safety rules key on it.
+
+Only the dimensions become labels, not every variable: `host` and `db_domain`
+say how to connect, and offering them to `--select` would offer choices that
+select nothing meaningful. A template may add labels of its own, and one that
+contradicts a dimension — `labels: { env: production }` under `for_each: { env:
+… }` — is an error rather than a silent winner either way. Writing the same
+value twice (`labels: { env: "{env}" }`) is redundant and allowed.
 
 ### Seeing what it produced
 
@@ -761,10 +789,16 @@ error message for a file this long.
   generates a surprising number of targets
 - a target with `environment: prod` referencing a vault marked
   `non_production: true` → error
-- a `target_set` whose `name` renders a duplicate → error, listing the collision
+- a `target_set` whose `name` renders a duplicate → error, listing the collision.
+  Across the whole estate, not one set: a generated name colliding with an
+  explicit `targets:` entry makes `--target` just as ambiguous
 - an `overrides` key naming a target the set does not generate → error (catches
   renames)
-- an unresolved `{placeholder}` anywhere → error, never an empty string
+- an unresolved `{placeholder}` anywhere → error, never an empty string. So is an
+  unbalanced or empty one, because there is no escape syntax to have meant
+- a `for_each` variable named after the dimension it sits under → error (§4);
+  `{env}` with two meanings resolves to one of them and silently decides a
+  rendered secret path
 - a profile containing a key outside the §5 whitelist → error, naming the key.
   The keys that would change *scope* — `accounts`, `applications`, `secret`,
   `secret_template`, `targets`, `target_sets`, `groups`, `environment`,

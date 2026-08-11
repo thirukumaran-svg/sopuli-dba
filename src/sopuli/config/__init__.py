@@ -14,10 +14,11 @@ filesystem, so keeping it separate is what lets the schema layer be tested with
 a dict and no I/O at all (``04-testing.md`` §4 makes that an architecture
 requirement, not a test convenience).
 
-Every section of ``01-configuration.md`` is now modelled, and every name written
-in one section is resolved against the section that declares it. What remains is
-target-set *expansion* -- rendering a :class:`~sopuli.config.model.TargetSet`
-into targets, and the rules that only make sense once it has been done.
+Every section of ``01-configuration.md`` is now modelled, every
+:class:`~sopuli.config.model.TargetSet` is expanded into the targets it
+generates (:mod:`sopuli.config.expansion`), and every name written in one
+section is resolved against the section that declares it. Those three run in
+that order: a set's ``vault: "{vault}"`` names nothing until it is rendered.
 
 Not every finding is fatal. :attr:`~sopuli.config.model.Config.warnings` carries
 the ones §10 asks for as warnings rather than errors.
@@ -28,6 +29,7 @@ exit code.
 """
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
+from sopuli.config.expansion import declared_at, expand_targets
 from sopuli.config.loading import (
     SUPPORTED_VERSIONS,
     build_config,
@@ -42,6 +44,7 @@ from sopuli.config.model import (
     ConfigWarning,
     Defaults,
     DimensionValue,
+    ExpandedTarget,
     ForEach,
     Group,
     InnerDimension,
@@ -77,6 +80,7 @@ __all__ = [
     "ConfigWarning",
     "Defaults",
     "DimensionValue",
+    "ExpandedTarget",
     "ForEach",
     "Group",
     "InnerDimension",
@@ -101,6 +105,8 @@ __all__ = [
     "VerifyPolicy",
     "build_config",
     "check_permissions",
+    "declared_at",
+    "expand_targets",
     "load_config",
     "load_document",
 ]
