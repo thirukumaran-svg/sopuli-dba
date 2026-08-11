@@ -60,7 +60,7 @@ def test_the_worked_example_is_a_loadable_document(write_config: Callable[[str],
 
     document = load_document(write_config(complete[0]))
 
-    assert document["accounts"][0] == "acme_web_user"
+    assert document["applications"][0]["accounts"][0] == "acme_web_user"
     assert document["target_sets"]["appdb"]["for_each"]["env"]["prod"]["tenant"][0] == "alpha"
 
 
@@ -68,15 +68,22 @@ def test_the_worked_example_builds_the_application_it_describes() -> None:
     """§2 says in prose what it declares; this asserts the code agrees.
 
     Parsing only proves the YAML is well formed. The document's claim is that
-    those six accounts are one unnamed application mastered by one template with
-    a dev exception -- which is a statement about the schema layer, not the
-    parser.
+    those six accounts are one application, scoped to the generated PDBs and
+    mastered by one template with a dev exception -- which is a statement about
+    the schema layer, not the parser.
+
+    The scoping is the part worth pinning. §2 uses the `applications:` form for
+    one application, which §1 permits and this file needs: the estate also holds
+    a CDB root that belongs to a different job, and an inline binding would apply
+    to that too.
     """
     complete = next(block for _, block in _blocks() if "runtime:" in block)
 
     (application,) = build_applications(parse_yaml(complete))
 
-    assert application.is_inline
+    assert not application.is_inline
+    assert application.name == "acme"
+    assert application.targets.group == "app-pdbs"
     assert application.accounts == (
         "acme_web_user",
         "acme_api_user",
@@ -113,7 +120,7 @@ def test_the_worked_example_builds_the_estate_it_describes() -> None:
     Parsing proves the YAML is well formed; this proves the sections mean what
     the document says they do -- three vaults, the CDB root as an explicit
     target, one set expanding `env` over its own tenant list per environment,
-    and two groups. Every field name in the reference is asserted here by being
+    and three groups. Every field name in the reference is asserted here by being
     *read*, which is what turns the document into a specification rather than an
     illustration.
     """
@@ -141,8 +148,9 @@ def test_the_worked_example_builds_the_estate_it_describes() -> None:
     ] == [6, 8, 7]
     assert [name for name, _ in appdb.overrides] == ["appdb-qa-delta", "appdb-qa-epsilon"]
 
-    assert [group.name for group in config.groups] == ["dev-pdbs", "prod-pdbs"]
-    assert config.groups[1].match == (("env", "prod"), ("target_set", "appdb"))
+    assert [group.name for group in config.groups] == ["app-pdbs", "dev-pdbs", "prod-pdbs"]
+    assert config.groups[0].match == (("target_set", "appdb"),)
+    assert config.groups[2].match == (("env", "prod"), ("target_set", "appdb"))
 
 
 def test_the_worked_example_expands_into_the_estate_it_promises() -> None:
@@ -161,6 +169,11 @@ def test_the_worked_example_expands_into_the_estate_it_promises() -> None:
 
     assert len(config.expanded_targets) == 1 + 6 + 8 + 7
     assert config.expanded_targets[0].name == "cdb-root-dev"
+
+    # Why §2 has to scope its application: the CDB root carries no labels, so
+    # `{tenant}` could never render for it and a binding that applied to "all
+    # targets" would be unresolvable. See §2, "Why not the inline form".
+    assert by_name["cdb-root-dev"].target.labels == ()
 
     generated = by_name["appdb-prod-eta"]
     assert generated.target_set == "appdb"
@@ -190,11 +203,16 @@ def test_the_two_application_example_sits_on_the_estate_from_2() -> None:
     binding replaced. That is also the only way its references resolve --
     `group: prod-pdbs` and `policy: app-standard` are declared in §2 -- which
     makes this the test that the reference's own two examples fit together.
+
+    Both now write `applications:`, so replacing the binding is replacing one
+    key. §3's own claim that "nothing else changes" is the point: the estate
+    above it is untouched, including the CDB root that §3's `monitoring` entry
+    is the first thing in the reference to bind.
     """
     estate = {
         key: value
         for key, value in parse_yaml(next(b for _, b in _blocks() if "runtime:" in b)).items()
-        if key not in ("accounts", "secret_template", "policy", "overrides")
+        if key != "applications"
     }
     fragment = parse_yaml(next(block for _, block in _blocks() if "monitoring" in block))
 
@@ -205,7 +223,7 @@ def test_the_two_application_example_sits_on_the_estate_from_2() -> None:
         "reporting",
         "monitoring",
     ]
-    assert [group.name for group in config.groups] == ["dev-pdbs", "prod-pdbs"]
+    assert [group.name for group in config.groups] == ["app-pdbs", "dev-pdbs", "prod-pdbs"]
     assert config.warnings == ()
 
 

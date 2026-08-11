@@ -7,9 +7,9 @@ Depends on: `00-principles.md` (P3 defines precedence)
 
 ## 1. Two shapes, and you start with the simpler one
 
-**One application → no `applications:` section.** Put the binding keys at the top
-level and the file reads like a straightforward target list. This is the shape
-most users will ever need.
+**One application, and every target is its own → no `applications:` section.**
+Put the binding keys at the top level and the file reads like a straightforward
+target list. This is the shape most users will ever need.
 
 ```yaml
 version: 1
@@ -58,6 +58,12 @@ and `name` are available only inside `applications:`, because at the top level
 one application's target selector. An inline application therefore applies to
 all targets, which is the documented default anyway; needing any of those keys
 is the point at which a file moves to the `applications:` form.
+
+That boundary is what decides the shape of a real file, more often than the
+number of applications does. An estate whose targets exist for more than one
+purpose — the worked example in §2 has a CDB root for common-user maintenance —
+cannot be bound by the inline form at all, because "all targets" would include
+the ones this application has nothing to do with. §2 shows what that looks like.
 
 ### What an application entry actually is
 
@@ -172,6 +178,7 @@ target_sets:
         dsn: "db-test.example.com:1521/epsilonqa2.pdb.example.com"
 
 groups:
+  app-pdbs:  { match: { target_set: appdb } }
   dev-pdbs:  { match: { target_set: appdb, env: dev } }
   prod-pdbs: { match: { target_set: appdb, env: prod } }
 
@@ -206,25 +213,47 @@ profiles:
     log_level: warning
 
 # ---------------------------------------------------------------------------
-# The single application. No `applications:` wrapper, no name to invent.
+# The single application. It names its targets, so it uses `applications:` --
+# see "why not the inline form" below.
 # ---------------------------------------------------------------------------
-accounts:
-  - acme_web_user
-  - acme_api_user
-  - acme_batch_user
-  - acme_integration_user
-  - acme_search_user
-  - acme_svc_user
+applications:
+  - name: acme
+    targets: { group: app-pdbs }        # the generated PDBs, not the CDB root
+    accounts:
+      - acme_web_user
+      - acme_api_user
+      - acme_batch_user
+      - acme_integration_user
+      - acme_search_user
+      - acme_svc_user
 
-# One JSON document per tenant secret, mapping username -> password.
-secret_template: "tenants/{tenant}#DB_CREDENTIALS/{account}"
-policy: app-standard
+    # One JSON document per tenant secret, mapping username -> password.
+    secret_template: "tenants/{tenant}#DB_CREDENTIALS/{account}"
+    policy: app-standard
 
-# dev shares one document across every dev PDB rather than one per tenant.
-overrides:
-  - where: { env: dev }
-    secret_template: "tenants/_shared#DB_CREDENTIALS/{account}"
+    # dev shares one document across every dev PDB rather than one per tenant.
+    overrides:
+      - where: { env: dev }
+        secret_template: "tenants/_shared#DB_CREDENTIALS/{account}"
 ```
+
+### Why not the inline form
+
+§1 says one application means no `applications:` wrapper, and this file has one
+application. It uses the wrapper anyway, for the reason §1 gives: *needing any of
+those keys is the point at which a file moves to the `applications:` form* — and
+the key needed here is `targets`.
+
+`cdb-root-dev` is in the estate for common-user maintenance, which is a different
+job from this application. The inline form applies to **all** targets by
+definition, so it would bind `acme_web_user` to the CDB root as well — and
+`{tenant}` cannot even render there, since that target carries no labels. The
+file would not load, and if it did it would describe an estate nobody meant.
+
+So the rule is sharper than "one application": **the inline form fits an estate
+where every target is that application's.** The moment the estate serves a second
+purpose — another application, or a use case that is not designed yet — the
+binding has to say which targets it means, and only `applications:` can.
 
 Commands against it:
 
