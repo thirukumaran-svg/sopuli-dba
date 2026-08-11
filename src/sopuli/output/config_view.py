@@ -25,7 +25,11 @@ from pathlib import Path
 from typing import Any
 
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
-from sopuli.output.table import Column, render_table
+from sopuli.output.palette import Role, paint
+from sopuli.output.table import Cell, Column, render_table
+
+#: The environment safety rules key on (§9), and the one this view highlights.
+PRODUCTION = "prod"
 
 #: How wide a cell may get before it is truncated. A DSN and a secret ref are the
 #: two that run long; both are complete in `--output json`.
@@ -43,7 +47,7 @@ def render_text(paths: Sequence[Path], config: Config, *, resolved: bool) -> str
     for heading, body in sections:
         if not body:
             continue
-        lines.extend(["", heading])
+        lines.extend(["", paint(heading, Role.HEADING)])
         lines.extend(body)
 
     lines.extend(_warnings(config))
@@ -101,8 +105,8 @@ def _vault_rows(config: Config) -> list[str]:
             [
                 vault.name,
                 vault.type,
-                vault.addr or "-",
-                "non-production" if vault.non_production else "",
+                _or_dash(vault.addr),
+                Cell("non-production", Role.NOTABLE) if vault.non_production else "",
             ]
             for vault in config.vaults
         ],
@@ -116,8 +120,8 @@ def _declared_target_rows(config: Config) -> list[str]:
             [
                 target.name,
                 target.dsn,
-                target.environment or "-",
-                target.oracle.scope or "-",
+                _environment(target.environment),
+                _or_dash(target.oracle.scope),
             ]
             for target in config.targets
         ],
@@ -136,7 +140,7 @@ def _target_set_rows(config: Config) -> list[str]:
                 target_set.name,
                 target_set.template.name,
                 f"{target_set.for_each.dimension}: {values}",
-                ", ".join(sorted(inner)) or "-",
+                _or_dash(", ".join(sorted(inner)) or None),
             ]
         )
     return render_table(
@@ -165,7 +169,7 @@ def _application_rows(config: Config) -> list[str]:
                 application.name or "(inline)",
                 str(len(application.accounts)),
                 _selector(application),
-                application.secret_ref or "-",
+                _or_dash(application.secret_ref),
             ]
             for application in config.applications
         ],
@@ -195,10 +199,10 @@ def _estate_rows(config: Config) -> list[str]:
         [
             expanded.name,
             expanded.target.dsn,
-            expanded.target.environment or "-",
-            expanded.target.oracle.scope or "-",
-            expanded.target.vault or "-",
-            _source(expanded),
+            _environment(expanded.target.environment),
+            _or_dash(expanded.target.oracle.scope),
+            _or_dash(expanded.target.vault),
+            _source_cell(expanded),
         ]
         for expanded in config.expanded_targets
     ]
@@ -279,9 +283,9 @@ def _binding_rows(bindings: Sequence[Binding]) -> list[str]:
             [
                 binding.target,
                 binding.account,
-                str(binding.secret) if binding.secret is not None else "-",
-                binding.vault or "-",
-                binding.policy or "-",
+                _or_dash(str(binding.secret) if binding.secret is not None else None),
+                _or_dash(binding.vault),
+                _or_dash(binding.policy),
             ]
             for binding in bindings
         ],
@@ -334,6 +338,30 @@ def _bound_targets(config: Config) -> frozenset[str]:
     return frozenset(binding.target for binding in config.bindings)
 
 
+def _or_dash(value: str | None) -> Cell | str:
+    """A value, or a muted placeholder where there is none.
+
+    The dash is what says "nothing here" -- the colour only stops a column of
+    them from competing with the values beside it, which is why removing it
+    loses nothing.
+    """
+    return value if value is not None else Cell("-", Role.MUTED)
+
+
+def _environment(environment: str | None) -> Cell | str:
+    """`prod` is the one value on this screen worth finding without reading."""
+    if environment is None:
+        return _or_dash(None)
+    return Cell(environment, Role.PRODUCTION) if environment == PRODUCTION else environment
+
+
+def _source_cell(expanded: ExpandedTarget) -> Cell | str:
+    """An overridden target departs from what its set generated, which is the
+    thing a reader is scanning this column for."""
+    source = _source(expanded)
+    return Cell(source, Role.NOTABLE) if expanded.overridden else source
+
+
 def _source(expanded: ExpandedTarget) -> str:
     """§4's SOURCE column, in §4's words."""
     if expanded.target_set is None:
@@ -357,7 +385,7 @@ def _warnings(config: Config) -> list[str]:
     if not config.warnings:
         return []
     body = [f"  {line}" for warning in config.warnings for line in str(warning).splitlines()]
-    return ["", f"{_count(len(config.warnings), 'warning')}:", *body]
+    return ["", paint(f"{_count(len(config.warnings), 'warning')}:", Role.NOTABLE), *body]
 
 
 def _count(number: int, noun: str, plural: str | None = None) -> str:

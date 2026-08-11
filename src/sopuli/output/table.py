@@ -20,6 +20,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from sopuli.output.palette import Role, paint
+
 #: What a truncated cell ends with. ASCII by the same convention as the rest of
 #: the tool's prose -- this is decoration the tool adds, not text a user supplied.
 ELLIPSIS = "..."
@@ -27,6 +29,20 @@ ELLIPSIS = "..."
 #: Spaces between columns. Two, because one reads as a single wide column when a
 #: cell happens to end in a space-like character.
 GAP = "  "
+
+
+@dataclass(frozen=True)
+class Cell:
+    """A value and what it is, for a column where only some rows are notable.
+
+    A plain ``str`` is a cell with no role, so a caller only reaches for this
+    where a row differs from its neighbours. Every width is computed from
+    ``text``, never from the styled form: escape sequences have length, and a
+    table measured with them in has columns that drift by row.
+    """
+
+    text: str
+    role: Role | None = None
 
 
 @dataclass(frozen=True)
@@ -41,7 +57,7 @@ class Column:
     width: int | None = None
 
 
-def render_table(columns: Sequence[Column], rows: Sequence[Sequence[str]]) -> list[str]:
+def render_table(columns: Sequence[Column], rows: Sequence[Sequence[Cell | str]]) -> list[str]:
     """Lay out ``rows`` under ``columns``, one string per line.
 
     Returns lines rather than a block so a caller can indent them, put a count
@@ -58,23 +74,20 @@ def render_table(columns: Sequence[Column], rows: Sequence[Sequence[str]]) -> li
     # traceback -- and every zip below can be strict.
     squared = [[_cell(row, index) for index in range(len(columns))] for row in rows]
 
-    lines = [_line([column.heading for column in columns], widths)]
-    lines.extend(
-        _line([_fit(cell, width) for cell, width in zip(row, widths, strict=True)], widths)
-        for row in squared
-    )
-    return lines
+    headings = [Cell(column.heading, Role.HEADING) for column in columns]
+    return [_line(headings, widths), *(_line(row, widths) for row in squared)]
 
 
-def _width_of(column: Column, index: int, rows: Sequence[Sequence[str]]) -> int:
-    longest = max((len(_cell(row, index)) for row in rows), default=0)
+def _width_of(column: Column, index: int, rows: Sequence[Sequence[Cell | str]]) -> int:
+    longest = max((len(_cell(row, index).text) for row in rows), default=0)
     if column.width is not None:
         longest = min(longest, column.width)
     return max(longest, len(column.heading))
 
 
-def _cell(row: Sequence[str], index: int) -> str:
-    return row[index] if index < len(row) else ""
+def _cell(row: Sequence[Cell | str], index: int) -> Cell:
+    value = row[index] if index < len(row) else ""
+    return value if isinstance(value, Cell) else Cell(value)
 
 
 def _fit(text: str, width: int) -> str:
@@ -91,10 +104,26 @@ def _fit(text: str, width: int) -> str:
     return text[: width - len(ELLIPSIS)] + ELLIPSIS
 
 
-def _line(cells: Sequence[str], widths: Sequence[int]) -> str:
-    """Pad every cell but the last, which would otherwise trail whitespace."""
+def _line(cells: Sequence[Cell], widths: Sequence[int]) -> str:
+    """Fit, paint, then pad *outside* the paint.
+
+    The order is the whole of the arithmetic. Widths are measured on the plain
+    text, because escape sequences have length and a table measured with them in
+    has columns that drift by row. Padding then goes outside the escapes rather
+    than inside them, so a dim placeholder dims one character instead of a run of
+    spaces -- invisible either way on most terminals, and not on all of them.
+
+    The last cell is not padded: trailing whitespace is invisible until it lands
+    in a diff or a ticket.
+    """
     if not cells:
         return ""
-    padded = [cell.ljust(width) for cell, width in zip(cells[:-1], widths[:-1], strict=True)]
-    padded.append(cells[-1])
-    return GAP.join(padded).rstrip()
+    painted = [_pad(cell, width) for cell, width in zip(cells[:-1], widths[:-1], strict=True)]
+    painted.append(paint(_fit(cells[-1].text, widths[-1]), cells[-1].role))
+    return GAP.join(painted).rstrip()
+
+
+def _pad(cell: Cell, width: int) -> str:
+    """One cell, painted and then padded to ``width`` in plain spaces."""
+    fitted = _fit(cell.text, width)
+    return paint(fitted, cell.role) + " " * (width - len(fitted))

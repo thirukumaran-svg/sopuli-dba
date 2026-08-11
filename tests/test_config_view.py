@@ -13,9 +13,11 @@ and there is nothing in the path that could open a socket even if it wanted to.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from jsonschema import Draft202012Validator
 
@@ -26,6 +28,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.1.schema.json"
 
 PATHS = [Path("/etc/sopuli/config.yaml")]
+
+#: One ANSI-wrapped run of text, for reading the palette back out.
+STYLED = re.compile(re.escape(chr(27)) + r"\[[0-9;]*m(.*?)" + re.escape(chr(27)) + r"\[0m")
 
 DOCUMENT: dict[str, Any] = {
     "version": 1,
@@ -94,7 +99,7 @@ def test_the_default_view_shows_the_file_not_its_consequences(config: Config) ->
 
 
 def test_the_default_view_names_every_section_of_the_file(config: Config) -> None:
-    text = render_text(PATHS, config, resolved=False)
+    text = click.unstyle(render_text(PATHS, config, resolved=False))
 
     for section in ("vaults", "targets", "target_sets", "groups", "policies", "applications"):
         assert f"\n{section}\n" in text
@@ -303,3 +308,95 @@ def test_both_views_validate_against_the_schema(
 
     errors = [f"{list(e.path)}: {e.message}" for e in validator.iter_errors(document.to_dict())]
     assert errors == []
+
+
+# ---------------------------------------------------------------- colour ---
+
+
+#: A second estate, with a production target. Kept apart from DOCUMENT so the
+#: counts every other test asserts do not move when the palette changes.
+PRODUCTION_DOCUMENT: dict[str, Any] = {
+    "version": 1,
+    "vaults": {"vault-prod": {"type": "hashicorp"}},
+    "targets": [
+        {
+            "name": "appdb-prod",
+            "type": "oracle",
+            "dsn": "db-prod.example.com:1521/PRODDB.pdb.example.com",
+            "environment": "prod",
+            "vault": "vault-prod",
+        },
+        {
+            "name": "appdb-dev",
+            "type": "oracle",
+            "dsn": "db-dev.example.com:1521/DEVDB.pdb.example.com",
+            "environment": "dev",
+            "vault": "vault-prod",
+        },
+    ],
+}
+
+
+@pytest.fixture
+def production() -> Config:
+    return build_config(PRODUCTION_DOCUMENT)
+
+
+def test_the_section_headings_are_styled(config: Config) -> None:
+    """Structure, so the eye finds the sections without reading them."""
+    text = render_text(PATHS, config, resolved=False)
+
+    assert f"\n{click.style('vaults', bold=True)}\n" in text
+
+
+def painted(text: str) -> set[str]:
+    """Every styled fragment, with its padding trimmed.
+
+    Reads the roles back out of the rendered text without knowing which colour
+    any of them is, so a palette change cannot break a test about *what* is
+    emphasised -- which is the part that has to stay true.
+    """
+    # A role may emit more than one code -- red *and* bold -- so the capture
+    # can still hold one. Unstyling it leaves the text the reader sees.
+    fragments = (click.unstyle(match).strip() for match in STYLED.findall(text))
+    return {fragment for fragment in fragments if fragment}
+
+
+def test_production_is_styled_and_no_other_environment_is(production: Config) -> None:
+    """`prod` is the one value on this screen worth finding without reading:
+    §9 keys `confirm_environments` on it. Colouring every environment would make
+    the one that matters ordinary again."""
+    emphasised = painted(render_text(PATHS, production, resolved=True))
+
+    assert "prod" in emphasised
+    assert "dev" not in emphasised
+
+
+@pytest.mark.parametrize(
+    ("word", "resolved"),
+    [("override", True), ("non-production", False)],
+    ids=["overridden-target", "non-production-store"],
+)
+def test_the_things_worth_finding_are_styled(config: Config, word: str, resolved: bool) -> None:
+    """Each maps onto a field the `config` section already emits -- `overridden`
+    and `non_production` -- rather than a second vocabulary that could disagree
+    with it (03-json-output.md §1)."""
+    lines = render_text(PATHS, config, resolved=resolved).splitlines()
+
+    carrying = [line for line in lines if word in click.unstyle(line)]
+    assert carrying, f"{word!r} is not in this view at all"
+    assert any(line != click.unstyle(line) for line in carrying)
+
+
+def test_colour_never_carries_meaning_on_its_own(production: Config) -> None:
+    """§1's accessibility floor, asserted rather than intended.
+
+    Everything the palette touches is already a word, so stripping the escapes
+    loses decoration and nothing else. If a role were ever the *only* thing
+    distinguishing two rows, this is where it would show up -- the word would
+    have to be missing from the plain text.
+    """
+    plain = click.unstyle(render_text(PATHS, production, resolved=True))
+
+    for word in ("prod", "dev", "targets", "appdb-prod", "-"):
+        assert word in plain

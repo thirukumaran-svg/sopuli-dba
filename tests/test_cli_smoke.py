@@ -239,6 +239,38 @@ def test_text_output_is_not_coloured_when_piped(runner: CliRunner, show: list[st
     assert "\x1b" not in result.output
 
 
+def test_colour_adds_decoration_and_never_information(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """`03-json-output.md` §1: the `NO_COLOR` path is lossless, not degraded.
+
+    The strongest form of that promise, end to end: take the coloured output,
+    strip the escapes, and it must equal the uncoloured output byte for byte. If
+    anything were ever distinguishable *only* by colour, the two would differ.
+    """
+    path = str(write_config(ESTATE))
+    command = ["config", "show", "--config", path, "--resolved"]
+
+    coloured = runner.invoke(cli, [*command, "--color", "always"])
+    plain = runner.invoke(cli, [*command, "--color", "never"])
+
+    assert coloured.exit_code == ExitCode.SUCCESS
+    assert "\x1b" in coloured.output, "--color always emitted nothing to strip"
+    assert click.unstyle(coloured.output) == plain.output
+
+
+@pytest.mark.parametrize("variable", ["NO_COLOR", "SOPULI_NO_COLOR"])
+def test_the_no_color_variables_reach_a_real_command(
+    runner: CliRunner, show: list[str], variable: str
+) -> None:
+    """Resolved in `output/color.py` and unit-tested there; asserted here through
+    a command, because a control surface nothing consults is not one."""
+    result = runner.invoke(cli, show, env={variable: "1"})
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "\x1b" not in result.output
+
+
 # ------------------------------------------------------------ config show ---
 
 ESTATE = """

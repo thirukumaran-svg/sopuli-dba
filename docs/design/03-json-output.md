@@ -92,11 +92,35 @@ Two rules, both binding on the renderer that ADR-003 selects:
 machine views must not be able to describe the same run differently. Inventing a
 separate set of visual categories produces two vocabularies that will drift.
 
+That rule was written against *results*, because results were the only text
+output anticipated. `config show` arrived first and has no states at all, so the
+rule applies to it in the same form against the fields its `config` section
+emits. Implemented in `sopuli/output/palette.py`:
+
+| Role | What it marks | The field behind it |
+|---|---|---|
+| `heading` | a section name, a column heading | structure, not data |
+| `muted` | the `-` standing in for a value that is not there | any nullable field |
+| `notable` | an overridden target, a `non_production` store, a warning | `overridden`, `non_production` |
+| `production` | the `prod` environment wherever it appears | `environment` |
+
+Nothing there is a new category: each is a field the JSON already carries, so
+the two views still cannot disagree. **The result palette is deliberately not
+defined yet** — nothing emits a `state`, and a mapping written before there is
+anything to map is the renderer-against-guesses ADR-003 warns about. It arrives
+with `creds check`.
+
 **Meaning is never carried by colour alone.** Drift has its own exit code (3)
 because schedulers alert on it; a human needs that distinction without colour
 too — a symbol or a word, with colour as reinforcement. This makes the
 `NO_COLOR` path lossless rather than degraded, and it is the accessibility
 floor.
+
+Every role above decorates a word that is already on the line — `prod`,
+`override`, `non-production`, `-` — so the guarantee holds by construction
+rather than by care. `tests/test_cli_smoke.py` asserts the strong form of it end
+to end: strip the escapes from `--color always` output and it equals `--color
+never` output byte for byte.
 
 **The tool's own prose stays ASCII by convention**, enforced across the whole
 command tree by `tests/test_cli_smoke.py`. This is not a limitation left over
