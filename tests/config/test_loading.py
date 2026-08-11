@@ -48,7 +48,10 @@ accounts:
   - acme_web_user
   - acme_api_user
 
-secret_template: "tenants/{tenant}#DB_CREDENTIALS/{account}"
+# The inline form applies to every target, so the template may only use tokens
+# every target has. `{tenant}` would be a label, and the CDB root carries none --
+# see 01-configuration.md §2, "Why not the inline form".
+secret_template: "apps/acme/{env}#DB_CREDENTIALS/{account}"
 policy: app-standard
 """
 

@@ -50,6 +50,7 @@ def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     _check_vaults(config)
     _check_policies(config)
     _check_groups(config)
+    _check_targets(config)
     _check_profiles(config)
     _check_non_production_vaults(config)
     return _warn_about_profile_names(config)
@@ -127,6 +128,26 @@ def _check_groups(config: Config) -> None:
             found.append(_Reference(group, where.key("targets").key("group")))
 
     _resolve(found, declared, noun="group", section="groups")
+
+
+def _check_targets(config: Config) -> None:
+    """An application's `targets: [name]` must name targets that exist.
+
+    The same rule as every other name here, and the same failure: a typo does not
+    stay a typo. `targets: [cdb-root-dv]` selects nothing, so the application
+    manages nothing, and a run reports success over an empty set. Resolved
+    against the *expanded* estate, because a generated name is as real a target
+    as a written one.
+    """
+    declared = {expanded.name for expanded in config.expanded_targets}
+    found: list[_Reference] = []
+
+    for index, application in enumerate(config.applications):
+        where = ROOT if application.is_inline else ROOT.key("applications").index(index)
+        for position, name in enumerate(application.targets.names):
+            found.append(_Reference(name, where.key("targets").index(position)))
+
+    _resolve(found, declared, noun="target", section="targets")
 
 
 def _check_profiles(config: Config) -> None:

@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from sopuli.config.secret_refs import SecretRef
+
 #: Label matches and vendor options, kept as sorted pairs. See the module note.
 Pairs = tuple[tuple[str, str], ...]
 
@@ -82,6 +84,16 @@ class Override:
     policy: str | None = None
     oracle: OracleOptions = field(default_factory=OracleOptions)
 
+    @property
+    def secret_ref(self) -> str | None:
+        """Whichever of ``secret`` / ``secret_template`` this patch sets.
+
+        Same shape as :attr:`Application.secret_ref`, and for the same reason:
+        they are mutually exclusive by validation, so a rule about "the ref" does
+        not have to re-derive which field holds it.
+        """
+        return self.secret if self.secret is not None else self.secret_template
+
 
 @dataclass(frozen=True)
 class Application:
@@ -126,6 +138,26 @@ class Application:
         re-derive which field holds it.
         """
         return self.secret if self.secret is not None else self.secret_template
+
+
+@dataclass(frozen=True)
+class Binding:
+    """One account, in one target, mastered by one secret (§1).
+
+    The sentence §1 says the whole config exists to state, one row at a time.
+    Produced by :mod:`sopuli.config.bindings` once selection, overrides and token
+    expansion have been applied, so nothing here is still a template.
+
+    ``secret`` is an *address*, never a value -- P2 keeps resolution behind the
+    store interface, and this is the object a command hands it.
+    """
+
+    account: str
+    target: str
+    application: str | None = None
+    secret: SecretRef | None = None
+    vault: str | None = None
+    policy: str | None = None
 
 
 # --------------------------------------------------------------- the estate ---
@@ -512,6 +544,11 @@ class Config:
     #: what a command acts on and what ``config show --resolved`` prints are the
     #: same objects rather than two expansions that could differ.
     expanded_targets: tuple[ExpandedTarget, ...] = ()
+    #: One row per account per target, with its ref rendered (§1). Derived from
+    #: `applications` and the expanded estate, and built at load for the same
+    #: reason: the binding a command acts on and the one `config show --resolved`
+    #: prints must be the same object.
+    bindings: tuple[Binding, ...] = ()
     groups: tuple[Group, ...] = ()
     policies: tuple[Policy, ...] = ()
     profiles: tuple[Profile, ...] = ()

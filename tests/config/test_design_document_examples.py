@@ -196,6 +196,37 @@ def test_the_worked_example_expands_into_the_estate_it_promises() -> None:
     assert migrated.target.vault == "vault-test"
 
 
+def test_the_worked_example_binds_the_accounts_it_declares() -> None:
+    """§1 says the config exists to state *these accounts, in these targets,
+    mastered by these secrets*. This is that sentence, counted and read back.
+
+    Six accounts across 21 generated PDBs is 126 bindings, and the CDB root is
+    bound by none of them -- which is the whole reason §2 scopes its application
+    to `app-pdbs`. The dev exception is asserted here rather than only in the
+    override tests because §2 is where a reader meets it.
+    """
+    complete = next(block for _, block in _blocks() if "runtime:" in block)
+
+    config = build_config(parse_yaml(complete))
+    by_target: dict[str, list[str]] = {}
+    for binding in config.bindings:
+        by_target.setdefault(binding.target, []).append(str(binding.secret))
+
+    assert len(config.bindings) == 21 * 6
+    assert "cdb-root-dev" not in by_target
+
+    assert by_target["appdb-qa-alpha"][0] == "tenants/alpha#DB_CREDENTIALS/acme_web_user"
+    assert by_target["appdb-prod-eta"][0] == "tenants/eta#DB_CREDENTIALS/acme_web_user"
+    # The dev exception: one shared document instead of one per tenant.
+    assert by_target["appdb-dev-alpha"][0] == "tenants/_shared#DB_CREDENTIALS/acme_web_user"
+    assert by_target["appdb-dev-zeta"][0] == "tenants/_shared#DB_CREDENTIALS/acme_web_user"
+
+    qa = next(binding for binding in config.bindings if binding.target == "appdb-qa-alpha")
+    assert qa.vault == "vault-test"
+    assert qa.policy == "app-standard"
+    assert qa.application == "acme"
+
+
 def test_the_two_application_example_sits_on_the_estate_from_2() -> None:
     """§3 says of moving to `applications:` that "nothing else changes".
 

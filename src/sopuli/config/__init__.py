@@ -28,6 +28,7 @@ wrapped around it, and errors are plain exceptions that the boundary maps to an
 exit code.
 """
 
+from sopuli.config.bindings import build_bindings
 from sopuli.config.discovery import CONFIG_ENV, discover, search_path
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at, expand_targets
@@ -44,6 +45,7 @@ from sopuli.config.model import (
     AccountPolicy,
     AdminCredential,
     Application,
+    Binding,
     Config,
     ConfigWarning,
     Defaults,
@@ -73,6 +75,7 @@ from sopuli.config.model import (
 )
 from sopuli.config.permissions import check_permissions
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
+from sopuli.config.selection import matches, select
 
 __all__ = [
     "CONFIG_ENV",
@@ -81,6 +84,7 @@ __all__ = [
     "AccountPolicy",
     "AdminCredential",
     "Application",
+    "Binding",
     "Config",
     "ConfigError",
     "ConfigWarning",
@@ -110,6 +114,7 @@ __all__ = [
     "Vault",
     "VaultAuth",
     "VerifyPolicy",
+    "build_bindings",
     "build_config",
     "check_permissions",
     "declared_at",
@@ -118,8 +123,10 @@ __all__ = [
     "load_config",
     "load_config_from",
     "load_document",
+    "matches",
     "load_documents",
     "merge_documents",
     "parse_secret_ref",
     "search_path",
+    "select",
 ]

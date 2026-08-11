@@ -327,6 +327,28 @@ sopuli creds rotate --app acme --select env=dev    # --app is an accepted alias
 | `oracle` | vendor-specific options, e.g. `container_clause` |
 | `overrides` | list of `{ where: {labels}, ...keys }` patches applied to matching targets. `where` is required, and the patchable keys are `vault`, `secret`, `secret_template`, `policy` and `oracle` — **not `accounts`**, see §10 |
 
+`where:` matches **labels**, so it reaches generated targets by their dimension
+values and explicit ones by the `labels:` they declare. `environment` is a field
+rather than a label (§4) and is not matched on.
+
+Every override that matches a target applies, in document order, and a later one
+wins key by key. That is what lets a broad rule be narrowed by a later exception
+instead of writing every case out separately; it also means two overrides that
+both match and both set the same key resolve to the later one, so order is worth
+keeping deliberate.
+
+Resolution, once a target is selected — implemented in `sopuli/config/bindings.py`:
+
+| Key | Resolves as |
+|---|---|
+| `secret` / `secret_template` | the last matching override's, else the entry's. The tokens are then expanded per account and target (§7) |
+| `vault` | the ref's own `vault:` prefix if it has one, else the last matching override's, else the entry's, else the target's, else `defaults.vault` |
+| `policy` | the last matching override's, else the entry's, else `defaults.policy` |
+
+This is the chain the file itself describes. The `SOPULI_*` and command-line
+layers above it are P3's and belong to the precedence resolver, not here — a
+config file can be read without knowing what environment it will be read in.
+
 ---
 
 ## 3a. The estate: vaults, targets, groups
@@ -717,6 +739,13 @@ behind the store interface.
 | `{application}` | application entry name (empty in the inline form) |
 | `{<label>}` | any label on the target, e.g. `{tenant}` |
 
+A built-in wins over a label of the same name: the built-in is specified here and
+a label is whatever somebody typed. A target with no `environment` supplies no
+`{env}`, and one with no container no `{container}`, so a template using either
+against such a target fails to render rather than rendering short — §10's rule,
+applied to refs. `{application}` is the one documented exception, and is empty
+rather than missing in the inline form.
+
 A template parses as the ref it will expand into: the punctuation that gives a
 ref its shape is literal, and the tokens sit inside the parts. So
 `tenants/{tenant}#DB_CREDENTIALS/{account}` is checked structurally at load. The
@@ -881,11 +910,14 @@ error message for a file this long.
   `secret_template`, `targets`, `target_sets`, `groups`, `environment`,
   `policies` — get their own message rather than "unknown key", because they are
   a wrong model rather than a typo
-- a name that names nothing → error. Every `vault`, `policy`, `group` and
-  `profile` written anywhere in the file must be declared in the section that
-  declares them. A dangling `vault:` is the dangerous one: it does not stay
-  dangling, it falls back to `defaults.vault`, and the tool then rotates a
-  production password into whatever that is
+- a name that names nothing → error. Every `vault`, `policy`, `group`, `profile`
+  and `targets:` entry written anywhere in the file must be declared in the
+  section that declares them — target names against the *expanded* estate, since
+  a generated name is as real as a written one. An application whose
+  `targets: [cdb-root-dv]` names nothing manages nothing, and a run reports
+  success over an empty set. A dangling `vault:` is the dangerous one: it does
+  not stay dangling, it falls back to `defaults.vault`, and the tool then
+  rotates a production password into whatever that is
 - `charset: custom` whose `allow:` contains `"` → error (invariant 11). The
   generator applies that rule to what it produces; this applies it to the
   alphabet it produces *from*, which is the only place a config file can name

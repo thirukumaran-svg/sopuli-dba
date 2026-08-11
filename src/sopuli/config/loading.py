@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from sopuli.config.applications import build_applications
+from sopuli.config.bindings import build_bindings
 from sopuli.config.defaults import build_defaults, build_runtime
 from sopuli.config.discovery import CONFIG_ENV
 from sopuli.config.errors import ROOT, ConfigError
@@ -200,9 +201,10 @@ def build_config(document: dict[str, Any]) -> Config:
 
     Sections are built estate-first so that the first error a half-finished file
     produces is about the estate it declares rather than about the application
-    bound to it. Target sets are then expanded, and cross-section names resolved
-    last -- in that order, because a set's ``vault: "{vault}"`` names nothing
-    until it has been rendered.
+    bound to it. Then, in order, because each step needs the one before it: the
+    target sets are expanded, every name is resolved -- a set's
+    ``vault: "{vault}"`` names nothing until it has been rendered -- and the
+    application bindings are built over the estate that results.
     """
     config = Config(
         version=document["version"],
@@ -217,7 +219,12 @@ def build_config(document: dict[str, Any]) -> Config:
         applications=build_applications(document),
     )
     config = replace(config, expanded_targets=expand_targets(config))
-    return replace(config, warnings=check_references(config))
+    # References are resolved before bindings are built, not after: an
+    # application naming a target that does not exist should say so, rather than
+    # silently selecting nothing and producing no bindings at all.
+    warnings = check_references(config)
+    config = replace(config, bindings=build_bindings(config))
+    return replace(config, warnings=warnings)
 
 
 def _read(path: Path) -> str:
