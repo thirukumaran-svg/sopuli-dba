@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/futville/sopuli-dba/compare/v0.7.0...v0.8.0) (2026-08-11)
+
+
+### Features
+
+* find and layer config files, and load them in config show ([#37](https://github.com/futville/sopuli-dba/issues/37)) ([0aae6fb](https://github.com/futville/sopuli-dba/commit/0aae6fbf2d882e7cf655e4d2bfc354e8184f737c))
+
 ## [0.7.0](https://github.com/futville/sopuli-dba/compare/v0.6.0...v0.7.0) (2026-08-11)
 
 
