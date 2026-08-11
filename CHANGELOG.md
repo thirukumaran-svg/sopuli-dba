@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/futville/sopuli-dba/compare/v0.10.0...v0.11.0) (2026-08-11)
+
+
+### Features
+
+* colour the text output, semantically ([#47](https://github.com/futville/sopuli-dba/issues/47)) ([b2b08bd](https://github.com/futville/sopuli-dba/commit/b2b08bdde2cead98f6656d5f59151dadc5f92c19))
+
 ## [0.10.0](https://github.com/futville/sopuli-dba/compare/v0.9.0...v0.10.0) (2026-08-11)
 
 
