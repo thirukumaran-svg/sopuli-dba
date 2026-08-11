@@ -39,6 +39,7 @@ from sopuli.config.loading import (
     load_config_from,
     load_document,
     load_documents,
+    load_layers,
     merge_documents,
 )
 from sopuli.config.model import (
@@ -72,6 +73,7 @@ from sopuli.config.model import (
     Vault,
     VaultAuth,
     VerifyPolicy,
+    as_dict,
 )
 from sopuli.config.permissions import check_permissions
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
@@ -123,8 +125,10 @@ __all__ = [
     "load_config",
     "load_config_from",
     "load_document",
+    "as_dict",
     "matches",
     "load_documents",
+    "load_layers",
     "merge_documents",
     "parse_secret_ref",
     "search_path",

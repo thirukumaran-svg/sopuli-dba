@@ -295,16 +295,32 @@ def test_a_non_ascii_config_path_reaches_the_output_intact(
     assert str(path) in result.output
 
 
-def test_config_show_counts_the_expanded_estate(
+def test_config_show_renders_the_file_as_loaded(
     runner: CliRunner, write_config: Callable[[str], Path]
 ) -> None:
-    """One explicit target plus a set over two tenants. The generated count is
-    the number nobody can work out by reading the file."""
+    """The default view answers *did my YAML say what I think it says*, so it
+    shows the sections as written -- the target set as a template, not as the
+    targets it will become."""
     result = runner.invoke(cli, ["config", "show", "--config", str(write_config(ESTATE))])
 
     assert result.exit_code == ExitCode.SUCCESS
-    assert "3 targets (1 explicit, 2 from 1 target set)" in result.output
-    assert "1 vault" in result.output
+    assert "appdb-{env}-{tenant}" in result.output
+    assert "appdb-dev-alpha" not in result.output
+
+
+def test_config_show_resolved_renders_what_the_tool_would_act_on(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """And `--resolved` answers the other question. One explicit target plus a
+    set over two tenants: the generated count is the number nobody can work out
+    by reading the file."""
+    path = write_config(ESTATE)
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path), "--resolved"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "appdb-dev-alpha" in result.output
+    assert "3 targets (1 explicit, 2 generated)" in result.output
 
 
 def test_config_show_prints_warnings_in_full(
@@ -334,7 +350,8 @@ def test_repeated_config_options_are_layered_in_order(runner: CliRunner, tmp_pat
     assert result.exit_code == ExitCode.SUCCESS
     assert f"config: {base}" in result.output
     assert f"{overlay} (layered)" in result.output
-    assert "2 vaults" in result.output
+    assert "vault-dev" in result.output
+    assert "extra" in result.output
 
 
 def test_a_named_config_that_does_not_exist_is_a_usage_error(

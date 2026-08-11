@@ -1,6 +1,6 @@
 """The run document (``docs/design/03-json-output.md`` §2).
 
-There is no such thing as a placeholder run document. ``sopuli-run-1.0.schema.json``
+There is no such thing as a placeholder run document. ``sopuli-run-1.1.schema.json``
 sets ``additionalProperties: false`` at the root and requires six top-level
 fields, two of which have required members of their own, so the smallest thing
 that validates is a complete document. Building it properly now is cheaper than
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -103,6 +103,12 @@ class RunDocument:
     finished_at: datetime | None = None
     summary: Summary = field(default_factory=Summary)
     exit_code: int = 0
+    #: The ``config`` section, when the command produces one. Its shape belongs
+    #: to the command that builds it (:mod:`sopuli.output.config_view`) rather
+    #: than here, and is pinned by the schema and by
+    #: ``tests/test_run_document.py`` -- this only decides that it is optional
+    #: and omitted rather than nulled when absent.
+    config: dict[str, Any] | None = None
 
     @classmethod
     def start(cls, command: str, *, dry_run: bool = False) -> RunDocument:
@@ -124,10 +130,10 @@ class RunDocument:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Render to the shape ``sopuli-run-1.0.schema.json`` describes."""
+        """Render to the shape ``sopuli-run-1.1.schema.json`` describes."""
         finished_at = self.finished_at or utc_now()
         duration_ms = int((finished_at - self.started_at).total_seconds() * 1000)
-        return {
+        document: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "tool": {"name": TOOL_NAME, "version": _tool_version()},
             "command": self.command,
@@ -142,6 +148,9 @@ class RunDocument:
             "summary": self.summary.to_dict(),
             "exit_code": self.exit_code,
         }
+        if self.config is not None:
+            document["config"] = self.config
+        return document
 
 
 def _tool_version() -> str:

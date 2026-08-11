@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/vronkko/sopuli-dba/schemas/sopuli-event-1.0.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-event-1.0.schema.json",
   "title": "sopuli-dba streamed event",
   "description": "One JSON object per line, emitted by `sopuli … --output jsonl` as the run progresses. The final run.finished event carries the same summary as the --output json document. Draft — not yet implemented.",
   "type": "object",

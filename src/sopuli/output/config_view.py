@@ -1,0 +1,366 @@
+"""Rendering a configuration -- as loaded, and as resolved (§2, §4, §7).
+
+Two views of one file, and the difference between them is the whole point:
+
+* **as loaded** answers *did my YAML say what I think it says*, after however
+  many ``--config`` layers were merged. It shows the file, not its consequences.
+* **``--resolved``** answers *what will this tool act on*. Target sets are
+  expanded, labels attached, overrides applied, and every secret ref rendered per
+  account. §4 says generation is invisible until it goes wrong; this is where it
+  stops being invisible.
+
+Both are offline. No vault is contacted and no database is opened, which is what
+makes ``--resolved`` safe to run against a production config from a laptop. A
+secret ref here is an address and never a value (invariant 2, P2).
+
+The JSON form is the ``config`` section of the run document. It carries the same
+two views, discriminated by ``resolved``, and is pinned by
+``docs/schemas/sopuli-run-1.1.schema.json``.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+from sopuli.config import Binding, Config, ExpandedTarget, as_dict
+from sopuli.output.table import Column, render_table
+
+#: How wide a cell may get before it is truncated. A DSN and a secret ref are the
+#: two that run long; both are complete in `--output json`.
+_NAME = 24
+_DSN = 46
+_REF = 52
+
+
+def render_text(paths: Sequence[Path], config: Config, *, resolved: bool) -> str:
+    """The human view. ASCII by convention; user-supplied values pass through."""
+    lines = [f"config: {paths[0]}"]
+    lines.extend(f"        {path} (layered)" for path in paths[1:])
+
+    sections = _resolved_sections(config) if resolved else _declared_sections(config)
+    for heading, body in sections:
+        if not body:
+            continue
+        lines.extend(["", heading])
+        lines.extend(body)
+
+    lines.extend(_warnings(config))
+    return "\n".join(lines)
+
+
+def build_section(
+    paths: Sequence[Path], config: Config, document: dict[str, Any], *, resolved: bool
+) -> dict[str, Any]:
+    """The ``config`` section of the run document.
+
+    ``declared`` is the merged document itself rather than a reshaping of it.
+    The question it answers is what the YAML says after layering, and any
+    normalisation on the way out would be a second answer to that question --
+    one that could drift from the first.
+    """
+    section: dict[str, Any] = {
+        "sources": [str(path) for path in paths],
+        "resolved": resolved,
+    }
+    if not resolved:
+        section["declared"] = document
+        return section
+
+    # Built once. A set per target would be one pass over every binding for
+    # every target, and §2's estate is already 22 x 126 of them.
+    bound = _bound_targets(config)
+    section["targets"] = [
+        _target_json(expanded, bound=bound) for expanded in config.expanded_targets
+    ]
+    section["bindings"] = [_binding_json(binding) for binding in config.bindings]
+    return section
+
+
+# ------------------------------------------------------------- as loaded ---
+
+
+def _declared_sections(config: Config) -> list[tuple[str, list[str]]]:
+    """One block per section of the file, in the order the file writes them."""
+    return [
+        ("vaults", _vault_rows(config)),
+        ("targets", _declared_target_rows(config)),
+        ("target_sets", _target_set_rows(config)),
+        ("groups", _group_rows(config)),
+        ("policies", _named(policy.name for policy in config.policies)),
+        ("profiles", _named(profile.name for profile in config.profiles)),
+        ("applications", _application_rows(config)),
+    ]
+
+
+def _vault_rows(config: Config) -> list[str]:
+    return render_table(
+        [Column("NAME", _NAME), Column("TYPE"), Column("ADDRESS", _DSN), Column("NOTE")],
+        [
+            [
+                vault.name,
+                vault.type,
+                vault.addr or "-",
+                "non-production" if vault.non_production else "",
+            ]
+            for vault in config.vaults
+        ],
+    )
+
+
+def _declared_target_rows(config: Config) -> list[str]:
+    return render_table(
+        [Column("NAME", _NAME), Column("DSN", _DSN), Column("ENV"), Column("SCOPE")],
+        [
+            [
+                target.name,
+                target.dsn,
+                target.environment or "-",
+                target.oracle.scope or "-",
+            ]
+            for target in config.targets
+        ],
+    )
+
+
+def _target_set_rows(config: Config) -> list[str]:
+    """A set is a template plus its dimensions, which is what needs checking
+    before it is expanded: the wrong dimension values are 34 targets, not 35."""
+    rows = []
+    for target_set in config.target_sets:
+        values = ", ".join(value.value for value in target_set.for_each.values)
+        inner = {value.inner.name for value in target_set.for_each.values if value.inner}
+        rows.append(
+            [
+                target_set.name,
+                target_set.template.name,
+                f"{target_set.for_each.dimension}: {values}",
+                ", ".join(sorted(inner)) or "-",
+            ]
+        )
+    return render_table(
+        [Column("NAME", _NAME), Column("TEMPLATE", _NAME), Column("OUTER", _DSN), Column("INNER")],
+        rows,
+    )
+
+
+def _group_rows(config: Config) -> list[str]:
+    return render_table(
+        [Column("NAME", _NAME), Column("MATCH", _DSN)],
+        [[group.name, _pairs(group.match)] for group in config.groups],
+    )
+
+
+def _application_rows(config: Config) -> list[str]:
+    return render_table(
+        [
+            Column("NAME", _NAME),
+            Column("ACCOUNTS"),
+            Column("TARGETS", _NAME),
+            Column("SECRET", _REF),
+        ],
+        [
+            [
+                application.name or "(inline)",
+                str(len(application.accounts)),
+                _selector(application),
+                application.secret_ref or "-",
+            ]
+            for application in config.applications
+        ],
+    )
+
+
+def _selector(application: Any) -> str:
+    selector = application.targets
+    if selector.is_everything:
+        return "all"
+    if selector.names:
+        return ", ".join(selector.names)
+    if selector.group is not None:
+        return f"group {selector.group}"
+    return _pairs(selector.match)
+
+
+# -------------------------------------------------------------- resolved ---
+
+
+def _resolved_sections(config: Config) -> list[tuple[str, list[str]]]:
+    return [("targets", _estate_rows(config)), *_binding_sections(config)]
+
+
+def _estate_rows(config: Config) -> list[str]:
+    rows = [
+        [
+            expanded.name,
+            expanded.target.dsn,
+            expanded.target.environment or "-",
+            expanded.target.oracle.scope or "-",
+            expanded.target.vault or "-",
+            _source(expanded),
+        ]
+        for expanded in config.expanded_targets
+    ]
+    lines = render_table(
+        [
+            Column("NAME", _NAME),
+            Column("DSN", _DSN),
+            Column("ENV"),
+            Column("SCOPE"),
+            Column("VAULT", _NAME),
+            Column("SOURCE"),
+        ],
+        rows,
+    )
+    return [*lines, "", _estate_summary(config)]
+
+
+def _estate_summary(config: Config) -> str:
+    generated = [target for target in config.expanded_targets if target.target_set is not None]
+    overridden = [target for target in generated if target.overridden]
+    parts = [f"{len(config.expanded_targets) - len(generated)} explicit"]
+    if generated:
+        parts.append(f"{len(generated)} generated")
+    if overridden:
+        parts.append(f"{len(overridden)} overridden")
+
+    summary = f"{_count(len(config.expanded_targets), 'target')} ({', '.join(parts)})"
+    unmanaged = _unmanaged(config)
+    if unmanaged:
+        listed = ", ".join(unmanaged)
+        summary += f"; {_count(len(unmanaged), 'target')} managed by nothing: {listed}"
+    return summary
+
+
+def _unmanaged(config: Config) -> list[str]:
+    """Targets no application binds.
+
+    Shown rather than warned about: §2's estate declares a CDB root for a use
+    case that is not designed yet, and a declared-but-unmanaged target is the
+    honest state until it is. Invisible is the one thing it must not be.
+    """
+    bound = _bound_targets(config)
+    return [expanded.name for expanded in config.expanded_targets if expanded.name not in bound]
+
+
+def _binding_sections(config: Config) -> list[tuple[str, list[str]]]:
+    """Bindings grouped by application rather than carrying an application column.
+
+    One estate is usually one or two applications, and a heading costs one line
+    where a column costs width on every row -- width that a secret ref needs.
+    """
+    sections = []
+    for application in config.applications:
+        bindings = [b for b in config.bindings if b.application == application.name]
+        if not bindings:
+            continue
+        label = application.name or "the inline application"
+        targets = len({binding.target for binding in bindings})
+        heading = (
+            f"bindings: {label} "
+            f"({_count(len(application.accounts), 'account')}, "
+            f"{_count(targets, 'target')})"
+        )
+        sections.append((heading, _binding_rows(bindings)))
+    return sections
+
+
+def _binding_rows(bindings: Sequence[Binding]) -> list[str]:
+    return render_table(
+        [
+            Column("TARGET", _NAME),
+            Column("ACCOUNT", _NAME),
+            Column("SECRET", _REF),
+            Column("VAULT", _NAME),
+            Column("POLICY"),
+        ],
+        [
+            [
+                binding.target,
+                binding.account,
+                str(binding.secret) if binding.secret is not None else "-",
+                binding.vault or "-",
+                binding.policy or "-",
+            ]
+            for binding in bindings
+        ],
+    )
+
+
+# ------------------------------------------------------------------ json ---
+
+
+def _target_json(expanded: ExpandedTarget, *, bound: frozenset[str]) -> dict[str, Any]:
+    target = expanded.target
+    return {
+        "name": target.name,
+        "type": target.type,
+        "dsn": target.dsn,
+        "environment": target.environment,
+        "vault": target.vault,
+        "scope": target.oracle.scope,
+        "container": target.oracle.container,
+        "labels": as_dict(target.labels),
+        "target_set": expanded.target_set,
+        "overridden": expanded.overridden,
+        "managed": target.name in bound,
+    }
+
+
+def _binding_json(binding: Binding) -> dict[str, Any]:
+    return {
+        "application": binding.application,
+        "account": binding.account,
+        "target": binding.target,
+        # The ref as written, which round-trips exactly (§7). Its parts are not
+        # broken out here: `plan.units[].secret` is the structured form, and its
+        # `version`/`stage` typing waits on C14 (issue #40).
+        "secret": str(binding.secret) if binding.secret is not None else None,
+        "vault": binding.vault,
+        "policy": binding.policy,
+    }
+
+
+# ----------------------------------------------------------------- shared ---
+
+
+def _bound_targets(config: Config) -> frozenset[str]:
+    """Every target some application binds an account in.
+
+    One pass over the bindings, asked once and then looked up. §2's estate is 22
+    targets and 126 bindings, and both views ask this question per target.
+    """
+    return frozenset(binding.target for binding in config.bindings)
+
+
+def _source(expanded: ExpandedTarget) -> str:
+    """§4's SOURCE column, in §4's words."""
+    if expanded.target_set is None:
+        return "targets"
+    if expanded.overridden:
+        return "override"
+    return f"target_set {expanded.target_set}"
+
+
+def _pairs(pairs: tuple[tuple[str, str], ...]) -> str:
+    return ", ".join(f"{key}={value}" for key, value in pairs)
+
+
+def _named(names: Any) -> list[str]:
+    listed = sorted(names)
+    return [", ".join(listed)] if listed else []
+
+
+def _warnings(config: Config) -> list[str]:
+    """§10's warnings, in full. This is the only place anybody will read them."""
+    if not config.warnings:
+        return []
+    body = [f"  {line}" for warning in config.warnings for line in str(warning).splitlines()]
+    return ["", f"{_count(len(config.warnings), 'warning')}:", *body]
+
+
+def _count(number: int, noun: str, plural: str | None = None) -> str:
+    if number == 1:
+        return f"1 {noun}"
+    return f"{number} {plural if plural is not None else noun + 's'}"

@@ -16,13 +16,14 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-run-1.0.schema.json](schemas/sopuli-run-1.0.schema.json) | JSON Schema (2020-12) for the `--output json` document |
+| [schemas/sopuli-run-1.1.schema.json](schemas/sopuli-run-1.1.schema.json) | JSON Schema (2020-12) for the `--output json` document |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
 | `../sql/oracle/01_audit_policy.sql` | Unified audit policies, correlation queries, password-leak release-gate probes |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
 | [decisions/adr-001-privilege-model.md](decisions/adr-001-privilege-model.md) | Why direct `ALTER USER`, what was rejected, and the two triggers for revisiting |
+| [decisions/adr-003-text-tables.md](decisions/adr-003-text-tables.md) | No table library: columns formatted with click and the standard library, and why output must not depend on the terminal |
 | [decisions/adr-004-yaml-parser.md](decisions/adr-004-yaml-parser.md) | PyYAML on a hardened `SafeLoader`, why not ruamel, and the pywin32 dependency for the P4 permission check |
 | `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
@@ -57,8 +58,9 @@ those keys rather than inventing them)**, ~~what profiles are for~~ (C10 —
 proposed no), a built-in `interactive` profile (C12, leaning no), **whether `vault:`
 under `defaults`/`profiles` is a name or a block (C13, issue #31 — the loader
 refuses the block form)**, **the `@stage=` vocabulary in a SecretRef and who owns
-it (C14, issue #40 — §7 writes `PENDING`, UC-1 writes `pending`; the parser
-carries the value as written)**.
+it (C14, issue #40 — §7 writes `PENDING`, UC-1 writes `pending`, and the run
+schema has already typed the enum lower-case and `version` as an integer; the
+parser carries both values as written)**.
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
 documented default (P1), grant `SELECT ON SYS.USER$` by default (P2), whether
@@ -69,9 +71,11 @@ does `doctor` fail or warn on over-granted privileges (P5), keep 11.2 support
 
 **JSON output (03):** buffering policy for `--output json` (J1), always emit
 `plan` (J2), warning code registry (J3), host/pid in output (J4), OpenTelemetry
-(J5), resumable streams (J6), **which library renders text tables — `click.style`
-or `rich` (ADR-003, issue #15; also gated on the first command with real results
-to display)**.
+(J5), resumable streams (J6). *~~Which library renders text tables~~ decided
+2026-08-11 in [ADR-003](decisions/adr-003-text-tables.md): none — `click` plus
+the standard library, on dependency weight and on keeping output independent of
+the terminal. `config show --resolved` was the first command with real results
+to display, which is what the decision was waiting for.*
 
 **Testing (04):** testcontainers or compose (T2), LocalStack tier (T3), OCI Vault
 cost in a test loop (T4), real standby for the read-only refusal (T6), Oracle

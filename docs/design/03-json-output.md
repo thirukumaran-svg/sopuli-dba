@@ -1,7 +1,11 @@
 # sopuli-dba — JSON output contract
 
-Status: draft / sketch. Schemas validate; nothing is implemented.
-Schemas: [`../schemas/sopuli-run-1.0.schema.json`](../schemas/sopuli-run-1.0.schema.json),
+Status: draft / sketch, **partly implemented**. The run document, `--output
+text|json`, colour resolution and the `config` section are real and validated
+against the schema in CI (`sopuli/output/`). `--output jsonl`, `plan`, `results`
+and `diagnostics` are not written yet, so everything about them here is still a
+sketch.
+Schemas: [`../schemas/sopuli-run-1.1.schema.json`](../schemas/sopuli-run-1.1.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -111,6 +115,7 @@ unchanged, which is precisely what the UTF-8 streams make safe.
 {
   schema_version, tool, command,
   invocation { correlation_id, timing, actor, dry_run, profile, selection, options },
+  config     { sources[], resolved, declared | targets[] + bindings[] },
   plan       { units[], shared_secrets[], confirmation_required, blast_radius },
   results    [ { account, target, scope, secret, state, changed, actions[],
                  verification, rollover, error, warnings[] } ],
@@ -120,8 +125,26 @@ unchanged, which is precisely what the UTF-8 streams make safe.
 }
 ```
 
-Four parts of it are worth explaining, because they encode decisions rather than
+Five parts of it are worth explaining, because they encode decisions rather than
 just data.
+
+### `config`, emitted by `config show`
+
+Two views of one file, discriminated by `resolved`:
+
+- **`resolved: false`** carries `declared`, the merged config document as
+  loaded. Deliberately untyped in the schema: it is the user's YAML after
+  `--config` layering, and reshaping it on the way out would answer a different
+  question from the one it is there to answer.
+- **`resolved: true`** carries `targets[]` — the expanded estate with labels,
+  provenance and whether anything manages each one — and `bindings[]`, one row
+  per account per target with its secret ref rendered.
+
+A binding's `secret` is the ref **as written**, a string that round-trips
+(`01-configuration.md` §7), so it lines up by eye with the config file. The
+structured form is `plan.units[].secret`, which is a different job: that one
+addresses a specific version at a specific moment, and this one records what the
+file says. Neither ever carries a value.
 
 ### `invocation.correlation_id`
 
@@ -324,6 +347,12 @@ Both schemas set `additionalProperties: false` so the tool's own tests catch
 accidental additions — but *consumers* must ignore unknown properties, and the
 docs say so explicitly. The strictness is a producer-side guard, not a
 consumer-side requirement.
+
+**1.0 became 1.1 when `config` was added**, which is the minor rule above
+working as written: an optional property, and no consumer of 1.0 breaks by
+ignoring it. The published schema file was renamed rather than duplicated. It is
+a *producer-side* guard — it describes what this build emits — so a retained 1.0
+file would guard nothing and drift.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/vronkko/sopuli-dba/schemas/sopuli-run-1.0.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.1.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -36,6 +36,7 @@
       ]
     },
     "invocation": { "$ref": "#/$defs/invocation" },
+    "config": { "$ref": "#/$defs/config_view" },
     "plan": { "$ref": "#/$defs/plan" },
     "results": {
       "type": "array",
@@ -55,6 +56,83 @@
   },
 
   "$defs": {
+
+    "config_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources", "resolved"],
+      "description": "What `config show` read, and what it resolves to. Offline: no vault or database is contacted, and no secret value appears. `resolved` discriminates the two shapes, and the allOf below holds the producer to it.",
+      "allOf": [
+        {
+          "if": { "properties": { "resolved": { "const": true } }, "required": ["resolved"] },
+          "then": { "required": ["targets", "bindings"], "not": { "required": ["declared"] } },
+          "else": { "required": ["declared"], "not": { "anyOf": [{ "required": ["targets"] }, { "required": ["bindings"] }] } }
+        }
+      ],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "description": "The config files that were read, in the order they were layered.",
+          "items": { "type": "string" }
+        },
+        "resolved": {
+          "type": "boolean",
+          "description": "false: `declared` holds the file as loaded. true: `targets` and `bindings` hold what the tool would act on."
+        },
+        "declared": {
+          "type": "object",
+          "description": "The merged config document, as loaded and before expansion. Deliberately untyped here: it is the user's YAML, and reshaping it would answer a different question from the one it is here to answer."
+        },
+        "targets": {
+          "type": "array",
+          "description": "The expanded estate. Present when resolved.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type", "dsn", "labels", "managed"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" },
+              "dsn": { "type": "string" },
+              "environment": { "type": ["string", "null"] },
+              "vault": { "type": ["string", "null"] },
+              "scope": { "type": ["string", "null"] },
+              "container": { "type": ["string", "null"] },
+              "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+              "target_set": {
+                "type": ["string", "null"],
+                "description": "The target_sets entry that generated it; null for an explicit target."
+              },
+              "overridden": { "type": "boolean" },
+              "managed": {
+                "type": "boolean",
+                "description": "Whether any application binds an account here. A declared target that nothing manages is legitimate, not an error."
+              }
+            }
+          }
+        },
+        "bindings": {
+          "type": "array",
+          "description": "One row per account per target, with its secret ref rendered. Present when resolved.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["account", "target"],
+            "properties": {
+              "application": { "type": ["string", "null"], "description": "null for the inline form." },
+              "account": { "type": "string" },
+              "target": { "type": "string" },
+              "secret": {
+                "type": ["string", "null"],
+                "description": "The SecretRef as written, rendered per account and target (01-configuration.md 7). An address, never a value. The structured form is plan.units[].secret."
+              },
+              "vault": { "type": ["string", "null"] },
+              "policy": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
 
     "timestamp": {
       "type": "string",

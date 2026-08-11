@@ -172,14 +172,31 @@ def load_config_from(paths: Sequence[Path]) -> Config:
     about a *file* -- unreadable, unparseable, unversioned -- are raised before
     the merge and still say which one.
     """
+    return load_layers(paths)[1]
+
+
+def load_layers(paths: Sequence[Path]) -> tuple[dict[str, Any], Config]:
+    """The merged document *and* the config built from it.
+
+    ``config show`` needs both: once several ``--config`` files have been
+    merged, "the configuration as loaded" is the merged document rather than any
+    file on disk, and it is the only form in which the effect of layering can be
+    inspected. Everything else wants the :class:`Config`.
+
+    One code path rather than two, so a caller that needs both cannot read the
+    files twice -- which would be wasteful on a small file and wrong on a file
+    that changed in between.
+    """
     if not paths:
         raise ConfigError(
             "no config file to load",
             hint=f"pass --config PATH, or set {CONFIG_ENV}",
         )
-    if len(paths) == 1:
-        return load_config(paths[0])
-    return _validate(load_documents(paths), source=None)
+    document = load_documents(paths)
+    # With one file a validation error can name it. With several it cannot: the
+    # offending value may have been written in one and overridden in another.
+    source = paths[0] if len(paths) == 1 else None
+    return document, _validate(document, source=source)
 
 
 def _validate(document: dict[str, Any], *, source: Path | None) -> Config:

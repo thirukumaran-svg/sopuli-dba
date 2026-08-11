@@ -30,7 +30,7 @@ SCHEMA_DIR = Path(__file__).resolve().parents[1] / "docs" / "schemas"
 #: that can rot; the ones in the repo are cited from the design documents, so
 #: they have to stay true as the schemas evolve.
 SAMPLES = {
-    "example-creds-check-drift.json": "sopuli-run-1.0.schema.json",
+    "example-creds-check-drift.json": "sopuli-run-1.1.schema.json",
 }
 
 

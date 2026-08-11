@@ -1,7 +1,7 @@
 """The JSON output is a versioned contract (invariant 12), so it is validated.
 
 What a command actually prints is checked against
-``docs/schemas/sopuli-run-1.0.schema.json`` — not against a hand-written
+``docs/schemas/sopuli-run-1.1.schema.json`` — not against a hand-written
 expectation that could drift from the schema without anyone noticing.
 """
 
@@ -20,7 +20,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.output.document import RunDocument, Summary, to_rfc3339, utc_now
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.0.schema.json"
+RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.1.schema.json"
 
 
 @pytest.fixture(scope="module")

@@ -23,15 +23,16 @@ ever looks like a credential.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
 import click
 
-from sopuli.config import Config, ConfigError, discover, load_config_from
+from sopuli.config import ConfigError, discover, load_layers
 from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
+from sopuli.output.config_view import build_section, render_text
 from sopuli.output.document import RunDocument, Summary
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.stream import configure_streams
@@ -99,16 +100,30 @@ def config_group() -> None:
 
 
 @config_group.command("show")
+@click.option(
+    "--resolved",
+    is_flag=True,
+    default=False,
+    help="Show what the tool would act on: expanded targets and their bindings.",
+)
 @common_options
 def config_show(
-    config_paths: tuple[Path, ...], output_mode: str, dry_run: bool, color_choice: str
+    resolved: bool,
+    config_paths: tuple[Path, ...],
+    output_mode: str,
+    dry_run: bool,
+    color_choice: str,
 ) -> None:
     """Show the effective configuration.
 
-    Offline in the strongest sense: it finds the file, validates it, and expands
-    the estate, without opening a socket to a vault or a database. What it
-    prints so far is a summary -- which files were read and what they declare.
-    Rendering the sections themselves is the next change.
+    Two views of one file. Without ``--resolved`` it shows the configuration as
+    loaded, which answers *did my YAML say what I think it says* after however
+    many ``--config`` layers were merged. With it, target sets are expanded and
+    every secret ref rendered per account, which answers *what will this act on*.
+
+    Offline in the strongest sense: it opens no socket to a vault or a database,
+    so it is safe to run against a production config from a laptop. A secret ref
+    is an address and never a value.
 
     A bad config file raises out of here rather than being caught and reported
     as a run: the boundary in :func:`main` already maps it to exit 2, and
@@ -123,80 +138,15 @@ def config_show(
     document = RunDocument.start("config.show", dry_run=dry_run)
 
     paths = discover(config_paths)
-    config = load_config_from(paths)
+    declared, config = load_layers(paths)
 
     targets = len(config.expanded_targets)
+    document.config = build_section(paths, config, declared, resolved=resolved)
     document.finish(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    emitter.emit(document, describe_config(paths, config))
-
-
-def describe_config(paths: Sequence[Path], config: Config) -> str:
-    """The text summary: where the config came from, and what it declares.
-
-    The tool's own prose stays ASCII by convention, even though the streams are
-    UTF-8 now (``sopuli.output.stream``): decoration should be opt-in and
-    deliberate, not an em dash that arrived in a docstring by accident. Anything
-    a user supplies -- a target name, a warning's key path -- passes through
-    unchanged.
-    """
-    lines = [f"config: {paths[0]}"]
-    lines.extend(f"        {path} (layered)" for path in paths[1:])
-    lines.append("")
-    lines.extend(_estate_summary(config))
-    lines.extend(_warning_summary(config))
-    lines.append("")
-    lines.append("This is a summary; the sections themselves are not rendered yet.")
-    return "\n".join(lines)
-
-
-def _estate_summary(config: Config) -> list[str]:
-    """What the file declares, counted.
-
-    The generated count is worth a line of its own because it is the number
-    nobody can work out by reading: `01-configuration.md` §4 says generation is
-    invisible until it goes wrong, and one target set is 35 targets or 34.
-    """
-    generated = sum(1 for target in config.expanded_targets if target.target_set is not None)
-    explicit = len(config.expanded_targets) - generated
-
-    targets = _count(len(config.expanded_targets), "target")
-    if config.target_sets:
-        sets = _count(len(config.target_sets), "target set")
-        targets = f"{targets} ({explicit} explicit, {generated} from {sets})"
-
-    declared = [
-        _count(len(config.vaults), "vault"),
-        _count(len(config.groups), "group"),
-        _count(len(config.policies), "policy", "policies"),
-        _count(len(config.profiles), "profile"),
-        _count(len(config.applications), "application"),
-    ]
-    return [targets, ", ".join(declared)]
-
-
-def _warning_summary(config: Config) -> list[str]:
-    """§10's warnings, in full.
-
-    A count alone would be worse than nothing: these are the findings the config
-    layer decided were not worth refusing to run over, which makes this the only
-    place anybody will read them.
-    """
-    if not config.warnings:
-        return []
-    return ["", f"{_count(len(config.warnings), 'warning')}:", *_indent(config.warnings)]
-
-
-def _indent(warnings: Sequence[Any]) -> list[str]:
-    return [f"  {line}" for warning in warnings for line in str(warning).splitlines()]
-
-
-def _count(number: int, noun: str, plural: str | None = None) -> str:
-    if number == 1:
-        return f"1 {noun}"
-    return f"{number} {plural if plural is not None else noun + 's'}"
+    emitter.emit(document, render_text(paths, config, resolved=resolved))
 
 
 def main() -> None:
