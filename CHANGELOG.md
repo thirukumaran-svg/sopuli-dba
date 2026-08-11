@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/futville/sopuli-dba/compare/v0.11.0...v0.12.0) (2026-08-11)
+
+
+### Features
+
+* **config:** publish the config JSON Schema, generated from the model ([#49](https://github.com/futville/sopuli-dba/issues/49)) ([68df689](https://github.com/futville/sopuli-dba/commit/68df689d00b3d4cce43855dcd54667c0d1732de4))
+
 ## [0.11.0](https://github.com/futville/sopuli-dba/compare/v0.10.0...v0.11.0) (2026-08-11)
 
 
