@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/futville/sopuli-dba/compare/v0.15.0...v0.16.0) (2026-08-12)
+
+
+### Features
+
+* show what a password policy produces, with policy sample ([#69](https://github.com/futville/sopuli-dba/issues/69)) ([3e79280](https://github.com/futville/sopuli-dba/commit/3e792803cc1da441ff9968dbc893f211960f504d)), closes [#68](https://github.com/futville/sopuli-dba/issues/68)
+
+
+### Bug Fixes
+
+* **config:** say what to write in a missing auth key, not which one ([#71](https://github.com/futville/sopuli-dba/issues/71)) ([4f4a228](https://github.com/futville/sopuli-dba/commit/4f4a2286191c112313b61d8153a083bc4a9a9973)), closes [#70](https://github.com/futville/sopuli-dba/issues/70)
+
 ## [0.15.0](https://github.com/futville/sopuli-dba/compare/v0.14.0...v0.15.0) (2026-08-12)
 
 
