@@ -309,7 +309,10 @@ def test_the_vault_source_must_name_one() -> None:
 
     rendered = str(caught.value)
     assert "`vault` cannot be written as a bare value" in rendered
-    assert "secret" in rendered
+    # And the hint says what the key it needs actually holds (#70): a SecretRef,
+    # not a password and not a field of this block's own invention.
+    assert "`secret:` is a SecretRef" in rendered
+    assert "in the target's vault by default" in rendered
 
 
 def test_a_malformed_admin_ref_is_refused_where_it_was_written() -> None:

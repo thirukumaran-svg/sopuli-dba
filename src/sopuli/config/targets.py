@@ -181,13 +181,28 @@ def read_admin_auth(raw: Any, *, at: KeyPath) -> AdminAuth | None:
     if raw is None:
         return None
 
-    method, auth = read_method(raw, at=at, methods=ADMIN_METHODS, noun="admin auth method")
+    method, auth = read_method(
+        raw, at=at, methods=ADMIN_METHODS, noun="admin auth method", shape=_shape
+    )
     ref = optional_string(auth, "secret", at=at)
     return AdminAuth(
         method=method,
         secret=None if ref is None else parse_secret_ref(ref, at=at.key("secret")),
         password_env=optional_string(auth, "password_env", at=at),
     )
+
+
+def _shape(key: str) -> str:
+    """How one `admin.auth` key is written, for the error about a missing one (#70).
+
+    Only `method: vault` requires anything, and what it requires is a whole
+    SecretRef -- which is the answer somebody staring at "needs `secret`" wants,
+    since the alternative readings are a bare password (never) and a field of this
+    block's own invention (there is none).
+    """
+    if key == "secret":
+        return "a SecretRef -- `[vault:]path#field`, in the target's vault by default (§7)"
+    return "written inline"  # pragma: no cover - no other admin key is required
 
 
 def read_oracle(raw: Any, *, at: KeyPath) -> TargetOracle:

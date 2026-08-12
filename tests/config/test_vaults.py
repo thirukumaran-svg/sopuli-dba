@@ -312,7 +312,8 @@ def test_a_method_missing_its_material_is_refused_at_load() -> None:
     rendered = str(caught.value)
     assert "vaults.vault-dev.auth.secret_id" in rendered
     assert "`method: approle` needs `secret_id`" in rendered
-    assert "required for this method: role_id, secret_id" in rendered
+    # The hint says what to *write* rather than repeating the key (#70).
+    assert "`secret_id:` is named, not written -- `{ env: NAME }` or `{ file: PATH }`" in rendered
 
 
 def test_several_missing_keys_are_all_named_at_the_first_of_them() -> None:
@@ -324,6 +325,36 @@ def test_several_missing_keys_are_all_named_at_the_first_of_them() -> None:
     rendered = str(caught.value)
     assert "vaults.vault-dev.auth.role_id" in rendered
     assert "needs `role_id`, `secret_id`" in rendered
+    # And the hint explains both, once: two keys sharing a shape are grouped, or a
+    # hint says the same sentence twice and stops being read.
+    assert "`role_id:` and `secret_id:` are named, not written" in rendered
+
+
+def test_the_hint_distinguishes_material_from_an_identity_field() -> None:
+    """#70: a method can require both kinds, so one sentence about MaterialRefs
+    would be wrong. `kubernetes` needs a `role`, which is written as it is, and a
+    `jwt`, which is named -- and the hint has to say which is which."""
+    with pytest.raises(ConfigError) as caught:
+        auth(method="kubernetes")
+
+    rendered = str(caught.value)
+    assert "`role:` is written inline" in rendered
+    assert "`jwt:` is named, not written" in rendered
+
+
+def test_the_hint_does_not_merely_repeat_the_message() -> None:
+    """The defect #70 reports. The message names the keys and the path names one of
+    them; a hint that lists them a third time answers nothing, and CLAUDE.md asks a
+    hint to say what to do next."""
+    with pytest.raises(ConfigError) as caught:
+        auth(method="approle")
+
+    message, hint = str(caught.value).split("hint:")
+    assert "env" in hint
+    assert "file" in hint
+    # Nothing in the hint is only a restatement of the key list.
+    assert hint.strip() != ", ".join(("role_id", "secret_id"))
+    assert "required for this method" not in message
 
 
 @pytest.mark.parametrize("method", ["token", "instance_principal", "config_file"])
@@ -346,7 +377,10 @@ def test_a_method_that_needs_material_may_not_be_written_as_a_bare_value() -> No
 
     rendered = str(caught.value)
     assert "`approle` cannot be written as a bare value" in rendered
-    assert "role_id" in rendered
+    # The same explanation as the missing-key error, for the same reason (#70):
+    # knowing which keys are needed is not knowing what to write in them.
+    assert "`role_id:` and `secret_id:` are named, not written" in rendered
+    assert "{ env: NAME }" in rendered
 
 
 def test_an_unknown_method_written_as_a_bare_value_is_refused() -> None:

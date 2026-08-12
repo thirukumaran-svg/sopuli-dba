@@ -127,6 +127,18 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
     )
 
 
+def _shape(key: str) -> str:
+    """How one `auth:` key is written, for the error about a missing one (#70).
+
+    The distinction P2 draws, in the one place a reader needs it: material is
+    *named* and identity is *written*. Answered per key because a method can
+    require both -- `kubernetes` needs a `role` and a `jwt`.
+    """
+    if key in AUTH_MATERIAL_KEYS:
+        return "named, not written -- `{ env: NAME }` or `{ file: PATH }`"
+    return "written inline"
+
+
 def _build_kv_version(entry: dict[str, Any], *, at: KeyPath) -> int | None:
     version = optional_int(entry, "kv_version", at=at)
     if version is not None and version not in KV_VERSIONS:
@@ -149,7 +161,7 @@ def _build_auth(raw: Any, *, at: KeyPath) -> VaultAuth | None:
     if raw is None:
         return None
 
-    method, auth = read_method(raw, at=at, methods=AUTH_METHODS, noun="auth method")
+    method, auth = read_method(raw, at=at, methods=AUTH_METHODS, noun="auth method", shape=_shape)
     return VaultAuth(
         method=method,
         mount=optional_string(auth, "mount", at=at),

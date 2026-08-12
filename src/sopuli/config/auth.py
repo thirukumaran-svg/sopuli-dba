@@ -44,6 +44,7 @@ already put vendor validation.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -119,7 +120,12 @@ def read_material(raw: Any, *, at: KeyPath) -> MaterialRef:
 
 
 def read_method(
-    raw: Any, *, at: KeyPath, methods: dict[str, Method], noun: str
+    raw: Any,
+    *,
+    at: KeyPath,
+    methods: dict[str, Method],
+    noun: str,
+    shape: Callable[[str], str],
 ) -> tuple[str, dict[str, Any]]:
     """Read a method block, or its scalar shorthand, and check its keys.
 
@@ -128,9 +134,21 @@ def read_method(
     read the same grammar and build different objects, and one reader that
     returned a union of both would have to know about vaults and databases at
     once.
+
+    ``shape`` says how one key is written, for the error about a missing one. It is
+    the caller's to supply because this module knows only that a key is *absent*:
+    a vault's material is a MaterialRef, a target's ``admin.auth.secret`` is a
+    SecretRef, and an identity field such as ``role`` is written inline. A sentence
+    fixed here would be wrong for one of those positions, and "required for this
+    method: role_id, secret_id" -- which is what it used to say -- was wrong for
+    all of them, because it repeated the message instead of answering it (#70).
+
+    It returns a predicate **without its verb** -- "named, not written -- ``{ env:
+    NAME }``" rather than "is named" -- because :func:`_explain` groups the keys
+    that share one and has to choose *is* or *are* for the group.
     """
     if isinstance(raw, str):
-        return _shorthand(raw, at=at, methods=methods, noun=noun), {}
+        return _shorthand(raw, at=at, methods=methods, noun=noun, shape=shape), {}
 
     entry = mapping(raw, at=at)
     if "method" not in entry:
@@ -161,7 +179,7 @@ def read_method(
         raise ConfigError(
             f"`method: {method}` needs {_listed(tuple(missing))}",
             at=at.key(missing[0]),
-            hint=f"required for this method: {', '.join(spec.required)}",
+            hint=_explain(tuple(missing), shape),
         )
     return method, entry
 
@@ -179,7 +197,9 @@ def read_material_key(entry: dict[str, Any], key: str, *, at: KeyPath) -> Materi
     return read_material(entry[key], at=at.key(key))
 
 
-def _shorthand(text: str, *, at: KeyPath, methods: dict[str, Method], noun: str) -> str:
+def _shorthand(
+    text: str, *, at: KeyPath, methods: dict[str, Method], noun: str, shape: Callable[[str], str]
+) -> str:
     """``auth: prompt`` -- legal where the method requires nothing else."""
     method = choice(text, allowed=tuple(methods), at=at, noun=noun)
     spec = methods[method]
@@ -188,11 +208,31 @@ def _shorthand(text: str, *, at: KeyPath, methods: dict[str, Method], noun: str)
             f"`{method}` cannot be written as a bare value: it needs {_listed(spec.required)}",
             at=at,
             hint=(
-                f"write `{{ method: {method}, {spec.required[0]}: ... }}` -- the short form is "
-                "for methods that need nothing else"
+                f"the short form is for methods that need nothing else -- write "
+                f"`{{ method: {method}, ... }}`, where {_explain(spec.required, shape)}"
             ),
         )
     return method
+
+
+def _explain(missing: tuple[str, ...], shape: Callable[[str], str]) -> str:
+    """The keys that are missing, and what goes in each of them.
+
+    Keys sharing a shape are grouped, because ``approle`` needs two MaterialRefs
+    and saying so twice in one sentence is how a hint stops being read.
+    """
+    grouped: dict[str, list[str]] = {}
+    for key in missing:
+        grouped.setdefault(shape(key), []).append(key)
+    return "; ".join(f"{_keys(keys)} {text}" for text, keys in grouped.items())
+
+
+def _keys(keys: list[str]) -> str:
+    """```role_id:` and `secret_id:` are`` -- the subject of one clause."""
+    written = [f"`{key}:`" for key in keys]
+    if len(written) == 1:
+        return f"{written[0]} is"
+    return f"{', '.join(written[:-1])} and {written[-1]} are"
 
 
 def _kinds() -> str:
