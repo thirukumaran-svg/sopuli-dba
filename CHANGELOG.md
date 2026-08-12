@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/futville/sopuli-dba/compare/v0.13.0...v0.14.0) (2026-08-12)
+
+
+### Features
+
+* add target list, the estate as its own command ([#61](https://github.com/futville/sopuli-dba/issues/61)) ([52f17f5](https://github.com/futville/sopuli-dba/commit/52f17f583ecde962012759820ec2ba5705bf5ec2))
+
 ## [0.13.0](https://github.com/futville/sopuli-dba/compare/v0.12.1...v0.13.0) (2026-08-12)
 
 
