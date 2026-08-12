@@ -10,9 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, TargetSelector
-from sopuli.config.selection import matches, select
+from sopuli.config.selection import filter_estate, matches, parse_selector, select
+from sopuli.exit_codes import ExitCode
 
 ESTATE: dict[str, Any] = {
     "version": 1,
@@ -156,3 +160,139 @@ def test_selection_cannot_introduce_a_target(  # invariant 5
     selected = select(config, TargetSelector(match=(("target_set", "appdb"),)))
 
     assert all(expanded in config.expanded_targets for expanded in selected)
+
+
+# ----------------------------------------------------------- parse_selector ---
+
+
+def test_one_pair_is_a_match() -> None:
+    assert parse_selector(["env=qa"]) == (("env", "qa"),)
+
+
+def test_several_pairs_in_one_option_are_all_of_them() -> None:
+    assert parse_selector(["env=qa,tenant=beta"]) == (("env", "qa"), ("tenant", "beta"))
+
+
+def test_repeats_accumulate() -> None:
+    """`--select env=qa --select tenant=beta` is the same request as writing both
+    in one option. Two spellings of one thought should not select differently."""
+    assert parse_selector(["env=qa", "tenant=beta"]) == parse_selector(["env=qa,tenant=beta"])
+
+
+def test_the_result_is_ordered_by_key() -> None:
+    """So that two spellings of one selector render identically -- the pairs
+    reach `invocation.selection` and the text header, and a document that
+    differs by argument order is a document that cannot be diffed."""
+    assert parse_selector(["tenant=beta,env=qa"]) == parse_selector(["env=qa,tenant=beta"])
+
+
+def test_surrounding_space_is_not_part_of_a_label() -> None:
+    """`--select "env = qa"` is one shell quoting accident away from normal."""
+    assert parse_selector(["env = qa"]) == (("env", "qa"),)
+
+
+def test_no_selector_at_all_is_an_empty_match() -> None:
+    assert parse_selector([]) == ()
+
+
+def test_the_same_pair_twice_is_not_a_conflict() -> None:
+    """Harmless repetition, and refusing it would only punish a generated
+    command line that appended the same filter twice."""
+    assert parse_selector(["env=qa", "env=qa"]) == (("env", "qa"),)
+
+
+def test_one_key_with_two_values_is_refused() -> None:
+    """A match is a conjunction, so `env=dev,env=qa` can only ever select
+    nothing. Answering "or" with an empty estate would be a silent wrong answer
+    to a question the tool cannot yet ask (C2)."""
+    with pytest.raises(ConfigError) as caught:
+        parse_selector(["env=dev,env=qa"])
+
+    assert "selected twice" in str(caught.value)
+    assert "dev" in str(caught.value)
+    assert "qa" in str(caught.value)
+
+
+@pytest.mark.parametrize("value", ["env", "env qa", ""])
+def test_a_pair_without_an_equals_sign_is_refused(value: str) -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_selector([value])
+
+    assert f"'{value}' is not a label match" in str(caught.value)
+
+
+@pytest.mark.parametrize("value", ["env=", "=qa", "  =  "])
+def test_an_empty_side_is_refused(value: str) -> None:
+    """`--select env=` is a shell variable that did not expand, which is a
+    different mistake from asking for targets whose `env` is empty."""
+    with pytest.raises(ConfigError) as caught:
+        parse_selector([value])
+
+    assert "empty" in str(caught.value)
+
+
+def test_a_selector_error_exits_as_a_usage_error() -> None:
+    """P5: "you typed it wrong" is 2, not 1, so a scheduler can tell it from a
+    failure."""
+    with pytest.raises(ConfigError) as caught:
+        parse_selector(["nonsense"])
+
+    assert caught.value.exit_code == ExitCode.USAGE
+    assert str(caught.value.at) == "--select"
+
+
+# ------------------------------------------------------------ filter_estate ---
+
+
+def test_filtering_keeps_the_targets_that_carry_every_label() -> None:
+    config = filter_estate(estate(), (("env", "dev"), ("tenant", "alpha")))
+
+    assert [expanded.name for expanded in config.expanded_targets] == ["appdb-dev-alpha"]
+
+
+def test_filtering_keeps_estate_order() -> None:
+    """Not the order the selector wrote, for the reason `select` gives: two
+    routes to the same set must produce the same list."""
+    config = filter_estate(estate(), (("target_set", "appdb"),))
+    everything = [expanded.name for expanded in estate().expanded_targets]
+
+    assert [expanded.name for expanded in config.expanded_targets] == [
+        name for name in everything if name.startswith("appdb-")
+    ]
+
+
+def test_an_empty_match_changes_nothing() -> None:
+    """A command with no `--select` and one whose selector spans the estate take
+    the same path, so there is no filtered/unfiltered branch to get wrong."""
+    config = estate()
+
+    assert filter_estate(config, ()) is config
+
+
+def test_a_match_selecting_nothing_leaves_an_empty_estate() -> None:
+    config = filter_estate(estate(), (("env", "staging"),))
+
+    assert config.expanded_targets == ()
+    assert config.bindings == ()
+
+
+def test_filtering_cannot_introduce_a_target(  # invariant 5
+) -> None:
+    """`--force` cannot widen the whitelist and neither can a selector: every
+    survivor is an object that was already in the estate."""
+    config = estate()
+    filtered = filter_estate(config, (("target_set", "appdb"),))
+
+    assert all(expanded in config.expanded_targets for expanded in filtered.expanded_targets)
+
+
+def test_the_rest_of_the_config_is_untouched() -> None:
+    """Filtering narrows what a run acts on, not what the file says. `targets:`
+    and `target_sets:` still describe the whole estate, which is what the
+    declared view renders."""
+    config = estate()
+    filtered = filter_estate(config, (("env", "qa"),))
+
+    assert filtered.targets == config.targets
+    assert filtered.target_sets == config.target_sets
+    assert filtered.groups == config.groups

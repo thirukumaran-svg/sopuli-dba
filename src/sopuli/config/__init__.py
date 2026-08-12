@@ -77,9 +77,10 @@ from sopuli.config.model import (
 )
 from sopuli.config.permissions import check_permissions
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
-from sopuli.config.selection import matches, select
+from sopuli.config.selection import AT_SELECT, filter_estate, matches, parse_selector, select
 
 __all__ = [
+    "AT_SELECT",
     "CONFIG_ENV",
     "ROOT",
     "SUPPORTED_VERSIONS",
@@ -122,6 +123,7 @@ __all__ = [
     "declared_at",
     "discover",
     "expand_targets",
+    "filter_estate",
     "load_config",
     "load_config_from",
     "load_document",
@@ -131,6 +133,7 @@ __all__ = [
     "load_layers",
     "merge_documents",
     "parse_secret_ref",
+    "parse_selector",
     "search_path",
     "select",
 ]

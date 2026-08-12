@@ -21,7 +21,7 @@ import click
 import pytest
 from jsonschema import Draft202012Validator
 
-from sopuli.config import Config, build_config
+from sopuli.config import Config, build_config, filter_estate
 from sopuli.output.config_view import build_section, render_text
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -147,6 +147,35 @@ def test_the_resolved_view_counts_the_estate(config: Config) -> None:
     assert "3 targets (1 explicit, 2 generated, 1 overridden)" in render_text(
         PATHS, config, resolved=True
     )
+
+
+def test_a_kind_that_contributed_nothing_is_left_out(config: Config) -> None:
+    """`0 explicit` is the absence of a fact, not a fact. Every filtered estate
+    and most unfiltered ones are entirely generated, and none of them should
+    have to open with a zero."""
+    generated_only = filter_estate(config, (("target_set", "appdb"),))
+
+    summary = render_text(PATHS, generated_only, resolved=True, match=(("target_set", "appdb"),))
+
+    assert "2 targets (2 generated, 1 overridden)" in summary
+    assert "0 explicit" not in summary
+
+
+def test_the_breakdown_survives_when_one_kind_is_all_of_it(config: Config) -> None:
+    """Not collapsed to a bare count: §4 keeps provenance visible because
+    generation is invisible until it goes wrong."""
+    generated_only = filter_estate(config, (("target_set", "appdb"),))
+
+    assert "(2 generated" in render_text(PATHS, generated_only, resolved=True)
+
+
+def test_an_estate_with_nothing_in_it_says_so_without_a_breakdown(config: Config) -> None:
+    """`0 targets ()` and `0 targets (0 explicit)` are both worse than the
+    plain count, which is already the whole story."""
+    empty = filter_estate(config, (("env", "staging"),))
+
+    assert "0 targets" in render_text(PATHS, empty, resolved=True)
+    assert "0 targets (" not in render_text(PATHS, empty, resolved=True)
 
 
 def test_a_target_nothing_manages_is_shown_rather_than_warned_about(config: Config) -> None:

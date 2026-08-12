@@ -572,3 +572,192 @@ def test_no_command_accepts_a_secret_on_the_command_line() -> None:
         if any(token in opt.lower().lstrip("-") for token in SECRET_LIKE)
     ]
     assert not offenders, f"secret-like CLI options are forbidden: {offenders}"
+
+
+#: Two environments and an application, which `ESTATE` deliberately lacks: a
+#: selector needs something to leave behind, and a binding needs to disappear
+#: with its target.
+SELECTABLE = """
+version: 1
+vaults:
+  vault-dev: { type: hashicorp, addr: "https://v.example.com" }
+targets:
+  - name: cdb-root-dev
+    type: oracle
+    dsn: db-dev.example.com:1521/CDBDEV.pdb.example.com
+target_sets:
+  appdb:
+    type: oracle
+    name: "appdb-{env}-{tenant}"
+    dsn: "{host}:1521/{tenant}.pdb.example.com"
+    environment: "{env}"
+    vault: vault-dev
+    for_each:
+      env:
+        dev:
+          host: db-dev.example.com
+          tenant: [alpha, beta]
+        qa:
+          host: db-test.example.com
+          tenant: [alpha, beta]
+groups:
+  app-pdbs: { match: { target_set: appdb } }
+applications:
+  - name: acme
+    targets: { group: app-pdbs }
+    accounts: [acme_web_user]
+    secret_template: "tenants/{tenant}#DB_CREDENTIALS/{account}"
+"""
+
+
+def test_select_narrows_the_resolved_estate(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(
+        cli, ["config", "show", "--resolved", "--select", "env=qa", "--config", str(path)]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "appdb-qa-alpha" in result.output
+    assert "appdb-dev-alpha" not in result.output
+    assert "2 targets" in result.output
+
+
+def test_select_says_what_it_filtered_by(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """Filtered output gets pasted into tickets. Two targets with no note of the
+    selector reads as an estate of two."""
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(
+        cli, ["config", "show", "--resolved", "--select", "env=qa", "--config", str(path)]
+    )
+
+    assert "select: env=qa" in result.output
+
+
+def test_a_binding_leaves_with_its_target(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """A binding whose target was filtered out describes work on something this
+    run cannot see."""
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(
+        cli,
+        [
+            "config",
+            "show",
+            "--resolved",
+            "--select",
+            "env=qa,tenant=beta",
+            "--config",
+            str(path),
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    document = json.loads(result.output)
+    assert [target["name"] for target in document["config"]["targets"]] == ["appdb-qa-beta"]
+    assert [binding["target"] for binding in document["config"]["bindings"]] == ["appdb-qa-beta"]
+
+
+def test_the_document_records_what_the_run_was_narrowed_to(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """Invariant 12 is a contract about meaning, not just shape: a consumer
+    counting two targets cannot otherwise tell a small estate from a filtered
+    one."""
+    path = write_config(SELECTABLE)
+    command = ["config", "show", "--resolved", "--config", str(path), "--output", "json"]
+
+    filtered = runner.invoke(cli, [*command, "--select", "env=qa"])
+    whole = runner.invoke(cli, command)
+
+    assert filtered.exit_code == ExitCode.SUCCESS
+    assert json.loads(filtered.output)["invocation"]["selection"] == {"select": {"env": "qa"}}
+    assert whole.exit_code == ExitCode.SUCCESS
+    assert "selection" not in json.loads(whole.output)["invocation"]
+
+
+def test_a_selector_matching_nothing_is_not_an_error(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """Exit 0 with an answer, not exit 2. "None of them" is a legitimate reply
+    to a legitimate question -- but it is said in words, because an empty table
+    under a `targets` heading looks like an estate that expanded to nothing."""
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(
+        cli, ["config", "show", "--resolved", "--select", "env=staging", "--config", str(path)]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "no targets carry env=staging" in result.output
+    assert "NAME" not in result.output
+
+
+def test_select_without_resolved_is_refused(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """Ignoring it would be the failure P3 refuses for unknown keys: the run
+    looks like it did what was asked. The declared view shows the file, and the
+    estate a selector narrows does not exist until `--resolved` builds it."""
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(
+        cli,
+        ["config", "show", "--select", "env=qa", "--config", str(path)],
+        standalone_mode=False,
+    )
+
+    assert isinstance(result.exception, ConfigError)
+    assert "nothing to filter without --resolved" in str(result.exception)
+    assert result.exception.exit_code == ExitCode.USAGE
+
+
+def test_a_malformed_selector_is_a_usage_error(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(
+        cli,
+        ["config", "show", "--resolved", "--select", "env", "--config", str(path)],
+        standalone_mode=False,
+    )
+
+    assert isinstance(result.exception, ConfigError)
+    assert "not a label match" in str(result.exception)
+    assert result.exception.exit_code == ExitCode.USAGE
+
+
+def test_selecting_cannot_reach_a_target_the_file_does_not_declare(  # invariant 5
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """The config is the whitelist. A selector filters it and cannot extend it,
+    so a label nothing carries selects nothing rather than conjuring a target."""
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(
+        cli,
+        [
+            "config",
+            "show",
+            "--resolved",
+            "--select",
+            "tenant=omega",
+            "--config",
+            str(path),
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert json.loads(result.output)["config"]["targets"] == []

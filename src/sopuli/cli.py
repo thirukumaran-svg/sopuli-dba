@@ -30,7 +30,16 @@ from typing import Any, TypeVar
 
 import click
 
-from sopuli.config import Config, ConfigError, discover, load_layers
+from sopuli.config import (
+    AT_SELECT,
+    Config,
+    ConfigError,
+    as_dict,
+    discover,
+    filter_estate,
+    load_layers,
+    parse_selector,
+)
 from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
 from sopuli.output.config_view import build_section, render_text, render_validation
@@ -118,9 +127,17 @@ def config_group() -> None:
     default=False,
     help="Show what the tool would act on: expanded targets and their bindings.",
 )
+@click.option(
+    "--select",
+    "selectors",
+    multiple=True,
+    metavar="K=V[,K=V]",
+    help="Keep only targets carrying every label. Repeat to add more.",
+)
 @common_options
 def config_show(
     resolved: bool,
+    selectors: tuple[str, ...],
     config_paths: tuple[Path, ...],
     output_mode: str,
     dry_run: bool,
@@ -149,17 +166,31 @@ def config_show(
     )
     document = RunDocument.start("config.show", dry_run=dry_run)
 
+    match = parse_selector(selectors)
+    if match and not resolved:
+        # Silently ignoring a filter is the failure P3 refuses for unknown keys,
+        # for the same reason: the run looks like it did what was asked. There is
+        # nothing to filter in the declared view -- it shows the file, and the
+        # estate `--select` narrows does not exist until `--resolved` builds it.
+        raise ConfigError(
+            "--select has nothing to filter without --resolved",
+            at=AT_SELECT,
+            hint="the declared view shows the file; the estate it selects over is --resolved",
+        )
+
     paths = discover(config_paths)
     declared, config = load_layers(paths)
+    config = filter_estate(config, match)
 
     targets = len(config.expanded_targets)
     document.diagnostics = config_diagnostics(config)
+    document.selection = as_dict(match) or None
     document.config = build_section(paths, config, declared, resolved=resolved)
     document.finish(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    emitter.emit(document, render_text(paths, config, resolved=resolved))
+    emitter.emit(document, render_text(paths, config, resolved=resolved, match=match))
 
 
 @config_group.command("validate")

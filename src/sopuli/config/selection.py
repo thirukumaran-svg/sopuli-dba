@@ -22,7 +22,22 @@ which is what makes plan output comparable between them.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import replace
+
+from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Config, ExpandedTarget, Pairs, Target, TargetSelector, as_dict
+
+#: What a `--select` pair is written with. Not configurable: a separator that
+#: could be something else is one more thing to get wrong in a shell.
+PAIR_SEPARATOR = ","
+KEY_SEPARATOR = "="
+
+#: Where a `--select` error points. A `KeyPath` names a place in the document
+#: and this is not one, but it renders as the option the user typed and it puts
+#: a bad selector on the same exit code and the same message shape as a bad
+#: key -- both are "you told the tool the wrong thing" (P5).
+AT_SELECT = ROOT.key("--select")
 
 
 def matches(target: Target, match: Pairs) -> bool:
@@ -57,6 +72,73 @@ def select(config: Config, selector: TargetSelector) -> tuple[ExpandedTarget, ..
     return tuple(
         expanded for expanded in config.expanded_targets if matches(expanded.target, match)
     )
+
+
+def parse_selector(values: Sequence[str]) -> Pairs:
+    """``--select env=qa,tenant=beta`` as a label match.
+
+    Repeats accumulate and every pair must hold, which is what ``matches``
+    already means for a group's ``match:``. One selector language, whether it
+    was written in the file or on the command line.
+
+    A key given twice is refused rather than resolved. ``--select env=dev,env=qa``
+    is either a typo or a wish for "dev *or* qa", and a match that can only
+    ever be a conjunction would silently answer the second reading with an
+    empty estate. C2 leaves set membership open; this refuses to pretend.
+    """
+    seen: dict[str, str] = {}
+    for value in values:
+        for pair in value.split(PAIR_SEPARATOR):
+            key, label = _split_pair(pair)
+            if key in seen and seen[key] != label:
+                raise ConfigError(
+                    f"label '{key}' selected twice, as '{seen[key]}' and '{label}'",
+                    at=AT_SELECT,
+                    hint="a selector is every pair at once; there is no 'or' (C2)",
+                )
+            seen[key] = label
+    return tuple(sorted(seen.items()))
+
+
+def _split_pair(pair: str) -> tuple[str, str]:
+    """One ``k=v``, or an error quoting exactly what was typed."""
+    if KEY_SEPARATOR not in pair:
+        raise ConfigError(
+            f"'{pair}' is not a label match",
+            at=AT_SELECT,
+            hint="write it as key=value, e.g. --select env=qa,tenant=beta",
+        )
+    key, _, label = pair.partition(KEY_SEPARATOR)
+    if not key.strip() or not label.strip():
+        raise ConfigError(
+            f"'{pair}' has an empty {'key' if not key.strip() else 'value'}",
+            at=AT_SELECT,
+            hint="both sides are required; a label with no value selects nothing",
+        )
+    return key.strip(), label.strip()
+
+
+def filter_estate(config: Config, match: Pairs) -> Config:
+    """The estate reduced to the targets ``match`` selects, bindings with them.
+
+    Invariant 5 holds structurally rather than by inspection: this only ever
+    removes from ``expanded_targets``, so no selector can introduce a target the
+    file does not declare. Bindings follow their target -- a binding whose
+    target was filtered out describes work on something this run cannot see.
+
+    An empty ``match`` returns the config unchanged rather than everything or
+    nothing, so a command that was given no ``--select`` and one given a
+    selector matching the whole estate take the same path.
+    """
+    if not match:
+        return config
+
+    targets = tuple(
+        expanded for expanded in config.expanded_targets if matches(expanded.target, match)
+    )
+    selected = {expanded.name for expanded in targets}
+    bindings = tuple(binding for binding in config.bindings if binding.target in selected)
+    return replace(config, expanded_targets=targets, bindings=bindings)
 
 
 def _group_match(config: Config, name: str) -> Pairs:

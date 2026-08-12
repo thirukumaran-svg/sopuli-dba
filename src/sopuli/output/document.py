@@ -138,6 +138,17 @@ class RunDocument:
     #: are any: the schema types it as an array, so an empty one would be noise
     #: in every clean run and a null would fail validation.
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    #: ``invocation.selection.select`` -- the label filters as given. A run over
+    #: part of the estate must say so: a consumer counting 3 targets cannot
+    #: otherwise tell a small estate from a filtered one, and "3 rotated" means
+    #: different things in each. Absent when the whole estate was in scope.
+    #:
+    #: The schema has carried ``selection`` since it was written, with slots for
+    #: the selectors that do not exist yet: ``applications``, ``accounts``,
+    #: ``targets``, ``groups``, ``all`` and ``limit``. Only ``select`` is
+    #: populated, and the others are omitted rather than sent empty -- an empty
+    #: array would claim the tool considered a selector it has not implemented.
+    selection: dict[str, str] | None = None
     #: The ``config`` section, when the command produces one. Its shape belongs
     #: to the command that builds it (:mod:`sopuli.output.config_view`) rather
     #: than here, and is pinned by the schema and by
@@ -168,18 +179,21 @@ class RunDocument:
         """Render to the shape ``sopuli-run-1.1.schema.json`` describes."""
         finished_at = self.finished_at or utc_now()
         duration_ms = int((finished_at - self.started_at).total_seconds() * 1000)
+        invocation: dict[str, Any] = {
+            "correlation_id": self.correlation_id,
+            "started_at": to_rfc3339(self.started_at),
+            "finished_at": to_rfc3339(finished_at),
+            "duration_ms": duration_ms,
+            "actor": self.actor.to_dict(),
+            "dry_run": self.dry_run,
+        }
+        if self.selection is not None:
+            invocation["selection"] = {"select": self.selection}
         document: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "tool": {"name": TOOL_NAME, "version": _tool_version()},
             "command": self.command,
-            "invocation": {
-                "correlation_id": self.correlation_id,
-                "started_at": to_rfc3339(self.started_at),
-                "finished_at": to_rfc3339(finished_at),
-                "duration_ms": duration_ms,
-                "actor": self.actor.to_dict(),
-                "dry_run": self.dry_run,
-            },
+            "invocation": invocation,
             "summary": self.summary.to_dict(),
             "exit_code": self.exit_code,
         }

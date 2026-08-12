@@ -504,6 +504,14 @@ groups:
   dev-pdbs: { match: { target_set: appdb, env: dev } }
 ```
 
+A `--select` is every pair at once, the same conjunction a group's `match:`
+means — one selector language whether it was written in the file or typed. It
+may be repeated (`--select env=qa --select tenant=beta`), which accumulates.
+Two values for one key is refused rather than read as "or": a conjunction can
+only answer that with an empty estate, and set membership is exactly what C2
+leaves open. An implemented command shows what it filtered by, so output that
+covers part of an estate cannot be mistaken for the whole of a small one.
+
 Explicit `targets:` entries may carry `labels: {}` of their own, so the two kinds
 mix in one selection. `environment:` remains a first-class field rather than a
 label, because safety rules key on it.

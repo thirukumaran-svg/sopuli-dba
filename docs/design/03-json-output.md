@@ -1,10 +1,11 @@
 # sopuli-dba — JSON output contract
 
 Status: draft / sketch, **partly implemented**. The run document, `--output
-text|json`, colour resolution, the `config` section and `diagnostics` are real
-and validated against the schema in CI (`sopuli/output/`). `--output jsonl`,
-`plan` and `results` are not written yet, so everything about them here is still
-a sketch.
+text|json`, colour resolution, the `config` section, `diagnostics` and
+`invocation.selection.select` are real and validated against the schema in CI
+(`sopuli/output/`). `--output jsonl`, `plan` and `results` are not written yet,
+so everything about them here is still a sketch, and so are the other members of
+`invocation.selection`.
 
 `diagnostics` carries what §10 of `01-configuration.md` calls warnings: findings
 the loader decided not to refuse to run over. They are run-level because a config
@@ -178,6 +179,21 @@ A binding's `secret` is the ref **as written**, a string that round-trips
 structured form is `plan.units[].secret`, which is a different job: that one
 addresses a specific version at a specific moment, and this one records what the
 file says. Neither ever carries a value.
+
+### `invocation.selection`
+
+What the run was narrowed to, as the selectors were given rather than as they
+resolved — the resolved answer is `config.targets[]` or `results[]`, and having
+both is what makes a filtered run auditable.
+
+Only `select` is populated so far, from `--select k=v`. The other slots —
+`applications`, `accounts`, `targets`, `groups`, `all` and `limit` — are the
+selectors that do not exist yet, and are omitted rather than sent empty: an
+empty array would claim the tool weighed a selector it has not implemented.
+
+`selection` is absent entirely when the whole estate was in scope. This matters
+more than it looks — a consumer reading `total: 2` cannot otherwise tell a small
+estate from a filtered one, and "2 rotated" means very different things in each.
 
 ### `invocation.correlation_id`
 

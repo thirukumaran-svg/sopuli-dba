@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
+from sopuli.config.model import Pairs
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
 
@@ -38,10 +39,26 @@ _DSN = 46
 _REF = 52
 
 
-def render_text(paths: Sequence[Path], config: Config, *, resolved: bool) -> str:
-    """The human view. ASCII by convention; user-supplied values pass through."""
+def render_text(paths: Sequence[Path], config: Config, *, resolved: bool, match: Pairs = ()) -> str:
+    """The human view. ASCII by convention; user-supplied values pass through.
+
+    ``match`` is shown rather than assumed remembered. Filtered output is the
+    kind of thing that gets pasted into a ticket, and a table of four targets
+    with no note of the filter reads as an estate of four.
+    """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
+    if match:
+        lines.append(f"select: {_pairs(match)}")
+
+    if resolved and match and not config.expanded_targets:
+        # Not an error: a selector that matches nothing is a legitimate question
+        # with the answer "none of them" (exit 0). But an empty table under a
+        # `targets` heading looks like an estate that expanded to nothing, which
+        # is a different and much more alarming thing.
+        lines.extend(["", f"no targets carry {_pairs(match)}"])
+        lines.extend(_warnings(config))
+        return "\n".join(lines)
 
     sections = _resolved_sections(config) if resolved else _declared_sections(config)
     for heading, body in sections:
@@ -253,15 +270,30 @@ def _estate_rows(config: Config) -> list[str]:
 
 
 def _estate_summary(config: Config) -> str:
+    """How many targets, and where they came from.
+
+    A kind that contributed nothing is left out rather than printed as a zero.
+    `0 explicit` is not a fact about the estate, it is the absence of one, and
+    an estate that is entirely generated -- which is most of them, and every
+    filtered one -- should not have to say so. The breakdown itself stays even
+    when one kind accounts for all of it: §4's point is that generation is
+    invisible until it goes wrong, and `3 targets (3 generated)` is where it
+    stops being invisible.
+    """
     generated = [target for target in config.expanded_targets if target.target_set is not None]
     overridden = [target for target in generated if target.overridden]
-    parts = [f"{len(config.expanded_targets) - len(generated)} explicit"]
+    explicit = len(config.expanded_targets) - len(generated)
+    parts = []
+    if explicit:
+        parts.append(f"{explicit} explicit")
     if generated:
         parts.append(f"{len(generated)} generated")
     if overridden:
         parts.append(f"{len(overridden)} overridden")
 
-    summary = f"{_count(len(config.expanded_targets), 'target')} ({', '.join(parts)})"
+    summary = _count(len(config.expanded_targets), "target")
+    if parts:
+        summary += f" ({', '.join(parts)})"
     unmanaged = _unmanaged(config)
     if unmanaged:
         listed = ", ".join(unmanaged)
