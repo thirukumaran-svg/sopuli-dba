@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.15.0](https://github.com/futville/sopuli-dba/compare/v0.14.0...v0.15.0) (2026-08-12)
+
+
+### Features
+
+* **config:** adopt the run document's scope vocabulary, as an assertion ([#65](https://github.com/futville/sopuli-dba/issues/65)) ([96f75f3](https://github.com/futville/sopuli-dba/commit/96f75f3027e234d4eaab17ee72acc8e2b285cac9)), closes [#27](https://github.com/futville/sopuli-dba/issues/27)
+* **config:** name the database admin credential, in the vault grammar ([#64](https://github.com/futville/sopuli-dba/issues/64)) ([a7edd5b](https://github.com/futville/sopuli-dba/commit/a7edd5be9518366f57edc77e049582ff18cbbf1f)), closes [#27](https://github.com/futville/sopuli-dba/issues/27)
+* **config:** point at vault auth material with a MaterialRef ([#63](https://github.com/futville/sopuli-dba/issues/63)) ([7d0d287](https://github.com/futville/sopuli-dba/commit/7d0d287d43f4711355099d6f42df46aa4b2922fd)), closes [#27](https://github.com/futville/sopuli-dba/issues/27)
+* generate passwords from a policy, as tier 0 logic ([#67](https://github.com/futville/sopuli-dba/issues/67)) ([2008a5f](https://github.com/futville/sopuli-dba/commit/2008a5faa40b604c5f24bc54d03322b018bf8340)), closes [#58](https://github.com/futville/sopuli-dba/issues/58)
+
 ## [0.14.0](https://github.com/futville/sopuli-dba/compare/v0.13.0...v0.14.0) (2026-08-12)
 
 
