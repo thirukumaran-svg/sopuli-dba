@@ -26,12 +26,16 @@ import pytest
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.targets import ADMIN_METHODS, ORACLE_SCOPES, build_targets
+from sopuli.output.document import SCHEMA_VERSION
 
 #: The run document, which typed `scope.type` before the config layer read a
 #: `scope:` at all. The two vocabularies are asserted to be the same one below.
 SCHEMAS = Path(__file__).resolve().parents[2] / "docs" / "schemas"
 
-RUN_SCHEMA = SCHEMAS / "sopuli-run-1.2.schema.json"
+#: Derived from the version the tool emits rather than written out, so a minor
+#: bump (`03-json-output.md` §8 renames the file) does not break this test for a
+#: reason that has nothing to do with scopes.
+RUN_SCHEMA = SCHEMAS / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
 
 DSN = "db-dev.example.com:1521/CDBDEV.pdb.example.com"
 

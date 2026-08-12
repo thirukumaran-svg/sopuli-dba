@@ -76,6 +76,7 @@ from sopuli.config.model import (
     as_dict,
 )
 from sopuli.config.permissions import check_permissions
+from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
 from sopuli.config.selection import AT_SELECT, filter_estate, matches, parse_selector, select
 
@@ -120,6 +121,7 @@ __all__ = [
     "build_bindings",
     "build_config",
     "check_permissions",
+    "dangling",
     "declared_at",
     "discover",
     "expand_targets",

@@ -123,6 +123,53 @@ class Violation:
     detail: str
 
 
+@dataclass(frozen=True)
+class Properties:
+    """What a password *is*, without being it (§8, `policy sample`).
+
+    Everything here can be shown to anybody: a length, a byte count, how many
+    characters of each class, and whether the policy is met. It is what
+    ``policy sample`` reports by default, and the only thing it reports under
+    ``--output json`` -- so a run captured by CI carries the shape of the passwords
+    a policy produces and never one of them.
+
+    Computed once for both views, so the table and the JSON section cannot
+    disagree about a sample they are describing together.
+    """
+
+    characters: int
+    #: ``None`` when no :class:`ByteLimit` was given -- there is no such thing as a
+    #: byte count without the encoding it was counted in (§8).
+    encoded_bytes: int | None
+    #: Per :data:`~sopuli.config.charsets.CLASS_NAMES`, sorted, every class present
+    #: even at zero. Pairs rather than a dict for the reason the config model gives:
+    #: deterministic rendering, and hashable.
+    counts: tuple[tuple[str, int], ...]
+    violations: tuple[Violation, ...]
+
+    @property
+    def compliant(self) -> bool:
+        """Whether the policy is met. A generated sample always is; a supplied
+        password is why this is worth reporting."""
+        return not self.violations
+
+
+def properties(candidate: Secret, policy: PasswordPolicy, *, limit: ByteLimit | None) -> Properties:
+    """Describe a password without revealing it.
+
+    Compliance comes from :func:`check` rather than from a second reading of the
+    policy, so "this sample is compliant" and "this supplied password is refused"
+    can never be two different answers to one question.
+    """
+    text = candidate.reveal()
+    return Properties(
+        characters=len(text),
+        encoded_bytes=limit.width(text) if limit is not None and limit.encodable(text) else None,
+        counts=tuple(sorted(charsets.counts(text).items())),
+        violations=check(candidate, policy, limit=limit),
+    )
+
+
 def check(
     candidate: Secret, policy: PasswordPolicy, *, limit: ByteLimit | None
 ) -> tuple[Violation, ...]:

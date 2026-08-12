@@ -1,6 +1,6 @@
 """The run document (``docs/design/03-json-output.md`` §2).
 
-There is no such thing as a placeholder run document. ``sopuli-run-1.2.schema.json``
+There is no such thing as a placeholder run document. ``sopuli-run-1.3.schema.json``
 sets ``additionalProperties: false`` at the root and requires six top-level
 fields, two of which have required members of their own, so the smallest thing
 that validates is a complete document. Building it properly now is cheaper than
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.3"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -155,6 +155,12 @@ class RunDocument:
     #: ``tests/test_run_document.py`` -- this only decides that it is optional
     #: and omitted rather than nulled when absent.
     config: dict[str, Any] | None = None
+    #: The ``policy`` section, emitted by ``policy sample``. Same arrangement as
+    #: ``config``: :mod:`sopuli.output.policy_view` owns the shape. It describes
+    #: the passwords a policy produces and never carries one -- the schema gives a
+    #: sample no value property at all, which is what keeps ``--reveal`` a
+    #: text-only affair.
+    policy: dict[str, Any] | None = None
 
     @classmethod
     def start(cls, command: str, *, dry_run: bool = False) -> RunDocument:
@@ -176,7 +182,7 @@ class RunDocument:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Render to the shape ``sopuli-run-1.2.schema.json`` describes."""
+        """Render to the shape ``sopuli-run-1.3.schema.json`` describes."""
         finished_at = self.finished_at or utc_now()
         duration_ms = int((finished_at - self.started_at).total_seconds() * 1000)
         invocation: dict[str, Any] = {
@@ -201,6 +207,8 @@ class RunDocument:
             document["diagnostics"] = [diagnostic.to_dict() for diagnostic in self.diagnostics]
         if self.config is not None:
             document["config"] = self.config
+        if self.policy is not None:
+            document["policy"] = self.policy
         return document
 
 

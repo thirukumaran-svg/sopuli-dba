@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.2.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.3.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -32,11 +32,13 @@
       "enum": [
         "creds.generate", "creds.apply", "creds.check", "creds.rotate",
         "creds.status", "creds.promote", "creds.finish-rollover",
-        "config.validate", "config.show", "target.list", "doctor", "admin.install"
+        "config.validate", "config.show", "target.list", "policy.sample",
+        "doctor", "admin.install"
       ]
     },
     "invocation": { "$ref": "#/$defs/invocation" },
     "config": { "$ref": "#/$defs/config_view" },
+    "policy": { "$ref": "#/$defs/policy_samples" },
     "plan": { "$ref": "#/$defs/plan" },
     "results": {
       "type": "array",
@@ -56,6 +58,55 @@
   },
 
   "$defs": {
+
+    "policy_samples": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "samples"],
+      "description": "What `policy sample` produced: the policy as declared, and one entry per sample describing it. Offline -- no vault, no database, and nothing generated here is stored anywhere. A sample object has no value property at all, deliberately, the same way `secret_ref` has none: `--reveal` prints to a terminal for a human to read and is refused with `--output json`, so this section cannot carry a password even by mistake.",
+      "properties": {
+        "name": { "type": "string", "description": "The `policies:` entry sampled." },
+        "length": { "type": "integer", "description": "Characters, as the policy declares. The byte limit is separate -- see `limit`." },
+        "charset": { "type": ["string", "null"] },
+        "first_char": { "type": ["string", "null"] },
+        "require": {
+          "type": "object",
+          "description": "Minimum count per character class, as declared.",
+          "additionalProperties": { "type": "integer" }
+        },
+        "limit": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["max_bytes", "encoding"],
+          "description": "The target byte limit the samples were measured against, and the encoding it was counted in. Null when none was given: §8 measures the maximum in the database character set, so a byte count without its encoding would be meaningless.",
+          "properties": {
+            "max_bytes": { "type": "integer" },
+            "encoding": { "type": "string" }
+          }
+        },
+        "samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sample" }
+        }
+      }
+    },
+
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["characters", "compliant"],
+      "description": "One generated password, described rather than given.",
+      "properties": {
+        "characters": { "type": "integer" },
+        "encoded_bytes": { "type": ["integer", "null"], "description": "Null when no byte limit was given." },
+        "counts": {
+          "type": "object",
+          "description": "Characters per class: upper, lower, digit, special.",
+          "additionalProperties": { "type": "integer" }
+        },
+        "compliant": { "type": "boolean", "description": "Whether the sample satisfies the policy it was drawn from. Always true for a generated sample; false would mean the generator and the validator disagree." }
+      }
+    },
 
     "config_view": {
       "type": "object",

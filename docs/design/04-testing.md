@@ -134,7 +134,7 @@ environments are a coverage gap.
 
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
-| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction |
+| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner` |
 | 1 | every PR | public CI | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
 | 2 | nightly | public CI | < 30 min | 21c XE, 18c XE, 11g XE, PostgreSQL matrix; fault injection |
 | 3 | pre-release | maintainer | manual | built 19c, real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
@@ -223,6 +223,16 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 1. **Redaction.** Run the full suite at `--log-level debug`, then grep every
    artefact — stdout, stderr, log files, JSON output, audit records — for every
    generated password. Zero hits.
+
+   **`policy sample --reveal` is excluded by name**, and it is the only exclusion.
+   That command prints a password because printing one is what it is for
+   (invariant 2's third exception: a sample is not a credential, since nothing
+   authenticates with it and it is never stored). Excluding it would weaken the
+   gate if it stopped there, so the gate gains the narrower property in exchange:
+   **no JSON document contains a sample value, `--reveal` or not** — which holds
+   because the run schema gives a `sample` object no value property, and because
+   `--reveal` with `--output json` is refused. Grep the JSON artefacts of a
+   `policy sample` run for the values it printed; zero hits.
 2. **Password leakage into Oracle.** Rotate a throwaway account with a known
    password on each supported major version, then query `V$SQL` and
    `UNIFIED_AUDIT_TRAIL` and grep the trace directory (queries in

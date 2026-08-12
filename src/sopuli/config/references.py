@@ -201,6 +201,17 @@ def _check_profiles(config: Config) -> None:
     _resolve(found, declared, noun="profile", section="profiles")
 
 
+def dangling(name: str, declared: set[str], *, noun: str, section: str, at: KeyPath = ROOT) -> None:
+    """Raise the standard "that name names nothing" error, or return quietly.
+
+    Public because a name can also be typed rather than written: ``policy sample``
+    takes one on the command line, and a second phrasing of the same failure would
+    be a second thing to learn. The message names what *is* declared, because a
+    rejection that does not is an invitation to guess at spelling.
+    """
+    _resolve([_Reference(name, at)], declared, noun=noun, section=section)
+
+
 def _resolve(references: list[_Reference], declared: set[str], *, noun: str, section: str) -> None:
     for reference in references:
         if reference.name in declared:

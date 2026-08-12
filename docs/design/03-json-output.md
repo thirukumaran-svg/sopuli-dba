@@ -15,7 +15,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.2.schema.json`](../schemas/sopuli-run-1.2.schema.json),
+Schemas: [`../schemas/sopuli-run-1.3.schema.json`](../schemas/sopuli-run-1.3.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -180,6 +180,23 @@ structured form is `plan.units[].secret`, which is a different job: that one
 addresses a specific version at a specific moment, and this one records what the
 file says. Neither ever carries a value.
 
+### `policy`, emitted by `policy sample`
+
+The policy as declared, plus one entry per sample describing it: how many
+characters, how many bytes in the encoding it was measured against, how many of
+each character class, and whether it satisfies the policy it was drawn from.
+
+**A sample object has no value property at all**, the same way `secret_ref` has
+none. That is not an oversight to fix later: `policy sample --reveal` prints
+passwords to a terminal for a human to look at, and it is refused with
+`--output json` precisely because JSON is what gets captured and shipped to log
+aggregation. The schema having nowhere to put a password is what makes the
+refusal a property rather than a promise.
+
+`compliant` is always `true` for a generated sample. It is reported anyway,
+because `false` would mean the generator and the validator disagree — and one
+predicate serving both is the design (`01-configuration.md` §8).
+
 ### `invocation.selection`
 
 What the run was narrowed to, as the selectors were given rather than as they
@@ -289,19 +306,44 @@ One rule, enforced in one place: **redaction happens at the serialiser, not at
 each call site.** Every secret value the process holds is wrapped in a type whose
 serialisation is the literal string `"***"`, and whose `__str__`/`__repr__` is the
 same. Nothing in the codebase can accidentally emit one by forgetting a helper,
-because there is no code path that produces the plaintext except the vault write
-and the database driver call.
+because there is no code path that produces the plaintext except the vault write,
+the database driver call, and `policy sample --reveal`.
 
 Consequences that show up in the schema:
 
 - `secret_ref` objects address a secret (`vault`, `path`, `field`, `version`) and
   have **no value property at all**. There is nowhere to put a password.
+- a `sample` object has none either, for the same reason and with the same effect.
 - `error.message` and `diagnostic.message` are documented as redacted. Driver
   exceptions are passed through a scrubber before they reach either.
 - `password.applied` events carry the vault version, never the value.
 
-The release gate from UC-1 §11 tests this: run everything at `--log-level debug`,
-grep every artefact for the generated password, zero hits or no release.
+### The one exception, and what keeps it narrow
+
+`policy sample --reveal` prints generated passwords on purpose. It is allowed
+because **a sample is not a credential**: nothing authenticates with it, it is
+never stored, and it guards nothing — the property that makes `pwgen` safe and a
+vault write dangerous.
+
+What stops it from becoming a leak is structure rather than care:
+
+| | |
+|---|---|
+| it is opt-in | the default output reports properties — length, bytes, class counts — and no value |
+| it is text-only | `--reveal` with `--output json` is **refused**, not quietly downgraded |
+| JSON cannot carry it | a `sample` object has no value property, so the section could not hold one even if asked |
+| it is one call site | the only `reveal()` outside the tests is in `sopuli/output/policy_view.py`, findable by grepping one method name |
+
+The output says the samples must not be used, because the realistic hazard is not
+the printing. It is somebody liking sample 2 and pasting it into an `ALTER USER`
+by hand, at which point a value that sat in a scrollback becomes a live credential.
+
+The release gate from UC-1 §11 tests the rest: run everything at
+`--log-level debug`, grep every artefact for the generated password, zero hits or
+no release. `policy sample --reveal` is excluded by name — it is the one command
+whose output is *supposed* to contain one — and in exchange the gate asserts the
+narrower property above: no sample value in any JSON document, `--reveal` or not.
+See `04-testing.md` §6.
 
 ---
 
@@ -408,6 +450,11 @@ same rule again: a new enum value, and a consumer of 1.1 that switches on
 `command` already has to cope with a value it does not recognise, because the
 enum was never the set of commands it happened to know. Renamed rather than
 duplicated, for the reason above.
+
+**1.2 became 1.3 when `policy.sample` arrived**, which is both rules at once: a
+new enum value and a new optional property (`policy`). Nothing existing changed
+meaning, so a 1.2 consumer that ignores unknown properties reads a 1.3 document
+correctly. Renamed again, for the reason above.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles

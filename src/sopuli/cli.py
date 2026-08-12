@@ -1,12 +1,12 @@
 """The ``sopuli`` command line.
 
 Grammar is noun-verb (D2): ``sopuli <noun> <verb>``. Each noun is a
-:class:`click.Group`, each verb a command inside it. Only the ``config`` verbs
-and ``target list`` exist so far — none touches a vault or a database, and they
-are here so the shape is established once instead of being improvised by
+:class:`click.Group`, each verb a command inside it. So far the ``config`` verbs,
+``target list`` and ``policy sample`` exist — none touches a vault or a database,
+and they are here so the shape is established once instead of being improvised by
 whichever command lands first.
 
-Two things about the structure are deliberate:
+Three things about the structure are deliberate:
 
 **Global options are a shared decorator, not group options.** A click option
 declared on the group has to appear *before* the subcommand
@@ -20,6 +20,12 @@ as a command-line value — it is visible in ``ps`` and in the Windows process
 list. Passwords arrive from stdin, a file, or a vault reference.
 ``tests/test_cli_smoke.py`` walks the command tree and fails if an option name
 ever looks like a credential.
+
+**One command prints a password on purpose.** ``policy sample --reveal`` is
+invariant 2's third exception, because a sample is not a credential: nothing
+authenticates with it and it is never stored. What keeps that narrow lives in
+:mod:`sopuli.output.policy_view`; what lives here is the refusal to combine it
+with ``--output json``.
 """
 
 from __future__ import annotations
@@ -32,9 +38,12 @@ import click
 
 from sopuli.config import (
     AT_SELECT,
+    ROOT,
     Config,
     ConfigError,
+    PasswordPolicy,
     as_dict,
+    dangling,
     discover,
     filter_estate,
     load_layers,
@@ -50,7 +59,10 @@ from sopuli.output.config_view import (
 )
 from sopuli.output.document import Diagnostic, RunDocument, Summary
 from sopuli.output.emit import Emitter, OutputMode
+from sopuli.output.policy_view import build_section as build_policy_section
+from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.stream import configure_streams
+from sopuli.passwords import ByteLimit, generate
 from sopuli.version import get_version
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -270,6 +282,141 @@ def target_list(
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
     emitter.emit(document, render_target_list(paths, config, match=match))
+
+
+@cli.group("policy")
+def policy_group() -> None:
+    """Inspect password policies."""
+
+
+@policy_group.command("sample")
+@click.argument("name", required=False)
+@click.option(
+    "--count",
+    type=click.IntRange(1, 100),
+    default=3,
+    show_default=True,
+    help="How many samples to draw.",
+)
+@click.option(
+    "--max-bytes",
+    type=click.IntRange(1, 4096),
+    help="Preview a target's byte limit (30 below 12.2, 128 from 12.2).",
+)
+@click.option(
+    "--encoding",
+    default="utf-8",
+    show_default=True,
+    help="The character set the byte limit is counted in.",
+)
+@click.option(
+    "--reveal",
+    is_flag=True,
+    default=False,
+    help="Print the sampled passwords. Text output only; they are never stored.",
+)
+@common_options
+def policy_sample(
+    name: str | None,
+    count: int,
+    max_bytes: int | None,
+    encoding: str,
+    reveal: bool,
+    config_paths: tuple[Path, ...],
+    output_mode: str,
+    dry_run: bool,
+    color_choice: str,
+) -> None:
+    """Show what a password policy produces, without touching anything.
+
+    A policy is a handful of numbers and a charset name, and none of that answers
+    the question somebody actually has: *what do the passwords look like*. This
+    draws samples so they can answer it -- whether a `custom` charset renders what
+    was meant, whether 24 characters fit a 30-byte target, whether the shape
+    survives a `.env` file.
+
+    Offline, and further than the other verbs: it opens no socket *and* writes
+    nothing. Nothing generated here is stored, in a vault or anywhere else. With
+    `--max-bytes` and `--encoding` it previews what a target would accept without
+    connecting to one; reading the real limit needs a driver (P1) and will arrive
+    as `--target`.
+
+    `--reveal` prints the passwords themselves. That is the one place in the tool
+    where plaintext reaches output on purpose (invariant 2's third exception): a
+    sample is not a credential, because nothing authenticates with it and it is
+    never stored. It is refused with `--output json`, which is what gets captured
+    and shipped to log aggregation -- and the JSON section carries no value
+    property at all, so the two halves cannot disagree about that.
+
+    Named policies only: this samples what the file declares, so an undeclared
+    name is refused the same way one written *in* the file would be. With no name
+    it uses `defaults.policy`.
+    """
+    emitter = Emitter(
+        mode=OutputMode(output_mode),
+        color_choice=ColorChoice(color_choice),
+    )
+    document = RunDocument.start("policy.sample", dry_run=dry_run)
+
+    if reveal and emitter.is_json:
+        # Silently dropping the flag is the defect `select_option` describes; the
+        # refusal is `config show --select`'s precedent. Which way round matters:
+        # `--output json` is the safe one, so it wins and the *revealing* flag is
+        # what has to go.
+        raise ConfigError(
+            "--reveal cannot be used with --output json",
+            hint=(
+                "json output is what gets captured and shipped to log aggregation, so a "
+                "sample never appears in it -- drop --reveal, or use the text output"
+            ),
+        )
+
+    paths = discover(config_paths)
+    _, config = load_layers(paths)
+    chosen, policy = _policy_to_sample(config, name)
+
+    limit = None if max_bytes is None else ByteLimit(max_bytes=max_bytes, encoding=encoding)
+    samples = [generate(policy, limit=limit) for _ in range(count)]
+    described = describe_all(samples, policy, limit=limit)
+
+    document.diagnostics = config_diagnostics(config)
+    document.policy = build_policy_section(chosen, policy, described, limit=limit)
+    document.finish(
+        ExitCode.SUCCESS,
+        Summary(total=count, ok=sum(1 for one in described if one.compliant), changed=0, failed=0),
+    )
+    emitter.emit(
+        document,
+        render_samples(paths, chosen, policy, samples, described, limit=limit, reveal=reveal),
+    )
+
+
+def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPolicy]:
+    """The policy that was asked for, or the file's default.
+
+    `defaults.policy` is read directly, as `bindings.py` already reads it: it is
+    the chain the file itself describes (§3), and the `SOPULI_*` and command-line
+    layers above it belong to the precedence resolver (#10) rather than here.
+    """
+    chosen = name if name is not None else config.defaults.policy
+    if chosen is None:
+        raise ConfigError(
+            "no policy to sample",
+            hint=(
+                "name one -- `sopuli policy sample NAME` -- or set `defaults.policy:` in the config"
+            ),
+        )
+    dangling(
+        chosen,
+        {policy.name for policy in config.policies},
+        noun="policy",
+        section="policies",
+        # A name typed on the command line has no place in the document to
+        # point at; one that came from the file does, and naming it is what
+        # sends the reader to the line to fix.
+        at=ROOT.key("defaults").key("policy") if name is None else ROOT,
+    )
+    return chosen, next(policy for policy in config.policies if policy.name == chosen).password
 
 
 @config_group.command("validate")

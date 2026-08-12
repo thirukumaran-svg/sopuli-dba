@@ -37,8 +37,18 @@ something specific.
    option.
 2. **Redaction happens at the output serialiser, not at each call site.** Secret
    values are wrapped in a type whose `str`, `repr` and JSON serialisation are
-   `"***"`. There must be no code path that emits plaintext except the vault write
-   and the driver call. Do not "remember to mask" at a log statement.
+   `"***"`. There must be no code path that emits plaintext except the vault write,
+   the driver call, and `policy sample --reveal`. Do not "remember to mask" at a
+   log statement.
+
+   The third exception is allowed because **a sample is not a credential**:
+   nothing authenticates with it, it is never stored, and it guards nothing —
+   which is what makes `pwgen` safe and a vault write dangerous. It stays narrow
+   structurally rather than carefully: the one `reveal()` call outside the tests
+   lives in `sopuli/output/policy_view.py`, it is reachable only under `--reveal`,
+   `--reveal` is refused with `--output json`, and the run schema gives a sample no
+   value property to put a password in. Widening it again is a decision, not an
+   implementation detail.
 3. **Never branch on a version number from config.** Query the database for its
    capabilities, cache per session, and branch on the capability. See P1.
 4. **A command that needs an unavailable capability fails at plan time**, with a
