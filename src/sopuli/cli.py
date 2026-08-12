@@ -30,7 +30,7 @@ from typing import Any, TypeVar
 
 import click
 
-from sopuli.config import ConfigError, discover, load_layers
+from sopuli.config import Config, ConfigError, discover, load_layers
 from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
 from sopuli.output.config_view import build_section, render_text, render_validation
@@ -89,6 +89,17 @@ def common_options(func: F) -> F:
     return color(output(dry_run(config(func))))
 
 
+def config_diagnostics(config: Config) -> list[Diagnostic]:
+    """§10's warnings, as run-level diagnostics.
+
+    Run-level rather than per-target because a config warning is not
+    attributable to one target. Both config verbs report warnings the same way,
+    in both views -- in full in the text, and here for the schedulers and CI
+    jobs that read the document and never see the text at all.
+    """
+    return [Diagnostic(level="warning", message=str(warning)) for warning in config.warnings]
+
+
 @click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option(version=get_version(), prog_name="sopuli")
 def cli() -> None:
@@ -142,6 +153,7 @@ def config_show(
     declared, config = load_layers(paths)
 
     targets = len(config.expanded_targets)
+    document.diagnostics = config_diagnostics(config)
     document.config = build_section(paths, config, declared, resolved=resolved)
     document.finish(
         ExitCode.SUCCESS,
@@ -190,10 +202,7 @@ def config_validate(
     paths = discover(config_paths)
     _, config = load_layers(paths)
 
-    # A config warning is not attributable to one target, so it is run-level.
-    document.diagnostics = [
-        Diagnostic(level="warning", message=str(warning)) for warning in config.warnings
-    ]
+    document.diagnostics = config_diagnostics(config)
     targets = len(config.expanded_targets)
     document.finish(
         ExitCode.SUCCESS,

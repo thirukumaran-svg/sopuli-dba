@@ -370,6 +370,39 @@ def test_config_show_prints_warnings_in_full(
     assert "named after an environment" in result.output
 
 
+@pytest.mark.parametrize("view", [[], ["--resolved"]], ids=["declared", "resolved"])
+def test_config_show_reports_warnings_as_diagnostics(
+    runner: CliRunner, write_config: Callable[[str], Path], view: list[str]
+) -> None:
+    """The text view is not the contract. A warning that appears only there is
+    invisible to the scheduler reading the document, which is the reader §10's
+    findings most need to reach -- so both views carry them, like
+    ``config validate`` does."""
+    path = write_config(f"{ESTATE}\nprofiles:\n  dev: {{ output: json }}\n")
+
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(path), *view, "--output", "json"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    document = json.loads(result.output)
+    assert [entry["level"] for entry in document["diagnostics"]] == ["warning"]
+    assert "named after an environment" in document["diagnostics"][0]["message"]
+
+
+def test_config_show_emits_no_diagnostics_for_a_clean_file(
+    runner: CliRunner, config_file: Path
+) -> None:
+    """A clean run carries no empty array, for the reason its `validate`
+    counterpart gives: a field present in every document stops being read."""
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(config_file), "--output", "json"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "diagnostics" not in json.loads(result.output)
+
+
 def test_repeated_config_options_are_layered_in_order(runner: CliRunner, tmp_path: Path) -> None:
     """§9: several `--config` files layer left to right, and the output has to
     say so -- an estate assembled from two files is otherwise indistinguishable
@@ -453,11 +486,13 @@ def test_config_validate_reports_warnings_both_ways(
     command = ["config", "validate", "--config", str(path)]
 
     text = runner.invoke(cli, command)
-    document = json.loads(runner.invoke(cli, [*command, "--output", "json"]).output)
+    emitted = runner.invoke(cli, [*command, "--output", "json"])
 
     assert text.exit_code == ExitCode.SUCCESS
     assert "1 warning:" in text.output
     assert "named after an environment" in text.output
+    assert emitted.exit_code == ExitCode.SUCCESS
+    document = json.loads(emitted.output)
     assert [entry["level"] for entry in document["diagnostics"]] == ["warning"]
     assert "named after an environment" in document["diagnostics"][0]["message"]
 
@@ -488,6 +523,7 @@ def test_config_validate_shows_nothing_of_the_file_itself(
 
     result = runner.invoke(cli, ["config", "validate", "--config", str(path), "--output", "json"])
 
+    assert result.exit_code == ExitCode.SUCCESS
     assert "config" not in json.loads(result.output)
 
 

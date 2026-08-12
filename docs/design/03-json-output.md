@@ -9,7 +9,11 @@ a sketch.
 `diagnostics` carries what §10 of `01-configuration.md` calls warnings: findings
 the loader decided not to refuse to run over. They are run-level because a config
 warning belongs to no single target, and `level` is `warning` for all of them so
-far — the config layer has no other severity to report.
+far — the config layer has no other severity to report. Every command that loads
+a config emits them, `config show` in both its views as well as
+`config validate`: a warning that reached only the text output would be invisible
+to the scheduler, which is the reader that most needs it. A run with nothing to
+report omits the key rather than carrying an empty array.
 Schemas: [`../schemas/sopuli-run-1.1.schema.json`](../schemas/sopuli-run-1.1.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
