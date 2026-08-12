@@ -64,13 +64,13 @@ stays in scope, unreachable from Apple Silicon (D7).
 (C2), template expressiveness (C3), per-account overrides (C4), config encryption
 (C5, proposed out of scope), mirrored vault writes (C6), ~~target-set nesting
 depth~~ (C7 — **decided: two levels, write a second set**), ~~labels on explicit
-targets~~ (C8 — **decided: allowed**), **how the file points at vault auth
-material and the database admin credential (C9, issue #27 — **both decided and
-implemented**: one grammar, two vocabularies. A vault's secret-bearing keys are
-each a MaterialRef, one of `env` / `file`, so the config has nowhere to hold a
-credential; the admin credential names one of P2's four sources, with `external`
-constraining the DSN to a TNS alias. The `oracle.scope` vocabulary is the open
-half)**, ~~what profiles are for~~ (C10 —
+targets~~ (C8 — **decided: allowed**), ~~how the file points at vault auth
+material and the database admin credential~~ (C9 — **decided in #27**: one
+grammar, two vocabularies. A vault's secret-bearing keys are each a MaterialRef,
+one of `env` / `file`, so the config has nowhere to hold a credential; the admin
+credential names one of P2's four sources, with `external` constraining the DSN to
+a TNS alias; `oracle.scope` adopts the run document's vocabulary and is an
+assertion checked on connect), ~~what profiles are for~~ (C10 —
 **decided: run context, not target selection**), composable profiles (C11,
 proposed no), a built-in `interactive` profile (C12, leaning no), **whether `vault:`
 under `defaults`/`profiles` is a name or a block (C13, issue #31 — the loader

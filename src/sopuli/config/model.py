@@ -326,8 +326,18 @@ class TargetOracle:
     name and nothing else, so they are separate types -- one bag accepting both
     key sets would let ``container_clause`` on a target look configured and do
     nothing.
+
+    Both fields are **assertions rather than settings**, and optional because an
+    assertion nobody makes is not a gap. The driver detects the real scope and
+    container on connect (P1 ``resolve_scope``); a declared value that disagrees is
+    an error naming both, which is what catches a DSN edit that repointed a target
+    somewhere else. Neither constrains the other in the config layer -- see
+    :func:`~sopuli.config.targets.read_oracle`.
     """
 
+    #: One of :data:`~sopuli.config.targets.ORACLE_SCOPES`, which is the run
+    #: document's own ``scope.type`` vocabulary minus ``unknown``: the same word on
+    #: both sides means a mismatch needs no translation to report.
     scope: str | None = None
     container: str | None = None
 

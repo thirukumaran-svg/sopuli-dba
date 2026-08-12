@@ -468,7 +468,7 @@ something the estate can express and the set silently cannot.
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
 | `admin` | `{ username, auth }` — the credential that reaches the database. There is no password field, and there will not be one (P2). See below |
-| `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. `scope` is `cdb_root` or `pdb`; a non-CDB database omits the block. How the two keys constrain each other is not decided — see C9 |
+| `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. Both are assertions about the database rather than settings on it, and both are optional. See below |
 | `labels` | free labels for selection (C8). A generated target gets its dimension values as labels automatically |
 | `safety` | a `safety:` block (§9) |
 
@@ -551,6 +551,49 @@ rather than warnings:
 
 Both are checked against the *expanded* estate, so an `overrides:` patch that
 introduces the combination is caught too.
+
+### `oracle:` on a target — assertions, not settings
+
+`scope` is one of the scopes P1 names, spelled the way the run document already
+spells them:
+
+| `scope` | |
+|---|---|
+| `non_cdb` | single-instance non-CDB (11.2, 12.1 non-CDB, 19c non-CDB) |
+| `cdb_root` | the CDB root — common users, `CONTAINER=ALL` vs `CONTAINER=CURRENT` |
+| `pdb` | a pluggable database, reached by its own service name |
+| `app_root` | an application root — a distinct scope, not the same as the CDB root |
+| `app_pdb` | an application PDB |
+
+That is `scope.type` from
+[`sopuli-run-1.2.schema.json`](../schemas/sopuli-run-1.2.schema.json), minus
+`unknown`. Adopting the vocabulary the run document has typed since it was written
+means the word a file *asserts* and the word the tool *reports* are the same word,
+so a mismatch between them needs no translation to explain. `unknown` is
+observation-only: something the driver may find, never something a file can claim.
+
+**Both keys are assertions.** The driver detects the real scope and container when
+it connects (P1 `resolve_scope`), so what the file writes is a claim to be checked
+rather than a setting to be applied — which is what UC-1's pre-flight already asks
+for: *"the connection really is in the container the config claims"*
+(`uc-01-app-credential-sync.md` §4). A declared value that disagrees with what the
+driver finds is an **error naming both**. That is worth more than it sounds: it
+catches a `dsn:` edit that silently repointed a target at a different container,
+and a PDB whose role changed under an estate that still describes the old one —
+neither of which any amount of load-time validation could see.
+
+Being assertions, both are optional. A target that says nothing about its scope is
+not incompletely configured; it just makes no claim, and the driver reports what it
+found.
+
+**They do not constrain each other.** `scope: pdb` with no `container` is fine
+unless something actually needs the value, and the thing that needs it is §7's
+`{container}` token — where §4 rule 4 already makes an unresolved placeholder an
+error, for a reason about the *template* rather than about the connection. So the
+rule falls out of one that already exists rather than being a new one. `scope:
+cdb_root` beside `container: CDB$ROOT` is redundant but not contradictory, so the
+connect-time comparison decides it rather than the schema. `container_clause: ALL`
+keeps its own guardrail (UC-1 §6.2) and belongs to an application, not here.
 
 ### `groups:` — a mapping of name to selection
 
@@ -1217,6 +1260,10 @@ notices until a rotation.
 - a malformed `admin.auth.secret` → error (§7), like any other ref, wherever it is
   written; and one still holding a `{placeholder}` on an explicit target → error,
   since a target set's dimensions are the only thing that renders one
+- a declared `oracle.scope` or `oracle.container` that disagrees with what the
+  driver finds on connect → error naming both. Not a load-time rule — it is the one
+  check here that needs a session, and it is what catches a `dsn:` edit that
+  repointed a target at a different container
 - a `target_set` whose `name` renders a duplicate → error, listing the collision.
   Across the whole estate, not one set: a generated name colliding with an
   explicit `targets:` entry makes `--target` just as ambiguous
@@ -1284,7 +1331,7 @@ notices until a rotation.
 | C6 | Multiple vaults for one application (mirror writes) | defer to a later use case |
 | C7 | ~~Should `target_sets` allow more than two nesting levels?~~ | **decided: no** — write a second set. §4 rules 2, 6 and 7 are what that costs |
 | C8 | ~~Do explicit `targets:` need labels, or is `environment` enough?~~ | **decided: labels are allowed on them**, so mixed estates select uniformly |
-| C9 | How does the file point at vault auth material, and at the database admin credential? | **both auth questions decided** (§3a). One grammar, two vocabularies: `{ method: ..., ...method-specific keys }`, with a scalar shorthand where the method needs nothing else. A vault's material is a MaterialRef — one key, `env` or `file` — so P2's no-plaintext rule is structural rather than remembered; identity fields stay inline; `method: token`'s source chain stops inside the method; a token helper is deferred. The admin credential uses P2's four sources, with `method: vault` naming a whole SecretRef, `method: env` naming its own variable, and `external` constraining the `dsn` to a TNS alias and refusing a `username`. Still open: the **`oracle.scope` vocabulary**, and whether `scope` and `container` constrain each other. Issue #27 |
+| C9 | ~~How does the file point at vault auth material, and at the database admin credential?~~ | **decided** (§3a), in #27. One grammar, two vocabularies: `{ method: ..., ...method-specific keys }`, with a scalar shorthand where the method needs nothing else. A vault's material is a MaterialRef — one key, `env` or `file` — so P2's no-plaintext rule is structural rather than remembered; identity fields stay inline; `method: token`'s source chain stops inside the method; a token helper is deferred. The admin credential uses P2's four sources, with `method: vault` naming a whole SecretRef, `method: env` naming its own variable, and `external` constraining the `dsn` to a TNS alias and refusing a `username`. `oracle.scope` adopts the run document's own vocabulary and is an **assertion** checked on connect, as is `container`; the two do not constrain each other in the loader |
 | C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |

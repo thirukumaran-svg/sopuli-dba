@@ -91,11 +91,14 @@ ADMIN_PASSWORD_ENV = "SOPULI_DB_ADMIN_PASSWORD"
 
 ORACLE_KEYS = ("scope", "container")
 
-#: The two scopes §2 actually writes. P1 names non-CDB databases and application
-#: containers as distinct scopes but gives them no spelling, so they are absent
-#: rather than invented; a non-CDB target simply omits `oracle:`. Widening this
-#: is a one-line change once the reference names them (issue #27).
-ORACLE_SCOPES = ("cdb_root", "pdb")
+#: Every scope P1 names, spelled the way `sopuli-run-1.2.schema.json` already
+#: spells them: the run document has typed `scope.type` since it was written, so
+#: adopting that vocabulary means the word a file *asserts* and the word the tool
+#: *reports* are the same word, and a mismatch needs no translation to explain.
+#:
+#: `unknown` is deliberately absent. It is observation-only -- something the driver
+#: may find, never something a file can claim.
+ORACLE_SCOPES = ("non_cdb", "cdb_root", "pdb", "app_root", "app_pdb")
 
 
 def build_targets(document: dict[str, Any]) -> tuple[Target, ...]:
@@ -192,6 +195,20 @@ def read_oracle(raw: Any, *, at: KeyPath) -> TargetOracle:
 
     Not the application's ``oracle:`` block, which carries ``container_clause``.
     Same key name, different meaning; see :class:`~sopuli.config.model.TargetOracle`.
+
+    Both keys are optional, and **neither constrains the other here**. ``scope``
+    and ``container`` are *assertions* about the database rather than settings on
+    it: the driver detects the real ones on connect (P1 ``resolve_scope``), and a
+    declared value that disagrees with what it finds is an error naming both. That
+    catches a DSN edit that silently repointed a target, or a PDB whose role
+    changed -- neither of which any load-time rule about these two keys could see.
+
+    So ``scope: pdb`` without a ``container`` is legal unless something actually
+    needs the value, and the thing that needs it is §7's ``{container}`` token --
+    where §4 rule 4 already makes an unresolved placeholder an error, for a reason
+    about the template rather than about the connection. ``scope: cdb_root`` with
+    ``container: CDB$ROOT`` is redundant but not contradictory, so the comparison
+    on connect decides it rather than the schema.
     """
     if raw is None:
         return TargetOracle()
@@ -218,13 +235,6 @@ def _reject_empty(block: dict[str, Any], *, at: KeyPath, block_name: str) -> Non
     difference between them is a sentence somebody started and did not finish.
     Reporting it costs one error; hiding it costs a target that turns out not to
     be configured the way the file appears to say.
-
-    What is *not* checked is how ``scope`` and ``container`` constrain each
-    other. §2 writes ``cdb_root`` without a container and ``pdb`` with one, but
-    the reference never says whether that is a rule -- and ``container`` is also
-    the ``{container}`` token in a secret template (§7), so it carries
-    information beyond which container to connect to. P1 puts per-vendor
-    validation behind the driver. Recorded in C9 / issue #27 rather than guessed.
     """
     if block:
         return

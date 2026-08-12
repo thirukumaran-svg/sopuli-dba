@@ -18,12 +18,20 @@ there is an unknown key rather than a rejected value -- and the rules about what
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.targets import ADMIN_METHODS, build_targets
+from sopuli.config.targets import ADMIN_METHODS, ORACLE_SCOPES, build_targets
+
+#: The run document, which typed `scope.type` before the config layer read a
+#: `scope:` at all. The two vocabularies are asserted to be the same one below.
+SCHEMAS = Path(__file__).resolve().parents[2] / "docs" / "schemas"
+
+RUN_SCHEMA = SCHEMAS / "sopuli-run-1.2.schema.json"
 
 DSN = "db-dev.example.com:1521/CDBDEV.pdb.example.com"
 
@@ -119,9 +127,27 @@ def test_duplicate_target_names_are_refused() -> None:
 # ----------------------------------------------------------------- oracle ---
 
 
-@pytest.mark.parametrize("scope", ["cdb_root", "pdb"])
-def test_the_scopes_the_reference_writes_are_accepted(scope: str) -> None:
+@pytest.mark.parametrize("scope", list(ORACLE_SCOPES))
+def test_every_scope_p1_names_is_accepted(scope: str) -> None:
+    """P1's list: non-CDB, the CDB root, a PDB, and application containers as a
+    distinct scope from the CDB root."""
     assert only(oracle={"scope": scope}).oracle.scope == scope
+
+
+def test_the_scope_vocabulary_is_the_run_documents_own() -> None:
+    """The same word on both sides, which is the point of adopting it.
+
+    ``scope.type`` in the run schema has been typed since it was written, so a
+    declared scope and an observed one are comparable without a translation table --
+    and the error when they disagree can name both in one sentence. ``unknown`` is
+    the one value a file may not claim: it is what the driver reports when it could
+    not tell, which is not something a config can assert.
+    """
+    schema = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))
+    observed = schema["$defs"]["scope"]["properties"]["type"]["enum"]
+
+    assert list(ORACLE_SCOPES) == [value for value in observed if value != "unknown"]
+    assert "unknown" in observed, "the run document dropped the value this test excludes"
 
 
 def test_a_misspelled_scope_is_refused() -> None:
@@ -175,16 +201,30 @@ def test_an_empty_block_is_refused_even_though_omitting_it_is_fine(block: str) -
     assert f"targets[0].{block}" in rendered
 
 
-def test_how_scope_and_container_constrain_each_other_is_not_decided_here() -> None:
-    """§2 writes `cdb_root` without a container and `pdb` with one, but never says
-    that is a rule -- and `container` is also the `{container}` token in a secret
-    template (§7), so it carries information beyond which container to connect
-    to. P1 puts per-vendor validation behind the driver. Recorded as C9 / #27
-    rather than guessed at, and pinned here so the absence is deliberate.
+def test_scope_and_container_do_not_constrain_each_other() -> None:
+    """Decided in #27, and pinned here so the absence stays deliberate.
+
+    Both keys are assertions the driver checks on connect, not settings the loader
+    applies, so there is nothing here for a coupling rule to protect. `scope: pdb`
+    without a container is fine unless something needs the value -- and the thing
+    that needs it is §7's `{container}` token, where §4 rule 4 already refuses an
+    unresolved placeholder, for a reason about the template rather than about the
+    connection. `cdb_root` beside a container is redundant, not contradictory, so
+    the connect-time comparison decides it rather than the schema.
     """
     assert only(oracle={"scope": "pdb"}).oracle.container is None
     assert only(oracle={"container": "alphadev"}).oracle.scope is None
-    assert only(oracle={"scope": "cdb_root", "container": "alphadev"}).oracle.scope == "cdb_root"
+    assert only(oracle={"scope": "cdb_root", "container": "CDB$ROOT"}).oracle.scope == "cdb_root"
+
+
+def test_a_scope_the_driver_only_ever_observes_may_not_be_asserted() -> None:
+    """`unknown` is what the driver reports when it could not tell. A file
+    claiming it would be asserting the absence of an assertion; omitting `scope:`
+    is how a target says nothing about it."""
+    with pytest.raises(ConfigError) as caught:
+        build_targets(document({**CDB_ROOT, "oracle": {"scope": "unknown"}}))
+
+    assert "unknown Oracle scope 'unknown'" in str(caught.value)
 
 
 # ------------------------------------------------------------------ admin ---

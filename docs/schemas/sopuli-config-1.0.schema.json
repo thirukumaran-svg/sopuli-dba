@@ -376,8 +376,11 @@
         "scope": {
           "type": "string",
           "enum": [
+            "non_cdb",
             "cdb_root",
-            "pdb"
+            "pdb",
+            "app_root",
+            "app_pdb"
           ]
         },
         "container": {
