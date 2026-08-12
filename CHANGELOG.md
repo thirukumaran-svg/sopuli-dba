@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/futville/sopuli-dba/compare/v0.12.0...v0.12.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* report config warnings as diagnostics from config show ([#54](https://github.com/futville/sopuli-dba/issues/54)) ([93f67a8](https://github.com/futville/sopuli-dba/commit/93f67a83f7562cc989b5a3dc7e6993489ddf8686))
+
 ## [0.12.0](https://github.com/futville/sopuli-dba/compare/v0.11.0...v0.12.0) (2026-08-11)
 
 
