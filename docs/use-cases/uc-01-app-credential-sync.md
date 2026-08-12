@@ -148,9 +148,16 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
 
 **Notes**
 
+- Generation and validation are `sopuli/passwords.py`, and step 3's "reject and
+  regenerate" runs against the *same* predicate `--from-stdin` uses. A policy that
+  declares no `length` is refused rather than defaulted; a policy no password could
+  satisfy is refused before any drawing, naming what is wrong
+  (`01-configuration.md` §8).
 - `--from-stdin` exists for migration and for cases where an external system
   dictates the password. It validates against policy and refuses on violation
-  unless `--no-policy-check` is passed, which is recorded in the audit event.
+  unless `--no-policy-check` is passed, which is recorded in the audit event. It
+  reads `length:` as a minimum rather than as an exact figure — a password an
+  external system dictated is not weaker for being longer.
 - Generating twice without applying simply replaces `pending`. That is safe and
   is reported as such.
 

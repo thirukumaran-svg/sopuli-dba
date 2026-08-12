@@ -94,6 +94,21 @@ def test_a_custom_charset_may_not_contain_a_double_quote() -> None:
     assert "no escape for it" in rendered
 
 
+def test_a_custom_charset_may_not_contain_control_characters() -> None:
+    """The same section as invariant 11 rejects these in a password, `CHR(0)`
+    included, so an alphabet holding one could only produce candidates the
+    generator throws away."""
+    with pytest.raises(ConfigError) as caught:
+        build_policies(
+            document(**{"risky": {"password": {"charset": "custom", "allow": "abc\x00"}}})
+        )
+
+    rendered = str(caught.value)
+    assert "may not contain control characters" in rendered
+    assert "policies.risky.password.allow" in rendered
+    assert "CHR(0)" in rendered
+
+
 def test_a_custom_charset_without_a_double_quote_is_fine() -> None:
     policy = only(password={"charset": "custom", "allow": "abcdef0123456789_-"})
 
@@ -155,6 +170,77 @@ def test_requiring_a_special_from_an_alphanumeric_charset_is_refused() -> None:
     rendered = str(caught.value)
     assert "has no special characters" in rendered
     assert "alnum_safe" in rendered
+
+
+def test_requiring_a_class_a_custom_alphabet_lacks_is_refused() -> None:
+    """The same impossibility as the row above, on the charset where it is most
+    likely: nobody checks a hand-written string of punctuation by eye, and a
+    `require:` it cannot satisfy would surface as generation giving up.
+    """
+    with pytest.raises(ConfigError) as caught:
+        build_policies(
+            document(
+                **{
+                    "impossible": {
+                        "password": {
+                            "charset": "custom",
+                            "allow": "abcdef",
+                            "require": {"special": 1},
+                        }
+                    }
+                }
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "`allow:` has no special characters" in rendered
+    assert "policies.impossible.password.require.special" in rendered
+    assert "add special characters to `allow:`" in rendered
+
+
+def test_requiring_a_letter_class_a_custom_alphabet_lacks_is_refused() -> None:
+    """Not only `special`: an `allow:` of digits cannot produce an upper-case
+    character either, and the named charsets all can, which is why this case only
+    exists for `custom`."""
+    with pytest.raises(ConfigError) as caught:
+        build_policies(
+            document(
+                **{
+                    "p": {
+                        "password": {"charset": "custom", "allow": "0123", "require": {"upper": 1}}
+                    }
+                }
+            )
+        )
+
+    assert "`allow:` has no upper characters" in str(caught.value)
+
+
+def test_first_char_alpha_against_an_alphabet_with_no_letters_is_refused() -> None:
+    """`first_char: alpha` is the other way a policy can demand what its alphabet
+    cannot give, and it needs no `require:` block to do it."""
+    with pytest.raises(ConfigError) as caught:
+        build_policies(
+            document(
+                **{
+                    "p": {
+                        "password": {"charset": "custom", "allow": "0123#", "first_char": "alpha"}
+                    }
+                }
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "`first_char: alpha` needs a letter" in rendered
+    assert "policies.p.password.first_char" in rendered
+
+
+def test_requiring_zero_of_a_missing_class_is_not_a_contradiction() -> None:
+    """`require: { special: 0 }` asks for nothing, so there is nothing the alphabet
+    fails to provide. Refusing it would be arithmetic rather than a rule."""
+    assert only(password={"charset": "alnum", "require": {"special": 0}}).password.require == (
+        ("special", 0),
+    )
 
 
 def test_the_same_requirement_is_fine_on_a_charset_that_has_specials() -> None:

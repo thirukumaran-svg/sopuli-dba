@@ -528,7 +528,8 @@ def _password_policy() -> Schema:
                 **STRING,
                 "description": (
                     'Belongs to `charset: custom` and to nothing else. May not contain " '
-                    "-- Oracle quoted identifiers have no escape for it (invariant 11)."
+                    "-- Oracle quoted identifiers have no escape for it (invariant 11) -- "
+                    "nor a control character. Must hold every class `require:` asks for."
                 ),
             },
             "first_char": _enum(policies.FIRST_CHARS),

@@ -985,24 +985,70 @@ the same secret — application settings and the like — are never touched.
 
 ## 8. Password charsets
 
+The alphabets are `sopuli/config/charsets.py`, which is §8's table as characters
+rather than as prose; generation and validation are `sopuli/passwords.py`.
+
 | Name | Contents | Notes |
 |---|---|---|
 | `alnum` | `A–Z a–z 0–9` | safest; no quoting anywhere |
 | `alnum_safe` | alnum + `_ # $ - . + = ~ ^` | avoids shell, connection-string and SQL-quoting hazards. **Default.** |
-| `printable_ascii` | all printable ASCII except space | requires quoted identifiers; may break connect strings and `.env` files |
+| `printable_ascii` | printable ASCII except space **and except `"`** | requires quoted identifiers; may break connect strings and `.env` files |
 | `custom` | explicit `allow:` string | you take responsibility |
+
+`printable_ascii` names the `"` exclusion rather than leaving it to the rule
+below, because an alphabet containing a character every password is rejected for
+would produce nothing but candidates that are thrown away.
+
+A **class** is `upper`, `lower`, `digit`, or `special` — where `special` is
+everything else in the alphabet. That is what makes `require: { special: 1 }`
+answerable for `charset: custom`, whose alphabet is whatever somebody typed.
 
 Independent of charset:
 
 - `first_char: alpha` — an unquoted Oracle password may not start with a digit
 - max byte length from the target (30 vs 128), computed in the **database
-  character set**, not in characters
+  character set**, not in characters. `length:` counts *characters*, so the two
+  are separate numbers and the byte limit travels with the encoding it was counted
+  in — 30 bytes is 30 characters in `WE8MSWIN1252` and as few as 7 in `AL32UTF8`.
+  Where no target could be reached there is no byte limit to apply, and the run
+  says so rather than assuming one (UC-1 §4)
 - passwords containing `"` are rejected outright — Oracle quoted identifiers have
-  no escape for it (see `02-oracle-privileges.md` §4)
+  no escape for it (see `02-oracle-privileges.md` §4) — as are control characters,
+  `CHR(0)` included
 - the target's verify function: generate → validate → on rejection (ORA-28003, or
   ORA-20xxx from the function) retry with a new candidate up to N times, then
   fail with the server's message intact
 - `PASSWORD_REUSE_TIME` / `PASSWORD_REUSE_MAX` — never retry blindly on ORA-28007
+
+### `length` has no default
+
+There is no built-in password length. A policy that does not declare one is legal
+— nothing has to generate from it — but generating **refuses**, naming the key to
+add. §8 names a default charset and deliberately no default length: which charset
+is safe is a property of Oracle, while how much entropy every credential in an
+estate gets is a decision about that estate, and a credential tool choosing it
+quietly is the opposite of a reviewed line in a file. If a built-in is ever wanted
+it belongs in P3's layer 6, where `config show --explain` can attribute it.
+
+### Generation, and what "compliant" means
+
+One definition, used twice. `creds generate` draws candidates from a CSPRNG and
+keeps the first compliant one; `creds apply --from-stdin` runs a supplied password
+through the same predicate (UC-1 §4). Two implementations would eventually
+disagree, and the disagreement would be a password the tool wrote and then refused.
+
+`length` is read slightly differently by each, which is deliberate: generation
+produces **exactly** `length`, while a *supplied* password satisfies it at
+`length` **or longer**. A password an external system dictated is not weaker for
+being longer, and refusing it would block the migration case `--from-stdin` exists
+for; shorter is a violation.
+
+A policy that no password could satisfy is refused before any drawing happens,
+naming what is wrong — a `require:` asking for a class the alphabet lacks, a
+`first_char: alpha` against an alphabet with no letters, an alphabet the target's
+character set cannot store, or a `length:` that cannot fit the target's byte limit.
+§10 catches most of these when the file is read, which is the better moment; the
+rest need the target's limits and so cannot be known until a command runs.
 
 ---
 
@@ -1289,13 +1335,18 @@ notices until a rotation.
   success over an empty set. A dangling `vault:` is the dangerous one: it does
   not stay dangling, it falls back to `defaults.vault`, and the tool then
   rotates a production password into whatever that is
-- `charset: custom` whose `allow:` contains `"` → error (invariant 11). The
-  generator applies that rule to what it produces; this applies it to the
-  alphabet it produces *from*, which is the only place a config file can name
-  the character
+- `charset: custom` whose `allow:` contains `"` → error (invariant 11), or a
+  control character, `CHR(0)` included (`02-oracle-privileges.md` §4). The
+  generator applies those rules to what it produces; this applies them to the
+  alphabet it produces *from*, which is the only place a config file can name such
+  a character
 - a `require:` block no password could satisfy → error: more characters demanded
-  than `length` allows, or `require: { special: N }` against a charset with no
-  special characters. Both would leave generation looping rather than failing
+  than `length` allows, or a class the policy's alphabet does not contain —
+  `require: { special: N }` against `alnum`, and equally against a
+  `charset: custom` whose `allow:` has no punctuation. Both would leave generation
+  looping rather than failing
+- `first_char: alpha` against an alphabet with no letters → error, for the same
+  reason and with no `require:` block needed to reach it
 - `--profile` or `SOPULI_PROFILE` naming a profile that does not exist → error,
   never a silent fallback to defaults
 - a profile name matching any target's `environment` value → warning, explaining

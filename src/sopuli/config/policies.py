@@ -3,25 +3,29 @@
 Most of this is reading closed sets and range-checking numbers. Three rules earn
 their place by catching a config that looks fine and cannot work:
 
-* **invariant 11** -- a `"` in a custom charset. Oracle quoted identifiers have
-  no escape for it (``02-oracle-privileges.md`` §4), so a password containing one
-  is rejected rather than escaped. The generator enforces that on what it
-  produces; here the same rule is applied to the alphabet it produces *from*,
-  which is the only place a config file can name the character at all.
+* **invariant 11 and the rest of what cannot be in a password** -- a `"` in a
+  custom charset, because Oracle quoted identifiers have no escape for it, and a
+  control character, because the same section rejects those too
+  (``02-oracle-privileges.md`` §4). The generator enforces that on what it
+  produces; here the same rules are applied to the alphabet it produces *from*,
+  which is the only place a config file can name such a character at all.
 * **`require` cannot exceed `length`** -- ask for 30 characters of each class in
   a 24-character password and generation never terminates.
-* **`require.special` against a charset with no specials** -- the same
-  impossibility, one step less obvious, and the default charset is only one
-  entry away in the table.
+* **`require:` asking for a class the alphabet does not have** -- the same
+  impossibility, one step less obvious. Answered against the *real* alphabet
+  (:mod:`sopuli.config.charsets`), so it holds for `charset: custom` as well as
+  for the named sets, and covers `first_char: alpha` against an alphabet with no
+  letters.
 
-All three are the same kind of failure: a file nobody could look at and see was
-wrong, which would surface as a hung or looping rotation rather than as an error.
+All are the same kind of failure: a file nobody could look at and see was wrong,
+which would surface as a hung or looping rotation rather than as an error.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from sopuli.config import charsets
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
     choice,
@@ -43,18 +47,19 @@ POLICY_KEYS = ("password", "rotation", "verify", "account")
 
 PASSWORD_KEYS = ("length", "charset", "allow", "first_char", "require")
 
-#: §8's table. `custom` is the only one that reads `allow:`.
-CHARSETS = ("alnum", "alnum_safe", "printable_ascii", "custom")
-
-#: Charsets with no punctuation in them, so `require: { special: 1 }` beside one
-#: is unsatisfiable rather than merely strict.
-ALPHANUMERIC_ONLY = ("alnum",)
+#: §8's table. `custom` is the only one that reads `allow:`; the others are the
+#: named alphabets in :mod:`sopuli.config.charsets`, which is where §8's table
+#: exists as characters.
+CHARSETS = (*charsets.ALPHABETS, charsets.CUSTOM)
 
 #: §8 documents one value. Omitting the key means no constraint, so there is no
 #: need for an "any" spelling and no reason to invent one.
-FIRST_CHARS = ("alpha",)
+FIRST_CHARS = (charsets.ALPHA,)
 
-REQUIRE_KEYS = ("upper", "lower", "digit", "special")
+#: The classes `require:` counts. Taken from the charset module rather than
+#: written again, so the alphabet's idea of a class and the config key that
+#: demands one cannot drift -- the published schema generates from this too.
+REQUIRE_KEYS = charsets.CLASS_NAMES
 
 ROTATION_KEYS = ("strategy", "rollover_hours", "keep_previous", "max_age_days")
 
@@ -115,7 +120,7 @@ def _build_password(raw: Any, *, at: KeyPath) -> PasswordPolicy:
     )
 
     _require_allow_matches_charset(policy, at=at)
-    _reject_double_quote(policy, at=at)
+    _reject_unusable_characters(policy, at=at)
     _require_satisfiable(policy, at=at)
     return policy
 
@@ -164,14 +169,21 @@ def _require_allow_matches_charset(policy: PasswordPolicy, *, at: KeyPath) -> No
         )
 
 
-def _reject_double_quote(policy: PasswordPolicy, *, at: KeyPath) -> None:
-    """Invariant 11, at the only place a config file can name the character.
+def _reject_unusable_characters(policy: PasswordPolicy, *, at: KeyPath) -> None:
+    """What a password may not contain, at the only place a file can name it.
 
     Rejected rather than quietly dropped from the alphabet: a charset that
     silently differs from what the file says is how somebody ends up believing
     their passwords have a character class they do not have.
+
+    Both rules come from ``02-oracle-privileges.md`` §4, which builds
+    ``ALTER USER ... IDENTIFIED BY "<password>"`` as a quoted literal. A `"` has
+    no escape in one (invariant 11), and a control character in one is at best
+    unusable.
     """
-    if policy.allow is not None and '"' in policy.allow:
+    if policy.allow is None:
+        return
+    if charsets.FORBIDDEN in policy.allow:
         raise ConfigError(
             'a custom charset may not contain `"`',
             at=at.key("allow"),
@@ -180,13 +192,27 @@ def _reject_double_quote(policy: PasswordPolicy, *, at: KeyPath) -> None:
                 "could not be set at all (02-oracle-privileges.md §4)"
             ),
         )
+    controls = sum(1 for character in policy.allow if charsets.is_control(character))
+    if controls:
+        raise ConfigError(
+            f"a custom charset may not contain control characters, and this one has {controls}",
+            at=at.key("allow"),
+            hint=(
+                "02-oracle-privileges.md §4 rejects them in a password, CHR(0) included, "
+                "so they could only ever produce candidates the generator throws away"
+            ),
+        )
 
 
 def _require_satisfiable(policy: PasswordPolicy, *, at: KeyPath) -> None:
-    """A `require` block that no password of this length and charset can meet.
+    """A policy no password of this length and charset can meet.
 
-    Both cases below are generation looping or failing forever, reported instead
-    while somebody is looking at the file.
+    Every case below is generation looping or failing forever, reported instead
+    while somebody is looking at the file. They are answered against the alphabet
+    the policy actually chose (:mod:`sopuli.config.charsets`), so a hand-written
+    ``allow:`` is held to the same standard as a named charset -- it is the one
+    more likely to be missing a class, since nobody checks a string of punctuation
+    by eye.
     """
     demanded = sum(count for _, count in policy.require)
     if policy.length is not None and demanded > policy.length:
@@ -196,14 +222,45 @@ def _require_satisfiable(policy: PasswordPolicy, *, at: KeyPath) -> None:
             hint="no password can satisfy this, so generation would never succeed",
         )
 
-    specials = dict(policy.require).get("special", 0)
-    if specials and policy.charset in ALPHANUMERIC_ONLY:
+    alphabet = charsets.alphabet(policy)
+    present = charsets.classes_present(alphabet)
+    for name, count in policy.require:
+        if count and name not in present:
+            raise ConfigError(
+                f"{_names(policy)} has no {name} characters, but `require:` asks for {count}",
+                at=at.key("require").key(name),
+                hint=_widen(policy, name),
+            )
+
+    if policy.first_char == charsets.ALPHA and not charsets.has_letters(alphabet):
         raise ConfigError(
-            f"`charset: {policy.charset}` has no special characters, "
-            f"but `require:` asks for {specials}",
-            at=at.key("require").key("special"),
-            hint="use `alnum_safe`, which adds _ # $ - . + = ~ ^ (§8)",
+            f"`first_char: {charsets.ALPHA}` needs a letter, but {_names(policy)} has none",
+            at=at.key("first_char"),
+            hint="no password can satisfy this, so generation would never succeed",
         )
+
+
+def _names(policy: PasswordPolicy) -> str:
+    """How to refer to this policy's alphabet in a message.
+
+    A named charset is named; a custom one is the key that holds it, because
+    quoting the characters back would be quoting the line the reader is looking at.
+    """
+    if policy.charset == charsets.CUSTOM:
+        return "`allow:`"
+    return f"`charset: {policy.charset or charsets.DEFAULT_CHARSET}`"
+
+
+def _widen(policy: PasswordPolicy, name: str) -> str:
+    """What to do about a class the alphabet cannot produce.
+
+    The named charsets all hold every class but ``special``, so for them there is
+    exactly one remedy and §8's table has it one row down. A custom alphabet is
+    whatever was typed, so the remedy is to type more of it.
+    """
+    if policy.charset == charsets.CUSTOM:
+        return f"add {name} characters to `allow:`, or use a named charset from §8"
+    return f"use `alnum_safe`, which adds {charsets.SAFE_SPECIALS_SPACED} (§8)"
 
 
 # ------------------------------------------------- rotation and the rest ---

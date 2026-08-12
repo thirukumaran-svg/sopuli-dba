@@ -166,7 +166,10 @@ container. `testcontainers-python` handles session-scoped containers; a
   third-party-env ranking
 - SecretRef parsing, including `#field/json/pointer` and `@version=`/`@stage=`
 - password generation: charset, first character, byte length in a given database
-  character set, composition requirements
+  character set, composition requirements — each asserted over enough draws that
+  "usually" fails. Two things output cannot show are pinned as well: that the
+  source of randomness is the CSPRNG rather than `random`, and that no message
+  about a rejected candidate repeats any of it
 - redaction: the serialiser cannot emit a secret value
 
 ### Against a database (tiers 1–3)

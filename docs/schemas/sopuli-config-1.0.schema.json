@@ -577,7 +577,7 @@
         "allow": {
           "type": "string",
           "minLength": 1,
-          "description": "Belongs to `charset: custom` and to nothing else. May not contain \" -- Oracle quoted identifiers have no escape for it (invariant 11)."
+          "description": "Belongs to `charset: custom` and to nothing else. May not contain \" -- Oracle quoted identifiers have no escape for it (invariant 11) -- nor a control character. Must hold every class `require:` asks for."
         },
         "first_char": {
           "type": "string",
