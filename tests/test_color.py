@@ -249,6 +249,11 @@ def test_the_answer_is_resolved_once_and_remembered() -> None:
 
     Re-deciding per write would call isatty on every line, and could answer
     differently mid-run if the stream were swapped underneath it.
+
+    The empty ``env`` is what makes this a test of the caching rather than of
+    the developer's shell: `NO_COLOR` in the real environment short-circuits
+    `resolve_color` before it ever reaches the stream, and the count would be
+    zero for a reason that has nothing to do with what is being asserted.
     """
     calls: list[int] = []
 
@@ -257,8 +262,43 @@ def test_the_answer_is_resolved_once_and_remembered() -> None:
             calls.append(1)
             return False
 
-    emitter = Emitter(mode=OutputMode.TEXT, stream=cast("TextIO", CountingStream()))
+    emitter = Emitter(mode=OutputMode.TEXT, stream=cast("TextIO", CountingStream()), env={})
 
     assert emitter.use_color() is False
     assert emitter.use_color() is False
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("variable", ["NO_COLOR", "SOPULI_NO_COLOR"])
+@pytest.mark.usefixtures("vt_available")
+def test_the_emitter_reads_the_environment_it_was_given(variable: str) -> None:
+    """Which environment answers is the emitter's to decide, not the shell's.
+
+    `resolve_color` takes `env` so it stays a pure function of its arguments;
+    an emitter that reached for `os.environ` regardless would put that back
+    exactly where it could not be tested.
+    """
+    disabled = Emitter(mode=OutputMode.TEXT, stream=terminal(), env={variable: "1"})
+    enabled = Emitter(mode=OutputMode.TEXT, stream=terminal(), env={})
+
+    assert disabled.use_color() is False
+    assert enabled.use_color() is True
+
+
+@pytest.mark.usefixtures("vt_available")
+def test_the_process_environment_is_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Injecting one is for tests. A real run still honours the user's shell,
+    which is the whole of P4's `NO_COLOR` promise.
+
+    Every variable the gate consults is cleared first, not just the one under
+    test: leaving `SOPULI_NO_COLOR` or `TERM=dumb` to whatever the developer's
+    shell happens to say is the bug this test exists to prevent.
+    """
+    for variable in ("NO_COLOR", "SOPULI_NO_COLOR", "TERM"):
+        monkeypatch.delenv(variable, raising=False)
+
+    assert Emitter(mode=OutputMode.TEXT, stream=terminal()).use_color() is True
+
+    monkeypatch.setenv("NO_COLOR", "1")
+
+    assert Emitter(mode=OutputMode.TEXT, stream=terminal()).use_color() is False

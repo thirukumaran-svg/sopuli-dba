@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, StrEnum
@@ -68,8 +69,13 @@ def render_json(document: RunDocument) -> str:
 class Emitter:
     """Holds the resolved output mode and colour choice for a run.
 
-    The stream is resolved at write time, not at construction: capturing
-    ``sys.stdout`` early would break under test runners that replace it.
+    The stream and the environment are both resolved at write time rather than
+    at construction, and default to the process's own. Capturing ``sys.stdout``
+    early would break under test runners that replace it; ``env`` is here for
+    the reason :func:`~sopuli.output.color.resolve_color` takes one — it is a
+    pure function of its arguments so that colour resolution can be tested
+    without the ambient environment deciding the answer. Reading
+    ``os.environ`` here would have undone that one layer further out.
 
     Colour lives here rather than at the call sites for the same reason
     redaction does. A command asks the emitter whether it may decorate; it never
@@ -80,10 +86,14 @@ class Emitter:
     mode: OutputMode = OutputMode.TEXT
     stream: TextIO | None = None
     color_choice: ColorChoice = ColorChoice.AUTO
+    env: Mapping[str, str] | None = None
     _color: bool | None = field(default=None, init=False, repr=False)
 
     def _out(self) -> TextIO:
         return self.stream if self.stream is not None else sys.stdout
+
+    def _env(self) -> Mapping[str, str]:
+        return self.env if self.env is not None else os.environ
 
     @property
     def is_json(self) -> bool:
@@ -107,7 +117,7 @@ class Emitter:
         if self.is_json:
             self._color = False
         else:
-            self._color = resolve_color(self.color_choice, stream=self._out(), env=os.environ)
+            self._color = resolve_color(self.color_choice, stream=self._out(), env=self._env())
         return self._color
 
     def emit(self, document: RunDocument, text: str) -> None:
