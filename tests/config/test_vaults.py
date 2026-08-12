@@ -4,9 +4,12 @@ Tier 0, pure: everything builds from a dict, so there is no filesystem and no
 vault. Fixtures use the fictional vocabulary the provenance note requires --
 hosts under ``example.com``, never a real address or mount.
 
-The interesting tests here are the two refusals. A vault entry chooses a backend
-and an auth method, and both are closed sets: a free string means a typo loads
-happily and the tool then goes looking for passwords somewhere nobody intended.
+Two kinds of refusal are worth reading. A vault entry chooses a backend and an
+auth method, and both are closed sets: a free string means a typo loads happily
+and the tool then goes looking for passwords somewhere nobody intended. And every
+secret-bearing key under ``auth:`` is a MaterialRef -- a named environment
+variable or file -- so a credential written inline is refused rather than read,
+which is P2's constraint and invariant 2's, enforced by shape.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.vaults import build_vaults
+from sopuli.config.vaults import AUTH_MATERIAL_KEYS, AUTH_METHODS, build_vaults
 
 HASHICORP: dict[str, Any] = {
     "type": "hashicorp",
@@ -132,12 +135,27 @@ def test_kv_version_true_is_not_version_one() -> None:
 # --------------------------------------------------------------------- auth ---
 
 
-@pytest.mark.parametrize("method", ["token", "approle", "oidc", "instance_principal"])
-def test_the_auth_methods_p2_names_are_accepted(method: str) -> None:
-    vault = only(**{"vault-dev": {"type": "hashicorp", "auth": {"method": method}}})
+def auth(**keys: Any) -> Any:
+    """The `auth:` block of a vault built from `keys`."""
+    return only(**{"vault-dev": {"type": "hashicorp", "auth": keys or None}}).auth
 
-    assert vault.auth is not None
-    assert vault.auth.method == method
+
+def required_keys(method: str) -> dict[str, Any]:
+    """Whatever this method must be given, filled in from its own spec.
+
+    Derived rather than written out so that a method added to the table is
+    exercised by the test below without anybody remembering to extend a fixture.
+    """
+    return {
+        key: {"env": key.upper()} if key in AUTH_MATERIAL_KEYS else key
+        for key in AUTH_METHODS[method].required
+    }
+
+
+@pytest.mark.parametrize("method", list(AUTH_METHODS))
+def test_every_auth_method_p2_names_is_accepted(method: str) -> None:
+    """P2's list, pinned. Only the name here; the keys are the tests below."""
+    assert auth(method=method, **required_keys(method)).method == method
 
 
 def test_an_unknown_auth_method_is_refused() -> None:
@@ -147,37 +165,195 @@ def test_an_unknown_auth_method_is_refused() -> None:
     assert "unknown auth method 'tokne'" in str(caught.value)
 
 
-def test_auth_material_keys_are_refused_and_say_why() -> None:
-    """The one place this layer refuses rather than guesses.
-
-    P2 names the methods but never says what the keys pointing at the material
-    are called -- only that the file must not hold the material itself. Accepting
-    `role_id:` now would fix a schema the vault layer then has to live with, so
-    it is an error that names the open question instead.
-    """
-    with pytest.raises(ConfigError) as caught:
-        build_vaults(
-            document(
-                **{
-                    "vault-dev": {
-                        "type": "hashicorp",
-                        "auth": {"method": "approle", "role_id": "0000"},
-                    }
-                }
-            )
-        )
-
-    rendered = str(caught.value)
-    assert "unknown key 'role_id'" in rendered
-    assert "not specified yet" in rendered
-    assert "#27" in rendered
-
-
 def test_an_auth_block_must_name_a_method() -> None:
     with pytest.raises(ConfigError) as caught:
         build_vaults(document(**{"vault-dev": {"type": "hashicorp", "auth": {}}}))
 
-    assert "must name an auth method" in str(caught.value)
+    rendered = str(caught.value)
+    assert "vaults.vault-dev.auth.method" in rendered
+    assert "must name a method" in rendered
+
+
+# ------------------------------------------------------- material, per method ---
+
+
+def test_approle_names_where_both_halves_come_from() -> None:
+    """P2's own example of a method with material: role_id and secret_id, each
+    from an environment variable or a file, never inline."""
+    block = auth(
+        method="approle",
+        mount="approle",
+        role_id={"env": "SOPULI_VAULT_ROLE_ID"},
+        secret_id={"file": "/run/secrets/vault_secret_id"},
+    )
+
+    assert block.mount == "approle"
+    assert block.role_id is not None
+    assert (block.role_id.kind, block.role_id.location) == ("env", "SOPULI_VAULT_ROLE_ID")
+    assert block.secret_id is not None
+    assert (block.secret_id.kind, block.secret_id.location) == (
+        "file",
+        "/run/secrets/vault_secret_id",
+    )
+
+
+def test_material_written_inline_is_refused_as_the_wrong_kind_of_thing() -> None:
+    """The rule this whole shape exists for (P2, invariant 2). A string here is
+    not a type error to be reported as one: it is somebody writing the credential
+    into a file that is committed and shared, so the message says that."""
+    with pytest.raises(ConfigError) as caught:
+        auth(method="approle", role_id="0000", secret_id={"env": "SECRET_ID"})
+
+    rendered = str(caught.value)
+    assert "vaults.vault-dev.auth.role_id" in rendered
+    assert "auth material is named, not written here" in rendered
+    assert "`env:`" in rendered
+    assert "`file:`" in rendered
+
+
+def test_material_written_as_an_unquoted_number_is_the_same_mistake() -> None:
+    """An AppRole role_id looks like a number often enough that YAML will hand one
+    over as an int. It is still a credential in a committed file."""
+    with pytest.raises(ConfigError) as caught:
+        auth(method="approle", role_id=1234, secret_id={"env": "SECRET_ID"})
+
+    assert "auth material is named, not written here" in str(caught.value)
+
+
+def test_a_material_ref_names_exactly_one_source() -> None:
+    """Two sources leave nothing to say which was meant, and the tool would have
+    to pick one -- silently deciding which credential it authenticates with."""
+    with pytest.raises(ConfigError) as caught:
+        auth(method="token", token={"env": "VAULT_TOKEN", "file": "~/.vault-token"})
+
+    rendered = str(caught.value)
+    assert "must name exactly one source, found 2" in rendered
+    assert "'env', 'file'" in rendered
+
+
+def test_an_empty_material_ref_names_no_source() -> None:
+    with pytest.raises(ConfigError) as caught:
+        auth(method="token", token={})
+
+    assert "must name exactly one source, found 0" in str(caught.value)
+
+
+def test_a_material_source_that_is_not_a_source_is_refused() -> None:
+    """`command:` is the one somebody will reach for -- Vault has a token helper.
+    Shelling out from a credential tool is its own decision, so it is not here."""
+    with pytest.raises(ConfigError) as caught:
+        auth(method="token", token={"command": "vault-helper get"})
+
+    rendered = str(caught.value)
+    assert "unknown material source 'command'" in rendered
+    assert "known: env, file" in rendered
+
+
+def test_a_material_location_must_be_a_string() -> None:
+    with pytest.raises(ConfigError) as caught:
+        auth(method="token", token={"env": ["VAULT_TOKEN"]})
+
+    assert "vaults.vault-dev.auth.token.env" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("method", "key"),
+    [(method, key) for method, spec in AUTH_METHODS.items() for key in spec.keys],
+    ids=lambda value: str(value),
+)
+def test_every_key_a_method_takes_is_read_into_the_model(method: str, key: str) -> None:
+    """Accepted and then dropped is the failure this catches.
+
+    A key can be added to a method's spec, pass validation, and never reach the
+    model -- and the only symptom is a vault that authenticates as though the line
+    had not been written. Exhaustive over (method, key) rather than sampled,
+    because the sampled version is what let the gap exist.
+    """
+    written: Any = {"env": key.upper()} if key in AUTH_MATERIAL_KEYS else key
+    block = auth(method=method, **{**required_keys(method), key: written})
+
+    assert getattr(block, key) is not None
+
+
+def test_identity_fields_stay_inline() -> None:
+    """`role`, `username`, `profile` and `mount` name *who* rather than prove it,
+    so they are written as they are. Only material is addressed indirectly."""
+    block = auth(method="userpass", username="sopuli", password={"env": "PW"}, mount="userpass")
+
+    assert (block.username, block.mount) == ("sopuli", "userpass")
+
+
+# -------------------------------------------------------- keys and methods ---
+
+
+def test_a_key_belonging_to_another_method_is_refused_naming_the_method() -> None:
+    """The one cross-key rule this block has. `role_id` under `method: token` is
+    not a typo -- it is a leftover from an edit that changed the method, and the
+    message has to say which method is in force."""
+    with pytest.raises(ConfigError) as caught:
+        auth(method="token", role_id={"env": "ROLE_ID"})
+
+    rendered = str(caught.value)
+    assert "unknown key 'role_id'" in rendered
+    assert "`method: token` takes `token`" in rendered
+
+
+def test_a_method_missing_its_material_is_refused_at_load() -> None:
+    """An AppRole with no secret_id cannot authenticate, and finding that out at
+    the first rotation is invariant 4's failure mode.
+
+    Reported at the key that is missing rather than at the block, the way a missing
+    required key is reported everywhere else -- the path is the line that has to be
+    written.
+    """
+    with pytest.raises(ConfigError) as caught:
+        auth(method="approle", role_id={"env": "ROLE_ID"})
+
+    rendered = str(caught.value)
+    assert "vaults.vault-dev.auth.secret_id" in rendered
+    assert "`method: approle` needs `secret_id`" in rendered
+    assert "required for this method: role_id, secret_id" in rendered
+
+
+def test_several_missing_keys_are_all_named_at_the_first_of_them() -> None:
+    """One location, every missing key. Naming only the one the path points at
+    would mean fixing it and being told again."""
+    with pytest.raises(ConfigError) as caught:
+        auth(method="approle")
+
+    rendered = str(caught.value)
+    assert "vaults.vault-dev.auth.role_id" in rendered
+    assert "needs `role_id`, `secret_id`" in rendered
+
+
+@pytest.mark.parametrize("method", ["token", "instance_principal", "config_file"])
+def test_a_method_that_needs_nothing_may_be_written_as_a_bare_value(method: str) -> None:
+    """`auth: token` is sugar for `{ method: token }`, which is what keeps §2's
+    and §4's examples valid and lets P2's token source chain stay implicit."""
+    vault = only(**{"vault-dev": {"type": "hashicorp", "auth": method}})
+
+    assert vault.auth is not None
+    assert vault.auth.method == method
+    assert vault.auth.token is None
+
+
+def test_a_method_that_needs_material_may_not_be_written_as_a_bare_value() -> None:
+    """There is nowhere in `auth: approle` to say where role_id comes from, and
+    the old draft's answer -- fall through to some other source -- is exactly the
+    failure nobody can explain afterwards."""
+    with pytest.raises(ConfigError) as caught:
+        build_vaults(document(**{"vault-dev": {"type": "hashicorp", "auth": "approle"}}))
+
+    rendered = str(caught.value)
+    assert "`approle` cannot be written as a bare value" in rendered
+    assert "role_id" in rendered
+
+
+def test_an_unknown_method_written_as_a_bare_value_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_vaults(document(**{"vault-dev": {"type": "hashicorp", "auth": "tokne"}}))
+
+    assert "unknown auth method 'tokne'" in str(caught.value)
 
 
 # ---------------------------------------------------------- non_production ---

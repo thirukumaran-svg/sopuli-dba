@@ -183,17 +183,72 @@ class Safety:
 
 
 @dataclass(frozen=True)
-class VaultAuth:
-    """``auth:`` on a vault -- *how* to authenticate, never the material.
+class MaterialRef:
+    """*Where* a piece of auth material comes from -- never the material (P2).
 
-    Only ``method`` is modelled. P2 names the methods but says nothing about the
-    keys that point at the material (an AppRole's ``role_id``, a token file), and
-    it is explicit that "auth material is never written to the config file in
-    plaintext; the config points at *where* the material comes from". Inventing
-    those key names here would fix a schema the vault layer has to live with.
+    Deliberately not a :class:`~sopuli.config.secret_refs.SecretRef`: that
+    addresses a value in a vault, and this is what you need *before* you have a
+    vault. Two types with two names keep the chicken-and-egg visible. See
+    :mod:`sopuli.config.auth`.
+
+    Stored as a kind and a location rather than as two optional fields, so that
+    every consumer -- a message, a store, ``config show --explain`` -- handles one
+    shape instead of re-deriving which of them was set. There is no field for a
+    value, and that absence is the guarantee: nothing downstream can be handed
+    plaintext from this object because there is nowhere for plaintext to sit.
+    """
+
+    #: One of :data:`~sopuli.config.auth.MATERIAL_KINDS` -- ``env`` or ``file``.
+    kind: str
+    #: The variable name or the path, as written.
+    location: str
+
+    def __str__(self) -> str:
+        """``env SOPULI_VAULT_ROLE_ID`` -- a source and where to look, never a
+        value. Safe to render anywhere, which is the point of the type."""
+        return f"{self.kind} {self.location}"
+
+
+@dataclass(frozen=True)
+class VaultAuth:
+    """``auth:`` on a vault -- *how* to authenticate, never the material itself.
+
+    Flat rather than one class per method, with every method-specific field
+    optional. A method's own keys are validated when the block is read
+    (:mod:`sopuli.config.auth`), so the alternative -- nine small classes and a
+    union -- would buy type-level exclusivity at the cost of every consumer having
+    to match on it, in the part of the tool that most needs to stay readable.
+
+    Which fields are meaningful follows from ``method``:
+
+    ==================== =========================================
+    ``token``            ``token``
+    ``approle``          ``mount``, ``role_id``, ``secret_id``
+    ``kubernetes``       ``mount``, ``role``, ``jwt``
+    ``oidc``             ``mount``, ``role``
+    ``userpass``         ``mount``, ``username``, ``password``
+    ``instance_principal``  --
+    ``resource_principal``  --
+    ``config_file``      ``profile``
+    ``session_token``    ``profile``
+    ==================== =========================================
+
+    ``mount`` here is the *auth* mount, not the KV mount on :class:`Vault`. It
+    stays ``None`` when unwritten rather than being filled with the method name it
+    defaults to: an unset value has to stay distinguishable from a written one for
+    ``config show --explain`` to attribute it (P3).
     """
 
     method: str
+    mount: str | None = None
+    role: str | None = None
+    username: str | None = None
+    profile: str | None = None
+    token: MaterialRef | None = None
+    role_id: MaterialRef | None = None
+    secret_id: MaterialRef | None = None
+    jwt: MaterialRef | None = None
+    password: MaterialRef | None = None
 
 
 @dataclass(frozen=True)

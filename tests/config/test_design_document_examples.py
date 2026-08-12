@@ -27,6 +27,7 @@ from sopuli.config.applications import build_applications
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config, load_document
 from sopuli.config.schema import SCHEMA_FILENAME
+from sopuli.config.vaults import build_vaults
 from sopuli.config.yaml_loader import parse_yaml
 
 REFERENCE = Path(__file__).resolve().parents[2] / "docs" / "design" / "01-configuration.md"
@@ -310,6 +311,34 @@ def test_the_two_application_example_sits_on_the_estate_from_2() -> None:
     ]
     assert [group.name for group in config.groups] == ["app-pdbs", "dev-pdbs", "prod-pdbs"]
     assert config.warnings == ()
+
+
+def test_the_auth_example_builds_the_stores_it_describes() -> None:
+    """§3a's `auth:` fragment is where a reader learns the shape of a MaterialRef.
+
+    It shows all three forms in one block -- a method with material from an
+    environment variable and a file, a method with one optional MaterialRef, and a
+    method written as a bare value -- so if the grammar and the document disagree
+    about any of them, it shows up here rather than in somebody's config file.
+    """
+    block = next(block for _, block in _blocks() if "instance_principal" in block)
+
+    prod, dev, oci = build_vaults(parse_yaml(block))
+
+    assert prod.auth is not None
+    assert prod.auth.method == "approle"
+    assert prod.auth.mount == "approle"
+    assert str(prod.auth.role_id) == "env SOPULI_VAULT_ROLE_ID"
+    assert str(prod.auth.secret_id) == "file /run/secrets/vault_secret_id"
+
+    assert dev.auth is not None
+    assert str(dev.auth.token) == "file ~/.vault-token"
+
+    # The bare form: sugar for `{ method: instance_principal }`, and no material,
+    # since a machine identity is not something the file can point at.
+    assert oci.auth is not None
+    assert oci.auth.method == "instance_principal"
+    assert oci.auth.token is None
 
 
 def test_the_skeleton_is_illustrative_rather_than_loadable() -> None:

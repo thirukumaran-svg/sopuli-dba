@@ -34,6 +34,7 @@ from jsonschema import Draft202012Validator
 
 from sopuli.config import (
     applications,
+    auth,
     defaults,
     groups,
     loading,
@@ -63,6 +64,7 @@ KEY_SETS: dict[str, tuple[str, ...]] = {
     "safety": safety.SAFETY_KEYS,
     "vault": vaults.VAULT_KEYS,
     "vault_auth": vaults.AUTH_KEYS,
+    "material_ref": auth.MATERIAL_KINDS,
     "target": targets.TARGET_KEYS,
     "admin": targets.ADMIN_KEYS,
     "target_oracle": targets.ORACLE_KEYS,
@@ -93,7 +95,7 @@ ENUMS: dict[str, tuple[Any, ...]] = {
     "/properties/version": loading.SUPPORTED_VERSIONS,
     "$defs/vault/properties/type": vaults.VAULT_TYPES,
     "$defs/vault/properties/kv_version": vaults.KV_VERSIONS,
-    "$defs/vault_auth/properties/method": vaults.AUTH_METHODS,
+    "$defs/vault_auth/properties/method": tuple(vaults.AUTH_METHODS),
     "$defs/target/properties/type": targets.TARGET_TYPES,
     "$defs/admin/properties/auth": targets.ADMIN_SOURCES,
     "$defs/target_oracle/properties/scope": targets.ORACLE_SCOPES,
@@ -214,6 +216,36 @@ def test_the_inline_form_is_the_application_entry_hoisted() -> None:
         assert root[key] == entry[key], f"the inline `{key}:` differs from the entry's"
 
 
+def test_every_secret_bearing_auth_key_is_typed_as_a_material_ref() -> None:
+    """P2 in the artefact. A material key typed as a string would have an editor
+    completing a credential straight into a file that is committed and shared, and
+    the schema is the thing a reader meets before any validator runs.
+
+    The partition is asserted with it: material is the default and inline is the
+    exception, so a key in both lists would be a string here and a MaterialRef in
+    the builder.
+    """
+    properties = _properties(build_schema(), "vault_auth")
+
+    assert set(vaults.AUTH_MATERIAL_KEYS).isdisjoint(vaults.AUTH_IDENTITY_KEYS)
+    assert vaults.AUTH_MATERIAL_KEYS, "no material keys -- the derivation broke"
+    for key in vaults.AUTH_MATERIAL_KEYS:
+        assert properties[key] == {"$ref": "#/$defs/material_ref"}, key
+
+
+def test_the_auth_shorthand_offers_exactly_the_methods_that_need_nothing() -> None:
+    """`auth: approle` has nowhere to say where role_id comes from, so the editor
+    must not offer it -- the builder refuses it, and an editor that suggested it
+    would be sending somebody to that error."""
+    branches = _properties(build_schema(), "vault")["auth"]["oneOf"]
+    (shorthand,) = [branch for branch in branches if "enum" in branch]
+
+    assert shorthand["enum"] == sorted(
+        method for method, spec in vaults.AUTH_METHODS.items() if spec.is_parameterless
+    )
+    assert "approle" not in shorthand["enum"]
+
+
 def test_the_target_selector_offers_exactly_the_forms_the_builder_reads() -> None:
     """`targets:` on an application is a list, a group or a match, and nothing
     else -- the third form is what `_build_targets` refuses to guess at."""
@@ -315,6 +347,34 @@ def test_the_smallest_legal_file_validates() -> None:
             },
         ),
         ("a group matching everything", {"version": 1, "groups": {"g": {"match": {}}}}),
+        (
+            "auth material written inline",
+            {
+                "version": 1,
+                "vaults": {
+                    "v": {
+                        "type": "hashicorp",
+                        "auth": {"method": "approle", "role_id": "0000", "secret_id": {"env": "S"}},
+                    }
+                },
+            },
+        ),
+        (
+            "a material ref naming two sources",
+            {
+                "version": 1,
+                "vaults": {
+                    "v": {
+                        "type": "hashicorp",
+                        "auth": {"method": "token", "token": {"env": "T", "file": "~/.token"}},
+                    }
+                },
+            },
+        ),
+        (
+            "the shorthand of a method that needs material",
+            {"version": 1, "vaults": {"v": {"type": "hashicorp", "auth": "approle"}}},
+        ),
     ],
 )
 def test_the_schema_refuses(why: str, document: dict[str, Any]) -> None:

@@ -113,7 +113,7 @@ vaults:
     mount: kv
     kv_version: 2
     auth:
-      method: token        # --vault-token, $VAULT_TOKEN, ~/.vault-token, then AppRole
+      method: token        # --vault-token, then $VAULT_TOKEN, then ~/.vault-token
   vault-test:
     type: hashicorp
     addr: https://vault-test.example.com
@@ -366,16 +366,93 @@ config file can be read without knowing what environment it will be read in.
 | `addr` | backend address, where the backend has one |
 | `mount` | KV mount point (HashiCorp) |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
-| `auth` | `{ method: ... }` — see below |
+| `auth` | how to authenticate, and where the material comes from — see below |
 | `non_production` | marks a store that must never master a `prod` target (§10). Absent means production |
 
 Only `type` is required. A file backend has no address, and P2 puts per-backend
 validation behind the store interface, so demanding a HashiCorp shape of every
 entry would be exactly the top-level vendor bias P1 forbids.
 
-`auth.method` is one of the methods P2 names: `token`, `approle`, `kubernetes`,
-`oidc`, `userpass`, `instance_principal`, `resource_principal`, `config_file`,
-`session_token`. **No other key is accepted inside `auth:` yet** — see C9.
+### `auth:` — the method, and where its material lives
+
+Implemented in `sopuli/config/auth.py`, which is also where the target `admin:`
+grammar lives: the two positions share a grammar and not a vocabulary.
+
+An `auth:` block is `{ method: NAME, ...the keys that method takes }`. Where a
+method needs nothing else it may be written as the bare method name —
+`auth: token` is sugar for `auth: { method: token }`. A method that needs material
+may **not**: there is nowhere in a scalar to say where the material comes from.
+
+| `method` | Its keys |
+|---|---|
+| `token` | `token` (optional — without it, `--vault-token`, then `$VAULT_TOKEN`, then `~/.vault-token`) |
+| `approle` | `role_id`, `secret_id`, and optionally `mount` |
+| `kubernetes` | `role`, `jwt`, and optionally `mount` |
+| `oidc` | optionally `role` and `mount` |
+| `userpass` | `username`, `password`, and optionally `mount` |
+| `instance_principal`, `resource_principal` | none |
+| `config_file`, `session_token` | optionally `profile` |
+
+A key belongs to the method that uses it: `role_id` under `method: token` is an
+error naming the method in force, because it is a leftover from an edit that
+changed the method rather than a typo. `mount` here is the **auth** mount, not the
+KV `mount:` on the vault itself, and it defaults to the method's own name.
+
+### MaterialRef — where auth material comes from
+
+Everything secret-bearing above — `token`, `role_id`, `secret_id`, `jwt`,
+`password` — is a **MaterialRef**: a one-key mapping, exactly one of `env` or
+`file`.
+
+```yaml
+vaults:
+  vault-prod:
+    type: hashicorp
+    addr: https://vault.example.com
+    auth:
+      method: approle
+      mount: approle                                   # optional
+      role_id:   { env: SOPULI_VAULT_ROLE_ID }
+      secret_id: { file: /run/secrets/vault_secret_id }
+
+  vault-dev:
+    type: hashicorp
+    addr: https://vault-dev.example.com
+    auth: { method: token, token: { file: ~/.vault-token } }
+
+  vault-oci:
+    type: oci
+    auth: instance_principal
+```
+
+This is **not** a SecretRef (§7). A SecretRef addresses a value *in* a vault; this
+is what you need before you have a vault, and the two are named differently so
+that the chicken-and-egg stays visible instead of being papered over by one word
+meaning both.
+
+The one-key shape is preferred over an `_env` / `_file` suffix convention because
+it makes P2's constraint **structural**: there is no slot for an inline string, so
+"auth material is never written to the config file in plaintext" is enforced by
+the shape rather than by a validation rule someone has to remember to write. A
+string where a MaterialRef belongs is refused with a message that says so, rather
+than as a type complaint.
+
+A token *helper* (`command:`) is deliberately absent. Shelling out from a
+credential tool deserves its own decision, and Vault's own helper is the only real
+use.
+
+Two properties follow from the shape and are worth stating, because they are the
+reason for it:
+
+- **A source chain stays inside one method.** `method: token` falls through
+  `--vault-token` → `$VAULT_TOKEN` → `~/.vault-token`, and stops there. An earlier
+  draft fell through to AppRole after that; falling into a *different* method makes
+  an authentication failure impossible to explain.
+- **Identity is inline, proof is not.** `role`, `username`, `profile` and `mount`
+  name *who* rather than prove it, so they are written as they are. `role_id` is
+  arguably an identifier too, and is a MaterialRef anyway: carving out one field
+  that may be inline sets a precedent to be re-litigated for every method added
+  later. Uniform now; relax it if it turns out to be friction.
 
 ### `targets:` — a list of endpoints
 
@@ -702,6 +779,11 @@ Honoured third-party variables, ranked *below* their `SOPULI_*` equivalent:
 
 ## 7. SecretRef syntax
 
+A SecretRef addresses a value **in** a vault. What the *vault itself* is
+authenticated with is a MaterialRef (§3a) — a different, smaller type, because
+that material is what you need before you have a vault to address anything in.
+Nothing in this section applies to it: no vault prefix, no qualifiers, no tokens.
+
 One string addresses a value in any backend:
 
 ```
@@ -917,7 +999,10 @@ new optional key is a minor bump there and changes nothing about a file that say
 **What it says.** Key names, JSON types, the closed sets, which keys are
 required, and `additionalProperties: false` — P3's "exits non-zero on unknown
 keys", in the form an editor can use. The shape rules of §4 are here too, since
-they are about shape: one outer dimension, one list per value.
+they are about shape: one outer dimension, one list per value. So is a
+MaterialRef's — exactly one of `env` / `file`, and no property for a value at all,
+which is the one rule in the artefact that is a security property rather than a
+convenience (P2).
 
 **What it deliberately does not say.** Every rule in §10 that relates two keys
 to each other stays with the hand-written validators, because those errors have
@@ -928,6 +1013,7 @@ match instead:
 |---|---|
 | the inline form and `applications:` are mutually exclusive | yes |
 | `secret` and `secret_template` are mutually exclusive | §3 |
+| an `auth:` block carries only the keys its own `method:` takes | §3a |
 | two accounts may not resolve to one secret ref | yes |
 | `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
 | `allow:` belongs to `charset: custom` | §8 |
@@ -1029,6 +1115,21 @@ notices until a rotation.
   generates a surprising number of targets
 - a target with `environment: prod` referencing a vault marked
   `non_production: true` → error
+- auth material written inline — a string where a MaterialRef belongs → error, and
+  a different one from "wrong type": it is the credential itself appearing in a
+  file that is committed and shared, which P2 forbids outright
+- a MaterialRef naming two sources, or none → error. Two leave nothing to say which
+  was meant, so the tool would silently pick one and authenticate as something
+  nobody chose
+- an `auth:` key that belongs to another method → error, naming the method in
+  force. `role_id` under `method: token` is a leftover from an edit that changed
+  the method, not a typo
+- a method written as a bare value when it needs material — `auth: approle` →
+  error. There is nowhere in a scalar to say where `role_id` comes from, and the
+  alternative is a fall-through into some other method that nobody can explain
+  afterwards
+- an `auth:` method missing material it requires → error at load, not at the first
+  rotation (invariant 4)
 - a `target_set` whose `name` renders a duplicate → error, listing the collision.
   Across the whole estate, not one set: a generated name colliding with an
   explicit `targets:` entry makes `--target` just as ambiguous
@@ -1096,7 +1197,7 @@ notices until a rotation.
 | C6 | Multiple vaults for one application (mirror writes) | defer to a later use case |
 | C7 | ~~Should `target_sets` allow more than two nesting levels?~~ | **decided: no** — write a second set. §4 rules 2, 6 and 7 are what that costs |
 | C8 | ~~Do explicit `targets:` need labels, or is `environment` enough?~~ | **decided: labels are allowed on them**, so mixed estates select uniformly |
-| C9 | How does the file point at vault auth material, and at the database admin credential? | unresolved — P2 names the methods and forbids plaintext material in the file, but nothing names the keys. The loader accepts `auth.method` and refuses every other key rather than inventing a schema the vault layer must then live with. Also covers the `oracle.scope` vocabulary, of which only `cdb_root` and `pdb` are written down, and whether `scope` and `container` constrain each other — §2 shows `cdb_root` without a container and `pdb` with one, but never says that is a rule, and `container` is also the `{container}` token in a secret template (§7). Issue #27 |
+| C9 | How does the file point at vault auth material, and at the database admin credential? | **vault auth decided** (§3a): `{ method: ..., ...method-specific keys }`, with everything secret-bearing a MaterialRef — one key, `env` or `file`, so P2's no-plaintext rule is structural rather than remembered. Identity fields stay inline; a token helper is deferred; `method: token`'s source chain stops inside the method. Two halves are still open and land next: the **database admin credential** (`admin.auth` in the same grammar, and what `method: vault` names its ref with), and the **`oracle.scope` vocabulary** plus whether `scope` and `container` constrain each other. Issue #27 |
 | C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |

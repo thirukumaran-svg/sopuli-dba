@@ -3,7 +3,7 @@
   "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-config-1.0.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
-  "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
+  "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
   "additionalProperties": false,
   "required": [
     "version"
@@ -164,7 +164,23 @@
           ]
         },
         "auth": {
-          "$ref": "#/$defs/vault_auth"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/vault_auth"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "config_file",
+                "instance_principal",
+                "oidc",
+                "resource_principal",
+                "session_token",
+                "token"
+              ],
+              "description": "Shorthand for `{ method: NAME }`, available where the method needs nothing else."
+            }
+          ]
         },
         "non_production": {
           "type": "boolean",
@@ -174,7 +190,7 @@
     },
     "vault_auth": {
       "type": "object",
-      "description": "How to authenticate, never the material. The keys that point at the material are not specified yet -- see issue #27.",
+      "description": "How to authenticate, and where the material comes from -- never the material itself (P2). Each method takes only its own keys, which the validator checks; the identity fields are inline and everything secret-bearing is a MaterialRef.",
       "additionalProperties": false,
       "required": [
         "method"
@@ -193,6 +209,55 @@
             "config_file",
             "session_token"
           ]
+        },
+        "jwt": {
+          "$ref": "#/$defs/material_ref"
+        },
+        "mount": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The auth mount, not the KV mount on the vault itself. Defaults to the method's own name."
+        },
+        "password": {
+          "$ref": "#/$defs/material_ref"
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role_id": {
+          "$ref": "#/$defs/material_ref"
+        },
+        "secret_id": {
+          "$ref": "#/$defs/material_ref"
+        },
+        "token": {
+          "$ref": "#/$defs/material_ref"
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "material_ref": {
+      "type": "object",
+      "description": "Where a piece of auth material comes from: an environment variable or a file. Not a SecretRef -- this is what you need before you have a vault.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "env": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

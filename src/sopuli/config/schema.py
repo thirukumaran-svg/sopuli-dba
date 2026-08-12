@@ -24,9 +24,10 @@ is P3's "exits non-zero on unknown keys" in the form an editor can use. The
 cross-key rules stay with the builders, where the message can locate the key:
 the inline-vs-``applications:`` exclusion, ``secret`` beside ``secret_template``,
 two accounts sharing one ref, ``require:`` exceeding ``length:``, ``allow:``
-without ``charset: custom``, every name that must resolve against the section
-declaring it, and the §5 profile blocklist. A file this schema accepts may still
-be refused by ``sopuli config validate``, and that is the intended division.
+without ``charset: custom``, which keys an ``auth:`` method takes, every name that
+must resolve against the section declaring it, and the §5 profile blocklist. A file
+this schema accepts may still be refused by ``sopuli config validate``, and that is
+the intended division.
 
 Regenerate the committed artefact with::
 
@@ -42,6 +43,7 @@ from typing import Any
 
 from sopuli.config import (
     applications,
+    auth,
     defaults,
     groups,
     loading,
@@ -228,7 +230,7 @@ def _vault() -> Schema:
             "addr": STRING,
             "mount": STRING,
             "kv_version": _int_enum(vaults.KV_VERSIONS),
-            "auth": _ref("vault_auth"),
+            "auth": _auth(),
             "non_production": {
                 **BOOLEAN,
                 "description": (
@@ -247,16 +249,83 @@ def _vault() -> Schema:
     )
 
 
+def _auth() -> Schema:
+    """``auth:`` on a vault: the method block, or the scalar shorthand.
+
+    The shorthand is offered for exactly the methods that need nothing else, which
+    is the rule :mod:`sopuli.config.auth` enforces rather than a shorter list
+    written out here.
+    """
+    parameterless = sorted(
+        method for method, spec in vaults.AUTH_METHODS.items() if spec.is_parameterless
+    )
+    return {
+        "oneOf": [
+            _ref("vault_auth"),
+            _enum(
+                parameterless,
+                description=(
+                    "Shorthand for `{ method: NAME }`, available where the method needs "
+                    "nothing else."
+                ),
+            ),
+        ]
+    }
+
+
 def _vault_auth() -> Schema:
+    """The method block itself.
+
+    Structural, and therefore flat: every key any method may write is a property
+    here, and *which* keys go with which method is a relation between two keys, so
+    it stays with the builder where the error can name the method (§9b). The
+    property set is still generated from the method table, so a key cannot reach a
+    method without reaching the schema.
+    """
+    identity = dict.fromkeys(vaults.AUTH_IDENTITY_KEYS, STRING)
+    identity["mount"] = {
+        **STRING,
+        "description": (
+            "The auth mount, not the KV mount on the vault itself. Defaults to the "
+            "method's own name."
+        ),
+    }
     return _object(
         keys=vaults.AUTH_KEYS,
-        types={"method": _enum(vaults.AUTH_METHODS)},
+        types={
+            "method": _enum(tuple(vaults.AUTH_METHODS)),
+            **dict.fromkeys(vaults.AUTH_MATERIAL_KEYS, _ref("material_ref")),
+            **identity,
+        },
         required=("method",),
         description=(
-            "How to authenticate, never the material. The keys that point at the "
-            "material are not specified yet -- see issue #27."
+            "How to authenticate, and where the material comes from -- never the "
+            "material itself (P2). Each method takes only its own keys, which the "
+            "validator checks; the identity fields are inline and everything "
+            "secret-bearing is a MaterialRef."
         ),
     )
+
+
+def _material_ref() -> Schema:
+    """``{ env: NAME }`` or ``{ file: PATH }`` -- exactly one of them.
+
+    The one rule in this whole schema that is a security property rather than a
+    convenience: there is no property for a value, so a config file has nowhere to
+    write a credential (P2). Expressible structurally, so it is expressed here as
+    well as in the builder.
+    """
+    return {
+        "type": "object",
+        "description": (
+            "Where a piece of auth material comes from: an environment variable or a "
+            "file. Not a SecretRef -- this is what you need before you have a vault."
+        ),
+        "additionalProperties": False,
+        "minProperties": 1,
+        "maxProperties": 1,
+        "properties": dict.fromkeys(auth.MATERIAL_KINDS, STRING),
+    }
 
 
 #: The target-shaped keys, shared by `targets:` entries, a `target_sets:` template
@@ -668,10 +737,11 @@ The rules it does not express are enforced by `sopuli config validate`, whose \
 errors name the offending key: the inline form and `applications:` are mutually \
 exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may \
 not resolve to one secret ref; `require:` may not exceed `length:` or ask for \
-specials a charset does not have; `allow:` belongs to `charset: custom`; every \
-vault, policy, group, profile and target name written anywhere must be declared in \
-the section that declares it; a `for_each` must use one inner dimension \
-throughout; and a profile may not set a key that would change scope. A file this \
+specials a charset does not have; `allow:` belongs to `charset: custom`; an \
+`auth:` block may carry only the keys its own `method:` takes; every vault, \
+policy, group, profile and target name written anywhere must be declared in the \
+section that declares it; a `for_each` must use one inner dimension throughout; \
+and a profile may not set a key that would change scope. A file this \
 schema accepts may still be refused there.\
 """
 
@@ -732,6 +802,7 @@ def build_schema() -> Schema:
             "safety": _safety(),
             "vault": _vault(),
             "vault_auth": _vault_auth(),
+            "material_ref": _material_ref(),
             "target": _target(),
             "admin": _admin(),
             "target_oracle": _target_oracle(),
