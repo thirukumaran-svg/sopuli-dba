@@ -5,6 +5,11 @@ failure they prevent is not cosmetic — a dangling `vault:` does not stay
 dangling, it falls back to `defaults.vault`, and the tool then rotates a
 production password into whatever that turns out to be.
 
+Also here, for the same reason: the §10 rules about two keys of *one target*, which
+need the estate expanded before the pair exists. `admin.auth: external` constrains
+the `dsn` and refuses a `username`, and either half of that pair can arrive from an
+`overrides:` patch rather than from the template.
+
 Also here: the one *warning* the config layer produces. §5 makes it a warning
 rather than an error deliberately, so the test asserts it does not raise as much
 as it asserts what it says.
@@ -63,14 +68,23 @@ def test_the_hint_says_so_when_there_is_no_vaults_section_at_all() -> None:
 
 @pytest.mark.parametrize(
     "section",
-    ["application", "override", "profile", "defaults", "target_set"],
+    ["application", "override", "profile", "defaults", "target_set", "admin"],
     ids=lambda name: f"from-{name}",
 )
 def test_every_place_that_names_a_vault_is_checked(section: str) -> None:
-    """One resolver, every reference. A rule that covers four of five places is
-    the same as no rule, because the fifth is where the typo will be."""
+    """One resolver, every reference. A rule that covers five of six places is
+    the same as no rule, because the sixth is where the typo will be."""
     sections: dict[str, Any] = {"vaults": VAULTS}
-    if section == "application":
+    if section == "admin":
+        # The admin credential's own ref may carry a prefix, and a dangling one
+        # means the tool cannot reach the database at all.
+        sections["targets"] = [
+            {
+                **TARGET,
+                "admin": {"auth": {"method": "vault", "secret": "nope:ops/admin#password"}},
+            }
+        ]
+    elif section == "application":
         sections["applications"] = [
             {"name": "acme", "accounts": ["acme_web_user"], "vault": "nope"}
         ]
@@ -100,7 +114,12 @@ def test_every_place_that_names_a_vault_is_checked(section: str) -> None:
     with pytest.raises(ConfigError) as caught:
         build_config(document(**sections))
 
-    assert "no vault named 'nope'" in str(caught.value)
+    rendered = str(caught.value)
+    assert "no vault named 'nope'" in rendered
+    if section == "admin":
+        # The ref, not the block it sits in: `admin:` has three keys that could
+        # each be wrong, and only one of them names a store.
+        assert "targets[0].admin.auth.secret" in rendered
 
 
 def test_the_inline_application_reports_its_reference_at_the_root() -> None:
@@ -232,6 +251,199 @@ def test_a_dev_target_may_use_a_non_production_store() -> None:
     )
 
     assert config.targets[0].vault == "local"
+
+
+# ------------------------------------------------------ external admin auth ---
+
+ALIAS = "CDBPROD"
+
+
+def external(**keys: Any) -> Any:
+    """A target using external authentication, plus whatever `keys` change."""
+    return build_config(
+        document(targets=[{**TARGET, "dsn": ALIAS, "admin": {"auth": "external"}, **keys}])
+    )
+
+
+def test_a_wallet_target_names_a_tns_alias() -> None:
+    """The shape external auth actually needs: `/@alias`, resolved through
+    TNS_ADMIN. Nothing else about the target changes."""
+    config = external()
+
+    assert config.targets[0].dsn == ALIAS
+
+
+def test_external_auth_with_an_ezconnect_dsn_is_refused() -> None:
+    """A wallet is keyed on the alias it was created for, so a host:port/service
+    string has no entry to match -- and the connection then fails as an
+    *authentication* error, which sends the reader to the wrong problem."""
+    with pytest.raises(ConfigError) as caught:
+        external(dsn="db-prod.example.com:1521/CDBPROD.pdb.example.com")
+
+    rendered = str(caught.value)
+    assert "must be a TNS alias" in rendered
+    assert "targets[0].dsn" in rendered
+    assert "TNS_ADMIN" in rendered
+
+
+def test_external_auth_with_a_connect_descriptor_is_refused_too() -> None:
+    """The other form somebody reaches for. Same reason: the wallet is keyed on an
+    alias, not on a descriptor."""
+    with pytest.raises(ConfigError) as caught:
+        external(dsn="(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=db.example.com)(PORT=1521)))")
+
+    assert "must be a TNS alias" in str(caught.value)
+
+
+def test_external_auth_beside_a_username_is_refused_rather_than_ignored() -> None:
+    """The wallet supplies the username. A file naming one while the wallet names
+    another would put the wrong answer in every audit record (P5)."""
+    with pytest.raises(ConfigError) as caught:
+        external(admin={"username": "C##SOPULI_SVC", "auth": "external"})
+
+    rendered = str(caught.value)
+    assert "cannot be honoured" in rendered
+    assert "targets[0].admin.username" in rendered
+
+
+def test_another_method_may_pair_a_username_with_any_dsn() -> None:
+    """The rules belong to `external` and to nothing else -- every other source
+    takes a username, and connects by whatever the DSN says."""
+    config = build_config(
+        document(
+            targets=[
+                {
+                    **TARGET,
+                    "admin": {"username": "C##SOPULI_SVC", "auth": "prompt"},
+                }
+            ]
+        )
+    )
+
+    assert config.targets[0].admin is not None
+    assert config.targets[0].admin.username == "C##SOPULI_SVC"
+
+
+def test_an_override_cannot_smuggle_in_an_ezconnect_dsn_under_external_auth() -> None:
+    """Why this rule lives after expansion. The template pairs `external` with an
+    alias; the patch replaces the DSN, and the pair only exists once both have
+    been applied."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                target_sets={
+                    "appdb": {
+                        "type": "oracle",
+                        "name": "appdb-{env}",
+                        "dsn": "CDB{env}",
+                        "admin": {"auth": "external"},
+                        "for_each": {"env": {"prod": {}}},
+                        "overrides": {"appdb-prod": {"dsn": "192.0.2.75:1521/CDBPROD"}},
+                    }
+                }
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "must be a TNS alias" in rendered
+    # Reported against the override, which is the line that wrote the value.
+    assert "target_sets.appdb.overrides.appdb-prod.dsn" in rendered
+
+
+def test_an_override_cannot_smuggle_in_external_auth_under_an_ezconnect_dsn() -> None:
+    """The same pair from the other side: the patch changes the method, and the
+    template's DSN was never an alias."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                target_sets={
+                    "appdb": {
+                        "type": "oracle",
+                        "name": "appdb-{env}",
+                        "dsn": "db-{env}.example.com:1521/CDB{env}",
+                        "admin": {"auth": "prompt"},
+                        "for_each": {"env": {"prod": {}}},
+                        "overrides": {"appdb-prod": {"admin": {"auth": "external"}}},
+                    }
+                }
+            )
+        )
+
+    assert "must be a TNS alias" in str(caught.value)
+
+
+# --------------------------------------------------------- admin refs ---
+
+
+def test_an_admin_ref_may_be_templated_in_a_target_set() -> None:
+    """Where the values come from: the set's own dimensions, rendered during
+    expansion like every other string it writes."""
+    config = build_config(
+        document(
+            target_sets={
+                "appdb": {
+                    "type": "oracle",
+                    "name": "appdb-{env}",
+                    "dsn": "db-{env}.example.com:1521/CDB{env}",
+                    "admin": {"auth": {"method": "vault", "secret": "ops/{env}/admin#password"}},
+                    "for_each": {"env": {"qa": {}, "prod": {}}},
+                }
+            }
+        )
+    )
+
+    refs = sorted(
+        str(expanded.target.admin.auth.secret)
+        for expanded in config.expanded_targets
+        if expanded.target.admin is not None and expanded.target.admin.auth is not None
+    )
+    assert refs == ["ops/prod/admin#password", "ops/qa/admin#password"]
+
+
+def test_an_admin_ref_written_in_an_override_is_reported_against_the_override() -> None:
+    """A value's location is the line that wrote it (§4 rule 5).
+
+    Reported against the template, this would send a reader to the one place the
+    store name is spelled correctly -- which is the wrong line by definition when
+    the exception is what introduced the typo.
+    """
+    declared = {"method": "vault", "secret": "vault-dev:ops#password"}
+    mistyped = {"method": "vault", "secret": "nope:ops#password"}
+
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                vaults=VAULTS,
+                target_sets={
+                    "appdb": {
+                        "type": "oracle",
+                        "name": "appdb-{env}",
+                        "dsn": "CDB{env}",
+                        "admin": {"auth": declared},
+                        "for_each": {"env": {"prod": {}}},
+                        "overrides": {"appdb-prod": {"admin": {"auth": mistyped}}},
+                    }
+                },
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "no vault named 'nope'" in rendered
+    assert "target_sets.appdb.overrides.appdb-prod.admin.auth.secret" in rendered
+
+
+def test_a_templated_admin_ref_on_an_explicit_target_is_refused() -> None:
+    """Nothing renders it: §7's tokens are expanded per account and target for an
+    application's ref, and the admin credential belongs to no account. §10 says an
+    unresolved placeholder is an error rather than an empty string."""
+    templated = {"method": "vault", "secret": "ops/{env}/admin#password"}
+
+    with pytest.raises(ConfigError) as caught:
+        build_config(document(targets=[{**TARGET, "admin": {"auth": templated}}]))
+
+    rendered = str(caught.value)
+    assert "still contains a placeholder" in rendered
+    assert "targets[0].admin.auth.secret" in rendered
 
 
 # ----------------------------------------------------------- the warning ---

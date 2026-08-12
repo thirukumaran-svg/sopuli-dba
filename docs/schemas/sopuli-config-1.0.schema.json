@@ -317,9 +317,36 @@
       "properties": {
         "username": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Absent under `auth: external`, where the wallet supplies it, and overridable per execution context by SOPULI_DB_ADMIN_USER (§6)."
         },
         "auth": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/admin_auth"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "env",
+                "external",
+                "prompt"
+              ],
+              "description": "Shorthand for `{ method: NAME }`, available where the method needs nothing else."
+            }
+          ]
+        }
+      }
+    },
+    "admin_auth": {
+      "type": "object",
+      "description": "P2's bootstrap sources, in its order of preference: external authentication, a vault path, an interactive prompt, an environment variable.",
+      "additionalProperties": false,
+      "required": [
+        "method"
+      ],
+      "properties": {
+        "method": {
           "type": "string",
           "enum": [
             "external",
@@ -327,6 +354,16 @@
             "prompt",
             "env"
           ]
+        },
+        "password_env": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The variable holding the admin password, for `method: env`. Defaults to SOPULI_DB_ADMIN_PASSWORD. Still low-assurance (P2)."
+        },
+        "secret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For `method: vault`: a full SecretRef, so it takes a `vault:` prefix and §7's tokens. Defaults to the target's own vault."
         }
       }
     },

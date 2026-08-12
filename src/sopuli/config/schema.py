@@ -230,7 +230,7 @@ def _vault() -> Schema:
             "addr": STRING,
             "mount": STRING,
             "kv_version": _int_enum(vaults.KV_VERSIONS),
-            "auth": _auth(),
+            "auth": _method_or_shorthand("vault_auth", vaults.AUTH_METHODS),
             "non_production": {
                 **BOOLEAN,
                 "description": (
@@ -249,19 +249,18 @@ def _vault() -> Schema:
     )
 
 
-def _auth() -> Schema:
-    """``auth:`` on a vault: the method block, or the scalar shorthand.
+def _method_or_shorthand(block: str, methods: dict[str, auth.Method]) -> Schema:
+    """An ``auth:`` block, or the scalar shorthand for it.
 
-    The shorthand is offered for exactly the methods that need nothing else, which
-    is the rule :mod:`sopuli.config.auth` enforces rather than a shorter list
-    written out here.
+    Both positions -- a vault's ``auth:`` and a target's ``admin.auth`` -- take this
+    shape, and the shorthand is offered for exactly the methods that need nothing
+    else, which is the rule :mod:`sopuli.config.auth` enforces rather than a shorter
+    list written out here.
     """
-    parameterless = sorted(
-        method for method, spec in vaults.AUTH_METHODS.items() if spec.is_parameterless
-    )
+    parameterless = sorted(name for name, spec in methods.items() if spec.is_parameterless)
     return {
         "oneOf": [
-            _ref("vault_auth"),
+            _ref(block),
             _enum(
                 parameterless,
                 description=(
@@ -356,11 +355,55 @@ def _target() -> Schema:
 def _admin() -> Schema:
     return _object(
         keys=targets.ADMIN_KEYS,
-        types={"username": STRING, "auth": _enum(targets.ADMIN_SOURCES)},
+        types={
+            "username": {
+                **STRING,
+                "description": (
+                    "Absent under `auth: external`, where the wallet supplies it, and "
+                    "overridable per execution context by SOPULI_DB_ADMIN_USER (§6)."
+                ),
+            },
+            "auth": _method_or_shorthand("admin_auth", targets.ADMIN_METHODS),
+        },
         min_properties=1,
         description=(
             "Which credential reaches the database, never the password: storing the "
             "admin password in the config file is not supported at all (P2)."
+        ),
+    )
+
+
+def _admin_auth() -> Schema:
+    """``admin.auth`` -- P2's bootstrap sources, in the vault block's grammar.
+
+    Same shape, different vocabulary, and the same division of labour: the keys are
+    all here, and which of them belongs to which method stays with the validator
+    (§9b).
+    """
+    return _object(
+        keys=targets.ADMIN_AUTH_KEYS,
+        types={
+            "method": _enum(tuple(targets.ADMIN_METHODS)),
+            "password_env": {
+                **STRING,
+                "description": (
+                    "The variable holding the admin password, for `method: env`. "
+                    f"Defaults to {targets.ADMIN_PASSWORD_ENV}. Still low-assurance (P2)."
+                ),
+            },
+            "secret": {
+                **SECRET_REF,
+                "description": (
+                    "For `method: vault`: a full SecretRef, so it takes a `vault:` prefix "
+                    "and §7's tokens. Defaults to the target's own vault."
+                ),
+            },
+        },
+        required=("method",),
+        description=(
+            "P2's bootstrap sources, in its order of preference: external "
+            "authentication, a vault path, an interactive prompt, an environment "
+            "variable."
         ),
     )
 
@@ -805,6 +848,7 @@ def build_schema() -> Schema:
             "material_ref": _material_ref(),
             "target": _target(),
             "admin": _admin(),
+            "admin_auth": _admin_auth(),
             "target_oracle": _target_oracle(),
             "target_set": _target_set(),
             "target_patch": _target_patch(),

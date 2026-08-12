@@ -9,17 +9,23 @@ added to explicit targets but not to generated ones would mean a target set
 silently cannot express something the estate can.
 
 Three values are read from closed sets -- ``type``, ``oracle.scope`` and
-``admin.auth``. A free string there loads happily and then connects somewhere
-other than where the author meant, and this file is the whitelist (invariant 5).
-Where the reference has not named the vocabulary, the set holds only what it
-*has* named and the error says so; see issue #27 and the note in
-:mod:`sopuli.config.vaults`.
+``admin.auth.method``. A free string there loads happily and then connects
+somewhere other than where the author meant, and this file is the whitelist
+(invariant 5). Where the reference has not named the vocabulary, the set holds
+only what it *has* named and the error says so; see issue #27.
+
+``admin:`` says which of P2's bootstrap sources reaches the database, in the same
+grammar as a vault's ``auth:`` (:mod:`sopuli.config.auth`) and with a different
+vocabulary. There is no password field and there will not be one: P2 says storing
+the admin password in the config file is "not supported at all", so the file names
+a wallet, a vault ref, a prompt, or a variable.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from sopuli.config.auth import Method, read_method
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
     choice,
@@ -30,8 +36,9 @@ from sopuli.config.fields import (
     required_string,
     sequence,
 )
-from sopuli.config.model import AdminCredential, Target, TargetOracle
+from sopuli.config.model import AdminAuth, AdminCredential, Target, TargetOracle
 from sopuli.config.safety import build_safety
+from sopuli.config.secret_refs import parse_secret_ref
 
 TARGET_KEYS = (
     "name",
@@ -54,9 +61,33 @@ TARGET_TYPES = ("oracle",)
 
 ADMIN_KEYS = ("username", "auth")
 
-#: P2's bootstrap sources, in its order of preference. `vault` has nowhere yet to
-#: say *which* ref -- see issue #27.
-ADMIN_SOURCES = ("external", "vault", "prompt", "env")
+#: P2's bootstrap sources, in its order of preference, each with the keys it takes.
+#: Two are parameterless and so may be written as a bare `auth: prompt`, which is
+#: the form §2 and §4 already use.
+#:
+#: `vault` requires its ref: there is no default path to fall back on, and a
+#: credential tool guessing at one is how a run authenticates as something nobody
+#: chose. `env` does not, because §6 already names a variable
+#: (:data:`ADMIN_PASSWORD_ENV`) for the single-credential case.
+#: The source that constrains the rest of the target -- a wallet decides both who
+#: connects and how, so §10 has two rules about the keys beside it, enforced in
+#: :mod:`sopuli.config.references` once the estate is expanded.
+EXTERNAL = "external"
+
+ADMIN_METHODS: dict[str, Method] = {
+    EXTERNAL: Method(),
+    "vault": Method(required=("secret",)),
+    "prompt": Method(),
+    "env": Method(optional=("password_env",)),
+}
+
+ADMIN_AUTH_KEYS = ("method", *sorted({key for spec in ADMIN_METHODS.values() for key in spec.keys}))
+
+#: §6's variable, and the default for `method: env` when `password_env:` is not
+#: given. Named here rather than resolved into the model: an unset value has to
+#: stay distinguishable from a written one for `config show --explain` to
+#: attribute it (P3).
+ADMIN_PASSWORD_ENV = "SOPULI_DB_ADMIN_PASSWORD"
 
 ORACLE_KEYS = ("scope", "container")
 
@@ -65,11 +96,6 @@ ORACLE_KEYS = ("scope", "container")
 #: rather than invented; a non-CDB target simply omits `oracle:`. Widening this
 #: is a one-line change once the reference names them (issue #27).
 ORACLE_SCOPES = ("cdb_root", "pdb")
-
-_UNSPECIFIED_ADMIN = (
-    "P2 forbids the admin password in the config file, and the keys that point at "
-    "the credential are not specified yet -- see issue #27"
-)
 
 
 def build_targets(document: dict[str, Any]) -> tuple[Target, ...]:
@@ -115,21 +141,49 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
 
 
 def read_admin(raw: Any, *, at: KeyPath) -> AdminCredential | None:
-    """``admin:`` -- which credential reaches the database, never the password."""
+    """``admin:`` -- which credential reaches the database, never the password.
+
+    P2 is explicit that storing the admin password in the config file is not
+    supported at all, so a ``password:`` here is an unknown key rather than a
+    rejected value: there is no field for it to be rejected from.
+    """
     if raw is None:
         return None
     admin = mapping(raw, at=at)
-    reject_unknown_keys(admin, allowed=ADMIN_KEYS, at=at, hint=_UNSPECIFIED_ADMIN)
+    reject_unknown_keys(
+        admin,
+        allowed=ADMIN_KEYS,
+        at=at,
+        hint=(
+            "known keys here: auth, username -- the password is never written in this "
+            "file (P2); `auth:` says where it comes from"
+        ),
+    )
     _reject_empty(admin, at=at, block_name="admin")
 
-    auth = admin.get("auth")
     return AdminCredential(
         username=optional_string(admin, "username", at=at),
-        auth=(
-            None
-            if auth is None
-            else choice(auth, allowed=ADMIN_SOURCES, at=at.key("auth"), noun="admin auth source")
-        ),
+        auth=read_admin_auth(admin.get("auth"), at=at.key("auth")),
+    )
+
+
+def read_admin_auth(raw: Any, *, at: KeyPath) -> AdminAuth | None:
+    """``admin.auth`` -- one of P2's four sources, and what it needs to say.
+
+    ``method: vault`` carries a whole SecretRef rather than a field of its own:
+    the ref grammar already has a vault prefix and §7's tokens, and a second,
+    smaller addressing syntax for one credential would be a parser that disagrees
+    with the first one somewhere nobody looks.
+    """
+    if raw is None:
+        return None
+
+    method, auth = read_method(raw, at=at, methods=ADMIN_METHODS, noun="admin auth method")
+    ref = optional_string(auth, "secret", at=at)
+    return AdminAuth(
+        method=method,
+        secret=None if ref is None else parse_secret_ref(ref, at=at.key("secret")),
+        password_env=optional_string(auth, "password_env", at=at),
     )
 
 

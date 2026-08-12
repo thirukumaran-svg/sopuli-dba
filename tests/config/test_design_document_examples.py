@@ -192,7 +192,8 @@ def test_the_worked_example_builds_the_estate_it_describes() -> None:
     assert cdb_root.name == "cdb-root-dev"
     assert cdb_root.oracle.scope == "cdb_root"
     assert cdb_root.admin is not None
-    assert cdb_root.admin.auth == "prompt"
+    assert cdb_root.admin.auth is not None
+    assert cdb_root.admin.auth.method == "prompt"
 
     (appdb,) = config.target_sets
     assert appdb.template.name == "appdb-{env}-{tenant}"
@@ -339,6 +340,39 @@ def test_the_auth_example_builds_the_stores_it_describes() -> None:
     assert oci.auth is not None
     assert oci.auth.method == "instance_principal"
     assert oci.auth.token is None
+
+
+def test_the_admin_example_builds_the_credentials_it_describes() -> None:
+    """§3a's `admin:` fragment shows all four of P2's sources in one estate.
+
+    It is also the document's only worked example of `auth: external`, which
+    constrains the target around it -- a TNS alias and no username -- so building it
+    proves the rules and the example agree. They are checked against the expanded
+    estate, which `build_config` is what runs.
+    """
+    block = next(block for _, block in _blocks() if "cdb-root-prod" in block)
+
+    # A fragment, so it carries no `version:` of its own -- §9b's rule, and the
+    # reason it must not: an example with one has to point an editor at the schema.
+    config = build_config({"version": 1, **parse_yaml(block)})
+    by_name = {target.name: target for target in config.targets}
+
+    prompted = by_name["cdb-root-dev"].admin
+    assert prompted is not None
+    assert prompted.auth is not None
+    assert prompted.auth.method == "prompt"
+
+    mastered = by_name["cdb-root-qa"].admin
+    assert mastered is not None
+    assert mastered.auth is not None
+    assert str(mastered.auth.secret) == "ops/sopuli/qa/admin#password"
+
+    # External auth: the wallet supplies the username, and the DSN is the alias it
+    # is keyed on rather than a host:port/service string.
+    wallet = by_name["cdb-root-prod"].admin
+    assert wallet is not None
+    assert wallet.username is None
+    assert by_name["cdb-root-prod"].dsn == "CDBPROD"
 
 
 def test_the_skeleton_is_illustrative_rather_than_loadable() -> None:

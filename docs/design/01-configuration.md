@@ -467,7 +467,7 @@ something the estate can express and the set silently cannot.
 | `dsn` | **required** — `host:port/service`, or a TNS alias |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
-| `admin` | `{ username, auth }` — the credential that reaches the database. `auth` is one of P2's bootstrap sources: `external`, `vault`, `prompt`, `env`. There is no password field, and there will not be one (P2). `vault` has nowhere yet to name *which* ref — see C9 |
+| `admin` | `{ username, auth }` — the credential that reaches the database. There is no password field, and there will not be one (P2). See below |
 | `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. `scope` is `cdb_root` or `pdb`; a non-CDB database omits the block. How the two keys constrain each other is not decided — see C9 |
 | `labels` | free labels for selection (C8). A generated target gets its dimension values as labels automatically |
 | `safety` | a `safety:` block (§9) |
@@ -476,11 +476,81 @@ A block that is present and empty — `oracle: {}`, `admin: {}` — is an error.
 Absent and empty mean the same thing to the tool, so the difference between them
 is a sentence somebody started and did not finish.
 
-`type`, `oracle.scope` and `admin.auth` are closed sets. A free string there
-means `scope: cdb-root` loads happily and the tool then operates in a different
-container from the one that was meant — and this file is the whitelist
+`type`, `oracle.scope` and `admin.auth.method` are closed sets. A free string
+there means `scope: cdb-root` loads happily and the tool then operates in a
+different container from the one that was meant — and this file is the whitelist
 (invariant 5). Widening a set is a one-line change once the reference names the
 new value.
+
+### `admin:` — the credential that reaches the database
+
+The bootstrap problem P2 states: the DBA credential the tool uses is itself a
+secret, and it cannot come from the vault the tool has not authenticated to yet.
+So `admin.auth` names one of P2's four sources, **in its order of preference**,
+in the same grammar as a vault's `auth:` (§3a) and with its own vocabulary.
+
+| `method` | Its keys | |
+|---|---|---|
+| `external` | none | a wallet / secure external password store, Kerberos, OS auth |
+| `vault` | `secret` | a vault authenticated by machine identity, not by a password |
+| `prompt` | none | interactive |
+| `env` | `password_env` | supported, and flagged low-assurance in output (P2) |
+
+```yaml
+targets:
+  - name: cdb-root-dev
+    type: oracle
+    dsn: "db-dev.example.com:1521/CDBDEV.pdb.example.com"
+    admin: { username: C##SOPULI_SVC, auth: prompt }
+
+  - name: cdb-root-qa
+    type: oracle
+    dsn: "db-test.example.com:1521/CDBQA.pdb.example.com"
+    admin:
+      username: C##SOPULI_SVC
+      auth: { method: vault, secret: "ops/sopuli/qa/admin#password" }
+
+  - name: cdb-root-prod
+    type: oracle
+    dsn: CDBPROD                                   # a TNS alias, see below
+    admin: { auth: external }
+```
+
+`auth: prompt` as a bare value is sugar for `{ method: prompt }`, legal where the
+method needs nothing else — which is why §2's and §4's examples read as they do.
+
+**`method: vault` names a whole SecretRef** (§7), so it takes a `vault:` prefix
+and the template tokens without a second addressing syntax to learn; with no
+prefix it resolves in the target's own `vault:`. It is required — there is no
+default admin path to fall back on, and a credential tool guessing at one is how a
+run authenticates as something nobody chose.
+
+A `{placeholder}` in that ref is rendered from a **target set's** dimensions, like
+every other string a template writes. On an explicit target it is an error, because
+nothing renders it: §7's tokens are expanded per account and target for an
+application's ref, and an admin credential belongs to no account. Who — if anyone —
+should expand `{env}` there is undecided, and refusing is the reversible half of
+that: §10 already says an unresolved placeholder is an error rather than an empty
+string.
+
+**`method: env` names its own variable.** §6's single `SOPULI_DB_ADMIN_PASSWORD`
+does not scale past one admin credential, so `password_env:` says which variable
+holds this one; absent, it is that pair. Either way this source stays flagged
+low-assurance wherever it is reported.
+
+**`external` constrains the rest of the target**, and both halves are errors
+rather than warnings:
+
+- the `dsn` must be a **TNS alias** resolvable through `TNS_ADMIN`. External auth
+  connects as `/@alias` and the wallet is keyed on that alias, so an EZConnect
+  string has no entry to match — and the failure surfaces as an authentication
+  error, which is the most misleading way for a config mistake to appear.
+- a `username:` is **refused**, not ignored. The wallet supplies it. A file that
+  appears to name the connecting account while the wallet names another is worth
+  stopping for, not least because "who" is half of every audit record (P5).
+
+Both are checked against the *expanded* estate, so an `overrides:` patch that
+introduces the combination is caught too.
 
 ### `groups:` — a mapping of name to selection
 
@@ -551,8 +621,8 @@ language (C7): `{name}` is looked up in one flat scope and that is all there is.
 | | |
 |---|---|
 | **In scope** | the outer dimension (`{env}`), the scalar variables of the value being rendered, and the inner dimension's current value (`{tenant}`) |
-| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `oracle.container`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string with its braces intact |
-| **Not substituted in** | `type`, `oracle.scope`, `admin.auth`. They are closed sets, so a placeholder there is already refused when the set is read |
+| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `oracle.container`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
+| **Not substituted in** | `type`, `oracle.scope`, `admin.auth.method`. They are closed sets, so a placeholder there is already refused when the set is read |
 | **No escaping** | there is no way to write a literal brace. An unbalanced or empty one (`{`, `{}`) is an error, not a literal |
 | **Shadowing** | a variable may not share the name of the dimension it sits under — `for_each: { env: { dev: { env: production } } }` gives `{env}` two meanings, and either choice silently decides a rendered secret path |
 
@@ -560,7 +630,11 @@ An `overrides:` patch is rendered in the same scope as the target it patches, so
 a placeholder is resolved there too rather than reaching a DSN intact. A patch
 merges rather than replaces: `oracle: { container: X }` keeps the `scope:` the
 template set, `labels:` keeps the dimension labels `--select` found the target
-by, and a key the patch does not mention keeps its generated value. A `safety:`
+by, and a key the patch does not mention keeps its generated value. The one
+exception is `admin.auth`, which is replaced as a whole: its keys belong to its
+`method:`, so merging `{ method: prompt }` over `{ method: vault, secret: … }`
+would leave a prompt carrying a ref that means nothing. Patching
+`admin: { username: … }` alone still keeps the `auth:` the template chose. A `safety:`
 block written in a patch is not a way to relax one — §9 resolves the effective
 setting by taking the safest of all layers.
 
@@ -754,7 +828,7 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 | `SOPULI_VAULT_ADDR` | address of the active vault |
 | `SOPULI_VAULT_TOKEN` | token for the active vault |
 | `SOPULI_VAULT__VAULT_DEV__ADDR` | address of a *specific* named vault |
-| `SOPULI_DB_ADMIN_USER` / `SOPULI_DB_ADMIN_PASSWORD` | admin credentials (password is low-assurance, flagged in output) |
+| `SOPULI_DB_ADMIN_USER` / `SOPULI_DB_ADMIN_PASSWORD` | admin credentials (password is low-assurance, flagged in output). The password pair is the default for `admin.auth: { method: env }`; a target may name its own variable with `password_env:` (§3a) |
 | `SOPULI_ORACLE_CLIENT_LIB_DIR` | Oracle client directory for thick mode |
 | `SOPULI_OUTPUT` | `text` \| `json` \| `jsonl` |
 | `SOPULI_LOG_LEVEL` | log level |
@@ -1014,6 +1088,7 @@ match instead:
 | the inline form and `applications:` are mutually exclusive | yes |
 | `secret` and `secret_template` are mutually exclusive | §3 |
 | an `auth:` block carries only the keys its own `method:` takes | §3a |
+| `admin.auth: external` requires a TNS-alias `dsn` and no `username` | yes |
 | two accounts may not resolve to one secret ref | yes |
 | `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
 | `allow:` belongs to `charset: custom` | §8 |
@@ -1129,7 +1204,19 @@ notices until a rotation.
   alternative is a fall-through into some other method that nobody can explain
   afterwards
 - an `auth:` method missing material it requires → error at load, not at the first
-  rotation (invariant 4)
+  rotation (invariant 4). `admin.auth: vault` with no `secret:` is the same rule:
+  there is no default admin path, and guessing at one is how a run authenticates as
+  something nobody chose
+- `admin.auth: external` on a target whose `dsn` is not a TNS alias → error.
+  External auth connects as `/@alias` and the wallet is keyed on that alias, so an
+  EZConnect string fails as an *authentication* error, which is the most
+  misleading way for a config mistake to surface
+- `admin.auth: external` beside a `username:` → error rather than the username
+  being ignored. The wallet decides who connects, and a file that appears to name
+  the connecting account while the wallet names another is worth stopping for
+- a malformed `admin.auth.secret` → error (§7), like any other ref, wherever it is
+  written; and one still holding a `{placeholder}` on an explicit target → error,
+  since a target set's dimensions are the only thing that renders one
 - a `target_set` whose `name` renders a duplicate → error, listing the collision.
   Across the whole estate, not one set: a generated name colliding with an
   explicit `targets:` entry makes `--target` just as ambiguous
@@ -1197,7 +1284,7 @@ notices until a rotation.
 | C6 | Multiple vaults for one application (mirror writes) | defer to a later use case |
 | C7 | ~~Should `target_sets` allow more than two nesting levels?~~ | **decided: no** — write a second set. §4 rules 2, 6 and 7 are what that costs |
 | C8 | ~~Do explicit `targets:` need labels, or is `environment` enough?~~ | **decided: labels are allowed on them**, so mixed estates select uniformly |
-| C9 | How does the file point at vault auth material, and at the database admin credential? | **vault auth decided** (§3a): `{ method: ..., ...method-specific keys }`, with everything secret-bearing a MaterialRef — one key, `env` or `file`, so P2's no-plaintext rule is structural rather than remembered. Identity fields stay inline; a token helper is deferred; `method: token`'s source chain stops inside the method. Two halves are still open and land next: the **database admin credential** (`admin.auth` in the same grammar, and what `method: vault` names its ref with), and the **`oracle.scope` vocabulary** plus whether `scope` and `container` constrain each other. Issue #27 |
+| C9 | How does the file point at vault auth material, and at the database admin credential? | **both auth questions decided** (§3a). One grammar, two vocabularies: `{ method: ..., ...method-specific keys }`, with a scalar shorthand where the method needs nothing else. A vault's material is a MaterialRef — one key, `env` or `file` — so P2's no-plaintext rule is structural rather than remembered; identity fields stay inline; `method: token`'s source chain stops inside the method; a token helper is deferred. The admin credential uses P2's four sources, with `method: vault` naming a whole SecretRef, `method: env` naming its own variable, and `external` constraining the `dsn` to a TNS alias and refusing a `username`. Still open: the **`oracle.scope` vocabulary**, and whether `scope` and `container` constrain each other. Issue #27 |
 | C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |

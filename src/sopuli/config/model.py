@@ -271,6 +271,38 @@ class Vault:
 
 
 @dataclass(frozen=True)
+class AdminAuth:
+    """``admin.auth`` -- which of P2's bootstrap sources reaches the database.
+
+    The same grammar as :class:`VaultAuth` and a different vocabulary, which is
+    the point: both are ``{ method: ... }`` with method-specific keys and a scalar
+    shorthand where the method needs nothing else, but ``prompt`` is meaningless
+    for a vault and ``approle`` for a database. See :mod:`sopuli.config.auth`.
+
+    ================ ==================================================
+    ``external``     -- (a wallet, Kerberos, OS authentication)
+    ``vault``        ``secret``
+    ``prompt``       --
+    ``env``          ``password_env``
+    ================ ==================================================
+
+    ``secret`` is a full :class:`~sopuli.config.secret_refs.SecretRef` rather than
+    a field of its own invention, so it gains the ``[vault:]`` prefix and §7's
+    template tokens without a second grammar to learn -- and defaults to the
+    target's own ``vault:`` when it carries no prefix.
+
+    ``password_env`` names its own variable because §6's single
+    ``SOPULI_DB_ADMIN_PASSWORD`` does not scale past one admin credential. Absent
+    means that pair, and this source stays flagged low-assurance wherever it is
+    reported (P2).
+    """
+
+    method: str
+    secret: SecretRef | None = None
+    password_env: str | None = None
+
+
+@dataclass(frozen=True)
 class AdminCredential:
     """``admin:`` on a target -- the credential the tool uses to reach the database.
 
@@ -282,7 +314,7 @@ class AdminCredential:
     """
 
     username: str | None = None
-    auth: str | None = None
+    auth: AdminAuth | None = None
 
 
 @dataclass(frozen=True)

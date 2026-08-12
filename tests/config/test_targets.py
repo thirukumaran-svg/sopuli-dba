@@ -5,9 +5,15 @@ tenants ``alpha``…``theta``, the service account ``C##SOPULI_SVC`` the referen
 itself uses.
 
 Three fields are read from closed sets -- ``type``, ``oracle.scope`` and
-``admin.auth`` -- and those are the tests worth reading. A target is where the
-tool decides *which database and which container* it is about to change a
+``admin.auth.method`` -- and those are the tests worth reading. A target is where
+the tool decides *which database and which container* it is about to change a
 password in; a typo that loads happily there is the expensive kind.
+
+``admin:`` is the other half: which of P2's bootstrap sources reaches the
+database. There is no password field at any depth of it, so a password written
+there is an unknown key rather than a rejected value -- and the rules about what
+``auth: external`` requires of the *rest* of the target live in
+``tests/config/test_references.py``, because they need the estate expanded.
 """
 
 from __future__ import annotations
@@ -17,7 +23,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.targets import build_targets
+from sopuli.config.targets import ADMIN_METHODS, build_targets
 
 DSN = "db-dev.example.com:1521/CDBDEV.pdb.example.com"
 
@@ -52,7 +58,8 @@ def test_a_target_is_read_whole() -> None:
     assert target.dsn == DSN
     assert target.admin is not None
     assert target.admin.username == "C##SOPULI_SVC"
-    assert target.admin.auth == "prompt"
+    assert target.admin.auth is not None
+    assert target.admin.auth.method == "prompt"
     assert target.oracle.scope == "cdb_root"
 
 
@@ -183,33 +190,40 @@ def test_how_scope_and_container_constrain_each_other_is_not_decided_here() -> N
 # ------------------------------------------------------------------ admin ---
 
 
-@pytest.mark.parametrize("source", ["external", "vault", "prompt", "env"])
-def test_the_bootstrap_sources_p2_ranks_are_accepted(source: str) -> None:
-    target = only(admin={"username": "C##SOPULI_SVC", "auth": source})
+def admin_auth(**keys: Any) -> Any:
+    """The `admin.auth` of a target built from `keys`."""
+    credential = only(admin={"auth": keys}).admin
+    assert credential is not None
+    return credential.auth
 
-    assert target.admin is not None
-    assert target.admin.auth == source
+
+@pytest.mark.parametrize("method", list(ADMIN_METHODS))
+def test_every_bootstrap_source_p2_ranks_is_accepted(method: str) -> None:
+    """P2's four sources, in its order of preference, pinned."""
+    filled = {"vault": {"secret": "ops/sopuli/admin#password"}}.get(method, {})
+
+    assert admin_auth(method=method, **filled).method == method
 
 
-def test_an_unknown_admin_source_is_refused() -> None:
+def test_an_unknown_admin_method_is_refused() -> None:
     with pytest.raises(ConfigError) as caught:
         build_targets(document({**CDB_ROOT, "admin": {"auth": "wallet"}}))
 
     rendered = str(caught.value)
-    assert "unknown admin auth source 'wallet'" in rendered
+    assert "unknown admin auth method 'wallet'" in rendered
     assert "external" in rendered
 
 
 def test_an_admin_password_has_nowhere_to_go() -> None:
     """P2: "Storing the admin password in the config file is not supported at
-    all." There is no field for one, so it is an unknown key -- and the hint
-    says which question is open rather than listing keys."""
+    all." There is no field for one, so it is an unknown key -- and the hint says
+    what `auth:` is for rather than only listing the keys."""
     with pytest.raises(ConfigError) as caught:
         build_targets(document({**CDB_ROOT, "admin": {"username": "SYS", "password": "hunter2"}}))
 
     rendered = str(caught.value)
     assert "unknown key 'password'" in rendered
-    assert "#27" in rendered
+    assert "never written in this file" in rendered
 
 
 def test_admin_may_omit_the_username() -> None:
@@ -219,6 +233,84 @@ def test_admin_may_omit_the_username() -> None:
 
     assert target.admin is not None
     assert target.admin.username is None
+
+
+@pytest.mark.parametrize("method", ["external", "prompt"])
+def test_a_source_that_needs_nothing_is_written_as_a_bare_value(method: str) -> None:
+    """`auth: prompt` is the form §2 and §4 already use -- sugar for
+    `{ method: prompt }`, and the reason those examples did not have to change."""
+    target = only(admin={"username": "C##SOPULI_SVC", "auth": method})
+
+    assert target.admin is not None
+    assert target.admin.auth is not None
+    assert target.admin.auth.method == method
+
+
+def test_the_vault_source_names_which_ref() -> None:
+    """What C9 was missing: `auth: vault` had nowhere to say *which* secret. It is
+    a whole SecretRef, so a vault prefix and §7's parts come with it."""
+    auth = admin_auth(method="vault", secret="vault-prod:ops/sopuli/prod/admin#password")
+
+    assert auth.secret is not None
+    assert auth.secret.vault == "vault-prod"
+    assert auth.secret.path == "ops/sopuli/prod/admin"
+    assert auth.secret.field == "password"
+
+
+def test_the_vault_source_must_name_one() -> None:
+    """There is no default admin path to fall back on, and a credential tool
+    guessing at one is how a run authenticates as something nobody chose."""
+    with pytest.raises(ConfigError) as caught:
+        build_targets(document({**CDB_ROOT, "admin": {"auth": "vault"}}))
+
+    rendered = str(caught.value)
+    assert "`vault` cannot be written as a bare value" in rendered
+    assert "secret" in rendered
+
+
+def test_a_malformed_admin_ref_is_refused_where_it_was_written() -> None:
+    """The same parser as every other ref (§7), so the same failures -- checked
+    when the file is read rather than when the tool tries to connect."""
+    with pytest.raises(ConfigError) as caught:
+        admin_auth(method="vault", secret="ops/admin#password@versio=7")
+
+    rendered = str(caught.value)
+    assert "targets[0].admin.auth.secret" in rendered
+    assert "unknown qualifier 'versio'" in rendered
+
+
+def test_the_env_source_may_name_its_own_variable() -> None:
+    """§6's single `SOPULI_DB_ADMIN_PASSWORD` does not scale past one admin
+    credential, so a target may name its own."""
+    assert admin_auth(method="env", password_env="SOPULI_DB_ADMIN_PW_PROD").password_env == (
+        "SOPULI_DB_ADMIN_PW_PROD"
+    )
+
+
+def test_the_env_source_leaves_the_default_unset_rather_than_filling_it_in() -> None:
+    """Absent means §6's pair. Writing the default into the model would make
+    `config show --explain` unable to say which layer supplied it (P3)."""
+    assert admin_auth(method="env").password_env is None
+
+
+def test_a_key_belonging_to_another_source_is_refused() -> None:
+    """`password_env` under `method: vault` is a leftover from an edit that
+    changed the method, and the message names the method in force."""
+    with pytest.raises(ConfigError) as caught:
+        admin_auth(method="vault", secret="ops/admin#password", password_env="SOPULI_DB_ADMIN_PW")
+
+    rendered = str(caught.value)
+    assert "unknown key 'password_env'" in rendered
+    assert "`method: vault` takes `secret`" in rendered
+
+
+def test_the_admin_block_may_not_hold_the_password_under_any_method() -> None:
+    """The same rule one level down: `auth:` says where the password comes from,
+    so there is no key inside it for the password either."""
+    with pytest.raises(ConfigError) as caught:
+        admin_auth(method="env", password="hunter2")
+
+    assert "unknown key 'password'" in str(caught.value)
 
 
 # ----------------------------------------------------------------- labels ---

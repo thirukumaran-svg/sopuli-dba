@@ -135,9 +135,71 @@ def test_the_admin_username_and_confirm_environments_render_too() -> None:
     target = named(expanded, "appdb-qa-alpha").target
     assert target.admin is not None
     assert target.admin.username == "C##SOPULI_qa"
-    assert target.admin.auth == "prompt"
+    assert target.admin.auth is not None
+    assert target.admin.auth.method == "prompt"
     assert target.safety is not None
     assert target.safety.confirm_environments == ("qa",)
+
+
+def test_the_admin_credentials_own_addresses_render_too() -> None:
+    """A level deeper again, and the one that matters most: an admin ref or a
+    variable name left unrendered reaches a vault with its braces intact.
+
+    §4's substitution table used to exclude `admin.auth` wholesale, because it was
+    a closed-set scalar. Now only `method` is closed, and everything else the block
+    carries is an address like any other string the template writes.
+    """
+    expanded = expand(
+        target_sets={
+            "appdb": {
+                **APPDB,
+                "admin": {
+                    "auth": {"method": "vault", "secret": "ops/sopuli/{env}/{tenant}#password"}
+                },
+            }
+        }
+    )
+
+    target = named(expanded, "appdb-qa-alpha").target
+    assert target.admin is not None
+    assert target.admin.auth is not None
+    assert str(target.admin.auth.secret) == "ops/sopuli/qa/alpha#password"
+
+
+def test_an_admin_ref_that_cannot_render_is_refused_where_it_was_written() -> None:
+    """§4 rule 4 applies here too: never an empty string, and never braces left in
+    a path that decides which credential opens a production database."""
+    with pytest.raises(ConfigError) as caught:
+        expand(
+            target_sets={
+                "appdb": {
+                    **APPDB,
+                    "admin": {"auth": {"method": "vault", "secret": "ops/{region}#password"}},
+                }
+            }
+        )
+
+    rendered = str(caught.value)
+    assert "nothing to substitute for `{region}`" in rendered
+    assert "target_sets.appdb.admin.auth.secret" in rendered
+
+
+def test_an_admin_variable_name_renders_too() -> None:
+    """§6's fixed `SOPULI_DB_ADMIN_PASSWORD` does not scale past one credential,
+    and a set is exactly where per-environment names come from."""
+    expanded = expand(
+        target_sets={
+            "appdb": {
+                **APPDB,
+                "admin": {"auth": {"method": "env", "password_env": "SOPULI_DB_ADMIN_PW_{env}"}},
+            }
+        }
+    )
+
+    target = named(expanded, "appdb-qa-alpha").target
+    assert target.admin is not None
+    assert target.admin.auth is not None
+    assert target.admin.auth.password_env == "SOPULI_DB_ADMIN_PW_qa"
 
 
 # ---------------------------------------------------------------- labels ---
@@ -389,6 +451,55 @@ def test_an_override_merges_a_nested_block_rather_than_replacing_it() -> None:
     target = named(expanded, "appdb-qa-alpha").target
     assert target.oracle.container == "ALPHA2"
     assert target.oracle.scope == "pdb"
+
+
+def test_an_override_keeps_the_admin_auth_when_it_patches_only_the_username() -> None:
+    """The same rule one block over: `admin: { username: X }` must not drop the
+    source the template chose, or the target would fall back to no method at all."""
+    expanded = expand(
+        target_sets={
+            "appdb": {
+                **APPDB,
+                "admin": {"username": "C##SOPULI_SVC", "auth": "prompt"},
+                "overrides": {"appdb-qa-alpha": {"admin": {"username": "C##SOPULI_QA"}}},
+            }
+        }
+    )
+
+    target = named(expanded, "appdb-qa-alpha").target
+    assert target.admin is not None
+    assert target.admin.username == "C##SOPULI_QA"
+    assert target.admin.auth is not None
+    assert target.admin.auth.method == "prompt"
+
+
+def test_an_override_replaces_admin_auth_whole_rather_than_merging_it() -> None:
+    """The exception to the merge rule, and it is about coherence rather than
+    convenience: an `auth:` block's keys belong to its `method:`, so merging
+    `{ method: prompt }` over `{ method: vault, secret: ... }` would leave a prompt
+    carrying a ref that means nothing. An override that changes the method states
+    the whole source, which is one line either way.
+    """
+    expanded = expand(
+        target_sets={
+            "appdb": {
+                **APPDB,
+                "admin": {"auth": {"method": "vault", "secret": "ops/{env}/admin#password"}},
+                "overrides": {"appdb-qa-alpha": {"admin": {"auth": "prompt"}}},
+            }
+        }
+    )
+
+    target = named(expanded, "appdb-qa-alpha").target
+    assert target.admin is not None
+    assert target.admin.auth is not None
+    assert target.admin.auth.method == "prompt"
+    assert target.admin.auth.secret is None
+
+    untouched = named(expanded, "appdb-dev-beta").target
+    assert untouched.admin is not None
+    assert untouched.admin.auth is not None
+    assert str(untouched.admin.auth.secret) == "ops/dev/admin#password"
 
 
 def test_an_override_renders_placeholders_in_the_same_scope() -> None:

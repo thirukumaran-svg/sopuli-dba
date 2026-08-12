@@ -1,4 +1,6 @@
-"""Cross-section rules: does every name in this file name something in it?
+"""Cross-section rules, and the ones that need the estate expanded first.
+
+Mostly one question: does every name in this file name something in it?
 
 Each section validates its own shape. Nothing so far has checked that
 ``vault: vault-prd`` names a store that exists — and that is the typo with real
@@ -18,6 +20,12 @@ the template would be resolving a name no store will ever have. Running after
 -- names a store literally. A ``{placeholder}`` reaching this module therefore
 comes from an application, a profile or ``defaults``, where there is nothing to
 substitute from, and is an error rather than a hole in the resolver.
+
+That is also why the §10 rules about *pairs of keys on one target* are here
+rather than in :mod:`sopuli.config.targets`: a target's final ``dsn`` and ``admin``
+may come from a template and an ``overrides:`` patch respectively, so the pair only
+exists once the estate is expanded. Checking the written form instead would pass a
+patch that breaks it, and invariant 4 wants the refusal at plan time.
 """
 
 from __future__ import annotations
@@ -26,11 +34,17 @@ from dataclasses import dataclass
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import Config, ConfigWarning
+from sopuli.config.model import Config, ConfigWarning, ExpandedTarget
+from sopuli.config.targets import EXTERNAL
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
 #: first-class field (§4), and this is the value the reference names.
 PRODUCTION = "prod"
+
+#: What a TNS alias cannot contain. `:` and `/` are EZConnect's punctuation, `(`
+#: starts a connect descriptor, `@` is a connect-string separator, and a space is
+#: not a net service name.
+_NOT_IN_AN_ALIAS = (":", "/", "@", "(", " ")
 
 
 @dataclass(frozen=True)
@@ -39,6 +53,21 @@ class _Reference:
 
     name: str
     at: KeyPath
+
+
+def _admin_at(expanded: ExpandedTarget, *parts: str) -> KeyPath:
+    """Where inside a target's ``admin:`` block something was written.
+
+    :func:`~sopuli.config.expansion.declared_at` keys on *target* fields, because
+    that is what an ``overrides:`` patch replaces -- so the block is located
+    override-aware first, and the keys inside it are descended afterwards. The
+    result is the line to edit (``targets[0].admin.auth.secret``, or the override's
+    own path) rather than the block it sits in.
+    """
+    at = declared_at(expanded, "admin")
+    for part in parts:
+        at = at.key(part)
+    return at
 
 
 def check_references(config: Config) -> tuple[ConfigWarning, ...]:
@@ -53,6 +82,8 @@ def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     _check_targets(config)
     _check_profiles(config)
     _check_non_production_vaults(config)
+    _check_external_admin(config)
+    _check_admin_refs(config)
     return _warn_about_profile_names(config)
 
 
@@ -72,6 +103,15 @@ def _vault_references(config: Config) -> list[_Reference]:
     for expanded in config.expanded_targets:
         if expanded.target.vault is not None:
             found.append(_Reference(expanded.target.vault, declared_at(expanded, "vault")))
+        # `admin: { auth: { method: vault, secret: "vault-prod:..." } }`. A prefix
+        # here is a store name like any other, and the credential it addresses is
+        # the one that reaches the database -- a dangling name means the tool
+        # cannot connect at all, which is worth saying while the file is open.
+        admin = expanded.target.admin
+        if admin is not None and admin.auth is not None and admin.auth.secret is not None:
+            prefix = admin.auth.secret.vault
+            if prefix is not None:
+                found.append(_Reference(prefix, _admin_at(expanded, "auth", "secret")))
 
     at = ROOT.key("applications")
     for index, application in enumerate(config.applications):
@@ -211,6 +251,98 @@ def _check_non_production_vaults(config: Config) -> None:
             at=declared_at(expanded, "vault"),
             hint="point it at a production store, or drop the marking if it is wrong",
         )
+
+
+def _check_external_admin(config: Config) -> None:
+    """§10: what ``auth: external`` requires of the rest of the target.
+
+    External authentication means the client connects as ``/@alias`` and a secure
+    external password store -- an Oracle wallet -- supplies both the username and
+    the password for that alias. Two things follow, and neither is a preference:
+
+    * **The DSN has to be a TNS alias**, resolvable through ``TNS_ADMIN``. An
+      EZConnect string has no wallet entry to match, so the connection fails as an
+      authentication error, which is the most misleading way for a config mistake
+      to surface.
+    * **A ``username:`` is refused rather than ignored.** The wallet decides who
+      connects. A username written beside ``external`` says something the tool
+      cannot honour, and a file that appears to name the connecting account while
+      the wallet names another is worth stopping for -- especially in the audit
+      trail, where "who" is half the record (P5).
+    """
+    for expanded in config.expanded_targets:
+        target = expanded.target
+        if target.admin is None or target.admin.auth is None:
+            continue
+        if target.admin.auth.method != EXTERNAL:
+            continue
+
+        if target.admin.username is not None:
+            raise ConfigError(
+                f"target {target.name!r} uses external authentication, so its "
+                f"`username:` cannot be honoured",
+                at=_admin_at(expanded, "username"),
+                hint=(
+                    "a wallet supplies the username for the alias it is keyed on -- drop "
+                    "`username:`, or use a method that takes one"
+                ),
+            )
+
+        offending = _not_in_an_alias(target.dsn)
+        if offending is not None:
+            raise ConfigError(
+                f"target {target.name!r} uses external authentication, so its `dsn:` must "
+                f"be a TNS alias, and {target.dsn!r} contains {offending!r}",
+                at=declared_at(expanded, "dsn"),
+                hint=(
+                    "external auth connects as `/@alias`, and the wallet is keyed on that "
+                    "alias -- name one resolvable through TNS_ADMIN rather than a "
+                    "host:port/service string"
+                ),
+            )
+
+
+def _check_admin_refs(config: Config) -> None:
+    """An admin ref that still has a ``{placeholder}`` has nobody left to render it.
+
+    A generated target's ref was rendered from its ``for_each:`` variables during
+    expansion, and an unresolvable token there was already an error. So a template
+    surviving to here was written on an explicit target, where there is nothing to
+    substitute from: §7's own tokens are expanded *per account and target* for an
+    application's ref, and the admin credential belongs to no account.
+
+    §10 says an unresolved placeholder is an error and never an empty string, and
+    this is that rule applied one section over. Refusing is also the reversible
+    choice: who expands ``{env}`` in an admin ref on an explicit target is not
+    decided, and allowing it now would mean a brace reaching a vault while it stays
+    undecided.
+    """
+    for expanded in config.expanded_targets:
+        admin = expanded.target.admin
+        if admin is None or admin.auth is None or admin.auth.secret is None:
+            continue
+        if not admin.auth.secret.is_templated:
+            continue
+        raise ConfigError(
+            f"admin ref {str(admin.auth.secret)!r} still contains a placeholder",
+            at=_admin_at(expanded, "auth", "secret"),
+            hint=(
+                "a target set's `for_each:` variables render one (§4); elsewhere there is "
+                "nothing to substitute from -- an admin credential belongs to no account, "
+                "so §7's per-account tokens never reach it"
+            ),
+        )
+
+
+def _not_in_an_alias(dsn: str) -> str | None:
+    """The first character that makes this a connect string rather than a name.
+
+    A blocklist rather than a pattern for an alias, deliberately: net service names
+    are more varied than any charset this layer should invent, and the rule being
+    enforced is narrower than "looks like a name" -- it is "is not an EZConnect
+    string or a connect descriptor".
+    """
+    return next((character for character in _NOT_IN_AN_ALIAS if character in dsn), None)
 
 
 # -------------------------------------------------------------- warnings ---
