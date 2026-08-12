@@ -24,13 +24,15 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
+from sopuli.output.document import SCHEMA_VERSION
+
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "docs" / "schemas"
 
 #: Sample file -> the schema it must validate against. Samples are documentation
 #: that can rot; the ones in the repo are cited from the design documents, so
 #: they have to stay true as the schemas evolve.
 SAMPLES = {
-    "example-creds-check-drift.json": "sopuli-run-1.1.schema.json",
+    "example-creds-check-drift.json": f"sopuli-run-{SCHEMA_VERSION}.schema.json",
 }
 
 

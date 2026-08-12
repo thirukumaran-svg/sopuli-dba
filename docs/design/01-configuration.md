@@ -530,6 +530,8 @@ command:
 
 ```
 $ sopuli target list --select env=qa --output text
+config: /etc/sopuli/config.yaml
+select: env=qa
 
 NAME                DSN                                              ENV  SCOPE  SOURCE
 appdb-qa-alpha      db-test.example.com:1521/alphaqa.pdb.example.com  qa   pdb    target_set appdb
@@ -539,6 +541,12 @@ appdb-qa-epsilon    db-test.example.com:1521/epsilonqa2.pdb.example…  qa   pdb
 …
 8 targets (6 generated, 2 overridden)
 ```
+
+No VAULT column, unlike the estate table in `config show --resolved`: which
+store masters a target is a fact about the binding, and this view is about the
+target. Both are offline, and both count the estate with the same code, because
+two commands disagreeing about how many databases are in scope is worse than
+either being wrong alone.
 
 `sopuli config show --resolved` expands target sets fully, so what the tool will
 act on is always inspectable without connecting to anything.
@@ -1093,4 +1101,4 @@ notices until a rotation.
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
 | C13 | Is `vault:` under `defaults:` and in a profile a store *name* or a block? | unresolved — §3 and `SOPULI_VAULT` say name; P3's `defaults.vault.addr` and §5's `vault.auth` say block. The loader accepts the name form and refuses the block form rather than settling it in a diff. Overlaps C9. Issue #31 |
-| C14 | What are the `@version=` and `@stage=` vocabularies, and who owns them? | unresolved, and a **conflict between committed documents** rather than only a gap. §7 writes `@stage=PENDING`; UC-1 §2 names the states `current` / `pending` / `previous` in lower case; and `sopuli-run-1.1.schema.json` has typed `secret_ref.stage` as a closed lower-case enum and `secret_ref.version` as an integer since it was written — so §7's own example cannot be emitted as a structured ref. Widening that enum is a *major* bump under `03-json-output.md` §8, which is why the schema is evidence rather than an accident. The parser carries both values as written rather than settling it, the same way `auth.method` is left to P2. Issue #40 |
+| C14 | What are the `@version=` and `@stage=` vocabularies, and who owns them? | unresolved, and a **conflict between committed documents** rather than only a gap. §7 writes `@stage=PENDING`; UC-1 §2 names the states `current` / `pending` / `previous` in lower case; and `sopuli-run-1.2.schema.json` has typed `secret_ref.stage` as a closed lower-case enum and `secret_ref.version` as an integer since it was written — so §7's own example cannot be emitted as a structured ref. Widening that enum is a *major* bump under `03-json-output.md` §8, which is why the schema is evidence rather than an accident. The parser carries both values as written rather than settling it, the same way `auth.method` is left to P2. Issue #40 |

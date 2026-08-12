@@ -2,9 +2,9 @@
 
 Grammar is noun-verb (D2): ``sopuli <noun> <verb>``. Each noun is a
 :class:`click.Group`, each verb a command inside it. Only the ``config`` verbs
-exist so far — neither touches a vault or a database, and both are here so the
-shape is established once instead of being improvised by whichever command lands
-first.
+and ``target list`` exist so far — none touches a vault or a database, and they
+are here so the shape is established once instead of being improvised by
+whichever command lands first.
 
 Two things about the structure are deliberate:
 
@@ -42,7 +42,12 @@ from sopuli.config import (
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
-from sopuli.output.config_view import build_section, render_text, render_validation
+from sopuli.output.config_view import (
+    build_section,
+    render_target_list,
+    render_text,
+    render_validation,
+)
 from sopuli.output.document import Diagnostic, RunDocument, Summary
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.stream import configure_streams
@@ -98,6 +103,23 @@ def common_options(func: F) -> F:
     return color(output(dry_run(config(func))))
 
 
+def select_option(func: F) -> F:
+    """``--select``, for the commands that act on the estate.
+
+    Deliberately not in :func:`common_options`. ``config validate`` answers
+    "does this file parse", which no selector narrows, and an option that
+    silently means nothing on some of the commands carrying it is the same
+    defect as ignoring one that does.
+    """
+    return click.option(
+        "--select",
+        "selectors",
+        multiple=True,
+        metavar="K=V[,K=V]",
+        help="Keep only targets carrying every label. Repeat to add more.",
+    )(func)
+
+
 def config_diagnostics(config: Config) -> list[Diagnostic]:
     """§10's warnings, as run-level diagnostics.
 
@@ -127,13 +149,7 @@ def config_group() -> None:
     default=False,
     help="Show what the tool would act on: expanded targets and their bindings.",
 )
-@click.option(
-    "--select",
-    "selectors",
-    multiple=True,
-    metavar="K=V[,K=V]",
-    help="Keep only targets carrying every label. Repeat to add more.",
-)
+@select_option
 @common_options
 def config_show(
     resolved: bool,
@@ -191,6 +207,69 @@ def config_show(
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
     emitter.emit(document, render_text(paths, config, resolved=resolved, match=match))
+
+
+@cli.group("target")
+def target_group() -> None:
+    """Inspect the estate."""
+
+
+@target_group.command("list")
+@select_option
+@common_options
+def target_list(
+    selectors: tuple[str, ...],
+    config_paths: tuple[Path, ...],
+    output_mode: str,
+    dry_run: bool,
+    color_choice: str,
+) -> None:
+    """List the targets the configuration expands to.
+
+    ``01-configuration.md`` section 4 makes this a command rather than a flag:
+    "generation is invisible until it goes wrong", and the moment it matters is
+    before a rotation, when the question is *how many databases is this about
+    to touch* and the answer must not require reading a binding table to count.
+
+    Always the expanded estate, so there is no ``--resolved`` here. A target
+    set is a template; the targets it generates are the only thing this command
+    is about, which is why ``config show`` keeps the other view rather than
+    this one growing a flag to suppress its own subject.
+
+    Offline, like the ``config`` verbs: nothing here opens a socket, so it is
+    safe against a production config from a laptop. It says which targets
+    *exist*, never which are reachable -- that is a different command with a
+    different failure mode, and it must not arrive as a flag on this one.
+
+    A bad config file raises out of here rather than being caught, for the
+    reason ``config show`` gives: J7 (issue #8) is open, and no command should
+    answer it by accident.
+    """
+    emitter = Emitter(
+        mode=OutputMode(output_mode),
+        color_choice=ColorChoice(color_choice),
+    )
+    document = RunDocument.start("target.list", dry_run=dry_run)
+
+    match = parse_selector(selectors)
+    paths = discover(config_paths)
+    declared, config = load_layers(paths)
+    config = filter_estate(config, match)
+
+    targets = len(config.expanded_targets)
+    document.diagnostics = config_diagnostics(config)
+    document.selection = as_dict(match) or None
+    # The same `config` section `config show --resolved` emits, deliberately.
+    # It is one estate, and a second JSON shape for it would be two answers to
+    # one question -- exactly what invariant 12 exists to prevent. The cost is
+    # that `bindings` rides along where the text view has no column for it,
+    # which is the cheaper of the two mistakes.
+    document.config = build_section(paths, config, declared, resolved=True)
+    document.finish(
+        ExitCode.SUCCESS,
+        Summary(total=targets, ok=targets, changed=0, failed=0),
+    )
+    emitter.emit(document, render_target_list(paths, config, match=match))
 
 
 @config_group.command("validate")

@@ -1,8 +1,9 @@
 """The JSON output is a versioned contract (invariant 12), so it is validated.
 
-What a command actually prints is checked against
-``docs/schemas/sopuli-run-1.1.schema.json`` — not against a hand-written
-expectation that could drift from the schema without anyone noticing.
+What a command actually prints is checked against the published run schema —
+``docs/schemas/sopuli-run-<SCHEMA_VERSION>.schema.json``, found from the
+producer's own constant — not against a hand-written expectation that could
+drift from the schema without anyone noticing.
 """
 
 from __future__ import annotations
@@ -17,10 +18,20 @@ from jsonschema import Draft202012Validator
 
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
-from sopuli.output.document import Diagnostic, RunDocument, Summary, to_rfc3339, utc_now
+from sopuli.output.document import (
+    SCHEMA_VERSION,
+    Diagnostic,
+    RunDocument,
+    Summary,
+    to_rfc3339,
+    utc_now,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.1.schema.json"
+#: Derived from the producer's own version. The published file is renamed on
+#: every bump (03-json-output.md section 8), so naming it literally here means
+#: the next bump validates against the previous contract until someone notices.
+RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
 
 
 @pytest.fixture(scope="module")

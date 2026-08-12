@@ -7,6 +7,7 @@ invokes commands directly, so asserting an exact exit code costs nothing.
 from __future__ import annotations
 
 import json
+import socket
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -761,3 +762,96 @@ def test_selecting_cannot_reach_a_target_the_file_does_not_declare(  # invariant
 
     assert result.exit_code == ExitCode.SUCCESS
     assert json.loads(result.output)["config"]["targets"] == []
+
+
+# ------------------------------------------------------------ target list ---
+
+
+def test_target_list_shows_the_expanded_estate(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(cli, ["target", "list", "--config", str(path)])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "appdb-dev-alpha" in result.output
+    assert "appdb-qa-beta" in result.output
+    assert "5 targets (1 explicit, 4 generated)" in result.output
+
+
+def test_target_list_takes_a_selector(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """§4's own example of this command is `target list --select env=qa`."""
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(cli, ["target", "list", "--select", "env=qa", "--config", str(path)])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "appdb-qa-alpha" in result.output
+    assert "appdb-dev-alpha" not in result.output
+
+
+def test_target_list_needs_no_resolved_flag(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """Always the expanded estate: a target set is a template, and the targets
+    it generates are the whole subject of this command. `--resolved` here would
+    be a flag to suppress the only thing it is for."""
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(cli, ["target", "list", "--resolved", "--config", str(path)])
+
+    assert result.exit_code == ExitCode.USAGE
+    assert "no such option" in result.output.lower()
+
+
+def test_target_list_and_config_show_agree_on_the_count(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """Two commands over one file disagreeing about how many databases are in
+    scope is the failure worth a test of its own."""
+    path = write_config(SELECTABLE)
+
+    listed = runner.invoke(cli, ["target", "list", "--config", str(path), "--output", "json"])
+    shown = runner.invoke(
+        cli, ["config", "show", "--resolved", "--config", str(path), "--output", "json"]
+    )
+
+    assert listed.exit_code == ExitCode.SUCCESS
+    assert shown.exit_code == ExitCode.SUCCESS
+    listed_names = [target["name"] for target in json.loads(listed.output)["config"]["targets"]]
+    shown_names = [target["name"] for target in json.loads(shown.output)["config"]["targets"]]
+    assert listed_names == shown_names
+    assert json.loads(listed.output)["summary"]["total"] == len(shown_names)
+
+
+def test_target_list_names_itself_in_the_document(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """`command` is a closed enum in the schema, so a new verb that forgot to
+    add itself would fail validation rather than emit an unknown value."""
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(cli, ["target", "list", "--config", str(path), "--output", "json"])
+
+    assert json.loads(result.output)["command"] == "target.list"
+
+
+def test_target_list_opens_no_socket(
+    runner: CliRunner, write_config: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It says which targets exist, never which are reachable. Reachability is
+    a different command with a different failure mode."""
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("target list opened a socket")
+
+    monkeypatch.setattr(socket, "socket", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    path = write_config(SELECTABLE)
+
+    result = runner.invoke(cli, ["target", "list", "--config", str(path)])
+
+    assert result.exit_code == ExitCode.SUCCESS

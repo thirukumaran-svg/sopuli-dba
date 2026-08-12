@@ -22,10 +22,12 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from sopuli.config import Config, build_config, filter_estate
-from sopuli.output.config_view import build_section, render_text
+from sopuli.config.model import Pairs
+from sopuli.output.config_view import build_section, render_target_list, render_text
+from sopuli.output.document import SCHEMA_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.1.schema.json"
+RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
 
 PATHS = [Path("/etc/sopuli/config.yaml")]
 
@@ -304,7 +306,7 @@ def test_the_schema_holds_the_producer_to_one_shape_or_the_other(
     that guards nothing (§8).
     """
     document = {
-        "schema_version": "1.1",
+        "schema_version": SCHEMA_VERSION,
         "tool": {"name": "sopuli", "version": "0.0.0"},
         "command": "config.show",
         "invocation": {
@@ -429,3 +431,83 @@ def test_colour_never_carries_meaning_on_its_own(production: Config) -> None:
 
     for word in ("prod", "dev", "targets", "appdb-prod", "-"):
         assert word in plain
+
+
+# ------------------------------------------------------------ target list ---
+
+
+def test_the_target_list_shows_the_estate(config: Config) -> None:
+    text = render_target_list(PATHS, config)
+
+    assert "appdb-dev-alpha" in text
+    assert "cdb-root-dev" in text
+
+
+def test_the_target_list_drops_the_vault_column(config: Config) -> None:
+    """§4's example has no VAULT, and the omission is the difference between
+    this and the resolved estate table: which store masters a target is a fact
+    about the binding, and this view is about the target."""
+    listed = click.unstyle(render_target_list(PATHS, config))
+    resolved = click.unstyle(render_text(PATHS, config, resolved=True))
+
+    assert "VAULT" in resolved
+    assert "VAULT" not in listed
+
+
+def test_the_target_list_shows_no_bindings(config: Config) -> None:
+    """The narrower question. A binding table is what `config show --resolved`
+    is for, and printing one here would make the two commands the same."""
+    text = render_target_list(PATHS, config)
+
+    assert "bindings:" not in text
+    assert "tenants/alpha#DB_CREDENTIALS/acme_web_user" not in text
+
+
+def test_the_target_list_names_the_source_of_every_target(config: Config) -> None:
+    text = click.unstyle(render_target_list(PATHS, config))
+
+    assert "target_set appdb" in text
+    assert "override" in text
+
+
+def test_the_target_list_counts_the_estate_the_same_way(config: Config) -> None:
+    """Two commands disagreeing about how many targets exist is the bug worth
+    catching, so the summary comes from one function rather than two."""
+    summary = "3 targets (1 explicit, 2 generated, 1 overridden)"
+
+    assert summary in render_target_list(PATHS, config)
+    assert summary in render_text(PATHS, config, resolved=True)
+
+
+def test_the_target_list_says_what_it_filtered_by(config: Config) -> None:
+    filtered = filter_estate(config, (("env", "dev"),))
+
+    assert "select: env=dev" in render_target_list(PATHS, filtered, match=(("env", "dev"),))
+
+
+def test_a_filter_matching_nothing_says_so_rather_than_printing_a_header(
+    config: Config,
+) -> None:
+    empty = filter_estate(config, (("env", "staging"),))
+
+    text = render_target_list(PATHS, empty, match=(("env", "staging"),))
+
+    assert "no targets carry env=staging" in text
+    assert "NAME" not in text
+
+
+def test_the_target_list_is_deterministic(config: Config) -> None:
+    assert render_target_list(PATHS, config) == render_target_list(PATHS, config)
+
+
+@pytest.mark.parametrize("match", [(), (("env", "staging"),)], ids=["estate", "nothing-matched"])
+def test_the_target_list_shows_warnings_in_full(match: Pairs) -> None:
+    """A command that reads a config and hides its findings is the same defect
+    whichever view does it -- including the path where nothing matched, which
+    is exactly when a warning about the file is worth reading."""
+    config = build_config({**DOCUMENT, "profiles": {"dev": {"output": "json"}}})
+
+    text = render_target_list(PATHS, filter_estate(config, match), match=match)
+
+    assert "1 warning:" in text
+    assert "named after an environment" in text

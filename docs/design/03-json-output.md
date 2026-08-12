@@ -15,7 +15,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.1.schema.json`](../schemas/sopuli-run-1.1.schema.json),
+Schemas: [`../schemas/sopuli-run-1.2.schema.json`](../schemas/sopuli-run-1.2.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -402,6 +402,12 @@ working as written: an optional property, and no consumer of 1.0 breaks by
 ignoring it. The published schema file was renamed rather than duplicated. It is
 a *producer-side* guard — it describes what this build emits — so a retained 1.0
 file would guard nothing and drift.
+
+**1.1 became 1.2 when `target.list` joined the `command` enum**, which is the
+same rule again: a new enum value, and a consumer of 1.1 that switches on
+`command` already has to cope with a value it does not recognise, because the
+enum was never the set of commands it happened to know. Renamed rather than
+duplicated, for the reason above.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles

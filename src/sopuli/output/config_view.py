@@ -15,7 +15,7 @@ secret ref here is an address and never a value (invariant 2, P2).
 
 The JSON form is the ``config`` section of the run document. It carries the same
 two views, discriminated by ``resolved``, and is pinned by
-``docs/schemas/sopuli-run-1.1.schema.json``.
+``docs/schemas/sopuli-run-1.2.schema.json``.
 """
 
 from __future__ import annotations
@@ -67,6 +67,65 @@ def render_text(paths: Sequence[Path], config: Config, *, resolved: bool, match:
         lines.extend(["", paint(heading, Role.HEADING)])
         lines.extend(body)
 
+    lines.extend(_warnings(config))
+    return "\n".join(lines)
+
+
+def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = ()) -> str:
+    """``target list`` -- the estate, and nothing else (§4).
+
+    The narrower question `config show --resolved` answers on the way past:
+    which targets exist and where each came from. §4 makes it a command of its
+    own because "generation is invisible until it goes wrong", and the moment
+    it goes wrong is before a rotation, when nobody wants to read a binding
+    table to count PDBs.
+
+    Two columns short of the estate table in the resolved view. §4's own
+    example has no VAULT, and the omission is the difference between the
+    commands rather than an oversight: which store masters a target is a fact
+    about the binding, and this view is about the target.
+
+    §10's warnings are rendered here as they are in every other view, including
+    the path where nothing matched. A command that reads a config and shows
+    none of its findings is the same defect whichever view does it.
+    """
+    lines = [f"config: {paths[0]}"]
+    lines.extend(f"        {path} (layered)" for path in paths[1:])
+    if match:
+        lines.append(f"select: {_pairs(match)}")
+
+    if not config.expanded_targets:
+        lines.extend(["", f"no targets carry {_pairs(match)}" if match else "no targets"])
+        lines.extend(_warnings(config))
+        return "\n".join(lines)
+
+    rows = [
+        [
+            expanded.name,
+            expanded.target.dsn,
+            _environment(expanded.target.environment),
+            _or_dash(expanded.target.oracle.scope),
+            _source_cell(expanded),
+        ]
+        for expanded in config.expanded_targets
+    ]
+    lines.extend(
+        [
+            "",
+            *render_table(
+                [
+                    Column("NAME", _NAME),
+                    Column("DSN", _DSN),
+                    Column("ENV"),
+                    Column("SCOPE"),
+                    Column("SOURCE"),
+                ],
+                rows,
+            ),
+            "",
+            _estate_summary(config),
+        ]
+    )
     lines.extend(_warnings(config))
     return "\n".join(lines)
 

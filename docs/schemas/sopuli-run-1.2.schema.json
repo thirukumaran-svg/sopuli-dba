@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.1.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.2.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -32,7 +32,7 @@
       "enum": [
         "creds.generate", "creds.apply", "creds.check", "creds.rotate",
         "creds.status", "creds.promote", "creds.finish-rollover",
-        "config.validate", "config.show", "doctor", "admin.install"
+        "config.validate", "config.show", "target.list", "doctor", "admin.install"
       ]
     },
     "invocation": { "$ref": "#/$defs/invocation" },
