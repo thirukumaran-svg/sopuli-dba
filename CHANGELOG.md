@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/futville/sopuli-dba/compare/v0.12.1...v0.13.0) (2026-08-12)
+
+
+### Features
+
+* filter the expanded estate with --select over target labels ([#59](https://github.com/futville/sopuli-dba/issues/59)) ([90e133d](https://github.com/futville/sopuli-dba/commit/90e133db03591d8c71b160b61fdb9c3de36b60fa))
+
 ## [0.12.1](https://github.com/futville/sopuli-dba/compare/v0.12.0...v0.12.1) (2026-08-12)
 
 
