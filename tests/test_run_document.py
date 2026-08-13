@@ -21,6 +21,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.output.document import (
     SCHEMA_VERSION,
     Diagnostic,
+    Option,
     RunDocument,
     Summary,
     to_rfc3339,
@@ -88,6 +89,65 @@ def test_a_document_carrying_diagnostics_validates(validator: Draft202012Validat
     assert emitted["diagnostics"] == [
         {"level": "warning", "message": "profile `prod` names nothing"}
     ]
+
+
+def test_a_document_carrying_options_validates(validator: Draft202012Validator) -> None:
+    """``invocation.options`` is the machine-readable form of ``--explain`` (P3).
+
+    The schema requires ``value`` and ``source``, forbids anything else, and pins
+    ``source`` to an enum -- so a layer renamed in the resolver has to fail here
+    as well as in ``tests/settings/test_registry.py``.
+    """
+    document = RunDocument.start(
+        "config.show",
+        options={
+            "output": Option(value="json", source="cli", source_detail="--output (verb)"),
+            "safety.dry_run": Option(value=True, source="env", source_detail="SOPULI_DRY_RUN"),
+        },
+    )
+    document.finish(ExitCode.SUCCESS)
+
+    emitted = document.to_dict()
+
+    assert _errors(validator, emitted) == []
+    assert emitted["invocation"]["options"]["safety.dry_run"] == {
+        "value": True,
+        "source": "env",
+        "source_detail": "SOPULI_DRY_RUN",
+    }
+
+
+def test_options_are_omitted_when_nothing_overrode_anything(
+    validator: Draft202012Validator,
+) -> None:
+    """An empty object would say "nothing overrode anything" once per run, in a
+    document consumers diff. Absent says it without saying it every time."""
+    document = RunDocument.start("config.show").finish(ExitCode.SUCCESS)
+
+    emitted = document.to_dict()
+
+    assert "options" not in emitted["invocation"]
+    assert _errors(validator, emitted) == []
+
+
+def test_an_option_omits_a_source_detail_it_does_not_have() -> None:
+    """A built-in default has no location to point at, and ``source_detail`` is
+    typed as a string -- so it is omitted rather than nulled, like every other
+    optional field here."""
+    assert set(Option(value="text", source="builtin").to_dict()) == {"value", "source"}
+
+
+def test_a_list_valued_option_reaches_json_as_an_array() -> None:
+    """``confirm_environments`` resolves to a tuple, which JSON has no type for.
+
+    No command emits one yet -- the safety block needs the config layer to reach
+    the resolver -- but the conversion is here rather than at whichever call site
+    first needs it, for the reason redaction is.
+    """
+    emitted = Option(value=("dev", "prod"), source="defaults").to_dict()
+
+    assert emitted["value"] == ["dev", "prod"]
+    assert json.dumps(emitted)
 
 
 def test_a_diagnostic_omits_the_fields_it_has_no_value_for() -> None:

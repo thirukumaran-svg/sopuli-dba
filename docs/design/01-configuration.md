@@ -876,12 +876,29 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 | `SOPULI_OUTPUT` | `text` \| `json` \| `jsonl` |
 | `SOPULI_LOG_LEVEL` | log level |
 | `SOPULI_NO_COLOR` / `NO_COLOR` | disable colour — set and not empty, whatever the value. Outranked by an explicit `--color always`; see `03-json-output.md` §1 for the full precedence |
-| `SOPULI_DRY_RUN` | force dry-run globally (safety ratchet: no flag turns it off) |
+| `SOPULI_DRY_RUN` | force dry-run globally (safety ratchet: no flag turns it off). Set and non-empty is the whole answer, whatever the value — `SOPULI_DRY_RUN=0` means dry-run |
 
 Honoured third-party variables, ranked *below* their `SOPULI_*` equivalent:
 `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_NAMESPACE`, `VAULT_CACERT`,
 `OCI_CLI_PROFILE`, `OCI_CLI_CONFIG_FILE`, `TNS_ADMIN`, `ORACLE_HOME`,
 `NLS_LANG`, `HTTPS_PROXY`, `NO_PROXY`.
+
+### Set, unset, and empty
+
+**Set-but-empty counts as unset**, so a CI job can clear an inherited variable
+without unsetting it. This is the `NO_COLOR` convention the tool already follows
+for `SOPULI_NO_COLOR`, applied to the whole table.
+
+**A safety variable's value is not read at all** — presence is the answer.
+`SOPULI_DRY_RUN=0` means dry-run, which is deliberate: under the ratchet nothing
+can turn a safety setting *off*, so a variable that parsed `0` / `false` / `no`
+would be one that looks like it disables dry-run and cannot. That is worse than
+either reading on its own.
+
+Implemented in `sopuli/settings/sources.py`, which converts the table into
+contributions for the resolver. `SOPULI_CONFIG` is not there — file discovery is
+a different chain (§9a) — and neither is `SOPULI_NO_COLOR`, because colour is
+settled with TTY detection rather than by precedence.
 
 ### What is *not* overridable
 

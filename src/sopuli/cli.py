@@ -8,12 +8,14 @@ whichever command lands first.
 
 Three things about the structure are deliberate:
 
-**Global options are a shared decorator, not group options.** A click option
-declared on the group has to appear *before* the subcommand
-(``sopuli --output json config show``), and DBAs type flags at the end of the
-line. :func:`common_options` puts ``--output`` and ``--dry-run`` on every verb
-so both orders work. Applying it is one line per command; retrofitting it across
-twenty verbs would not be.
+**Global options are declared in both parser positions, and resolved in one.**
+click's group parser and verb parser never see each other's options, so
+``--output`` is attached to the group *and* to every verb; both are layer 1 and
+:mod:`sopuli.invocation` merges them through the one precedence resolver. The
+safety flags are the exception -- ``--dry-run`` is accepted after the subcommand
+only, and the group's copy is a trap that says so. A verb receives the resolved
+:class:`~sopuli.invocation.Invocation` rather than the raw flags, so no command
+can read a value that skipped the layers beneath it.
 
 **Secrets never become options (invariant 1).** No command may take a password
 as a command-line value — it is visible in ``ps`` and in the Windows process
@@ -50,15 +52,14 @@ from sopuli.config import (
     parse_selector,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.output.color import ColorChoice
+from sopuli.invocation import GlobalOptions, Invocation, global_options, group_options
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
     render_text,
     render_validation,
 )
-from sopuli.output.document import Diagnostic, RunDocument, Summary
-from sopuli.output.emit import Emitter, OutputMode
+from sopuli.output.document import Diagnostic, Summary
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.stream import configure_streams
@@ -70,55 +71,10 @@ F = TypeVar("F", bound=Callable[..., Any])
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
-def common_options(func: F) -> F:
-    """Attach the options every verb accepts.
-
-    ``--dry-run`` is here from the start because invariant 8 requires every
-    mutating command to support it. Nothing mutates yet, so it only reaches the
-    run document — but no future command has to remember to add the flag.
-
-    ``--color`` is an *override*, not a ratchet: the command line simply wins
-    over the environment (P3). ``--dry-run`` will need the opposite treatment
-    when option precedence lands (#10), because invariant 10 says a safety
-    setting may only move toward safe. The two are listed together here so that
-    the difference is visible rather than assumed.
-    """
-    config = click.option(
-        "--config",
-        "config_paths",
-        multiple=True,
-        type=click.Path(path_type=Path),
-        help="Config file. Repeat to layer files left to right.",
-    )
-    dry_run = click.option(
-        "--dry-run",
-        is_flag=True,
-        default=False,
-        help="Print the plan and make no changes.",
-    )
-    output = click.option(
-        "--output",
-        "output_mode",
-        type=click.Choice([m.value for m in OutputMode]),
-        default=OutputMode.TEXT.value,
-        show_default=True,
-        help="Output format. Scripts should consume json, never text.",
-    )
-    color = click.option(
-        "--color",
-        "color_choice",
-        type=click.Choice([c.value for c in ColorChoice]),
-        default=ColorChoice.AUTO.value,
-        show_default=True,
-        help="Colour in text output. auto follows the terminal; NO_COLOR disables it.",
-    )
-    return color(output(dry_run(config(func))))
-
-
 def select_option(func: F) -> F:
     """``--select``, for the commands that act on the estate.
 
-    Deliberately not in :func:`common_options`. ``config validate`` answers
+    Deliberately not in :func:`~sopuli.invocation.global_options`. ``config validate`` answers
     "does this file parse", which no selector narrows, and an option that
     silently means nothing on some of the commands carrying it is the same
     defect as ignoring one that does.
@@ -145,8 +101,26 @@ def config_diagnostics(config: Config) -> list[Diagnostic]:
 
 @click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option(version=get_version(), prog_name="sopuli")
-def cli() -> None:
+@group_options
+@click.pass_context
+def cli(
+    ctx: click.Context,
+    config_paths: tuple[Path, ...],
+    output_mode: str | None,
+    color_choice: str | None,
+) -> None:
     """Manage database account credentials with a vault as the master record."""
+    # The group's copies of the global options are hidden and do nothing on their
+    # own: they are stashed here for the verb, which resolves both positions
+    # together (`sopuli.invocation`). A safety flag never arrives -- the group's
+    # copy of it refuses before this runs. The explanation lives in a comment
+    # rather than the docstring because the docstring is `sopuli --help`, and
+    # naming a trap there would advertise a flag the help says you may not use.
+    ctx.obj = GlobalOptions(
+        config_paths=config_paths,
+        output_mode=output_mode,
+        color_choice=color_choice,
+    )
 
 
 @cli.group("config")
@@ -162,14 +136,11 @@ def config_group() -> None:
     help="Show what the tool would act on: expanded targets and their bindings.",
 )
 @select_option
-@common_options
+@global_options
 def config_show(
     resolved: bool,
     selectors: tuple[str, ...],
-    config_paths: tuple[Path, ...],
-    output_mode: str,
-    dry_run: bool,
-    color_choice: str,
+    run: Invocation,
 ) -> None:
     """Show the effective configuration.
 
@@ -188,11 +159,8 @@ def config_show(
     an open question (J7, issue #8) that this command must not answer by
     accident.
     """
-    emitter = Emitter(
-        mode=OutputMode(output_mode),
-        color_choice=ColorChoice(color_choice),
-    )
-    document = RunDocument.start("config.show", dry_run=dry_run)
+    emitter = run.emitter()
+    document = run.start("config.show")
 
     match = parse_selector(selectors)
     if match and not resolved:
@@ -206,7 +174,7 @@ def config_show(
             hint="the declared view shows the file; the estate it selects over is --resolved",
         )
 
-    paths = discover(config_paths)
+    paths = discover(run.config_paths)
     declared, config = load_layers(paths)
     config = filter_estate(config, match)
 
@@ -228,13 +196,10 @@ def target_group() -> None:
 
 @target_group.command("list")
 @select_option
-@common_options
+@global_options
 def target_list(
     selectors: tuple[str, ...],
-    config_paths: tuple[Path, ...],
-    output_mode: str,
-    dry_run: bool,
-    color_choice: str,
+    run: Invocation,
 ) -> None:
     """List the targets the configuration expands to.
 
@@ -257,14 +222,11 @@ def target_list(
     reason ``config show`` gives: J7 (issue #8) is open, and no command should
     answer it by accident.
     """
-    emitter = Emitter(
-        mode=OutputMode(output_mode),
-        color_choice=ColorChoice(color_choice),
-    )
-    document = RunDocument.start("target.list", dry_run=dry_run)
+    emitter = run.emitter()
+    document = run.start("target.list")
 
     match = parse_selector(selectors)
-    paths = discover(config_paths)
+    paths = discover(run.config_paths)
     declared, config = load_layers(paths)
     config = filter_estate(config, match)
 
@@ -315,17 +277,14 @@ def policy_group() -> None:
     default=False,
     help="Print the sampled passwords. Text output only; they are never stored.",
 )
-@common_options
+@global_options
 def policy_sample(
     name: str | None,
     count: int,
     max_bytes: int | None,
     encoding: str,
     reveal: bool,
-    config_paths: tuple[Path, ...],
-    output_mode: str,
-    dry_run: bool,
-    color_choice: str,
+    run: Invocation,
 ) -> None:
     """Show what a password policy produces, without touching anything.
 
@@ -352,11 +311,8 @@ def policy_sample(
     name is refused the same way one written *in* the file would be. With no name
     it uses `defaults.policy`.
     """
-    emitter = Emitter(
-        mode=OutputMode(output_mode),
-        color_choice=ColorChoice(color_choice),
-    )
-    document = RunDocument.start("policy.sample", dry_run=dry_run)
+    emitter = run.emitter()
+    document = run.start("policy.sample")
 
     if reveal and emitter.is_json:
         # Silently dropping the flag is the defect `select_option` describes; the
@@ -371,7 +327,7 @@ def policy_sample(
             ),
         )
 
-    paths = discover(config_paths)
+    paths = discover(run.config_paths)
     _, config = load_layers(paths)
     chosen, policy = _policy_to_sample(config, name)
 
@@ -420,12 +376,9 @@ def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPo
 
 
 @config_group.command("validate")
-@common_options
+@global_options
 def config_validate(
-    config_paths: tuple[Path, ...],
-    output_mode: str,
-    dry_run: bool,
-    color_choice: str,
+    run: Invocation,
 ) -> None:
     """Check the configuration and say nothing else.
 
@@ -450,13 +403,10 @@ def config_validate(
     run document for a usage error is an open question (J7, issue #8) that this
     command must not answer by accident -- the same reason ``config show`` gives.
     """
-    emitter = Emitter(
-        mode=OutputMode(output_mode),
-        color_choice=ColorChoice(color_choice),
-    )
-    document = RunDocument.start("config.validate", dry_run=dry_run)
+    emitter = run.emitter()
+    document = run.start("config.validate")
 
-    paths = discover(config_paths)
+    paths = discover(run.config_paths)
     _, config = load_layers(paths)
 
     document.diagnostics = config_diagnostics(config)

@@ -100,6 +100,36 @@ class Diagnostic:
 
 
 @dataclass(frozen=True)
+class Option:
+    """One entry in ``invocation.options`` -- an effective setting and its layer.
+
+    ``source`` is a value from the schema's own enum, which is
+    :class:`sopuli.settings.registry.Layer` serialised; ``source_detail`` is a
+    **location** and never a value (``03-json-output.md``
+    §``invocation.options``). There is no field for a value's origin *and* its
+    content, which is what keeps a ``--vault-token`` entry safe to emit: the flag
+    is named, the token has nowhere to sit.
+
+    Kept deliberately dumb -- no import of the resolver -- so the run document
+    stays a description of output rather than a second consumer of the
+    precedence rules. The three-line conversion lives at the CLI boundary.
+    """
+
+    value: Any
+    source: str
+    source_detail: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        # A tuple-valued setting (`confirm_environments`) has to reach JSON as an
+        # array; nothing else here needs converting.
+        value = list(self.value) if isinstance(self.value, tuple) else self.value
+        data: dict[str, Any] = {"value": value, "source": self.source}
+        if self.source_detail is not None:
+            data["source_detail"] = self.source_detail
+        return data
+
+
+@dataclass(frozen=True)
 class Summary:
     """``summary``. Only the four required counters are populated so far."""
 
@@ -161,9 +191,21 @@ class RunDocument:
     #: sample no value property at all, which is what keeps ``--reveal`` a
     #: text-only affair.
     policy: dict[str, Any] | None = None
+    #: ``invocation.options`` -- the settings that changed behaviour, each with
+    #: the layer it came from. Emitted only when there are any: on a run with no
+    #: flags and no ``SOPULI_*`` variables the answer is "nothing overrode
+    #: anything", and an empty object would say that once per run in a document
+    #: consumers diff.
+    options: dict[str, Option] = field(default_factory=dict)
 
     @classmethod
-    def start(cls, command: str, *, dry_run: bool = False) -> RunDocument:
+    def start(
+        cls,
+        command: str,
+        *,
+        dry_run: bool = False,
+        options: dict[str, Option] | None = None,
+    ) -> RunDocument:
         """Open a run document. ``command`` must be a value from the schema enum."""
         return cls(
             command=command,
@@ -171,6 +213,7 @@ class RunDocument:
             started_at=utc_now(),
             actor=current_actor(),
             dry_run=dry_run,
+            options=options or {},
         )
 
     def finish(self, exit_code: int, summary: Summary | None = None) -> RunDocument:
@@ -195,6 +238,10 @@ class RunDocument:
         }
         if self.selection is not None:
             invocation["selection"] = {"select": self.selection}
+        if self.options:
+            invocation["options"] = {
+                name: option.to_dict() for name, option in sorted(self.options.items())
+            }
         document: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "tool": {"name": TOOL_NAME, "version": _tool_version()},

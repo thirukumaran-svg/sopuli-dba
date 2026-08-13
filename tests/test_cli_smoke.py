@@ -163,24 +163,29 @@ def test_json_mode_emits_only_the_document(runner: CliRunner, show: list[str]) -
 def test_global_flag_works_after_the_verb(runner: CliRunner, show: list[str]) -> None:
     """The order a DBA actually types has to work.
 
-    This is the reason common_options exists rather than options on the group:
-    a group-level option is only accepted *before* the subcommand. Pinned so a
-    later refactor cannot quietly move the flag back onto the group.
+    A click option declared on the group alone is only accepted *before* the
+    subcommand, so every verb carries its own copy
+    (:func:`~sopuli.invocation.global_options`). Pinned so a later refactor
+    cannot quietly leave the flag on the group only.
     """
     result = runner.invoke(cli, [*show, "--output", "json"])
     assert result.exit_code == ExitCode.SUCCESS
     json.loads(result.output)
 
 
-def test_global_flag_before_the_noun_is_a_clean_usage_error(runner: CliRunner) -> None:
-    """The consequence of the choice above, recorded rather than discovered.
+def test_global_flag_works_before_the_noun_too(runner: CliRunner, config_file: Path) -> None:
+    """The other order, which used to be a usage error (#10).
 
-    ``sopuli --output json config show`` is not supported: the option lives on
-    the verb. It must fail as a usage error with exit 2, never a traceback.
+    ``sopuli --output json config show`` and ``sopuli config show --output json``
+    are the same person typing the same intent, so they resolve the same way.
+    The precedence rules for the two positions live in
+    ``tests/test_cli_precedence.py``; this is the routing.
     """
-    result = runner.invoke(cli, ["--output", "json", "config", "show"])
-    assert result.exit_code == ExitCode.USAGE
-    assert "Traceback" not in result.output
+    result = runner.invoke(
+        cli, ["--output", "json", "config", "show", "--config", str(config_file)]
+    )
+    assert result.exit_code == ExitCode.SUCCESS
+    json.loads(result.output)
 
 
 def test_dry_run_is_reflected_in_the_document(runner: CliRunner, show: list[str]) -> None:

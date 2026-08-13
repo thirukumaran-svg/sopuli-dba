@@ -68,14 +68,37 @@ argparse, while giving up argparse's explicitness too.
 
 - One runtime dependency. Minor next to D3, which already makes Instant Client a
   hard runtime prerequisite on every platform.
-- Global options are a shared `common_options` decorator applied per verb. A new
-  command that forgets it silently loses `--output` and `--dry-run`, so it is
-  worth a test once there is more than one verb.
-- `sopuli --output json config show` (flag before the noun) is a usage error.
-  Pinned by a test so the behaviour is recorded rather than rediscovered.
+- Global options are a shared `global_options` decorator applied per verb, *and*
+  a `group_options` decorator on the group. A new command that forgets the first
+  silently loses `--output` and `--dry-run`, so `tests/test_cli_precedence.py`
+  walks the command tree and fails if one does.
+- Both parser positions are accepted for the inert options and both are layer 1;
+  the verb's value wins where both were given. See `sopuli/invocation.py`.
+
+### The position asymmetry, and how it was resolved (#10)
+
+This ADR originally recorded `sopuli --output json config show` as a usage error,
+and said the fix — if the asymmetry ever mattered — was a custom `click.Group`
+reconciling group-level and command-level options.
+
+It mattered, and the fix is narrower than a custom `Group`. Declaring the option
+in both places is mechanically fine: click hands back both values, and
+`default=None` distinguishes "not given" from "given the default", including for
+`is_flag` options. What was missing was not parsing but a *rule* about which one
+wins — and that rule cannot be the same for every option, because
+`--dry-run` may only ratchet toward safe (invariant 10) while `--output` may
+not care. So the merge belongs to the precedence resolver, not to the parser.
+
+**Safety flags are the exception, and they are refused rather than merged.**
+`--dry-run` is declared on the group as a hidden trap whose callback raises a
+`UsageError` naming the trailing position. Group and verb position express
+identical intent for a safety flag, so accepting both would buy typing tolerance
+and nothing else — at the price of a merge policy in the smallest and least
+visible layer there is. The trap buys the typing tolerance anyway, and no
+group-position safety value ever reaches the resolver.
 
 ## When to revisit
 
-If the flag-position asymmetry proves to be a real usability problem in the
-field, the fix is a custom `click.Group` that reconciles group-level and
-command-level options — not a change of framework.
+If a *verb* ever needs an option the group also declares, with different meaning
+in each, this arrangement breaks: one name binds to one setting. That would be a
+naming problem rather than a framework one.
