@@ -253,6 +253,14 @@ This is the machine-readable form of `config show --explain` (P3). When someone
 asks why a scheduled run behaved differently from their interactive one, the
 answer is in the output they already have, not in a re-run with `--debug`.
 
+By default it carries the settings that **changed behaviour** — a setting
+answered by its built-in default changed nothing, and reporting
+`output: text [builtin]` on every clean run would be noise in a document
+consumers diff. `--explain` lifts that filter and includes them, in this mode as
+well as in the text one: it means *show everything you consulted*. The shape of
+an entry is identical either way, so the flag changes how many entries appear and
+nothing about what one means.
+
 Two rules about the pair, both load-bearing:
 
 **`source_detail` is a location, never a value.** The flag as typed (`-o` records

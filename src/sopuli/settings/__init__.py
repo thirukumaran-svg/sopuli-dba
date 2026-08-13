@@ -35,6 +35,7 @@ from sopuli.settings.resolver import (
     Contribution,
     Resolved,
     ratchet_note,
+    render_value,
     resolve,
     resolve_all,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "Resolved",
     "Setting",
     "ratchet_note",
+    "render_value",
     "resolve",
     "resolve_all",
     "setting",

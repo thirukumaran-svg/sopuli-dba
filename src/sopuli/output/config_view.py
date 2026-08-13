@@ -20,14 +20,17 @@ two views, discriminated by ``resolved``, and is pinned by
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.model import Pairs
+from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
+from sopuli.settings import Resolved
 
 #: The environment safety rules key on (§9), and the one this view highlights.
 PRODUCTION = "prod"
@@ -39,12 +42,24 @@ _DSN = 46
 _REF = 52
 
 
-def render_text(paths: Sequence[Path], config: Config, *, resolved: bool, match: Pairs = ()) -> str:
+def render_text(
+    paths: Sequence[Path],
+    config: Config,
+    *,
+    resolved: bool,
+    match: Pairs = (),
+    settings: Mapping[str, Resolved] = MappingProxyType({}),
+) -> str:
     """The human view. ASCII by convention; user-supplied values pass through.
 
     ``match`` is shown rather than assumed remembered. Filtered output is the
     kind of thing that gets pasted into a ticket, and a table of four targets
     with no note of the filter reads as an estate of four.
+
+    ``settings`` is ``--explain``'s section, empty unless it was asked for. It is
+    appended rather than replacing anything: the subject of ``config show`` is
+    still the configuration, and where a setting came from is a third question
+    beside the file and the estate (:mod:`sopuli.output.explain_view`).
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -57,6 +72,9 @@ def render_text(paths: Sequence[Path], config: Config, *, resolved: bool, match:
         # `targets` heading looks like an estate that expanded to nothing, which
         # is a different and much more alarming thing.
         lines.extend(["", f"no targets carry {_pairs(match)}"])
+        # `--explain` still answers its own question: a selector that matched
+        # nothing says nothing about where `output` came from.
+        lines.extend(explain_section(settings))
         lines.extend(_warnings(config))
         return "\n".join(lines)
 
@@ -67,6 +85,7 @@ def render_text(paths: Sequence[Path], config: Config, *, resolved: bool, match:
         lines.extend(["", paint(heading, Role.HEADING)])
         lines.extend(body)
 
+    lines.extend(explain_section(settings))
     lines.extend(_warnings(config))
     return "\n".join(lines)
 

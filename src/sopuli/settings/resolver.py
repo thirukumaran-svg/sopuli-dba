@@ -185,8 +185,8 @@ def ratchet_note(resolved: Resolved) -> str | None:
     # the operator typed a moment ago.
     loser = relaxations[0]
     return (
-        f"{loser.location} asked for {_render(loser.value)}; "
-        f"{resolved.setting} stays {_render(resolved.value)} ({resolved.location}) "
+        f"{loser.location} asked for {render_value(loser.value)}; "
+        f"{resolved.setting} stays {render_value(resolved.value)} ({resolved.location}) "
         f"-- safety settings only ratchet toward safe"
     )
 
@@ -271,12 +271,20 @@ def _checked(contribution: Contribution, definition: Setting) -> Contribution:
     return contribution
 
 
-def _render(value: Any) -> str:
-    """A value as a message should show it.
+def render_value(value: Any) -> str:
+    """A value as any view should show it.
 
     Lower-case booleans because that is how the config file writes them, and a
     reader told ``readonly: True`` would go looking for a capital letter in their
     own YAML.
+
+    Public because ``config show --explain`` renders the same values in a table
+    and a ratchet note can appear under one of its rows: two spellings of one
+    value, three lines apart, would be a defect the reader has to resolve.
+
+    A :class:`~sopuli.secrets.Secret` renders ``***`` here for free, since that
+    is what its ``__str__`` does (invariant 2) -- this function does not know
+    secrets exist, and that is what keeps it from forgetting one.
     """
     if isinstance(value, bool):
         return "true" if value else "false"

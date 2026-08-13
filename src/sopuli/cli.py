@@ -51,7 +51,13 @@ from sopuli.config import (
     parse_selector,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.invocation import GlobalOptions, Invocation, global_options, group_options
+from sopuli.invocation import (
+    GlobalOptions,
+    Invocation,
+    all_options,
+    global_options,
+    group_options,
+)
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -134,10 +140,17 @@ def config_group() -> None:
     default=False,
     help="Show what the tool would act on: expanded targets and their bindings.",
 )
+@click.option(
+    "--explain",
+    is_flag=True,
+    default=False,
+    help="Show every effective setting and the layer it came from.",
+)
 @select_option
 @global_options
 def config_show(
     resolved: bool,
+    explain: bool,
     selectors: tuple[str, ...],
     run: Invocation,
 ) -> str:
@@ -147,6 +160,12 @@ def config_show(
     loaded, which answers *did my YAML say what I think it says* after however
     many ``--config`` layers were merged. With it, target sets are expanded and
     every secret ref rendered per account, which answers *what will this act on*.
+
+    ``--explain`` answers a third question -- *where did each setting come from*
+    -- and answers it the same way in both views, because provenance does not
+    depend on target expansion. That is why it does not require ``--resolved``
+    the way ``--select`` does: a selector has nothing to filter until the estate
+    exists, and a setting has a source either way (P3, issue #53).
 
     Offline in the strongest sense: it opens no socket to a vault or a database,
     so it is safe to run against a production config from a laptop. A secret ref
@@ -184,14 +203,20 @@ def config_show(
     config = filter_estate(config, match)
 
     targets = len(config.expanded_targets)
-    document.diagnostics = config_diagnostics(config)
+    document.diagnostics.extend(config_diagnostics(config))
     document.selection = as_dict(match) or None
     document.config = build_section(paths, config, declared, resolved=resolved)
+    if explain:
+        # The same data the JSON document already carries, widened: `--explain`
+        # means "show everything you consulted", built-in defaults included.
+        document.options = all_options(run)
     document.finish(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    return render_text(paths, config, resolved=resolved, match=match)
+    return render_text(
+        paths, config, resolved=resolved, match=match, settings=run.resolved if explain else {}
+    )
 
 
 @cli.group("target")
@@ -235,7 +260,7 @@ def target_list(
     config = filter_estate(config, match)
 
     targets = len(config.expanded_targets)
-    document.diagnostics = config_diagnostics(config)
+    document.diagnostics.extend(config_diagnostics(config))
     document.selection = as_dict(match) or None
     # The same `config` section `config show --resolved` emits, deliberately.
     # It is one estate, and a second JSON shape for it would be two answers to
@@ -340,7 +365,7 @@ def policy_sample(
     samples = [generate(policy, limit=limit) for _ in range(count)]
     described = describe_all(samples, policy, limit=limit)
 
-    document.diagnostics = config_diagnostics(config)
+    document.diagnostics.extend(config_diagnostics(config))
     document.policy = build_policy_section(chosen, policy, described, limit=limit)
     document.finish(
         ExitCode.SUCCESS,
@@ -421,7 +446,7 @@ def config_validate(
     paths = discover(run.config_paths)
     _, config = load_layers(paths)
 
-    document.diagnostics = config_diagnostics(config)
+    document.diagnostics.extend(config_diagnostics(config))
     targets = len(config.expanded_targets)
     document.finish(
         ExitCode.SUCCESS,

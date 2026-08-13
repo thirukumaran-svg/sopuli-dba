@@ -48,6 +48,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
+from sopuli.output.explain_view import ratchet_notes
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import env_contributions
 
@@ -159,22 +160,42 @@ def open_document(command: str, invocation: Invocation) -> RunDocument:
     ``options`` reports what *changed behaviour*, which is the schema's own
     wording: a setting answered by its built-in default changed nothing, and
     ``output: text [builtin]`` on every clean run would be noise in a document
-    consumers diff. ``config show --explain`` (#53) shows those rows too -- a
-    different view over the same resolver, not a second answer.
+    consumers diff. ``--explain`` lifts that filter (see :func:`all_options`) --
+    the same producer, asked for everything.
+
+    A defeated relaxation becomes a diagnostic here rather than under
+    ``--explain``, because it is true of every run: something was asked for and
+    safely refused, and a run that says nothing about it is the surprise
+    invariant 10 exists to prevent.
     """
-    return RunDocument.start(
+    document = RunDocument.start(
         command,
         dry_run=invocation.dry_run,
         options={
-            name: Option(
-                value=answer.value,
-                source=str(answer.layer),
-                source_detail=answer.detail,
-            )
-            for name, answer in invocation.resolved.items()
-            if answer.layer is not Layer.BUILTIN
+            name: option
+            for name, option in all_options(invocation).items()
+            if invocation.resolved[name].layer is not Layer.BUILTIN
         },
     )
+    document.diagnostics.extend(ratchet_notes(invocation.resolved))
+    return document
+
+
+def all_options(invocation: Invocation) -> dict[str, Option]:
+    """Every setting the run consulted, built-in defaults included.
+
+    What ``--explain`` reports, in both output modes. The shape is identical to
+    the filtered form -- one producer, one schema -- so the flag changes how many
+    entries appear and nothing about what an entry means.
+    """
+    return {
+        name: Option(
+            value=answer.value,
+            source=str(answer.layer),
+            source_detail=answer.detail,
+        )
+        for name, answer in invocation.resolved.items()
+    }
 
 
 def command_path(ctx: click.Context) -> str:

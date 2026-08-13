@@ -218,8 +218,8 @@ Two deliberate exceptions, documented as such:
 
 ### Making precedence debuggable
 
-`sopuli config show --resolved --explain` prints every effective setting with the
-layer it came from:
+`sopuli config show --explain` prints every effective setting with the layer it
+came from:
 
 ```
 vault.addr         = https://vault.example.com:8200   [env SOPULI_VAULT_ADDR]
@@ -237,7 +237,18 @@ considers low-assurance is marked.
 The `safety.max_targets` line is the one worth being able to see. A setting that
 was *requested* and did not win is invisible in the result and obvious in this
 view, which is the difference between "the ratchet works" as a claim and as
-something an operator can check.
+something an operator can check. It also reaches `--output json`: the same
+defeated request is a warning in `diagnostics[]`, on every run rather than only
+when `--explain` was asked for.
+
+**`--explain` does not require `--resolved`**, although the example above was
+once written with both. Where a setting came from is the same answer in the
+declared view and the resolved one, because provenance does not depend on target
+expansion — unlike `--select`, which has nothing to filter until the estate
+exists. In `--output json` it widens `invocation.options` to include settings
+answered by a built-in default, which the document otherwise omits as not having
+changed behaviour. One producer, one shape, two questions about how much of it to
+show. Implemented in `sopuli/output/explain_view.py`.
 
 ### Config file discovery
 
