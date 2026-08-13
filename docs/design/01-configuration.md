@@ -1115,6 +1115,61 @@ profile, and unlike everything else these do **not** follow last-one-wins: the
 resolved value is the *safest* of all layers — lowest `max_targets`, union of
 `confirm_environments`, `readonly: true` if any layer sets it.
 
+### The unit that gets resolved is a setting, not an option
+
+`readonly` has no flag at all. `verify.method` arrives from a profile block.
+`--dry-run` will have both a flag and `SOPULI_DRY_RUN`. A resolver keyed on
+command-line options would leave half the things that need a merge policy with
+nowhere to declare one.
+
+So the resolvable unit is a **setting** — `safety.dry_run`, `output`,
+`safety.readonly` — declared with its type, the layers that may supply it, and
+how colliding layers merge. Flags, `SOPULI_*` variables and config keys all bind
+to setting names. The same declarations are what `invocation.options` and
+`config show --resolved --explain` iterate over, so the merge rule, the JSON
+attribution and the human view are one mechanism rather than three that must
+agree. Implemented in `sopuli/settings/`.
+
+A setting's declared layers are **enforced**: a value arriving from a layer the
+setting does not list is a programming error, not a silently-accepted override.
+Otherwise the table above describes intent rather than behaviour.
+
+### Two merge policies
+
+| Policy | Rule | Applies to |
+|---|---|---|
+| `override` | the highest-authority layer wins | everything not below |
+| `ratchet` | the *safest* layer wins, whichever it is | `safety.dry_run`, `safety.readonly`, `safety.max_targets`, `safety.confirm_environments` |
+
+The ratcheted set is invariant 10's, and it is one frozenset in
+`sopuli/settings/registry.py` so it can be reviewed at a glance. A setting
+declaring `ratchet` without being in it — or the reverse — fails to construct,
+so the two cannot drift apart.
+
+Merge policy is a **required** field with no default. The failure mode worth
+designing against is not a wrong policy; it is a safety setting added later that
+silently inherits `override` because nobody wrote one.
+
+One policy, three shapes, taken from the setting's type — exactly the three the
+safety paragraph above names: a boolean ratchets to true, an integer to the
+minimum, a list to the union. `relax-but-bounded` was considered for a `--force`
+that does not exist yet and deliberately not built; because the field is
+required and declared, adding it later is additive rather than a migration.
+
+Two rules follow from the ratchet and are easy to get backwards:
+
+- **The built-in default is a fallback, not a contributor.** If any other layer
+  spoke, layer 6 drops out before merging. A built-in that took part in a ratchet
+  would be an unremovable floor rather than a default: a built-in `confirm: true`
+  would make `profiles.ci.confirm: false` unreachable forever. "Built-in default"
+  in `--explain` means precisely *nothing else spoke*.
+- **Ties resolve downward.** Where several layers supply the effective value —
+  two of them saying `readonly: true`, or three contributing to a union — the
+  reported source is the *lowest-authority* one. If config says `readonly: true`
+  and a flag asked to relax it, the answer to "why did this refuse to write" is
+  the config key. It is also the only actionable answer: dropping the flag
+  changes nothing, editing the key does.
+
 ---
 
 ## 9a. The file itself

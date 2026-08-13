@@ -200,6 +200,13 @@ per execution context (CI job, container) and must be able to redirect a shared
 config without editing it. Rationale for CLI above env: the operator typing the
 command expresses the most specific intent available.
 
+**Layer 1 is one layer.** A CLI parser that accepts a flag both before and after
+the subcommand does not thereby create two layers: it is the same person, in the
+same command line, at the same moment, so there is no authority to rank. Both
+positions resolve as `cli` and the position, where it matters, is recorded in
+`source_detail`. Safety flags are accepted in the trailing position only, so no
+group-position value ever reaches the resolver — see `adr-002-cli-framework.md`.
+
 Two deliberate exceptions, documented as such:
 
 - **Third-party env vars** (`VAULT_ADDR`, `VAULT_TOKEN`, `ORACLE_HOME`,
