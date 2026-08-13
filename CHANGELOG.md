@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/futville/sopuli-dba/compare/v0.18.0...v0.19.0) (2026-08-13)
+
+
+### Features
+
+* **config:** show where every effective setting came from, with --explain ([#81](https://github.com/futville/sopuli-dba/issues/81)) ([750654b](https://github.com/futville/sopuli-dba/commit/750654bb76ef015d55d3bdf5c789110644cee4b9))
+
 ## [0.18.0](https://github.com/futville/sopuli-dba/compare/v0.17.0...v0.18.0) (2026-08-13)
 
 
