@@ -566,7 +566,7 @@ spells them:
 | `app_pdb` | an application PDB |
 
 That is `scope.type` from
-[`sopuli-run-1.3.schema.json`](../schemas/sopuli-run-1.3.schema.json), minus
+[`sopuli-run-1.4.schema.json`](../schemas/sopuli-run-1.4.schema.json), minus
 `unknown`. Adopting the vocabulary the run document has typed since it was written
 means the word a file *asserts* and the word the tool *reports* are the same word,
 so a mismatch between them needs no translation to explain. `unknown` is
@@ -1316,12 +1316,14 @@ reports what it found:
 |---|---|---|
 | the file loads | 0 | the files read, and how much they declare: targets, bindings, warnings |
 | §10 warnings | 0 | each warning in full, and `diagnostics[]` under `--output json` |
-| anything §9a or §10 refuses | 2 | the message, with its key path and its hint |
+| anything §9a or §10 refuses | 9 | the message, with its key path and its hint |
 
-Exit 2 rather than 1: P5 puts config validation with usage errors, so a scheduler
-can tell "fix your file" from "something broke". A bad file produces no run
-document even under `--output json`, which is not an oversight — whether a usage
-error should emit one is J7, and this command must not answer it by accident.
+Exit 9 rather than 1 or 2: a scheduler can tell "fix your file" from "something
+broke" *and* from "fix your command line". A bad file produces a run document
+under `--output json` — the invocation resolved and it is the configuration that
+failed, which is J7's seam (`03-json-output.md` §6). This command is the reason
+the seam is there: reporting configuration problems is its entire purpose, and a
+validator that goes silent exactly when it has something to say is not one.
 
 It validates through the builders, not through the published schema above. The
 two are not equivalent and the stricter one wins; `jsonschema` stays a
@@ -1467,4 +1469,4 @@ notices until a rotation.
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
 | C13 | Is `vault:` under `defaults:` and in a profile a store *name* or a block? | unresolved — §3 and `SOPULI_VAULT` say name; P3's `defaults.vault.addr` and §5's `vault.auth` say block. The loader accepts the name form and refuses the block form rather than settling it in a diff. Overlaps C9. Issue #31 |
-| C14 | What are the `@version=` and `@stage=` vocabularies, and who owns them? | unresolved, and a **conflict between committed documents** rather than only a gap. §7 writes `@stage=PENDING`; UC-1 §2 names the states `current` / `pending` / `previous` in lower case; and `sopuli-run-1.3.schema.json` has typed `secret_ref.stage` as a closed lower-case enum and `secret_ref.version` as an integer since it was written — so §7's own example cannot be emitted as a structured ref. Widening that enum is a *major* bump under `03-json-output.md` §8, which is why the schema is evidence rather than an accident. The parser carries both values as written rather than settling it, the same way `auth.method` is left to P2. Issue #40 |
+| C14 | What are the `@version=` and `@stage=` vocabularies, and who owns them? | unresolved, and a **conflict between committed documents** rather than only a gap. §7 writes `@stage=PENDING`; UC-1 §2 names the states `current` / `pending` / `previous` in lower case; and `sopuli-run-1.4.schema.json` has typed `secret_ref.stage` as a closed lower-case enum and `secret_ref.version` as an integer since it was written — so §7's own example cannot be emitted as a structured ref. Widening that enum is a *major* bump under `03-json-output.md` §8, which is why the schema is evidence rather than an accident. The parser carries both values as written rather than settling it, the same way `auth.method` is left to P2. Issue #40 |

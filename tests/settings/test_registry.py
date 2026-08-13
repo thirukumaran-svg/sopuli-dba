@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.output.document import SCHEMA_VERSION
 from sopuli.settings.registry import (
     SAFETY_SETTINGS,
     SETTINGS,
@@ -25,7 +26,15 @@ from sopuli.settings.registry import (
     setting,
 )
 
-SCHEMA = Path(__file__).resolve().parents[2] / "docs" / "schemas" / "sopuli-run-1.3.schema.json"
+#: Named from the version the code claims, so a schema bump does not need this
+#: file edited -- and cannot be half-done, since a rename without a
+#: ``SCHEMA_VERSION`` change makes this path miss.
+SCHEMA = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "schemas"
+    / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
+)
 
 
 def test_layer_values_match_the_published_source_enum() -> None:

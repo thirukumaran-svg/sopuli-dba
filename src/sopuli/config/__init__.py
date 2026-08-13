@@ -30,7 +30,7 @@ exit code.
 
 from sopuli.config.bindings import build_bindings
 from sopuli.config.discovery import CONFIG_ENV, discover, search_path
-from sopuli.config.errors import ROOT, ConfigError, KeyPath
+from sopuli.config.errors import ROOT, ArgumentError, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at, expand_targets
 from sopuli.config.loading import (
     SUPPORTED_VERSIONS,
@@ -86,6 +86,7 @@ __all__ = [
     "ROOT",
     "SUPPORTED_VERSIONS",
     "AccountPolicy",
+    "ArgumentError",
     "AdminCredential",
     "Application",
     "Binding",

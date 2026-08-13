@@ -28,6 +28,7 @@ from sopuli import passwords
 from sopuli.config import charsets
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import PasswordPolicy
+from sopuli.exit_codes import ExitCode
 from sopuli.output.emit import RedactingJSONEncoder
 from sopuli.passwords import ByteLimit, PasswordPolicyError, check, generate
 from sopuli.secrets import REDACTED, Secret
@@ -197,13 +198,18 @@ def test_a_policy_with_no_length_is_refused_rather_than_defaulted() -> None:
     assert "no built-in default" in rendered
 
 
-def test_a_policy_error_is_a_config_error_and_exits_two() -> None:
-    """P5 puts "fix your file" on 2 rather than on 1, and the CLI boundary already
-    prints a `ConfigError` with its hint."""
+def test_a_policy_error_is_a_config_error_and_exits_nine() -> None:
+    """P5 gives "fix your file" a code of its own, and the CLI boundary already
+    prints a `ConfigError` with its hint.
+
+    Exit 9 rather than 2 since #8: a policy the file could not hold is found
+    *after* the invocation resolved, so it is the one that carries a run
+    document. Exit 2 is reserved for argv that never parsed.
+    """
     error = PasswordPolicyError("nope")
 
     assert isinstance(error, ConfigError)
-    assert error.exit_code == 2
+    assert error.exit_code == ExitCode.CONFIG_INVALID
 
 
 @pytest.mark.parametrize(
@@ -235,7 +241,7 @@ def test_a_policy_a_config_file_could_not_hold_is_an_error_at_both_entry_points(
     with pytest.raises(ConfigError) as checking:
         check(Secret("Abcdef1#"), built, limit=UTF8)
 
-    assert generating.value.exit_code == 2
+    assert generating.value.exit_code == ExitCode.CONFIG_INVALID
     assert str(generating.value) == str(checking.value), "the two entry points must agree"
 
 

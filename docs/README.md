@@ -17,7 +17,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.0.schema.json](schemas/sopuli-config-1.0.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.3.schema.json](schemas/sopuli-run-1.3.schema.json) | JSON Schema (2020-12) for the `--output json` document |
+| [schemas/sopuli-run-1.4.schema.json](schemas/sopuli-run-1.4.schema.json) | JSON Schema (2020-12) for the `--output json` document |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -88,7 +88,12 @@ does `doctor` fail or warn on over-granted privileges (P5), keep 11.2 support
 
 **JSON output (03):** buffering policy for `--output json` (J1), always emit
 `plan` (J2), warning code registry (J3), host/pid in output (J4), OpenTelemetry
-(J5), resumable streams (J6). *~~Which library renders text tables~~ decided
+(J5), resumable streams (J6). *~~Does a usage error emit a run document~~
+resolved 2026-08-13 in issue #8: no — a run document describes a run, and a run
+begins when the invocation resolves. Exit 2 is the only code that never produces
+one; P5 gained exit 9 so that an invalid config file, which has a perfectly good
+invocation, stops sharing a code with a bad command line (J7).* *~~Which library
+renders text tables~~ decided
 2026-08-11 in [ADR-003](decisions/adr-003-text-tables.md): none — `click` plus
 the standard library, on dependency weight and on keeping output independent of
 the terminal. `config show --resolved` was the first command with real results

@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import replace
 
-from sopuli.config.errors import ROOT, ConfigError
+from sopuli.config.errors import ROOT, ArgumentError
 from sopuli.config.model import Config, ExpandedTarget, Pairs, Target, TargetSelector, as_dict
 
 #: What a `--select` pair is written with. Not configurable: a separator that
@@ -34,9 +34,12 @@ PAIR_SEPARATOR = ","
 KEY_SEPARATOR = "="
 
 #: Where a `--select` error points. A `KeyPath` names a place in the document
-#: and this is not one, but it renders as the option the user typed and it puts
-#: a bad selector on the same exit code and the same message shape as a bad
-#: key -- both are "you told the tool the wrong thing" (P5).
+#: and this is not one, but it renders as the option the user typed, which is
+#: where the reader has to go and fix it.
+#:
+#: That location is also why these raise `ArgumentError` rather than a plain
+#: `ConfigError`: nothing is wrong with any file, so the exit code is 2 and there
+#: is no run document (J7, issue #8). The message shape is identical.
 AT_SELECT = ROOT.key("--select")
 
 
@@ -91,7 +94,7 @@ def parse_selector(values: Sequence[str]) -> Pairs:
         for pair in value.split(PAIR_SEPARATOR):
             key, label = _split_pair(pair)
             if key in seen and seen[key] != label:
-                raise ConfigError(
+                raise ArgumentError(
                     f"label '{key}' selected twice, as '{seen[key]}' and '{label}'",
                     at=AT_SELECT,
                     hint="a selector is every pair at once; there is no 'or' (C2)",
@@ -103,14 +106,14 @@ def parse_selector(values: Sequence[str]) -> Pairs:
 def _split_pair(pair: str) -> tuple[str, str]:
     """One ``k=v``, or an error quoting exactly what was typed."""
     if KEY_SEPARATOR not in pair:
-        raise ConfigError(
+        raise ArgumentError(
             f"'{pair}' is not a label match",
             at=AT_SELECT,
             hint="write it as key=value, e.g. --select env=qa,tenant=beta",
         )
     key, _, label = pair.partition(KEY_SEPARATOR)
     if not key.strip() or not label.strip():
-        raise ConfigError(
+        raise ArgumentError(
             f"'{pair}' has an empty {'key' if not key.strip() else 'value'}",
             at=AT_SELECT,
             hint="both sides are required; a label with no value selects nothing",

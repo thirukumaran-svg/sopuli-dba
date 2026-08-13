@@ -15,7 +15,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.3.schema.json`](../schemas/sopuli-run-1.3.schema.json),
+Schemas: [`../schemas/sopuli-run-1.4.schema.json`](../schemas/sopuli-run-1.4.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -414,18 +414,82 @@ is a `plan`.
 `exit_code` in the document always equals the process exit code, so a consumer
 that captured only stdout can still branch correctly.
 
-The pairing that makes scheduling work:
+### Which exits produce a document (J7)
+
+One rule:
+
+> **A run document describes a run, and a run begins when the invocation
+> resolves. No valid invocation, no document.**
+
+From which: **exit 2 is the only exit code that never produces a document. Empty
+stdout with exit 2 means the invocation never parsed; the message is on stderr.**
+Every other code emits one, exit 1 and internal errors included — they all have a
+valid invocation to describe, and withholding the document exactly when something
+went wrong is the opposite of useful.
+
+The seam is there and not elsewhere for a schema reason as much as a conceptual
+one. `command` is a closed enum of dotted paths and sits in `required`, as does
+`invocation`. `sopuli config bogus` has no `command` value that exists, so
+emitting a document for it means either violating this schema or relaxing
+`required` and adding an `"unknown"` member — permanently, for every consumer, so
+that all of them must handle a document that describes nothing. That is
+contract-weakening dressed as contract-completing. `additionalProperties: false`
+and a closed `command` enum are only worth their strictness because every
+document describes a real run.
+
+And `--output json` is itself an option that has to parse. `sopuli config show
+--output jsom` is a usage error *in the request for JSON*; the tool cannot honour
+a request it failed to read. A rule of "emit one if the parse got far enough to
+see `--output`" would make the behaviour depend on where in argv the parse died —
+not statable as a contract.
+
+**A bad config file is not a usage error.** It has a perfectly good invocation:
+argv resolved, the run began, and the file it was told to read turned out to be
+unusable. It exits 9 (P5), carries `error.category: "config"`, and emits a
+document. `config validate --output json` is the case that forced this: a
+validator that goes silent exactly when it has something to say is not a
+validator.
+
+> **Implementation note, because the convenient way is the wrong way.** A missing
+> or invalid config file must not be raised as a CLI-framework usage error, even
+> though `--config` is an option and its callback is the natural place to load
+> the file. Doing that hands the error to the framework's usage path, which
+> prints text and exits 2 — putting config errors back on the no-document side
+> whatever this section says.
+
+The same rule holds for `jsonl`: a usage error produces zero events, not a
+truncated stream. That is already consistent with "a stream that ends without
+`run.finished` did not complete".
+
+So a consumer faces **three** shapes, not two:
+
+| What it sees | What it means |
+|---|---|
+| a document | the run happened; branch on `exit_code` |
+| empty stdout, exit 2 | the invocation never parsed; the message is on stderr |
+| empty stdout, any other exit | the process died before it could serialise |
+
+The third is real and worth planning for — `jsonl` exists precisely for runs long
+enough that dying halfway is a possibility worth observing.
+
+### The pairing that makes scheduling work
 
 ```bash
 sopuli creds check --application orders-app --profile scheduled --output json > result.json
 case $? in
   0) ;;                                     # in sync, say nothing
+  2) alert "sopuli: bad command line" ;;    # no document — result.json is empty
   3) alert "credential drift" < result.json ;;   # distinct: DRIFT, not a failure
   4) alert "partial rotation — needs apply --repair" < result.json ;;
+  9) alert "sopuli: fix the config" < result.json ;;
   6|7) alert "sopuli could not run" < result.json ;;
   *) alert "sopuli failed" < result.json ;;
 esac
 ```
+
+The `2)` arm is the one worth copying: it is the only arm that must not read
+`result.json`, and a canonical example that leaves it out is how the rule gets
+discovered in production instead of in the docs.
 
 Exit 3 being distinct from exit 1 is the whole reason a scheduled check is
 useful: "the passwords disagree" and "the tool is broken" need different pagers.
@@ -518,3 +582,4 @@ CI. The schema is the test fixture, not documentation written afterwards.
 | J4 | Emit a top-level `hostname`/`pid` for log correlation | probably, under `invocation.actor` |
 | J5 | OpenTelemetry span export alongside JSON | later; `correlation_id` is already the trace id in spirit |
 | J6 | Should the event stream be resumable after a crash? | no — re-run instead; `check` establishes truth cheaply |
+| ~~J7~~ | ~~Does `--output json` emit a run document on a usage error?~~ | *resolved 2026-08-13 (issue #8): no, and exit 2 is the only code that never does. §6 states the rule and P5 gained exit 9 so that a bad config file — which has a perfectly good invocation — is no longer on the same code as a bad command line.* |

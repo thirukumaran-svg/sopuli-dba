@@ -392,13 +392,24 @@ tool safe to run from a scheduler.
 |---|---|
 | 0 | success — changes applied, or nothing to do |
 | 1 | generic failure |
-| 2 | usage / config validation error |
+| 2 | usage error — argv did not resolve to a valid command and options |
 | 3 | drift detected (`check` found a mismatch) — distinct so schedulers can alert |
 | 4 | partial success (some targets succeeded, some failed) |
 | 5 | capability not supported by target/driver |
 | 6 | authentication failure (vault or database) |
 | 7 | lock held by another process |
 | 8 | aborted by user / confirmation declined |
+| 9 | configuration invalid — missing, unreadable, or refused by validation |
+
+**2 and 9 are deliberately not the same code.** They were, until J7 (issue #8)
+needed them on opposite sides of one seam: a usage error has no invocation, an
+invalid config has a perfectly good one. That is what decides whether a run
+document exists — see `03-json-output.md` §6 — and "empty stdout plus exit 2" is
+only a usable rule for a consumer if exit 2 never carries one.
+
+It also reads better for the operator. Exit 2 means *fix your command line*;
+exit 9 means *fix your config file*. Different people, different moments: one is
+somebody typing, the other is a deployed artefact a scheduler is running.
 
 ---
 

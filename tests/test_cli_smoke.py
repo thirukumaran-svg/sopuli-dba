@@ -119,18 +119,19 @@ def test_main_configures_the_streams_before_dispatching(
     assert calls == ["streams"]
 
 
-def test_a_config_error_exits_two_and_keeps_its_location(
+def test_a_config_error_exits_nine_and_keeps_its_location(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     write_config: Callable[[str], Path],
 ) -> None:
-    """P5 puts config validation on 2 with usage errors, not on 1 with failures.
+    """P5 gives a bad configuration its own code rather than folding it into 1.
 
     A scheduler branches on that: "fix your file" and "something broke" call for
-    different people. Driven through a real command against a real bad file
-    rather than a monkeypatched boundary, now that `config show` loads one: what
-    matters is that a file the loader rejects reaches the user as a located
-    message and exit 2, with no traceback anywhere in the path.
+    different people -- and since #8, so does "fix your command line", which is
+    what exit 2 now means on its own. Driven through a real command against a
+    real bad file rather than a monkeypatched boundary: what matters is that a
+    file the loader rejects reaches the user as a located message and exit 9,
+    with no traceback anywhere in the path.
     """
     path = write_config("version: 4\n")
     monkeypatch.setattr(sys, "argv", ["sopuli", "config", "show", "--config", str(path)])
@@ -138,7 +139,7 @@ def test_a_config_error_exits_two_and_keeps_its_location(
     with pytest.raises(SystemExit) as exit_info:
         cli_module.main()
 
-    assert exit_info.value.code == ExitCode.USAGE
+    assert exit_info.value.code == ExitCode.CONFIG_INVALID
     captured = capsys.readouterr()
     assert f"{path}:" in captured.err
     assert "unsupported config version 4" in captured.err
@@ -425,18 +426,22 @@ def test_repeated_config_options_are_layered_in_order(runner: CliRunner, tmp_pat
     assert "extra" in result.output
 
 
-def test_a_named_config_that_does_not_exist_is_a_usage_error(
+def test_a_named_config_that_does_not_exist_is_a_config_error(
     runner: CliRunner, tmp_path: Path
 ) -> None:
     """Never skipped in favour of the next candidate: a CI job whose path has a
-    typo must not quietly run against the system config instead."""
+    typo must not quietly run against the system config instead.
+
+    A configuration error rather than a usage one, since #8: `--config` parsed
+    perfectly and the run began, and it is the path it named that is not there.
+    """
     missing = tmp_path / "nope.yaml"
 
     result = runner.invoke(cli, ["config", "show", "--config", str(missing)], standalone_mode=False)
 
     assert isinstance(result.exception, ConfigError)
     assert "named by --config does not exist" in str(result.exception)
-    assert result.exception.exit_code == ExitCode.USAGE
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
 
 
 # -------------------------------------------------------- config validate ---
@@ -458,7 +463,7 @@ def test_config_validate_accepts_a_good_file(
     assert "ok: 3 targets" in result.output
 
 
-def test_config_validate_exits_two_on_an_unknown_key(
+def test_config_validate_exits_nine_on_an_unknown_key(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     write_config: Callable[[str], Path],
@@ -468,6 +473,10 @@ def test_config_validate_exits_two_on_an_unknown_key(
 
     Driven through ``main`` rather than the runner, because the exit code is the
     contract here and it is the boundary that maps a ConfigError onto it.
+
+    Exit 9 since #8. This verb is the reason the code exists: reporting
+    configuration problems is its entire purpose, so it is the one that must not
+    share an exit code with "you typed the command wrong".
     """
     path = write_config("version: 1\ntargts: []\n")
     monkeypatch.setattr(sys, "argv", ["sopuli", "config", "validate", "--config", str(path)])
@@ -475,7 +484,7 @@ def test_config_validate_exits_two_on_an_unknown_key(
     with pytest.raises(SystemExit) as exit_info:
         cli_module.main()
 
-    assert exit_info.value.code == ExitCode.USAGE
+    assert exit_info.value.code == ExitCode.CONFIG_INVALID
     captured = capsys.readouterr()
     assert "unknown key 'targts'" in captured.err
     assert "Traceback" not in captured.err
@@ -722,7 +731,9 @@ def test_select_without_resolved_is_refused(
         standalone_mode=False,
     )
 
-    assert isinstance(result.exception, ConfigError)
+    # A usage error rather than a config error: both options parsed, they simply
+    # do not form a valid request, and no file is at fault (#8).
+    assert isinstance(result.exception, click.UsageError)
     assert "nothing to filter without --resolved" in str(result.exception)
     assert result.exception.exit_code == ExitCode.USAGE
 

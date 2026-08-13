@@ -39,7 +39,6 @@ from typing import Any, TypeVar
 import click
 
 from sopuli.config import (
-    AT_SELECT,
     ROOT,
     Config,
     ConfigError,
@@ -153,11 +152,12 @@ def config_show(
     so it is safe to run against a production config from a laptop. A secret ref
     is an address and never a value.
 
-    A bad config file raises out of here rather than being caught and reported
-    as a run: the boundary in :func:`main` already maps it to exit 2, and
-    whether ``--output json`` should emit a run document for a usage error is
-    an open question (J7, issue #8) that this command must not answer by
-    accident.
+    A bad config file raises out of here rather than being caught: the boundary
+    in :func:`main` maps it to exit 9, which J7 (issue #8) settled as the code
+    that *does* carry a run document -- the invocation resolved, and it is the
+    file that turned out to be unusable. Emitting that document is the exit
+    handler's job rather than this command's, so there is one place it happens
+    instead of one per verb.
     """
     emitter = run.emitter()
     document = run.start("config.show")
@@ -168,10 +168,16 @@ def config_show(
         # for the same reason: the run looks like it did what was asked. There is
         # nothing to filter in the declared view -- it shows the file, and the
         # estate `--select` narrows does not exist until `--resolved` builds it.
-        raise ConfigError(
-            "--select has nothing to filter without --resolved",
-            at=AT_SELECT,
-            hint="the declared view shows the file; the estate it selects over is --resolved",
+        #
+        # A UsageError rather than a ConfigError, because nothing is wrong with
+        # the configuration: two options that each parsed do not form a valid
+        # request. That puts it on exit 2 with no document, which is J7's rule --
+        # and keeps exit 9 meaning "your file is wrong" for a consumer that
+        # branches on it (#8).
+        raise click.UsageError(
+            "--select has nothing to filter without --resolved\n"
+            "       the declared view shows the file; the estate it selects over "
+            "is --resolved"
         )
 
     paths = discover(run.config_paths)
@@ -219,8 +225,8 @@ def target_list(
     different failure mode, and it must not arrive as a flag on this one.
 
     A bad config file raises out of here rather than being caught, for the
-    reason ``config show`` gives: J7 (issue #8) is open, and no command should
-    answer it by accident.
+    reason ``config show`` gives: exit 9 carries a document, and the boundary
+    emits it (J7, issue #8).
     """
     emitter = run.emitter()
     document = run.start("target.list")
@@ -319,12 +325,14 @@ def policy_sample(
         # refusal is `config show --select`'s precedent. Which way round matters:
         # `--output json` is the safe one, so it wins and the *revealing* flag is
         # what has to go.
-        raise ConfigError(
-            "--reveal cannot be used with --output json",
-            hint=(
-                "json output is what gets captured and shipped to log aggregation, so a "
-                "sample never appears in it -- drop --reveal, or use the text output"
-            ),
+        #
+        # A UsageError, for `config show --select`'s reason as well: two flags
+        # that cannot both be honoured is a fact about argv, not about the file.
+        raise click.UsageError(
+            "--reveal cannot be used with --output json\n"
+            "       json output is what gets captured and shipped to log "
+            "aggregation, so a sample never\n"
+            "       appears in it -- drop --reveal, or use the text output"
         )
 
     paths = discover(run.config_paths)
@@ -353,6 +361,15 @@ def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPo
     `defaults.policy` is read directly, as `bindings.py` already reads it: it is
     the chain the file itself describes (§3), and the `SOPULI_*` and command-line
     layers above it belong to the precedence resolver (#10) rather than here.
+
+    **Both refusals below stay `ConfigError`, on exit 9, even though the name was
+    typed on the command line.** This is the boundary J7 (#8) predicted would
+    blur, and the test is not where the name came from but what is wrong: argv
+    resolved to a valid command with valid options, the run began, and the
+    configuration turned out not to declare what it asked for. `sopuli policy
+    sample nosuch` is answerable only by reading the file, so it is the file the
+    operator has to go and fix -- which is what exit 9 tells them. The two flag
+    refusals above are the other case: nothing is wrong with any file.
     """
     chosen = name if name is not None else config.defaults.policy
     if chosen is None:
@@ -399,9 +416,11 @@ def config_validate(
     is safe to point at a production config from a laptop.
 
     A bad file raises out of here rather than being caught. The boundary in
-    :func:`main` maps it to exit 2, and whether ``--output json`` should emit a
-    run document for a usage error is an open question (J7, issue #8) that this
-    command must not answer by accident -- the same reason ``config show`` gives.
+    :func:`main` maps it to exit 9 and emits the run document, which matters more
+    for this verb than for any other: reporting configuration problems is its
+    entire purpose, and a validator that goes silent under ``--output json``
+    exactly when it has something to say is not a validator. That argument is
+    what settled J7 (issue #8).
     """
     emitter = run.emitter()
     document = run.start("config.validate")

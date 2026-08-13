@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from sopuli.config.errors import ConfigError
+from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, TargetSelector
 from sopuli.config.selection import filter_estate, matches, parse_selector, select
@@ -232,9 +232,13 @@ def test_an_empty_side_is_refused(value: str) -> None:
 
 
 def test_a_selector_error_exits_as_a_usage_error() -> None:
-    """P5: "you typed it wrong" is 2, not 1, so a scheduler can tell it from a
-    failure."""
-    with pytest.raises(ConfigError) as caught:
+    """ "You typed it wrong" is 2, so a scheduler can tell it from a failure.
+
+    An `ArgumentError` rather than a plain `ConfigError`, which is what keeps it
+    on 2 now that a bad *file* is 9 (#8). Nothing is wrong with any file here,
+    and the location says so: `--select`, not a key path.
+    """
+    with pytest.raises(ArgumentError) as caught:
         parse_selector(["nonsense"])
 
     assert caught.value.exit_code == ExitCode.USAGE

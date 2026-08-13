@@ -21,6 +21,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
@@ -230,7 +231,11 @@ def test_reveal_is_refused_with_json_output(
         standalone_mode=False,
     )
 
-    assert isinstance(result.exception, ConfigError)
+    # A usage error, not a config error: nothing is wrong with any file, two
+    # flags simply cannot both be honoured. J7 (#8) puts that on exit 2, with no
+    # run document -- which is the point here, since the document is the thing
+    # `--output json` asked for and the sample must not appear in it either way.
+    assert isinstance(result.exception, click.UsageError)
     assert "--reveal cannot be used with --output json" in str(result.exception)
     assert result.exception.exit_code == ExitCode.USAGE
 
@@ -372,7 +377,8 @@ def test_a_policy_with_no_length_is_refused_here(
 
     assert isinstance(result.exception, ConfigError)
     assert "declares no password length" in str(result.exception)
-    assert result.exception.exit_code == ExitCode.USAGE
+    # The file is what has to change, so exit 9 rather than 2 (#8).
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
 
 
 def test_a_length_the_target_cannot_hold_is_refused(

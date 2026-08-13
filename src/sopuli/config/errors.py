@@ -73,12 +73,18 @@ ROOT = KeyPath()
 class ConfigError(Exception):
     """A config file is unusable, with enough detail to go and fix it.
 
-    Carries its own ``exit_code`` because P5 puts config validation on 2 with
-    usage errors, not on 1 with generic failures -- a scheduler distinguishes
-    "you typed it wrong" from "it broke".
+    Carries its own ``exit_code`` because P5 gives a bad configuration a code of
+    its own rather than folding it into generic failure -- a scheduler
+    distinguishes "fix your file" from "it broke", and the first is the failure
+    an operator can act on.
+
+    Not exit 2. That is the *pre-invocation* code, and a config error is the
+    opposite case: argv resolved, the run began, and then the file it was told to
+    read turned out to be unusable. J7 (issue #8) puts the seam exactly there, so
+    that this can carry a run document while a usage error cannot.
     """
 
-    exit_code = ExitCode.USAGE
+    exit_code = ExitCode.CONFIG_INVALID
 
     def __init__(
         self,
@@ -128,6 +134,27 @@ class ConfigError(Exception):
         if self.hint:
             rendered += f"\n  hint: {self.hint}"
         return rendered
+
+
+class ArgumentError(ConfigError):
+    """Something on the *command line* is unusable, not something in a file.
+
+    A ``--select`` value that is not ``key=value`` is the case that needs this:
+    it is parsed in the config layer, which must not import click
+    (``04-testing.md`` §4 keeps tier 0 free of I/O and of the CLI), so
+    ``click.UsageError`` is not available where the problem is found.
+
+    Everything about it is a :class:`ConfigError` except the exit code, and that
+    is the whole point. J7 (issue #8) puts the seam at "did the invocation
+    resolve": a malformed selector means it did not, so this exits 2 and carries
+    no run document, while its parent exits 9 and does. The boundary needs no
+    special case -- it already exits with ``exc.exit_code``.
+
+    Refusals found *in* the CLI raise ``click.UsageError`` directly. This exists
+    for the layers that cannot.
+    """
+
+    exit_code = ExitCode.USAGE
 
 
 def location_of(mark: Mark | None) -> tuple[int | None, int | None]:
