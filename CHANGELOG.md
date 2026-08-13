@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/futville/sopuli-dba/compare/v0.16.0...v0.17.0) (2026-08-13)
+
+
+### Features
+
+* **cli:** resolve every global option through one precedence chain ([#75](https://github.com/futville/sopuli-dba/issues/75)) ([02531aa](https://github.com/futville/sopuli-dba/commit/02531aa791158a09da06228f57d3fe25274120dc))
+* **settings:** resolve a setting across P3's layers, with a safety ratchet ([#73](https://github.com/futville/sopuli-dba/issues/73)) ([75d4513](https://github.com/futville/sopuli-dba/commit/75d4513ac43a761412ab04d6d12b7adbe2edf83a))
+
 ## [0.16.0](https://github.com/futville/sopuli-dba/compare/v0.15.0...v0.16.0) (2026-08-12)
 
 
