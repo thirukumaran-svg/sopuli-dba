@@ -140,7 +140,7 @@ def config_show(
     resolved: bool,
     selectors: tuple[str, ...],
     run: Invocation,
-) -> None:
+) -> str:
     """Show the effective configuration.
 
     Two views of one file. Without ``--resolved`` it shows the configuration as
@@ -159,8 +159,7 @@ def config_show(
     handler's job rather than this command's, so there is one place it happens
     instead of one per verb.
     """
-    emitter = run.emitter()
-    document = run.start("config.show")
+    document = run.document
 
     match = parse_selector(selectors)
     if match and not resolved:
@@ -192,7 +191,7 @@ def config_show(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    emitter.emit(document, render_text(paths, config, resolved=resolved, match=match))
+    return render_text(paths, config, resolved=resolved, match=match)
 
 
 @cli.group("target")
@@ -206,7 +205,7 @@ def target_group() -> None:
 def target_list(
     selectors: tuple[str, ...],
     run: Invocation,
-) -> None:
+) -> str:
     """List the targets the configuration expands to.
 
     ``01-configuration.md`` section 4 makes this a command rather than a flag:
@@ -228,8 +227,7 @@ def target_list(
     reason ``config show`` gives: exit 9 carries a document, and the boundary
     emits it (J7, issue #8).
     """
-    emitter = run.emitter()
-    document = run.start("target.list")
+    document = run.document
 
     match = parse_selector(selectors)
     paths = discover(run.config_paths)
@@ -249,7 +247,7 @@ def target_list(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    emitter.emit(document, render_target_list(paths, config, match=match))
+    return render_target_list(paths, config, match=match)
 
 
 @cli.group("policy")
@@ -291,7 +289,7 @@ def policy_sample(
     encoding: str,
     reveal: bool,
     run: Invocation,
-) -> None:
+) -> str:
     """Show what a password policy produces, without touching anything.
 
     A policy is a handful of numbers and a charset name, and none of that answers
@@ -317,10 +315,9 @@ def policy_sample(
     name is refused the same way one written *in* the file would be. With no name
     it uses `defaults.policy`.
     """
-    emitter = run.emitter()
-    document = run.start("policy.sample")
+    document = run.document
 
-    if reveal and emitter.is_json:
+    if reveal and run.is_json:
         # Silently dropping the flag is the defect `select_option` describes; the
         # refusal is `config show --select`'s precedent. Which way round matters:
         # `--output json` is the safe one, so it wins and the *revealing* flag is
@@ -349,10 +346,7 @@ def policy_sample(
         ExitCode.SUCCESS,
         Summary(total=count, ok=sum(1 for one in described if one.compliant), changed=0, failed=0),
     )
-    emitter.emit(
-        document,
-        render_samples(paths, chosen, policy, samples, described, limit=limit, reveal=reveal),
-    )
+    return render_samples(paths, chosen, policy, samples, described, limit=limit, reveal=reveal)
 
 
 def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPolicy]:
@@ -396,7 +390,7 @@ def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPo
 @global_options
 def config_validate(
     run: Invocation,
-) -> None:
+) -> str:
     """Check the configuration and say nothing else.
 
     P3 makes this a first-class command: it "exits non-zero on unknown keys -- a
@@ -422,8 +416,7 @@ def config_validate(
     exactly when it has something to say is not a validator. That argument is
     what settled J7 (issue #8).
     """
-    emitter = run.emitter()
-    document = run.start("config.validate")
+    document = run.document
 
     paths = discover(run.config_paths)
     _, config = load_layers(paths)
@@ -434,7 +427,7 @@ def config_validate(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    emitter.emit(document, render_validation(paths, config))
+    return render_validation(paths, config)
 
 
 def main() -> None:
@@ -444,6 +437,13 @@ def main() -> None:
     table already specifies, so that path is left alone. This wrapper exists for
     the other one: an unexpected exception should reach the user as a message
     and exit 1, never as a traceback.
+
+    **This is the boundary's text half.** The JSON half -- the run document, for
+    every exit but 2 -- is emitted before the exception gets here, by the exit
+    handler in :mod:`sopuli.invocation`, which is the only place that has the
+    open document to attach an error to. What is left here is the message a human
+    reads on stderr and the process exit code, both of which happen whatever
+    ``--output`` said.
 
     Stream encoding is settled here rather than inside a command because it is a
     property of the process, not of any one verb: by the time a command runs,
@@ -458,10 +458,11 @@ def main() -> None:
     except SystemExit:
         raise
     except ConfigError as exc:
-        # A bad config file is a usage error, not a failure (P5): it exits 2
-        # alongside "you typed the command wrong", so a scheduler can tell
-        # "fix your file" from "something broke". The error already knows its
-        # own location and hint -- printing it is all that is left to do.
+        # P5 gives a bad configuration its own exit code, so a scheduler can tell
+        # "fix your file" from "you typed the command wrong" and from "something
+        # broke". The error already knows its own location, hint and code --
+        # printing it is all that is left to do. `ArgumentError` comes through
+        # here too, carrying exit 2 (#8).
         click.echo(f"sopuli: {exc}", err=True)
         raise SystemExit(exc.exit_code) from exc
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all at the boundary

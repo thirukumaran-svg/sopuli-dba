@@ -86,6 +86,12 @@ class ConfigError(Exception):
 
     exit_code = ExitCode.CONFIG_INVALID
 
+    #: ``error.category`` in the run document, from the schema's closed enum.
+    #: Carried by the exception so the boundary reports what was wrong rather
+    #: than inferring it from the exception's type -- which is the mapping that
+    #: goes wrong first when a subclass is added.
+    category = "config"
+
     def __init__(
         self,
         message: str,
@@ -104,12 +110,18 @@ class ConfigError(Exception):
         self.column = column
         self.hint = hint
 
-    def __str__(self) -> str:
-        """Render as ``file:line:col: key.path: message``, hint on its own line.
+    @property
+    def located(self) -> str:
+        """``file:line:col: key.path: message`` -- everything but the hint.
 
-        Every part is optional except the message, and each is omitted rather
-        than filled with a placeholder -- ``sopuli.yaml:?:?:`` tells a reader
-        nothing except that the tool did not know.
+        Split out of :meth:`__str__` because the JSON contract's ``error`` object
+        has a ``hint`` field of its own and **no location field at all**
+        (``03-json-output.md`` §4). So the location has to travel inside the
+        message there, and the hint must not -- otherwise a consumer gets the
+        hint twice and a newline in the middle of a string it is going to render
+        in a table. Same rendering either way, which is what keeps the message a
+        reader sees on stderr and the one a scheduler parses from being two
+        different descriptions of one problem.
         """
         prefix = []
         if self.source is not None:
@@ -130,10 +142,18 @@ class ConfigError(Exception):
         if self.at:
             prefix.append(str(self.at))
 
-        rendered = ": ".join([*prefix, self.message])
+        return ": ".join([*prefix, self.message])
+
+    def __str__(self) -> str:
+        """The located message, with the hint on its own line.
+
+        Every part is optional except the message, and each is omitted rather
+        than filled with a placeholder -- ``sopuli.yaml:?:?:`` tells a reader
+        nothing except that the tool did not know.
+        """
         if self.hint:
-            rendered += f"\n  hint: {self.hint}"
-        return rendered
+            return f"{self.located}\n  hint: {self.hint}"
+        return self.located
 
 
 class ArgumentError(ConfigError):

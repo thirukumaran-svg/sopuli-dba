@@ -26,6 +26,14 @@ from sopuli import invocation
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import GLOBAL_PARAMS, INVOCATION_PARAM
+from sopuli.output.document import SCHEMA_VERSION
+
+SCHEMA = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "schemas"
+    / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
+)
 
 
 @pytest.fixture
@@ -326,6 +334,22 @@ def test_every_verb_takes_the_global_options(path: str, command: click.Command) 
     """
     names = {param.name for param in command.params}
     assert set(GLOBAL_PARAMS) <= names, path
+
+
+@pytest.mark.parametrize(("path", "command"), list(commands()), ids=lambda one: str(one))
+def test_every_verb_names_a_command_the_schema_allows(path: str, command: click.Command) -> None:
+    """The document's `command` is derived from the tree, so the tree must fit it.
+
+    `command_path` builds `config.show` out of the contexts rather than each verb
+    repeating its own name, which removes a whole class of typo -- and moves the
+    risk to a new verb whose path is not in the closed enum. That is this test:
+    the verb exists, so its dotted name has to be a value a document may carry.
+    """
+    del command
+    dotted = ".".join(path.split()[1:])
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+
+    assert dotted in schema["properties"]["command"]["enum"], path
 
 
 @pytest.mark.parametrize(("path", "command"), list(commands()), ids=lambda one: str(one))

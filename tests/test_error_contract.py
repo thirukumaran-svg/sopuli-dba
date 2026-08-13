@@ -5,15 +5,16 @@ Tier 0 (04-testing.md §4): in-process, no containers.
     A run document describes a run, and a run begins when the invocation
     resolves. No valid invocation, no document.
 
-The consumer-facing half of that rule is what this file pins: **stdout is
-byte-empty on exit 2**, and nothing else exits 2. J1's buffering happens to give
-the first for free today, which is exactly why it is asserted rather than
-inherited -- a guarantee consumers branch on should not depend on an unrelated
-decision staying the way it is.
+Both halves are pinned here. **Stdout is byte-empty on exit 2**, and J1's
+buffering happens to give that for free today -- which is exactly why it is
+asserted rather than inherited, since a guarantee consumers branch on should not
+depend on an unrelated decision staying the way it is. And **every other exit
+emits a document**, including the one nobody plans for: an exception from the
+middle of a verb.
 
-The other half -- that every *other* exit code emits a document -- arrives with
-the exit handler that emits it. What is here now is the seam: the exit codes on
-either side of it, and which errors land where.
+The failure documents are validated against the committed schema rather than
+merely inspected. A document emitted only when something has already gone wrong
+is the one nobody looks at until they need it.
 """
 
 from __future__ import annotations
@@ -22,9 +23,12 @@ import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner
+from jsonschema import Draft202012Validator
 
 from sopuli import cli as cli_module
 from sopuli.cli import cli
@@ -46,6 +50,35 @@ BAD_CONFIG = "version: 1\ntargts: []\n"
 def runner() -> CliRunner:
     """Separate streams, so "stdout is empty" is a claim about stdout alone."""
     return CliRunner()
+
+
+@pytest.fixture
+def validator() -> Draft202012Validator:
+    return Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))
+
+
+def emitted(capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
+    """The run document a failed run wrote to stdout.
+
+    Reads the captured streams once, so a caller can assert on the document and
+    on stderr from the same run -- both happen, and which goes where is the
+    contract.
+    """
+    document: dict[str, Any] = json.loads(capsys.readouterr().out)
+    return document
+
+
+def run_main(monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
+    """Drive a real process boundary and return the exit code.
+
+    Through ``main`` rather than ``CliRunner`` because the exit code is half of
+    what is being asserted, and only the boundary maps a `ConfigError` onto one.
+    """
+    monkeypatch.setattr(sys, "argv", ["sopuli", *argv])
+    with pytest.raises(SystemExit) as exit_info:
+        cli_module.main()
+    assert isinstance(exit_info.value.code, int)
+    return exit_info.value.code
 
 
 # ------------------------------------------------------- exit 2: no document ---
@@ -216,6 +249,212 @@ def test_every_exit_code_is_in_the_published_enum() -> None:
     published = schema["properties"]["exit_code"]["enum"]
 
     assert sorted(int(code) for code in ExitCode) == sorted(published)
+
+
+# --------------------------------------------- the document a failure emits ---
+
+
+def test_a_config_error_emits_a_document_under_output_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    validator: Draft202012Validator,
+    write_config: Callable[[str], Path],
+) -> None:
+    """`config validate` is the verb the whole decision was made for.
+
+    Reporting configuration problems is its entire purpose, and until now
+    `--output json` against a broken file produced an exit code and silence.
+    """
+    path = write_config(BAD_CONFIG)
+
+    code = run_main(monkeypatch, "config", "validate", "--config", str(path), "--output", "json")
+    document = emitted(capsys)
+
+    assert code == ExitCode.CONFIG_INVALID
+    assert list(validator.iter_errors(document)) == []
+    assert document["exit_code"] == ExitCode.CONFIG_INVALID
+    assert document["command"] == "config.validate"
+    assert document["error"]["category"] == "config"
+    assert "unknown key 'targts'" in document["error"]["message"]
+
+
+def test_the_error_message_carries_the_location_and_the_hint_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+) -> None:
+    """`error` has a `hint` field and no location field, so the two split there.
+
+    The file and key path are the most useful part of a config error and have
+    nowhere else to go; the hint has its own field, so repeating it inside the
+    message would hand a consumer the same sentence twice and a newline in the
+    middle of a string it is about to put in a table.
+    """
+    path = write_config(BAD_CONFIG)
+
+    run_main(monkeypatch, "config", "validate", "--config", str(path), "--output", "json")
+    error = emitted(capsys)["error"]
+
+    assert str(path) in error["message"]
+    assert "\n" not in error["message"]
+    assert "hint:" not in error["message"]
+    assert error["hint"].startswith("known keys here")
+
+
+def test_a_failure_says_so_on_both_streams(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+) -> None:
+    """The document is for the scheduler; the message is for whoever is watching.
+
+    Both happen, and which goes where is the contract: a consumer parsing stdout
+    must find only the document, and a human tailing a CI log must not have to
+    parse JSON to see what went wrong.
+    """
+    path = write_config(BAD_CONFIG)
+
+    run_main(monkeypatch, "config", "validate", "--config", str(path), "--output", "json")
+    captured = capsys.readouterr()
+
+    json.loads(captured.out)  # raises if anything else was printed alongside
+    assert "unknown key 'targts'" in captured.err
+
+
+def test_an_unexpected_exception_still_emits_a_valid_document(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    validator: Draft202012Validator,
+    config_file: Path,
+) -> None:
+    """The case most likely to be missed, and the reason the document is opened
+    early rather than assembled at the end.
+
+    A verb that dies three lines in has no sections to report and still owes the
+    consumer a document: the command it was running, the invocation, a zeroed
+    summary, and the error. Assembling at the end would have produced nothing at
+    all here -- which is exactly the shape a consumer cannot distinguish from a
+    crashed process.
+    """
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("something went wrong")
+
+    monkeypatch.setattr(cli_module, "load_layers", explode)
+
+    code = run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
+    document = emitted(capsys)
+
+    assert code == ExitCode.FAILURE
+    assert list(validator.iter_errors(document)) == []
+    assert document["exit_code"] == ExitCode.FAILURE
+    assert document["command"] == "config.show"
+    assert document["summary"] == {"total": 0, "ok": 0, "changed": 0, "failed": 0}
+    assert document["error"]["category"] == "internal"
+    assert "something went wrong" in document["error"]["message"]
+
+
+def test_an_abort_exits_eight_with_a_document(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    validator: Draft202012Validator,
+    config_file: Path,
+) -> None:
+    """A run somebody stopped is still a run that happened.
+
+    click's own handler would print "Aborted!" and exit 1; P5 puts "aborted by
+    user / confirmation declined" on 8. Both halves matter: the document says 8
+    and the process exits 8, because `exit_code` in the document is defined as
+    equal to the process's.
+
+    Nothing prompts yet, so the abort is injected -- but the path is the one a
+    declined confirmation will take, and a Ctrl-C already takes today.
+    """
+
+    def abort(*args: object, **kwargs: object) -> None:
+        raise click.Abort
+
+    monkeypatch.setattr(cli_module, "load_layers", abort)
+
+    code = run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
+    document = emitted(capsys)
+
+    assert code == ExitCode.ABORTED
+    assert list(validator.iter_errors(document)) == []
+    assert document["exit_code"] == ExitCode.ABORTED
+    # No `error`: the category enum has no value for "the operator said no", and
+    # `internal` would be a lie about what happened. The code says it, and a
+    # diagnostic says it in words.
+    assert "error" not in document
+    assert document["diagnostics"] == [{"level": "info", "message": "aborted before completion"}]
+
+
+def test_a_failed_run_still_reports_its_options(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+) -> None:
+    """The document is the *invocation's*, opened before the verb ran.
+
+    "Why did the scheduled run fail and mine not" is answered by what each run
+    was asked to do, which is the half a failure would otherwise drop.
+    """
+    path = write_config(BAD_CONFIG)
+    monkeypatch.setenv("SOPULI_DRY_RUN", "1")
+
+    run_main(monkeypatch, "config", "validate", "--config", str(path), "--output", "json")
+    document = emitted(capsys)
+
+    assert document["invocation"]["dry_run"] is True
+    assert document["invocation"]["options"]["safety.dry_run"]["source"] == "env"
+
+
+def test_text_output_gets_a_message_and_no_document(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    write_config: Callable[[str], Path],
+) -> None:
+    """A run document *is* the JSON output mode; text has no such thing.
+
+    So the rule is about `--output json`, and the text path is unchanged: a
+    located message on stderr and nothing on stdout.
+    """
+    path = write_config(BAD_CONFIG)
+
+    code = run_main(monkeypatch, "config", "validate", "--config", str(path))
+    captured = capsys.readouterr()
+
+    assert code == ExitCode.CONFIG_INVALID
+    assert captured.out == ""
+    assert "unknown key 'targts'" in captured.err
+
+
+def test_a_usage_error_emits_nothing_even_when_json_was_asked_for(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], config_file: Path
+) -> None:
+    """The seam, from the emitting side.
+
+    `--select nonsense` is refused after the invocation would otherwise have
+    resolved, so this is the case where the handler has a document in hand and
+    must decline to emit it. Keyed on the exit code rather than on where the
+    refusal happened, which is what makes the rule one line.
+    """
+    code = run_main(
+        monkeypatch,
+        "config",
+        "show",
+        "--select",
+        "nonsense",
+        "--config",
+        str(config_file),
+        "--output",
+        "json",
+    )
+    captured = capsys.readouterr()
+
+    assert code == ExitCode.USAGE
+    assert captured.out == ""
+    assert captured.err.strip()
 
 
 def test_no_two_exit_codes_share_a_number() -> None:

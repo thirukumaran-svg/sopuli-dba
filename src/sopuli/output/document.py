@@ -100,6 +100,41 @@ class Diagnostic:
 
 
 @dataclass(frozen=True)
+class Error:
+    """``error`` -- why the run as a whole failed.
+
+    Distinct from ``results[].error``, which is one target failing inside a run
+    that otherwise worked. This one is present when there is no per-target work
+    to report at all: the configuration could not be read, or something went
+    wrong before the first target was touched.
+
+    ``category`` comes from the schema's closed enum, and the exception carries
+    it (:attr:`sopuli.config.errors.ConfigError.category`) rather than the
+    boundary guessing from the exception type.
+
+    Only three of the schema's fields are here. ``code`` and ``retryable``
+    describe failures this tool cannot produce yet -- a vendor code needs a
+    driver -- and ``target_capability`` belongs to the capability category. They
+    arrive with the errors that have them.
+
+    ``message`` is documented as redacted (``03-json-output.md`` §4). What makes
+    that true here is the same thing that makes it true everywhere: a
+    :class:`~sopuli.secrets.Secret` serialises as ``***``, so an exception that
+    interpolated one carries no plaintext into this field.
+    """
+
+    category: str
+    message: str
+    hint: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"category": self.category, "message": self.message}
+        if self.hint is not None:
+            data["hint"] = self.hint
+        return data
+
+
+@dataclass(frozen=True)
 class Option:
     """One entry in ``invocation.options`` -- an effective setting and its layer.
 
@@ -197,6 +232,9 @@ class RunDocument:
     #: anything", and an empty object would say that once per run in a document
     #: consumers diff.
     options: dict[str, Option] = field(default_factory=dict)
+    #: Why the run failed as a whole. Absent on success, and absent on exit 2 --
+    #: which never produces a document at all (J7, ``03-json-output.md`` §6).
+    error: Error | None = None
 
     @classmethod
     def start(
@@ -256,6 +294,8 @@ class RunDocument:
             document["config"] = self.config
         if self.policy is not None:
             document["policy"] = self.policy
+        if self.error is not None:
+            document["error"] = self.error.to_dict()
         return document
 
 

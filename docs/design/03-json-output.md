@@ -155,6 +155,7 @@ unchanged, which is precisely what the UTF-8 streams make safe.
                  verification, rollover, error, warnings[] } ],
   summary    { total, ok, changed, drift, unverifiable, skipped, failed, by_state },
   diagnostics[],
+  error      { category, message, hint },
   exit_code
 }
 ```
@@ -196,6 +197,19 @@ refusal a property rather than a promise.
 `compliant` is always `true` for a generated sample. It is reported anyway,
 because `false` would mean the generator and the validator disagree — and one
 predicate serving both is the design (`01-configuration.md` §8).
+
+### `error`, when the run failed as a whole
+
+Distinct from `results[].error`, which is one target failing inside a run that
+otherwise worked. The run-level one is present when there is no per-target work
+to report at all — the configuration could not be read, or something went wrong
+before the first target was touched — and it is what makes exit 9 and exit 1
+answerable from the document alone.
+
+It has **no location field**, so a config error's file and key path travel inside
+`message`; `hint` has a field of its own and is not repeated there. The category
+comes from the exception rather than from the boundary inferring one from a
+Python type, which is the mapping that goes wrong first when a subclass is added.
 
 ### `invocation.selection`
 
@@ -456,6 +470,31 @@ validator.
 > the file. Doing that hands the error to the framework's usage path, which
 > prints text and exits 2 — putting config errors back on the no-document side
 > whatever this section says.
+
+**How it is enforced.** The document is opened the moment the invocation
+resolves, not assembled when the run ends, and it is serialised once by a single
+exit handler wrapped around every verb (`sopuli/invocation.py`). That ordering is
+what makes the rule true rather than aspirational: an exception three lines into
+a verb still has a document to attach the error to, carrying `command`, the
+`invocation` including its resolved options, a zeroed `summary`, and the error —
+schema-valid, and the case most likely to be missed if the document were built at
+the end. The handler decides by **exit code**, never by exception type, so a new
+error class cannot arrive on the wrong side of the seam by forgetting to be
+listed somewhere.
+
+A run document *is* the `--output json` mode; text output has no such thing to
+withhold, and a failure there is the located message on stderr that it always
+was. Both streams are used on a failed JSON run: the document on stdout for the
+scheduler, the message on stderr for whoever is watching the log.
+
+**An abort is a run that happened and did not finish**, so it gets a document
+too, on exit 8. Withholding one would be worst in the case the code exists for: a
+confirmation declined halfway through a rotation is exactly when a consumer needs
+to know which targets were already touched. It carries no `error` — the category
+enum has no value for "the operator said no", and `internal` would be a lie about
+what happened — so the exit code says it and a `diagnostics[]` entry says it in
+words. `error` is optional precisely so a document can report an outcome that is
+not a failure.
 
 The same rule holds for `jsonl`: a usage error produces zero events, not a
 truncated stream. That is already consistent with "a stream that ends without

@@ -37,15 +37,16 @@ from __future__ import annotations
 import functools
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TypeVar
 
 import click
 
-from sopuli.config.errors import ConfigError
+from sopuli.config.errors import ArgumentError, ConfigError
+from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
-from sopuli.output.document import Option, RunDocument
+from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import env_contributions
@@ -76,6 +77,12 @@ GLOBAL_PARAMS = ("config_paths", "output_mode", "color_choice", "dry_run")
 #: block needs the config layer to reach it, and `profile` needs profile
 #: activation to mean anything.
 RESOLVED_SETTINGS = ("output", "safety.dry_run")
+
+#: What an :class:`Invocation` built without a command is called. Only reachable
+#: from a test that constructs one directly -- every real run derives the name
+#: from the command tree (:func:`command_path`) -- and it is a value from the
+#: schema's enum rather than a placeholder, so such a document still validates.
+NO_COMMAND = "config.show"
 
 
 @dataclass(frozen=True)
@@ -116,6 +123,12 @@ class Invocation:
     config_paths: tuple[Path, ...] = ()
     color_choice: ColorChoice = ColorChoice.AUTO
     resolved: Mapping[str, Resolved] = field(default_factory=dict)
+    #: The run document, **open from the moment the invocation resolves**. A verb
+    #: fills in its sections and finishes it; it is serialised once, by
+    #: :func:`_pass_invocation`. Building it here rather than at the end is what
+    #: makes "every exit but 2 emits a document" true rather than aspirational --
+    #: an exception three lines into a verb still has one to attach the error to.
+    document: RunDocument = field(default_factory=lambda: RunDocument.start(NO_COMMAND))
 
     @property
     def output_mode(self) -> OutputMode:
@@ -124,6 +137,11 @@ class Invocation:
     @property
     def dry_run(self) -> bool:
         return bool(self.value("safety.dry_run"))
+
+    @property
+    def is_json(self) -> bool:
+        """Whether this run's output is the machine-readable contract."""
+        return self.output_mode is OutputMode.JSON
 
     def value(self, name: str) -> Any:
         """The effective value of a setting, or ``None`` if no layer supplied one."""
@@ -134,28 +152,53 @@ class Invocation:
         """The one emitter for this run (see :class:`~sopuli.output.emit.Emitter`)."""
         return Emitter(mode=self.output_mode, color_choice=self.color_choice)
 
-    def start(self, command: str) -> RunDocument:
-        """Open a run document carrying this invocation's own settings.
 
-        ``options`` reports what *changed behaviour*, which is the schema's own
-        wording: a setting answered by its built-in default changed nothing, and
-        ``output: text [builtin]`` on every clean run would be noise in a
-        document consumers diff. ``config show --explain`` (#53) shows those rows
-        too -- a different view over the same resolver, not a second answer.
-        """
-        return RunDocument.start(
-            command,
-            dry_run=self.dry_run,
-            options={
-                name: Option(
-                    value=answer.value,
-                    source=str(answer.layer),
-                    source_detail=answer.detail,
-                )
-                for name, answer in self.resolved.items()
-                if answer.layer is not Layer.BUILTIN
-            },
-        )
+def open_document(command: str, invocation: Invocation) -> RunDocument:
+    """A run document carrying this invocation's own settings.
+
+    ``options`` reports what *changed behaviour*, which is the schema's own
+    wording: a setting answered by its built-in default changed nothing, and
+    ``output: text [builtin]`` on every clean run would be noise in a document
+    consumers diff. ``config show --explain`` (#53) shows those rows too -- a
+    different view over the same resolver, not a second answer.
+    """
+    return RunDocument.start(
+        command,
+        dry_run=invocation.dry_run,
+        options={
+            name: Option(
+                value=answer.value,
+                source=str(answer.layer),
+                source_detail=answer.detail,
+            )
+            for name, answer in invocation.resolved.items()
+            if answer.layer is not Layer.BUILTIN
+        },
+    )
+
+
+def command_path(ctx: click.Context) -> str:
+    """The verb's dotted path, as the schema's ``command`` enum spells it.
+
+    Derived rather than passed in by each verb. The enum *is* D2's noun-verb
+    grammar written with a dot -- ``config show`` is ``config.show``, and the
+    top-level ``doctor`` is ``doctor`` -- so a verb repeating its own name would
+    be a second spelling of one fact, and the one place a typo could put a run
+    document under a command that does not exist.
+
+    Built by walking up the context chain rather than by splitting
+    ``ctx.command_path``, which begins with the program name -- and the program
+    name is whatever click made of ``argv[0]``, which can be several words
+    (``python -m sopuli``, and ``python -m pytest`` under the test suite). Every
+    context except the root is a noun or a verb; the root is the program.
+    """
+    names = []
+    node: click.Context | None = ctx
+    while node is not None and node.parent is not None:
+        if node.info_name is not None:
+            names.append(node.info_name)
+        node = node.parent
+    return ".".join(reversed(names))
 
 
 def global_options(func: F) -> F:
@@ -208,12 +251,19 @@ def trailing_only(ctx: click.Context, param: click.Parameter, value: bool) -> bo
 
 
 def resolve_invocation(
-    group: GlobalOptions, verb: GlobalOptions, *, env: Mapping[str, str]
+    group: GlobalOptions,
+    verb: GlobalOptions,
+    *,
+    env: Mapping[str, str],
+    command: str = NO_COMMAND,
 ) -> Invocation:
     """Merge both parser positions with the environment, and resolve.
 
     Pure: the environment arrives as a mapping. The process supplies its own in
     :func:`_pass_invocation`, which is the only place it is read.
+
+    The run document is opened here, at the end, because *here* is the moment the
+    invocation resolves -- which J7 makes the moment a run begins.
     """
     contributions: dict[str, list[Contribution]] = {name: [] for name in RESOLVED_SETTINGS}
     for name, supplied in env_contributions(env).items():
@@ -224,13 +274,14 @@ def resolve_invocation(
         # environment already put there.
         _wired(contributions, name).insert(0, contribution)
 
-    return Invocation(
+    invocation = Invocation(
         # Left to right, group first: both positions are kept, because repeating
         # `--config` layers files rather than replacing them (§9).
         config_paths=(*group.config_paths, *verb.config_paths),
         color_choice=ColorChoice(_first_given(verb.color_choice, group.color_choice)),
         resolved=resolve_all(contributions),
     )
+    return replace(invocation, document=open_document(command, invocation))
 
 
 def _wired(contributions: dict[str, list[Contribution]], name: str) -> list[Contribution]:
@@ -264,11 +315,17 @@ def check_output_mode(invocation: Invocation) -> None:
     what makes it fixable -- the same variable can be inherited from a CI image
     nobody in the room chose. ``jsonl`` is the realistic case: it is in §6's table
     and not yet implemented (#9).
+
+    An :class:`~sopuli.config.errors.ArgumentError`, so it exits 2 and emits no
+    document, and this is the case ``03-json-output.md`` §6 names outright:
+    ``--output json`` is itself a request that has to parse, and the tool cannot
+    honour one it failed to read. It does not matter that the value arrived in a
+    variable rather than in argv -- the invocation did not resolve either way.
     """
     answer = invocation.resolved.get("output")
     if answer is None or answer.value in {mode.value for mode in OutputMode}:
         return
-    raise ConfigError(
+    raise ArgumentError(
         f"{answer.location}: {answer.value!r} is not an output format",
         hint=f"this build has: {', '.join(mode.value for mode in OutputMode)}",
     )
@@ -343,10 +400,31 @@ def _pass_invocation(func: F) -> F:
         for name in GLOBAL_PARAMS:
             kwargs.pop(name, None)
         group = ctx.find_root().obj or GlobalOptions()
-        invocation = resolve_invocation(group, verb, env=os.environ)
+        invocation = resolve_invocation(group, verb, env=os.environ, command=command_path(ctx))
         check_output_mode(invocation)
         kwargs[INVOCATION_PARAM] = invocation
-        return ctx.invoke(func, **kwargs)
+
+        # Everything from here is the exit handler. It is one function applied to
+        # every verb rather than a global, which is what "serialised once" means
+        # in practice: a verb cannot forget it, and there is no ambient state
+        # holding a half-built document.
+        try:
+            text = ctx.invoke(func, **kwargs)
+        except click.Abort as exc:
+            # click would print "Aborted!" and exit 1. P5 puts "aborted by user /
+            # confirmation declined" on 8, and an abort raised from inside a verb
+            # is that: the invocation resolved, the run began, and somebody -- or
+            # a Ctrl-C -- stopped it. Raising SystemExit here rather than
+            # re-raising is what makes the process agree with the document, since
+            # `exit_code` in the document always equals the process's.
+            _abort(invocation)
+            click.echo("sopuli: aborted", err=True)
+            raise SystemExit(ExitCode.ABORTED) from exc
+        except Exception as exc:  # noqa: BLE001 - deliberate: this is the handler
+            _fail(invocation, exc)
+            raise
+        invocation.emitter().emit(invocation.document, text)
+        return text
 
     # `update_wrapper` rather than the `@functools.wraps` decorator, so that mypy
     # still sees `wrapper` as the plain function `click.pass_context` wants. The
@@ -355,6 +433,88 @@ def _pass_invocation(func: F) -> F:
     # `tests/test_cli_precedence.py` can check that a verb really takes `run`.
     functools.update_wrapper(wrapper, func)
     return click.pass_context(wrapper)  # type: ignore[return-value]
+
+
+def _fail(invocation: Invocation, exc: BaseException) -> None:
+    """Emit the run document for a failure, if this failure has one.
+
+    J7's rule, and the only place it is applied: **exit 2 never produces a
+    document**, everything else does. Keyed on the exit code rather than on the
+    exception type, so a new error class cannot arrive on the wrong side of the
+    seam by forgetting to be listed here.
+
+    The exception is re-raised by the caller either way. In text output that is
+    what reaches the boundary in :func:`sopuli.cli.main` and becomes a message on
+    stderr -- a run document *is* the JSON output mode, and text has no such
+    thing to withhold.
+    """
+    if not invocation.is_json:
+        return
+
+    code, error = _classify(exc)
+    if code is ExitCode.USAGE:
+        # The invocation never resolved -- or, for `ArgumentError`, resolved to
+        # something that was not a valid request. Either way there is no run to
+        # describe, stdout stays byte-empty, and the message goes to stderr.
+        return
+
+    document = invocation.document
+    document.error = error
+    document.finish(code)
+    invocation.emitter().emit(document, "")
+
+
+def _abort(invocation: Invocation) -> None:
+    """Emit the run document for a run somebody stopped.
+
+    An abort is a run that happened and did not finish, so it gets a document
+    like every other exit but 2 -- withholding one would be the same defect as
+    withholding it for a failure, and worse in the case it exists for: a
+    confirmation declined halfway through a rotation is exactly when a scheduler
+    wants to know which targets were already touched.
+
+    No ``error`` object, because the schema's ``category`` enum has no value for
+    "the operator said no" and ``internal`` would be a lie about what happened.
+    The exit code says it, and a diagnostic says it in words -- the schema makes
+    ``error`` optional precisely so a document can report an outcome that is not
+    a failure.
+    """
+    if not invocation.is_json:
+        return
+    document = invocation.document
+    document.diagnostics.append(Diagnostic(level="info", message="aborted before completion"))
+    document.finish(ExitCode.ABORTED)
+    invocation.emitter().emit(document, "")
+
+
+def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
+    """An exception as an exit code and an ``error`` object.
+
+    ``ConfigError`` carries both itself, which is the point of
+    :attr:`~sopuli.config.errors.ConfigError.category`: the boundary reports what
+    the error says about itself rather than inferring it from a type, and the
+    inference is what goes wrong first when a subclass is added.
+
+    Anything else is ``internal`` on exit 1. When driver and vault errors arrive
+    they bring their own categories and vendor codes, and they pass through a
+    scrubber first (``03-json-output.md`` §4) -- until then this catch-all repeats
+    what the text boundary already prints to stderr, and no more.
+    """
+    if isinstance(exc, ConfigError):
+        return (
+            ExitCode(exc.exit_code),
+            Error(category=exc.category, message=exc.located, hint=exc.hint),
+        )
+    if isinstance(exc, click.ClickException):
+        # click's own errors carry their exit code, and every one of them today
+        # is a usage error -- which the caller then declines to emit. Reading the
+        # code off the exception rather than assuming 2 keeps that true if click
+        # ever raises something else.
+        return ExitCode(exc.exit_code), Error(category="internal", message=exc.format_message())
+    return (
+        ExitCode.FAILURE,
+        Error(category="internal", message=f"{type(exc).__name__}: {exc}"),
+    )
 
 
 def _cli_contributions(group: GlobalOptions, verb: GlobalOptions) -> list[tuple[str, Contribution]]:
