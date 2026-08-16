@@ -1,0 +1,92 @@
+"""What a lock is keyed on, and the order several are taken in (#83).
+
+P5 said "account+target" until Q2 was answered, and neither half was right.
+Per-target is meaningless: every target in a run receives the same value, so
+``--select env=dev`` and ``--select env=prod`` would hold different locks while
+racing on one secret. Per-account is too narrow: two accounts can share one
+document, and an account-keyed lock does not see the collision.
+
+The mutated resource is the **vault document**, and compare-and-set operates on
+exactly that. So a lock is keyed on the store and the path, and the account
+travels in the record as a label for whoever reads it.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+
+from sopuli.config.secret_refs import SecretRef
+
+
+@dataclass(frozen=True, order=True)
+class LockKey:
+    """One store, one secret path -- the unit a lock is taken on.
+
+    Ordered, because :func:`acquisition_order` sorts these and the ordering is a
+    safety property rather than tidiness. Frozen and hashable for the same
+    reason: two refs that address the same document have to *be* one key, not
+    two that compare equal somewhere later.
+    """
+
+    store: str
+    path: str
+
+    def __str__(self) -> str:
+        """``store:path`` -- what exit 7 and the lock events print."""
+        return f"{self.store}:{self.path}"
+
+
+def lock_key(ref: SecretRef, *, store: str) -> LockKey:
+    """The lock a secret ref is mutated under.
+
+    Five of a :class:`~sopuli.config.secret_refs.SecretRef`'s six parts are
+    dropped, and dropping them is the point rather than a simplification:
+
+    * ``field`` and the JSON pointer address a part *of* the document, and a
+      write to one field is a write to the whole document. Two accounts in one
+      shared document (§7) must contend, which is exactly what per-account
+      locking missed.
+    * ``@version=`` and ``@stage=`` select a version to read. A mutation writes
+      the next one, so they say nothing about what is being locked.
+    * ``vault`` is not read here even when the ref carries one. Which store a ref
+      resolves to is a precedence question (P3), answered before this is called;
+      taking a prefix that may be absent would make the key depend on how the ref
+      happened to be written.
+
+    The path is normalised -- surrounding and repeated separators removed --
+    because the key is a string and the store's document is not. ``apps/acme/db``
+    and ``apps//acme/db`` address one document, and two keys for it would be two
+    locks that never contend. Normalising can only ever *merge* keys, which
+    over-locks at worst; the failure in the other direction is two runs rotating
+    one credential at once.
+
+    Case is deliberately left alone: vault paths are case-sensitive, and folding
+    them here would make two different documents share a lock.
+    """
+    return LockKey(store=store, path=normalise_path(ref.path))
+
+
+def normalise_path(path: str) -> str:
+    """Collapse a path to the one spelling this module locks on."""
+    return "/".join(segment for segment in path.split("/") if segment)
+
+
+def acquisition_order(keys: Iterable[LockKey]) -> tuple[LockKey, ...]:
+    """Every distinct lock a run needs, in the order it must take them.
+
+    Sorted and deduplicated, and both halves are load-bearing.
+
+    **Sorted** makes deadlock structurally impossible rather than unlikely. Two
+    runs whose selections overlap take the shared locks in the same order, so one
+    of them fails to get the first contested lock and gives up -- instead of each
+    holding half of what the other needs. Nothing here ever waits, which is the
+    other half of that argument (#83: there is no ``--lock-wait``).
+
+    **Deduplicated** because a run that touches one secret from several bindings
+    -- the one-secret-many-targets case UC-1 §5 exists to handle -- would
+    otherwise try to acquire the same lock twice. The second attempt would find
+    the run's own held record and refuse it, which is a run deadlocking against
+    itself and reporting that somebody else holds the lock.
+    """
+    return tuple(sorted(set(keys)))

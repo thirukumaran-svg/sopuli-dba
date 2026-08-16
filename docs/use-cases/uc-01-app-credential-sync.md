@@ -436,6 +436,45 @@ in step 9 happens in a `finally`, on every path including failure, and writes a
 An hourly scheduled check that blocked rotations would be a worse problem than
 the one the lock solves.
 
+**The record.** One per secret path, written under a `locks/` prefix on the same
+mount as the secret — `secret/data/locks/<path>` on KV v2 — so the secret's own
+version history stays clean for `previous` and rollback. The lock path's metadata
+carries `cas_required: true` and `max_versions: 10`, and the tool asserts both in
+pre-flight rather than assuming them.
+
+```json
+{ "state": "held",
+  "correlation_id": "01J…",
+  "holder": { "host": "ci-runner-3", "pid": 8821, "os_user": "svc_sopuli" },
+  "command": "creds rotate",
+  "acquired_at": "…", "expires_at": "…",
+  "selection": "env=prod" }
+```
+
+Nothing in it is a value: an account, a selection and a process, which is what
+makes it safe to print at exit 7. Default TTL is 15 minutes, renewed at each
+target boundary, and a lock counts as expired only past `expires_at` plus a
+60-second clock-skew margin. `acquired_at` does not move on renewal — it answers
+"how long has this been going on", which is the question somebody reading exit 7
+is actually asking.
+
+Three rules about reading and writing it, each of which is the safe side of a
+choice that could have gone the other way:
+
+- **Release writes, never deletes.** A KV v2 delete leaves the metadata behind,
+  after which a first acquisition can never compare-and-set against version 0
+  again — and that monotonic version *is* the fence.
+- **Anything not `released` is held**, including a state this version has never
+  heard of. Guessing that an unrecognised record is free is the one guess that
+  ends with two runs rotating one credential.
+- **A field this version does not know is kept**, because renewal rewrites the
+  whole payload. Otherwise a record written by a newer sopuli comes back
+  narrower than it went in.
+
+Implemented in `sopuli/lock/` (#95), which holds the keying, the record and the
+acquire/take-over/refuse decision as pure logic; the store, the fence and the
+`finally` are #96.
+
 **Failure at each step**
 
 | Fails at | State afterwards | Recovery |

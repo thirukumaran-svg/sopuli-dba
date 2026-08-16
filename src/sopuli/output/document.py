@@ -20,21 +20,30 @@ import getpass
 import socket
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
+
+# Re-exported: these were defined here until a lock record needed the same
+# format (#83), and `sopuli.output.emit` and the tests import them from here.
+from sopuli.clock import to_rfc3339, utc_now
 
 SCHEMA_VERSION = "1.5"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
-def utc_now() -> datetime:
-    """Current time as an aware UTC datetime."""
-    return datetime.now(UTC)
-
-
-def to_rfc3339(moment: datetime) -> str:
-    """RFC 3339 with a trailing ``Z``, as the schema's timestamp type requires."""
-    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+__all__ = [
+    "SCHEMA_VERSION",
+    "TOOL_NAME",
+    "Actor",
+    "Diagnostic",
+    "Error",
+    "Option",
+    "RunDocument",
+    "Summary",
+    "current_actor",
+    "to_rfc3339",
+    "utc_now",
+]
 
 
 def current_actor() -> Actor:
