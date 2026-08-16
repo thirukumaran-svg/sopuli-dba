@@ -171,6 +171,13 @@ container. `testcontainers-python` handles session-scoped containers; a
   source of randomness is the CSPRNG rather than `random`, and that no message
   about a rejected candidate repeats any of it
 - redaction: the serialiser cannot emit a secret value
+- the advisory lock: acquire, fence, renew and release against an in-memory KV v2
+  fake with an injected clock — including the fencing case, where a lock is
+  stolen mid-run and the original must abort before its next mutation. That case
+  belongs here rather than in tier 2 because none of it is I/O: what makes a
+  stolen lock detectable is a version comparison, and the store that supplies the
+  version can be a dictionary. The tier-1 version below then checks the same
+  property against a real Vault rather than discovering it there
 
 ### Against a database (tiers 1–3)
 
@@ -206,6 +213,8 @@ recovery, not merely that the tool did not crash:
 | close a PDB mid-run (multi-target) | partial success, exit 4, other targets untouched; `apply --repair` fixes it |
 | revoke `ALTER USER` mid-run | clean authorization error, no half-written state |
 | two `rotate` runs on one account concurrently | one loses the lock with exit 7; final state consistent |
+| steal a held lock mid-run: expire it, let a second run take it over | the first run's next fence check fails, and it aborts before its next `ALTER USER`. Nothing half-applied from a stale plan |
+| kill a run holding a lock, then start another | by default the second refuses with exit 7, reporting the holder and that the lock has expired — breaking one is not self-service. Under `locking.break_expired` it takes it with a CAS write that bumps the version, which fences the zombie if it ever wakes |
 | vault returns a stale read after write | post-verify catches it and reports rather than promoting |
 
 Mechanics: `docker pause`/`stop` for the database, and a TCP proxy (toxiproxy or

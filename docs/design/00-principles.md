@@ -143,6 +143,13 @@ Where a capability is missing the tool **emulates it in the secret payload**
 (explicit `current` / `pending` / `previous` fields) rather than pretending the
 guarantee exists. Emulation is not atomic; commands must say so in dry-run output.
 
+**`cas` is the one capability that cannot be emulated**, since "not atomic" is
+precisely what it is for. A store without it therefore gets no lock rather than a
+weaker one: P5's advisory lock refuses on KV v1 and the file backend unless that
+store is explicitly configured down to `locking: advisory-only`, where the record
+is written without CAS and every run says so (issue #83; the configuration key
+itself arrives with #94).
+
 ### Authenticating to the vault
 
 Vault auth is configuration too, and must cover at least:
@@ -370,8 +377,16 @@ question is where their test database lives.
   required by default when blast radius exceeds `max_targets` (default 1) or the
   target is marked `environment: prod`.
 - `--limit`/`--max-targets` prevents a wildcard from hitting 200 PDBs by accident.
-- Mutating operations take an advisory **lock** keyed on account+target so two
-  operators or two CI jobs cannot rotate the same credential concurrently.
+- Mutating operations take an advisory **lock** keyed on the secret path being
+  mutated, so two operators or two CI jobs cannot rotate the same credential
+  concurrently. The lock lives in the vault, is compare-and-set guarded, and
+  carries a fencing token that is re-checked before every mutation (Q2, decided
+  in issue #83). This bullet said "account+target" until then; neither half was
+  right. Per-target is meaningless when every target receives the same value, and
+  per-account misses two accounts sharing one document. The mutated resource is
+  the vault document, and compare-and-set operates on exactly that.
+  `check`, `status` and every `--dry-run` take no lock at all — otherwise an
+  hourly scheduled check blocks rotations.
 
 **Idempotency**
 

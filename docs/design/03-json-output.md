@@ -3,9 +3,11 @@
 Status: draft / sketch, **partly implemented**. The run document, `--output
 text|json`, colour resolution, the `config` section, `diagnostics` and
 `invocation.selection.select` are real and validated against the schema in CI
-(`sopuli/output/`). `--output jsonl`, `plan` and `results` are not written yet,
-so everything about them here is still a sketch, and so are the other members of
-`invocation.selection`.
+(`sopuli/output/`). `--output jsonl`, `plan`, `results` and `lock` are not
+written yet, so everything about them here is still a sketch, and so are the
+other members of `invocation.selection`. `lock` is in the published schema
+anyway, because issue #83 decided its shape and one written form is better than
+two — the code that fills it is #96 and #97.
 
 `diagnostics` carries what §10 of `01-configuration.md` calls warnings: findings
 the loader decided not to refuse to run over. They are run-level because a config
@@ -15,7 +17,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.4.schema.json`](../schemas/sopuli-run-1.4.schema.json),
+Schemas: [`../schemas/sopuli-run-1.5.schema.json`](../schemas/sopuli-run-1.5.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -151,6 +153,7 @@ unchanged, which is precisely what the UTF-8 streams make safe.
   invocation { correlation_id, timing, actor, dry_run, profile, selection, options },
   config     { sources[], resolved, declared | targets[] + bindings[] },
   plan       { units[], shared_secrets[], confirmation_required, blast_radius },
+  lock       { mode, held[], denied },
   results    [ { account, target, scope, secret, state, changed, actions[],
                  verification, rollover, error, warnings[] } ],
   summary    { total, ok, changed, drift, unverifiable, skipped, failed, by_state },
@@ -160,8 +163,8 @@ unchanged, which is precisely what the UTF-8 streams make safe.
 }
 ```
 
-Five parts of it are worth explaining, because they encode decisions rather than
-just data.
+Several parts of it are worth explaining, because they encode decisions rather
+than just data.
 
 ### `config`, emitted by `config show`
 
@@ -308,6 +311,60 @@ would have emitted with `--dry-run`, so a diff between "what we said we'd do" an
 one-secret-many-targets case from UC-1 §4 — the situation where rotating one
 account quietly changes three PDBs. Legal, often intended, never invisible.
 
+### `lock`, on runs that take one
+
+P5's advisory lock lives in the vault and is keyed on the **secret path** being
+mutated (Q2, decided in issue #83). What reaches the document is deliberately
+about the guarantee rather than the mechanism:
+
+```json
+"lock": {
+  "mode": "cas",
+  "held": [ { "vault": "vault-prod", "path": "apps/acme/db",
+              "fence": 41, "acquired_at": "…", "expires_at": "…",
+              "released": true } ]
+}
+```
+
+**`mode` is `cas` or `none`**, not `kv2` or `flock`. A consumer needs to know
+whether the run was actually protected; it should not have to know what KV v1 is
+to find out. `none` is what a store configured `locking: advisory-only` reports —
+the record was written without compare-and-set, which catches two operators
+minutes apart and misses two CI jobs in the same second. That weakening is also a
+`diagnostics[]` warning on every run, so it appears in the audit trail of each
+run rather than only in the config file somebody would have to go and read.
+
+**`fence` is the version the acquiring write returned**, and it is the whole
+safety argument for putting the lock in the vault rather than in the database.
+The risk worth designing against is not the stale lock but the stolen one: a run
+stalls, its lock expires, a second run takes over and rotates, and the first
+wakes up and applies `ALTER USER` to its remaining targets from a plan that is no
+longer true. `DBMS_LOCK` does not prevent that either — the stalled session is
+still alive and still holds it. Re-reading the fence before every mutation does,
+which is why automatic release on session death stopped being worth a widened
+grant set.
+
+**`denied` appears on exit 7**, carrying the holder — host, pid, os_user, and
+the holder's own `correlation_id`. That is the field that answers the only
+question anyone has at that moment: is this a colleague mid-rotation, or a
+process that died? There is never more than one, because acquisition is
+all-or-nothing and stops at the first refusal.
+
+Its `reason` says **how** the run lost, and the two ways are not the same event.
+`held` means a held, unexpired record was read, so the holder and the timestamps
+describe it and the schema requires them. `race` means the compare-and-set write
+was refused — another run acquired between this run's read and its write — and
+there the winner's record was never read. The schema therefore leaves `holder`
+optional and `reason` says why it is absent, which is better than a producer
+emitting an all-null holder that a consumer cannot distinguish from a vault that
+answered badly. Everything in `held[]` is required by contrast: that section is
+written when the run ends, by which point there is nothing about its own locks
+the tool does not know.
+
+**The section is absent on a run that takes no lock**, which is `check`,
+`status` and every `--dry-run`. Absent means none was needed, not none was
+available.
+
 ### `results[].changed` vs `results[].state`
 
 Deliberately separate:
@@ -420,7 +477,7 @@ See `04-testing.md` §6.
 ```jsonl
 {"schema_version":"1.0","event":"run.started","seq":0,"ts":"…","correlation_id":"…"}
 {"schema_version":"1.0","event":"plan.resolved","seq":1,"ts":"…","correlation_id":"…","data":{…}}
-{"schema_version":"1.0","event":"lock.acquired","seq":2,"ts":"…","correlation_id":"…","account":"ORDERS_APP"}
+{"schema_version":"1.0","event":"lock.acquired","seq":2,"ts":"…","correlation_id":"…","account":"ORDERS_APP","data":{"vault":"vault-prod","path":"apps/acme/db","mode":"cas","fence":41}}
 {"schema_version":"1.0","event":"target.started","seq":3,"ts":"…","correlation_id":"…","target":"cdb1-pdb-orders"}
 {"schema_version":"1.0","event":"password.applied","seq":4,"ts":"…","correlation_id":"…","target":"cdb1-pdb-orders","account":"ORDERS_APP","data":{"vault_version":8}}
 {"schema_version":"1.0","event":"target.finished","seq":5,"ts":"…","correlation_id":"…","target":"cdb1-pdb-orders","account":"ORDERS_APP","data":{…result…}}
@@ -435,6 +492,13 @@ last `seq` says where it stopped.
 Payload shapes are reused, not redefined: `target.finished.data` is a `result`
 object, `run.finished.data` carries `summary` + `exit_code`, `plan.resolved.data`
 is a `plan`.
+
+The three `lock.*` events were in the enum from 1.0 and now have a payload. Each
+carries the store, the path and the fence — `lock.denied` carries the holder
+instead of a fence, matching `lock.denied` in the run document. `account` stays
+on the event as a label, which is what it is: the lock is keyed on the path, and
+two accounts sharing one document contend on one lock. A consumer grouping by
+`account` alone would report that contention as two independent locks.
 
 ---
 
@@ -612,6 +676,16 @@ duplicated, for the reason above.
 new enum value and a new optional property (`policy`). Nothing existing changed
 meaning, so a 1.2 consumer that ignores unknown properties reads a 1.3 document
 correctly. Renamed again, for the reason above.
+
+**1.3 became 1.4 when exit code 9 joined the `exit_code` enum** (J7, issue #8),
+**and 1.4 became 1.5 when `lock` arrived** — a new enum value and then a new
+optional property, which is the minor rule twice over.
+`lock` is the first section published *ahead* of the code that fills it, which
+the minor rule tolerates for the same reason it tolerates `plan` and `results`
+having sat unimplemented since 1.0: the schema is a producer-side guard on the
+shape, and a section nothing emits constrains nothing. What it does buy is that
+the decision in issue #83 has one written form, in the file CI validates against,
+rather than two that can disagree.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles

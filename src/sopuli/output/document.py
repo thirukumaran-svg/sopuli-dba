@@ -1,15 +1,17 @@
 """The run document (``docs/design/03-json-output.md`` §2).
 
-There is no such thing as a placeholder run document. ``sopuli-run-1.4.schema.json``
+There is no such thing as a placeholder run document. ``sopuli-run-1.5.schema.json``
 sets ``additionalProperties: false`` at the root and requires six top-level
 fields, two of which have required members of their own, so the smallest thing
 that validates is a complete document. Building it properly now is cheaper than
 discovering the shape later, and it makes the schema check in CI real from the
 first command (invariant 12).
 
-Optional sections (``plan``, ``results``, ``diagnostics``) are omitted entirely
-rather than emitted as ``null`` — the schema types them as object/array, so a
-null would fail validation.
+Optional sections (``plan``, ``lock``, ``results``, ``diagnostics``) are omitted
+entirely rather than emitted as ``null`` — the schema types them as object/array,
+so a null would fail validation. For ``lock`` the omission also *means* something
+(``03-json-output.md`` §2): absent says the run needed no lock, which is every
+``check``, ``status`` and ``--dry-run``.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-SCHEMA_VERSION = "1.4"
+SCHEMA_VERSION = "1.5"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -263,7 +265,7 @@ class RunDocument:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Render to the shape ``sopuli-run-1.4.schema.json`` describes."""
+        """Render to the shape ``sopuli-run-1.5.schema.json`` describes."""
         finished_at = self.finished_at or utc_now()
         duration_ms = int((finished_at - self.started_at).total_seconds() * 1000)
         invocation: dict[str, Any] = {

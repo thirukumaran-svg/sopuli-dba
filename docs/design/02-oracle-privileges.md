@@ -206,6 +206,7 @@ login` with the `LCOUNT` guard.
 | `ALTER PROFILE` | see UC-1 Q4 — the tool reports the DDL needed to enable password rollover rather than changing a shared profile itself |
 | `CREATE USER` / `DROP USER` | account provisioning is out of scope for UC-1 |
 | `ALTER SYSTEM`, `GRANT ANY *`, `BECOME USER` | no operation needs them |
+| `EXECUTE ON DBMS_LOCK` | P5's advisory lock lives in the vault, not in the database (Q2, decided in #83). It was the one grant a `DBMS_LOCK`-based lock would have added, and the reason it is not here is that session-scoped locking does not solve the problem it looked like it solved: a stalled run's session is still alive, so its lock prevents nothing while its plan goes stale. A fencing token re-checked before every mutation does, and it needs nothing from the database |
 
 `sopuli doctor --check-privileges` reports what the service account actually
 holds and flags anything on this list. Over-granting is the common failure when

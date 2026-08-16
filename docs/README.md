@@ -17,7 +17,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.0.schema.json](schemas/sopuli-config-1.0.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.4.schema.json](schemas/sopuli-run-1.4.schema.json) | JSON Schema (2020-12) for the `--output json` document |
+| [schemas/sopuli-run-1.5.schema.json](schemas/sopuli-run-1.5.schema.json) | JSON Schema (2020-12) for the `--output json` document |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -108,8 +108,14 @@ reset strategy (T7). *T1 resolved 2026-08-08: the 11g XE image exists and works,
 so 11.2 stays tier 2. T5 resolved 2026-08-09: GitHub Actions, tier 0 wired in
 `.github/workflows/ci.yml`.*
 
-**UC-1:** default verification method and the privilege it implies (Q1), where
-the advisory lock lives (Q2), ~~how many `previous` generations to keep~~ (Q3 —
+**UC-1:** default verification method and the privilege it implies (Q1),
+~~where the advisory lock lives~~ (Q2 — **decided in #83: in the vault**, one
+CAS-guarded record per *secret path*, with a fencing token re-checked before
+every mutation. `DBMS_LOCK` was rejected: its one advantage is release on session
+death, and a stalled session is still alive, so it does not prevent the failure
+that matters — a run waking from a stall and applying a stale plan. Fencing does,
+and it costs no widened grant set. Stores without `cas` refuse mutations unless
+configured `locking: advisory-only`), ~~how many `previous` generations to keep~~ (Q3 —
 **decided in #84: exactly one**, plus whatever the store's native versioning
 gives for free. C14 settled it: OCI holds exactly one `PREVIOUS`, and a closed
 three-stage vocabulary has nothing to address an older generation with),
@@ -134,10 +140,11 @@ positive.
    `check --method hash` and, more importantly, the `LCOUNT` guard that stops
    scheduled checks from locking production accounts. With `ALTER USER` already
    granted, the verifier exposure is a smaller concern than it was.
-2. **Q2** — advisory lock in the vault or in the database.
-3. **C1–C6** — the configuration questions, since the YAML schema is the next
+2. **C1–C6** — the configuration questions, since the YAML schema is the next
    thing that becomes code.
-*(T1 was here and is now answered: the image exists, 11.2 support costs nothing.)*
+*(T1 was here and is now answered: the image exists, 11.2 support costs nothing.
+Q2 was here too and is answered in #83: the lock lives in the vault, keyed on the
+secret path, fenced by the vault's own version counter. Building it is #94–#97.)*
 
 ## Verify before implementing
 

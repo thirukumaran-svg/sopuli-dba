@@ -141,7 +141,9 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
    declared limits and say so in the output.
 3. Generate from a CSPRNG. Reject and regenerate candidates that violate charset,
    first-character, length-in-bytes, or composition requirements. Bounded retries.
-4. Acquire the lock for the account.
+4. Acquire the lock for the secret path (Q2, #83) — which `generate` can do
+   precisely because the lock lives in the vault: this step never connects to a
+   database, so a database-side lock could not have protected the write below.
 5. Write to the vault: `pending = candidate`, leave `current` untouched. Use CAS
    where supported so a concurrent writer cannot be overwritten silently.
 6. Report new version, and the fact that the database has not changed.
@@ -396,20 +398,43 @@ sopuli creds rotate --application orders-app
 
 ```
  1. plan + confirm            ── nothing has changed yet
- 2. acquire lock
+ 2. acquire every lock        ── one per secret path, sorted order,
+                                 all-or-nothing, never waiting
  3. pre-flight all targets    ── reachable, correct scope, account exists,
                                  privileges present, capability present
- 4. generate                  ── vault: pending = new
+ 4. generate                  ── vault: pending = new          (fence checked)
  5. apply to each target      ── database changed; old password still valid
-                                 if strategy = rollover
+                                 if strategy = rollover        (fence checked,
+                                 lock renewed at each boundary)
  6. verify each target        ── login or hash with the new password
  7. promote                   ── vault: previous = current, current = pending
+                                                              (fence checked)
  8. post-verify               ── read back from vault, verify once more
- 9. release lock, emit audit record
+ 9. release every lock, emit audit record
 ```
 
 Step 3 exists so that the common failures (wrong privileges, closed PDB,
 unreachable host) happen *before* anything is written anywhere.
+
+**Step 2 and the fence** (Q2, decided in #83). Locks live in the vault, one per
+**secret path** — not per account and not per target, because every target in a
+run receives the same value and two accounts may share one document. A run that
+touches several paths takes them all before the first mutation, in sorted order,
+and never blocks waiting: partial acquisition releases what it took and exits 7
+having applied nothing, which makes deadlock structurally impossible rather than
+unlikely.
+
+The fence is the vault version the acquiring write returned, and it is re-read
+before every mutating call — each vault write and each `ALTER USER`. That is what
+makes step 5 safe to resume after a stall: if this run's lock expired and another
+took it over, the check fails and the run aborts before touching its remaining
+targets, rather than applying a password the vault no longer advertises. Release
+in step 9 happens in a `finally`, on every path including failure, and writes a
+`released` record rather than deleting one.
+
+`check` and `status` take no lock at all, and neither does any `--dry-run`.
+An hourly scheduled check that blocked rotations would be a worse problem than
+the one the lock solves.
 
 **Failure at each step**
 
@@ -421,6 +446,7 @@ unreachable host) happen *before* anything is written anywhere.
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` distinguishes "wrong password" from "account locked/expired" |
 | 7 | database has new, vault `current` still old | **highest-severity case**: `pending` still holds the right value, so `sopuli creds promote` completes it; the tool must retry the promote before giving up |
 | 8 | promoted but read-back disagreed | report; likely a vault replication lag issue |
+| any fence check, at 4–7 | this run's lock was taken over by another; whatever it had already applied stands | abort immediately, mutate nothing further, exit non-zero. `check` establishes what is true; the run that holds the lock is the one that may fix it |
 
 **Rollback.** `previous` is retained so that
 `sopuli creds apply --source previous --confirm` can put the old password back on
@@ -509,7 +535,13 @@ is the UC-1 specific list.
 - **Idempotency test:** every command run twice; the second run reports
   `unchanged` and emits no audit mutation record.
 - **Concurrency test:** two `rotate` runs on the same account; one must lose on
-  the lock with exit 7, and the final state must be consistent.
+  the lock with exit 7, and the final state must be consistent. The test stands
+  as written after #83 even though locks are keyed on the path rather than on the
+  account: two runs on one account resolve to one path, so they do contend.
+- **Fencing test:** steal a lock mid-run — expire it and let a second run take it
+  over — and assert the first aborts before its next `ALTER USER`. This is the
+  case that a session-scoped `DBMS_LOCK` would not have caught, since a stalled
+  session is still alive and still holding.
 - **Redaction test:** run everything with `--log-level debug`, grep all output,
   logs and trace for the generated password. Zero hits is a release gate.
 
@@ -520,7 +552,7 @@ is the UC-1 specific list.
 | # | Question | Notes / leaning |
 |---|---|---|
 | Q1 | Should `check` default to `hash` or `login`? | leaning `login` interactively, `hash` under an unattended profile (`01-configuration.md` §5); needs a decision because it changes the privilege ask |
-| Q2 | Where does the advisory lock live? | vault (works cross-platform, survives DB outage) vs `DBMS_LOCK` (no extra vault write). Leaning vault. |
+| ~~Q2~~ | ~~Where does the advisory lock live?~~ | **decided: in the vault** (#83). One record per secret path, CAS-guarded, carrying holder metadata and a TTL of 15 minutes, under a `locks/` prefix on the secret's own mount so the secret's version history stays clean for `previous` and rollback. `DBMS_LOCK`'s one unique benefit is release on session death, and that does not survive contact with the actual risk: a stalled run's session is still alive, so the lock it holds prevents nothing while its plan goes stale. A **fencing token** — the vault version, re-checked before every mutation — is what prevents it, and once fencing exists, automatic release does not pay for `EXECUTE ON DBMS_LOCK`, a widened grant set, a CDB/PDB scope answer, and product-specific behaviour in the command layer (P1). The grant set in `../design/02-oracle-privileges.md` §2 is unchanged. Keyed on the **path**, which is neither candidate P5 named: per-target is meaningless when every target gets the same value, and per-account misses two accounts sharing one document. Stores without `cas` (KV v1, the file backend) refuse mutations unless configured `locking: advisory-only`. |
 | Q3 | ~~How many generations of `previous` to keep?~~ | **decided: exactly one**, plus whatever the store's native versioning gives for free (#84). C14 (#40) settled it: OCI holds exactly one `PREVIOUS`, and the closed `current` / `pending` / `previous` vocabulary has nothing to address an older generation with. Keeps the emulated payload the same shape as the native one, and `check --include-previous` need not say *which* previous it accepted. |
 | Q4 | Does the tool ever alter a *profile* to enable rollover? | leaning no by default — profiles are shared; report the needed DDL instead |
 | Q5 | Notification on drift | out of scope for the tool; exit code 3 + JSON output is the integration point |

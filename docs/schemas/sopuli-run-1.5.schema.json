@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.4.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.5.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -40,6 +40,7 @@
     "config": { "$ref": "#/$defs/config_view" },
     "policy": { "$ref": "#/$defs/policy_samples" },
     "plan": { "$ref": "#/$defs/plan" },
+    "lock": { "$ref": "#/$defs/lock" },
     "results": {
       "type": "array",
       "items": { "$ref": "#/$defs/result" }
@@ -314,6 +315,86 @@
             "accounts": { "type": "integer" },
             "environments": { "type": "array", "items": { "type": "string" } }
           }
+        }
+      }
+    },
+
+    "lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "description": "The advisory locks a mutating run took (00-principles.md P5, decided in issue #83). Locks live in the vault and are keyed on the store and the secret path being mutated -- not on the account and not on the target, because the mutated resource is the vault document and compare-and-set operates on exactly that. Absent on a run that takes none: `check`, `status` and every `--dry-run`.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["cas", "none"],
+          "description": "The guarantee, not the mechanism. `cas` means every acquisition was compare-and-set guarded and carries a fence. `none` means the store has no atomic primitive (KV v1, the file backend) and was configured `locking: advisory-only`, so the record is a courtesy that catches operators minutes apart and misses two jobs in the same second. A consumer branches on this without knowing what KV v1 is."
+        },
+        "held": {
+          "type": "array",
+          "description": "One entry per lock, in acquisition order -- which is sorted and deterministic, so two runs contending on overlapping sets cannot deadlock.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["vault", "path", "fence", "acquired_at", "expires_at", "released"],
+            "description": "Every field is required, including the two that are only interesting when something went wrong. This section is written when the run ends, by which point all six are known -- a partial entry would mean the producer did not know what it had locked, which is not a state worth being able to describe. `fence` is nullable rather than optional for the same reason: under mode `none` there is no fence, and saying so is different from not saying.",
+            "properties": {
+              "vault": { "type": "string" },
+              "path": { "type": "string", "description": "The secret path, not the lock record's own path. Where the record is written is the store's business." },
+              "fence": {
+                "type": ["integer", "null"],
+                "description": "The version returned by the acquiring write, re-checked before every mutation. Null under mode `none`, where there is nothing to fence with."
+              },
+              "acquired_at": { "$ref": "#/$defs/timestamp" },
+              "expires_at": { "$ref": "#/$defs/timestamp" },
+              "released": {
+                "type": "boolean",
+                "description": "Release writes a released record rather than deleting one: a delete leaves metadata behind, after which a first acquisition can never compare-and-set against version 0 again."
+              }
+            }
+          }
+        },
+        "denied": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["vault", "path", "reason"],
+          "description": "The lock that stopped the run, on exit 7. The holder is reported so an operator can tell a colleague from a process that died -- which is the whole question at that moment. Never more than one: acquisition is all-or-nothing and stops at the first refusal.",
+          "properties": {
+            "vault": { "type": "string" },
+            "path": { "type": "string" },
+            "reason": {
+              "type": "string",
+              "enum": ["held", "race"],
+              "description": "How the run lost. `held` means a held, unexpired record was read, and the holder and timestamps below describe it. `race` means the compare-and-set write itself was refused, which is another run acquiring between this run's read and its write -- there is nothing to report about the winner, because the winner's record was never read and re-reading it is a second round trip to answer a question the operator can answer by running again. This is why `holder` is optional: it is present exactly when it was read, and absent is a fact rather than a gap."
+            },
+            "holder": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Who holds it, in the same shape this run's own actor is reported in.",
+              "properties": {
+                "host": { "type": ["string", "null"] },
+                "pid": { "type": ["integer", "null"] },
+                "os_user": { "type": ["string", "null"] },
+                "correlation_id": { "type": ["string", "null"], "description": "The holder's run, joinable to its own output and to the database audit trail." },
+                "command": { "type": ["string", "null"] }
+              }
+            },
+            "acquired_at": { "$ref": "#/$defs/timestamp" },
+            "expires_at": { "$ref": "#/$defs/timestamp" },
+            "expired": {
+              "type": "boolean",
+              "description": "True when the lock is past its expiry and was still not taken, which happens when `locking.break_expired` is off. Distinguishes a live holder from one to break."
+            }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "reason": { "const": "held" } }, "required": ["reason"] },
+              "then": {
+                "required": ["holder", "acquired_at", "expires_at", "expired"],
+                "description": "A denial by a record that was read has to describe it. Optional-everywhere would let a producer emit `{vault, path}` on exit 7 and leave the operator with the one question this section exists to answer."
+              }
+            }
+          ]
         }
       }
     },
