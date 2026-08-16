@@ -12,11 +12,12 @@ from typing import Any
 
 from sopuli.config.errors import ROOT
 from sopuli.config.fields import mapping, optional_string, reject_unknown_keys
+from sopuli.config.locking import build_locking
 from sopuli.config.model import Defaults, OracleRuntime, Runtime
 from sopuli.config.safety import build_safety
 from sopuli.config.vaults import vault_name
 
-DEFAULTS_KEYS = ("vault", "policy", "profile", "safety")
+DEFAULTS_KEYS = ("vault", "policy", "profile", "safety", "locking")
 
 RUNTIME_KEYS = ("oracle",)
 
@@ -37,6 +38,7 @@ def build_defaults(document: dict[str, Any]) -> Defaults:
         policy=optional_string(entry, "policy", at=at),
         profile=optional_string(entry, "profile", at=at),
         safety=build_safety(entry.get("safety"), at=at.key("safety")),
+        locking=build_locking(entry.get("locking"), at=at.key("locking")),
     )
 
 

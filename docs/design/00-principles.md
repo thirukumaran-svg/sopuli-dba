@@ -147,8 +147,8 @@ guarantee exists. Emulation is not atomic; commands must say so in dry-run outpu
 precisely what it is for. A store without it therefore gets no lock rather than a
 weaker one: P5's advisory lock refuses on KV v1 and the file backend unless that
 store is explicitly configured down to `locking: advisory-only`, where the record
-is written without CAS and every run says so (issue #83; the configuration key
-itself arrives with #94).
+is written without CAS and every run says so (issue #83, `01-configuration.md`
+§3a).
 
 ### Authenticating to the vault
 
@@ -284,7 +284,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-1.0.schema.json`, generated from the
+The schema is `docs/schemas/sopuli-config-1.1.schema.json`, generated from the
 config layer by `sopuli/config/schema.py` so that it cannot drift from what the
 tool actually accepts. It is structural: an editor pointed at it catches the
 typo, and the cross-key rules stay in the validators, where an error can name the

@@ -38,7 +38,7 @@ DOCUMENT: dict[str, Any] = {
     "version": 1,
     "vaults": {
         "vault-dev": {"type": "hashicorp", "addr": "https://vault-dev.example.com"},
-        "local": {"type": "file", "non_production": True},
+        "local": {"type": "file", "non_production": True, "locking": "advisory-only"},
     },
     "targets": [
         {
@@ -111,6 +111,20 @@ def test_a_non_production_store_is_marked(config: Config) -> None:
     """The marking exists so a development store is obviously one (P2), which
     only works if the view says so."""
     assert "non-production" in render_text(PATHS, config, resolved=False)
+
+
+def test_a_store_that_cannot_lock_is_marked_too(config: Config) -> None:
+    """A store excused from locking is the other thing this column is for (#83).
+
+    Both notes share the column because both say the same kind of thing: this
+    store is less than the default assumption. The two also co-occur -- the file
+    backend in this fixture is exactly the store somebody would excuse -- so the
+    rendering has to survive a row with both, which is why the fixture marks one
+    store twice rather than adding a third.
+    """
+    text = click.unstyle(render_text(PATHS, config, resolved=False))
+
+    assert "non-production, advisory-only" in text
 
 
 def test_an_application_shows_what_it_selects_and_what_masters_it(config: Config) -> None:

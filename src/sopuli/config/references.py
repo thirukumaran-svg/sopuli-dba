@@ -34,7 +34,8 @@ from dataclasses import dataclass
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import Config, ConfigWarning, ExpandedTarget
+from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
+from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking
 from sopuli.config.targets import EXTERNAL
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
@@ -82,6 +83,7 @@ def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     _check_targets(config)
     _check_profiles(config)
     _check_non_production_vaults(config)
+    _check_breaking_locks_without_a_fence(config)
     _check_external_admin(config)
     _check_admin_refs(config)
     return _warn_about_profile_names(config)
@@ -262,6 +264,58 @@ def _check_non_production_vaults(config: Config) -> None:
             at=declared_at(expanded, "vault"),
             hint="point it at a production store, or drop the marking if it is wrong",
         )
+
+
+def _check_breaking_locks_without_a_fence(config: Config) -> None:
+    """#83: `locking.break_expired` and an `advisory-only` store are incompatible.
+
+    Breaking an expired lock is only safe because of the fence: the takeover write
+    bumps the vault's version, so the run that was broken discovers it at its next
+    check and stops. A store configured `advisory-only` has no compare-and-set and
+    therefore no fence, and the two settings together are the exact recipe for two
+    runners applying different passwords to different targets -- each believing it
+    holds the lock, neither able to find out otherwise.
+
+    Refused here rather than at plan time because both halves are written in the
+    file, so the answer does not depend on which targets a run selects. Naming
+    both ends matters more than usual: either one alone is legitimate, and an
+    error that named only the one it happened to read first would send somebody to
+    delete the wrong line.
+    """
+    # `is True` rather than a truth test: an unwritten block is `None`, and an
+    # explicit `false` is a layer withholding permission rather than an absent one.
+    permitted = [where for where, block in _locking_blocks(config) if block.break_expired is True]
+    unfenced = [vault.name for vault in config.vaults if vault.locking != LOCK_REQUIRED]
+    if not permitted or not unfenced:
+        return
+
+    # Every offender, not the first one found. Fixing the one the loader happened
+    # to read first would leave the file just as invalid, and the second run of
+    # `config validate` would name the next -- which is the error message asking
+    # somebody to play twenty questions with their own config.
+    named = ", ".join(repr(name) for name in sorted(unfenced))
+    raise ConfigError(
+        f"`break_expired: true` is refused while "
+        f"{'vault' if len(unfenced) == 1 else 'vaults'} {named} "
+        f"{'is' if len(unfenced) == 1 else 'are'} `locking: {LOCK_ADVISORY_ONLY}`",
+        at=permitted[0].key("break_expired"),
+        hint=(
+            "breaking a lock unattended is safe only because the takeover fences the "
+            "run it broke, and a store with no compare-and-set has nothing to fence "
+            "with -- drop `break_expired`, or give those stores a KV v2 mount"
+        ),
+    )
+
+
+def _locking_blocks(config: Config) -> list[tuple[KeyPath, Locking]]:
+    """Every `locking:` block in the file, with where it was written."""
+    found = []
+    if config.defaults.locking is not None:
+        found.append((ROOT.key("defaults").key("locking"), config.defaults.locking))
+    for profile in config.profiles:
+        if profile.locking is not None:
+            found.append((ROOT.key("profiles").key(profile.name).key("locking"), profile.locking))
+    return found
 
 
 def _check_external_admin(config: Config) -> None:

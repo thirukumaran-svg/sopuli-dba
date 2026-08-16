@@ -52,7 +52,7 @@ def test_an_unknown_defaults_key_is_refused() -> None:
 
     rendered = str(caught.value)
     assert "unknown key 'polciy'" in rendered
-    assert "known keys here: policy, profile, safety, vault" in rendered
+    assert "known keys here: locking, policy, profile, safety, vault" in rendered
 
 
 def test_the_vault_block_form_is_refused_with_the_question() -> None:

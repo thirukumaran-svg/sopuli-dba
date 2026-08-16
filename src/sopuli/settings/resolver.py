@@ -21,10 +21,17 @@ unreachable forever, which is not what P3 describes -- and "built-in default" in
 ``--explain`` means precisely *nothing else spoke*.
 
 **Ratchet is one policy with three shapes**, taken from the setting's declared
-type rather than from a third policy name: ``bool`` ratchets to true, ``int`` to
-the minimum, and a list to the union. §9 of ``01-configuration.md`` names exactly
-those three -- "lowest ``max_targets``, union of ``confirm_environments``,
-``readonly: true`` if any layer sets it".
+type rather than from a third policy name: ``bool`` ratchets toward its safe
+value, ``int`` to the minimum, and a list to the union. §9 of
+``01-configuration.md`` names exactly those three -- "lowest ``max_targets``,
+union of ``confirm_environments``, ``readonly: true`` if any layer sets it".
+
+The boolean shape reads its direction from
+:attr:`~sopuli.settings.registry.Setting.safe_bool` rather than assuming ``true``
+is safe. It held for every ratcheted boolean until ``locking.break_expired``
+(#83), which grants permission rather than withholding it -- and a ratchet that
+merged it with ``any`` would have advertised a guardrail while doing the
+opposite of one.
 
 **Ties resolve downward.** Where several layers supply the effective value -- two
 of them saying ``readonly: true``, or three contributing to a union -- the
@@ -99,6 +106,12 @@ class Resolved:
     #: Every contribution that was considered, in authority order. Kept so
     #: ``--explain`` can show the loser as well as the winner.
     contributions: tuple[Contribution, ...] = ()
+    #: The setting's declared boolean polarity, copied from the registry by
+    #: :func:`resolve` rather than looked up here. A resolved value is a value
+    #: object: renderers hold one, tests build one, and neither should need the
+    #: registry to be able to ask it what it means. Irrelevant for every
+    #: non-boolean setting, where :func:`_is_looser_than` never consults it.
+    safe_bool: bool = True
 
     @property
     def location(self) -> str:
@@ -113,7 +126,11 @@ class Resolved:
         back. A union never produces one: every layer's environments end up in
         the result, so nothing was defeated.
         """
-        return tuple(one for one in self.contributions if _is_looser_than(one.value, self.value))
+        return tuple(
+            one
+            for one in self.contributions
+            if _is_looser_than(one.value, self.value, self.safe_bool)
+        )
 
 
 def resolve(name: str, contributions: Iterable[Contribution] = ()) -> Resolved | None:
@@ -142,7 +159,7 @@ def resolve(name: str, contributions: Iterable[Contribution] = ()) -> Resolved |
         # one layer keep the caller's order, so the first of those wins too.
         winner, value = candidates[0], candidates[0].value
     else:
-        value = _safest([one.value for one in candidates])
+        value = _safest([one.value for one in candidates], definition)
         winner = _ratchet_winner(candidates, value)
 
     return Resolved(
@@ -151,6 +168,7 @@ def resolve(name: str, contributions: Iterable[Contribution] = ()) -> Resolved |
         layer=winner.layer,
         detail=winner.detail,
         contributions=tuple(candidates),
+        safe_bool=definition.safe_bool,
     )
 
 
@@ -213,11 +231,18 @@ def _ratchet_winner(candidates: list[Contribution], effective: Any) -> Contribut
     return contributors[-1] if contributors else candidates[-1]
 
 
-def _safest(values: Sequence[Any]) -> Any:
-    """The safest of several values of one type. §9's three shapes."""
+def _safest(values: Sequence[Any], definition: Setting) -> Any:
+    """The safest of several values of one type. §9's three shapes.
+
+    A boolean consults the setting's declared polarity. Where ``true`` is the
+    safe value this is ``any`` -- one layer asking for ``readonly`` is enough.
+    Where ``false`` is (``locking.break_expired``, #83) it is ``all``, which is
+    the same sentence read the other way round: one layer withholding permission
+    is enough.
+    """
     first = values[0]
     if isinstance(first, bool):
-        return any(values)
+        return any(values) if definition.safe_bool else all(values)
     if isinstance(first, tuple):
         return tuple(sorted({item for value in values for item in value}))
     if isinstance(first, int):
@@ -236,15 +261,19 @@ def _contributes(value: Any, effective: Any) -> bool:
     return bool(value == effective)
 
 
-def _is_looser_than(value: Any, effective: Any) -> bool:
+def _is_looser_than(value: Any, effective: Any, safe_bool: bool) -> bool:
     """Whether ``value`` asked for something less safe than ``effective``.
 
     A union has no losers: every layer's entries are in the result. Booleans and
     integers do -- ``readonly: false`` against a ``true`` that held, or a profile
     asking for 200 targets where another layer said 1.
+
+    For a boolean the loser is whoever asked for the *unsafe* value and did not
+    get it, which is the setting's polarity rather than "asked for false". With
+    ``locking.break_expired`` the defeated request is a ``true``.
     """
     if isinstance(effective, bool):
-        return effective and not value
+        return value != effective and bool(value) is not safe_bool
     if isinstance(effective, tuple) or not isinstance(effective, int):
         return False
     return bool(value > effective)

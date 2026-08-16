@@ -12,7 +12,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.1.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -91,7 +91,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.1.schema.json
 version: 1
 
 runtime:
@@ -368,10 +368,67 @@ config file can be read without knowing what environment it will be read in.
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
 | `auth` | how to authenticate, and where the material comes from — see below |
 | `non_production` | marks a store that must never master a `prod` target (§10). Absent means production |
+| `locking` | `required` (default) or `advisory-only` — whether this store can hold P5's advisory lock. See below |
 
 Only `type` is required. A file backend has no address, and P2 puts per-backend
 validation behind the store interface, so demanding a HashiCorp shape of every
 entry would be exactly the top-level vendor bias P1 forbids.
+
+### `locking:` — on a store, and as a block
+
+P5's advisory lock lives in the vault, keyed on the secret path being mutated
+(Q2, decided in #83). Two keys configure it, and they are one decision seen from
+two ends.
+
+**On a store**, `locking:` says whether that store can hold a real lock:
+
+```yaml
+vaults:
+  legacy-kv:
+    type: hashicorp
+    mount: secret
+    kv_version: 1
+    locking: advisory-only      # default: required
+```
+
+A lock needs compare-and-set. P2's capability table gives `cas` to KV v2 and,
+through ETags, to OCI; KV v1 and the file backend have none. Everywhere else a
+missing store capability is emulated in the payload — but "not atomic" is exactly
+what CAS is for, so there is nothing to emulate, and under the default a mutating
+command **refuses** on a store that cannot lock, with `error.category: capability`
+naming this key. `advisory-only` is the operator saying they know: the record is
+still written, every run emits a warning diagnostic so the weakening reaches each
+run's audit trail rather than only the config file, and the run document reports
+`lock.mode: none`. The documented remedy is `vault kv enable-versioning`, which
+is in place on an existing mount. The file backend does not attempt `flock`: it
+is documented as non-production, and one rule is worth more here than a
+marginally stronger local mutex.
+
+**As a block**, under `defaults:` or in a profile:
+
+```yaml
+defaults:
+  locking:
+    break_expired: true         # default: off
+```
+
+`break_expired` lets an unattended runner take over a lock that is past
+`expires_at` plus a 60-second clock-skew margin. Breaking one is otherwise not
+self-service — the holder may be a colleague mid-rotation rather than a process
+that died — and what makes automatic takeover safe enough to exist is the fence:
+the takeover write bumps the vault's version, so the run that was broken
+discovers it at its next check and stops before its next `ALTER USER`.
+
+Which is why **the two may not be combined**: `break_expired: true` beside any
+store marked `advisory-only` is refused when the config is read. Without CAS
+there is no fence, and unattended breaking without a fence is the recipe for two
+runners applying different passwords to different targets, each believing it
+holds the lock.
+
+Both are config-only, per invariant 10 — no flag and no environment variable. A
+store's key could not be anything else, and `break_expired` is deliberately the
+same: a flag that unblocks a stuck run at 17:00 on a Friday is the one thing
+nobody would remove afterwards.
 
 ### `auth:` — the method, and where its material lives
 
@@ -795,6 +852,7 @@ A closed list. Anything else is a validation error.
 | `verify.method` | `login` \| `hash` \| `both` \| `none` |
 | `verify.lockout_margin` | how close to `FAILED_LOGIN_ATTEMPTS` to stop trying |
 | `safety.*` | `max_targets`, `confirm_environments`, `readonly` |
+| `locking.break_expired` | may an unattended run take over an expired lock (#83)? The profile is where this belongs: it is a property of running without anybody watching |
 | `confirm` | whether interactive confirmation is possible at all |
 | `output` | `text` \| `json` \| `jsonl` |
 | `log_level`, `log_file` | |
@@ -1208,7 +1266,7 @@ Otherwise the table above describes intent rather than behaviour.
 | Policy | Rule | Applies to |
 |---|---|---|
 | `override` | the highest-authority layer wins | everything not below |
-| `ratchet` | the *safest* layer wins, whichever it is | `safety.dry_run`, `safety.readonly`, `safety.max_targets`, `safety.confirm_environments` |
+| `ratchet` | the *safest* layer wins, whichever it is | `safety.dry_run`, `safety.readonly`, `safety.max_targets`, `safety.confirm_environments`, `locking.break_expired` |
 
 The ratcheted set is invariant 10's, and it is one frozenset in
 `sopuli/settings/registry.py` so it can be reviewed at a glance. A setting
@@ -1220,8 +1278,18 @@ designing against is not a wrong policy; it is a safety setting added later that
 silently inherits `override` because nobody wrote one.
 
 One policy, three shapes, taken from the setting's type — exactly the three the
-safety paragraph above names: a boolean ratchets to true, an integer to the
-minimum, a list to the union. `relax-but-bounded` was considered for a `--force`
+safety paragraph above names: a boolean ratchets toward its safe value, an
+integer to the minimum, a list to the union.
+
+**Which boolean value is the safe one is declared per setting**, and it was not
+worth saying until `locking.break_expired` arrived (#83). `readonly: true`
+refuses more, so one layer asking for it is enough. `break_expired: true`
+refuses *less* — it is permission rather than a guard — so there the layer saying
+`false` is the one that must win, and one layer withholding permission is enough.
+Merging both with "true wins" would have advertised a guardrail while doing the
+opposite of one. The direction is a field on the setting rather than something
+inferred from its name, because a ratchet that reads its polarity out of a string
+flips silently the day somebody renames a setting. `relax-but-bounded` was considered for a `--force`
 that does not exist yet and deliberately not built; because the field is
 required and declared, adding it later is additive rather than a migration.
 
@@ -1268,7 +1336,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-1.0.schema.json`](../schemas/sopuli-config-1.0.schema.json),
+[`docs/schemas/sopuli-config-1.1.schema.json`](../schemas/sopuli-config-1.1.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -1279,7 +1347,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-1.0.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.1.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -1316,6 +1384,7 @@ match instead:
 | every `vault`, `policy`, `group`, `profile` and target name must resolve | yes |
 | a `for_each`'s inner dimension must be one variable throughout | §4 |
 | a profile may not set a key that changes scope | §5 |
+| `locking.break_expired` beside an `advisory-only` store | yes |
 
 So a file the schema accepts may still be refused by `sopuli config validate`,
 and that is the intended division rather than a gap. The schema is the fast,
@@ -1327,7 +1396,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.1.schema.json
 version: 1
 ```
 
@@ -1338,7 +1407,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.0.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.1.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -1413,6 +1482,12 @@ notices until a rotation.
   generates a surprising number of targets
 - a target with `environment: prod` referencing a vault marked
   `non_production: true` → error
+- `locking.break_expired: true` anywhere in the file while any vault is
+  `locking: advisory-only` → error naming both ends (#83). Either alone is
+  legitimate; together they are an unattended run taking over a lock with no
+  fence to stop the run it took it from, which is how two runners end up applying
+  different passwords to different targets. Both halves are written in the file,
+  so the answer does not depend on which targets a run selects
 - auth material written inline — a string where a MaterialRef belongs → error, and
   a different one from "wrong type": it is the credential itself appearing in a
   file that is committed and shared, which P2 forbids outright

@@ -30,6 +30,7 @@ from sopuli.config.fields import (
     optional_string,
     reject_unknown_keys,
 )
+from sopuli.config.locking import build_locking
 from sopuli.config.model import Profile, ProfileDb
 from sopuli.config.policies import ROTATION_STRATEGIES, build_verify
 from sopuli.config.safety import build_safety
@@ -42,6 +43,7 @@ PROFILE_KEYS = (
     "verify",
     "rotation",
     "safety",
+    "locking",
     "confirm",
     "output",
     "log_level",
@@ -94,6 +96,7 @@ def _build_profile(name: str, raw: Any, *, at: KeyPath) -> Profile:
         verify=build_verify(entry.get("verify"), at=at.key("verify")),
         rotation_strategy=_build_rotation_strategy(entry.get("rotation"), at=at.key("rotation")),
         safety=build_safety(entry.get("safety"), at=at.key("safety")),
+        locking=build_locking(entry.get("locking"), at=at.key("locking")),
         confirm=optional_bool(entry, "confirm", at=at),
         output=_closed(entry, "output", allowed=OUTPUTS, noun="output format", at=at),
         log_level=_closed(entry, "log_level", allowed=LOG_LEVELS, noun="log level", at=at),

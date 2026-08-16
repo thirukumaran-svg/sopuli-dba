@@ -31,9 +31,10 @@ from sopuli.config.fields import (
     reject_unknown_keys,
     required_string,
 )
+from sopuli.config.locking import build_lock_mode
 from sopuli.config.model import Vault, VaultAuth
 
-VAULT_KEYS = ("type", "addr", "mount", "kv_version", "auth", "non_production")
+VAULT_KEYS = ("type", "addr", "mount", "kv_version", "auth", "non_production", "locking")
 
 #: The backends P2 puts in scope. `aws`/`azure` are listed there as "later" and
 #: are absent on purpose: a config that declares a store the tool cannot reach
@@ -124,6 +125,10 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
         # non-production store, and defaulting the other way would make that
         # rule fire on every vault nobody has labelled yet.
         non_production=optional_bool(entry, "non_production", at=at) or False,
+        # Absent means `required`, which is the whole point of the default: a
+        # store gets a real lock unless somebody wrote down that it cannot have
+        # one (#83).
+        locking=build_lock_mode(entry, at=at),
     )
 
 

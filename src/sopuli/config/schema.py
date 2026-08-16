@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.0.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.1.schema.json
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ from sopuli.config import (
     defaults,
     groups,
     loading,
+    locking,
     policies,
     profiles,
     safety,
@@ -58,7 +59,11 @@ from sopuli.config import (
 #: The artefact's own version, which is not the config file's ``version:``. This
 #: one tracks the schema contract the way `sopuli-run-1.5` does -- a new optional
 #: key is a minor bump and does not touch a file that already says `version: 1`.
-SCHEMA_VERSION = "1.0"
+#:
+#: 1.0 became 1.1 when `locking:` arrived (#83): a store's `locking:` and a
+#: `locking:` block under `defaults` and a profile, all optional, so every file
+#: valid under 1.0 is valid under 1.1.
+SCHEMA_VERSION = "1.1"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -225,6 +230,28 @@ def _safety() -> Schema:
     )
 
 
+def _locking() -> Schema:
+    return _object(
+        keys=locking.LOCKING_KEYS,
+        types={
+            "break_expired": {
+                **BOOLEAN,
+                "description": (
+                    "May an unattended run take over a lock past its expiry, plus a "
+                    "60-second skew margin? Off unless written. Safe to exist only "
+                    "because the takeover fences the run it broke, so it is refused "
+                    "beside a store marked `locking: advisory-only` (#83)."
+                ),
+            },
+        },
+        description=(
+            "The advisory lock, which lives in the vault and is keyed on the secret "
+            "path being mutated (00-principles.md P5, #83). Config-only: breaking a "
+            "lock has no flag, per invariant 10."
+        ),
+    )
+
+
 def _vault() -> Schema:
     return _object(
         keys=vaults.VAULT_KEYS,
@@ -239,6 +266,19 @@ def _vault() -> Schema:
                 "description": (
                     "Absent means production. A target with environment: prod pointed at "
                     "a store marked here is refused (§10)."
+                ),
+            },
+            "locking": {
+                **_enum(locking.LOCK_MODES),
+                "default": locking.DEFAULT_LOCK_MODE,
+                "description": (
+                    "Whether this store can hold P5's advisory lock. `required` is the "
+                    "default and needs no compare-and-set capability written down: KV "
+                    "v2 and OCI have one, KV v1 and the file backend do not, and a "
+                    "mutating command refuses on a store that cannot lock. "
+                    "`advisory-only` is the operator saying so deliberately -- the "
+                    "record is still written, every run warns, and the run document "
+                    "reports lock.mode: none (#83)."
                 ),
             },
         },
@@ -600,6 +640,7 @@ def _profile() -> Schema:
             "verify": _ref("verify_policy"),
             "rotation": _ref("profile_rotation"),
             "safety": _ref("safety"),
+            "locking": _ref("locking"),
             "confirm": BOOLEAN,
             "output": _enum(profiles.OUTPUTS),
             "log_level": _enum(profiles.LOG_LEVELS),
@@ -642,6 +683,7 @@ def _defaults() -> Schema:
             "policy": STRING,
             "profile": STRING,
             "safety": _ref("safety"),
+            "locking": _ref("locking"),
         },
         description="Precedence layer 5 (P3): the bottom of the config file.",
     )
@@ -847,6 +889,7 @@ def build_schema() -> Schema:
             "labels": _labels(at_least_one=False),
             "label_selector": _labels(at_least_one=True),
             "safety": _safety(),
+            "locking": _locking(),
             "vault": _vault(),
             "vault_auth": _vault_auth(),
             "material_ref": _material_ref(),

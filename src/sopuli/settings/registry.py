@@ -28,6 +28,13 @@ cannot drift from the registry, and neither can be edited alone.
 required declared field, adding a third later is additive rather than a
 migration, and building it now would be speculative.
 
+**Ratcheted booleans carry a direction.** "Safest" meant ``any()`` while every
+ratcheted boolean refused *more* when true. ``locking.break_expired`` (#83) is
+the first that refuses *less*, and reading it with the same rule would have made
+the setting unreachable and — worse — made it look like a guardrail while being
+the opposite. So :attr:`Setting.safe_bool` says which value is the safe one, per
+setting, declared rather than inferred from the name.
+
 **:attr:`Setting.layers` is enforced.** A contribution from a layer a setting
 does not declare raises rather than being merged. ``output`` has no meaning on a
 target and ``safety.max_targets`` has no business arriving from an environment
@@ -111,6 +118,7 @@ SAFETY_SETTINGS = frozenset(
         "safety.readonly",
         "safety.max_targets",
         "safety.confirm_environments",
+        "locking.break_expired",
     }
 )
 
@@ -140,6 +148,19 @@ class Setting:
     policy: MergePolicy
     #: Layer 6, or ``None`` where the tool has no built-in answer.
     builtin: Any = None
+    #: For a ratcheted **boolean**, which of the two values is the safe one.
+    #:
+    #: ``True`` for almost everything: ``readonly``, ``dry_run`` and a confirm
+    #: flag all refuse *more* when set, so a layer asking for ``true`` may always
+    #: have it. ``locking.break_expired`` (#83) is the first that inverts --
+    #: permission to break a lock nobody is watching refuses *less* -- so there
+    #: the layer saying ``false`` is the one that must win.
+    #:
+    #: Declared rather than inferred from the name. A ratchet that reads its
+    #: direction out of a string is a ratchet that silently flips when somebody
+    #: renames a setting, and the failure mode is a guardrail that stops holding
+    #: while every test still passes.
+    safe_bool: bool = True
 
     def __post_init__(self) -> None:
         if self.type not in SETTING_TYPES:
@@ -166,6 +187,14 @@ class Setting:
             raise ValueError(
                 f"built-in default for {self.name!r} is {type(self.builtin).__name__}, "
                 f"not {self.type.__name__}"
+            )
+        if not self.safe_bool and not (ratchet and self.type is bool):
+            # An inverted polarity on anything else is a statement with no
+            # meaning: OVERRIDE never consults it, and "the safe int" is
+            # `min` by §9 rather than a direction somebody may choose.
+            raise ValueError(
+                f"{self.name!r} declares safe_bool=False but is not a ratcheted bool; "
+                f"polarity only means anything for a ratcheted boolean"
             )
 
     @property
@@ -202,8 +231,16 @@ def _setting(
     layers: tuple[Layer, ...],
     policy: MergePolicy,
     builtin: Any = None,
+    safe_bool: bool = True,
 ) -> Setting:
-    return Setting(name=name, type=type, layers=frozenset(layers), policy=policy, builtin=builtin)
+    return Setting(
+        name=name,
+        type=type,
+        layers=frozenset(layers),
+        policy=policy,
+        builtin=builtin,
+        safe_bool=safe_bool,
+    )
 
 
 #: Every setting the resolver knows about.
@@ -261,6 +298,21 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 type=tuple,
                 layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
                 policy=MergePolicy.RATCHET,
+            ),
+            _setting(
+                # May an unattended runner take over a lock past its expiry
+                # (#83)? Config-only -- `defaults.locking` and a profile's -- for
+                # the reason the ratchet exists: a flag that unblocks a stuck run
+                # is the one thing nobody would ever remove afterwards.
+                #
+                # No built-in, like `max_targets`: nobody having asked is not the
+                # same statement as somebody having written `false`, and only the
+                # second is worth reporting in `invocation.options`.
+                "locking.break_expired",
+                type=bool,
+                layers=(Layer.PROFILE, Layer.DEFAULTS),
+                policy=MergePolicy.RATCHET,
+                safe_bool=False,
             ),
         )
     }

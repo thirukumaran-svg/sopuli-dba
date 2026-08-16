@@ -183,6 +183,20 @@ class Safety:
 
 
 @dataclass(frozen=True)
+class Locking:
+    """A ``locking:`` block, under ``defaults`` or a profile (Q2, #83).
+
+    Optional for the reason :class:`Safety`'s fields are, and inverted for a
+    reason of its own: ``break_expired`` is the first ratcheted boolean whose
+    *safe* value is ``False``. ``readonly: true`` refuses more; permission to
+    break a lock nobody is watching refuses less, so the layer that says ``false``
+    is the one that must win. See :class:`sopuli.settings.registry.Setting`.
+    """
+
+    break_expired: bool | None = None
+
+
+@dataclass(frozen=True)
 class MaterialRef:
     """*Where* a piece of auth material comes from -- never the material (P2).
 
@@ -268,6 +282,11 @@ class Vault:
     kv_version: int | None = None
     auth: VaultAuth | None = None
     non_production: bool = False
+    #: ``required`` or ``advisory-only`` (#83). Unlike the fields above this one
+    #: takes its default here rather than staying ``None``: a store either offers
+    #: compare-and-set or it does not, and no other precedence layer has an
+    #: opinion about one store, so there is nothing to be safest of later.
+    locking: str = "required"
 
 
 @dataclass(frozen=True)
@@ -573,6 +592,7 @@ class Profile:
     verify: VerifyPolicy = field(default_factory=VerifyPolicy)
     rotation_strategy: str | None = None
     safety: Safety | None = None
+    locking: Locking | None = None
     confirm: bool | None = None
     output: str | None = None
     log_level: str | None = None
@@ -588,6 +608,7 @@ class Defaults:
     policy: str | None = None
     profile: str | None = None
     safety: Safety | None = None
+    locking: Locking | None = None
 
 
 @dataclass(frozen=True)

@@ -26,7 +26,8 @@ from types import MappingProxyType
 from typing import Any
 
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
-from sopuli.config.model import Pairs
+from sopuli.config.locking import LOCK_REQUIRED
+from sopuli.config.model import Pairs, Vault
 from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
@@ -233,11 +234,29 @@ def _vault_rows(config: Config) -> list[str]:
                 vault.name,
                 vault.type,
                 _or_dash(vault.addr),
-                Cell("non-production", Role.NOTABLE) if vault.non_production else "",
+                _vault_note(vault),
             ]
             for vault in config.vaults
         ],
     )
+
+
+def _vault_note(vault: Vault) -> Cell | str:
+    """What is worth saying about a store beyond its type and address.
+
+    Both notes are the same kind of thing -- a store that is *less* than the
+    default assumption -- so they share the column and the ``notable`` role
+    rather than each getting one. ``advisory-only`` is here because a store that
+    cannot hold a real lock is exactly what somebody reading this table needs to
+    notice, and the run document's ``lock.mode: none`` says the same thing to the
+    other reader (#83).
+    """
+    notes = []
+    if vault.non_production:
+        notes.append("non-production")
+    if vault.locking != LOCK_REQUIRED:
+        notes.append(vault.locking)
+    return Cell(", ".join(notes), Role.NOTABLE) if notes else ""
 
 
 def _declared_target_rows(config: Config) -> list[str]:

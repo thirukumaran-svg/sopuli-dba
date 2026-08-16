@@ -43,15 +43,21 @@ DOMAINS: dict[type, tuple[Any, ...]] = {
 }
 
 
-def at_least_as_safe(resolved: Any, asked: Any) -> bool:
+def at_least_as_safe(resolved: Any, asked: Any, safe_bool: bool = True) -> bool:
     """Whether ``resolved`` gives away nothing that ``asked`` would have kept.
 
     Written out here rather than imported from the resolver: a test that reuses
     the implementation's own notion of "safer" would pass for any consistent
     definition, including a wrong one.
+
+    ``safe_bool`` is the one thing taken from the registry, because it is a
+    *declaration* rather than a merge rule: `readonly: true` refuses more and
+    `locking.break_expired: true` refuses less (#83), and no property of the two
+    values themselves says which. Everything about how layers combine is still
+    written out here.
     """
     if isinstance(resolved, bool):
-        return resolved or not asked
+        return resolved is safe_bool or asked is not safe_bool
     if isinstance(resolved, tuple):
         return set(asked) <= set(resolved)
     return bool(resolved <= asked)
@@ -99,8 +105,9 @@ def test_no_layer_is_ever_relaxed(name: str, contributions: Sequence[Contributio
     """The invariant itself: the answer is at least as safe as every request."""
     answer = resolve(name, contributions)
     assert answer is not None
+    safe = setting(name).safe_bool
     for one in contributions:
-        assert at_least_as_safe(answer.value, one.value), (
+        assert at_least_as_safe(answer.value, one.value, safe), (
             f"{name}: resolved {answer.value!r} is less safe than {one.location}'s {one.value!r}"
         )
 
@@ -133,8 +140,9 @@ def test_every_reported_relaxation_really_asked_for_less(
     """
     answer = resolve(name, contributions)
     assert answer is not None
+    safe = setting(name).safe_bool
     for one in answer.relaxations:
-        assert not at_least_as_safe(one.value, answer.value)
+        assert not at_least_as_safe(one.value, answer.value, safe)
 
 
 def _contributed(one: Contribution, answer: Resolved) -> bool:

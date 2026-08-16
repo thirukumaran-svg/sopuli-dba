@@ -81,12 +81,18 @@ def test_the_safety_settings_are_the_ones_p3_names() -> None:
     than a line lost in a refactor. ``--confirm`` and ``--force`` have no setting
     yet; when they arrive they belong here, and this assertion is where the
     reminder lives.
+
+    ``locking.break_expired`` joined the set with the advisory lock (#83). P3 does
+    not name it because it did not exist when P3 was written, which is the case
+    this assertion is meant to catch: it is here on the same argument, not by
+    resemblance.
     """
     assert set(SAFETY_SETTINGS) == {
         "safety.dry_run",
         "safety.readonly",
         "safety.max_targets",
         "safety.confirm_environments",
+        "locking.break_expired",
     }
 
 
