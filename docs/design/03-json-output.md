@@ -372,8 +372,15 @@ the database driver call, and `policy sample --reveal`.
 
 Consequences that show up in the schema:
 
-- `secret_ref` objects address a secret (`vault`, `path`, `field`, `version`) and
-  have **no value property at all**. There is nowhere to put a password.
+- `secret_ref` objects address a secret (`vault`, `path`, `field`, `version`,
+  `stage`) and have **no value property at all**. There is nowhere to put a
+  password. `version` is an integer and `stage` is the closed lower-case enum
+  `current` / `pending` / `previous`, which C14 ratified rather than widened
+  (`01-configuration.md` §7): the config layer refuses anything else before a
+  document is ever emitted. `vault` is required here even though a written ref
+  may omit the prefix — this object is emitted after resolution, when the store
+  is known, and a plan that named a secret without naming its store would need
+  precedence re-derived to read.
 - a `sample` object has none either, for the same reason and with the same effect.
 - `error.message` and `diagnostic.message` are documented as redacted. Driver
   exceptions are passed through a scrubber before they reach either.

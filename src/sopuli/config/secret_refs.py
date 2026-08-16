@@ -27,12 +27,19 @@ is settled the way that keeps a realistic ref working:
 * ``/`` inside the ``#`` part starts the JSON pointer, because a field name is
   one segment and everything after it addresses into that field's document.
 
-What is *not* settled here is what a qualifier value means. ``version`` and
-``stage`` are the two §7 names, so an unknown qualifier is refused -- but their
-values are kept as written, because P2 puts per-backend validation behind the
-store interface. Version numbering and the stage vocabulary are the store's, and
-inventing them here would fix a schema the vault layer then has to live with.
-The same reasoning as ``auth.method`` in :mod:`sopuli.config.vaults`.
+**The qualifier vocabularies are the tool's** (C14, decided in #40). ``version``
+and ``stage`` are the two §7 names, an unknown qualifier is refused, and so is an
+unknown *value*: a stage outside ``current`` / ``pending`` / ``previous``, or a
+version that is not a whole number from 1 upwards. Both stores in scope have a
+fixed vocabulary of their own -- OCI's rotation states are Oracle's five, not
+user-definable labels, and both number versions with integers -- so carrying the
+value through to the backend would buy nothing and move a typo to rotation time,
+which invariant 4 says is the wrong time to find out.
+
+Stages are matched case-insensitively and normalised to lower case, because OCI
+writes ``PENDING`` and that is the spelling a DBA copies out of the console. The
+cost is the one place a ref no longer renders back byte-for-byte; see
+:meth:`SecretRef.__str__`.
 """
 
 from __future__ import annotations
@@ -47,6 +54,22 @@ from sopuli.config.errors import ROOT, ConfigError, KeyPath
 VERSION = "version"
 STAGE = "stage"
 QUALIFIERS = (VERSION, STAGE)
+
+#: The stages a ref may name (C14, #40). UC-1 §2's three states, which are also
+#: three of OCI's five rotation states. ``LATEST`` and ``DEPRECATED`` are left
+#: out on purpose: ``LATEST`` is an upload-ordering artefact with no counterpart
+#: in a payload of JSON fields, and ``DEPRECATED`` names a *set* of versions
+#: rather than selecting one, so it is not a selector at all.
+STAGES = ("current", "pending", "previous")
+
+#: The lowest version a ref may pin. Not 0: KV v2 reads version 0 as "the latest
+#: version" while OCI numbers from 1, and a ref that meant two different things
+#: depending on where it resolved would be a rotation reading the wrong password.
+#: "The current one" is ``@stage=current``, or no qualifier at all.
+FIRST_VERSION = 1
+
+#: What a token looks like in a template, so a qualifier can refuse to hold one.
+TOKEN_START = "{"
 
 VAULT_SEPARATOR = ":"
 FIELD_SEPARATOR = "#"
@@ -71,7 +94,7 @@ class SecretRef:
     vault: str | None = None
     field: str | None = None
     pointer: str | None = None
-    version: str | None = None
+    version: int | None = None
     stage: str | None = None
 
     @property
@@ -89,14 +112,20 @@ class SecretRef:
     @property
     def is_templated(self) -> bool:
         """Whether any part still contains a ``{token}`` to expand (§7)."""
-        return "{" in str(self)
+        return TOKEN_START in str(self)
 
     def __str__(self) -> str:
-        """Render back to the string it was parsed from.
+        """Render the canonical form of the ref.
 
         Round-tripping is not a convenience: a ref is what plan output and the
         audit trail name a secret by, and a form that differed from the one in
         the config file would make the two impossible to line up by eye.
+
+        One difference is allowed, and only one: a stage written in upper case
+        renders back in lower case, because C14 normalises it. That is the price
+        of a canonical form, and the right side of the trade -- two refs that
+        differ only in the case of a stage now compare equal, which is what
+        "addresses the same secret" ought to mean.
         """
         rendered = self.path if self.vault is None else f"{self.vault}:{self.path}"
         if self.field is not None:
@@ -142,13 +171,17 @@ def parse_secret_ref(text: str, *, at: KeyPath = ROOT) -> SecretRef:
 # ------------------------------------------------------------- qualifiers ---
 
 
-def _split_qualifier(text: str, *, at: KeyPath) -> tuple[str, str | None, str | None]:
+def _split_qualifier(text: str, *, at: KeyPath) -> tuple[str, int | None, str | None]:
     """Peel ``@version=N`` or ``@stage=NAME`` off the end.
 
     Split on the *last* ``@`` so a path containing one still parses, and only
     when what follows looks like an assignment. A qualifier with a misspelt name
     is an error rather than path text: silently addressing
     ``creds#password@versio=7`` as a field name would read the wrong secret.
+
+    Structure is checked before vocabulary, so ``@version=1@stage=pending`` is
+    reported as two qualifiers rather than as whichever value happens to be
+    looked at first.
     """
     head, separator, tail = text.rpartition(QUALIFIER_SEPARATOR)
     if not separator or "=" not in tail:
@@ -183,7 +216,75 @@ def _split_qualifier(text: str, *, at: KeyPath) -> tuple[str, str | None, str | 
             ),
         )
 
-    return (head, value, None) if name == VERSION else (head, None, value)
+    if TOKEN_START in value:
+        raise ConfigError(
+            f"qualifier {name!r} in secret ref {text!r} contains a token",
+            at=at,
+            hint=(
+                "write it literally: a version or stage that varied per target would have "
+                "one rotation reading a different generation on each of them"
+            ),
+        )
+
+    if name == VERSION:
+        return head, _version(value, text, at=at), None
+    return head, None, _stage(value, text, at=at)
+
+
+def _version(value: str, text: str, *, at: KeyPath) -> int:
+    """A pinned version, as an integer (C14, #40).
+
+    Both stores in scope number versions with integers, so a ref that does not is
+    refused here rather than at the far end of a rotation. ``isascii`` as well as
+    ``isdigit`` because ``int()`` accepts other scripts' digits and a version
+    written in them is a typo, not a preference.
+
+    ``@version=007`` is refused rather than read as 7, so that the case of a
+    stage stays the *only* thing that does not render back as it was written.
+    Upper case has a source -- OCI spells its rotation states that way -- and
+    padding has none, so accepting it would be canonicalising for nothing.
+    """
+    if not (value.isascii() and value.isdigit()):
+        raise ConfigError(
+            f"version {value!r} in secret ref {text!r} is not a whole number",
+            at=at,
+            hint="both stores number versions with integers, as in `@version=7`",
+        )
+    number = int(value)
+    if number < FIRST_VERSION:
+        raise ConfigError(
+            f"version {value!r} in secret ref {text!r} is below the first version",
+            at=at,
+            hint=(
+                "versions are numbered from 1; for the current one write `@stage=current` "
+                "or leave the qualifier off"
+            ),
+        )
+    if value != str(number):
+        raise ConfigError(
+            f"version {value!r} in secret ref {text!r} is padded with leading zeros",
+            at=at,
+            hint=f"write it as `@{VERSION}={number}` -- a ref has one canonical form",
+        )
+    return number
+
+
+def _stage(value: str, text: str, *, at: KeyPath) -> str:
+    """A stage, normalised to the vocabulary UC-1 §2 and the run schema share.
+
+    Case-insensitive because OCI writes ``PENDING`` and that is the spelling
+    somebody copies out of the console -- but the parsed value is lower case, so
+    there is one spelling downstream and the backends map from it rather than to
+    each other.
+    """
+    normalised = value.lower()
+    if normalised not in STAGES:
+        raise ConfigError(
+            f"unknown stage {value!r} in secret ref {text!r}",
+            at=at,
+            hint=f"known: {', '.join(STAGES)} -- any case",
+        )
+    return normalised
 
 
 def _ends_with_qualifier(head: str) -> bool:

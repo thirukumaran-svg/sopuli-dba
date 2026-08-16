@@ -427,7 +427,11 @@ unreachable host) happen *before* anything is written anywhere.
 the database. This is a real operation, not a theoretical one — it is the escape
 hatch when an application turns out to have hard-coded the old password
 somewhere. Rollback is bounded: only one generation back, and only while the
-vault still holds `previous`.
+vault still holds `previous`. That bound is the decision, not the example (Q3,
+settled in #84): OCI holds exactly one `PREVIOUS`, and `01-configuration.md` §7's
+stage vocabulary — `current` / `pending` / `previous` — has nothing to address an
+older generation with. Recovery further back is a matter of reading the store's
+own version history, which not every backend has.
 
 ---
 
@@ -517,7 +521,7 @@ is the UC-1 specific list.
 |---|---|---|
 | Q1 | Should `check` default to `hash` or `login`? | leaning `login` interactively, `hash` under an unattended profile (`01-configuration.md` §5); needs a decision because it changes the privilege ask |
 | Q2 | Where does the advisory lock live? | vault (works cross-platform, survives DB outage) vs `DBMS_LOCK` (no extra vault write). Leaning vault. |
-| Q3 | How many generations of `previous` to keep? | one, plus whatever the store's native versioning gives for free |
+| Q3 | ~~How many generations of `previous` to keep?~~ | **decided: exactly one**, plus whatever the store's native versioning gives for free (#84). C14 (#40) settled it: OCI holds exactly one `PREVIOUS`, and the closed `current` / `pending` / `previous` vocabulary has nothing to address an older generation with. Keeps the emulated payload the same shape as the native one, and `check --include-previous` need not say *which* previous it accepted. |
 | Q4 | Does the tool ever alter a *profile* to enable rollover? | leaning no by default — profiles are shared; report the needed DDL instead |
 | Q5 | Notification on drift | out of scope for the tool; exit code 3 + JSON output is the integration point |
 | Q6 | Self-rotation mode (tool connects as the account itself, `REPLACE old`) | useful where no admin credential exists; defer to UC-1b |

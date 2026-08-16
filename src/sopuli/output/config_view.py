@@ -459,9 +459,10 @@ def _binding_json(binding: Binding) -> dict[str, Any]:
         "application": binding.application,
         "account": binding.account,
         "target": binding.target,
-        # The ref as written, which round-trips exactly (§7). Its parts are not
-        # broken out here: `plan.units[].secret` is the structured form, and its
-        # `version`/`stage` typing waits on C14 (issue #40).
+        # The ref in its canonical form (§7), which is what was written apart
+        # from the case of a stage. Its parts are not broken out here:
+        # `plan.units[].secret` is the structured form, and it carries the
+        # resolved vault name that a written ref may leave off.
         "secret": str(binding.secret) if binding.secret is not None else None,
         "vault": binding.vault,
         "policy": binding.policy,

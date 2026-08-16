@@ -74,10 +74,13 @@ assertion checked on connect), ~~what profiles are for~~ (C10 —
 **decided: run context, not target selection**), composable profiles (C11,
 proposed no), a built-in `interactive` profile (C12, leaning no), **whether `vault:`
 under `defaults`/`profiles` is a name or a block (C13, issue #31 — the loader
-refuses the block form)**, **the `@stage=` vocabulary in a SecretRef and who owns
-it (C14, issue #40 — §7 writes `PENDING`, UC-1 writes `pending`, and the run
-schema has already typed the enum lower-case and `version` as an integer; the
-parser carries both values as written)**.
+refuses the block form)**, ~~the `@version=` and `@stage=` vocabularies in a
+SecretRef and who owns them~~ (C14 — **decided in #40: the tool owns both.**
+`stage` is `current` / `pending` / `previous`, any case in, lower case out;
+`version` is a whole number from 1; neither may hold a `{token}`. OCI's rotation
+states turned out to be a fixed Oracle-defined set rather than user-definable
+labels, so there was no backend vocabulary to defer to and the run schema is
+ratified as written).
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
 documented default (P1), grant `SELECT ON SYS.USER$` by default (P2), whether
@@ -106,7 +109,10 @@ so 11.2 stays tier 2. T5 resolved 2026-08-09: GitHub Actions, tier 0 wired in
 `.github/workflows/ci.yml`.*
 
 **UC-1:** default verification method and the privilege it implies (Q1), where
-the advisory lock lives (Q2), how many `previous` generations to keep (Q3),
+the advisory lock lives (Q2), ~~how many `previous` generations to keep~~ (Q3 —
+**decided in #84: exactly one**, plus whatever the store's native versioning
+gives for free. C14 settled it: OCI holds exactly one `PREVIOUS`, and a closed
+three-stage vocabulary has nothing to address an older generation with),
 whether the tool ever alters a profile (Q4), drift notification (Q5),
 self-rotation mode (Q6), one-secret-per-account vs one-secret-per-app (Q7),
 account creation scope (Q8), authoritative time source for password age (Q9).

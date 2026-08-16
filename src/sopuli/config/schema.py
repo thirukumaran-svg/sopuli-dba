@@ -101,8 +101,11 @@ SECRET_REF: Schema = {
     "type": "string",
     "minLength": 1,
     "description": (
-        "A SecretRef (01-configuration.md §7): [vault:]path[#field][/pointer][@qualifier]. "
-        "In `secret_template` the {tokens} are expanded per account and target."
+        "A SecretRef (01-configuration.md §7): [vault:]path[#field][/pointer], optionally "
+        "qualified by one of @version=N (a whole number from 1) or "
+        "@stage=current|pending|previous (any case). "
+        "In `secret_template` the {tokens} are expanded per account and target, "
+        "but a qualifier may not hold one."
     ),
 }
 

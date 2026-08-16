@@ -931,7 +931,7 @@ One string addresses a value in any backend:
 | `vault-dev:apps/orders/prod/db/creds#password` | explicit vault |
 | `tenants/beta#DB_CREDENTIALS/acme_web_user` | one entry in a JSON map held in one property — the layout in §2 |
 | `apps/orders/prod/db/creds#password@version=7` | pinned version (read-only contexts) |
-| `apps/orders/prod/db/creds#password@stage=PENDING` | staging label (OCI native, emulated elsewhere) |
+| `apps/orders/prod/db/creds#password@stage=pending` | staging label (OCI native, emulated elsewhere) |
 
 ### Parsing it
 
@@ -957,9 +957,61 @@ key named nothing, and a credential store has no such key, so it is a stray `/`.
 
 Only `version` and `stage` are qualifiers, and only one may appear — a pinned
 version and a stage select the same secret two different ways and nothing says
-which would win. Their *values* are carried as written: version numbering and
-the stage vocabulary belong to the backend, and P2 puts per-backend validation
-behind the store interface.
+which would win.
+
+### The qualifier vocabularies (C14, decided)
+
+Both vocabularies are the **tool's**, and both are checked when the file is read.
+Not the backend's: OCI's rotation states are a fixed set Oracle defines rather
+than labels anybody may invent, and both stores in scope number versions with
+integers — so carrying an unknown value through to the store would buy nothing
+and move a typo to rotation time. That is the same reasoning as the paragraph
+above: a ref is parsed when the file is read precisely because the failure at the
+far end of a malformed one is a password written where nobody reads it.
+
+| Qualifier | Accepted | Refused |
+|---|---|---|
+| `@version=` | a whole number from 1 upwards | `@version=v3-beta`, `@version=0`, and `@version=007` |
+| `@stage=` | `current`, `pending`, `previous`, in any case | anything else, including `latest` and `deprecated` |
+
+- **Stages are the three states UC-1 §2 names**, matched case-insensitively and
+  normalised to lower case. Case-insensitively because OCI writes `PENDING` and
+  that is the spelling somebody copies out of the console; normalised because one
+  spelling should reach the store, and each backend maps *from* it — to OCI's
+  upper-case rotation states, or to the payload's JSON fields on a store with no
+  native staging.
+- **Three of OCI's five, deliberately.** `LATEST` is an upload-ordering artefact
+  with no counterpart in a payload of JSON fields, so there is nothing to emulate
+  it with; `DEPRECATED` names a *set* of versions rather than selecting one, so
+  it is not a selector at all. Note also that an OCI version may hold several
+  states at once — a new secret is both `CURRENT` and `LATEST` — so `@stage=`
+  selects a version rather than identifying one.
+- **Versions start at 1**, because KV v2 reads version 0 as "the latest version"
+  while OCI numbers from 1, and a ref that meant two different things depending
+  on where it resolved would be a rotation reading the wrong password. The
+  current version is `@stage=current`, or no qualifier at all.
+- **A qualifier value may not contain a `{token}`.** Templates parse through the
+  same grammar (below), and a version or stage that varied per target would have
+  one rotation reading a different generation on each of them.
+
+Normalising costs one thing, and it is the only thing: a ref whose stage was
+written in upper case does not render back byte-for-byte. `@stage=PENDING` comes
+out of `config show` as `@stage=pending`. The trade is worth it, because two refs
+that differ only in the case of a stage now compare equal — which is what
+"addresses the same secret" ought to mean.
+
+That it stays the *only* thing is why `@version=007` is refused rather than read
+as 7: upper case has a source, since OCI spells its rotation states that way, and
+padding has none, so accepting it would be canonicalising for nothing.
+
+The **run document** types the same two fields (`secret_ref.version` as an
+integer, `secret_ref.stage` as this closed lower-case enum), so the config layer
+and the JSON contract agree by construction. One difference between the two is
+deliberate: `vault` is optional in a written ref and **required** on an emitted
+`secret_ref`. §7 describes the ref as written, where the prefix may be left to
+the resolved store; the schema describes it after resolution, where the store is
+always known and a plan that named a secret without naming its store would make
+the audit record unreadable without re-deriving precedence.
 
 **Templates** in `secret_template` expand from labels and built-ins:
 
@@ -1469,4 +1521,4 @@ notices until a rotation.
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
 | C13 | Is `vault:` under `defaults:` and in a profile a store *name* or a block? | unresolved — §3 and `SOPULI_VAULT` say name; P3's `defaults.vault.addr` and §5's `vault.auth` say block. The loader accepts the name form and refuses the block form rather than settling it in a diff. Overlaps C9. Issue #31 |
-| C14 | What are the `@version=` and `@stage=` vocabularies, and who owns them? | unresolved, and a **conflict between committed documents** rather than only a gap. §7 writes `@stage=PENDING`; UC-1 §2 names the states `current` / `pending` / `previous` in lower case; and `sopuli-run-1.4.schema.json` has typed `secret_ref.stage` as a closed lower-case enum and `secret_ref.version` as an integer since it was written — so §7's own example cannot be emitted as a structured ref. Widening that enum is a *major* bump under `03-json-output.md` §8, which is why the schema is evidence rather than an accident. The parser carries both values as written rather than settling it, the same way `auth.method` is left to P2. Issue #40 |
+| C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. `sopuli-run-1.4.schema.json` is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
