@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.21.0](https://github.com/futville/sopuli-dba/compare/v0.20.0...v0.21.0) (2026-08-16)
+
+
+### Features
+
+* **config:** `vaults.*.locking` and `locking.break_expired` ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#108](https://github.com/futville/sopuli-dba/issues/108)) ([7aef5c5](https://github.com/futville/sopuli-dba/commit/7aef5c533c1afe442ceab71dd22d42d4efc5eb36))
+* **lock:** a LockManager over a narrow store protocol ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#101](https://github.com/futville/sopuli-dba/issues/101)) ([8384e57](https://github.com/futville/sopuli-dba/commit/8384e57e23df4757a95e3788e205230ac48a1f48))
+* **lock:** the lock record and its state machine, as tier-0 logic ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#100](https://github.com/futville/sopuli-dba/issues/100)) ([09320f5](https://github.com/futville/sopuli-dba/commit/09320f5b308ecfb4ca1b7c93098cde4cfcf31eac))
+* **output:** emit the lock section, exit 7, and the first warning codes ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#102](https://github.com/futville/sopuli-dba/issues/102)) ([cb2cc68](https://github.com/futville/sopuli-dba/commit/cb2cc68bd62986191f4d2f351a775efe358c176b))
+* **output:** record the Q2 advisory-lock decision, run schema 1.5 ([#98](https://github.com/futville/sopuli-dba/issues/98)) ([8d6f28b](https://github.com/futville/sopuli-dba/commit/8d6f28b5e17bc414ae1cdcdb93a76100c0c1e498))
+
 ## [0.20.0](https://github.com/futville/sopuli-dba/compare/v0.19.0...v0.20.0) (2026-08-16)
 
 
