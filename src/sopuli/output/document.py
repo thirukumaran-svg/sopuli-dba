@@ -237,6 +237,12 @@ class RunDocument:
     #: sample no value property at all, which is what keeps ``--reveal`` a
     #: text-only affair.
     policy: dict[str, Any] | None = None
+    #: The ``lock`` section, on a run that took locks (#83). Same arrangement as
+    #: ``config`` and ``policy``: :mod:`sopuli.output.lock_view` owns the shape.
+    #: Absent *means* something here rather than merely omitting something --
+    #: no lock was needed, which is every ``check``, ``status`` and
+    #: ``--dry-run``.
+    lock: dict[str, Any] | None = None
     #: ``invocation.options`` -- the settings that changed behaviour, each with
     #: the layer it came from. Emitted only when there are any: on a run with no
     #: flags and no ``SOPULI_*`` variables the answer is "nothing overrode
@@ -305,6 +311,8 @@ class RunDocument:
             document["config"] = self.config
         if self.policy is not None:
             document["policy"] = self.policy
+        if self.lock is not None:
+            document["lock"] = self.lock
         if self.error is not None:
             document["error"] = self.error.to_dict()
         return document

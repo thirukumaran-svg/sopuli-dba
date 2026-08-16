@@ -45,6 +45,7 @@ import click
 
 from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.exit_codes import ExitCode
+from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.output.color import ColorChoice
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
@@ -516,6 +517,21 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
     the error says about itself rather than inferring it from a type, and the
     inference is what goes wrong first when a subclass is added.
 
+    A lock error carries its category the same way and **splits on which one it
+    is** (#83). Neither carries an exit code of its own, unlike ``ConfigError``,
+    because the right code depends on what the run had already done:
+
+    * :class:`~sopuli.lock.errors.LockDeniedError` is exit 7. It is raised while
+      acquiring, before anything is touched, which is exactly what exit 7 asserts
+      -- ``03-json-output.md`` §6's recipe pairs 7 with 6 under "sopuli could not
+      run".
+    * :class:`~sopuli.lock.errors.LockStolenError` is **not** exit 7. It is found
+      at a fence check, and that may be the check before a run's *second* target.
+      Reporting "nothing ran" there is the one answer that would mislead a
+      scheduler into skipping the repair. A command that knows what it applied
+      finishes its own document on exit 4 and never reaches here; reaching here
+      means nobody could say, so it is generic failure.
+
     Anything else is ``internal`` on exit 1. When driver and vault errors arrive
     they bring their own categories and vendor codes, and they pass through a
     scrubber first (``03-json-output.md`` §4) -- until then this catch-all repeats
@@ -526,6 +542,9 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
             ExitCode(exc.exit_code),
             Error(category=exc.category, message=exc.located, hint=exc.hint),
         )
+    if isinstance(exc, LockError):
+        code = ExitCode.LOCK_HELD if isinstance(exc, LockDeniedError) else ExitCode.FAILURE
+        return code, Error(category=exc.category, message=exc.message, hint=exc.hint)
     if isinstance(exc, click.ClickException):
         # click's own errors carry their exit code, and every one of them today
         # is a usage error -- which the caller then declines to emit. Reading the

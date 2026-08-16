@@ -58,6 +58,7 @@ from sopuli.invocation import (
     global_options,
     group_options,
 )
+from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -490,9 +491,30 @@ def main() -> None:
         # here too, carrying exit 2 (#8).
         click.echo(f"sopuli: {exc}", err=True)
         raise SystemExit(exc.exit_code) from exc
+    except LockDeniedError as exc:
+        # P5's exit 7, and the message carries the holder (#83) -- who is running
+        # what, since a lock a colleague holds and a lock a dead process holds
+        # need opposite responses. This arm and `_classify` in
+        # `sopuli.invocation` have to agree: the document's `exit_code` is
+        # defined as equal to the process's.
+        click.echo(f"sopuli: {exc}", err=True)
+        raise SystemExit(ExitCode.LOCK_HELD) from exc
+    except LockError as exc:
+        # Everything else about a lock, which today is `LockStolenError`, and
+        # deliberately *not* 7. Exit 7 tells a scheduler nothing ran -- the
+        # canonical recipe in `03-json-output.md` §6 pairs it with 6 under
+        # "sopuli could not run" -- and a stolen lock is found at a fence check,
+        # which may be the check before a run's *second* target. Saying "nothing
+        # happened" there would be the one wrong answer.
+        #
+        # A command that knows what it applied reports exit 4 from its own
+        # document and never reaches this handler. Reaching it means nobody could
+        # say, and generic failure is what that is.
+        click.echo(f"sopuli: {exc}", err=True)
+        raise SystemExit(ExitCode.FAILURE) from exc
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all at the boundary
-        # TODO(#4 follow-up): map driver and vault errors to their categories
-        # here, carrying the vendor code and a hint (see CLAUDE.md, Style).
+        # TODO(#4 follow-up): map driver errors to their categories here,
+        # carrying the vendor code and a hint (see CLAUDE.md, Style).
         click.echo(f"sopuli: {type(exc).__name__}: {exc}", err=True)
         raise SystemExit(ExitCode.FAILURE) from exc
 

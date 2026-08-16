@@ -33,6 +33,7 @@ from jsonschema import Draft202012Validator
 from sopuli import cli as cli_module
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
+from sopuli.lock import LockDeniedError, LockKey, LockStolenError
 from sopuli.output.document import SCHEMA_VERSION
 
 SCHEMA = (
@@ -352,6 +353,85 @@ def test_an_unexpected_exception_still_emits_a_valid_document(
     assert document["summary"] == {"total": 0, "ok": 0, "changed": 0, "failed": 0}
     assert document["error"]["category"] == "internal"
     assert "something went wrong" in document["error"]["message"]
+
+
+def test_a_lock_denial_exits_seven_with_the_holder(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    validator: Draft202012Validator,
+    config_file: Path,
+) -> None:
+    """P5's exit 7, and the one thing an operator wants when they see it.
+
+    The exception carries its own category and hint (#83); the boundary reports
+    what the error says about itself rather than inferring anything from its
+    type. Nothing takes a lock yet -- no `creds` command exists -- so it is
+    injected here, on the path a denial will actually take.
+
+    Exit 7 is what an escaping lock error means: the run stopped over a lock
+    before it had anything to report. A command that had already applied changes
+    finishes its own document on exit 4 and never reaches this handler, which is
+    why `LockError` deliberately carries no exit code of its own.
+    """
+
+    def denied(*args: object, **kwargs: object) -> None:
+        raise LockDeniedError(
+            "vault-prod:apps/acme/db is locked by svc_sopuli@ci-runner-3 pid 8821",
+            key=LockKey(store="vault-prod", path="apps/acme/db"),
+            hint="wait for it to finish, or coordinate with whoever is running it",
+        )
+
+    monkeypatch.setattr(cli_module, "load_layers", denied)
+
+    code = run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
+    document = emitted(capsys)
+
+    assert code == ExitCode.LOCK_HELD
+    assert list(validator.iter_errors(document)) == []
+    assert document["exit_code"] == ExitCode.LOCK_HELD
+    assert document["error"]["category"] == "lock"
+    assert "svc_sopuli@ci-runner-3" in document["error"]["message"]
+    # The hint has a field of its own and must not also be inside the message,
+    # or a consumer renders it twice with a newline in the middle (§4).
+    assert "\n" not in document["error"]["message"]
+    assert document["error"]["hint"].startswith("wait for it")
+
+
+def test_a_stolen_lock_does_not_claim_that_nothing_ran(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    validator: Draft202012Validator,
+    config_file: Path,
+) -> None:
+    """The other lock failure, and deliberately not exit 7.
+
+    A stolen lock is found at a fence check, which may be the check before a
+    run's *second* target. Exit 7 asserts that nothing ran -- §6's recipe pairs
+    it with 6 under "sopuli could not run" -- so reporting it here would mislead
+    a scheduler into skipping the repair.
+
+    A command that knows what it applied finishes its own document on exit 4 and
+    never reaches this handler. Reaching it means nobody could say, which is what
+    generic failure is for. The category is still `lock`, because what went wrong
+    has not changed.
+    """
+
+    def stolen(*args: object, **kwargs: object) -> None:
+        raise LockStolenError(
+            "vault-prod:apps/acme/db was taken over: expected version 41, found 42",
+            key=LockKey(store="vault-prod", path="apps/acme/db"),
+        )
+
+    monkeypatch.setattr(cli_module, "load_layers", stolen)
+
+    code = run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
+    document = emitted(capsys)
+
+    assert code == ExitCode.FAILURE
+    assert list(validator.iter_errors(document)) == []
+    assert document["exit_code"] == ExitCode.FAILURE
+    assert document["error"]["category"] == "lock"
+    assert "taken over" in document["error"]["message"]
 
 
 def test_an_abort_exits_eight_with_a_document(
