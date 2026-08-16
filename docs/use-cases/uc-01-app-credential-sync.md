@@ -438,9 +438,18 @@ the one the lock solves.
 
 **The record.** One per secret path, written under a `locks/` prefix on the same
 mount as the secret — `secret/data/locks/<path>` on KV v2 — so the secret's own
-version history stays clean for `previous` and rollback. The lock path's metadata
-carries `cas_required: true` and `max_versions: 10`, and the tool asserts both in
-pre-flight rather than assuming them.
+version history stays clean for `previous` and rollback.
+
+Pre-flight asserts `cas_required` on the lock path rather than assuming it: that
+setting is what stops a *different* writer — an operator with a vault CLI — from
+replacing the record without a compare-and-set, and the tool cannot claim a
+guarantee it has not checked. A path with no metadata at all is the ordinary
+state before the first lock and is not a failure.
+
+`max_versions: 10` is recommended and deliberately **not** enforced. Pruning old
+versions does not reset the version counter, so fencing survives any value of it,
+and refusing a working vault over a housekeeping preference would be a guardrail
+that only costs.
 
 ```json
 { "state": "held",

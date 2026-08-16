@@ -112,11 +112,21 @@ backend-specific.
 ```
 SecretStore
   read(ref) -> SecretValue + metadata(version, created, custom)
-  write(ref, value, opts) -> version
+  write(ref, value, cas, opts) -> version
+  metadata(path) -> PathMetadata | none
   list(prefix) -> [ref]
   supports() -> StoreCapabilitySet
   health() -> ok | degraded | unreachable
 ```
+
+Two of those arrived with the advisory lock (#83, #96) and were not in the
+original sketch. **`write` takes a compare-and-set version and returns the new
+one**, because that returned version is the lock's fencing token — a write that
+only said "ok" would leave the design with nothing to fence with. **`metadata`
+reads what a store knows about a path apart from its contents**, so pre-flight
+can check that a lock path is not configured to accept writes without a CAS: a
+guarantee the tool cannot check is one it should not claim. The slice the lock
+uses is `sopuli/store/protocol.py`; the rest arrives with the first real backend.
 
 ### Backends in scope
 
