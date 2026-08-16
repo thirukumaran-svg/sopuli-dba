@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.20.0](https://github.com/futville/sopuli-dba/compare/v0.19.0...v0.20.0) (2026-08-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** decide the SecretRef qualifier vocabularies (C14) ([#92](https://github.com/futville/sopuli-dba/issues/92))
+
+### Features
+
+* **config:** decide the SecretRef qualifier vocabularies (C14) ([#92](https://github.com/futville/sopuli-dba/issues/92)) ([59ab70b](https://github.com/futville/sopuli-dba/commit/59ab70b3e07e094c8a0404459da121ae2941a79c))
+
 ## [0.19.0](https://github.com/futville/sopuli-dba/compare/v0.18.0...v0.19.0) (2026-08-13)
 
 
