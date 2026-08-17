@@ -23,7 +23,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.5.schema.json`](../schemas/sopuli-run-1.5.schema.json),
+Schemas: [`../schemas/sopuli-run-1.6.schema.json`](../schemas/sopuli-run-1.6.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -316,6 +316,19 @@ would have emitted with `--dry-run`, so a diff between "what we said we'd do" an
 `results` is mechanical. `plan.shared_secrets` exists specifically to surface the
 one-secret-many-targets case from UC-1 §4 — the situation where rotating one
 account quietly changes three PDBs. Legal, often intended, never invisible.
+
+Since Q7 (#85) made one secret per application the documented default, sharing has
+a second axis and the entry carries it: `accounts[]`, present when one document
+holds more than one account's credential. That is the case where rotating
+`acme_orders_user` rewrites the document `acme_batch_user` reads, and the two axes
+are genuinely different questions — `targets[]` answers "who receives this
+password", `accounts[]` answers "whose password is in this document". A consumer
+that only knew the first would report a blast radius of one account for a write
+that touched six.
+
+`accounts[]` is optional rather than always-present, and reads as "the sharing the
+operator might not have intended". A document with exactly one account in it omits
+it, because a list of one is not a warning.
 
 ### `lock`, on runs that take one
 

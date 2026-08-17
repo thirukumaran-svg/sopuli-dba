@@ -623,7 +623,7 @@ spells them:
 | `app_pdb` | an application PDB |
 
 That is `scope.type` from
-[`sopuli-run-1.5.schema.json`](../schemas/sopuli-run-1.5.schema.json), minus
+[`sopuli-run-1.6.schema.json`](../schemas/sopuli-run-1.6.schema.json), minus
 `unknown`. Adopting the vocabulary the run document has typed since it was written
 means the word a file *asserts* and the word the tool *reports* are the same word,
 so a mismatch between them needs no translation to explain. `unknown` is
@@ -1102,11 +1102,29 @@ an account exists in eleven PDBs and the template mentions no distinguishing
 label, all eleven share one password — legal and often intended, but the plan
 output states it explicitly so it is never accidental.
 
-**Writing into a shared JSON document.** Where several accounts live in one
-property (`DB_CREDENTIALS` above), the tool must not clobber siblings. On KV v2 it
-uses a JSON merge patch, falling back to a check-and-set read-modify-write; a
-concurrent change aborts the write rather than overwriting. Sibling properties in
-the same secret — application settings and the like — are never touched.
+**Writing into a shared JSON document.** One secret per application with a field
+per account is the **documented default** (Q7, decided in #85; the payload shape
+is `../use-cases/uc-01-app-credential-sync.md` §3). One secret per account stays
+fully supported — it is the same code path with one account in the map.
+
+Where several accounts live in one property (`DB_CREDENTIALS` above), the tool
+must not clobber siblings. On KV v2 it uses a JSON merge patch, falling back to a
+check-and-set read-modify-write; a concurrent change aborts the write rather than
+overwriting. Sibling properties in the same secret — application settings and the
+like — are never touched.
+
+Aborting is worth stating as a rule rather than as caution, because the reason
+changed once the lock landed. A mutating run holds the advisory lock on the
+**path** (Q2, #83), so no other run of this tool can be writing that document. A
+compare-and-set conflict therefore means a *foreign* writer — somebody at a vault
+CLI. Re-reading and merging over them is exactly the read-modify-write that
+rewrites fields belonging to accounts nobody selected, which invariant 5 exists to
+prevent. So the write is abandoned and reported; it is never retried into a
+document that moved underneath it.
+
+The same reasoning gives the read side its rule: **keys the tool does not
+recognise are preserved verbatim**, never dropped and never rebuilt from config.
+A document is edited, not regenerated.
 
 ---
 
@@ -1596,4 +1614,4 @@ notices until a rotation.
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
 | C13 | Is `vault:` under `defaults:` and in a profile a store *name* or a block? | unresolved — §3 and `SOPULI_VAULT` say name; P3's `defaults.vault.addr` and §5's `vault.auth` say block. The loader accepts the name form and refuses the block form rather than settling it in a diff. Overlaps C9. Issue #31 |
-| C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. `sopuli-run-1.5.schema.json` is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
+| C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. `sopuli-run-1.6.schema.json` is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |

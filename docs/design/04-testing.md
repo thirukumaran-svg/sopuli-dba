@@ -165,6 +165,12 @@ container. `testcontainers-python` handles session-scoped containers; a
 - precedence: every layer in P3, including the safety ratchet and the
   third-party-env ranking
 - SecretRef parsing, including `#field/json/pointer` and `@version=`/`@stage=`
+- the staged payload layout (Q7, #85): that Q7's two layouts produce the same
+  arithmetic under one rule, and that a merge patch **omits** every sibling
+  account rather than rewriting it with what was last read. The second is the
+  interesting one — a patch that names a sibling is indistinguishable from a
+  correct one until two accounts share a document, so it is asserted on what the
+  patch does not contain
 - password generation: charset, first character, byte length in a given database
   character set, composition requirements — each asserted over enough draws that
   "usually" fails. Two things output cannot show are pinned as well: that the

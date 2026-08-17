@@ -2,7 +2,7 @@
 
 Invariant 12: the schema is the test fixture, not documentation written
 afterwards. Every section built here goes through
-``sopuli-run-1.5.schema.json`` -- which is stricter than it looks, because #98's
+``sopuli-run-1.6.schema.json`` -- which is stricter than it looks, because #98's
 review tightened it: every field of a `held` entry is required, and a `denied`
 whose reason is `held` must describe the holder.
 """
@@ -54,7 +54,7 @@ class Clock:
 
 @pytest.fixture(scope="module")
 def validator() -> Draft202012Validator:
-    schema = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.5.schema.json"
+    schema = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.6.schema.json"
     return Draft202012Validator(json.loads(schema.read_text(encoding="utf-8")))
 
 

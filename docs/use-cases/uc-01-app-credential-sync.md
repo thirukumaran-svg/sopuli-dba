@@ -102,7 +102,66 @@ the vault payload are the whole rotation mechanism:
 ```
 
 On a store with native staging (OCI, AWSSM) these map to version stages instead
-of extra fields; the tool abstracts over that but reports which mechanism it used.
+of extra fields; the tool abstracts over that but reports which mechanism it used
+— with one exception, below.
+
+### The layout, and the one rule that covers both (Q7, decided in #85)
+
+The documented default is **one secret per application, a field per account** —
+`tenants/{tenant}#DB_CREDENTIALS/{account}`, the layout
+`../design/01-configuration.md` §2 already uses. One secret per account remains
+fully supported; a `secret` or `secret_template` naming a single field is the
+same code path.
+
+What differs between the two is only *how many accounts live in one document*,
+and the payload follows from one rule:
+
+> **Every root-level key mirrors the shape of the current-stage container.**
+
+The container is what the configured ref addresses — the field, and any pointer
+below it. Where that is a scalar, `pending`, `previous` and the rotation stamps
+are scalars beside it, which is the payload above, unchanged. Where it is a map
+keyed by account, they are maps keyed the same way:
+
+```json
+{ "DB_CREDENTIALS": { "acme_web_user": "<current>", "acme_api_user": "<current>" },
+  "pending":        { "acme_web_user": "<generated, not yet applied>" },
+  "previous":       { "acme_web_user": "<the one before current>" },
+  "rotated_at":     { "acme_web_user": "2026-08-04T09:12:33Z", "acme_api_user": "…" },
+  "rotated_by":     { "acme_web_user": "approle:sopuli-ci", "acme_api_user": "…" },
+  "policy":         { "acme_web_user": "app-standard", "acme_api_user": "app-standard" },
+  "targets":        { "acme_web_user": ["cdb1-pdb-orders"], "acme_api_user": ["…"] } }
+```
+
+Three things fall out of it, and each is why the rule is worth stating as a rule:
+
+- **No new pointer syntax, and no nesting of the triple.** `#DB_CREDENTIALS/…`
+  and `#pending/…` take the same pointer below the same key, so C14's
+  `@stage=pending` means "the `pending` sibling, same key" in both layouts.
+- **The ref an application reads does not change.** It still resolves to a
+  password string, which is what rules out the other candidate shape — an object
+  per account, holding its own triple. That would have made every consumer read a
+  document and dig, to save the tool a rule it needs anyway.
+- **The stamps sit beside the value they describe.** They are per-account because
+  a single account can be rotated inside a shared document, and a root-level
+  `rotated_at` would then describe some of the document and not the rest.
+  `username` has no counterpart in the shared layout: the map key *is* the
+  username, and a second copy is a thing that can disagree with itself.
+
+**Native staging is the exception the first paragraph names.** An OCI or AWSSM
+version stage is per *secret*, so it cannot promote one account's `pending`
+without promoting every account's. A document holding more than one account's
+credential therefore emulates the three stages in payload fields even on a store
+that has them natively, and the run reports the emulated mechanism — which is
+the reporting §3 already requires, with the condition now made explicit rather
+than left to be discovered. Where each account has its own secret, native staging
+is used as before.
+
+**Sharing a document is not sharing a lock by accident.** Two accounts in one
+document contend, deliberately: Q2 keys the lock on the path, so the second run
+loses on the lock and exits 7 naming the holder, rather than racing to a lost
+update. Under the common workflow — rotate an application's accounts together —
+that is one lock, one document and one write for the whole application.
 
 **Why `pending` exists.** Ordering is the central risk in this use case:
 
@@ -605,6 +664,6 @@ is the UC-1 specific list.
 | Q4 | Does the tool ever alter a *profile* to enable rollover? | leaning no by default — profiles are shared; report the needed DDL instead |
 | Q5 | Notification on drift | out of scope for the tool; exit code 3 + JSON output is the integration point |
 | Q6 | Self-rotation mode (tool connects as the account itself, `REPLACE old`) | useful where no admin credential exists; defer to UC-1b |
-| Q7 | One secret per account vs one secret with many fields for an app | support both via SecretRef JSON pointers; pick one as the documented default |
+| ~~Q7~~ | ~~One secret per account vs one secret with many fields for an app~~ | **decided: one secret per application, a field per account** (#85) — the layout §2 of `../design/01-configuration.md` already used in its worked example, now the documented default. An application's accounts are rotated together far more often than separately, and across a dozen tenants and environments the per-account layout is the difference between eight vault paths and forty-eight — which on a store that bills per secret is a line item, and on any store is a policy surface. One secret per account stays fully supported, and is the right answer where an account's lifecycle is genuinely its own. Neither the lock nor the write path changes shape: Q2 (#83) already keyed the lock on the **path** for exactly this case, and §7 already writes one field without touching its siblings — so the **account remains the unit of work** even where the document is shared. What the default settles is the payload, in §3 below. |
 | Q8 | Should `apply` be able to create a missing account? | no in UC-1; belongs to a provisioning use case |
 | Q9 | Time source for `max_age_days` | vault `rotated_at` (authoritative) vs DB `PTIME`; use vault, show both in `status` |

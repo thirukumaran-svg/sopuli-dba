@@ -17,7 +17,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.1.schema.json](schemas/sopuli-config-1.1.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.5.schema.json](schemas/sopuli-run-1.5.schema.json) | JSON Schema (2020-12) for the `--output json` document |
+| [schemas/sopuli-run-1.6.schema.json](schemas/sopuli-run-1.6.schema.json) | JSON Schema (2020-12) for the `--output json` document |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -120,7 +120,17 @@ configured `locking: advisory-only`), ~~how many `previous` generations to keep~
 gives for free. C14 settled it: OCI holds exactly one `PREVIOUS`, and a closed
 three-stage vocabulary has nothing to address an older generation with),
 whether the tool ever alters a profile (Q4), drift notification (Q5),
-self-rotation mode (Q6), one-secret-per-account vs one-secret-per-app (Q7),
+self-rotation mode (Q6), ~~one-secret-per-account vs one-secret-per-app~~ (Q7 —
+**decided in #85: one secret per application**, a field per account, as the
+documented *default*; per-account stays fully supported. An application's accounts
+rotate together far more often than separately, and the per-account layout
+multiplies paths by accounts across every tenant and environment. Nothing about
+the lock or the write path changes shape, because Q2 already keyed the lock on the
+path and the merge patch already writes one field without touching its siblings —
+so the account remains the unit of work even in a shared document. The payload
+follows one rule: every root-level key mirrors the shape of the current-stage
+container. The one real cost is that a shared document cannot use native version
+staging, because an OCI or AWSSM stage is per secret),
 account creation scope (Q8), authoritative time source for password age (Q9).
 
 ### Settled

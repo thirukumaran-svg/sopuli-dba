@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.5.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.6.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -295,14 +295,20 @@
         },
         "shared_secrets": {
           "type": "array",
-          "description": "Where one secret backs several targets, so the operator can see it is deliberate.",
+          "description": "Where one secret backs several targets or several accounts, so the operator can see it is deliberate.",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": ["secret", "targets"],
             "properties": {
               "secret": { "$ref": "#/$defs/secret_ref" },
-              "targets": { "type": "array", "items": { "type": "string" } }
+              "targets": { "type": "array", "items": { "type": "string" } },
+              "accounts": {
+                "type": "array",
+                "description": "Every account whose credential lives in this document (Q7, decided in issue #85). Present only when there is more than one, because a list of one is not a warning: it is the ordinary one-secret-per-account layout. `targets` answers who receives the password; this answers whose passwords the write touches.",
+                "minItems": 2,
+                "items": { "type": "string" }
+              }
             }
           }
         },
