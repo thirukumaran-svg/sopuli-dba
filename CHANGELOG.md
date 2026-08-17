@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/futville/sopuli-dba/compare/v0.21.0...v0.22.0) (2026-08-17)
+
+
+### Features
+
+* **payload:** one secret per application by default, one rule for both layouts ([#85](https://github.com/futville/sopuli-dba/issues/85)) ([#109](https://github.com/futville/sopuli-dba/issues/109)) ([02a5871](https://github.com/futville/sopuli-dba/commit/02a5871ae9af74b0e1b5cc399f960686e7e0c1b4))
+
 ## [0.21.0](https://github.com/futville/sopuli-dba/compare/v0.20.0...v0.21.0) (2026-08-16)
 
 
