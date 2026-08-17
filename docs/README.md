@@ -95,8 +95,9 @@ setting**, which is what keeps it structurally unable to relax `readonly`,
 `max_targets`, `confirm_environments` or `dry_run`),
 one service account per database or per application (P4),
 does `doctor` fail or warn on over-granted privileges (P5), keep 11.2 support
-(P6), **do 23ai schema privileges cover `ALTER USER` (P7 — to be tested on
-26ai; a yes would narrow the whole privilege model)**.
+(P6), **do the 23-codebase schema privileges cover `ALTER USER` (P7 — testable on
+the tier-1 `oracle-free` image, since "23ai" and "26ai" are one product renamed;
+a yes would narrow the whole privilege model)**.
 
 **JSON output (03):** buffering policy for `--output json` (J1), always emit
 `plan` (J2), warning code registry (J3), host/pid in output (J4), OpenTelemetry

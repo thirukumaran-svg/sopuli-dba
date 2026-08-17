@@ -95,13 +95,15 @@ pattern, revisit this **for that runner's credential only**. A lighter option to
 try first: a read-only account for scheduled `check`, and an `ALTER USER` account
 used only by interactive `apply`/`rotate`.
 
-A separate trigger: **P7**. If Oracle 23ai schema privileges turn out to cover
-`ALTER USER` (`GRANT ALTER USER ON SCHEMA app_web_user TO sopuli_svc`), scoped
-direct grants would give the least-privilege property the package was meant to
-provide, with none of its cost. Expected not to work — schema privileges scope
-privileges over objects *inside* a schema, and `ALTER USER` acts on the account as
-a principal — but it is a five-minute test on 26ai and it changes the model if it
-succeeds.
+A separate trigger: **P7**. If the schema privileges introduced in the 23 codebase
+turn out to cover `ALTER USER`
+(`GRANT ALTER USER ON SCHEMA app_web_user TO sopuli_svc`), scoped direct grants
+would give the least-privilege property the package was meant to provide, with none
+of its cost. Expected not to work — schema privileges scope privileges over objects
+*inside* a schema, and `ALTER USER` acts on the account as a principal — but it is a
+five-minute test on the tier-1 `oracle-free` image, which *is* the 23 codebase
+("23ai" and "26ai" being one product renamed, not two versions —
+`../design/02-oracle-privileges.md` §2.1), and it changes the model if it succeeds.
 
 ## Note on the implementation
 

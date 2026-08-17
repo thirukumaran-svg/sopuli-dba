@@ -106,7 +106,10 @@ than reasoning:
   on it and it is not confirmed
 - whether `ALTER USER` text leaks the password into `V$SQL` or
   `UNIFIED_AUDIT_TRAIL`, per version
-- whether 23ai schema privileges cover `ALTER USER` (P7)
+- whether the 23-codebase schema privileges cover `ALTER USER` (P7). Note that
+  "23ai" and "26ai" are one product renamed, not two versions — the tier-1
+  `oracle-free` image is the 23 codebase, so this is not blocked on an
+  environment (`docs/design/02-oracle-privileges.md` §2.1)
 - whether a pullable Oracle 11g XE image exists (T1)
 
 Do not assume any of these. Where the answer is unknown, the code should refuse

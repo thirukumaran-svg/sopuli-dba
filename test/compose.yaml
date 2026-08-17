@@ -1,15 +1,25 @@
 # sopuli-dba test stack
 #
-# STATUS: DRAFT. Never run. Image tags are unverified — see docs/design/04-testing.md §8 T1.
+# STATUS: tier0 and tier1 verified working 2026-08-17. tier2, nne and emulators are
+# still unrun and their image tags unverified — see docs/design/04-testing.md §8 T1.
 #
-# Profiles keep the inner loop fast:
+# Profiles keep the inner loop fast, and they are additive: every tier0 service also
+# carries tier1 and tier2, so moving up a tier adds services and recreates nothing.
 #   docker compose --profile tier0 up -d     # Vault + PostgreSQL, seconds
-#   docker compose --profile tier1 up -d     # + Oracle 23ai Free, ~1-2 min first start
+#   docker compose --profile tier1 up -d     # + Oracle Free, ~30-60 s to healthy
 #   docker compose --profile tier2 up -d     # + older Oracle lines, several minutes
 #   docker compose --profile nne   up -d     # Oracle with Native Network Encryption required
 #
-# Oracle containers are slow to start and are deliberately long-running: tests reset
-# state by dropping and recreating accounts, never by recreating the container.
+# TEARDOWN: use `docker compose --profile '*' down`. A plain `docker compose down` is
+# a SILENT NO-OP here — every service below carries a profiles: key, so with no
+# profile selected it matches nothing and exits 0. `--profile tier0 down` is worse
+# than useless: it removes tier0's services, leaves Oracle running, and then cannot
+# remove the network. See README.md.
+#
+# Oracle containers are deliberately long-running: tests reset state by dropping and
+# recreating accounts, never by recreating the container. Note that NOTHING HERE
+# ENFORCES THAT — no service declares a volume, so any teardown discards the
+# database and the next `up` re-initialises from scratch.
 
 name: sopuli-test
 

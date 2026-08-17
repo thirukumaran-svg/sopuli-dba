@@ -17,10 +17,10 @@ scope** — there is no `GRANT ALTER USER ON ORDERS_APP`. Any account that can
 change one user's password can change every user's password in that container,
 including `SYS`.
 
-23ai/26ai adds **schema privileges**, which are worth checking before accepting
-that as permanent — see the test in §2.1. The expectation is that they do not
-help here, but it is cheap to confirm and the answer changes the model if it goes
-the other way.
+The 23 codebase — 23ai, renamed 26ai — adds **schema privileges**, which are worth
+checking before accepting that as permanent; see the test in §2.1. The expectation
+is that they do not help here, but it is cheap to confirm and the answer changes the
+model if it goes the other way.
 
 The alternative is a definer-rights package that owns the privilege and exposes
 only whitelisted operations. That was the earlier draft of this document, and it
@@ -46,7 +46,17 @@ code. §6 describes the one situation where it may earn its cost back.
 
 ## 2. The grants
 
-### 2.1 First: test schema privileges on 26ai (open, cheap, decision-changing)
+### 2.1 First: test schema privileges (open, cheap, decision-changing)
+
+> **"23ai" and "26ai" are one product, not two.** Oracle renamed Oracle Database
+> 23ai to Oracle AI Database 26ai in October 2025: same codebase, no architectural
+> or API change, and 26ai inherits 23ai's Lifetime Support Policy. In
+> `23.26.2.0.0` the **23** is the codebase and the **26** is the release-update
+> year. A 23ai instance becomes 26ai by applying the 23.26.0 RU, and 23ai is no
+> longer separately downloadable — **so there is no pre-26ai 23ai to find, and
+> nothing here is waiting on one.** Read "23ai" below as "the 23 codebase", and
+> "23ai+" as "codebase 23 and later". Numbering detail:
+> [`04-testing.md`](04-testing.md) §2.
 
 Oracle 23ai introduced schema-level privilege grants:
 
@@ -72,7 +82,9 @@ Oracle publishes an explicit list of system and administrative privileges
 excluded from schema privileges, in *Configuring Privilege and Role
 Authorization*. That list is where the definitive answer lives.
 
-**Test to run on 26ai:**
+**Test to run** — `gvenzl/oracle-free:latest` is the 23 codebase and is sufficient;
+this needs no environment the test stack does not already have (tier 1,
+`04-testing.md` §2):
 
 ```sql
 -- expect a syntax/privilege error, most likely ORA-00990
@@ -89,9 +101,9 @@ SELECT * FROM dba_schema_privs WHERE grantee = 'SOPULI_SVC';
 account could then hold `ALTER USER` scoped to just the application schemas it
 manages, giving the least-privilege property the definer-rights package was
 supposed to provide — with no package, no per-PDB install, and no version skew.
-That would be worth taking, with the caveats that it is 23ai+ only (so every
-older target still needs the broad grant) and that the config's declared accounts
-would want to stay aligned with whatever is granted.
+That would be worth taking, with the caveats that it is codebase-23-and-later only
+(so 21c and every older target still needs the broad grant) and that the config's
+declared accounts would want to stay aligned with whatever is granted.
 
 Until tested, treat the direct grant in §1 as the model.
 
@@ -397,4 +409,4 @@ All scripts are idempotent and report what they did.
 | P4 | One service account per database, or per application? | per database; the config's declared accounts provide the finer scoping |
 | P5 | Does `doctor` fail or warn on over-granted privileges? | warn; failing would block someone mid-incident |
 | P6 | 11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases? | keep for now, drop if it starts costing real complexity |
-| P7 | Do 23ai schema privileges cover `ALTER USER`? (§2.1) | expected no; **Ville to test on 26ai**. If yes, adopt scoped grants for 23ai+ targets and keep the broad grant as the pre-23ai fallback |
+| P7 | Do the 23-codebase schema privileges cover `ALTER USER`? (§2.1) | expected no; **Ville to test** — the tier-1 `oracle-free` image is the 23 codebase, so this is not waiting on an environment. If yes, adopt scoped grants for 23-codebase targets and keep the broad grant as the fallback for 21c and older |

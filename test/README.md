@@ -1,25 +1,56 @@
 # Test environments
 
-Draft sketch. Nothing here has been run; image tags are unverified.
+**tier0 and tier1 verified working 2026-08-17** — both come up, Vault mounts both
+KV versions, Oracle initialises and the profiles in `oracle-init/` are created.
+tier2, `nne` and `emulators` are still unrun and their image tags unverified.
 Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testing.md).
 
 ## Quick start
 
 ```bash
 docker compose --profile tier0 up -d      # Vault + PostgreSQL, seconds
-docker compose --profile tier1 up -d      # + Oracle 23ai Free, ~1-2 min first start
+docker compose --profile tier1 up -d      # + Oracle Free, ~30-60 s to healthy
 docker compose --profile tier2 up -d      # + 21c/18c/11g XE + toxiproxy, minutes
 docker compose --profile nne   up -d      # Oracle requiring Native Network Encryption
-docker compose down -v                    # tear down, including volumes
+docker compose --profile '*'   down       # tear down EVERYTHING — see below
 ```
+
+**Profiles are additive, so the tiers nest.** Every tier0 service also carries the
+tier1 and tier2 profiles, so `--profile tier1 up -d` over a running tier0 adds
+Oracle and leaves Vault and PostgreSQL untouched — same containers, uninterrupted
+uptime, and Vault's in-memory `kv`/`kv1` data intact. Verified by container id, and
+it matters: dev-mode Vault is `inmem`, so a recreate would silently discard
+anything a test had written. There is no tier0-only service, which is why moving
+up a tier can never tear something down.
 
 Oracle containers are deliberately long-running. Tests reset state by dropping
 and recreating accounts, never by recreating the container — startup dominates
-everything else.
+everything else. **Nothing in this file enforces that**: no service declares a
+volume, so any teardown discards the database and the next `up` re-initialises
+from scratch.
+
+## Teardown, which is not what you would guess
+
+`docker compose down` **does nothing at all here.** Every service in
+`compose.yaml` carries a `profiles:` key, so a command with no profile selected
+matches zero services — it prints nothing and exits 0. `--remove-orphans` does not
+help either: an orphan is a container whose service left the file, not one
+excluded by a profile.
+
+| Command | What it actually does |
+|---|---|
+| `docker compose --profile '*' down` | **the one you want.** Removes every container and the network |
+| `docker compose down` | no-op. Silent, exit 0 |
+| `docker compose down --remove-orphans` | also a no-op |
+| `docker compose --profile tier0 down` | removes *only* tier0's services. Leaves Oracle running and then cannot remove the network — `Resource is still in use`. A half-torn-down stack that does not announce itself |
+
+`-v` is pointless in every form: the project declares no named volumes, so there
+is nothing for it to remove. It is omitted above rather than carried as
+reassurance that does nothing.
 
 | Service | Port | Notes |
 |---|---|---|
-| vault | 8200 | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted |
+| vault | 8200 | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **UI at <http://127.0.0.1:8200/ui>** — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` and `agent-registry/`, so three KV mounts exist and a test asserting on the mount list must expect them |
 | postgres | 5432 | `postgres` / `sopuli-test` |
 | oracle-free | 1521 | 23ai/26ai Free — CDB + PDB, rollover |
 | oracle-xe21 | 1522 | 21c XE |
@@ -33,6 +64,32 @@ everything else.
 1. Confirm the `sqlnet.ora` mount path for the NNE service — it is image- and
    version-specific.
 2. Confirm which LocalStack tier includes Secrets Manager (T3).
+
+## Gotchas found by actually running tier0 and tier1
+
+- **`SOPULI_STRONG` reads as `FROM ROOT`, not as the function name.** In the PDB,
+  `DBA_PROFILES.LIMIT` for `PASSWORD_VERIFY_FUNCTION` is `FROM ROOT`. The function
+  *is* enforced — a 4-character password gives `ORA-28003` plus
+  `ORA-20000: password length less than 9 characters` — so **assert on the error,
+  not on the dictionary value.** A test checking for
+  `PASSWORD_VERIFY_FUNCTION = 'ORA12C_STRONG_VERIFY_FUNCTION'` concludes the
+  profile is unconfigured when it is working correctly.
+- **`vault-init` logs two 400 errors on every `up` after the first.** It is a
+  one-shot that has already exited, so `up` starts it again, and both
+  `vault secrets enable` calls fail with `path is already in use`. `|| true`
+  swallows them, so it exits 0 and still prints `kv (v2) and kv1 (v1) mounted` —
+  harmless, but the errors are the first thing anyone debugging this stack will
+  find. A `vault secrets list | grep -q` guard before each enable would silence it.
+- **`hashicorp/vault:latest` is now 2.x** (2.0.4 as of 2026-08-17), not 1.x.
+- **`gvenzl/oracle-free:latest` is now 26ai** (`23.26.2.0.0`) — which is the *same
+  database* as 23ai, renamed in October 2025, not a newer version. So this image is
+  the 23ai line, and results from it apply to it; there is no separate 23ai to
+  obtain. Cite the release number rather than the name, because next quarter's 26ai
+  is a different RU. Detail in
+  [`../docs/design/04-testing.md`](../docs/design/04-testing.md) §2.
+- Oracle reaches `healthy` in **30–60 s**, not the 1–2 minutes assumed here — the
+  image ships a pre-built database. The `start_period: 120s` is generous rather
+  than necessary.
 
 *(T1 — whether `gvenzl/oracle-xe:11-slim` exists — is settled: it does, it starts
 in ~15 s, and `oracle-init/01_test_profiles.sql` runs against it. Oracle 11.2

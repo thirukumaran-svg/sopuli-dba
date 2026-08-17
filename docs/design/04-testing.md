@@ -40,6 +40,26 @@ This is also why the matrix is capability-driven rather than version-driven (§3
 | HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
 | File / age backend | none needed | the non-production store |
 
+**"23ai" and "26ai" are the same database.** Oracle renamed Oracle Database 23ai
+to Oracle AI Database 26ai in October 2025; 26ai adds functionality on top of the
+same codebase, with no change to the architecture or existing APIs, and it inherits
+23ai's Lifetime Support Policy. The numbering scheme changed at the same time:
+in `23.26.2.0.0` the **23** is the codebase, the **26** is the release-update year
+(2026), and the third digit is the quarter — so the version now tells you the date
+of the RU. A 23ai instance becomes 26ai by applying the 23.26.0 RU, and 23ai is no
+longer separately downloadable.
+
+Two consequences for this matrix:
+
+- **There is no pre-26ai 23ai to test, and no way to obtain one.** A result from
+  `gvenzl/oracle-free:latest` *is* a result for the 23ai line. Where this document
+  says "23ai Free" it means exactly this image. P7 ("do 23ai schema privileges
+  cover `ALTER USER`?") is answerable here, not blocked on finding a 23ai instance.
+- **Qualify findings by release number, not by marketing name.** `23.26.2.0.0`
+  says what was tested; "26ai" does not, since next quarter's 26ai is a different
+  RU. Verified 2026-08-17 as `Oracle AI Database 26ai Free Release 23.26.2.0.0`,
+  CDB `FREE` plus `FREEPDB1`, reaching `healthy` in 30–60 s.
+
 The 11g XE tag exists and works, so 11.2 support (D7) is cheap: it stays a tier-2
 compose service and never needs building from `oracle/docker-images`. Verified
 2026-08-08 against `gvenzl/oracle-xe:11.2.0.2-slim`
@@ -206,7 +226,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | Idempotency: every command twice, second reports `unchanged` | any |
 | Drift: change a password out of band, `check` reports DRIFT, exit 3 | any |
 | **Lockout regression**: profile with `FAILED_LOGIN_ATTEMPTS 3`, run `check` against a drifted account 5×, assert the account never locks | any |
-| Verify-function: profile with `ora12c_strong_verify_function` and a violating policy — bounded regeneration, then a clear error carrying the server message | any |
+| Verify-function: profile with `ora12c_strong_verify_function` and a violating policy — bounded regeneration, then a clear error carrying the server message. **Assert on the error, never on `DBA_PROFILES`**: in a PDB the `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` rather than the function name, so a dictionary check reports an unconfigured profile while the function is in fact enforcing (`ORA-28003` + `ORA-20000`) | any |
 | Password reuse: `PASSWORD_REUSE_MAX`, assert no blind retry on ORA-28007 | any |
 | 30-byte limit and 10G/11G verifiers | 11g XE / 18c XE |
 | Common user + `CONTAINER=ALL`, and refusal outside `CDB$ROOT` | any CDB |
