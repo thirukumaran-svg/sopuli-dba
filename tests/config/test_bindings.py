@@ -86,7 +86,9 @@ def one_target(**entry: Any) -> dict[str, Any]:
 def test_one_binding_per_account_per_target() -> None:
     """The fan-out §1 describes: one account in eleven PDBs is a sentence you
     write once and a list you can count."""
-    bindings = bind(accounts=["acme_web_user", "acme_api_user"], secret_template="apps/{account}")
+    bindings = bind(
+        accounts=["acme_web_user", "acme_api_user"], secret_template="apps/{account}#password"
+    )
 
     assert len(bindings) == 3 * 2
     assert {binding.target for binding in bindings} == {
@@ -98,7 +100,7 @@ def test_one_binding_per_account_per_target() -> None:
 
 def test_bindings_are_ordered_by_target_then_by_declared_account() -> None:
     """All document order, so the list is stable enough to diff between runs."""
-    bindings = bind(accounts=["b_user", "a_user"], secret_template="apps/{account}")
+    bindings = bind(accounts=["b_user", "a_user"], secret_template="apps/{account}#password")
 
     assert [(b.target, b.account) for b in bindings][:4] == [
         ("appdb-dev-alpha", "b_user"),
@@ -120,7 +122,7 @@ def test_a_target_no_application_selects_has_no_bindings() -> None:
                     "name": "acme",
                     "targets": {"group": "app-pdbs"},
                     "accounts": ["acme_web_user"],
-                    "secret_template": "apps/{account}",
+                    "secret_template": "apps/{account}#password",
                 }
             ],
         )
@@ -142,20 +144,22 @@ def test_the_account_tokens_render_per_account() -> None:
     accounts, and this is the rendering that rule protects."""
     bindings = bind(
         accounts=["Acme_Web_User"],
-        secret_template="apps/{account}/{account_lower}/{account_upper}",
+        secret_template="apps/{account}/{account_lower}/{account_upper}#password",
         targets={"match": {"tenant": "alpha", "env": "qa"}},
     )
 
     (binding,) = bindings
-    assert str(binding.secret) == "apps/Acme_Web_User/acme_web_user/ACME_WEB_USER"
+    assert str(binding.secret) == "apps/Acme_Web_User/acme_web_user/ACME_WEB_USER#password"
 
 
 def test_the_target_tokens_render_from_the_target() -> None:
     binding = only(
-        **one_target(accounts=["acme_web_user"], secret_template="{target}/{env}/{container}")
+        **one_target(
+            accounts=["acme_web_user"], secret_template="{target}/{env}/{container}#password"
+        )
     )
 
-    assert str(binding.secret) == "appdb-qa-alpha/qa/alphapdb"
+    assert str(binding.secret) == "appdb-qa-alpha/qa/alphapdb#password"
 
 
 def test_a_label_is_a_token() -> None:
@@ -169,9 +173,11 @@ def test_a_label_is_a_token() -> None:
 
 
 def test_the_application_token_is_the_entry_name() -> None:
-    binding = only(**one_target(accounts=["acme_web_user"], secret_template="{application}/creds"))
+    binding = only(
+        **one_target(accounts=["acme_web_user"], secret_template="{application}/creds#password")
+    )
 
-    assert str(binding.secret) == "acme/creds"
+    assert str(binding.secret) == "acme/creds#password"
 
 
 def test_the_application_token_is_empty_in_the_inline_form() -> None:
@@ -196,11 +202,11 @@ def test_a_built_in_token_wins_over_a_label_of_the_same_name() -> None:
             "vaults": VAULTS,
             "target_sets": {"appdb": target_set},
             "accounts": ["acme_web_user"],
-            "secret_template": "apps/{target}",
+            "secret_template": "apps/{target}#password",
         }
     )
 
-    assert str(config.bindings[0].secret) == "apps/appdb-dev-alpha"
+    assert str(config.bindings[0].secret) == "apps/appdb-dev-alpha#password"
 
 
 @pytest.mark.parametrize(
@@ -261,7 +267,7 @@ def test_a_ref_from_an_override_is_reported_against_that_override() -> None:
             accounts=["acme_web_user"],
             secret_template="tenants/{tenant}#DB/{account}",
             overrides=[
-                {"where": {"env": "qa"}, "secret_template": "x/{account}"},
+                {"where": {"env": "qa"}, "secret_template": "x/{account}#password"},
                 {"where": {"env": "dev"}, "secret_template": "tenants/{nope}#DB/{account}"},
             ],
         )
@@ -328,14 +334,14 @@ def test_overrides_apply_in_document_order_and_the_later_one_wins() -> None:
         accounts=["acme_web_user"],
         secret_template="tenants/{tenant}#DB/{account}",
         overrides=[
-            {"where": {"env": "dev"}, "secret_template": "broad/{account}"},
-            {"where": {"tenant": "beta"}, "secret_template": "narrow/{account}"},
+            {"where": {"env": "dev"}, "secret_template": "broad/{account}#password"},
+            {"where": {"tenant": "beta"}, "secret_template": "narrow/{account}#password"},
         ],
     )
 
     by_target = {binding.target: str(binding.secret) for binding in bindings}
-    assert by_target["appdb-dev-alpha"] == "broad/acme_web_user"
-    assert by_target["appdb-dev-beta"] == "narrow/acme_web_user"
+    assert by_target["appdb-dev-alpha"] == "broad/acme_web_user#password"
+    assert by_target["appdb-dev-beta"] == "narrow/acme_web_user#password"
 
 
 def test_an_override_patches_key_by_key() -> None:
@@ -356,7 +362,7 @@ def test_an_override_patches_key_by_key() -> None:
 
 def test_the_vault_falls_back_from_the_entry_to_the_target() -> None:
     """§3's chain, in the order it is written there."""
-    bindings = bind(accounts=["acme_web_user"], secret_template="apps/{account}")
+    bindings = bind(accounts=["acme_web_user"], secret_template="apps/{account}#password")
 
     by_target = {binding.target: binding.vault for binding in bindings}
     assert by_target["appdb-dev-alpha"] == "vault-dev"
@@ -366,7 +372,9 @@ def test_the_vault_falls_back_from_the_entry_to_the_target() -> None:
 def test_an_entry_vault_beats_the_target_vault() -> None:
     binding = only(
         **one_target(
-            accounts=["acme_web_user"], secret_template="apps/{account}", vault="vault-other"
+            accounts=["acme_web_user"],
+            secret_template="apps/{account}#password",
+            vault="vault-other",
         )
     )
 
@@ -377,7 +385,9 @@ def test_a_ref_naming_its_own_vault_beats_everything() -> None:
     """§7 calls the prefix an *explicit* vault. Anything else would print a ref
     reading `vault-other:...` beside a resolved store of `vault-test`."""
     binding = only(
-        **one_target(accounts=["acme_web_user"], secret_template="vault-other:apps/{account}")
+        **one_target(
+            accounts=["acme_web_user"], secret_template="vault-other:apps/{account}#password"
+        )
     )
 
     assert binding.vault == "vault-other"
@@ -396,7 +406,7 @@ def test_the_policy_falls_back_to_defaults() -> None:
                     "name": "acme",
                     "targets": {"group": "app-pdbs"},
                     "accounts": ["acme_web_user"],
-                    "secret_template": "apps/{account}",
+                    "secret_template": "apps/{account}#password",
                 }
             ],
         )
@@ -416,7 +426,7 @@ def test_an_entry_policy_beats_defaults() -> None:
                     "name": "acme",
                     "targets": {"group": "app-pdbs"},
                     "accounts": ["acme_web_user"],
-                    "secret_template": "apps/{account}",
+                    "secret_template": "apps/{account}#password",
                     "policy": "strict",
                 }
             ],
@@ -480,3 +490,141 @@ def test_a_literal_ref_is_shared_by_every_target_it_binds() -> None:
 
     assert {str(binding.secret) for binding in config.bindings} == {"apps/acme/db#password"}
     assert len(config.bindings) == 3
+
+
+# ------------------------------------------------------- somewhere to stage ---
+
+
+def test_a_ref_naming_a_whole_secret_is_refused_while_the_file_is_read() -> None:
+    """#111: the refusal existed, at the first rotation. This is when it fires.
+
+    On a store that emulates staging, `pending` and `previous` are keys beside
+    the container -- so a ref with no field has nowhere to put them, and the
+    document it names cannot hold a rotation at all.
+    """
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=["acme_web_user"], secret_template="apps/{account}")
+
+    assert "nowhere to stage into" in str(caught.value)
+    assert "applications[0].secret_template" in str(caught.value)
+    assert "#password" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "container",
+    ["pending", "previous", "rotated_at", "rotated_by", "policy", "targets"],
+)
+def test_a_container_named_after_a_staging_key_is_refused(container: str) -> None:
+    """The other half of the collision: `#pending/acme_web_user` would put the
+    current stage and the pending stage in one document key."""
+    with pytest.raises(ConfigError, match="reserved field name"):
+        bind(
+            accounts=["acme_web_user"],
+            secret_template=f"tenants/{{tenant}}#{container}/{{account}}",
+        )
+
+
+def test_a_field_called_current_is_fine() -> None:
+    """`current` is where the ref already points, so it is not a root key and
+    collides with nothing. The rule is about the keys the mirror generates."""
+    bindings = bind(
+        accounts=["acme_web_user"], secret_template="tenants/{tenant}#current/{account}"
+    )
+
+    assert str(bindings[0].secret) == "tenants/alpha#current/acme_web_user"
+
+
+def test_a_store_that_stages_natively_is_left_alone() -> None:
+    """P2: OCI's stages are versions of the secret, not fields in it.
+
+    So a ref naming a whole secret is the natural OCI layout rather than a
+    mistake, and refusing it everywhere would reject a correct config to enforce
+    a rule that exists only because HashiCorp KV has to emulate what OCI has.
+    """
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-oci": {"type": "oci"}, **VAULTS},
+            "target_sets": {"appdb": APPDB},
+            "groups": GROUPS,
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": {"group": "app-pdbs"},
+                    "accounts": ["acme_web_user"],
+                    "vault": "vault-oci",
+                    "secret_template": "apps/{account}",
+                }
+            ],
+        }
+    )
+
+    assert str(config.bindings[0].secret) == "apps/acme_web_user"
+
+
+def test_a_store_with_no_capability_row_is_left_alone() -> None:
+    """`keyring` is absent from P2's table, and deciding what it does about
+    staging is P2's call rather than this layer's. Absent means the check does
+    not fire, which is the reversible direction."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-keyring": {"type": "keyring"}, **VAULTS},
+            "target_sets": {"appdb": APPDB},
+            "groups": GROUPS,
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": {"group": "app-pdbs"},
+                    "accounts": ["acme_web_user"],
+                    "vault": "vault-keyring",
+                    "secret_template": "apps/{account}",
+                }
+            ],
+        }
+    )
+
+    assert str(config.bindings[0].secret) == "apps/acme_web_user"
+
+
+def test_the_key_reported_is_the_override_that_wrote_the_bad_ref() -> None:
+    """Checked per binding, on the rendered ref, so the location is the line
+    that actually produced it -- not the entry it patched."""
+    with pytest.raises(ConfigError) as caught:
+        bind(
+            accounts=["acme_web_user"],
+            secret_template="tenants/{tenant}#DB/{account}",
+            overrides=[{"where": {"env": "dev"}, "secret_template": "shared/{account}"}],
+        )
+
+    assert "applications[0].overrides[0].secret_template" in str(caught.value)
+
+
+def test_a_ref_naming_a_vault_that_is_not_declared_is_refused() -> None:
+    """The one way of naming a store that went unchecked.
+
+    `references.py` resolves the other five -- the target's `vault:`, the entry's,
+    an override's, a profile's, `defaults.vault` -- and the prefix on an
+    `admin.auth.secret`. An application's own prefix could not join them there,
+    because it is not resolvable until §7's tokens have been rendered.
+
+    Its own docstring says why that matters: a dangling store name does not stay
+    dangling. This one does not even fall back -- the prefix wins outright, so the
+    binding resolved to a store that does not exist.
+    """
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=["acme_web_user"], secret_template="vault-typo:apps/{account}#password")
+
+    assert "no vault named 'vault-typo' is declared" in str(caught.value)
+    assert "applications[0].secret_template" in str(caught.value)
+
+
+def test_a_ref_naming_a_declared_vault_is_fine() -> None:
+    """The rule is that the name resolves, not that the prefix is unusual."""
+    binding = only(
+        **one_target(
+            accounts=["acme_web_user"], secret_template="vault-other:apps/{account}#password"
+        )
+    )
+
+    assert binding.vault == "vault-other"

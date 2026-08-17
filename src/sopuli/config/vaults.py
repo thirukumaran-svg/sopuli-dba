@@ -41,6 +41,29 @@ VAULT_KEYS = ("type", "addr", "mount", "kv_version", "auth", "non_production", "
 #: should fail while it is being written, not at the first rotation.
 VAULT_TYPES = ("hashicorp", "oci", "file", "keyring")
 
+#: P2's ``staging_labels`` row, by store type: whether the three stages of UC-1
+#: §3 are the store's own or emulated in the payload's fields.
+#:
+#: The distinction decides whether a ref needs a field at all. Where staging is
+#: **native**, ``current``/``pending``/``previous`` are versions of the secret,
+#: so a ref naming a whole secret stages perfectly well and a field called
+#: ``pending`` is just a field. Where it is **emulated**, they are keys beside
+#: the container (``sopuli/payload.py``), so a whole-secret ref has nowhere to
+#: put them and a container named after one of them collides with it.
+#:
+#: ``keyring`` is deliberately absent rather than assumed emulated. P2's
+#: capability table does not have a row for it, it has no store adapter, and
+#: deciding what a single-string-per-entry backend does about staging is P2's
+#: call and not a validation function's. Absent means the check that reads this
+#: does not fire, which is the reversible direction.
+STAGING_NATIVE = "native"
+STAGING_EMULATED = "emulated"
+STAGING_LABELS = {
+    "hashicorp": STAGING_EMULATED,
+    "oci": STAGING_NATIVE,
+    "file": STAGING_EMULATED,
+}
+
 #: The methods P2 names, HashiCorp's first and OCI's after, each with the keys it
 #: takes. Which of them a given backend actually supports is the store's business,
 #: not this layer's -- pairing them here would hard-code a matrix P2 does not

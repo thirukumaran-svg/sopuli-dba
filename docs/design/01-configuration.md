@@ -984,7 +984,7 @@ One string addresses a value in any backend:
 
 | Example | Resolves to |
 |---|---|
-| `apps/orders/prod/db/ORDERS_APP` | whole secret (scalar or single-field) |
+| `apps/orders/prod/db/ORDERS_APP` | whole secret (scalar or single-field) — a **read** address; see below |
 | `apps/orders/prod/db/ORDERS_APP#password` | field `password` in the KV secret |
 | `vault-dev:apps/orders/prod/db/creds#password` | explicit vault |
 | `tenants/beta#DB_CREDENTIALS/acme_web_user` | one entry in a JSON map held in one property — the layout in §2 |
@@ -1101,6 +1101,44 @@ Rule: a template must resolve to **one** secret per (account × logical scope). 
 an account exists in eleven PDBs and the template mentions no distinguishing
 label, all eleven share one password — legal and often intended, but the plan
 output states it explicitly so it is never accidental.
+
+**An application's ref must have somewhere to stage into** (#111). Where the
+store emulates the three stages in payload fields — every backend in P2's table
+but OCI — `pending` and `previous` are keys *beside* the container, so two refs
+that parse perfectly well still cannot be rotated:
+
+| Refused | Why |
+|---|---|
+| `apps/orders/prod/db/creds` | no field: nowhere to put `pending` and `previous`. The "single-field" reading in the table above only holds until the first rotation, which makes the document three-field |
+| `tenants/beta#pending/{account}` | the container is a key the rotation mechanism owns. `pending`, `previous`, `rotated_at`, `rotated_by`, `policy` and `targets` are all reserved; `current` is not, because the ref already points at it |
+
+Both are refused **while the file is read** rather than at the first rotation —
+§1 calls this binding the safety-critical part, and invariant 4 wants a command
+that cannot succeed to fail before it has written anything. The check runs per
+binding in `sopuli/config/bindings.py`, on the *rendered* ref, which is what lets
+it be exact about two things a check on the written template could not be: the
+tokens are already substituted, and the store is known.
+
+**The store is why this is not a universal rule.** On OCI the stages are versions
+of the secret rather than fields in it (P2's `staging_labels` row), so a ref
+naming a whole secret is the natural layout there and a field called `pending`
+collides with nothing. Neither refusal fires against a store that stages
+natively. A store type P2 gives no capability row — `keyring` — is left alone
+too, rather than assumed to emulate.
+
+None of this constrains a ref that is only ever *read*. An `admin.auth.secret` is
+a credential the tool authenticates with and never rotates, so the whole-secret
+form stays exactly as the table above describes it.
+
+**A ref's own `vault-name:` prefix is resolved here too**, against the same
+declared set and with the same message as every other dangling name (§10). It is
+checked at this point rather than with the others because it is the only one that
+is not readable until the ref has been rendered — the rest are plain keys, while
+this one sits inside a template. It matters for the reason §10 gives about store
+names generally, with one turn of the screw: an entry's `vault:` that names
+nothing falls back, whereas a **prefix wins outright**, so a typo there produces a
+binding pointing at a store that does not exist — or one that later exists and
+belongs to somebody else.
 
 **Writing into a shared JSON document.** One secret per application with a field
 per account is the **documented default** (Q7, decided in #85; the payload shape
@@ -1403,6 +1441,7 @@ match instead:
 | a `for_each`'s inner dimension must be one variable throughout | §4 |
 | a profile may not set a key that changes scope | §5 |
 | `locking.break_expired` beside an `advisory-only` store | yes |
+| an application's ref must have somewhere to stage into, where the store emulates staging | §7 |
 
 So a file the schema accepts may still be refused by `sopuli config validate`,
 and that is the intended division rather than a gap. The schema is the fast,
