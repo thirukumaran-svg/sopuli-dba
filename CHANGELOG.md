@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.0](https://github.com/futville/sopuli-dba/compare/v0.22.0...v0.23.0) (2026-08-17)
+
+
+### Features
+
+* **config:** detect shared secrets, and show them in `config show --resolved` ([#110](https://github.com/futville/sopuli-dba/issues/110)) ([#117](https://github.com/futville/sopuli-dba/issues/117)) ([0849a3a](https://github.com/futville/sopuli-dba/commit/0849a3acfcab25d27685b4391ea34e07bb550e0b))
+* **config:** refuse an unstageable secret ref while the file is read ([#111](https://github.com/futville/sopuli-dba/issues/111)) ([#113](https://github.com/futville/sopuli-dba/issues/113)) ([ef55726](https://github.com/futville/sopuli-dba/commit/ef55726ce1ace4f1114da5da81707eadc173643a))
+
 ## [0.22.0](https://github.com/futville/sopuli-dba/compare/v0.21.0...v0.22.0) (2026-08-17)
 
 
