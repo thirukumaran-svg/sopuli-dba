@@ -23,7 +23,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.6.schema.json`](../schemas/sopuli-run-1.6.schema.json),
+Schemas: [`../schemas/sopuli-run-1.7.schema.json`](../schemas/sopuli-run-1.7.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -329,6 +329,34 @@ that touched six.
 `accounts[]` is optional rather than always-present, and reads as "the sharing the
 operator might not have intended". A document with exactly one account in it omits
 it, because a list of one is not a warning.
+
+**An entry is one document, not one ref** (#110). Every account in a document
+differs only by the pointer below the field, and the document is what a write, a
+compare-and-set and the advisory lock all operate on — so an entry is one entry
+per lock, and the `secret` it carries is a `vault` and a `path` with no `field`.
+Keying on the full ref instead would emit six near-identical entries for one
+six-account document, each repeating the same five neighbours. The path is
+normalised through the same function `sopuli/lock/keys.py` uses, so "shares a
+document" and "shares a lock" cannot give two different answers.
+
+**Where `accounts[]` comes from: the config, never the store.** The accounts in an
+entry are the ones the file declares for that document — invariant 5's set, which
+is also the set a write may touch. Two consequences, both intended. It is offline
+and deterministic, which it has to be: a plan is reviewable ahead of time only if
+it is a function of the config and the selection, and this section is emitted on
+real runs too, so a list read from a live document would make the plan-versus-
+`results` diff a question of whether somebody else edited the vault in between. And
+it will not show an account that is in the document but absent from the file —
+that is worth knowing, and it is drift rather than plan, so `creds check` reports
+it.
+
+**`config.shared_secrets` is the same shape, asked of the whole file.** `config
+show --resolved` emits it from the config alone, which is the offline question:
+*what does my file share, before I run anything?* `plan.shared_secrets` is the
+same detection narrowed to one run's work. They coexist for the reason
+`config.bindings` and `plan.units[]` do — one describes the file, the other
+describes a run. Both are omitted entirely when nothing is shared, rather than
+emitted empty: an empty array reads like a finding that came back negative.
 
 ### `lock`, on runs that take one
 

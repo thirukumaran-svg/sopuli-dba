@@ -15,7 +15,7 @@ secret ref here is an address and never a value (invariant 2, P2).
 
 The JSON form is the ``config`` section of the run document. It carries the same
 two views, discriminated by ``resolved``, and is pinned by
-``docs/schemas/sopuli-run-1.6.schema.json``.
+``docs/schemas/sopuli-run-1.7.schema.json``.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from typing import Any
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.locking import LOCK_REQUIRED
 from sopuli.config.model import Pairs, Vault
+from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
@@ -207,6 +208,12 @@ def build_section(
         _target_json(expanded, bound=bound) for expanded in config.expanded_targets
     ]
     section["bindings"] = [_binding_json(binding) for binding in config.bindings]
+    # Omitted rather than emitted empty, the same way `diagnostics` is: a config
+    # where nothing is shared has nothing to say, and an empty array reads like a
+    # finding that came back negative.
+    shared = shared_secrets(config.bindings)
+    if shared:
+        section["shared_secrets"] = [entry.as_json() for entry in shared]
     return section
 
 
@@ -337,7 +344,51 @@ def _selector(application: Any) -> str:
 
 
 def _resolved_sections(config: Config) -> list[tuple[str, list[str]]]:
-    return [("targets", _estate_rows(config)), *_binding_sections(config)]
+    return [
+        ("targets", _estate_rows(config)),
+        *_binding_sections(config),
+        *_shared_secret_sections(config),
+    ]
+
+
+def _shared_secret_sections(config: Config) -> list[tuple[str, list[str]]]:
+    """The binding rows seen the other way up: grouped by the document they write.
+
+    Last, because it is a reading of what is above it rather than new material --
+    and because the question it answers ("what else does this touch?") is one
+    somebody asks after seeing the bindings, not before.
+
+    The heading takes :attr:`~sopuli.output.palette.Role.NOTABLE`, which is the
+    role for a fact worth catching the eye without being an error. Sharing is
+    legal and often intended (§7); what it must not be is invisible. The word
+    "shared" is on the line either way, so the colour reinforces and never
+    carries the meaning on its own.
+    """
+    shared = shared_secrets(config.bindings)
+    if not shared:
+        return []
+    heading = paint(f"shared secrets ({_count(len(shared), 'document')}):", Role.NOTABLE)
+    return [(heading, _shared_secret_rows(shared))]
+
+
+def _shared_secret_rows(shared: Sequence[SharedSecret]) -> list[str]:
+    return render_table(
+        [
+            Column("SECRET", _REF),
+            Column("VAULT", _NAME),
+            Column("TARGETS"),
+            Column("ACCOUNTS"),
+        ],
+        [
+            [
+                entry.path,
+                _or_dash(entry.vault),
+                ", ".join(entry.targets),
+                ", ".join(entry.accounts),
+            ]
+            for entry in shared
+        ],
+    )
 
 
 def _estate_rows(config: Config) -> list[str]:

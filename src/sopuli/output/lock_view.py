@@ -1,7 +1,7 @@
 """The run document's ``lock`` section (``03-json-output.md`` §2, #83).
 
 What a run says about the locks it took, and — on exit 7 — about the one it did
-not get. The shape is pinned by ``sopuli-run-1.6.schema.json``; this is the only
+not get. The shape is pinned by ``sopuli-run-1.7.schema.json``; this is the only
 producer of it, the same arrangement :mod:`sopuli.output.config_view` and
 :mod:`sopuli.output.policy_view` have with their sections.
 

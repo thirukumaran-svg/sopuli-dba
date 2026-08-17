@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.6",
+  "schema_version": "1.7",
   "tool": {
     "name": "sopuli",
     "version": "0.1.0",
@@ -53,7 +53,7 @@
     ],
     "shared_secrets": [
       {
-        "secret": { "vault": "hcv-prod", "path": "apps/orders/prod/db/ORDERS_APP", "field": "password" },
+        "secret": { "vault": "hcv-prod", "path": "apps/orders/prod/db/ORDERS_APP" },
         "targets": ["cdb1-pdb-orders", "cdb1-pdb-billing"]
       }
     ],

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.6.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.7.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -122,7 +122,7 @@
         {
           "if": { "properties": { "resolved": { "const": true } }, "required": ["resolved"] },
           "then": { "required": ["targets", "bindings"], "not": { "required": ["declared"] } },
-          "else": { "required": ["declared"], "not": { "anyOf": [{ "required": ["targets"] }, { "required": ["bindings"] }] } }
+          "else": { "required": ["declared"], "not": { "anyOf": [{ "required": ["targets"] }, { "required": ["bindings"] }, { "required": ["shared_secrets"] }] } }
         }
       ],
       "properties": {
@@ -169,7 +169,7 @@
         },
         "bindings": {
           "type": "array",
-          "description": "One row per account per target, with its secret ref rendered. Present when resolved.",
+          "description": "One row per account per target, with its secret ref rendered. Present when resolved. Grouped by the document they write, `shared_secrets` is the same rows seen the other way up.",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -186,6 +186,11 @@
               "policy": { "type": ["string", "null"] }
             }
           }
+        },
+        "shared_secrets": {
+          "type": "array",
+          "description": "The documents more than one binding lands on, from the config alone. Present when resolved, and omitted entirely when nothing is shared. `plan.shared_secrets` is the same shape narrowed to one run's work.",
+          "items": { "$ref": "#/$defs/shared_secret" }
         }
       }
     },
@@ -295,22 +300,8 @@
         },
         "shared_secrets": {
           "type": "array",
-          "description": "Where one secret backs several targets or several accounts, so the operator can see it is deliberate.",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["secret", "targets"],
-            "properties": {
-              "secret": { "$ref": "#/$defs/secret_ref" },
-              "targets": { "type": "array", "items": { "type": "string" } },
-              "accounts": {
-                "type": "array",
-                "description": "Every account whose credential lives in this document (Q7, decided in issue #85). Present only when there is more than one, because a list of one is not a warning: it is the ordinary one-secret-per-account layout. `targets` answers who receives the password; this answers whose passwords the write touches.",
-                "minItems": 2,
-                "items": { "type": "string" }
-              }
-            }
-          }
+          "description": "The documents this run's work lands in that more than one binding shares. Same item shape as `config.shared_secrets`, narrowed to what the run touches.",
+          "items": { "$ref": "#/$defs/shared_secret" }
         },
         "confirmation_required": { "type": "boolean" },
         "blast_radius": {
@@ -402,6 +393,41 @@
             }
           ]
         }
+      }
+    },
+
+    "shared_secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secret", "targets"],
+      "description": "One secret document that more than one binding lands on. Keyed on the document rather than on the ref, because the document is what a write, a compare-and-set and the advisory lock all operate on -- so `secret` carries a vault and a path and no field. Sharing is legal and often intended (01-configuration.md 7); it is emitted so that it is never invisible.",
+      "properties": {
+        "secret": { "$ref": "#/$defs/secret_document" },
+        "targets": {
+          "type": "array",
+          "description": "Every target bound to this document: who receives the password. A document with one target still appears when several accounts share it.",
+          "items": { "type": "string" }
+        },
+        "accounts": {
+          "type": "array",
+          "description": "Every account whose credential the config puts in this document (Q7, decided in issue #85). Present only when there is more than one, because a list of one is not a warning: it is the ordinary one-secret-per-account layout. `targets` answers who receives the password; this answers whose passwords a write to the document touches. Read from the config rather than from the store, so that it is offline and deterministic; an account present in the document but absent from the config is drift, which `creds check` reports.",
+          "minItems": 2,
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "secret_document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vault", "path"],
+      "description": "Addresses a whole secret document -- a store and a path, and nothing below them. Deliberately not `secret_ref`, for two reasons. It has no `field` or `pointer` because there is nothing here that addresses part of a document; and its `vault` is nullable, because this is emitted from the config, where a store may not have been named at all. `secret_ref` describes a ref *after* resolution, where the store is always known and C14 makes it required; that is a different moment, and `config.bindings[].vault` is nullable for the same reason this is.",
+      "properties": {
+        "vault": {
+          "type": ["string", "null"],
+          "description": "Null when the config names no store for it -- neither a `vault-name:` prefix, an application's `vault:`, the target's, nor `defaults.vault`."
+        },
+        "path": { "type": "string" }
       }
     },
 

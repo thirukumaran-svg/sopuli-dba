@@ -623,7 +623,7 @@ spells them:
 | `app_pdb` | an application PDB |
 
 That is `scope.type` from
-[`sopuli-run-1.6.schema.json`](../schemas/sopuli-run-1.6.schema.json), minus
+[`sopuli-run-1.7.schema.json`](../schemas/sopuli-run-1.7.schema.json), minus
 `unknown`. Adopting the vocabulary the run document has typed since it was written
 means the word a file *asserts* and the word the tool *reports* are the same word,
 so a mismatch between them needs no translation to explain. `unknown` is
@@ -1101,6 +1101,13 @@ Rule: a template must resolve to **one** secret per (account × logical scope). 
 an account exists in eleven PDBs and the template mentions no distinguishing
 label, all eleven share one password — legal and often intended, but the plan
 output states it explicitly so it is never accidental.
+
+"States it explicitly" is `config show --resolved`'s **shared secrets** section
+and the run document's `shared_secrets` (#110), which report both ways a document
+can be shared: the targets bound to it, and — since Q7 made one document per
+application the default — the accounts whose credentials it holds. They are read
+from the file rather than from the store, so the answer is available offline and
+is the same on two runs of the same command.
 
 **An application's ref must have somewhere to stage into** (#111). Where the
 store emulates the three stages in payload fields — every backend in P2's table
@@ -1657,4 +1664,4 @@ notices until a rotation.
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
 | C13 | Is `vault:` under `defaults:` and in a profile a store *name* or a block? | unresolved — §3 and `SOPULI_VAULT` say name; P3's `defaults.vault.addr` and §5's `vault.auth` say block. The loader accepts the name form and refuses the block form rather than settling it in a diff. Overlaps C9. Issue #31 |
-| C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. `sopuli-run-1.6.schema.json` is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
+| C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. `sopuli-run-1.7.schema.json` is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
