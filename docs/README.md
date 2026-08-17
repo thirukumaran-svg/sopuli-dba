@@ -83,8 +83,16 @@ labels, so there was no backend vocabulary to defer to and the run schema is
 ratified as written).
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
-documented default (P1), grant `SELECT ON SYS.USER$` by default (P2), whether
-`--force` exists (P3), one service account per database or per application (P4),
+documented default (P1), grant `SELECT ON SYS.USER$` by default (P2),
+~~whether `--force` exists~~ (P3 — **decided in #89: yes**, one flag overriding
+§4's account checks 2–5 and nothing else. `DBSNMP` is the case: rotating its
+password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a tool with no
+override does not prevent that rotation — it moves it to SQL\*Plus, where nothing
+records it. Per-check flags were rejected as a growing flag surface for a rare
+case. It never overrides the config whitelist, and it is deliberately **not a
+setting**, which is what keeps it structurally unable to relax `readonly`,
+`max_targets`, `confirm_environments` or `dry_run`),
+one service account per database or per application (P4),
 does `doctor` fail or warn on over-granted privileges (P5), keep 11.2 support
 (P6), **do 23ai schema privileges cover `ALTER USER` (P7 — to be tested on
 26ai; a yes would narrow the whole privilege model)**.

@@ -1345,9 +1345,13 @@ refuses *less* — it is permission rather than a guard — so there the layer s
 Merging both with "true wins" would have advertised a guardrail while doing the
 opposite of one. The direction is a field on the setting rather than something
 inferred from its name, because a ratchet that reads its polarity out of a string
-flips silently the day somebody renames a setting. `relax-but-bounded` was considered for a `--force`
-that does not exist yet and deliberately not built; because the field is
-required and declared, adding it later is additive rather than a migration.
+flips silently the day somebody renames a setting. `relax-but-bounded` was
+considered for `--force` and deliberately not built, and P3's answer (#89) is why
+it is not needed: `--force` overrides the *account* guardrails of
+`02-oracle-privileges.md` §4, never a safety setting, so it is not a setting at
+all. That is invariant 10 made structural — a flag with no entry in the registry
+has no layer to arrive on and nothing to relax. Because the field is required and
+declared, adding a third policy later is additive rather than a migration.
 
 Two rules follow from the ratchet and are easy to get backwards:
 

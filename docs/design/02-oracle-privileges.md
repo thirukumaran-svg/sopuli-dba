@@ -234,9 +234,31 @@ Before any `ALTER USER`, the tool refuses when the target account:
 5. is on a literal deny list, for 11.2 where `ORACLE_MAINTAINED` does not exist
 
 `--force` overrides 2–5 for the case where a DBA deliberately manages something
-unusual. It is recorded in the audit event and in the JSON output; it never
-overrides 1, because acting on an account absent from the config would make the
-tool's own audit trail meaningless.
+unusual (P3, decided in #89). It is recorded in the audit event and in the JSON
+output; it never overrides 1, because acting on an account absent from the config
+would make the tool's own audit trail meaningless.
+
+**`DBSNMP` is the case it exists for.** Rotating its password is ordinary DBA
+work, and it is `ORACLE_MAINTAINED = 'Y'`, so check 2 refuses it. A tool with no
+override does not prevent that rotation — it moves it to SQL\*Plus, where nothing
+records that it happened. An audited override is the better failure.
+
+**It takes two deliberate acts, not one.** `--force` alone will not rotate
+`DBSNMP`: guardrail 1 still applies, so the account has to be declared in
+`accounts:` as well. That is invariant 5 — the config is the whitelist, and a
+flag cannot extend it — and it is what keeps "unusual account, deliberately
+managed" distinguishable from "typo that happened to be forced past".
+
+**What it may never override is a safety setting.** `readonly`, `max_targets`,
+`confirm_environments` and `dry_run` ratchet toward safe and no
+higher-precedence source may relax them (invariant 10, `00-principles.md` P3).
+`--force` is a higher-precedence source, so if it could relax any of them the
+ratchet would not be one. The two sets are kept apart structurally rather than by
+care: **`--force` is not a setting.** It never enters
+`sopuli/settings/registry.py`, so there is no merge policy for it to have and no
+layer for it to win — it is a per-invocation argument to §4's account checks and
+nothing else. A `relax-but-bounded` merge policy was considered for it and is not
+needed.
 
 ### Statement construction
 
@@ -354,7 +376,7 @@ All scripts are idempotent and report what they did.
 |---|---|---|
 | P1 | Common `C##` service user or per-PDB local, as the documented default? | common, with per-PDB documented for multi-tenant ownership |
 | P2 | Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard? | yes for scheduled use; the lockout protection is worth more than the verifier exposure once `ALTER USER` is already granted |
-| P3 | Should `--force` exist at all? | yes, audited — DBAs manage odd accounts and a tool that cannot be overridden gets worked around |
+| ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag, overriding checks 2–5 of §4 and nothing else** (#89). Managing `DBSNMP`'s password is ordinary DBA work, and it is `ORACLE_MAINTAINED` — so a tool with no override does not prevent that rotation, it just makes it happen in SQL\*Plus where nothing records it. Per-check flags were rejected: a growing flag surface for a rare case, one more flag with every new guardrail. The bluntness is real and accepted — a DBA who wanted to bypass one check bypasses four — and is what §4's audit record is for. It never touches guardrail 1 (invariant 5), and it is **not a setting**: see below |
 | P4 | One service account per database, or per application? | per database; the config's declared accounts provide the finer scoping |
 | P5 | Does `doctor` fail or warn on over-granted privileges? | warn; failing would block someone mid-incident |
 | P6 | 11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases? | keep for now, drop if it starts costing real complexity |

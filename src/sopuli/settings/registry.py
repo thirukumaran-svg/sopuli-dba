@@ -23,10 +23,12 @@ setting silently inheriting ``override`` -- and :meth:`Setting.__post_init__`
 refuses any disagreement between the two, in either direction. So the frozenset
 cannot drift from the registry, and neither can be edited alone.
 
-**Two policies, not three.** ``relax-but-bounded`` was considered for a
-``--force`` that does not exist yet (P3 is open on it). Because ``policy`` is a
-required declared field, adding a third later is additive rather than a
-migration, and building it now would be speculative.
+**Two policies, not three.** ``relax-but-bounded`` was considered for ``--force``
+and is not needed, now that P3 has decided what the flag is (#89): it overrides
+the *account* guardrails in ``02-oracle-privileges.md`` §4, never a safety
+setting, so it is not a setting at all and has nothing here to merge. Because
+``policy`` is a required declared field, adding a third policy later stays
+additive rather than a migration.
 
 **Ratcheted booleans carry a direction.** "Safest" meant ``any()`` while every
 ratcheted boolean refused *more* when true. ``locking.break_expired`` (#83) is
@@ -47,6 +49,13 @@ Two settings that look like they belong here and do not:
   TTY detection and Windows VT-mode probing, which are not precedence layers.
 * ``--config`` -- P3's five-step first-match *file discovery* is a different
   chain, implemented in :mod:`sopuli.config.discovery`.
+* ``--force`` -- decided in #89, and deliberately absent. It overrides the
+  account guardrails of ``02-oracle-privileges.md`` §4 (checks 2--5), which are
+  not settings and have no precedence chain: they are asked of one account at one
+  moment. Keeping it out of the registry is what makes invariant 10 structural
+  rather than remembered -- a flag that is not a setting cannot relax
+  ``safety.readonly`` or ``safety.max_targets``, because there is no layer for it
+  to arrive on. If it is ever added here, that argument is gone.
 """
 
 from __future__ import annotations
