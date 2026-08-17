@@ -74,6 +74,18 @@ something specific.
 12. **JSON output is a versioned contract.** Adding a field is a minor bump;
     renaming or removing one is major. Samples must validate against
     `docs/schemas/*.schema.json` — this runs in CI.
+13. **The password never appears as a literal inside a PL/SQL block sent to the
+    server.** `ALTER USER` is issued directly, never wrapped in
+    `BEGIN`/`DECLARE`/`EXECUTE IMMEDIATE`. Measured on 26ai: Oracle retains no
+    cursor for the DDL itself, but a block *containing* the DDL is an ordinary
+    block and its text is kept verbatim in `V$SQL` and `V$DB_OBJECT_CACHE`. So
+    wrapping does not hide the literal — it is the only thing that exposes it.
+    This is easy to violate by accident, because a wrapper looks like the more
+    careful option. Tier 0 asserts it against the generated statement text.
+14. **The password is never bound into a SQL predicate.** `V$SQL_BIND_CAPTURE`
+    samples bind values at hard parse and keeps them in clear. Rotation is
+    unaffected — DDL cannot take binds — so this binds on `check --method hash`:
+    never compare a password or a verifier by sending it as a bind.
 
 ---
 

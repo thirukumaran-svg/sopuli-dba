@@ -106,11 +106,24 @@ succeeds.
 ## Note on the implementation
 
 The package implementation was drafted and has been deleted. It was never
-executed, and two things in it were never resolved: the `T:` (12C) verifier
-layout in `SYS.USER$.SPARE4`, and whether `ALTER USER` statement text leaks the
-password into `V$SQL` or `UNIFIED_AUDIT_TRAIL` per version. Both questions apply
-to the direct model equally and live on as open items; the probe queries are in
-`sql/oracle/01_audit_policy.sql` §3.
+executed, and two things in it were never resolved. Both apply to the direct model
+equally. One is now partially closed:
+
+- **Whether `ALTER USER` statement text leaks the password into `V$SQL` or
+  `UNIFIED_AUDIT_TRAIL`** — **answered for Oracle AI Database 26ai Free
+  23.26.2.0.0, in `CDB$ROOT` and a PDB, and for that version only.** No cursor for
+  the DDL is retained in `V$SQL` at all, and unified audit masks the statement to
+  `IDENTIFIED BY *` at write time in the base table `AUDSYS.AUD$UNIFIED` as well as
+  the view. The probe also found one real leak that neither model would have
+  caught by reasoning: an anonymous PL/SQL block whose own text carries the
+  password as a literal is retained verbatim, because Oracle's protection is keyed
+  to the `CREATE/ALTER USER` statement rather than to the password. 19c and 11.2
+  are unrun, and SQL trace and the OS audit files are unchecked on every version.
+  The probe is `sql/oracle/02_password_leak_probe.sql`; findings are recorded in
+  `../design/02-oracle-privileges.md` §4 and the README's gate-2 table.
+- **The `T:` (12C) verifier layout in `SYS.USER$.SPARE4`** — untouched, and still
+  fully open. `--method hash` depends on it. Prototype it against a throwaway 19c
+  before committing hash mode to the CLI.
 
 If this decision is ever reversed, write the package fresh against the design as
 it stands then, rather than recovering the draft from git history.

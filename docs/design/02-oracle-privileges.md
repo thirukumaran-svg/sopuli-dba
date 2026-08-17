@@ -282,16 +282,32 @@ ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
 
 ### Where the password text can surface
 
-| Surface | Expectation | Action |
+Measured, not assumed. `sql/oracle/02_password_leak_probe.sql` plants a distinct
+canary per execution path and sweeps 24 source/column pairs, reporting whether
+each column is populated at all so that a "clean" on an empty column is labelled
+inconclusive rather than counted as a pass.
+
+**Every finding below is scoped to Oracle AI Database 26ai Free 23.26.2.0.0, in
+both `CDB$ROOT` and a PDB.** It is not a general statement about Oracle. No other
+version has been run; the README's gate-2 table records what is still open.
+
+| Surface | 26ai 23.26.2.0.0, `CDB$ROOT` and PDB | Action |
 |---|---|---|
-| `V$SQL` / AWR | Oracle is understood to mask passwords in `CREATE/ALTER USER` | **verify empirically per version — release gate, not an assumption** |
-| Unified audit `SQL_TEXT` | expected to be redacted for these statements | same: test it |
-| SQL trace / 10046 | not redacted | the tool never enables trace on its own sessions; a DBA who traces this session captures the password |
+| `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` — the `CREATE/ALTER USER` statement itself | **no cursor for the DDL exists at all.** Not masked — absent. Holds for client-issued DDL and for DDL run via `EXECUTE IMMEDIATE` alike | nothing to do on this version; re-run the probe on every version claimed as supported, because this is a retention behaviour and not a documented guarantee |
+| **An anonymous PL/SQL block carrying the password as a literal** | **leaks in full** into `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` and `V$DB_OBJECT_CACHE`. Oracle's protection is keyed to the `CREATE/ALTER USER` statement; a block that merely *contains* one is an ordinary block, and the block's own text is retained verbatim | **the tool never builds one.** Issue `ALTER USER` directly — invariant 13 |
+| Unified audit `SQL_TEXT` | **masked to `IDENTIFIED BY *`, at write time.** Confirmed in the base table `AUDSYS.AUD$UNIFIED` as well as in `UNIFIED_AUDIT_TRAIL` | keep verifying the base table rather than the view: view-level redaction alone would be bypassable by anyone holding `SELECT ANY DICTIONARY` |
+| AWR — `DBA_HIST_SQLTEXT` | **untested.** It reported `pop=y` in one FREEPDB1 run and `pop=n` in the next, and no snapshot was taken before the sweep, so "clean" here is an absence of evidence | take an AWR snapshot, then re-run the sweep. Needs the Diagnostics Pack. Stays untested until then — not clean |
+| `V$SQL_BIND_CAPTURE` — bind values in SQL *predicates* | sampled at hard parse and retained in clear. Does not apply to rotation, since DDL cannot take binds | constrains `check --method hash` if verifier comparison ever moves server-side: **never bind a password or a verifier into a predicate** — invariant 14 |
+| SQL trace / 10046 | **untested.** The probe's §7 emits the `grep` commands; they have not been run | run them. Until then assume not redacted: the tool never enables trace on its own sessions, and a DBA who traces this session captures the password |
+| OS audit files (`audit_file_dest`) — the SYSDBA path | **untested**, same reason | run the §7 greps, and run the probe once with `svc_user = sys` to exercise the path. Matters most on 11.2, where `AUDIT_SYS_OPERATIONS` writes statement text to files no query in the probe can see |
 | Network | encrypted when NNE or TLS is in use | `sopuli doctor` warns on an unencrypted connection |
 | Tool's own output and logs | redacted at the sink | covered by the redaction release gate, UC-1 §11 |
 
-The probe queries are in `sql/oracle/01_audit_policy.sql` §3. Run them on 11.2,
-19c and 23ai; whatever they find goes in the README.
+The probe is `sql/oracle/02_password_leak_probe.sql`. Run it in the three positions
+its header describes — PDB with a non-SYSDBA service account, PDB as SYSDBA, and
+`CDB$ROOT` — and record the outcome in the README's gate-2 table. The
+service-account position is the only one that proves anything about the audit
+policy; see `04-testing.md` §6 gate 2.
 
 ---
 
@@ -362,7 +378,8 @@ is not worth recovering.
 | File | Purpose |
 |---|---|
 | `sql/oracle/00_install.sql` | create the service account and grant it, with non-CDB / common-user / per-PDB variants |
-| `sql/oracle/01_audit_policy.sql` | unified audit policy, correlation queries, password-leak probes |
+| `sql/oracle/01_audit_policy.sql` | unified audit policy and correlation queries |
+| `sql/oracle/02_password_leak_probe.sql` | release gate 2: canary probe for password text retained anywhere queryable |
 | `sql/oracle/99_uninstall.sql` | remove the account and policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to revisit |
 

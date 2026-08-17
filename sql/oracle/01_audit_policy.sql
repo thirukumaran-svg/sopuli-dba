@@ -62,21 +62,16 @@ AUDIT POLICY sopuli_logon_pol BY &svc_user WHENEVER NOT SUCCESSFUL;
 --------------------------------------------------------------------------------
 -- 3. RELEASE GATE: does the password leak into any trail?
 --
---    Rotate a throwaway account with a known password, then run these. Any row
---    returned is a finding that belongs in the README. Repeat on every major
---    version claimed as supported — do not assume Oracle's redaction behaviour.
+--    MOVED. The probe lives in 02_password_leak_probe.sql, which supersedes the
+--    handful of queries that used to be inlined here. Two copies would drift, and
+--    the inlined ones were wrong in ways that mattered: a LIKE against V$SQL puts
+--    the canary into V$SQL as part of the probe's own cursor, and neither query
+--    reported whether the column it searched was populated at all -- so an empty
+--    result read as "clean" when it often meant "nothing was captured".
+--
+--    See 02_password_leak_probe.sql, and docs/design/04-testing.md §6 gate 2 for
+--    the three positions it must be run in.
 --------------------------------------------------------------------------------
--- DEFINE probe = 'ReplaceWithTheActualTestPassword'
---
--- SELECT sql_id, sql_text FROM v$sql
---  WHERE sql_text LIKE '%&probe%';
---
--- SELECT event_timestamp, dbusername, action_name, sql_text
---   FROM unified_audit_trail
---  WHERE sql_text LIKE '%&probe%';
---
--- On the server:
---   grep -R '<probe>' $ORACLE_BASE/diag/rdbms/*/*/trace/ 2>/dev/null
 
 --------------------------------------------------------------------------------
 -- 4. Everyday queries
@@ -131,8 +126,25 @@ SELECT event_timestamp, dbusername, return_code, authentication_type
 
 --------------------------------------------------------------------------------
 -- 6. Oracle 11.2 fallback (no unified auditing)
+--
+--    AUDIT ALTER USER is a PRIVILEGE option; AUDIT USER is a STATEMENT option.
+--    They are NOT equivalent, and the difference is not cosmetic. Privilege
+--    auditing records statements executed by virtue of holding ALTER USER, so an
+--    account changing its OWN password with IDENTIFIED BY ... REPLACE ...
+--    (self-rotation, UC-1 Q6) exercises no privilege and may not be recorded.
+--    Enable both where both exist, and check DBA_STMT_AUDIT_OPTS and
+--    DBA_PRIV_AUDIT_OPTS separately -- one being set says nothing about the other.
+--
+--    Also: SQL_TEXT is only populated when AUDIT_TRAIL is 'DB,EXTENDED'. With a
+--    plain 'DB' it is NULL for every statement ever executed, which reads as a
+--    clean leak result and is not one.
+--
+--    On 23ai and later BOTH statements raise ORA-46401: traditional auditing is
+--    desupported and no new configuration is accepted. Confirmed on 26ai Free
+--    23.26.2.0.0. That is expected, not a failure -- only the unified path applies.
 --------------------------------------------------------------------------------
--- AUDIT ALTER USER, CREATE USER, DROP USER;
+-- AUDIT USER;                              -- statement option
+-- AUDIT ALTER USER BY ACCESS;              -- privilege option
 --
 -- SELECT timestamp, username, action_name, obj_name, returncode, client_id
 --   FROM dba_audit_trail

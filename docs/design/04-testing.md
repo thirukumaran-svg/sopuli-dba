@@ -177,6 +177,17 @@ container. `testcontainers-python` handles session-scoped containers; a
   source of randomness is the CSPRNG rather than `random`, and that no message
   about a rejected candidate repeats any of it
 - redaction: the serialiser cannot emit a secret value
+- **statement shape: the generated SQL is never a PL/SQL block, and never binds
+  the password.** Assert against the statement text the Oracle driver layer
+  produces — it must match `ALTER USER … IDENTIFIED BY …` directly, with no
+  `BEGIN`/`DECLARE`/`EXECUTE IMMEDIATE` wrapper and no bind placeholder where the
+  password goes. Invariants 13 and 14. This belongs in tier 0 because it needs no
+  database, and it belongs *here* rather than being left to review because the
+  measured 26ai result is counter-intuitive: wrapping the DDL in a block is the
+  instinct that looks safer and is the one thing that actually leaks
+  (`02-oracle-privileges.md` §4). A later refactor that introduces a wrapper —
+  batching several rotations, say — breaks it silently and no database test would
+  notice, because the DDL itself stays clean either way
 - the advisory lock: acquire, fence, renew and release against an in-memory KV v2
   fake with an injected clock — including the fencing case, where a lock is
   stolen mid-run and the original must abort before its next mutation. That case
@@ -248,12 +259,37 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    because the run schema gives a `sample` object no value property, and because
    `--reveal` with `--output json` is refused. Grep the JSON artefacts of a
    `policy sample` run for the values it printed; zero hits.
-2. **Password leakage into Oracle.** Rotate a throwaway account with a known
-   password on each supported major version, then query `V$SQL` and
-   `UNIFIED_AUDIT_TRAIL` and grep the trace directory (queries in
-   `sql/oracle/01_audit_policy.sql` §3). Whatever it finds goes in the README —
-   this is the empirical check that `02-oracle-privileges.md` §4 refuses to
-   assume.
+2. **Password leakage into Oracle.** Run `sql/oracle/02_password_leak_probe.sql`
+   on each supported major version. It plants one canary per execution path —
+   client-issued `CREATE USER`, client-issued `ALTER USER`, `EXECUTE IMMEDIATE`
+   with the password as a literal in the block, and `EXECUTE IMMEDIATE` with it
+   assembled at runtime — then sweeps every source a statement's text can come to
+   rest in. Whatever it finds goes in the README's gate-2 table. This is the
+   empirical check that `02-oracle-privileges.md` §4 refuses to assume.
+
+   **Three positions per version, and they are not interchangeable:**
+
+   | # | Connect to | `svc_user` | What it establishes |
+   |---|---|---|---|
+   | 1 | the PDB service | the account holding `ALTER USER` and nothing else | **the only position that proves the audit policy works.** This is how sopuli operates |
+   | 2 | the PDB service | `sys` | the SYSDBA path, including the `audit_file_dest` greps that only `AUDIT_SYS_OPERATIONS` populates |
+   | 3 | the CDB service | a common `C##` account | that container scope does not change the answer |
+
+   Position 1 is the one that carries the result, and it has a validity check that
+   must be read before its findings are believed: **§3's output must say
+   `isdba=FALSE`.** SYS's actions are captured by MANDATORY unified auditing
+   regardless of any policy, so a run that reports `isdba=TRUE` demonstrates
+   nothing about `SOPULI_PROBE_POL` — the trail would look identical with no policy
+   at all. Confirm alongside it that the `ALTER USER` rows in §5 are attributed to
+   the service account rather than to `SYS`.
+
+   Two more reading rules, both of which turn an apparent pass into a non-result:
+   a `clean` on a `pop=n` column is an absence of evidence and the sweep labels it
+   `INCONCLUSIVE`; and `DBA_HIST_SQLTEXT` needs an AWR snapshot taken *before* the
+   sweep, so it stays untested until one is.
+
+   Position 1 has been run on 26ai Free 23.26.2.0.0 (PDB and `CDB$ROOT`). Every
+   other version and both off-database greps are outstanding.
 3. **Schema conformance.** Every sample and recorded output validates against the
    published JSON Schema. Already wired: the schemas and example in
    `docs/schemas/` validate today, the config schema is asserted to be what the

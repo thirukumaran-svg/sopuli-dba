@@ -296,12 +296,22 @@ Points that matter:
   appears in the statement. Consequences to handle and document:
   - quote the password and escape embedded `"` — or avoid `"` entirely via the
     `alnum_safe` charset default
-  - the statement text can appear in SQL trace and in `V$SQL`; Oracle's unified
-    audit redacts passwords in `ALTER USER`, but trace files and some 3rd-party
-    monitoring do not. The tool: never enables trace on its own sessions, keeps
-    the statement out of its own logs, and documents the residual risk.
-  - use `EXECUTE IMMEDIATE` from anonymous PL/SQL only if there is a reason to;
-    it does not remove the literal from the shared pool.
+  - **not in `V$SQL`, on 26ai.** Measured on 26ai Free 23.26.2.0.0 in `CDB$ROOT`
+    and a PDB: no cursor for the DDL is retained at all, so there is nothing to
+    mask. Unified audit does retain the statement, masked to `IDENTIFIED BY *` at
+    write time, in `AUDSYS.AUD$UNIFIED` as well as the view. Neither result is a
+    general Oracle guarantee — re-verify per version with
+    `sql/oracle/02_password_leak_probe.sql`. **SQL trace remains untested** (the
+    greps in the probe's §7 have not been run), as do trace-consuming 3rd-party
+    monitors. The tool: never enables trace on its own sessions, keeps the
+    statement out of its own logs, and documents the residual risk.
+  - **Never wrap the statement in an anonymous PL/SQL block.** Issue `ALTER USER`
+    directly. Wrapping does not move the DDL literal into the shared pool — the
+    DDL literal never reaches it either way — it *adds* an exposure, because the
+    wrapper block's own text is retained verbatim in `V$SQL`, `V$SQLAREA`,
+    `V$SQLSTATS`, `GV$SQL` and `V$DB_OBJECT_CACHE`. Oracle's protection is keyed
+    to the `CREATE/ALTER USER` statement; a block that merely contains one is an
+    ordinary block. Invariant 13.
 - **Privileges.** `ALTER USER` is a system privilege with no object scope — there
   is no way to grant it for specific accounts only. The tool requires it and
   nothing more; in particular it must never require `DBA` or `SELECT ANY

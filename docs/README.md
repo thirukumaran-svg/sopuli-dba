@@ -21,7 +21,8 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
-| `../sql/oracle/01_audit_policy.sql` | Unified audit policies, correlation queries, password-leak release-gate probes |
+| `../sql/oracle/01_audit_policy.sql` | Unified audit policies and correlation queries |
+| `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: canary probe for password text retained anywhere queryable. Run on 26ai; results in the top-level README |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
 | [decisions/adr-001-privilege-model.md](decisions/adr-001-privilege-model.md) | Why direct `ALTER USER`, what was rejected, and the two triggers for revisiting |
 | [decisions/adr-003-text-tables.md](decisions/adr-003-text-tables.md) | No table library: columns formatted with click and the standard library, and why output must not depend on the terminal |
@@ -166,17 +167,21 @@ secret path, fenced by the vault's own version counter. Building it is #94–#97
 
 ## Verify before implementing
 
-Two things are asserted with less confidence than the rest, and both are cheap to
-settle against a throwaway 19c:
-
 - **The `T:` (12C) verifier layout in `SYS.USER$.SPARE4`** — field order, salt
   length, iteration count, and whether a client library can reproduce the
-  derivation. If it does not reproduce reliably, drop `--method hash` and rely on
-  `--method login` with the `LCOUNT` guard.
+  derivation. Fully open, cheap to settle against a throwaway 19c. If it does not
+  reproduce reliably, drop `--method hash` and rely on `--method login` with the
+  `LCOUNT` guard.
 - **Whether `ALTER USER` text leaks the password** into `V$SQL`,
-  `UNIFIED_AUDIT_TRAIL`, or trace files, per Oracle version. This matters more
-  under the direct model than it did under the package. The probe queries are in
-  `sql/oracle/01_audit_policy.sql` §3; whatever they find goes in the README.
+  `UNIFIED_AUDIT_TRAIL`, or trace files, per Oracle version — **partially
+  answered.** On 26ai Free 23.26.2.0.0, in `CDB$ROOT` and a PDB, `V$SQL` retains no
+  cursor for the DDL at all and unified audit masks it at write time in
+  `AUDSYS.AUD$UNIFIED` as well as the view. The probe found one leak by
+  measurement that reasoning had missed: an anonymous PL/SQL block carrying the
+  password as a literal is retained verbatim, which is now invariant 13. Still
+  open: 19c and 11.2, and the trace-file and `audit_file_dest` greps on every
+  version. The probe is `sql/oracle/02_password_leak_probe.sql`; results are in the
+  top-level README's gate-2 table.
 
 ## Likely next use cases
 
