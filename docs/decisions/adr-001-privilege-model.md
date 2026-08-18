@@ -95,15 +95,19 @@ pattern, revisit this **for that runner's credential only**. A lighter option to
 try first: a read-only account for scheduled `check`, and an `ALTER USER` account
 used only by interactive `apply`/`rotate`.
 
-A separate trigger: **P7**. If the schema privileges introduced in the 23 codebase
-turn out to cover `ALTER USER`
-(`GRANT ALTER USER ON SCHEMA app_web_user TO sopuli_svc`), scoped direct grants
-would give the least-privilege property the package was meant to provide, with none
-of its cost. Expected not to work — schema privileges scope privileges over objects
-*inside* a schema, and `ALTER USER` acts on the account as a principal — but it is a
-five-minute test on the tier-1 `oracle-free` image, which *is* the 23 codebase
-("23ai" and "26ai" being one product renamed, not two versions —
-`../design/02-oracle-privileges.md` §2.1), and it changes the model if it succeeds.
+**The second trigger, P7, is now closed.** The hope was that the schema privileges
+introduced in the 23 codebase would cover `ALTER USER`
+(`GRANT ALTER USER ON SCHEMA app_web_user TO sopuli_svc`), giving scoped direct
+grants the least-privilege property the package was meant to provide at none of its
+cost. Tested 2026-08-17 on 26ai 23.26.2.0.0: **`ORA-00990: missing or invalid
+privilege`**, with `GRANT SELECT ANY TABLE ON SCHEMA` succeeding in the same session
+to prove the feature itself works. Exactly as the reasoning predicted — schema
+privileges scope privileges over objects *inside* a schema, and `ALTER USER` acts on
+the account as a principal. Evidence in `../design/02-oracle-privileges.md` §2.1.
+
+So the unattended-runner case above is the **only** remaining reason to revisit this
+decision, and it is about credential custody rather than about a narrower grant
+being available. No such grant exists to be had.
 
 ## Note on the implementation
 

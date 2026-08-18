@@ -54,7 +54,8 @@ Two consequences for this matrix:
 - **There is no pre-26ai 23ai to test, and no way to obtain one.** A result from
   `gvenzl/oracle-free:latest` *is* a result for the 23ai line. Where this document
   says "23ai Free" it means exactly this image. P7 ("do 23ai schema privileges
-  cover `ALTER USER`?") is answerable here, not blocked on finding a 23ai instance.
+  cover `ALTER USER`?") was answered here rather than being blocked on finding a
+  23ai instance — **no, `ORA-00990`** (`02-oracle-privileges.md` §2.1).
 - **Qualify findings by release number, not by marketing name.** `23.26.2.0.0`
   says what was tested; "26ai" does not, since next quarter's 26ai is a different
   RU. Verified 2026-08-17 as `Oracle AI Database 26ai Free Release 23.26.2.0.0`,
@@ -234,7 +235,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | Rollover *absent*: `--strategy rollover` fails at plan time, not execution | 18c XE, 11g XE |
 | Standby refusal: `OPEN MODE = READ ONLY` detected before any DDL | real OCI |
 | NNE: thin mode fails with `DPY-3001`, diagnostics are useful | container with `SQLNET.ENCRYPTION_SERVER=required` |
-| Schema-privilege probe (P7): does `GRANT ALTER USER ON SCHEMA` work? | 26ai |
+| Schema-privilege regression (P7, answered): `GRANT ALTER USER ON SCHEMA` must still fail with `ORA-00990`, while `GRANT SELECT ANY TABLE ON SCHEMA` must still succeed. **Assert both** — without the control, a future release that dropped schema privileges entirely would look like the same pass. A newly-succeeding `ALTER USER` grant re-opens the privilege model, so this is a test worth keeping rather than a question worth deleting | 23-codebase (tier 1) |
 | Shared JSON document: writing one account's password leaves siblings byte-identical | any + Vault |
 | KV v1 degradation: no versioning, staging emulated in payload, and the tool says so | Vault KV v1 mount |
 

@@ -95,9 +95,10 @@ setting**, which is what keeps it structurally unable to relax `readonly`,
 `max_targets`, `confirm_environments` or `dry_run`),
 one service account per database or per application (P4),
 does `doctor` fail or warn on over-granted privileges (P5), keep 11.2 support
-(P6), **do the 23-codebase schema privileges cover `ALTER USER` (P7 — testable on
-the tier-1 `oracle-free` image, since "23ai" and "26ai" are one product renamed;
-a yes would narrow the whole privilege model)**.
+(P6). *(~~P7 — do the 23-codebase schema privileges cover `ALTER USER`~~ — is
+answered: **no**, `ORA-00990`, tested on 26ai 23.26.2.0.0 with a succeeding
+`SELECT ANY TABLE ON SCHEMA` as the control. The direct grant is the permanent
+model and ADR-001's P7 revisit trigger is closed.)*
 
 **JSON output (03):** buffering policy for `--output json` (J1), always emit
 `plan` (J2), warning code registry (J3), host/pid in output (J4), OpenTelemetry
@@ -150,9 +151,10 @@ drafted and rejected: the operator is a DBA who already holds SYSDBA, so the
 package constrains someone who is not actually constrained, while adding a
 per-PDB install, a second whitelist to keep in sync with the tool's config, and
 version skew as a new failure mode. Recorded in
-[ADR-001](decisions/adr-001-privilege-model.md), which also names the two
-triggers for revisiting: an unattended scheduled runner, or P7 turning out
-positive.
+[ADR-001](decisions/adr-001-privilege-model.md). It named two triggers for
+revisiting; **P7 is now closed** — schema privileges do not cover `ALTER USER`
+(`ORA-00990`) — so an unattended scheduled runner is the only one left, and it is
+about credential custody rather than a narrower grant being available.
 
 ### Settle these next
 

@@ -17,10 +17,11 @@ scope** — there is no `GRANT ALTER USER ON ORDERS_APP`. Any account that can
 change one user's password can change every user's password in that container,
 including `SYS`.
 
-The 23 codebase — 23ai, renamed 26ai — adds **schema privileges**, which are worth
-checking before accepting that as permanent; see the test in §2.1. The expectation
-is that they do not help here, but it is cheap to confirm and the answer changes the
-model if it goes the other way.
+The 23 codebase — 23ai, renamed 26ai — adds **schema privileges**, which looked like
+they might change that. **They do not: `GRANT ALTER USER ON SCHEMA` is rejected with
+`ORA-00990`, tested on 26ai 23.26.2.0.0.** So there is nothing narrower to have on
+any current release either, and §1's model is permanent rather than provisional.
+Evidence and consequences in §2.1 (P7, closed).
 
 The alternative is a definer-rights package that owns the privilege and exposes
 only whitelisted operations. That was the earlier draft of this document, and it
@@ -46,7 +47,13 @@ code. §6 describes the one situation where it may earn its cost back.
 
 ## 2. The grants
 
-### 2.1 First: test schema privileges (open, cheap, decision-changing)
+### 2.1 Schema privileges do not cover `ALTER USER` — tested, closed (P7)
+
+**Answered 2026-08-17 on Oracle AI Database 26ai Free 23.26.2.0.0 (`FREEPDB1`).
+`GRANT ALTER USER ON SCHEMA` is rejected with `ORA-00990: missing or invalid
+privilege`, the error pointing at `USER`.** The direct grant in §1 is therefore the
+model, permanently rather than provisionally, and the narrower grant this section
+was hoping for does not exist on any current release.
 
 > **"23ai" and "26ai" are one product, not two.** Oracle renamed Oracle Database
 > 23ai to Oracle AI Database 26ai in October 2025: same codebase, no architectural
@@ -68,7 +75,37 @@ This scopes an `ANY`-form privilege to the objects of a single schema, and cover
 objects created later without re-granting. It is exactly the shape of thing that
 would let this tool hold a narrow grant.
 
-**The expectation is that it does not extend to `ALTER USER`,** for two reasons:
+This scopes an `ANY`-form privilege to the objects of a single schema, and covers
+objects created later without re-granting. It is exactly the shape of thing that
+would have let this tool hold a narrow grant.
+
+**It does not extend to `ALTER USER`.** What was run, and what came back:
+
+```sql
+-- CONTROL: a documented schema privilege, on the same database, same session
+GRANT SELECT ANY TABLE ON SCHEMA orders_app TO sopuli_svc;
+-- succeeded; appears in DBA_SCHEMA_PRIVS as SELECT ANY TABLE
+
+GRANT ALTER USER ON SCHEMA orders_app TO sopuli_svc;
+--                 *
+-- ORA-00990: missing or invalid privilege
+
+GRANT ALTER ANY USER ON SCHEMA orders_app TO sopuli_svc;   -- ORA-00990
+GRANT ALTER USER ON SCHEMA orders_app TO sopuli_svc CONTAINER=CURRENT;  -- ORA-00990
+
+SELECT privilege FROM dba_schema_privs WHERE grantee = 'SOPULI_SVC';
+-- SELECT ANY TABLE   <- only the control; nothing from the ALTER USER attempts
+```
+
+**The control is the part that makes this conclusive.** A bare `ORA-00990` would be
+consistent with schema privileges being absent, unlicensed, or syntactically
+unsupported on this release. `SELECT ANY TABLE ON SCHEMA` succeeding in the same
+session proves the feature is present and working, so the refusal is specific to
+`ALTER USER` rather than incidental to the environment. Nothing partial landed
+either — `DBA_SCHEMA_PRIVS` shows only the control.
+
+This matches the predicted reasoning, which is worth keeping because it is what
+makes the result general rather than a single observation:
 
 1. Schema privileges scope privileges over *objects inside* a schema — tables,
    views, sequences, procedures. `ALTER USER` does not act on an object in a
@@ -76,36 +113,23 @@ would let this tool hold a narrow grant.
    examples are all `SELECT/INSERT/UPDATE/DELETE ANY TABLE`,
    `SELECT ANY SEQUENCE`, `EXECUTE ANY PROCEDURE`.
 2. `ALTER USER` is not an `ANY`-form privilege at all, so there is no natural
-   syntax for it.
+   syntax for it — which is exactly what `ORA-00990` is reporting.
 
-Oracle publishes an explicit list of system and administrative privileges
-excluded from schema privileges, in *Configuring Privilege and Role
-Authorization*. That list is where the definitive answer lives.
+Oracle publishes the definitive list of system and administrative privileges
+excluded from schema privileges in *Configuring Privilege and Role Authorization*.
 
-**Test to run** — `gvenzl/oracle-free:latest` is the 23 codebase and is sufficient;
-this needs no environment the test stack does not already have (tier 1,
-`04-testing.md` §2):
+**Consequences.** The least-privilege model this section was testing for is not
+available, so nothing about §1 changes and the direct grant is the model on every
+supported release. Two follow-on effects worth naming: the P7 trigger for
+reconsidering the definer-rights package is closed
+([`../decisions/adr-001-privilege-model.md`](../decisions/adr-001-privilege-model.md)),
+leaving the unattended-runner case as its only remaining trigger; and §4's
+client-side guardrails carry the whole account-scoping job, since there is no
+server-side way to bound which accounts the service credential can reach.
 
-```sql
--- expect a syntax/privilege error, most likely ORA-00990
-GRANT ALTER USER ON SCHEMA orders_app TO sopuli_svc;
-
--- and confirm nothing landed
-SELECT * FROM dba_schema_privs WHERE grantee = 'SOPULI_SVC';
-```
-
-**If it fails** (expected): nothing changes, and this section becomes a recorded
-"we checked" rather than an assumption.
-
-**If it succeeds**: it reopens the whole privilege model in a good way. A service
-account could then hold `ALTER USER` scoped to just the application schemas it
-manages, giving the least-privilege property the definer-rights package was
-supposed to provide — with no package, no per-PDB install, and no version skew.
-That would be worth taking, with the caveats that it is codebase-23-and-later only
-(so 21c and every older target still needs the broad grant) and that the config's
-declared accounts would want to stay aligned with whatever is granted.
-
-Until tested, treat the direct grant in §1 as the model.
+Keep the probe as a regression check rather than deleting it — a future release
+could add `ALTER USER` to the schema-privilege list, and that would be worth
+noticing (`04-testing.md` §5).
 
 ### Non-CDB, or a single PDB with local users
 
@@ -409,4 +433,4 @@ All scripts are idempotent and report what they did.
 | P4 | One service account per database, or per application? | per database; the config's declared accounts provide the finer scoping |
 | P5 | Does `doctor` fail or warn on over-granted privileges? | warn; failing would block someone mid-incident |
 | P6 | 11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases? | keep for now, drop if it starts costing real complexity |
-| P7 | Do the 23-codebase schema privileges cover `ALTER USER`? (§2.1) | expected no; **Ville to test** — the tier-1 `oracle-free` image is the 23 codebase, so this is not waiting on an environment. If yes, adopt scoped grants for 23-codebase targets and keep the broad grant as the fallback for 21c and older |
+| ~~P7~~ | ~~Do the 23-codebase schema privileges cover `ALTER USER`?~~ (§2.1) | **decided: no — tested 2026-08-17 on 26ai 23.26.2.0.0.** `GRANT ALTER USER ON SCHEMA` gives `ORA-00990: missing or invalid privilege`, while `GRANT SELECT ANY TABLE ON SCHEMA` succeeds in the same session — so the feature works and the refusal is specific to `ALTER USER`, not an artefact of the environment. Nothing lands in `DBA_SCHEMA_PRIVS`. The direct grant in §1 is the model on every supported release, the scoped-grant alternative does not exist, and ADR-001's P7 trigger is closed |
