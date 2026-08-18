@@ -55,18 +55,18 @@ def test_an_unknown_defaults_key_is_refused() -> None:
     assert "known keys here: locking, policy, profile, safety, vault" in rendered
 
 
-def test_the_vault_block_form_is_refused_with_the_question() -> None:
-    """§3's field table says an application's vault "defaults to the target's
-    vault, then `defaults.vault`" -- a name, matching `SOPULI_VAULT`. P3's
-    precedence table writes `defaults.vault.addr`, which needs a block. Both
-    cannot be true, so the ambiguity is surfaced rather than settled in a diff.
+def test_the_vault_block_form_is_refused_and_points_at_vaults() -> None:
+    """C13, decided in #31: `vault:` is a store *name* everywhere, and settings of
+    a store are reached by naming it under `vaults:`. So `defaults.vault.addr` --
+    P3's old example of layer 5 -- is now `defaults.vaults.<name>.addr`, and the
+    mapping under `vault:` is refused with the form that replaces it.
     """
     with pytest.raises(ConfigError) as caught:
         build_defaults(document(defaults={"vault": {"addr": "https://vault.example.com"}}))
 
     rendered = str(caught.value)
     assert "is a store name, not a mapping" in rendered
-    assert "C13" in rendered
+    assert "`vaults:` keyed by its name" in rendered
     assert "defaults.vault" in rendered
 
 

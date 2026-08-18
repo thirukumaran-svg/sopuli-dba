@@ -200,11 +200,19 @@ precedence order applies everywhere**, and the tool can print it.
 ```
 1. Command-line option              --vault-addr https://…
 2. Environment variable             SOPULI_VAULT_ADDR
-3. Profile block in config          profiles.ci.vault.addr
+3. Profile block in config          profiles.ci.vaults.hcv-prod.addr
 4. Target/vault-level setting       vaults.hcv-prod.addr
-5. Top-level defaults in config     defaults.vault.addr
+5. Top-level defaults in config     defaults.vaults.hcv-prod.addr
 6. Built-in default                 (compiled into the tool)
 ```
+
+Layers 3 to 5 all name the store, because **`vault:` is a store name everywhere
+in the config and never a block** — the same word `SOPULI_VAULT` and a SecretRef's
+`[<vault>:]` prefix already use, with `SOPULI_VAULT__HCV_PROD__ADDR` as the
+environment form of the same addressing. Settings *of* a store are therefore
+written under `vaults:` keyed by its name, which `defaults:` and a profile may
+each carry as a partial entry. C13, decided in #31; `01-configuration.md` §3a
+and §5 are the specification.
 
 A profile is named after **how the run was invoked** — `interactive`, `ci`,
 `scheduled` — never after an environment. `--profile prod` reads like a target

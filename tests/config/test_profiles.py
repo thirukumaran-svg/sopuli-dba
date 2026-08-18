@@ -154,17 +154,18 @@ def test_vault_is_a_store_name() -> None:
     assert only(vault="vault-prod").vault == "vault-prod"
 
 
-def test_the_vault_block_form_is_refused_with_the_question() -> None:
-    """§5 lists `vault.auth` as something a profile should set -- token from a
-    laptop, AppRole from CI -- but `vault:` is a store *name* everywhere else in
-    the file. One key cannot be both, so the ambiguity is surfaced rather than
-    resolved in a diff."""
+def test_the_vault_block_form_is_refused_and_points_at_vaults() -> None:
+    """§5's case -- token from a laptop, AppRole from CI -- is real, and C13 (#31)
+    decided it is spelt `profiles.ci.vaults.<name>.auth`, not `vault.auth`:
+    `vault:` names the store, `vaults:` describes it. The profile block arrives
+    with the vault layer (#103), so the whitelist still refuses `vaults:` here;
+    what this pins is that the mapping under `vault:` names its replacement."""
     with pytest.raises(ConfigError) as caught:
         build_profiles(document(scheduled={"vault": {"auth": {"method": "approle"}}}))
 
     rendered = str(caught.value)
     assert "is a store name, not a mapping" in rendered
-    assert "C13" in rendered
+    assert "`vaults:` keyed by its name" in rendered
 
 
 # ------------------------------------------------------------------- db ---

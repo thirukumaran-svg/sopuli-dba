@@ -374,6 +374,36 @@ Only `type` is required. A file backend has no address, and P2 puts per-backend
 validation behind the store interface, so demanding a HashiCorp shape of every
 entry would be exactly the top-level vendor bias P1 forbids.
 
+#### `vault:` names a store; `vaults:` describes one (C13, decided)
+
+**`vault:` is always the name of a store and never a block** — under `defaults:`,
+in a profile, on a target, on an application, in an `overrides:` patch, and as a
+SecretRef's `[<vault>:]` prefix. `SOPULI_VAULT` overrides that name.
+
+Settings *of* a store are reached by naming it, under `vaults:`. `defaults:` and
+a profile may each carry a `vaults:` block whose entries are **partial** — they
+patch a store declared at the top level rather than declaring one:
+
+```yaml
+defaults:
+  vault: vault-dev              # which store, by name
+  vaults:
+    vault-dev:
+      addr: https://vault-dev.example.com   # something about that store
+```
+
+This is the environment table's shape written in the file: §6 already has
+`SOPULI_VAULT` for the default store's *name* and
+`SOPULI_VAULT__VAULT_DEV__ADDR` for one setting of one named store, so the two
+sides of the config now address a store the same way. It also keeps every layer
+of P3 stating which store it is talking about, which the alternative — a key
+meaning "whichever store is active" — could not: auth written for dev would
+follow a changed `vault:` to prod without anything in the file having changed.
+
+§5 has the profile case and the keys a profile may patch. Parsing these blocks
+arrives with the vault layer (#103); until then the closed whitelists refuse
+them, because a shape nothing reads is a contract no test can mean anything by.
+
 ### `locking:` — on a store, and as a block
 
 P5's advisory lock lives in the vault, keyed on the secret path being mutated
@@ -848,7 +878,7 @@ A closed list. Anything else is a validation error.
 | Key | Effect |
 |---|---|
 | `vault` | which named store to use, by name |
-| `vault.auth` | how to authenticate to it — token interactively, AppRole in CI. **Not yet accepted**: `vault:` is a store name everywhere else in the file, and one key cannot be both. See C13 |
+| `vaults.<name>.*` | how to *reach* a named store — `addr`, `mount`, `kv_version`, `auth`. This is what lets a profile say "token from a laptop, AppRole from CI" without re-declaring the store. Not `type`, and not `non_production` or `locking` — see below (C13) |
 | `verify.method` | `login` \| `hash` \| `both` \| `none` |
 | `verify.lockout_margin` | how close to `FAILED_LOGIN_ATTEMPTS` to stop trying |
 | `safety.*` | `max_targets`, `confirm_environments`, `readonly` |
@@ -858,6 +888,40 @@ A closed list. Anything else is a validation error.
 | `log_level`, `log_file` | |
 | `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs |
 | `rotation.strategy` | e.g. force `staged` where no human can watch a rollover. Only `strategy` — `rollover_hours` and the rest describe the credential's lifecycle, which belongs to the estate |
+
+### Reaching a store differently, without redeclaring it
+
+A profile's `vaults:` entries are **partial** — they patch a store declared in
+the top-level `vaults:`, key by key, and naming a store that does not exist there
+is an error rather than a new declaration. The case this exists for:
+
+```yaml
+vaults:
+  vault-prod:
+    type: hashicorp
+    addr: https://vault.example.com
+    mount: secret
+    auth: { method: token }          # a laptop, with ~/.vault-token
+
+profiles:
+  ci:
+    vault: vault-prod
+    vaults:
+      vault-prod:
+        auth:                        # the same store, a different way in
+          method: approle
+          role_id:   { env: SOPULI_VAULT_ROLE_ID }
+          secret_id: { env: SOPULI_VAULT_SECRET_ID }
+```
+
+`type` is not patchable: a store that is HashiCorp from a laptop and OCI from CI
+is two stores, and pretending otherwise would put a `vaults:` name in the audit
+trail that means different things depending on how the run was started.
+`non_production` and `locking` are not patchable either, and for the sharper
+reason — both are guardrails. `non_production` is what §10 checks a `prod` target
+against, and `locking: advisory-only` is the operator conceding a store cannot
+hold P5's lock. A profile that could set either would be a way to relax a safety
+setting from the invocation context, which invariant 10 forbids outright.
 
 ### What a profile may not contain
 
@@ -872,6 +936,8 @@ Rejected at validation, with a message naming the key:
   profile.
 - `policies.*.password.*` — a weaker password policy is a reviewed config change,
   never a side effect of running from CI.
+- `vaults.<name>.type`, `.non_production`, `.locking`, and any `vaults:` name not
+  declared at the top level — see above.
 
 ### Resolution rules
 
@@ -1663,5 +1729,5 @@ notices until a rotation.
 | C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
-| C13 | Is `vault:` under `defaults:` and in a profile a store *name* or a block? | unresolved — §3 and `SOPULI_VAULT` say name; P3's `defaults.vault.addr` and §5's `vault.auth` say block. The loader accepts the name form and refuses the block form rather than settling it in a diff. Overlaps C9. Issue #31 |
+| C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. Parsing arrives with the vault layer (#103) |
 | C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. `sopuli-run-1.7.schema.json` is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |

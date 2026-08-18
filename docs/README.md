@@ -73,9 +73,13 @@ credential names one of P2's four sources, with `external` constraining the DSN 
 a TNS alias; `oracle.scope` adopts the run document's vocabulary and is an
 assertion checked on connect), ~~what profiles are for~~ (C10 —
 **decided: run context, not target selection**), composable profiles (C11,
-proposed no), a built-in `interactive` profile (C12, leaning no), **whether `vault:`
-under `defaults`/`profiles` is a name or a block (C13, issue #31 — the loader
-refuses the block form)**, ~~the `@version=` and `@stage=` vocabularies in a
+proposed no), a built-in `interactive` profile (C12, leaning no), ~~whether `vault:`
+under `defaults`/`profiles` is a name or a block~~ (C13 — **decided in #31: a
+name, everywhere.** Settings *of* a store are reached by naming it under
+`vaults:`, which `defaults:` and a profile may each carry as partial entries;
+this is §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair written in the
+file. A profile may patch `addr`, `mount`, `kv_version` and `auth`, but not
+`type` and not the guardrails `non_production` and `locking`), ~~the `@version=` and `@stage=` vocabularies in a
 SecretRef and who owns them~~ (C14 — **decided in #40: the tool owns both.**
 `stage` is `current` / `pending` / `previous`, any case in, lower case out;
 `version` is a whole number from 1; neither may hold a `{token}`. OCI's rotation

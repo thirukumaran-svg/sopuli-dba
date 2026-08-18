@@ -204,24 +204,27 @@ def _build_auth(raw: Any, *, at: KeyPath) -> VaultAuth | None:
     )
 
 
-#: `defaults:` and `profiles:` both take a `vault:`, and both mean the *name* of
-#: a store -- as `targets[].vault` and `applications[].vault` already do, and as
-#: `SOPULI_VAULT` ("default vault name") does.
+#: `vault:` is the *name* of a store in every position it appears -- `defaults:`,
+#: a profile, `targets[]`, `applications[]`, an `overrides:` patch, and a
+#: SecretRef's `[<vault>:]` prefix -- and is never a block. `SOPULI_VAULT`
+#: overrides that name.
 #:
-#: The reference points the other way twice: P3's precedence table uses
-#: `defaults.vault.addr` as its example of layer 5, and §5 lists `vault.auth` as
-#: something a profile should be able to set. One key cannot be both a string and
-#: a block. The name form wins because it is what the rest of the file already
-#: means; the block form is refused with the question rather than guessed at.
+#: Settings *of* a store are reached by naming it under `vaults:`, which
+#: `defaults:` and a profile may each carry as partial entries patching a
+#: top-level declaration. That is C13, decided in #31, and it is §6's
+#: `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair written in the file
+#: rather than a second addressing scheme. Parsing those blocks arrives with the
+#: vault layer (#103); until then the closed whitelists refuse them, so the only
+#: block form reachable here is a mapping written directly under `vault:`.
 VAULT_IS_A_NAME = (
-    "`vault:` is a store name everywhere else in this file (see `SOPULI_VAULT`), "
-    "but P3 writes `defaults.vault.addr` and §5 lists `vault.auth` -- one key "
-    "cannot be both, and nothing says what the block form's keys are. See C13"
+    "`vault:` is a store name everywhere in this file (see `SOPULI_VAULT`); "
+    "settings of a store go under `vaults:` keyed by its name, which `defaults:` "
+    "and a profile may each carry. See C13, decided in #31"
 )
 
 
 def vault_name(container: dict[str, Any], *, at: KeyPath) -> str | None:
-    """Read a ``vault:`` that names a store, refusing the undecided block form."""
+    """Read a ``vault:`` that names a store, refusing the block form."""
     if "vault" not in container:
         return None
     if isinstance(container["vault"], dict):
