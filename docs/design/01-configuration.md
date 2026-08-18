@@ -377,9 +377,30 @@ config file can be read without knowing what environment it will be read in.
 | `addr` | backend address, where the backend has one |
 | `mount` | KV mount point (HashiCorp) |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
+| `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace |
+| `timeout_s` | request timeout against this store. `httpx` has no default (ADR-005), so this is not optional the way a stdlib client's would be |
+| `tls` | `{ ca_file, ca_path, client_cert, client_key, server_name, verify }` (ADR-005) — see below |
 | `auth` | how to authenticate, and where the material comes from — see below |
 | `non_production` | marks a store that must never master a `prod` target (§10). Absent means production |
 | `locking` | `required` (default) or `advisory-only` — whether this store can hold P5's advisory lock. See below |
+
+#### `tls:` — transport verification (ADR-005)
+
+`ca_file` / `ca_path` name a CA bundle; `client_cert` / `client_key` are for
+mutual TLS; `server_name` overrides SNI, for a store reached by an address that
+does not match the certificate (an SSH tunnel, a load balancer by IP). All four
+are plain paths or strings, not MaterialRefs — none of them is a credential.
+
+`verify` (default `true`) is the one field here that is not ordinary config: it
+falls under P3's safety ratchet, so the *resolved* value is the strictest across
+every layer, and no higher-precedence source can turn verification off once a
+lower one has it on. A run with verification disabled emits a warning
+diagnostic into the run document, so the weakening is visible in the audit
+trail and not only in the config file. `VAULT_SKIP_VERIFY` (§6) is read and
+refused with a config error rather than silently ignored — this is the one
+environment variable in the honoured-third-party list that the tool does not
+honour, precisely because it would otherwise bypass the ratchet from outside
+the config it governs.
 
 Only `type` is required. A file backend has no address, and P2 puts per-backend
 validation behind the store interface, so demanding a HashiCorp shape of every
@@ -1017,6 +1038,14 @@ Honoured third-party variables, ranked *below* their `SOPULI_*` equivalent:
 `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_NAMESPACE`, `VAULT_CACERT`,
 `OCI_CLI_PROFILE`, `OCI_CLI_CONFIG_FILE`, `TNS_ADMIN`, `ORACLE_HOME`,
 `NLS_LANG`, `HTTPS_PROXY`, `NO_PROXY`.
+
+**`VAULT_SKIP_VERIFY` is the one exception.** It is read and **refused** with a
+config error rather than honoured or silently ignored (ADR-005): it names the
+same setting as `vaults.*.tls.verify`, which is under the P3 safety ratchet, and
+honouring an unranked environment variable there would let it bypass every
+layer the ratchet is supposed to outrank. Refusing loudly means anyone who set
+it (Vault's own CLI convention) learns that it did nothing, instead of running
+unverified and believing otherwise.
 
 ### Set, unset, and empty
 

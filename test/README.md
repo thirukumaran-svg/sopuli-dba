@@ -122,7 +122,7 @@ The public test suite must be green using only what a contributor can pull —
 | `oracle-init/sqlnet-nne.ora` | forces Native Network Encryption on the NNE service |
 | `capabilities.py` | sketch of capability probing and the pytest skip markers |
 | `vault_cas_probe.py` | exploratory spike: what a real Vault CAS conflict looks like on the wire (#103, #104). Run by hand; the regression it found lives in `../tests/store/test_hashicorp_cas_conflict.py` instead |
-| `vault_auth_probe.py` | exploratory spike: whether `hvac`'s auth surface is worth the dependency (#103). Run by hand |
+| `vault_auth_probe.py` | exploratory spike behind [ADR-005](../docs/decisions/adr-005-vault-client.md): whether `hvac`'s auth surface was worth the dependency (#103) — it wasn't. Run by hand |
 
 Test accounts are created and dropped per test under a per-run prefix. Only the
 profiles are created at container init, so no test assumes anything pre-exists.

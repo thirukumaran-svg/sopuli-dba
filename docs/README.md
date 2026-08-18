@@ -27,6 +27,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | [decisions/adr-001-privilege-model.md](decisions/adr-001-privilege-model.md) | Why direct `ALTER USER`, what was rejected, and the two triggers for revisiting |
 | [decisions/adr-003-text-tables.md](decisions/adr-003-text-tables.md) | No table library: columns formatted with click and the standard library, and why output must not depend on the terminal |
 | [decisions/adr-004-yaml-parser.md](decisions/adr-004-yaml-parser.md) | PyYAML on a hardened `SafeLoader`, why not ruamel, and the pywin32 dependency for the P4 permission check |
+| [decisions/adr-005-vault-client.md](decisions/adr-005-vault-client.md) | The HTTP API directly, over `httpx`, not `hvac` — measured against a real Vault, why renewal doesn't change the answer, and what still binds OCI to its own SDK |
 | `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 
@@ -248,25 +249,28 @@ below.)*
   capability-skipped regression test in `tests/store/test_hashicorp_cas_conflict.py`,
   which runs as part of the ordinary suite and skips cleanly (not a failure)
   when Vault is unreachable.
-- **Whether `hvac`'s auth surface is worth the dependency it would add** (#103)
-  — **measured, and it moved the recommendation.** The case for `hvac` rested
-  on auth being where a library "earns its keep" (renewal, OIDC, Kubernetes).
-  Against the real tier0 Vault: AppRole is genuinely two calls — read a
-  `role_id`, `POST role_id`+`secret_id` to `auth/approle/login`, no auth
-  header, get a `client_token` straight back, confirmed to authenticate a
-  follow-up call. Kubernetes could only be exercised up to the point a real
-  cluster becomes load-bearing — no control plane exists in this stack, same
-  category as real OCI — but the client-side request needed nothing beyond
-  `{role, jwt}`: Vault accepted a syntactically-valid fake JWT past every
-  check that does not require one (`kubernetes_ca_cert` does have to be a
-  parseable PEM, or `auth/kubernetes/config` itself is refused — the one
-  genuine surprise) and only failed reading claims out of it. Renewal is one
-  POST (`auth/token/renew-self`) with no scheduling logic behind it in `hvac`
+- **Which HashiCorp Vault client** (#103) — **decided in
+  [ADR-005](decisions/adr-005-vault-client.md): the HTTP API directly, over
+  `httpx`. No `hvac`.** The case for `hvac` rested on auth being where a
+  library "earns its keep" (renewal, OIDC, Kubernetes). Against the real
+  tier0 Vault: AppRole is genuinely two calls — read a `role_id`, `POST
+  role_id`+`secret_id` to `auth/approle/login`, no auth header, get a
+  `client_token` straight back, confirmed to authenticate a follow-up call.
+  Kubernetes could only be exercised up to the point a real cluster becomes
+  load-bearing — no control plane exists in this stack, same category as real
+  OCI — but the client-side request needed nothing beyond `{role, jwt}`:
+  Vault accepted a syntactically-valid fake JWT past every check that does
+  not require one (`kubernetes_ca_cert` does have to be a parseable PEM, or
+  `auth/kubernetes/config` itself is refused — the one genuine surprise) and
+  only failed reading claims out of it. Renewal is one POST
+  (`auth/token/renew-self`) with no scheduling logic behind it in `hvac`
   either, and what sopuli needs is bespoke regardless — #83 renews at each
   target boundary behind a fence check, not on a background timer. Net: the
   auth argument for `hvac` is thin across every method in `01-configuration.md`
   §3a except OIDC's browser/callback dance, which `hvac` does not provide
-  either. Probe is `test/vault_auth_probe.py`, run against tier0.
+  either. Probe is `test/vault_auth_probe.py`, run against tier0. OCI keeps
+  its own SDK — ADR-005's criterion is request signing and principal
+  federation, not "is it HTTP." `httpx` lands as a base dependency with #104.
 
 ## Likely next use cases
 
