@@ -266,6 +266,41 @@ class VaultAuth:
 
 
 @dataclass(frozen=True)
+class VaultTls:
+    """``tls:`` on a vault -- how the transport to it is verified (ADR-005).
+
+    All five paths are plain strings and **not** MaterialRefs, which looks
+    inconsistent beside :class:`VaultAuth` until you ask what each one is: a CA
+    bundle and a server name are not credentials, and ``client_key`` names a
+    *path* rather than holding a key, so nothing here is a secret the config file
+    would be storing. The one-key MaterialRef shape exists to make "auth material
+    is never written in plaintext" structural; applying it to a CA path would be
+    ceremony that protects nothing.
+
+    ``verify`` is the field that is not ordinary config. §3a puts it under P3's
+    safety ratchet, so it stays ``None`` when unwritten rather than defaulting to
+    ``True`` here: once a profile or ``defaults:`` can patch a store (C13, #136),
+    "nobody said" and "somebody wrote true" have to stay distinguishable, or the
+    ratchet cannot tell a layer that declined to speak from one that agreed. Read
+    it through :attr:`verified`.
+    """
+
+    ca_file: str | None = None
+    ca_path: str | None = None
+    client_cert: str | None = None
+    client_key: str | None = None
+    server_name: str | None = None
+    verify: bool | None = None
+
+    @property
+    def verified(self) -> bool:
+        """The effective value. Absent means verified, and only an explicit
+        ``false`` turns it off -- which is the safe reading of a missing key and
+        the one a ratchet can agree with later."""
+        return self.verify is not False
+
+
+@dataclass(frozen=True)
 class Vault:
     """One entry in ``vaults:`` (§2).
 
@@ -280,6 +315,16 @@ class Vault:
     addr: str | None = None
     mount: str | None = None
     kv_version: int | None = None
+    #: HashiCorp Enterprise namespace, sent as ``X-Vault-Namespace``. Absent means
+    #: no namespace, which is not the same as the root one: sending the header
+    #: empty is a request about a namespace, and omitting it is not.
+    namespace: str | None = None
+    #: Request timeout against this store, in seconds. Not optional the way a
+    #: stdlib client's would be: ADR-005 chose ``httpx`` partly because it has
+    #: **no** default timeout, and a request with no deadline is one that can
+    #: hold P5's advisory lock for as long as the network stays open.
+    timeout_s: int | None = None
+    tls: VaultTls | None = None
     auth: VaultAuth | None = None
     non_production: bool = False
     #: ``required`` or ``advisory-only`` (#83). Unlike the fields above this one
@@ -637,11 +682,19 @@ class ConfigWarning:
     is not stderr: the config layer does no I/O (``04-testing.md`` §4), and the
     JSON contract has a ``diagnostics`` array these become. Same fields as
     :class:`~sopuli.config.errors.ConfigError` so both render identically.
+
+    ``code`` is optional and mostly absent. §10's findings have none, and J3 --
+    which warnings get a code, and how numbers are allocated across categories --
+    is still open, so this is a slot rather than a policy: a finding a consumer
+    would want to branch on can carry one, and the rest stay prose. The first is
+    ``SOPULI-W004``, because a run with certificate verification turned off is
+    exactly what a scheduler should be able to notice without matching text.
     """
 
     message: str
     at: str
     hint: str | None = None
+    code: str | None = None
 
     def __str__(self) -> str:
         rendered = f"{self.at}: {self.message}" if self.at else self.message

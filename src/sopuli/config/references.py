@@ -38,6 +38,16 @@ from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
 from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking
 from sopuli.config.targets import EXTERNAL
 
+#: A store in this file does not verify the certificate it is offered (§3a).
+#:
+#: Declared here rather than in :mod:`sopuli.diagnostics`, which is where the
+#: registry of what each code *means* lives, because the config layer may not
+#: import it: that module reaches into :mod:`sopuli.output` and
+#: :mod:`sopuli.lock`, and ``04-testing.md`` §4 keeps this layer free of both.
+#: The registry imports this name instead, so the dependency points the way the
+#: architecture does and the code still has exactly one definition.
+UNVERIFIED_TRANSPORT = "SOPULI-W004"
+
 #: The environment §10 singles out. Safety rules key on `environment` as a
 #: first-class field (§4), and this is the value the reference names.
 PRODUCTION = "prod"
@@ -86,7 +96,7 @@ def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     _check_breaking_locks_without_a_fence(config)
     _check_external_admin(config)
     _check_admin_refs(config)
-    return _warn_about_profile_names(config)
+    return (*_warn_about_profile_names(config), *_warn_about_unverified_transport(config))
 
 
 # ------------------------------------------------------------ resolution ---
@@ -437,6 +447,41 @@ def _warn_about_profile_names(config: Config) -> tuple[ConfigWarning, ...]:
             )
         )
     return tuple(warnings)
+
+
+def _warn_about_unverified_transport(config: Config) -> tuple[ConfigWarning, ...]:
+    """§3a: a store with ``tls.verify: false`` says so on every run.
+
+    The weakening is written once, in a file somebody may have edited a year ago,
+    and it applies to every rotation afterwards. A warning in the config file's
+    own review is not the same reach as a warning in each run's audit trail --
+    which is the whole reason ADR-005 asked for a diagnostic rather than being
+    satisfied that the key is visible in the YAML.
+
+    A warning and not an error, because the key exists to be usable: an internal
+    CA that nobody has distributed yet is a real situation, and refusing to run
+    would mean the tool is unusable exactly where an operator most needs it to
+    tell them what it is doing.
+
+    Carries ``SOPULI-W004`` because this one is worth branching on: "did any run
+    this month talk to a vault unverified" is a question a scheduler can answer
+    from the code and cannot answer from prose.
+    """
+    return tuple(
+        ConfigWarning(
+            message=f"vault {vault.name!r} does not verify its certificate",
+            at=str(ROOT.key("vaults").key(vault.name).key("tls").key("verify")),
+            hint=(
+                "anything between this run and the store can present its own certificate "
+                "and read every secret that crosses. Point `tls.ca_file` at your CA "
+                "instead -- `verify: false` is for reaching a store while you arrange that, "
+                "not for keeping it reachable"
+            ),
+            code=UNVERIFIED_TRANSPORT,
+        )
+        for vault in config.vaults
+        if vault.tls is not None and not vault.tls.verified
+    )
 
 
 def _environments(config: Config) -> set[str]:

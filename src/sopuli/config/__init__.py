@@ -72,6 +72,7 @@ from sopuli.config.model import (
     TargetSet,
     Vault,
     VaultAuth,
+    VaultTls,
     VerifyPolicy,
     as_dict,
 )
@@ -118,6 +119,7 @@ __all__ = [
     "TargetSet",
     "Vault",
     "VaultAuth",
+    "VaultTls",
     "VerifyPolicy",
     "build_bindings",
     "build_config",

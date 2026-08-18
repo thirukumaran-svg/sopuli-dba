@@ -422,3 +422,112 @@ def test_an_unknown_vault_key_is_refused() -> None:
     rendered = str(caught.value)
     assert "unknown key 'adrr'" in rendered
     assert "vaults.vault-dev" in rendered
+
+
+# ------------------------------------------------ transport settings (#135) ---
+#
+# ADR-005 put `namespace`, `timeout_s` and `tls:` in §3a when it landed and the
+# config layer never followed, so a file written to the documentation as it
+# stood was refused with "unknown key". These are the keys the HashiCorp
+# adapter (#104) reads: `httpx` has no default timeout, and `tls:` is why
+# ADR-005 chose a client that takes a real SSLContext rather than a boolean.
+
+
+def test_the_transport_keys_are_read() -> None:
+    [vault] = build_vaults(
+        {
+            "vaults": {
+                "vault-prod": {
+                    **HASHICORP,
+                    "namespace": "acme/platform",
+                    "timeout_s": 10,
+                    "tls": {
+                        "ca_file": "/etc/ssl/acme-ca.pem",
+                        "server_name": "vault.example.com",
+                    },
+                }
+            }
+        }
+    )
+
+    assert vault.namespace == "acme/platform"
+    assert vault.timeout_s == 10
+    assert vault.tls is not None
+    assert vault.tls.ca_file == "/etc/ssl/acme-ca.pem"
+    assert vault.tls.server_name == "vault.example.com"
+
+
+def test_the_transport_keys_are_all_optional() -> None:
+    """A file backend has no address and no TLS. Requiring any of these would be
+    the top-level vendor bias P1 forbids, one level down."""
+    [vault] = build_vaults({"vaults": {"local": {"type": "file"}}})
+
+    assert (vault.namespace, vault.timeout_s, vault.tls) == (None, None, None)
+
+
+def test_verify_is_absent_rather_than_true_when_unwritten() -> None:
+    """The distinction the ratchet needs: "nobody said" is not "somebody agreed".
+
+    Once a profile or `defaults:` can patch a store (C13, #136), a layer that
+    declined to speak must not read as one that wrote `true` -- otherwise the
+    strictest-wins merge cannot tell them apart. `verified` is the effective
+    value, and only an explicit `false` turns it off.
+    """
+    [vault] = build_vaults({"vaults": {"v": {**HASHICORP, "tls": {"ca_path": "/etc/ssl"}}}})
+
+    assert vault.tls is not None
+    assert vault.tls.verify is None
+    assert vault.tls.verified is True
+
+
+def test_verify_false_is_read_and_kept() -> None:
+    [vault] = build_vaults({"vaults": {"v": {**HASHICORP, "tls": {"verify": False}}}})
+
+    assert vault.tls is not None
+    assert vault.tls.verify is False
+    assert vault.tls.verified is False
+
+
+def test_an_unknown_key_under_tls_is_refused() -> None:
+    """The block must not become a free-form bag: a misspelled `ca_file` that
+    loaded happily would leave the run verifying against the system store while
+    the file says otherwise."""
+    with pytest.raises(ConfigError) as caught:
+        build_vaults({"vaults": {"v": {**HASHICORP, "tls": {"cafile": "/etc/ssl/ca.pem"}}}})
+
+    assert "cafile" in str(caught.value)
+
+
+def test_a_client_key_without_a_certificate_is_refused() -> None:
+    """An edit that stopped halfway. A key alone presents nothing."""
+    with pytest.raises(ConfigError) as caught:
+        build_vaults({"vaults": {"v": {**HASHICORP, "tls": {"client_key": "/etc/ssl/k.pem"}}}})
+
+    assert "client_key" in str(caught.value)
+    assert "client_cert" in str(caught.value)
+
+
+def test_a_client_certificate_may_stand_alone() -> None:
+    """The reverse is not an error: a combined PEM holds both halves, and
+    refusing it would refuse a perfectly ordinary way to write mutual TLS."""
+    [vault] = build_vaults(
+        {"vaults": {"v": {**HASHICORP, "tls": {"client_cert": "/etc/ssl/both.pem"}}}}
+    )
+
+    assert vault.tls is not None
+    assert vault.tls.client_cert == "/etc/ssl/both.pem"
+    assert vault.tls.client_key is None
+
+
+def test_a_zero_timeout_is_refused_rather_than_read_as_no_timeout() -> None:
+    """What a zero means to most clients is "wait forever", which is the opposite
+    of why the key exists -- and the advisory lock is held while we wait."""
+    with pytest.raises(ConfigError) as caught:
+        build_vaults({"vaults": {"v": {**HASHICORP, "timeout_s": 0}}})
+
+    assert "timeout_s" in str(caught.value)
+
+
+def test_a_negative_timeout_is_refused() -> None:
+    with pytest.raises(ConfigError):
+        build_vaults({"vaults": {"v": {**HASHICORP, "timeout_s": -5}}})

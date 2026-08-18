@@ -12,7 +12,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.2.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -91,7 +91,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.2.schema.json
 version: 1
 
 runtime:
@@ -1544,7 +1544,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-1.1.schema.json`](../schemas/sopuli-config-1.1.schema.json),
+[`docs/schemas/sopuli-config-1.2.schema.json`](../schemas/sopuli-config-1.2.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -1555,7 +1555,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-1.1.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.2.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -1605,7 +1605,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.2.schema.json
 version: 1
 ```
 
@@ -1616,7 +1616,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.1.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.2.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -1791,6 +1791,22 @@ notices until a rotation.
   naming the store, the type and the extra that supplies it (ADR-006, E4). Not an
   error: nothing about the file is wrong, and §3a has where it stops being a
   warning
+- a `vaults:` entry with `tls.verify: false` → warning, naming the store,
+  carrying `SOPULI-W004` and repeated on **every run** rather than only at
+  `config validate` (ADR-005). Not an error: an internal CA nobody has
+  distributed yet is a real situation, and a tool that refused would be unusable
+  exactly where an operator most needs it to say what it is doing
+- a `tls.client_key` with no `tls.client_cert` beside it → error. The reverse is
+  allowed: a client certificate may be written alone when the file holds both
+  halves, which is an ordinary way to write mutual TLS, but a key with no
+  certificate presents nothing and is an edit that stopped halfway
+- `timeout_s: 0` or negative → error, rather than being read as "no timeout".
+  Waiting forever is what the key exists to prevent — ADR-005 chose `httpx`
+  partly because it has no default deadline — and the advisory lock is held for
+  as long as the request is outstanding. Omitting the key is how you ask for the
+  backend's own default
+- `VAULT_SKIP_VERIFY` set and non-empty → error (§6), naming
+  `vaults.*.tls.verify` and what to write instead
 - `charset: printable_ascii` on a target detected below 12.2 → warning
 - `rotation.strategy: rollover` on a target without the `password_rollover`
   capability → error at plan time, not at execution time

@@ -7,6 +7,10 @@ variables do once they reach a command is ``tests/test_cli_precedence.py``.
 
 from __future__ import annotations
 
+import pytest
+
+from sopuli.config.errors import ConfigError
+from sopuli.exit_codes import ExitCode
 from sopuli.settings import Layer
 from sopuli.settings.sources import ENV_SETTINGS, env_contributions
 
@@ -54,3 +58,46 @@ def test_every_mapped_variable_is_a_sopuli_one() -> None:
     """Layer 2 is ``SOPULI_*``. Third-party variables are layer 3 and rank below
     their equivalent, so they cannot be added to this table by mistake."""
     assert all(variable.startswith("SOPULI_") for variable in ENV_SETTINGS)
+
+
+# ------------------------------------------------------ VAULT_SKIP_VERIFY ---
+#
+# §6's single exception: the one variable in the honoured-third-party list that
+# this tool refuses rather than honours or ignores.
+
+
+def test_vault_skip_verify_is_refused() -> None:
+    """Honouring it would let an unranked environment variable turn off
+    certificate verification from outside the config the ratchet governs, which
+    is the direction invariant 10 exists to forbid. Ignoring it silently is
+    worse than either: the operator set it and believes it took effect."""
+    with pytest.raises(ConfigError) as caught:
+        env_contributions({"VAULT_SKIP_VERIFY": "1"})
+
+    message = str(caught.value)
+    assert "VAULT_SKIP_VERIFY" in message
+    assert "vaults.*.tls.verify" in message
+
+
+def test_vault_skip_verify_is_refused_whatever_it_says() -> None:
+    """Including the value that looks like it asks for nothing. Reading `false`
+    as "not asked for" would make the refusal depend on parsing a variable we
+    have just said we do not honour."""
+    with pytest.raises(ConfigError):
+        env_contributions({"VAULT_SKIP_VERIFY": "false"})
+
+
+def test_vault_skip_verify_set_empty_is_unset() -> None:
+    """§6's rule for the whole table, and the way out: a CI job can clear an
+    inherited variable without unsetting it, and gets no error for doing so."""
+    assert env_contributions({"VAULT_SKIP_VERIFY": ""}) == {}
+
+
+def test_the_refusal_exits_nine_and_says_what_to_write_instead() -> None:
+    """An error an operator can act on: it names the key that does the same job
+    in the place where it is reviewable."""
+    with pytest.raises(ConfigError) as caught:
+        env_contributions({"VAULT_SKIP_VERIFY": "yes"})
+
+    assert caught.value.exit_code == ExitCode.CONFIG_INVALID
+    assert "verify: false" in (caught.value.hint or "")

@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.1.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.2.schema.json
 """
 
 from __future__ import annotations
@@ -63,7 +63,12 @@ from sopuli.config import (
 #: 1.0 became 1.1 when `locking:` arrived (#83): a store's `locking:` and a
 #: `locking:` block under `defaults` and a profile, all optional, so every file
 #: valid under 1.0 is valid under 1.1.
-SCHEMA_VERSION = "1.1"
+#:
+#: 1.1 became 1.2 with a vault's transport settings (#135, ADR-005): `namespace`,
+#: `timeout_s` and the `tls:` block. Optional again -- a file that named none of
+#: them means exactly what it did before -- which is what makes it a minor bump
+#: rather than the other kind.
+SCHEMA_VERSION = "1.2"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -260,6 +265,24 @@ def _vault() -> Schema:
             "addr": STRING,
             "mount": STRING,
             "kv_version": _int_enum(vaults.KV_VERSIONS),
+            "namespace": {
+                **STRING,
+                "description": (
+                    "HashiCorp Enterprise namespace, sent as X-Vault-Namespace. Absent "
+                    "means the header is not sent at all, which is not the same request "
+                    "as sending it empty."
+                ),
+            },
+            "timeout_s": {
+                **POSITIVE_INT,
+                "description": (
+                    "Request timeout against this store, in seconds. Not optional the "
+                    "way a stdlib client's would be: httpx has no default (ADR-005), and "
+                    "the advisory lock is held while the request is outstanding. Zero is "
+                    "refused rather than read as 'no timeout'."
+                ),
+            },
+            "tls": _ref("vault_tls"),
             "auth": _method_or_shorthand("vault_auth", vaults.AUTH_METHODS),
             "non_production": {
                 **BOOLEAN,
@@ -313,6 +336,54 @@ def _method_or_shorthand(block: str, methods: dict[str, auth.Method]) -> Schema:
             ),
         ]
     }
+
+
+def _vault_tls() -> Schema:
+    return _object(
+        keys=vaults.TLS_KEYS,
+        types={
+            "ca_file": {**STRING, "description": "Path to a CA bundle file."},
+            "ca_path": {**STRING, "description": "Path to a directory of CA certificates."},
+            "client_cert": {
+                **STRING,
+                "description": (
+                    "Path to a client certificate for mutual TLS. May hold the key as "
+                    "well, which is why it can be written without `client_key`."
+                ),
+            },
+            "client_key": {
+                **STRING,
+                "description": (
+                    "Path to the client key. Needs a `client_cert` beside it: a key "
+                    "alone presents nothing."
+                ),
+            },
+            "server_name": {
+                **STRING,
+                "description": (
+                    "Overrides SNI, for a store reached by an address that does not match "
+                    "its certificate -- a tunnel, or a load balancer by IP."
+                ),
+            },
+            "verify": {
+                **BOOLEAN,
+                "default": True,
+                "description": (
+                    "Verify the store's certificate. Under P3's safety ratchet, so the "
+                    "resolved value is the strictest across every layer and no "
+                    "higher-precedence source can turn it off once a lower one has it "
+                    "on. A run with it off warns into the run document. VAULT_SKIP_VERIFY "
+                    "is refused rather than honoured, because an unranked environment "
+                    "variable would bypass the ratchet from outside (§6)."
+                ),
+            },
+        },
+        description=(
+            "How the transport to this store is verified, and what identifies us to it "
+            "(ADR-005). None of these is a MaterialRef: a CA bundle is not a credential, "
+            "and `client_key` names a path rather than holding a key."
+        ),
+    )
 
 
 def _vault_auth() -> Schema:
@@ -892,6 +963,7 @@ def build_schema() -> Schema:
             "locking": _locking(),
             "vault": _vault(),
             "vault_auth": _vault_auth(),
+            "vault_tls": _vault_tls(),
             "material_ref": _material_ref(),
             "target": _target(),
             "admin": _admin(),

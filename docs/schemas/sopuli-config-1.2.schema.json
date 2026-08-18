@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-config-1.1.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-config-1.2.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
@@ -174,6 +174,19 @@
             2
           ]
         },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "HashiCorp Enterprise namespace, sent as X-Vault-Namespace. Absent means the header is not sent at all, which is not the same request as sending it empty."
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Request timeout against this store, in seconds. Not optional the way a stdlib client's would be: httpx has no default (ADR-005), and the advisory lock is held while the request is outstanding. Zero is refused rather than read as 'no timeout'."
+        },
+        "tls": {
+          "$ref": "#/$defs/vault_tls"
+        },
         "auth": {
           "oneOf": [
             {
@@ -261,6 +274,43 @@
         "username": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "vault_tls": {
+      "type": "object",
+      "description": "How the transport to this store is verified, and what identifies us to it (ADR-005). None of these is a MaterialRef: a CA bundle is not a credential, and `client_key` names a path rather than holding a key.",
+      "additionalProperties": false,
+      "properties": {
+        "ca_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to a CA bundle file."
+        },
+        "ca_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to a directory of CA certificates."
+        },
+        "client_cert": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to a client certificate for mutual TLS. May hold the key as well, which is why it can be written without `client_key`."
+        },
+        "client_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the client key. Needs a `client_cert` beside it: a key alone presents nothing."
+        },
+        "server_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Overrides SNI, for a store reached by an address that does not match its certificate -- a tunnel, or a load balancer by IP."
+        },
+        "verify": {
+          "type": "boolean",
+          "default": true,
+          "description": "Verify the store's certificate. Under P3's safety ratchet, so the resolved value is the strictest across every layer and no higher-precedence source can turn it off once a lower one has it on. A run with it off warns into the run document. VAULT_SKIP_VERIFY is refused rather than honoured, because an unranked environment variable would bypass the ratchet from outside (§6)."
         }
       }
     },

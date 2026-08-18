@@ -477,11 +477,12 @@ is not contract and may improve.
 | `SOPULI-W001` | A store in this run is `locking: advisory-only`, so its lock record was written without compare-and-set. The run has no fence: two runs starting in the same second can both believe they hold the lock (#83) |
 | `SOPULI-W002` | This run took a lock that was past its expiry, which `locking.break_expired` permits. The previous holder is fenced — its next check will fail — but it may have applied changes before that |
 | `SOPULI-W003` | A `vaults:` entry names a backend that is not installed. Emitted by `config validate`, which warns rather than fails: the config is valid and the install is incomplete (ADR-006, E4). Any command that resolves the store to a client fails instead, with `SOPULI-20001` |
+| `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked and anything on the path can read every secret that crosses. Under P3's safety ratchet, so no layer can weaken it further — but nothing in the run undoes it either (#135, ADR-005) |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
 answered**: what is settled is the spelling this document already used as its
-example and that these two warnings have codes. Whether *every* warning gets one
+example and that these four warnings have codes. Whether *every* warning gets one
 — the config layer's §10 findings still do not — and how numbers are allocated
 across categories is the part still open.
 

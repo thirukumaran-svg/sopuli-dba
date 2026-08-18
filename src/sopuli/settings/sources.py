@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from sopuli.config.errors import ROOT, ConfigError
 from sopuli.settings.registry import Layer
 from sopuli.settings.resolver import Contribution
 
@@ -44,6 +45,19 @@ ENV_SETTINGS = {
 #: empty means not asked for; there is no third answer available to give.
 FLAG_VARIABLES = frozenset({"SOPULI_DRY_RUN"})
 
+#: Variables that are read and **refused**, mapped to the setting they collide
+#: with. One entry, and §6 calls it the single exception in the whole table.
+#:
+#: `VAULT_SKIP_VERIFY` is Vault's own CLI convention, so somebody will have it
+#: set, and it names the same thing as `vaults.*.tls.verify` -- which is under
+#: P3's safety ratchet. Honouring it would let an unranked environment variable
+#: turn off verification from outside the config the ratchet governs, which is
+#: the one direction invariant 10 exists to forbid. *Ignoring* it silently is
+#: worse than either: the operator set it, believes it took effect, and is
+#: running verified while thinking they are not -- or the reverse, next time the
+#: reading changes. So it is an error, and the error says what to write instead.
+REFUSED_VARIABLES = {"VAULT_SKIP_VERIFY": "vaults.*.tls.verify"}
+
 
 def env_contributions(env: Mapping[str, str]) -> dict[str, list[Contribution]]:
     """What the environment asks for, as contributions keyed by setting name.
@@ -55,6 +69,20 @@ def env_contributions(env: Mapping[str, str]) -> dict[str, list[Contribution]]:
     The variable is named in ``detail`` and its value never is: ``source_detail``
     is a location (``03-json-output.md`` §``invocation.options``).
     """
+    for variable, setting in REFUSED_VARIABLES.items():
+        # Set-but-empty is "said nothing" here too, so clearing an inherited
+        # variable is a way out rather than a second thing to explain.
+        if env.get(variable):
+            raise ConfigError(
+                f"{variable} is set, and this tool does not honour it",
+                at=ROOT,
+                hint=(
+                    f"it names the same setting as `{setting}`, which is under the safety "
+                    f"ratchet -- write `verify: false` on the store instead, where it is "
+                    f"reviewable and where a higher layer cannot weaken it further"
+                ),
+            )
+
     contributions: dict[str, list[Contribution]] = {}
     for variable, name in ENV_SETTINGS.items():
         raw = env.get(variable, "")

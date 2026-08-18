@@ -32,9 +32,24 @@ from sopuli.config.fields import (
     required_string,
 )
 from sopuli.config.locking import build_lock_mode
-from sopuli.config.model import Vault, VaultAuth
+from sopuli.config.model import Vault, VaultAuth, VaultTls
 
-VAULT_KEYS = ("type", "addr", "mount", "kv_version", "auth", "non_production", "locking")
+VAULT_KEYS = (
+    "type",
+    "addr",
+    "mount",
+    "kv_version",
+    "namespace",
+    "timeout_s",
+    "tls",
+    "auth",
+    "non_production",
+    "locking",
+)
+
+#: ``tls:`` (ADR-005). Five paths and a boolean, and the boolean is the one
+#: that is not ordinary config -- see :class:`~sopuli.config.model.VaultTls`.
+TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")
 
 #: The backends P2 puts in scope. `aws`/`azure` are listed there as "later" and
 #: are absent on purpose: a config that declares a store the tool cannot reach
@@ -143,6 +158,9 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
         addr=optional_string(entry, "addr", at=at),
         mount=optional_string(entry, "mount", at=at),
         kv_version=_build_kv_version(entry, at=at),
+        namespace=optional_string(entry, "namespace", at=at),
+        timeout_s=_build_timeout(entry, at=at),
+        tls=_build_tls(entry.get("tls"), at=at.key("tls")),
         auth=_build_auth(entry.get("auth"), at=at.key("auth")),
         # Absent means production. §10 refuses a prod target pointed at a
         # non-production store, and defaulting the other way would make that
@@ -176,6 +194,66 @@ def _build_kv_version(entry: dict[str, Any], *, at: KeyPath) -> int | None:
             hint=f"known: {', '.join(str(candidate) for candidate in KV_VERSIONS)}",
         )
     return version
+
+
+def _build_timeout(entry: dict[str, Any], *, at: KeyPath) -> int | None:
+    """``timeout_s`` -- seconds, and never zero.
+
+    Refused rather than read as "no timeout", which is what a zero would mean to
+    most clients and is the opposite of why the key exists: ADR-005 picked
+    ``httpx`` for its explicit deadlines, and the lock is held while we work. An
+    operator who genuinely wants no deadline can leave the key out, and gets the
+    backend's own default instead of a promise the config file did not make.
+    """
+    timeout = optional_int(entry, "timeout_s", at=at)
+    if timeout is not None and timeout < 1:
+        raise ConfigError(
+            f"timeout_s must be at least 1 second, not {timeout}",
+            at=at.key("timeout_s"),
+            hint="leave it out for the backend's own default; 0 is not 'no timeout' here",
+        )
+    return timeout
+
+
+def _build_tls(raw: Any, *, at: KeyPath) -> VaultTls | None:
+    """``tls:`` -- what verifies the transport, and what identifies us to it.
+
+    None of these is a MaterialRef, and §3a says why: a CA bundle and a server
+    name are not credentials, and ``client_key`` names a path rather than holding
+    a key.
+    """
+    if raw is None:
+        return None
+
+    entry = mapping(raw, at=at)
+    reject_unknown_keys(entry, allowed=TLS_KEYS, at=at)
+
+    tls = VaultTls(
+        ca_file=optional_string(entry, "ca_file", at=at),
+        ca_path=optional_string(entry, "ca_path", at=at),
+        client_cert=optional_string(entry, "client_cert", at=at),
+        client_key=optional_string(entry, "client_key", at=at),
+        server_name=optional_string(entry, "server_name", at=at),
+        # Stays None when unwritten. `VaultTls.verified` is the effective value;
+        # the distinction is for the ratchet that arrives with C13's partial
+        # blocks (#136), which has to tell "nobody said" from "somebody agreed".
+        verify=optional_bool(entry, "verify", at=at),
+    )
+
+    if tls.client_key is not None and tls.client_cert is None:
+        # One direction only. A `client_cert` alone is a perfectly ordinary
+        # combined PEM holding both halves, which is why the reverse is not an
+        # error -- but a key with no certificate cannot present anything, so it
+        # is an edit that stopped halfway rather than a shape anyone meant.
+        raise ConfigError(
+            "`client_key` needs a `client_cert` beside it",
+            at=at.key("client_key"),
+            hint=(
+                "a client certificate may be written alone when the file holds both "
+                "halves; a key alone presents nothing"
+            ),
+        )
+    return tls
 
 
 def _build_auth(raw: Any, *, at: KeyPath) -> VaultAuth | None:

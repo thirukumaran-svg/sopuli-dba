@@ -103,7 +103,10 @@ def config_diagnostics(config: Config) -> list[Diagnostic]:
     in both views -- in full in the text, and here for the schedulers and CI
     jobs that read the document and never see the text at all.
     """
-    return [Diagnostic(level="warning", message=str(warning)) for warning in config.warnings]
+    return [
+        Diagnostic(level="warning", message=str(warning), code=warning.code)
+        for warning in config.warnings
+    ]
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
@@ -428,7 +431,7 @@ def config_validate(
 
     **Validated by the loader, not by the published schema.** The two are not
     equivalent, and the stricter one wins:
-    ``docs/schemas/sopuli-config-1.1.schema.json`` is structural, deliberately
+    ``docs/schemas/sopuli-config-1.2.schema.json`` is structural, deliberately
     leaves the cross-key rules out (``01-configuration.md`` section 9b), and
     ``jsonschema`` is a development dependency that must not become a runtime
     one. The schema is the editor's fast local check; this is the complete one.
