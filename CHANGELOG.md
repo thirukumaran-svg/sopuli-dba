@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/futville/sopuli-dba/compare/v0.23.0...v0.24.0) (2026-08-18)
+
+
+### Features
+
+* **config:** decide C15 — refuse a binding with no store only when vaults: is empty ([#126](https://github.com/futville/sopuli-dba/issues/126)) ([a1322e5](https://github.com/futville/sopuli-dba/commit/a1322e5ade3218ed7d3a2f884cb7534834e36132))
+
 ## [0.23.0](https://github.com/futville/sopuli-dba/compare/v0.22.0...v0.23.0) (2026-08-17)
 
 
