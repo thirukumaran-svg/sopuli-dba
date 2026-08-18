@@ -238,18 +238,25 @@ def test_detection_is_deterministic(template: str) -> None:
 
 
 def test_a_document_no_store_is_named_for_still_reports() -> None:
-    """A config can name no store at all -- no `vault-name:` prefix, no
-    application `vault:`, none on the target, no `defaults.vault`.
+    """A binding can resolve with no store -- no `vault-name:` prefix, no
+    application `vault:`, none on the target, no `defaults.vault` -- as long as a
+    profile or `SOPULI_VAULT` could still complete it later (#118 option 3): the
+    file below leaves it to a profile, which `_vault_for` deliberately does not
+    consult at load (bindings are built once, and which profile is active is a
+    property of a run).
 
-    Nothing outside the file can supply one either: `VAULT_ADDR` and
+    Nothing else outside the file can supply one: `VAULT_ADDR` and
     `--vault-addr` carry an *address*, while a binding carries a store *name*,
     and names come only from `vaults:`. So the null is real rather than
-    transitional, and the entry says so instead of being dropped -- what a write
-    would touch is worth reporting whether or not the config has said where.
+    transitional here, and the entry says so instead of being dropped -- what a
+    write would touch is worth reporting whether or not the run has picked a
+    store yet.
     """
     config = build_config(
         {
             "version": 1,
+            "vaults": {"vault-prod": {"type": "hashicorp"}},
+            "profiles": {"scheduled": {"vault": "vault-prod"}},
             "targets": [
                 {
                     "name": "t1",

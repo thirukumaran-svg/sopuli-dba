@@ -85,7 +85,15 @@ SecretRef and who owns them~~ (C14 — **decided in #40: the tool owns both.**
 `version` is a whole number from 1; neither may hold a `{token}`. OCI's rotation
 states turned out to be a fixed Oracle-defined set rather than user-definable
 labels, so there was no backend vocabulary to defer to and the run schema is
-ratified as written).
+ratified as written), ~~a binding names a secret and no store, anywhere: refuse,
+warn, or leave it to plan time~~ (C15 — **decided in #118: mostly plan time.**
+`_vault_for` resolving to `None` is not always wrong — a profile's `vault:` or
+`SOPULI_VAULT` can still complete it, and neither is consulted while bindings
+are built once at load — so it is left alone, shown as `-` by `config show
+--resolved`, and caught exactly by the first command that needs a store.
+Refused at load only for the narrower case nothing at run time can ever
+complete: `vaults:` declaring no store at all, so there is nothing for a
+profile or `SOPULI_VAULT` to name).
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
 documented default (P1), ~~grant `SELECT ON SYS.USER$` by default~~ (P2 —

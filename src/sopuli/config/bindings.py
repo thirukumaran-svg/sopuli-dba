@@ -33,7 +33,7 @@ than warning about it.
 
 from __future__ import annotations
 
-from sopuli.config.errors import ROOT, KeyPath
+from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.model import (
     Application,
     Binding,
@@ -82,6 +82,7 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
             secret = _render(ref, application, account, expanded, at=where)
             store = _vault_for(secret, vault, expanded, config)
             _check_store_declared(secret, config, at=where)
+            _check_has_somewhere_to_resolve_from(secret, store, config, at=where)
             _check_stageable(secret, store, config, at=where)
             bound.append(
                 Binding(
@@ -125,6 +126,43 @@ def _check_store_declared(secret: SecretRef | None, config: Config, *, at: KeyPa
         noun="vault",
         section="vaults",
         at=at,
+    )
+
+
+def _check_has_somewhere_to_resolve_from(
+    secret: SecretRef | None, store: str | None, config: Config, *, at: KeyPath
+) -> None:
+    """#118: a ref with no store, and no `vaults:` block to point one at later.
+
+    ``store`` is `None` here means none of §3's chain named one -- not the ref's
+    own prefix, not the entry, not an override, not the target, not
+    ``defaults.vault``. That is not always a mistake: a profile's `vault:` is
+    deliberately left out of the chain (`_vault_for`'s docstring), because which
+    profile is active is a property of a *run* and bindings are built once at
+    load, and the same is true of `SOPULI_VAULT` (P3, issue #10). Both can still
+    complete this binding once a run picks one -- but only if the file declared
+    somewhere for them to point *at*. `config show --resolved` already renders a
+    `-` for this binding rather than a verdict, and the command that actually
+    needs a store is where the exact answer belongs (invariant 4).
+
+    What is refused here is narrower: `vaults:` declaring nothing at all. Then
+    there is no name a profile or `SOPULI_VAULT` could select even in principle
+    -- a store name resolves against what the file declared (invariant 5; see
+    `references.py`'s own dangling-name rule) -- so no run of this file can ever
+    rotate this account, and that is true regardless of profile or environment.
+    Refusing here is `config validate` catching the case #111 was raised about,
+    rather than every target discovering it separately at plan time.
+    """
+    if secret is None or store is not None or config.vaults:
+        return
+    raise ConfigError(
+        "no vault is declared, and this binding names no store",
+        at=at,
+        hint=(
+            "no `vaults:` entry exists for a profile or SOPULI_VAULT to select later -- "
+            "declare one under `vaults:`, or name a store on the ref, the entry, an "
+            "override, the target, or `defaults.vault`"
+        ),
     )
 
 

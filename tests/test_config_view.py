@@ -607,11 +607,16 @@ def test_the_shared_section_validates(sharing: Config, validator: Draft202012Val
 def test_a_shared_document_with_no_store_named_still_validates(
     validator: Draft202012Validator,
 ) -> None:
-    """A config can name no store at all, and `secret_document.vault` is nullable
-    for exactly that case -- unlike `secret_ref`, which describes a ref after
-    resolution and requires one (C14)."""
+    """A binding can resolve with no store, and `secret_document.vault` is
+    nullable for exactly that case -- unlike `secret_ref`, which describes a ref
+    after resolution and requires one (C14). A profile still names a store here
+    (#118 option 3), which is what keeps this file from being the narrow case
+    #118 refuses at load: `vaults:` declares nothing for a profile or
+    `SOPULI_VAULT` to point at."""
     document = {
         "version": 1,
+        "vaults": {"vault-prod": {"type": "hashicorp"}},
+        "profiles": {"scheduled": {"vault": "vault-prod"}},
         "targets": [
             {
                 "name": "t1",

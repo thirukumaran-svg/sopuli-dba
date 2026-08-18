@@ -628,3 +628,64 @@ def test_a_ref_naming_a_declared_vault_is_fine() -> None:
     )
 
     assert binding.vault == "vault-other"
+
+
+# --------------------------------------------------------- no store at all ---
+
+
+def test_a_binding_with_no_store_and_no_vaults_declared_is_refused() -> None:
+    """#118: the narrow, genuinely unrecoverable case.
+
+    No `vault-name:` prefix on the ref, no `vault:` on the target, the entry, an
+    override, `defaults`, or any profile -- and `vaults:` declares nothing at
+    all. Nothing at run time can complete this: a profile's `vault:` and
+    `SOPULI_VAULT` both have to name something the file declared, and there is
+    nothing here to name. This is the issue's own `t1` example.
+    """
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            {
+                "version": 1,
+                "targets": [
+                    {
+                        "name": "t1",
+                        "type": "oracle",
+                        "dsn": "db.example.com:1521/S.example.com",
+                        "environment": "dev",
+                        "oracle": {"scope": "pdb", "container": "P"},
+                    }
+                ],
+                "accounts": ["acme_web_user"],
+                "secret_template": "apps/acme/{account}#password",
+            }
+        )
+
+    assert "no vault is declared" in str(caught.value)
+
+
+def test_a_binding_with_no_store_but_a_declared_vault_is_left_unresolved() -> None:
+    """The same shape, except a store exists for a profile or `SOPULI_VAULT` to
+    select later. `config validate` cannot know which run this file will see,
+    so this is left to `config show --resolved` (a `-`) and to plan time (#118
+    option 3) -- not refused."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-prod": {"type": "hashicorp"}},
+            "profiles": {"scheduled": {"vault": "vault-prod"}},
+            "targets": [
+                {
+                    "name": "t1",
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "oracle": {"scope": "pdb", "container": "P"},
+                }
+            ],
+            "accounts": ["acme_web_user"],
+            "secret_template": "apps/acme/{account}#password",
+        }
+    )
+
+    assert len(config.bindings) == 1
+    assert config.bindings[0].vault is None
