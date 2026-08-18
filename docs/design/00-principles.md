@@ -99,6 +99,15 @@ targets:
       container: PDB1
 ```
 
+**A driver is an install extra**, on the same rule as a store: `python-oracledb`
+exists only to reach Oracle, so it arrives with `sopuli[oracle]` and PostgreSQL
+would arrive with `sopuli[postgres]`. Binding stores and not drivers would read
+as arbitrary, and D3 already makes reaching Oracle a per-site runtime condition
+— Instant Client has to be installed either way. See P2's *Backends are install
+extras* and [ADR-006](../decisions/adr-006-optional-dependencies.md); D6 is
+unaffected, since an extra controls which dependencies are installed and not
+which modules exist.
+
 ---
 
 ## P2. Multi-vault support
@@ -159,6 +168,70 @@ weaker one: P5's advisory lock refuses on KV v1 and the file backend unless that
 store is explicitly configured down to `locking: advisory-only`, where the record
 is written without CAS and every run says so (issue #83, `01-configuration.md`
 §3a).
+
+### Backends are install extras (D9, ADR-006)
+
+A backend's client is installed only by the sites that use that backend. The
+base install carries what every invocation uses; a vendor client is an extra.
+
+```
+pip install sopuli                 # config, selection, schema — no network client
+pip install "sopuli[oci]"          # + OCI Vault / Secrets
+pip install "sopuli[hashicorp]"    # + HashiCorp Vault
+pip install "sopuli[all]"          # everything
+```
+
+| Layer | Contents | Installed by |
+|---|---|---|
+| base | CLI framework, YAML parser, `pywin32` on Windows, sopuli itself | `sopuli` |
+| store extras | one vendor client per secret store | `sopuli[<store>]` |
+| driver extras | one database driver per product (P1) | `sopuli[<product>]` |
+| `all` | every extra above | `sopuli[all]` |
+
+This is packaging, not architecture: nothing above about `SecretStore`, the
+SecretRef, or capability negotiation changes. What changes is that P2's
+pluggability becomes true at *install* time and not only at import time. Three
+rules make that real rather than cosmetic:
+
+1. **A vendor client is imported inside its backend module, never at package
+   import time.** The registry maps `type:` to a module path and imports on
+   first use.
+2. **A missing backend is a diagnosable condition, not a traceback.** An
+   `ImportError` at registry resolution becomes a structured error naming the
+   extra that supplies it — `error.category: "config"`, exit 9, and a run
+   document under `--output json` like any other config-resolution failure:
+
+   ```
+   $ sopuli creds check --application acme
+   error: vault "oci-prod" declares type "oci", but that backend is not installed
+          install it with:  pip install "sopuli[oci]"
+   exit 9
+   ```
+
+3. **Nothing in base opens a socket.** That is the property being defended, and
+   the dependency set is what makes it testable: a base install can import none
+   of the clients the backends reach with — `httpx`, the OCI SDK,
+   `python-oracledb`. The stdlib's `urllib` is importable in every Python and
+   always will be, so it is covered by intent rather than by assertion: base
+   code does not reach the network, whatever it would reach it with.
+
+Every command that does not open a connection works with no backend installed —
+`config validate`, `config show --resolved --explain`, `target list`. This is
+what makes the boundary honest rather than a trick: declaring a store is config,
+and only *reaching* one needs its client, so a file naming eleven backends
+validates with none of them installed. A backend that is configured but not
+installed is a `config validate` **warning** and a `doctor` **failure**;
+`doctor` lists installed and configured backends on every run, not only when the
+two disagree.
+
+Why it is a decision and not a packaging detail: sopuli's subject is
+credentials, so its dependency tree is something a security review will actually
+read, and vendor SDKs carry constraints that collide — the OCI SDK pins
+`cryptography` and `pyOpenSSL` and vendors its own `requests`, which a site
+using neither OCI Vault nor OCI-hosted databases should not inherit. Extras are
+also a published interface: narrowing base later breaks installs that never
+named an extra, while widening it never does. Full reasoning, and the six
+questions this closed, in [ADR-006](../decisions/adr-006-optional-dependencies.md).
 
 ### Authenticating to the vault
 
@@ -347,7 +420,8 @@ as an authentication failure.
 Because Instant Client is required at runtime on every platform, packaging is
 "install the client, then install sopuli" regardless of implementation language.
 `sopuli doctor` checks client presence and version, `TNS_ADMIN`, wallet
-readability, vault reachability and clock skew, and prints a per-platform
+readability, vault reachability and clock skew, reports which backends are
+installed against which the config declares (P2), and prints a per-platform
 remediation hint.
 
 ### Why macOS is best-effort rather than supported or excluded (D5)
@@ -469,3 +543,4 @@ somebody typing, the other is a deployed artefact a scheduler is running.
 | D6 | Plugin model for drivers/stores | in-tree first; entry-point plugin API only after a second driver exists | decided |
 | D7 | Minimum Oracle version | 11.2 stays in scope, and testing it is cheap: `gvenzl/oracle-xe:11.2.0.2-slim` pulls freely and starts in seconds, so 11.2 is a tier-2 compose service rather than maintainer-only (T1, resolved 2026-08-08). Two independent caveats on Apple Silicon: it has only the 23.x client, which reaches 19c and later, and the 11g XE image is published for linux/amd64 only. Intel macOS, Linux and Windows all have a 19.x client that reaches it. | decided |
 | D8 | CLI framework | click. The grammar (D2) and exit code 2 on usage errors are equally easy in argparse; the deciding factors were `click.testing.CliRunner`, which keeps tier-0 CLI tests in-process and I/O-free, and a real exception hierarchy to hang error mapping on. See `../decisions/adr-002-cli-framework.md`. | decided |
+| D9 | Dependency layering | Vendor clients are install extras; base carries only the CLI framework, the YAML parser, `pywin32` on Windows and sopuli itself, and opens no sockets. Stores and drivers follow the same rule, `sopuli[all]` exists but is not the recommended install, a configured-but-uninstalled backend warns in `config validate` and fails `doctor`, and reaches the operator as `error.category: "config"` with exit 9. See `../decisions/adr-006-optional-dependencies.md`. | decided |

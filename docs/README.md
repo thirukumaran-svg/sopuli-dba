@@ -28,6 +28,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | [decisions/adr-003-text-tables.md](decisions/adr-003-text-tables.md) | No table library: columns formatted with click and the standard library, and why output must not depend on the terminal |
 | [decisions/adr-004-yaml-parser.md](decisions/adr-004-yaml-parser.md) | PyYAML on a hardened `SafeLoader`, why not ruamel, and the pywin32 dependency for the P4 permission check |
 | [decisions/adr-005-vault-client.md](decisions/adr-005-vault-client.md) | The HTTP API directly, over `httpx`, not `hvac` — measured against a real Vault, why renewal doesn't change the answer, and what still binds OCI to its own SDK |
+| [decisions/adr-006-optional-dependencies.md](decisions/adr-006-optional-dependencies.md) | Vendor clients are install extras: what base carries, why base opens no sockets, and what a configured-but-uninstalled backend does |
 | `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 
@@ -59,7 +60,39 @@ cross-key rules, whose errors have to name the offending key — is listed in
 **Principles (00): all decided.** Binary `sopuli` (D1); noun-verb CLI (D2);
 Python with python-oracledb thick mode (D3); YAML config (D4); macOS best-effort
 and untested (D5); drivers in-tree until there is a second one (D6); Oracle 11.2
-stays in scope, unreachable from Apple Silicon (D7).
+stays in scope, unreachable from Apple Silicon (D7); click as the CLI framework
+(D8); vendor clients are install extras (D9).
+
+**Packaging (130): all decided**, in
+[ADR-006](decisions/adr-006-optional-dependencies.md). Every dependency that
+exists only to reach one vendor is an install extra; base carries the CLI
+framework, the YAML parser, `pywin32` on Windows and sopuli itself, and **opens
+no sockets** — a testable property, not a slogan. ~~Does the rule bind database
+drivers as well as stores~~ (E1 — **decided: yes.** `python-oracledb` is
+`sopuli[oracle]`; binding stores and not drivers would read as arbitrary, and
+D3's Instant Client prerequisite already makes reaching Oracle a per-site
+condition), ~~is the HashiCorp store base or an extra~~ (E2 — **decided: an
+extra.** #103 landed on the HTTP API, so there is no vendor client — but `httpx`
+is still a network client, and rule 3 names the installed dependency set —
+`httpx`, the OCI SDK, `python-oracledb` — precisely so a test can hold it.
+`httpx` ships in `sopuli[hashicorp]` and ADR-005's consequence is amended),
+~~does `sopuli[all]` exist~~ (E3 —
+**decided: yes**, CI and the test matrix need one name that means everything;
+user-facing install instructions recommend the extras a site actually has, never
+`all` as the default line), ~~does `config validate` fail or warn on a
+configured-but-uninstalled backend~~ (E4 — **decided: warn.** The config is
+valid; the install is incomplete. A validator that calls a good file broken is
+less trustworthy for the case it exists to serve), ~~which exit code and
+category~~ (E5 — **decided: `config`, exit 9.** `capability` names what a
+*target* cannot do; a missing backend is fixed locally by the person reading the
+message. It carries an `error.code` so a consumer can branch without parsing
+prose), ~~does `doctor` always list install shape~~ (E6 — **decided: always.**
+Its output is audit evidence as often as it is a diagnostic, and a section that
+appears only on mismatch cannot be quoted as proof that there was none). The
+documents that cite the rule — `01-configuration.md`, `03-json-output.md`,
+`04-testing.md`, the root `README.md` install matrix — follow in the second PR
+of #130; `pyproject.toml` and the registry's lazy import are implementation
+after that.
 
 **Configuration (01):** ~~naming of the binding section~~ (C1 — **decided:
 `applications`, with an inline single-application form**), label selector syntax
@@ -270,7 +303,10 @@ below.)*
   §3a except OIDC's browser/callback dance, which `hvac` does not provide
   either. Probe is `test/vault_auth_probe.py`, run against tier0. OCI keeps
   its own SDK — ADR-005's criterion is request signing and principal
-  federation, not "is it HTTP." `httpx` lands as a base dependency with #104.
+  federation, not "is it HTTP." `httpx` lands with #104, in
+  `sopuli[hashicorp]` rather than in base — ADR-005 said base until #130 made
+  "base can import none of the backends' clients" a testable rule (ADR-006,
+  E2).
 
 ## Likely next use cases
 
