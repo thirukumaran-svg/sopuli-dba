@@ -56,6 +56,7 @@ from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.explain_view import ratchet_notes
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import env_contributions
+from sopuli.store.protocol import StoreError
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -548,6 +549,16 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
         return (
             ExitCode(exc.exit_code),
             Error(category=exc.category, message=exc.located, hint=exc.hint, code=exc.code),
+        )
+    if isinstance(exc, StoreError):
+        # Same arrangement as ConfigError above: the exception carries its
+        # category and its exit code, so a login failure reaches exit 6 (P5) and
+        # a sealed store reaches generic failure without this function knowing
+        # which is which. Before #138 every store failure landed in the
+        # catch-all below and exited 1 as `internal`, which was a lie about a
+        # failure the tool understood perfectly well.
+        return ExitCode(exc.exit_code), Error(
+            category=exc.category, message=exc.message, hint=exc.hint
         )
     if isinstance(exc, LockError):
         code = ExitCode.LOCK_HELD if isinstance(exc, LockDeniedError) else ExitCode.FAILURE

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import Any, NoReturn
 
+from sopuli.exit_codes import ExitCode
 from sopuli.store.protocol import CasConflictError, StoreError
 
 #: The lost race, in full. Deliberately not the whole sentence Vault sends --
@@ -63,6 +64,12 @@ class StoreAuthError(StoreError):
     """
 
     category = "authorization"
+    #: Exit 6, the same as a failed login. P5 gives one code to "authentication
+    #: failed against the vault or the database" and has none for authorization,
+    #: so the *category* distinguishes "the token is not valid" from "the token
+    #: may not do this" while the exit code does not. A scheduler branching on
+    #: the code wants the same behaviour either way: stop, and look at the token.
+    exit_code = ExitCode.AUTH_FAILURE
 
 
 class StoreUnavailableError(StoreError):

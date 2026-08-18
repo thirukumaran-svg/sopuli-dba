@@ -27,6 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from sopuli.exit_codes import ExitCode
+
 #: The store capability the lock requires, spelled as P2's table spells it.
 CAS = "cas"
 
@@ -40,6 +42,14 @@ class StoreError(Exception):
     """
 
     category = "vault"
+
+    #: What the process exits with, carried here for the same reason ``category``
+    #: is: the boundary reports what the error says about itself rather than
+    #: inferring it from a type. Generic failure by default -- a store that could
+    #: not answer is not a configuration problem and not a usage one. Subclasses
+    #: that mean something more specific say so, and
+    #: :class:`~sopuli.store.hashicorp._auth.LoginFailedError` is exit 6.
+    exit_code = ExitCode.FAILURE
 
     def __init__(self, message: str, *, hint: str | None = None) -> None:
         super().__init__(message)

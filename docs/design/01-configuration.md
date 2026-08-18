@@ -547,6 +547,15 @@ may **not**: there is nowhere in a scalar to say where the material comes from.
 | `instance_principal`, `resource_principal` | none |
 | `config_file`, `session_token` | optionally `profile` |
 
+**What a HashiCorp store can actually perform today** (#138): `token`,
+`approle`, `kubernetes`, `userpass`. `oidc` parses and is refused at plan time
+with a message saying *not implemented yet* rather than *unsupported* — ADR-005
+records why the gap is small: the hard part is the browser launch, the local
+callback listener and the `state`/`nonce` handling, which is CLI work that no
+Python client provides. The four OCI methods parse here too, because §3a is one
+grammar with two vocabularies, and are refused against a HashiCorp store with a
+message saying they authenticate to a different vendor.
+
 A key belongs to the method that uses it: `role_id` under `method: token` is an
 error naming the method in force, because it is a leftover from an edit that
 changed the method rather than a typo. `mount` here is the **auth** mount, not the

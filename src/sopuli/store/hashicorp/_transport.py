@@ -114,9 +114,15 @@ def _decode(response: httpx.Response) -> Any:
         return None
 
 
-def build_transport(vault: Vault, *, token: Secret) -> Transport:
-    """The client for ``vault``, authenticated with ``token``."""
-    headers = {"X-Vault-Token": token.reveal()}
+def build_transport(vault: Vault, *, token: Secret | None) -> Transport:
+    """The client for ``vault``, carrying ``token`` if there is one.
+
+    ``None`` is not a convenience: an auth-method login is the one request in
+    the tool that must go out *without* a token, because it is the request that
+    produces one (:mod:`._auth`). Sending an empty header instead would be a
+    request claiming an identity it does not have.
+    """
+    headers = {} if token is None else {"X-Vault-Token": token.reveal()}
     if vault.namespace is not None:
         # Absent means the header is not sent, which is a different request from
         # sending it empty: an empty namespace addresses the root one.

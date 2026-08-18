@@ -136,6 +136,17 @@ mapper. Two rules the probe made concrete:
 standby, 501 uninitialised, 503 sealed. A client that raises on non-2xx will
 misreport a healthy cluster.
 
+**A 403 on a *login* means the auth mount is missing, not that the credential
+was refused** (measured in #138, `hashicorp/vault:2.0.4`). A login endpoint is
+unauthenticated — there is no identity yet, so there is nothing to deny — and
+Vault answers 403 for a path that does not route rather than the 404 a reader
+expects. A refused credential is 400, with `invalid username or password` or
+`invalid role or secret ID`. So the status that reads most like "your credential
+was rejected" is the one where it was never examined, and a hint that says
+"check the credential" sends somebody to rotate a `secret_id` that was fine.
+This is the reverse of what 403 means on the data plane, where it *is* a policy
+problem.
+
 **TLS is config surface**, under `vaults.*.tls`: `ca_file`, `ca_path`,
 `client_cert`/`client_key`, `server_name`, `verify`, alongside `namespace` and
 `timeout_s`. `verify` falls under the P3 safety ratchet — the resolved value is
