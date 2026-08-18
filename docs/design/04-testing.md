@@ -364,6 +364,28 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    than no tool.
 5. **Idempotency.** Every command twice, everywhere, `changed: false` on the
    second run.
+6. **The lock holds under contention, and a stolen lock stops the run that lost
+   it** (#106). `tests/store/test_lock_concurrency.py`, against a real Vault:
+   two genuinely concurrent processes take one lock and exactly one wins, the
+   loser exits 7 having changed nothing, and a holder whose record is overwritten
+   mid-run fails its next fence check.
+
+   **Two processes, not two managers over one dictionary.** Tier 0 covers both
+   properties already and cannot cover this one: it forces the race by driving
+   the store in a chosen order, which proves the manager reacts correctly to a
+   lost compare-and-set but never lets two runs actually start together. A gate
+   that only ever ran in-process is not the gate a release note claims.
+
+   The two facts about the *store* rather than the manager are asserted here for
+   the same reason: that `cas: 0` fails forever on a deleted path — the fact
+   behind "release writes a record, never deletes one" — and that the real KV v1
+   mount lets two runs hold one lock at once, which is what `lock.mode: none` is
+   honest about. The second asserts a **weakness** on purpose: a run reporting
+   `cas` there would be claiming a guarantee it does not have, and that is the
+   failure worth catching.
+
+   A tool that lets two runs rotate one credential at once is worse than one with
+   no locking at all, because the second at least does not claim otherwise.
 
 ---
 
