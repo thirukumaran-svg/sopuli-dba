@@ -516,10 +516,13 @@ def _abort(invocation: Invocation) -> None:
 def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
     """An exception as an exit code and an ``error`` object.
 
-    ``ConfigError`` carries both itself, which is the point of
+    ``ConfigError`` carries its category, its exit code and -- where the
+    condition has one -- its ``error.code`` itself, which is the point of
     :attr:`~sopuli.config.errors.ConfigError.category`: the boundary reports what
     the error says about itself rather than inferring it from a type, and the
-    inference is what goes wrong first when a subclass is added.
+    inference is what goes wrong first when a subclass is added. A missing
+    backend (ADR-006) is the first subclass to carry a code, and it needed no
+    change here beyond passing one along -- which is the arrangement working.
 
     A lock error carries its category the same way and **splits on which one it
     is** (#83). Neither carries an exit code of its own, unlike ``ConfigError``,
@@ -544,7 +547,7 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
     if isinstance(exc, ConfigError):
         return (
             ExitCode(exc.exit_code),
-            Error(category=exc.category, message=exc.located, hint=exc.hint),
+            Error(category=exc.category, message=exc.located, hint=exc.hint, code=exc.code),
         )
     if isinstance(exc, LockError):
         code = ExitCode.LOCK_HELD if isinstance(exc, LockDeniedError) else ExitCode.FAILURE

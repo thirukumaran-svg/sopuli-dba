@@ -121,3 +121,67 @@ jobs:
           sopuli config show --config "$config" --output json > /dev/null
           sopuli config validate --config "$config" > /dev/null
           sopuli config validate --config "$config" --output json > /dev/null
+
+  # ADR-006's three rules, checked against real installs rather than against a
+  # blocked import. `tests/store/test_install_shape.py` holds rule 3 inside the
+  # suite, wherever the suite happens to run; this holds the packaging itself,
+  # which is the half a test cannot see: an extra that silently depends on a
+  # sibling, or a `sopuli[all]` that does not resolve, is a `pip` fact and not a
+  # Python one.
+  #
+  # `04-testing.md` §3 makes install shape a dimension of the matrix. It is tier
+  # 0 and needs no container; one interpreter and one OS is enough, because
+  # nothing here is platform-conditional -- `pywin32` is in base under a marker
+  # and is not an extra.
+  install-shape:
+    name: install shape (${{ matrix.shape }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # base first, because it is the cell that can actually fail: the others
+        # prove an extra resolves, and base proves the boundary held.
+        shape: ["", "[oracle]", "[hashicorp]", "[oci]", "[all]"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: install
+        run: pip install ".${{ matrix.shape }}"
+
+      # The offline commands are the promise ADR-006 makes about what a base
+      # install still does: a config naming a backend validates with that
+      # backend uninstalled, because declaring a store is config and reaching
+      # one is not (01-configuration.md §3a).
+      - name: the offline commands work
+        run: |
+          config="${TEMP:-/tmp}/sopuli-shape.yaml"
+          printf 'version: 1\nvaults:\n  vault-prod:\n    type: hashicorp\n    mount: secret\n' > "$config"
+          chmod 600 "$config"
+          sopuli config validate --config "$config"
+          sopuli config show --config "$config" --output json > /dev/null
+
+      # Rule 3, as ADR-006 states it: in a *base* install none of the clients
+      # the backends reach with is importable. Asserted only in that cell --
+      # everywhere else the clients are installed on purpose, and asserting
+      # their absence would be asserting the extra did not work.
+      - name: base opens no sockets
+        if: matrix.shape == ''
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import sys
+
+          present = [name for name in ("httpx", "oci", "oracledb")
+                     if importlib.util.find_spec(name) is not None]
+          if present:
+              sys.exit(f"base install pulled in a backend client: {', '.join(present)}")
+          print("base carries no backend client")
+          PY

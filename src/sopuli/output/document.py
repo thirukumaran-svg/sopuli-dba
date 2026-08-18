@@ -123,10 +123,14 @@ class Error:
     it (:attr:`sopuli.config.errors.ConfigError.category`) rather than the
     boundary guessing from the exception type.
 
-    Only three of the schema's fields are here. ``code`` and ``retryable``
-    describe failures this tool cannot produce yet -- a vendor code needs a
-    driver -- and ``target_capability`` belongs to the capability category. They
-    arrive with the errors that have them.
+    ``code`` arrived with the first error that has one: a configured backend
+    whose client is not installed is ``SOPULI-20001`` (ADR-006, E5). It stays
+    optional and omitted-when-absent, because most failures have no code and a
+    ``null`` would invite a consumer to branch on a field that is empty almost
+    always. ``retryable`` and ``target_capability`` are still absent for the
+    original reason -- a vendor code needs a driver, and ``target_capability``
+    belongs to the capability category -- and arrive with the errors that have
+    them.
 
     ``message`` is documented as redacted (``03-json-output.md`` §4). What makes
     that true here is the same thing that makes it true everywhere: a
@@ -137,9 +141,12 @@ class Error:
     category: str
     message: str
     hint: str | None = None
+    code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"category": self.category, "message": self.message}
+        if self.code is not None:
+            data["code"] = self.code
         if self.hint is not None:
             data["hint"] = self.hint
         return data

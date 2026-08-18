@@ -92,6 +92,15 @@ class ConfigError(Exception):
     #: goes wrong first when a subclass is added.
     category = "config"
 
+    #: ``error.code`` in the run document, where this condition has one from the
+    #: registry in ``03-json-output.md`` §3. ``None`` for the ordinary case: most
+    #: config errors are "this key is wrong", which a consumer handles by showing
+    #: the message rather than by branching. A subclass sets it when the
+    #: condition is specific enough that a scheduler would want to act on *that*
+    #: failure and not on config errors generally -- see
+    #: :class:`~sopuli.store.registry.BackendNotInstalledError`.
+    code: str | None = None
+
     def __init__(
         self,
         message: str,

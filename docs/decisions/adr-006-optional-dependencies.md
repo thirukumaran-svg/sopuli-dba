@@ -16,7 +16,7 @@ some sites need. A site with OCI Vault and Oracle needs the OCI SDK and
 PostgreSQL driver, and installing them buys it nothing.
 
 The question is whether those clients belong in the base install or behind
-`pip install "sopuli[<name>]"`. It arrives now rather than later because
+`pip install "sopuli-dba[<name>]"`. It arrives now rather than later because
 **extras are a published interface**. Moving a dependency out of base after a
 release breaks every install that never named the extra; moving one *into* base
 is harmless. The default chosen at the first release is the one that is hard to
@@ -25,7 +25,7 @@ change afterwards, which makes this cheaper to decide than to retrofit.
 ## What did not decide it
 
 - **Install size.** Wheels are cheap and disk is cheaper. If this were the
-  argument, `sopuli[all]` everywhere would be the answer and nobody would
+  argument, `sopuli-dba[all]` everywhere would be the answer and nobody would
   notice.
 - **Import time.** Lazy imports fix a slow start-up on their own, without any
   packaging change. They are a *consequence* of this decision, not a reason for
@@ -42,9 +42,9 @@ The base install carries what every invocation uses and nothing else.
 | Layer | Contents | Installed by |
 |---|---|---|
 | base | CLI framework (`click`, ADR-002), YAML parser (`pyyaml`, ADR-004), `pywin32` on Windows for P4's permission check, and sopuli itself | `sopuli` |
-| store extras | one vendor client per secret store | `sopuli[<store>]` |
-| driver extras | one database driver per product | `sopuli[<product>]` |
-| `all` | every extra above | `sopuli[all]` |
+| store extras | one vendor client per secret store | `sopuli-dba[<store>]` |
+| driver extras | one database driver per product | `sopuli-dba[<product>]` |
+| `all` | every extra above | `sopuli-dba[all]` |
 
 `pywin32` is in base and is not a counter-example: it is selected by a platform
 marker, not by a backend the operator configured. Every Windows invocation uses
@@ -108,7 +108,7 @@ client. A config naming eleven backends validates with none of them installed.
 ## Consequences
 
 **Drivers follow the same rule as stores (E1).** `python-oracledb` exists only
-to reach Oracle, so it is `sopuli[oracle]`. Symmetry decides it: a split that
+to reach Oracle, so it is `sopuli-dba[oracle]`. Symmetry decides it: a split that
 bound stores and not drivers would read as arbitrary the first time somebody
 asked why. The cost is an interface with one member today, and D3's thick-mode
 Instant Client prerequisite already makes reaching Oracle a per-site runtime
@@ -122,15 +122,15 @@ vendor client. That is right about `httpx` and wrong about the outcome: a
 third-party HTTP client in base is still a network client in base, and rule 3
 names the installed dependency set precisely so that a test can hold it, and
 `httpx` in base is exactly as visible to that test as an SDK would be. Nothing
-else in base wants `httpx`, so putting it behind `sopuli[hashicorp]` costs
+else in base wants `httpx`, so putting it behind `sopuli-dba[hashicorp]` costs
 nothing and keeps the property testable. ADR-005's consequence is amended
 accordingly; the client choice itself is untouched.
 
-**`sopuli[all]` exists, and is not the recommended install (E3).** CI and the
+**`sopuli-dba[all]` exists, and is not the recommended install (E3).** CI and the
 test matrix need one name that means everything, and inventing it later is
 worse than having it from the start. But user-facing installation instructions
 recommend the extras a site actually has, because a README whose first line is
-`sopuli[all]` quietly undoes the benefit for every reader who copies it.
+`sopuli-dba[all]` quietly undoes the benefit for every reader who copies it.
 
 **`config validate` warns on a configured-but-uninstalled backend (E4).** It
 does not fail. The config is valid; the install is incomplete. Telling an
@@ -166,7 +166,7 @@ backend that is not installed is a `doctor` failure.
 
 ## The cost accepted
 
-`pip install sopuli` on its own produces a tool that can read a config and reach
+`pip install sopuli-dba` on its own produces a tool that can read a config and reach
 nothing. That is a real first-run cliff, and it is paid for in two places rather
 than by defaulting to `all`: the root `README.md` leads with an install matrix,
 and rule 2 turns the failure into a message naming the exact command that fixes
@@ -175,14 +175,21 @@ it.
 The named gap: the file backend (P2, priority 3) has no extra yet, because P2
 does not say whether age/gpg is reached by subprocess or by a Python library.
 Whichever it turns out to be decides the answer, and the rule above already
-covers both — a library makes it `sopuli[file]`, a subprocess makes it a runtime
+covers both — a library makes it `sopuli-dba[file]`, a subprocess makes it a runtime
 prerequisite like Instant Client. It is not settled here because there is
 nothing yet to settle it from.
 
 ## Follow-ups
 
-- `pyproject.toml`: the extras themselves, and the store registry's lazy import
-  and error mapping. Implementation, separate PR.
+- ~~`pyproject.toml`: the extras themselves, and the store registry's lazy
+  import and error mapping~~ — **done in #134.** `sopuli/store/registry.py` maps
+  `type:` to a module path and imports on first use; `BackendNotInstalledError`
+  carries `SOPULI-20001` and `BackendNotImplementedError` is the separate case
+  for a backend nobody has written yet, which is every backend today. The trap
+  worth remembering is that both, plus a genuine bug inside a backend module,
+  arrive as `ModuleNotFoundError`: the registry matches on `exc.name` against the
+  modules the extra provides and re-raises anything else, so our own typo keeps
+  its traceback.
 - `01-configuration.md` §3a and §9: what a declared-but-uninstalled `type:`
   does, and the `config validate` warning (E4).
 - `03-json-output.md`: the `error.code` for a missing backend, and the warning's

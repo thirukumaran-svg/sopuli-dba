@@ -32,6 +32,44 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ADR-006: every dependency that exists only to reach one vendor is an extra, and
+# base opens no sockets. The floors below are floors, not a tested matrix -- each
+# one is the oldest release known to carry the API the backend uses, and the
+# tested version is whatever CI resolves.
+oracle = [
+  # D3: thick mode, because thin mode has no Native Network Encryption and
+  # OCI-hosted databases require it. Instant Client is a runtime prerequisite
+  # either way, which is why reaching Oracle was already a per-site condition
+  # before this extra named it.
+  #
+  # `oracledb`, not `python-oracledb`. Oracle calls the driver python-oracledb
+  # everywhere it is written about -- the docs, the release notes, this
+  # project's own design documents -- but the distribution on PyPI and the
+  # module you import are both `oracledb`, and the other name resolves to
+  # nothing at all. Keep the prose name in prose.
+  "oracledb>=2.0",
+]
+hashicorp = [
+  # ADR-005 (E2): the HTTP API directly, no `hvac`. `httpx` rather than
+  # `requests` for explicit default timeouts and a real SSLContext, and here
+  # rather than in base because a third-party HTTP client in base is exactly
+  # what rule 3 is a test for.
+  "httpx>=0.27",
+]
+oci = [
+  # ADR-005: the SDK stays, because request signing and principal federation are
+  # not "HTTP plus a bearer token". It pins `cryptography` and `pyOpenSSL` and
+  # vendors its own `requests`, which is the concrete reason a site without OCI
+  # should not inherit it.
+  "oci>=2.126",
+]
+# E3: `all` exists because CI and the test matrix need one name that means
+# everything. It is deliberately not what README recommends -- an install line
+# that reads `sopuli[all]` undoes the split for every reader who copies it.
+all = [
+  "sopuli-dba[oracle,hashicorp,oci]",
+]
+
 dev = [
   "pytest>=8.0",
   "jsonschema>=4.20",

@@ -166,7 +166,7 @@ neither needs a container. The per-extra cells are one install and one import
 each, and they matter most for the extra nobody develops against — the one whose
 missing sibling import is discovered by a user rather than by CI.
 
-The developer environment is `sopuli[all]`, which is exactly why the base cell
+The developer environment is `sopuli-dba[all]`, which is exactly why the base cell
 has to exist: every ordinary test passes there whether or not base is clean, so
 nothing else in the suite can see rule 3 break.
 
@@ -233,14 +233,19 @@ container. `testcontainers-python` handles session-scoped containers; a
 - **install shape (ADR-006): a base install can import none of the backends'
   clients** — `httpx`, the OCI SDK, `python-oracledb`, and every name added to
   an extra afterwards. Assert against the resolved environment, not against
-  source: the property is "an operator who ran `pip install sopuli` cannot open
+  source: the property is "an operator who ran `pip install sopuli-dba` cannot open
   a socket", and a grep for imports would pass on a machine where the extras
   happen to be present. The assertion is over that dependency set rather than
   over "an HTTP client", because `urllib` is importable in every Python — the
   stdlib is base code's own discipline (ADR-006 rule 3), not something a
   packaging test can hold. This is the one in the pair that regresses silently: it breaks the
   first time someone adds a convenient module-level import, and nothing else
-  notices, because the developer environment is `sopuli[all]`
+  notices, because the developer environment is `sopuli-dba[all]`. Held in two
+  halves, because neither is sufficient alone: `tests/store/test_install_shape.py`
+  blocks the clients at the import system and imports every sopuli module outside
+  a backend, which runs in any environment and names the module that broke it,
+  and CI's `install-shape` job installs base for real and asserts the clients are
+  absent, which is the only check that can see `pyproject.toml` itself go wrong
 - **the absent-backend path, per backend (ADR-006).** Resolve a store whose
   extra is uninstalled and assert the whole contract: the message names the
   correct extra, `error.category` is `config`, `error.code` is `SOPULI-20001`,

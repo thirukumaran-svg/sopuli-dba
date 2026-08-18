@@ -151,7 +151,9 @@ def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = 
     return "\n".join(lines)
 
 
-def render_validation(paths: Sequence[Path], config: Config) -> str:
+def render_validation(
+    paths: Sequence[Path], config: Config, extra_warnings: Sequence[str] = ()
+) -> str:
     """The human view of ``config validate`` -- what was read, and what it holds.
 
     Deliberately short. A validation that passed has nothing to show, and the
@@ -165,6 +167,14 @@ def render_validation(paths: Sequence[Path], config: Config) -> str:
     puts real findings behind them -- a profile named after an environment, a
     charset a target may not support -- and a summary line would be the wrong
     place to meet one.
+
+    ``extra_warnings`` are findings the *config layer* could not make, because
+    making them is not pure: a configured-but-uninstalled backend (ADR-006, E4)
+    is a fact about this machine rather than about the file, and
+    ``04-testing.md`` §4 keeps the config layer free of anything that has to look
+    outside the document. They arrive from the boundary already worded and are
+    counted and shown here exactly like the file's own, because to the person
+    reading the output the distinction is ours and not theirs.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -175,11 +185,11 @@ def render_validation(paths: Sequence[Path], config: Config) -> str:
             (
                 _count(len(config.expanded_targets), "target"),
                 _count(len(config.bindings), "binding"),
-                _count(len(config.warnings), "warning"),
+                _count(len(config.warnings) + len(extra_warnings), "warning"),
             )
         )
     )
-    lines.extend(_warnings(config))
+    lines.extend(_warnings(config, extra_warnings))
     return "\n".join(lines)
 
 
@@ -593,12 +603,14 @@ def _named(names: Any) -> list[str]:
     return [", ".join(listed)] if listed else []
 
 
-def _warnings(config: Config) -> list[str]:
+def _warnings(config: Config, extra: Sequence[str] = ()) -> list[str]:
     """§10's warnings, in full. This is the only place anybody will read them."""
-    if not config.warnings:
+    messages = [str(warning) for warning in config.warnings]
+    messages.extend(extra)
+    if not messages:
         return []
-    body = [f"  {line}" for warning in config.warnings for line in str(warning).splitlines()]
-    return ["", paint(f"{_count(len(config.warnings), 'warning')}:", Role.NOTABLE), *body]
+    body = [f"  {line}" for message in messages for line in message.splitlines()]
+    return ["", paint(f"{_count(len(messages), 'warning')}:", Role.NOTABLE), *body]
 
 
 def _count(number: int, noun: str, plural: str | None = None) -> str:

@@ -69,14 +69,14 @@ exists only to reach one vendor is an install extra; base carries the CLI
 framework, the YAML parser, `pywin32` on Windows and sopuli itself, and **opens
 no sockets** — a testable property, not a slogan. ~~Does the rule bind database
 drivers as well as stores~~ (E1 — **decided: yes.** `python-oracledb` is
-`sopuli[oracle]`; binding stores and not drivers would read as arbitrary, and
+`sopuli-dba[oracle]`; binding stores and not drivers would read as arbitrary, and
 D3's Instant Client prerequisite already makes reaching Oracle a per-site
 condition), ~~is the HashiCorp store base or an extra~~ (E2 — **decided: an
 extra.** #103 landed on the HTTP API, so there is no vendor client — but `httpx`
 is still a network client, and rule 3 names the installed dependency set —
 `httpx`, the OCI SDK, `python-oracledb` — precisely so a test can hold it.
-`httpx` ships in `sopuli[hashicorp]` and ADR-005's consequence is amended),
-~~does `sopuli[all]` exist~~ (E3 —
+`httpx` ships in `sopuli-dba[hashicorp]` and ADR-005's consequence is amended),
+~~does `sopuli-dba[all]` exist~~ (E3 —
 **decided: yes**, CI and the test matrix need one name that means everything;
 user-facing install instructions recommend the extras a site actually has, never
 `all` as the default line), ~~does `config validate` fail or warn on a
@@ -93,8 +93,9 @@ documents that cite the rule are updated with it: `01-configuration.md` §3a has
 what a declared-but-uninstalled `type:` does and §9/§10 have the warning,
 `03-json-output.md` §3 has `SOPULI-20001` and `SOPULI-W003`, `04-testing.md` §3
 makes install shape a dimension of the matrix, and the root `README.md` leads
-with the install matrix. `pyproject.toml` and the registry's lazy import are
-implementation, still to come.
+with the install matrix. `pyproject.toml` and the registry's lazy import landed
+in #134, with `SOPULI-20001` and `SOPULI-W003` as the first codes anything
+actually emits; `doctor`'s install-shape section (E6) waits on `doctor` itself.
 
 **Configuration (01):** ~~naming of the binding section~~ (C1 — **decided:
 `applications`, with an inline single-application form**), label selector syntax
@@ -306,7 +307,7 @@ below.)*
   either. Probe is `test/vault_auth_probe.py`, run against tier0. OCI keeps
   its own SDK — ADR-005's criterion is request signing and principal
   federation, not "is it HTTP." `httpx` lands with #104, in
-  `sopuli[hashicorp]` rather than in base — ADR-005 said base until #130 made
+  `sopuli-dba[hashicorp]` rather than in base — ADR-005 said base until #130 made
   "base can import none of the backends' clients" a testable rule (ADR-006,
   E2).
 

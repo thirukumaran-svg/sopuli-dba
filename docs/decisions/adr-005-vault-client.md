@@ -107,7 +107,7 @@ explicit default timeouts (`requests` defaults to none, and the lock is held
 while we work), and because it takes a real `SSLContext`, which is what makes
 `vaults.*.tls.ca_path` and `vaults.*.tls.server_name` expressible.
 
-**`httpx` ships in `sopuli[hashicorp]`.** This consequence originally read
+**`httpx` ships in `sopuli-dba[hashicorp]`.** This consequence originally read
 "`httpx` is a base dependency", on the grounds that a generic transport is not a
 vendor client and so #130's extras rule does not reach it. That is right about
 `httpx` and wrong about the outcome: #130 landed with rule 3 stated as *nothing

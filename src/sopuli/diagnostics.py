@@ -25,16 +25,21 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 
 from sopuli.clock import to_rfc3339
+from sopuli.config.model import Vault
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager
 from sopuli.lock.record import LockRecord
 from sopuli.output.document import Diagnostic
+from sopuli.store.registry import BACKENDS, installed
 
 #: A store is holding locks it cannot guard (``locking: advisory-only``, #94).
 ADVISORY_LOCKING = "SOPULI-W001"
 
 #: A lock past its expiry was taken from whoever held it (``break_expired``).
 LOCK_TAKEN_OVER = "SOPULI-W002"
+
+#: A ``vaults:`` entry names a backend whose client is not installed (#130).
+MISSING_BACKEND = "SOPULI-W003"
 
 #: Every code this build can emit, and what each one means. The description is
 #: the contract; the message wording around it is not, and may improve.
@@ -49,6 +54,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "This run took a lock that was past its expiry, which `locking.break_expired` "
             "permits. The previous holder is fenced -- its next check will fail -- but it "
             "may have applied changes before that."
+        ),
+        MISSING_BACKEND: (
+            "A `vaults:` entry names a backend whose client is not installed. The config "
+            "is valid and the install is incomplete, so `config validate` warns and exits "
+            "0; any command that resolves that store to a client fails with SOPULI-20001."
         ),
     }
 )
@@ -114,3 +124,41 @@ def _names(names: Sequence[str]) -> str:
     if len(quoted) == 1:
         return f"store {quoted[0]}"
     return "stores " + ", ".join(quoted)
+
+
+def backend_diagnostics(vaults: Sequence[Vault]) -> list[Diagnostic]:
+    """One warning per configured store whose backend is not installed (E4).
+
+    A **warning**, never an error, and that is the whole decision: the config is
+    valid and the install is incomplete. A validator that calls a good file
+    broken is less trustworthy for the case it exists to serve, and validating on
+    a laptop a config that runs elsewhere is the common case rather than the
+    strange one (ADR-006).
+
+    One per vault rather than one per backend type, unlike :func:`_advisory`
+    above: the operator's unit of action here is the store they wrote down, and
+    two stores of the same missing type are two lines in the file to look at.
+    They do share an install command, which the message repeats, because a
+    consumer reading one diagnostic out of the array should not have to find the
+    other one to learn what to run.
+
+    Asks :func:`~sopuli.store.registry.installed`, which looks a module up
+    without importing it -- so this stays safe to call from an offline command,
+    which is the only kind that calls it.
+    """
+    found = []
+    for vault in vaults:
+        backend = BACKENDS[vault.type]
+        if installed(backend):
+            continue
+        found.append(
+            Diagnostic(
+                level="warning",
+                code=MISSING_BACKEND,
+                message=(
+                    f'vault "{vault.name}" declares type "{vault.type}", but that backend '
+                    f"is not installed; install it with: {backend.install_command}"
+                ),
+            )
+        )
+    return found

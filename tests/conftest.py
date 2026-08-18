@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
+from sopuli.store.registry import BACKENDS
 
 #: Writes a config file and returns its path.
 WriteConfig = Callable[[str], Path]
@@ -48,3 +51,26 @@ def write_config(tmp_path: Path) -> WriteConfig:
 def config_file(write_config: WriteConfig) -> Path:
     """A valid config file, for tests that need one to exist but do not care."""
     return write_config(MINIMAL_CONFIG)
+
+
+@pytest.fixture(autouse=True)
+def backends_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every backend counts as installed, unless a test says otherwise.
+
+    Install shape is a *dimension of the matrix* (``04-testing.md`` §3), not an
+    ambient property of whoever is running the suite. Without this, the output of
+    every command that reads a config naming a vault would depend on whether the
+    machine happens to have `httpx` -- CI installs `[dev]` and a developer is
+    meant to have `[all]`, so the two would disagree about how many warnings
+    `config validate` prints, and the test that noticed would be an unrelated
+    one.
+
+    So the default is fixed here, and the tests whose subject *is* a missing
+    backend opt out by naming the absent client themselves
+    (``tests/store/test_missing_backend.py``). Emptying ``provides`` rather than
+    faking an import: :func:`~sopuli.store.registry.installed` reports a backend
+    with nothing to look for as installed, which is the same path `file` and
+    `keyring` take in production.
+    """
+    for name, backend in list(BACKENDS.items()):
+        monkeypatch.setitem(BACKENDS, name, replace(backend, provides=frozenset()))

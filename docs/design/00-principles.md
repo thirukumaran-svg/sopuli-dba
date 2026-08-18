@@ -100,8 +100,8 @@ targets:
 ```
 
 **A driver is an install extra**, on the same rule as a store: `python-oracledb`
-exists only to reach Oracle, so it arrives with `sopuli[oracle]` and PostgreSQL
-would arrive with `sopuli[postgres]`. Binding stores and not drivers would read
+exists only to reach Oracle, so it arrives with `sopuli-dba[oracle]` and PostgreSQL
+would arrive with `sopuli-dba[postgres]`. Binding stores and not drivers would read
 as arbitrary, and D3 already makes reaching Oracle a per-site runtime condition
 — Instant Client has to be installed either way. See P2's *Backends are install
 extras* and [ADR-006](../decisions/adr-006-optional-dependencies.md); D6 is
@@ -175,18 +175,18 @@ A backend's client is installed only by the sites that use that backend. The
 base install carries what every invocation uses; a vendor client is an extra.
 
 ```
-pip install sopuli                 # config, selection, schema — no network client
-pip install "sopuli[oci]"          # + OCI Vault / Secrets
-pip install "sopuli[hashicorp]"    # + HashiCorp Vault
-pip install "sopuli[all]"          # everything
+pip install sopuli-dba                 # config, selection, schema — no network client
+pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
+pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
+pip install "sopuli-dba[all]"          # everything
 ```
 
 | Layer | Contents | Installed by |
 |---|---|---|
 | base | CLI framework, YAML parser, `pywin32` on Windows, sopuli itself | `sopuli` |
-| store extras | one vendor client per secret store | `sopuli[<store>]` |
-| driver extras | one database driver per product (P1) | `sopuli[<product>]` |
-| `all` | every extra above | `sopuli[all]` |
+| store extras | one vendor client per secret store | `sopuli-dba[<store>]` |
+| driver extras | one database driver per product (P1) | `sopuli-dba[<product>]` |
+| `all` | every extra above | `sopuli-dba[all]` |
 
 This is packaging, not architecture: nothing above about `SecretStore`, the
 SecretRef, or capability negotiation changes. What changes is that P2's
@@ -204,7 +204,7 @@ rules make that real rather than cosmetic:
    ```
    $ sopuli creds check --application acme
    error: vault "oci-prod" declares type "oci", but that backend is not installed
-          install it with:  pip install "sopuli[oci]"
+          install it with:  pip install "sopuli-dba[oci]"
    exit 9
    ```
 
@@ -543,4 +543,4 @@ somebody typing, the other is a deployed artefact a scheduler is running.
 | D6 | Plugin model for drivers/stores | in-tree first; entry-point plugin API only after a second driver exists | decided |
 | D7 | Minimum Oracle version | 11.2 stays in scope, and testing it is cheap: `gvenzl/oracle-xe:11.2.0.2-slim` pulls freely and starts in seconds, so 11.2 is a tier-2 compose service rather than maintainer-only (T1, resolved 2026-08-08). Two independent caveats on Apple Silicon: it has only the 23.x client, which reaches 19c and later, and the 11g XE image is published for linux/amd64 only. Intel macOS, Linux and Windows all have a 19.x client that reaches it. | decided |
 | D8 | CLI framework | click. The grammar (D2) and exit code 2 on usage errors are equally easy in argparse; the deciding factors were `click.testing.CliRunner`, which keeps tier-0 CLI tests in-process and I/O-free, and a real exception hierarchy to hang error mapping on. See `../decisions/adr-002-cli-framework.md`. | decided |
-| D9 | Dependency layering | Vendor clients are install extras; base carries only the CLI framework, the YAML parser, `pywin32` on Windows and sopuli itself, and opens no sockets. Stores and drivers follow the same rule, `sopuli[all]` exists but is not the recommended install, a configured-but-uninstalled backend warns in `config validate` and fails `doctor`, and reaches the operator as `error.category: "config"` with exit 9. See `../decisions/adr-006-optional-dependencies.md`. | decided |
+| D9 | Dependency layering | Vendor clients are install extras; base carries only the CLI framework, the YAML parser, `pywin32` on Windows and sopuli itself, and opens no sockets. Stores and drivers follow the same rule, `sopuli-dba[all]` exists but is not the recommended install, a configured-but-uninstalled backend warns in `config validate` and fails `doctor`, and reaches the operator as `error.category: "config"` with exit 9. See `../decisions/adr-006-optional-dependencies.md`. | decided |

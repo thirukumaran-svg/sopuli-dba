@@ -50,6 +50,7 @@ from sopuli.config import (
     load_layers,
     parse_selector,
 )
+from sopuli.diagnostics import backend_diagnostics
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import (
     GlobalOptions,
@@ -447,13 +448,20 @@ def config_validate(
     paths = discover(run.config_paths)
     _, config = load_layers(paths)
 
+    # A configured-but-uninstalled backend warns here and **exits 0** (ADR-006,
+    # E4): the config is valid, the install is incomplete, and the two are
+    # different findings about different machines. It is the only warning in this
+    # command that the config layer did not make, because making it means asking
+    # what is importable and the config layer asks nothing outside the document.
+    backends = backend_diagnostics(config.vaults)
     document.diagnostics.extend(config_diagnostics(config))
+    document.diagnostics.extend(backends)
     targets = len(config.expanded_targets)
     document.finish(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    return render_validation(paths, config)
+    return render_validation(paths, config, [warning.message for warning in backends])
 
 
 def main() -> None:

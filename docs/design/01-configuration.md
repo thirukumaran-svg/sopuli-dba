@@ -408,8 +408,8 @@ entry would be exactly the top-level vendor bias P1 forbids.
 
 #### A declared backend that is not installed (ADR-006)
 
-A backend's client is an install extra (P2, D9): `sopuli[oci]` brings the OCI
-SDK, `sopuli[hashicorp]` brings `httpx`, and the base install brings neither.
+A backend's client is an install extra (P2, D9): `sopuli-dba[oci]` brings the OCI
+SDK, `sopuli-dba[hashicorp]` brings `httpx`, and the base install brings neither.
 So `type: oci` is a perfectly ordinary thing to write on a machine that cannot
 reach OCI, and the file has to keep meaning the same thing on both.
 
@@ -432,7 +432,7 @@ What changes is where it stops:
 ```
 $ sopuli creds check --application acme
 error: vault "oci-prod" declares type "oci", but that backend is not installed
-       install it with:  pip install "sopuli[oci]"
+       install it with:  pip install "sopuli-dba[oci]"
 exit 9
 ```
 
