@@ -3,6 +3,57 @@ Tool for automating and simplifying database credential management and other com
 
 ---
 
+## Installing
+
+**Install the backends you have, not all of them.** Every client that exists to
+reach one vendor — a secret store or a database — is an install extra. The base
+install carries the CLI, the config layer and nothing that opens a socket, so
+`pip install sopuli` gives you a tool that can read and validate a config and
+reach nothing.
+
+| Install | Adds | Use it when |
+|---|---|---|
+| `pip install sopuli` | nothing beyond the CLI and the config layer | you only need `config validate`, `config show`, `target list` — in an editor, a linter, a pre-commit hook |
+| `pip install "sopuli[oracle]"` | `python-oracledb` | you manage Oracle databases |
+| `pip install "sopuli[hashicorp]"` | the HashiCorp Vault client | your secrets are in HashiCorp Vault |
+| `pip install "sopuli[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
+| `pip install "sopuli[all]"` | every extra | CI, or you genuinely have all of them |
+
+A working install is one store plus one database. For most sites that is:
+
+```
+pip install "sopuli[oracle,hashicorp]"      # or [oracle,oci]
+```
+
+`sopuli[all]` exists for CI and the test matrix. It is deliberately not the
+recommended line: a tool that handles credentials should be able to answer "what
+is in its dependency tree" with the vendors you actually use, and vendor SDKs
+carry version constraints — the OCI SDK pins `cryptography` and `pyOpenSSL` —
+that a site with no OCI should not inherit.
+
+**Oracle needs Instant Client too.** `sopuli[oracle]` installs the driver;
+thick mode is required for Native Network Encryption, so Instant Client is a
+runtime prerequisite on every platform. `sopuli doctor` checks for it, and
+reports which backends are installed against which your config declares.
+
+If a config names a backend you have not installed, `config validate` warns and
+still passes — the file is fine, the install is incomplete — and the first
+command that needs to connect stops with the install line to fix it:
+
+```
+$ sopuli creds check --application acme
+error: vault "oci-prod" declares type "oci", but that backend is not installed
+       install it with:  pip install "sopuli[oci]"
+```
+
+The rule and what it costs: [ADR-006](docs/decisions/adr-006-optional-dependencies.md).
+
+> **Status: pre-implementation.** The design documents are complete; the extras
+> above are the published shape of the install and land with the packaging PR.
+> Nothing is on PyPI yet.
+
+---
+
 ## Release gate 2 — does a rotation leak the password into Oracle?
 
 `ALTER USER` takes the password as a literal; DDL cannot use bind variables. So the

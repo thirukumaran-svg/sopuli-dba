@@ -456,8 +456,9 @@ recovery from the UC-1 §8 table applies.
 
 **`error.category`** — `config`, `selection`, `connectivity`, `authentication`,
 `authorization`, `capability`, `policy`, `vault`, `database`, `lock`, `internal`.
-Categories are stable; `error.code` carries the vendor detail (`ORA-01017`,
-`SOPULI-20001`). Consumers branch on category, log the code.
+Categories are stable; `error.code` carries the vendor detail (`ORA-01017`) or
+a tool-side code from the registry below (`SOPULI-20001`). Consumers branch on
+category, log the code.
 
 **`verification.method`** — `login`, `hash`, `both`, `none`, with
 `lockout_margin_hit` recording the UC-1 §7 case where the tool *declined* to try
@@ -475,6 +476,7 @@ is not contract and may improve.
 |---|---|
 | `SOPULI-W001` | A store in this run is `locking: advisory-only`, so its lock record was written without compare-and-set. The run has no fence: two runs starting in the same second can both believe they hold the lock (#83) |
 | `SOPULI-W002` | This run took a lock that was past its expiry, which `locking.break_expired` permits. The previous holder is fenced — its next check will fail — but it may have applied changes before that |
+| `SOPULI-W003` | A `vaults:` entry names a backend that is not installed. Emitted by `config validate`, which warns rather than fails: the config is valid and the install is incomplete (ADR-006, E4). Any command that resolves the store to a client fails instead, with `SOPULI-20001` |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
@@ -482,6 +484,31 @@ answered**: what is settled is the spelling this document already used as its
 example and that these two warnings have codes. Whether *every* warning gets one
 — the config layer's §10 findings still do not — and how numbers are allocated
 across categories is the part still open.
+
+### Error codes
+
+`error.code` carries the vendor detail where there is one — `ORA-01017` comes
+from the server and the tool passes it through. Where the condition is the
+tool's own, the code is a `SOPULI-` one from this registry, under the same rule
+as the diagnostics above.
+
+| Code | Category | Exit | Meaning |
+|---|---|---|---|
+| `SOPULI-20001` | `config` | 9 | A `vaults:` entry names a backend whose client is not installed. The message names the store, its `type`, and the extra that supplies it (ADR-006, `01-configuration.md` §3a) |
+
+`SOPULI-20001` was this document's illustrative placeholder for a tool-side code
+before it meant anything; #130 gave it something to mean rather than adding a
+second number beside it.
+
+**The category is `config`, not `capability` (ADR-006, E5).** `capability` names
+what a *target* cannot do — a property of the database at the other end, which
+nothing the operator does locally changes, and which `target_capability` reports
+per target. A missing backend is not that: it is fixed on this machine, by the
+person reading the message, with the command in the message. It belongs where an
+unreadable config file and an unresolvable name already are, and exit 9 already
+says *fix your configuration, not your command line* (`00-principles.md` P5). No
+enum value is added — which is the point, since a consumer that already branches
+on `config` handles this without a change.
 
 ---
 
@@ -773,7 +800,7 @@ CI. The schema is the test fixture, not documentation written afterwards.
 |---|---|---|
 | J1 | Should `--output json` stream nothing until completion, even for long runs? | yes — a partial JSON document is worse than none; `jsonl` covers the streaming case |
 | J2 | Include `plan` in every run, or only with `--dry-run`/`--verbose`? | every run; it is small and makes plan-vs-result diffing mechanical |
-| J3 | Stable machine-readable codes for warnings (`SOPULI-W014`) | yes, and they get a documented registry — otherwise consumers grep messages. **Opened, not answered**: §3 now carries a registry with the two codes the advisory lock needed (#83), and the config layer's warnings still have none. What is left is the policy — which warnings get a code, and how numbers are allocated |
+| J3 | Stable machine-readable codes for warnings (`SOPULI-W014`) | yes, and they get a documented registry — otherwise consumers grep messages. **Opened, not answered**: §3 now carries a registry with the two codes the advisory lock needed (#83), a third for a configured-but-uninstalled backend (#130), and an error-code registry beside it holding `SOPULI-20001`. The config layer's other warnings still have none. What is left is the policy — which warnings get a code, and how numbers are allocated across categories; #130 allocated two by hand and did not settle it |
 | J4 | Emit a top-level `hostname`/`pid` for log correlation | probably, under `invocation.actor` |
 | J5 | OpenTelemetry span export alongside JSON | later; `correlation_id` is already the trace id in spirit |
 | J6 | Should the event stream be resumable after a crash? | no — re-run instead; `check` establishes truth cheaply |

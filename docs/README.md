@@ -89,10 +89,12 @@ message. It carries an `error.code` so a consumer can branch without parsing
 prose), ~~does `doctor` always list install shape~~ (E6 — **decided: always.**
 Its output is audit evidence as often as it is a diagnostic, and a section that
 appears only on mismatch cannot be quoted as proof that there was none). The
-documents that cite the rule — `01-configuration.md`, `03-json-output.md`,
-`04-testing.md`, the root `README.md` install matrix — follow in the second PR
-of #130; `pyproject.toml` and the registry's lazy import are implementation
-after that.
+documents that cite the rule are updated with it: `01-configuration.md` §3a has
+what a declared-but-uninstalled `type:` does and §9/§10 have the warning,
+`03-json-output.md` §3 has `SOPULI-20001` and `SOPULI-W003`, `04-testing.md` §3
+makes install shape a dimension of the matrix, and the root `README.md` leads
+with the install matrix. `pyproject.toml` and the registry's lazy import are
+implementation, still to come.
 
 **Configuration (01):** ~~naming of the binding section~~ (C1 — **decided:
 `applications`, with an inline single-application form**), label selector syntax

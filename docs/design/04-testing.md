@@ -149,13 +149,34 @@ password_reuse_policy      ✓         ✓       ✓       ✓        ✓
 The second skip count is the one to watch: capability skips are correct, missing
 environments are a coverage gap.
 
+### Install shape is a dimension too (ADR-006)
+
+Capabilities describe what the thing at the far end can do. **Install shape
+describes what this machine can reach at all**, and it is a matrix dimension for
+the same reason: a property nobody exercises is a property nobody has.
+
+| Shape | Installed | What it proves |
+|---|---|---|
+| base | `pip install .` | the boundary in rule 3: none of the backends' clients importable, and the offline commands still work |
+| one extra | `pip install ".[<name>]"`, each in turn | that backend imports on its own — no extra silently depends on a sibling |
+| `all` | `pip install ".[all]"` | the shape every other test runs under, and the only one where a full suite is meaningful |
+
+Base and `all` are cheap enough to run on every commit; both are tier 0 and
+neither needs a container. The per-extra cells are one install and one import
+each, and they matter most for the extra nobody develops against — the one whose
+missing sibling import is discovered by a user rather than by CI.
+
+The developer environment is `sopuli[all]`, which is exactly why the base cell
+has to exist: every ordinary test passes there whether or not base is clean, so
+nothing else in the suite can see rule 3 break.
+
 ---
 
 ## 4. Tiers
 
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
-| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner` |
+| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, and the install-shape assertions in §3 |
 | 1 | every PR | public CI | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
 | 2 | nightly | public CI | < 30 min | 21c XE, 18c XE, 11g XE, PostgreSQL matrix; fault injection |
 | 3 | pre-release | maintainer | manual | built 19c, real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
@@ -209,6 +230,23 @@ container. `testcontainers-python` handles session-scoped containers; a
   (`02-oracle-privileges.md` §4). A later refactor that introduces a wrapper —
   batching several rotations, say — breaks it silently and no database test would
   notice, because the DDL itself stays clean either way
+- **install shape (ADR-006): a base install can import none of the backends'
+  clients** — `httpx`, the OCI SDK, `python-oracledb`, and every name added to
+  an extra afterwards. Assert against the resolved environment, not against
+  source: the property is "an operator who ran `pip install sopuli` cannot open
+  a socket", and a grep for imports would pass on a machine where the extras
+  happen to be present. The assertion is over that dependency set rather than
+  over "an HTTP client", because `urllib` is importable in every Python — the
+  stdlib is base code's own discipline (ADR-006 rule 3), not something a
+  packaging test can hold. This is the one in the pair that regresses silently: it breaks the
+  first time someone adds a convenient module-level import, and nothing else
+  notices, because the developer environment is `sopuli[all]`
+- **the absent-backend path, per backend (ADR-006).** Resolve a store whose
+  extra is uninstalled and assert the whole contract: the message names the
+  correct extra, `error.category` is `config`, `error.code` is `SOPULI-20001`,
+  and the exit code is 9. Without it, the clean error rots into a traceback the
+  first time a module is renamed — a rename that no other test can see, since
+  every other test imports the module successfully
 - the advisory lock: acquire, fence, renew and release against an in-memory KV v2
   fake with an injected clock — including the fencing case, where a lock is
   stolen mid-run and the original must abort before its next mutation. That case

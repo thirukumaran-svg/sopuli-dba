@@ -373,7 +373,7 @@ config file can be read without knowing what environment it will be read in.
 
 | Key | Meaning |
 |---|---|
-| `type` | **required** — the backend: `hashicorp`, `oci`, `file`, `keyring` (P2). AWS and Azure are listed there as "later" and are refused until they exist |
+| `type` | **required** — the backend: `hashicorp`, `oci`, `file`, `keyring` (P2). AWS and Azure are listed there as "later" and are refused until they exist. A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
 | `addr` | backend address, where the backend has one |
 | `mount` | KV mount point (HashiCorp) |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
@@ -405,6 +405,41 @@ the config it governs.
 Only `type` is required. A file backend has no address, and P2 puts per-backend
 validation behind the store interface, so demanding a HashiCorp shape of every
 entry would be exactly the top-level vendor bias P1 forbids.
+
+#### A declared backend that is not installed (ADR-006)
+
+A backend's client is an install extra (P2, D9): `sopuli[oci]` brings the OCI
+SDK, `sopuli[hashicorp]` brings `httpx`, and the base install brings neither.
+So `type: oci` is a perfectly ordinary thing to write on a machine that cannot
+reach OCI, and the file has to keep meaning the same thing on both.
+
+It does, because **declaring a store is config and reaching one is not.** Every
+rule in §10 that touches a `vaults:` entry — unknown keys, the MaterialRef
+grammar, `non_production` against a `prod` target, `locking.break_expired`
+against `advisory-only` — is decided from the file. None of them needs the
+client. A config naming eleven backends therefore loads, validates and prints
+with none of them installed, and `config show --resolved`, `target list` and
+`config validate` all work as they always did.
+
+What changes is where it stops:
+
+| Moment | With the backend missing |
+|---|---|
+| load, `config validate`, `config show`, `target list` | works. `config validate` adds a **warning** (§9, §10), and exits 0 |
+| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3) |
+| `sopuli doctor` | **failure**. Its question is "can I reach my vaults", and this is a no |
+
+```
+$ sopuli creds check --application acme
+error: vault "oci-prod" declares type "oci", but that backend is not installed
+       install it with:  pip install "sopuli[oci]"
+exit 9
+```
+
+The message names the extra rather than the import that failed, because the
+extra is what the operator can act on. It is a config-category error under
+invariant 4's rule — a command that needs something unavailable fails at plan
+time, naming what is missing, rather than partway through a rotation.
 
 #### `vault:` names a store; `vaults:` describes one (C13, decided)
 
@@ -1611,7 +1646,15 @@ reports what it found:
 |---|---|---|
 | the file loads | 0 | the files read, and how much they declare: targets, bindings, warnings |
 | §10 warnings | 0 | each warning in full, and `diagnostics[]` under `--output json` |
+| a declared backend is not installed | 0 | a warning naming the store, its `type`, and the extra that supplies it (`SOPULI-W003`) |
 | anything §9a or §10 refuses | 9 | the message, with its key path and its hint |
+
+**A missing backend warns rather than fails (ADR-006, E4).** The config is
+valid; the install is incomplete, and those are different sentences. Validating
+on a laptop a file that runs on a scheduler elsewhere is the ordinary case, not
+the strange one, and a validator that calls a good file broken is less
+trustworthy for exactly the case it exists to serve. The command that actually
+needs the client is where this becomes an error (§3a).
 
 Exit 9 rather than 1 or 2: a scheduler can tell "fix your file" from "something
 broke" *and* from "fix your command line". A bad file produces a run document
@@ -1744,6 +1787,10 @@ notices until a rotation.
   never a silent fallback to defaults
 - a profile name matching any target's `environment` value → warning, explaining
   that a profile does not select targets
+- a `vaults:` entry whose `type` names a backend that is not installed → warning,
+  naming the store, the type and the extra that supplies it (ADR-006, E4). Not an
+  error: nothing about the file is wrong, and §3a has where it stops being a
+  warning
 - `charset: printable_ascii` on a target detected below 12.2 → warning
 - `rotation.strategy: rollover` on a target without the `password_rollover`
   capability → error at plan time, not at execution time
