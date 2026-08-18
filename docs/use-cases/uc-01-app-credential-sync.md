@@ -402,31 +402,53 @@ drift it was detecting. Mitigations, all of which must be in place:
 
 1. **Never retry.** One attempt per account per run, no back-off retries on
    ORA-01017.
-2. **Read `LCOUNT` first** (`SYS.USER$.LCOUNT` where readable) and refuse to
-   attempt a login when the account is already within `--lockout-margin` (default
-   2) of the profile's `FAILED_LOGIN_ATTEMPTS`. Report `UNVERIFIABLE` with the
-   reason.
+2. **Read `LCOUNT` first, where the grant exists.** `SELECT ON SYS.USER$` is
+   optional, not part of the default install (`02-oracle-privileges.md` §2,
+   §8 P2 — decided in #86), and probed as a capability rather than assumed.
+   Where present, refuse to attempt a login when the account is already within
+   `--lockout-margin` (default 2) of the profile's `FAILED_LOGIN_ATTEMPTS`, and
+   report `UNVERIFIABLE` with the reason. Where absent, `check` still runs on
+   the remaining runtime mitigations (1/3/6 below), and must say so plainly
+   rather than silently skip the guard.
 3. **Reset on success.** A successful login resets the counter, which is why the
    happy path is self-cleaning.
-4. **Offer hash mode** (below) as the safe alternative for high-frequency checks.
+4. **Offer hash mode** (below) as the safe alternative for high-frequency
+   checks, if it ships at all — see #90.
 5. Document the interaction with `PASSWORD_LOCK_TIME` and with profiles that set
-   `FAILED_LOGIN_ATTEMPTS UNLIMITED`.
+   `FAILED_LOGIN_ATTEMPTS UNLIMITED`. (A documentation item, not a runtime
+   check — excluded from the "1/3/6" runtime set above and below.)
+6. **Report `ACCOUNT_STATUS` unconditionally**, from `DBA_USERS` (already in
+   the baseline grant set, no extra privilege needed). A login attempt alone
+   conflates an expired password, an already-locked account and a genuinely
+   wrong password behind the same `ORA-01017` — `check` reads status
+   separately and surfaces `LOCKED` / `LOCKED (TIMED)` / `EXPIRED` as their own
+   states rather than folding them into `DRIFT`.
 
-### `--method hash` — verification without a login attempt
+### `--method hash` — verification without a login attempt, if it ships at all
+
+**Unresolved — tracked in #90, not part of the default path.** `check`
+defaults to `login` unconditionally (Q1 — decided in #86); hash mode is an
+opt-in extra that may not exist at all, not a fallback the default depends on.
 
 Oracle stores a salted PBKDF2-SHA512 verifier (the `12C` verifier in
-`SYS.USER$.SPARE4`). Given read access to that column, the tool can derive the
-verifier from the vault password and compare — **no authentication attempt, no
-failed-login counter, no lockout risk**, and it works even for locked accounts.
+`SYS.USER$.SPARE4`). Given read access to that column, the tool could derive
+the verifier from the vault password and compare — **no authentication
+attempt, no failed-login counter, no lockout risk** — and it would work even
+for locked accounts. Whether the `T:` layout can actually be reproduced
+client-side is #90's open question; if it can't, this whole method is dropped
+from the CLI.
 
-Trade-offs to document honestly:
+Trade-offs to document honestly if it does ship:
 
-- requires a privileged read of `SYS.USER$` (not `DBA_USERS`), which some sites
-  will not grant; the tool must degrade to `login` mode cleanly
+- requires the same optional `SELECT ON SYS.USER$` grant as the `LCOUNT` guard
+  (`02-oracle-privileges.md` §2), which some sites will not grant; the tool
+  must degrade to `login` mode cleanly. #124 is investigating whether a
+  narrower grant can expose just enough to avoid this trade-off
 - confirms the *stored verifier*, not that a login would succeed — an expired
   password, a locked account, or a failed listener still means the application
-  cannot connect. Hence `--method both` for the strongest answer, and `status`
-  surfacing lock/expiry independently.
+  cannot connect. Hence `--method both` for the strongest answer. Lock/expiry
+  status is already surfaced independently regardless of method — see
+  mitigation 6 above.
 - must handle multiple verifiers (10G/11G/12C) and pick the right one
 
 ### Output
@@ -668,7 +690,7 @@ is the UC-1 specific list.
 
 | # | Question | Notes / leaning |
 |---|---|---|
-| Q1 | Should `check` default to `hash` or `login`? | leaning `login` interactively, `hash` under an unattended profile (`01-configuration.md` §5); needs a decision because it changes the privilege ask |
+| ~~Q1~~ | ~~Should `check` default to `hash` or `login`?~~ | **decided: `login`, unconditionally** (#86, 2026-08-18) — not profile-dependent. The earlier "hash under an unattended profile" leaning assumed hash mode existed and its grant was default; neither holds. `SELECT ON SYS.USER$` is optional and capability-probed (`02-oracle-privileges.md` §2); where present it powers the `LCOUNT` guard and, if #90 lands positive, hash mode. `check` needs no site-specific grant to run at all |
 | ~~Q2~~ | ~~Where does the advisory lock live?~~ | **decided: in the vault** (#83). One record per secret path, CAS-guarded, carrying holder metadata and a TTL of 15 minutes, under a `locks/` prefix on the secret's own mount so the secret's version history stays clean for `previous` and rollback. `DBMS_LOCK`'s one unique benefit is release on session death, and that does not survive contact with the actual risk: a stalled run's session is still alive, so the lock it holds prevents nothing while its plan goes stale. A **fencing token** — the vault version, re-checked before every mutation — is what prevents it, and once fencing exists, automatic release does not pay for `EXECUTE ON DBMS_LOCK`, a widened grant set, a CDB/PDB scope answer, and product-specific behaviour in the command layer (P1). The grant set in `../design/02-oracle-privileges.md` §2 is unchanged. Keyed on the **path**, which is neither candidate P5 named: per-target is meaningless when every target gets the same value, and per-account misses two accounts sharing one document. Stores without `cas` (KV v1, the file backend) refuse mutations unless configured `locking: advisory-only`. |
 | Q3 | ~~How many generations of `previous` to keep?~~ | **decided: exactly one**, plus whatever the store's native versioning gives for free (#84). C14 (#40) settled it: OCI holds exactly one `PREVIOUS`, and the closed `current` / `pending` / `previous` vocabulary has nothing to address an older generation with. Keeps the emulated payload the same shape as the native one, and `check --include-previous` need not say *which* previous it accepted. |
 | Q4 | Does the tool ever alter a *profile* to enable rollover? | leaning no by default — profiles are shared; report the needed DDL instead |

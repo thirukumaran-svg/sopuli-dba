@@ -88,8 +88,11 @@ labels, so there was no backend vocabulary to defer to and the run schema is
 ratified as written).
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
-documented default (P1), grant `SELECT ON SYS.USER$` by default (P2),
-~~whether `--force` exists~~ (P3 — **decided in #89: yes**, one flag overriding
+documented default (P1), ~~grant `SELECT ON SYS.USER$` by default~~ (P2 —
+**decided in #86: no.** Optional, capability-probed grant instead — `check`
+defaults to `login` unconditionally either way. Whether to *recommend* the
+grant, and whether `SELECT_CATALOG_ROLE`/`KU$_USER_VIEW` is a narrower
+alternative, is deferred to #124), ~~whether `--force` exists~~ (P3 — **decided in #89: yes**, one flag overriding
 §4's account checks 2–5 and nothing else. `DBSNMP` is the case: rotating its
 password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a tool with no
 override does not prevent that rotation — it moves it to SQL\*Plus, where nothing
@@ -123,8 +126,13 @@ reset strategy (T7). *T1 resolved 2026-08-08: the 11g XE image exists and works,
 so 11.2 stays tier 2. T5 resolved 2026-08-09: GitHub Actions, tier 0 wired in
 `.github/workflows/ci.yml`.*
 
-**UC-1:** default verification method and the privilege it implies (Q1),
-~~where the advisory lock lives~~ (Q2 — **decided in #83: in the vault**, one
+**UC-1:** ~~default verification method and the privilege it implies~~ (Q1 —
+**decided in #86: `login`, unconditionally**, independent of profile. The
+earlier "hash under an unattended profile" leaning assumed hash mode existed
+and its grant was default; neither holds. The `LCOUNT` guard and `--method
+hash` both depend on the same optional, capability-probed `SELECT ON
+SYS.USER$` grant instead — see 02 P2, also #86), ~~where the advisory lock
+lives~~ (Q2 — **decided in #83: in the vault**, one
 CAS-guarded record per *secret path*, with a fencing token re-checked before
 every mutation. `DBMS_LOCK` was rejected: its one advantage is release on session
 death, and a stalled session is still alive, so it does not prevent the failure
@@ -162,23 +170,29 @@ about credential custody rather than a narrower grant being available.
 
 ### Settle these next
 
-1. **Q1 + P2** — whether `SELECT ON SYS.USER$` is granted by default. It enables
-   `check --method hash` and, more importantly, the `LCOUNT` guard that stops
-   scheduled checks from locking production accounts. With `ALTER USER` already
-   granted, the verifier exposure is a smaller concern than it was.
-2. **C1–C6** — the configuration questions, since the YAML schema is the next
+1. **C1–C6** — the configuration questions, since the YAML schema is the next
    thing that becomes code.
 *(T1 was here and is now answered: the image exists, 11.2 support costs nothing.
 Q2 was here too and is answered in #83: the lock lives in the vault, keyed on the
-secret path, fenced by the vault's own version counter. Building it is #94–#97.)*
+secret path, fenced by the vault's own version counter. Building it is #94–#97.
+Q1 + P2 was here too and is answered in #86: `check` defaults to `login`
+unconditionally, and `SELECT ON SYS.USER$` is optional rather than granted by
+default. What's left of it is deferred, not settled here — see #90 and #124
+below.)*
 
 ## Verify before implementing
 
-- **The `T:` (12C) verifier layout in `SYS.USER$.SPARE4`** — field order, salt
-  length, iteration count, and whether a client library can reproduce the
-  derivation. Fully open, cheap to settle against a throwaway 19c. If it does not
-  reproduce reliably, drop `--method hash` and rely on `--method login` with the
-  `LCOUNT` guard.
+- **The `T:` (12C) verifier layout in `SYS.USER$.SPARE4`** (#90) — field order,
+  salt length, iteration count, and whether a client library can reproduce the
+  derivation. Fully open, cheap to settle against a throwaway 19c. Blocks
+  `--method hash|both` only — `check`'s default (`login`) no longer waits on
+  this (#86). If it does not reproduce reliably, `--method hash` is dropped
+  from the CLI entirely.
+- **Whether `SELECT_CATALOG_ROLE` via `SYS.KU$_USER_VIEW` exposes `LCOUNT`
+  without `SPARE4`** (#124) — a narrower alternative to `SELECT ON SYS.USER$`
+  for the `LCOUNT` guard, from a blog post rather than Oracle documentation.
+  Affects what `sql/oracle/00_install.sql` recommends to sites that want the
+  guard; nothing in the default path depends on it.
 - **Whether `ALTER USER` text leaks the password** into `V$SQL`,
   `UNIFIED_AUDIT_TRAIL`, or trace files, per Oracle version — **partially
   answered.** On 26ai Free 23.26.2.0.0, in `CDB$ROOT` and a PDB, `V$SQL` retains no

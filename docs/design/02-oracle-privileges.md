@@ -200,15 +200,36 @@ case. Per-PDB local users when PDBs have different owners — there the isolatio
 is worth the extra provisioning, and the tool's config already models targets
 individually.
 
-### Verification without a login attempt (`check --method hash`)
+### `check`'s default method, and the optional `SYS.USER$` grant
 
-UC-1 §7 offers hash comparison so that scheduled checks cannot burn through
-`FAILED_LOGIN_ATTEMPTS` and lock a production account. It reads
-`SYS.USER$.SPARE4`, which needs an explicit grant:
+`check` defaults to `--method login` unconditionally — **decided in #86,
+2026-08-18** (Q1: `login`; P2: `SELECT ON SYS.USER$` is not granted by
+default). It never requires `SYS.USER$`: a login attempt plus
+UC-1 §7's mitigations (never retry, reset on success, `ACCOUNT_STATUS`
+reporting) is the whole of the default path, and all of it runs on the base
+grant set in §7 alone.
+
+`SELECT ON SYS.USER$` is **optional**, not part of the default install:
 
 ```sql
 GRANT SELECT ON SYS.USER$ TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
 ```
+
+`sql/oracle/00_install.sql` already models it this way — `grant_user_dollar`
+defaults to `N` — so this decision brings the docs into line with SQL that
+predates it, not the other way round.
+
+When present, the grant is probed as a capability at plan time (invariant 3,
+`CLAUDE.md`) rather than assumed from config, and used for two things:
+
+- **The `LCOUNT` guard** — refuse a login attempt within `--lockout-margin` of
+  the account's `FAILED_LOGIN_ATTEMPTS` limit (UC-1 §7 mitigation 2). This is
+  the one place the grant changes *behaviour*, not just what's queryable:
+  without it, `--method login` still runs, on UC-1 §7's remaining runtime
+  mitigations (1/3/6 — never retry, reset on success, `ACCOUNT_STATUS`
+  reporting), and `check` must report the guard's absence plainly rather than
+  silently run a weaker version of it.
+- **`check --method hash`**, if it ships at all — see below.
 
 Under the package model this grant was the thing to avoid — it exposes every
 password verifier in the database to a low-privilege account. Under the direct
@@ -216,19 +237,25 @@ model that objection largely evaporates: an account holding `ALTER USER` can
 already set any password it likes, so being able to read the verifiers adds
 little to what it can do. The residual concern is different in kind rather than
 degree — verifiers are *offline-attackable*, so a stolen dump of them is useful
-to an attacker who never touches the database again. Weigh that against the
-lockout risk of login-based checks and decide per site.
+to an attacker who never touches the database again. That trade-off is a site's
+to make, not the tool's to default to — which is why the grant is opt-in.
 
-The same grant provides `USER$.LCOUNT`, the current failed-login counter, which
-is what lets `check` refuse an attempt when an account is near its threshold.
-Without it, `--method login` runs with weaker guards. This is the one place where
-the read grant genuinely changes behaviour and not just performance.
+**Whether to recommend granting it, and whether a narrower alternative exists,
+is deferred to #124.** `SYS.KU$_USER_VIEW` / `SYS.KU$_USER_BASE_VIEW` (Data
+Pump metadata views, granted to `PUBLIC`) reportedly expose `LCOUNT` under
+`SELECT_CATALOG_ROLE` alone, masking `SPARE4` unless the session also holds
+`EXP_FULL_DATABASE` — which, if it reproduces, would let a site enable the
+`LCOUNT` guard without exposing verifiers at all. That claim comes from a blog
+post, not Oracle documentation, and needs the same measure-don't-trust
+treatment #124 gives it before it goes anywhere near the install script.
 
-**Still unresolved regardless of grants:** the `T:` (12C, PBKDF2-SHA512) verifier
-layout in `SPARE4` must be reproduced client-side for hash mode to work at all.
-Prototype it against a throwaway 19c before committing `--method hash` to the
-CLI. If it does not reproduce reliably, drop hash mode and rely on `--method
-login` with the `LCOUNT` guard.
+**`--method hash` remains unresolved, independent of the grant question:** the
+`T:` (12C, PBKDF2-SHA512) verifier layout in `SPARE4` must be reproduced
+client-side for hash mode to work at all (#90). Prototype it against a
+throwaway 19c before committing `--method hash` to the CLI. If it does not
+reproduce reliably, drop hash mode from the CLI surface entirely — `login`
+with the optional `LCOUNT` guard is already the complete default path, so
+nothing else depends on the outcome.
 
 ---
 
@@ -428,7 +455,7 @@ All scripts are idempotent and report what they did.
 | # | Question | Leaning |
 |---|---|---|
 | P1 | Common `C##` service user or per-PDB local, as the documented default? | common, with per-PDB documented for multi-tenant ownership |
-| P2 | Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard? | yes for scheduled use; the lockout protection is worth more than the verifier exposure once `ALTER USER` is already granted |
+| ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86, 2026-08-18). Optional, capability-probed grant instead — see §2. `check` defaults to `login` unconditionally either way; whether to *recommend* the grant, and whether `SELECT_CATALOG_ROLE`/`KU$_USER_VIEW` is a narrower alternative, is deferred to #124 |
 | ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag, overriding checks 2–5 of §4 and nothing else** (#89). Managing `DBSNMP`'s password is ordinary DBA work, and it is `ORACLE_MAINTAINED` — so a tool with no override does not prevent that rotation, it just makes it happen in SQL\*Plus where nothing records it. Per-check flags were rejected: a growing flag surface for a rare case, one more flag with every new guardrail. The bluntness is real and accepted — a DBA who wanted to bypass one check bypasses four — and is what §4's audit record is for. It never touches guardrail 1 (invariant 5), and it is **not a setting**: see below |
 | P4 | One service account per database, or per application? | per database; the config's declared accounts provide the finer scoping |
 | P5 | Does `doctor` fail or warn on over-granted privileges? | warn; failing would block someone mid-incident |
