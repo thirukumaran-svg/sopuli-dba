@@ -81,7 +81,13 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - run: pip install -e ".[dev]"
+      # `[all]`, not `[dev]` alone: `04-testing.md` §3 makes `sopuli[all]` the
+      # shape the full suite runs under, and "the only one where a full suite is
+      # meaningful". A test whose subject is a vendor client has nothing to
+      # assert without that client, and skipping it here would mean the cells
+      # that look like full coverage are quietly not. The lean shapes have their
+      # own job below, which is the whole reason this one can be fat.
+      - run: pip install -e ".[dev,all]"
 
       # mypy lives here rather than in the lint job because it is *not*
       # OS-independent: it narrows `sys.platform` to the platform it runs on, so

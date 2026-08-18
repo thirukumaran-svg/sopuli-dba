@@ -24,7 +24,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
-from sopuli.store.protocol import CAS, CasConflictError, PathMetadata, Stored
+from sopuli.store.protocol import CAS, CasConflictError, PathMetadata, Stored, StoreError
 
 
 @dataclass
@@ -79,9 +79,16 @@ class MemoryStore:
             # accepted one would let an implementation pass here and be rejected
             # by the real thing -- and the lock's pre-flight checks this exact
             # setting, so the emulation has to mean it.
-            raise CasConflictError(
-                f"{path!r} requires a compare-and-set and the write did not carry one"
-            )
+            #
+            # `StoreError` and **not** `CasConflictError`, which is what this
+            # raised until the conformance suite ran it beside the real backend
+            # (#104). Nothing raced: the write was refused because it carried no
+            # version, not because the version moved. ADR-005 names the same
+            # confusion from the other end -- Vault's message for this case opens
+            # with the same words as the conflict's, and reporting it as a lost
+            # race would have a run announce that somebody beat it to the path
+            # when nobody was there at all.
+            raise StoreError(f"{path!r} requires a compare-and-set and the write did not carry one")
         if cas is not None and cas != entry.version:
             raise CasConflictError(
                 f"compare-and-set failed at {path!r}: expected version {cas}, found {entry.version}"

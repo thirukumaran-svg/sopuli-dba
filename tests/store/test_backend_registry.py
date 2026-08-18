@@ -77,13 +77,20 @@ def test_every_configurable_type_has_a_backend() -> None:
     assert set(VAULT_TYPES) == set(BACKENDS)
 
 
-def test_no_backend_module_is_importable_at_package_import_time() -> None:
-    """Rule 1, from the registry's side: the mapping is strings, not imports.
+def test_the_mapping_is_strings_and_not_imports() -> None:
+    """Rule 1, from the registry's side. If this module imported the backends to
+    build its table, every extra would be a base dependency and the rest of the
+    design would be decoration.
 
-    If this module had imported the backends to build the table, every extra
-    would be a base dependency and the rest of the design would be decoration.
+    Asserted on the table rather than on ``sys.modules``, which is what this
+    checked until a backend existed (#104): now that `sopuli.store.hashicorp` is
+    real, any test module importing it puts it in ``sys.modules`` for the whole
+    session, and the assertion measured test collection order rather than the
+    registry. The property itself is held properly in
+    ``test_install_shape.py``, in a subprocess, where "was it imported" is a
+    question with one answer.
     """
-    assert not [name for name in sys.modules if name.startswith("sopuli.store.hashicorp")]
+    assert all(isinstance(backend.module, str) for backend in BACKENDS.values())
 
 
 # ------------------------------------------------------------------ installed ---

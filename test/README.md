@@ -50,7 +50,7 @@ reassurance that does nothing.
 
 | Service | Port | Notes |
 |---|---|---|
-| vault | 8200 | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **UI at <http://127.0.0.1:8200/ui>** — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` and `agent-registry/`, so three KV mounts exist and a test asserting on the mount list must expect them |
+| vault | 8200 | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>** — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` and `agent-registry/`, so three KV mounts exist and a test asserting on the mount list must expect them |
 | postgres | 5432 | `postgres` / `sopuli-test` |
 | oracle-free | 1521 | 23ai/26ai Free — CDB + PDB, rollover |
 | oracle-xe21 | 1522 | 21c XE |

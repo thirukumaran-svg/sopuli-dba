@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from sopuli.store import CAS, CasConflictError, MemoryStore, PathMetadata
+from sopuli.store import CAS, CasConflictError, MemoryStore, PathMetadata, StoreError
 
 
 def test_a_fresh_path_has_nothing_and_no_version() -> None:
@@ -54,11 +54,16 @@ def test_a_path_that_requires_a_compare_and_set_refuses_a_write_without_one() ->
     writer is -- which is what stops an operator with a vault CLI from replacing
     a lock record without one. A fake that accepted the write would let an
     implementation pass here and be rejected by the real thing.
+
+    A `StoreError` and **not** a `CasConflictError`: nothing raced. This asserted
+    the conflict until `tests/store/test_store_conformance.py` ran the same body
+    against a real Vault (#104) and the two disagreed -- the fake was the one
+    that was wrong, which is the divergence that suite exists to find.
     """
     store = MemoryStore()
     store.configure("locks/a", PathMetadata(cas_required=True))
 
-    with pytest.raises(CasConflictError) as caught:
+    with pytest.raises(StoreError) as caught:
         store.write("locks/a", {"n": 1}, cas=None)
 
     assert "requires a compare-and-set" in str(caught.value)
