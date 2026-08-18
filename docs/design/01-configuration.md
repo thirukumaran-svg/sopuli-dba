@@ -539,7 +539,7 @@ may **not**: there is nowhere in a scalar to say where the material comes from.
 
 | `method` | Its keys |
 |---|---|
-| `token` | `token` (optional — without it, `--vault-token`, then `$VAULT_TOKEN`, then `~/.vault-token`) |
+| `token` | `token` (optional — without it, `--vault-token`, then `$SOPULI_VAULT_TOKEN`, then `$VAULT_TOKEN`, then `~/.vault-token`) |
 | `approle` | `role_id`, `secret_id`, and optionally `mount` |
 | `kubernetes` | `role`, `jwt`, and optionally `mount` |
 | `oidc` | optionally `role` and `mount` |
@@ -599,9 +599,24 @@ Two properties follow from the shape and are worth stating, because they are the
 reason for it:
 
 - **A source chain stays inside one method.** `method: token` falls through
-  `--vault-token` → `$VAULT_TOKEN` → `~/.vault-token`, and stops there. An earlier
-  draft fell through to AppRole after that; falling into a *different* method makes
-  an authentication failure impossible to explain.
+  `--vault-token` → `$SOPULI_VAULT_TOKEN` → `$VAULT_TOKEN` → `~/.vault-token`, and
+  stops there. An earlier draft fell through to AppRole after that; falling into a
+  *different* method makes an authentication failure impossible to explain. The
+  `SOPULI_` variable is in the chain because §6 ranks every honoured third-party
+  variable below its `SOPULI_*` equivalent — one order, stated in one place, rather
+  than a second one implied here.
+- **A `file:` MaterialRef is not permission-checked**, unlike the config file
+  itself. P4 guards `sopuli.yaml` because the tool chose where it lives and reads
+  it on every invocation; `/run/secrets/…` belongs to whatever mounted it, and a
+  Kubernetes projected token arrives mode 0644. Refusing to read it would break a
+  method P2 lists, so the asymmetry is deliberate rather than an oversight.
+- **Exactly one trailing newline is stripped**, and nothing else. Vault's own CLI
+  writes `~/.vault-token` without one and every editor adds one, and a token
+  carrying a trailing newline fails with a 403 that mentions no whitespace.
+  Leading whitespace survives, because in a secret it is somebody's real secret. The file is read as
+  bytes rather than text for the same reason: text mode would rewrite a carriage
+  return inside a value and the symptom would be a credential that authenticates
+  nowhere while the file on disk looks right.
 - **Identity is inline, proof is not.** `role`, `username`, `profile` and `mount`
   name *who* rather than prove it, so they are written as they are. `role_id` is
   arguably an identifier too, and is a MaterialRef anyway: carving out one field
