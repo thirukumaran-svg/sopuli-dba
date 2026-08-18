@@ -477,6 +477,15 @@ Exit 3 for drift is what makes this schedulable: a monitoring system can alert o
 
 `generate` + `apply` + `check`, with the failure semantics tied together.
 
+**`--max-age-days` reads the vault, never the database** (Q9, decided in #87).
+`rotated_at` lives on the secret path, one value regardless of how many targets
+share it, so there is nothing to aggregate the way N database timestamps would
+need — no "oldest, newest, or any" rule to write for an account that spans a
+CDB's PDBs. A target the tool has not reached since the last rotation is
+therefore selected by age exactly like one it has, which is the trade §9 makes
+visible rather than hides: `status`'s `DB_PW_CHANGED` column is where that gap
+shows up, not in what `rotate` selects.
+
 ```
 sopuli creds rotate --application orders-app
                     [--strategy rollover|staged|direct]
@@ -616,6 +625,18 @@ ORDERS_BATCH  cdb1-pdb-orders    3        94d    2026-05-02     OPEN      APP_PR
 The mismatch between vault age and `DB_PW_CHANGED` is a useful drift smell that
 costs no login attempt.
 
+**`AGE` is `rotated_at`, from the vault, and is what `--max-age-days` filters
+on** (Q9, decided in #87). `DB_PW_CHANGED` is read from the database purely
+for display — it never gates a rotation and nothing currently reads it back —
+which is why the ⚠ above marks only `ORDERS_BATCH`'s row, on its vault age
+past 90 days. `ORDERS_APP`'s `cdb1-pdb-billing` row shares that exact
+`DB_PW_CHANGED` date with `ORDERS_BATCH`, yet its vault age is 12d rather than
+94d: the same database-side history, two very different answers depending on
+which clock is asked, and only the vault's is acted on. The column's source is
+version-dependent (`DBA_USERS.PASSWORD_CHANGE_DATE`, or `SYS.USER$.PTIME` on
+11.2, behind the grant `02-oracle-privileges.md` P2 makes optional) and
+unconfirmed — see `docs/README.md`'s "Verify before implementing".
+
 ---
 
 ## 10. Scenarios
@@ -698,4 +719,4 @@ is the UC-1 specific list.
 | Q6 | Self-rotation mode (tool connects as the account itself, `REPLACE old`) | useful where no admin credential exists; defer to UC-1b |
 | ~~Q7~~ | ~~One secret per account vs one secret with many fields for an app~~ | **decided: one secret per application, a field per account** (#85) — the layout §2 of `../design/01-configuration.md` already used in its worked example, now the documented default. An application's accounts are rotated together far more often than separately, and across a dozen tenants and environments the per-account layout is the difference between eight vault paths and forty-eight — which on a store that bills per secret is a line item, and on any store is a policy surface. One secret per account stays fully supported, and is the right answer where an account's lifecycle is genuinely its own. Neither the lock nor the write path changes shape: Q2 (#83) already keyed the lock on the **path** for exactly this case, and §7 already writes one field without touching its siblings — so the **account remains the unit of work** even where the document is shared. What the default settles is the payload, in §3 below. |
 | Q8 | Should `apply` be able to create a missing account? | no in UC-1; belongs to a provisioning use case |
-| Q9 | Time source for `max_age_days` | vault `rotated_at` (authoritative) vs DB `PTIME`; use vault, show both in `status` |
+| ~~Q9~~ | ~~Time source for `max_age_days`~~ | **decided: vault `rotated_at`, unconditionally** (#87). `rotate --max-age-days N` reads only the vault — one age per secret path regardless of how many targets share it, so there is no "oldest, newest, or any" rule to write for a multi-target account, which option 2 (database-authoritative) would have needed. `status` shows the database's own timestamp beside it (§9) as a drift smell, not folded into one number and not read by anything yet. The rejected alternative, option 3, made the database age a `diagnostics[]` warning past a threshold instead of an always-shown column; deferred partly because it needs a warning code and J3's registry is itself still open |

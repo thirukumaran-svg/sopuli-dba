@@ -162,7 +162,16 @@ so the account remains the unit of work even in a shared document. The payload
 follows one rule: every root-level key mirrors the shape of the current-stage
 container. The one real cost is that a shared document cannot use native version
 staging, because an OCI or AWSSM stage is per secret),
-account creation scope (Q8), authoritative time source for password age (Q9).
+account creation scope (Q8), ~~authoritative time source for password age~~ (Q9 —
+**decided in #87: vault `rotated_at`**, unconditionally; `status` shows the
+database's own timestamp beside it rather than folding the two into one number.
+Settles the aggregation question option 2 would have raised — one vault age
+per secret path, however many targets share it, needs no rule for "oldest,
+newest, or any" the way N database ages would have. The database column stays
+purely informational: a target the tool has never reached still looks exactly
+as fresh as the vault says, and nothing currently reads that column to decide
+anything, which is the cost this option accepts over option 3's thresholded
+`diagnostics[]` warning).
 
 ### Settled
 
@@ -211,6 +220,13 @@ below.)*
   open: 19c and 11.2, and the trace-file and `audit_file_dest` greps on every
   version. The probe is `sql/oracle/02_password_leak_probe.sql`; results are in the
   top-level README's gate-2 table.
+- **Which view supplies `status`'s `DB_PW_CHANGED` column, per version** (#87)
+  — `DBA_USERS.PASSWORD_CHANGE_DATE` is absent on 11.2, where the same value
+  means reading `SYS.USER$.PTIME` instead, behind the same optional grant Q1/P2
+  (#86) already made capability-probed rather than assumed. Purely a display
+  question — Q9 decided `rotate --max-age-days` reads only the vault, so
+  nothing gates on this — but `status` has no source for the column without it.
+  Worth confirming on the 11g XE and 19c images alongside #90.
 
 ## Likely next use cases
 
