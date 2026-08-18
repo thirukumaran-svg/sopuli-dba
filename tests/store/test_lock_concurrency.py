@@ -23,6 +23,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -41,10 +42,25 @@ SECRET_PATH = "apps/acme/alpha"
 #: clean up.
 LOCK_PATH = f"locks/{SECRET_PATH}"
 
-#: How far ahead the racers are told to start. Long enough that both have
-#: imported sopuli, opened a client and reached the sleep -- an import that has
-#: not finished is not a racer -- and short enough not to pad the suite.
-LEAD_SECONDS = 2.5
+#: How long to wait for a racer to say it is ready before giving up on it.
+#: Generous: this is startup, not the thing being measured. Enforced in
+#: :func:`_await_ready` -- it was documented here and enforced nowhere until
+#: review pointed out that the gate could hang rather than fail.
+READY_TIMEOUT = 60
+
+#: How long a racer holds the lock once it has it.
+#:
+#: **Without this the race is unobservable**, and the handshake is not enough on
+#: its own: a winner that releases immediately holds the lock for the two
+#: loopback round trips its acquire and release take -- a couple of milliseconds
+#: -- so a loser delayed by an ordinary scheduling hiccup finds the path
+#: *released* and legitimately acquires it. Both runs then report success and
+#: the gate fails for a reason that is not about locking.
+#:
+#: Holding is also what a real run does: the lock exists to be held across the
+#: work, not across the acquire. One second is far longer than the loser needs
+#: and short enough not to pad the suite.
+CONTENTION_SECONDS = 1
 
 
 def run_driver(stack: Any, **options: Any) -> dict[str, Any]:
@@ -66,14 +82,112 @@ def _start(stack: Any, **options: Any) -> subprocess.Popen[str]:
     """
     argv = [sys.executable, str(DRIVER), "--addr", stack.addr]
     for key, value in options.items():
-        argv += [f"--{key.replace('_', '-')}", str(value)]
+        flag = f"--{key.replace('_', '-')}"
+        argv += [flag] if value is True else [flag, str(value)]
     return subprocess.Popen(
         argv,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         env={**os.environ, "VAULT_TOKEN": stack.token},
     )
+
+
+def _race(stack: Any, count: int = 2, **options: Any) -> list[dict[str, Any]]:
+    """Start ``count`` racers, hold them at the line, and release them together.
+
+    The handshake is what makes this a race rather than a coincidence. Each
+    racer says `ready` once everything expensive is behind it -- imports, client,
+    token -- so the only thing left when `go` arrives is the acquiring write.
+
+    Aligning on a wall-clock instant instead, which this did first, is a guess
+    about process startup time. It was wrong often enough under a loaded machine
+    to make the gate flaky: a late racer found the other had already acquired
+    *and released*, so both legitimately acquired. A guess cannot be tightened
+    into a guarantee, so it is gone rather than longer.
+
+    The racers also **hold** what they take (:data:`CONTENTION_SECONDS`), which
+    the handshake does not make unnecessary: a winner that released immediately
+    would hold the lock for about as long as two loopback round trips, and a
+    loser delayed by an ordinary scheduling hiccup would find the path released
+    and take it honestly. Holding is what a real run does anyway -- the lock
+    exists to cover the work, not the acquire.
+    """
+    racers = [
+        _start(
+            stack,
+            handshake=True,
+            hold_seconds=CONTENTION_SECONDS,
+            correlation_id=f"run-{index}",
+            **options,
+        )
+        for index in range(count)
+    ]
+    try:
+        for racer in racers:
+            _await_ready(racer)
+        for racer in racers:
+            assert racer.stdin is not None
+            racer.stdin.write("go\n")
+            racer.stdin.flush()
+        return [json.loads(_finish(racer)) for racer in racers]
+    except BaseException as error:
+        # Whatever went wrong, no racer is left running: one still holding the
+        # lock would fail the *next* test rather than this one, and a hung
+        # handshake would otherwise sit here until the suite timed out.
+        raise AssertionError(_after_killing(racers, error)) from error
+
+
+def _await_ready(racer: subprocess.Popen[str]) -> None:
+    """Wait for one racer to reach the line, bounded.
+
+    A plain `readline()` has two bad endings and no bound at all: a racer that
+    hangs blocks here until something kills the suite, and one that dies during
+    import returns EOF, which surfaces as a JSON error about an empty string
+    rather than as "it never started".
+
+    A thread, because a timed read on a pipe is not portable -- `select` does not
+    take pipes on Windows, and P4 wants both platforms behaving the same. The
+    reader is a daemon and the caller kills the process, so nothing is left
+    behind either way.
+    """
+    line: list[str] = []
+
+    def read() -> None:
+        assert racer.stdout is not None
+        line.append(racer.stdout.readline())
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    reader.join(READY_TIMEOUT)
+
+    if reader.is_alive():
+        raise AssertionError(f"a racer did not reach the line within {READY_TIMEOUT}s")
+    if not line or not line[0].strip():
+        raise AssertionError("a racer exited before saying it was ready")
+    ready = json.loads(line[0])
+    assert ready == {"ready": True}, ready
+
+
+def _after_killing(racers: list[subprocess.Popen[str]], error: BaseException) -> str:
+    """Stop every racer and gather what they had to say.
+
+    Their stderr is most of the diagnosis: a racer that never said `ready`
+    failed at import, at the token, or at reaching the store, and the traceback
+    for that is in the child rather than here.
+    """
+    said = []
+    for racer in racers:
+        racer.kill()
+        try:
+            _, err = racer.communicate(timeout=10)
+        except subprocess.TimeoutExpired:  # pragma: no cover -- it was killed
+            err = ""
+        if err.strip():
+            said.append(err.strip())
+    reported = "\n".join(said) or "(the racers said nothing on stderr)"
+    return f"{error}\n--- racer stderr ---\n{reported}"
 
 
 def _finish(process: subprocess.Popen[str]) -> str:
@@ -120,18 +234,7 @@ def test_exactly_one_of_two_concurrent_runs_takes_the_lock(
     that it lost the race, and -- most importantly -- it must have touched
     nothing, which is what `acquire` releasing on the way out buys.
     """
-    start_at = time.time() + LEAD_SECONDS
-    racers = [
-        _start(
-            vault_stack,
-            mount=vault_stack.kv2_mount,
-            path=lock_path,
-            correlation_id=f"run-{index}",
-            start_at=start_at,
-        )
-        for index in range(2)
-    ]
-    results = [json.loads(_finish(racer)) for racer in racers]
+    results = _race(vault_stack, mount=vault_stack.kv2_mount, path=lock_path)
 
     outcomes = sorted(result["outcome"] for result in results)
     assert outcomes == ["acquired", "denied"], f"both runs took the lock: {results}"
@@ -152,18 +255,7 @@ def test_the_path_holds_one_record_after_a_race(vault_stack: Any, lock_path: str
     on top -- which is precisely the outcome the fence exists to prevent, and it
     would be invisible from the winner's side.
     """
-    start_at = time.time() + LEAD_SECONDS
-    racers = [
-        _start(
-            vault_stack,
-            mount=vault_stack.kv2_mount,
-            path=lock_path,
-            correlation_id=f"run-{index}",
-            start_at=start_at,
-        )
-        for index in range(2)
-    ]
-    results = [json.loads(_finish(racer)) for racer in racers]
+    results = _race(vault_stack, mount=vault_stack.kv2_mount, path=lock_path)
     [winner] = [result for result in results if result["outcome"] == "acquired"]
 
     read = vault_stack.client.get(f"/v1/{vault_stack.kv2_mount}/data/{LOCK_PATH}")
@@ -267,20 +359,13 @@ def test_advisory_only_lets_two_runs_hold_one_lock_at_once(vault_stack: Any) -> 
     secret_path = "apps/acme/beta"
     record = f"locks/{secret_path}"
     vault_stack.client.delete(f"/v1/{vault_stack.kv1_mount}/{record}")
-    start_at = time.time() + LEAD_SECONDS
-    racers = [
-        _start(
-            vault_stack,
-            mount=vault_stack.kv1_mount,
-            kv_version=1,
-            locking="advisory-only",
-            path=secret_path,
-            correlation_id=f"advisory-{index}",
-            start_at=start_at,
-        )
-        for index in range(2)
-    ]
-    results = [json.loads(_finish(racer)) for racer in racers]
+    results = _race(
+        vault_stack,
+        mount=vault_stack.kv1_mount,
+        kv_version=1,
+        locking="advisory-only",
+        path=secret_path,
+    )
     vault_stack.client.delete(f"/v1/{vault_stack.kv1_mount}/{record}")
 
     assert [result["outcome"] for result in results] == ["acquired", "acquired"]

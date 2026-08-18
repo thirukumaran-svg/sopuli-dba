@@ -13,10 +13,17 @@ exactly one winner, because it never lets them. That is a property of Vault and
 of the acquiring write, and it is only observable when nobody is holding the
 stopwatch.
 
-The processes align on a wall-clock instant passed in by the parent rather than
-on a barrier file, because a barrier is a write and a read against the same disk
-the test is already using -- the alignment would be as coarse as the thing being
-measured.
+The processes align on a **handshake over their own pipes**: each says ``ready``
+once it has imported sopuli, opened a client and reached the line before the
+write, then blocks until the parent says ``go``.
+
+An earlier version aligned on a wall-clock instant instead, which is a *guess*
+about how long a process takes to start -- and it was wrong often enough to make
+the gate flaky under load: a racer that reached the write late found the other
+had already acquired **and released**, so both legitimately acquired and the
+test failed for a reason that had nothing to do with locking. A guess about
+startup time cannot be tightened into a guarantee, so it was replaced rather
+than lengthened.
 
 **The token arrives in the environment and never in argv** (invariant 1, P5:
 secrets are visible in ``ps`` and in the Windows process list). It is a dev-mode
@@ -54,8 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--store-name", default="vault-dev")
     parser.add_argument("--locking", default="required")
     parser.add_argument("--correlation-id", required=True)
-    #: Wall-clock instant, as epoch seconds, at which to attempt the write.
-    parser.add_argument("--start-at", type=float, default=0.0)
+    #: Say `ready`, then block until the parent says `go`. Off by default so a
+    #: single racer needs no handshake partner.
+    parser.add_argument("--handshake", action="store_true")
     #: Hold the lock this long before checking the fence, so the parent has a
     #: window in which to steal it.
     parser.add_argument("--hold-seconds", type=float, default=0.0)
@@ -82,9 +90,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     key = LockKey(store=args.store_name, path=args.path)
 
-    remaining = args.start_at - time.time()
-    if remaining > 0:
-        time.sleep(remaining)
+    if args.handshake:
+        # Everything expensive is behind us: the imports, the client, the token.
+        # What is left is the acquiring write, which is what the parent wants
+        # both racers doing at once.
+        print(json.dumps({"ready": True}), flush=True)
+        sys.stdin.readline()
 
     result: dict[str, Any] = {"correlation_id": args.correlation_id, "mode": manager.mode}
     try:
