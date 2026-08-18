@@ -29,9 +29,16 @@ services:
   # Dev mode: in-memory, root token known, unsealed. Never resembles production,
   # which is the point — production auth paths are exercised against real OCI.
   vault:
-    image: hashicorp/vault:latest
+    # Pinned rather than :latest: tests/store/test_hashicorp_cas_conflict.py
+    # asserts on Vault's own error wording, so an upstream image bump has to
+    # be a deliberate, reviewable line here -- not something that silently
+    # changes what the regression test is measuring against.
+    image: hashicorp/vault:2.0.4
     profiles: [tier0, tier1, tier2, nne]
-    cap_add: [IPC_LOCK]
+    # No cap_add: [IPC_LOCK] here on purpose. 2.0.2 removed the cap_ipc_lock
+    # capability at build time so Vault can run in common container runtimes
+    # without it, with disable_mlock = true the advised setting instead --
+    # carrying the capability request is obsolete, not merely unnecessary.
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: sopuli-test-root
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
@@ -45,7 +52,7 @@ services:
   # Mounts BOTH KV versions, so the store-capability degradation paths
   # (00-principles P2) are covered in one container.
   vault-init:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:2.0.4
     profiles: [tier0, tier1, tier2, nne]
     depends_on:
       vault: { condition: service_healthy }

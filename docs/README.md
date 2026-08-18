@@ -227,6 +227,46 @@ below.)*
   question — Q9 decided `rotate --max-age-days` reads only the vault, so
   nothing gates on this — but `status` has no source for the column without it.
   Worth confirming on the 11g XE and 19c images alongside #90.
+- **What a real Vault's compare-and-set conflict looks like on the wire** (#103,
+  #104) — **answered.** Against `hashicorp/vault:2.0.4` dev mode: every lost
+  compare-and-set, whatever caused it (a stale `cas: 0`, a stale nonzero `cas`,
+  or `cas: 0` against a path whose latest version was soft-deleted but whose
+  version counter survived), is a 400 with the identical body
+  `{"errors": ["check-and-set parameter did not match the current version"]}`
+  — one string `CasConflictError` can match on regardless of which client
+  wraps the call (#103). A malformed `cas` is a different 400
+  (`"error parsing check-and-set parameter"`), so the match does not misfire.
+  One refinement to `sopuli/store/protocol.py`'s `read()` docstring: the two
+  states it says both collapse to `None` are not actually identical on the
+  wire — a soft-deleted path's 404 still carries a `data.metadata` envelope
+  (`deletion_time`, `version`); a never-written path's 404 is bare. `read()`
+  is right not to expose this — nothing that calls it needs the distinction —
+  but the information is there if a future diagnostic ever wants it. Spike is
+  `test/vault_cas_probe.py`, run by hand against tier0 (`docker compose
+  --profile tier0 up -d`). The string dependency itself — the fact that a
+  future `CasConflictError` mapping would key on — is promoted to a real,
+  capability-skipped regression test in `tests/store/test_hashicorp_cas_conflict.py`,
+  which runs as part of the ordinary suite and skips cleanly (not a failure)
+  when Vault is unreachable.
+- **Whether `hvac`'s auth surface is worth the dependency it would add** (#103)
+  — **measured, and it moved the recommendation.** The case for `hvac` rested
+  on auth being where a library "earns its keep" (renewal, OIDC, Kubernetes).
+  Against the real tier0 Vault: AppRole is genuinely two calls — read a
+  `role_id`, `POST role_id`+`secret_id` to `auth/approle/login`, no auth
+  header, get a `client_token` straight back, confirmed to authenticate a
+  follow-up call. Kubernetes could only be exercised up to the point a real
+  cluster becomes load-bearing — no control plane exists in this stack, same
+  category as real OCI — but the client-side request needed nothing beyond
+  `{role, jwt}`: Vault accepted a syntactically-valid fake JWT past every
+  check that does not require one (`kubernetes_ca_cert` does have to be a
+  parseable PEM, or `auth/kubernetes/config` itself is refused — the one
+  genuine surprise) and only failed reading claims out of it. Renewal is one
+  POST (`auth/token/renew-self`) with no scheduling logic behind it in `hvac`
+  either, and what sopuli needs is bespoke regardless — #83 renews at each
+  target boundary behind a fence check, not on a background timer. Net: the
+  auth argument for `hvac` is thin across every method in `01-configuration.md`
+  §3a except OIDC's browser/callback dance, which `hvac` does not provide
+  either. Probe is `test/vault_auth_probe.py`, run against tier0.
 
 ## Likely next use cases
 

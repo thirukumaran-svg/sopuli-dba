@@ -80,7 +80,11 @@ reassurance that does nothing.
   swallows them, so it exits 0 and still prints `kv (v2) and kv1 (v1) mounted` —
   harmless, but the errors are the first thing anyone debugging this stack will
   find. A `vault secrets list | grep -q` guard before each enable would silence it.
-- **`hashicorp/vault:latest` is now 2.x** (2.0.4 as of 2026-08-17), not 1.x.
+- **`hashicorp/vault:latest` was 2.x, not 1.x, as of 2026-08-17** — the version
+  that first surfaced this is now pinned (`hashicorp/vault:2.0.4`) rather than
+  tracked as `:latest`, because `tests/store/test_hashicorp_cas_conflict.py`
+  asserts on Vault's own error wording and an upstream bump has to be a
+  deliberate line change here, not a silent moving target.
 - **`gvenzl/oracle-free:latest` is now 26ai** (`23.26.2.0.0`) — which is the *same
   database* as 23ai, renamed in October 2025, not a newer version. So this image is
   the 23ai line, and results from it apply to it; there is no separate 23ai to
@@ -117,6 +121,8 @@ The public test suite must be green using only what a contributor can pull —
 | `oracle-init/01_test_profiles.sql` | profiles the suite needs: lockout, strong verify function, password reuse, rollover |
 | `oracle-init/sqlnet-nne.ora` | forces Native Network Encryption on the NNE service |
 | `capabilities.py` | sketch of capability probing and the pytest skip markers |
+| `vault_cas_probe.py` | exploratory spike: what a real Vault CAS conflict looks like on the wire (#103, #104). Run by hand; the regression it found lives in `../tests/store/test_hashicorp_cas_conflict.py` instead |
+| `vault_auth_probe.py` | exploratory spike: whether `hvac`'s auth surface is worth the dependency (#103). Run by hand |
 
 Test accounts are created and dropped per test under a per-run prefix. Only the
 profiles are created at container init, so no test assumes anything pre-exists.
