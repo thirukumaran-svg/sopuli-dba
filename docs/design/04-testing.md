@@ -282,6 +282,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | Shared JSON document: writing one account's password leaves siblings byte-identical | any + Vault |
 | KV v1 degradation: no versioning, staging emulated in payload, and the tool says so | Vault KV v1 mount |
 | `lock status` reads a record the tool did not write: a config entry opens a store, authenticates, and reports somebody else's held lock — and the survey leaves the version counter where it found it, because `status` takes no lock (#105) | Vault |
+| `list` agrees between the fake and the real mount (#150): full readable paths, recursion through subtree markers, a prefix that stops on a segment boundary, and — the one a dictionary-backed fake would never produce on its own — a soft-deleted path that is still listed and still reads as nothing, because KV v2 lists metadata and metadata outlives data | Vault, both mounts |
 
 ### Fault injection (tier 2)
 

@@ -11,9 +11,14 @@ straight out of the decision on #83:
   accept writes without a CAS, because a guarantee the tool cannot check is a
   guarantee it should not claim.
 
-Only that slice is here. The rest of P2's interface arrives with the first real
-backend, along with the parts a lock has no opinion about -- listing, health, and
-what a *secret* value looks like as opposed to a lock record.
+``list`` joined them in #150, and for a reason of the same kind: ``lock status``
+reads the paths the *config* declares, so a record left behind by an application
+that was renamed or removed is invisible to it -- and a lock nobody can see is a
+lock nobody can clear. Listing is how the tool finds a path its own configuration
+no longer names.
+
+The rest of P2's interface arrives with the secret side: ``health``, and what a
+*secret* value looks like as opposed to a lock record.
 
 Deliberately a :class:`~typing.Protocol` rather than a base class. A store
 implementation should not have to import this to satisfy it: the HashiCorp
@@ -31,6 +36,32 @@ from sopuli.exit_codes import ExitCode
 
 #: The store capability the lock requires, spelled as P2's table spells it.
 CAS = "cas"
+
+#: Enumerating the paths below a prefix (#150), spelled the same way.
+#:
+#: Its own capability rather than an assumption, for the reason every entry in
+#: P2's table is one: a store may genuinely not have it. Both HashiCorp mounts
+#: do, and an OS keyring or a future backend over an object store with no prefix
+#: query may not -- and the answer for a caller is then to say it could not look
+#: further, never to report an empty listing as though it had looked.
+LIST = "list"
+
+
+def bounded_prefix(prefix: str) -> str:
+    """``prefix`` with exactly one trailing separator, or ``""`` for everything.
+
+    What :meth:`SecretStore.list`'s argument *means*, which is why it lives
+    beside the interface rather than inside one implementation: every store has
+    to answer the same question for the same string, and the question is asked on
+    a **segment boundary**. ``locks``, ``locks/`` and ``/locks/`` are one prefix;
+    ``locksmiths/db`` is not under any of them, though a bare string comparison
+    would say it was.
+
+    An empty prefix -- or one that is nothing but separators -- means the whole
+    store, and returns ``""`` so that a prefix test against it is trivially true.
+    """
+    trimmed = prefix.strip("/")
+    return f"{trimmed}/" if trimmed else ""
 
 
 class StoreError(Exception):
@@ -147,5 +178,46 @@ class SecretStore(Protocol):
         ``None`` for a path that has never been written *and* never had metadata
         configured. That is the ordinary state of a lock path before the first
         lock is taken, so it is not a failure.
+        """
+        ...
+
+    def list(self, prefix: str) -> tuple[str, ...]:
+        """Every path the store knows about below ``prefix``, sorted (#150).
+
+        Five properties, each of which a caller is entitled to rely on and none
+        of which is what a backend's own listing endpoint gives you unaided:
+
+        **What comes back can be handed straight to** :meth:`read`. Each entry
+        still carries ``prefix`` on the front of it -- ``list("locks")`` answers
+        ``("locks/apps/acme/db", ...)``, not the bare tails a KV mount returns.
+        ``prefix`` is a boundary and never an entry in its own right: a document
+        written *at* ``locks`` is not below ``locks/`` and is not listed. A caller
+        that had to reassemble these would be reimplementing the store's own
+        addressing, and would get it wrong the first time a prefix did or did not
+        end in a separator.
+
+        **Recursive, and leaves only.** KV answers one level at a time and marks
+        a subtree with a trailing separator; that is a detail of the endpoint, and
+        a caller walking it would be walking it identically for every backend. No
+        entry returned here ends in ``/``.
+
+        **Knowing about a path is not the same as having something to read**, the
+        same seam :meth:`read` already draws. A soft-deleted path and one that
+        exists only because its metadata was configured are both *listed* and both
+        read as ``None``. That is deliberate: for the case #150 exists for -- a
+        leftover lock record -- the useful question is "what is out there", and a
+        caller that wants contents reads and finds out.
+
+        **Sorted**, so two surveys of one estate are the same survey. Store order
+        is nobody's contract, and a report whose rows moved between runs is a
+        report nobody can diff.
+
+        **An empty prefix is the whole mount, and an empty answer is not an
+        error.** A prefix with nothing under it returns ``()``; a store that
+        cannot answer raises rather than returning ``()``, because "I looked and
+        found nothing" and "I cannot look" are the two answers a caller must never
+        confuse. Which is why this is behind :data:`LIST`: a store that does not
+        declare the capability raises :class:`StoreError` when asked, and the
+        caller is expected to have checked.
         """
         ...

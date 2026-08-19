@@ -539,4 +539,4 @@ def test_connect_reaches_a_store_from_a_config_entry(
 
     # A path this token's policy cannot read is still an answer from the store,
     # so `supports()` is what proves the store is live without needing a policy.
-    assert store.supports() == frozenset({"cas"})
+    assert store.supports() == frozenset({"cas", "list"})

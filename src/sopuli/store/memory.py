@@ -16,6 +16,12 @@ What it gets right on purpose, because the lock depends on each:
   never by deleting" load-bearing rather than stylistic, and a fake without it
   would let the wrong implementation pass.
 * **a stale CAS is refused**, which is the primitive itself.
+* **listing knows about paths that have nothing to read** (#150). A soft-deleted
+  path and one that exists only because its metadata was configured are both
+  listed here and both read as ``None``, because that is what a KV v2
+  ``LIST metadata/`` answers -- metadata outlives the data. A fake that listed
+  only readable paths would let an adapter pass with the easier semantics and
+  then surprise ``lock status`` against a real Vault.
 """
 
 from __future__ import annotations
@@ -24,7 +30,15 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
-from sopuli.store.protocol import CAS, CasConflictError, PathMetadata, Stored, StoreError
+from sopuli.store.protocol import (
+    CAS,
+    LIST,
+    CasConflictError,
+    PathMetadata,
+    Stored,
+    StoreError,
+    bounded_prefix,
+)
 
 
 @dataclass
@@ -51,8 +65,9 @@ class MemoryStore:
     paths: dict[str, _Path] = field(default_factory=dict)
     #: Capabilities this instance claims. Reducible, so the advisory-only path
     #: can be exercised against a store that genuinely has no ``cas`` rather than
-    #: against one pretending not to.
-    capabilities: frozenset[str] = frozenset({CAS})
+    #: against one pretending not to -- and, since #150, so that a caller's
+    #: handling of a store that cannot be listed is exercised the same way.
+    capabilities: frozenset[str] = frozenset({CAS, LIST})
 
     def supports(self) -> frozenset[str]:
         return self.capabilities
@@ -106,6 +121,26 @@ class MemoryStore:
     def metadata(self, path: str) -> PathMetadata | None:
         entry = self.paths.get(path)
         return None if entry is None else entry.metadata
+
+    def list(self, prefix: str) -> tuple[str, ...]:
+        """Every known path under ``prefix``, sorted.
+
+        Every *known* path, which is not every readable one: a deleted entry and
+        a metadata-only entry both stay in :attr:`paths` and both appear here.
+        See the module note -- KV v2 lists metadata, and metadata outlives data.
+
+        The prefix goes through :func:`~sopuli.store.protocol.bounded_prefix`,
+        which is the interface's own rule rather than this store's reading of it
+        -- the fake and the adapters have to answer one question the same way, or
+        the conformance suite is comparing two different questions.
+        """
+        if LIST not in self.capabilities:
+            raise StoreError(
+                "this store cannot list paths, and something asked it to",
+                hint="a store without the `list` capability can only be read a path at a time",
+            )
+        under = bounded_prefix(prefix)
+        return tuple(sorted(path for path in self.paths if path.startswith(under)))
 
     # ------------------------------------------------ test-facing helpers ---
 

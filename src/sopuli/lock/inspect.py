@@ -17,8 +17,11 @@ to report on. Nothing here writes.
 through the same :func:`sopuli.lock.keys.lock_key` the manager locks on, so
 "shares a document" and "shares a lock" cannot give two different answers here
 either. A record at a path the config no longer declares is invisible to this,
-and that is a real gap rather than a decision -- seeing it needs a ``list``
-capability the store protocol does not have (#150).
+and that is still a real gap rather than a decision. Half of #150 has closed it:
+:meth:`sopuli.store.protocol.SecretStore.list` exists and both KV mounts
+implement it, so the paths *can* now be found. Reading them here, and marking
+them in the report as records this configuration does not declare, is the other
+half and is not done.
 
 **Nothing is a refusal.** A path with no record is a state, not an error, and so
 is a payload that does not parse as a lock:

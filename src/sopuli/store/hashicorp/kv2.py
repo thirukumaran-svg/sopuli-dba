@@ -6,7 +6,8 @@ The four methods of :mod:`sopuli.store.protocol` against Vault's KV v2 API:
 ``read(path)``           ``GET  /v1/<mount>/data/<path>``
 ``write(path, …)``       ``POST /v1/<mount>/data/<path>`` with ``options.cas``
 ``metadata(path)``       ``GET  /v1/<mount>/metadata/<path>``
-``supports()``           ``{cas}``
+``list(prefix)``         ``LIST /v1/<mount>/metadata/<prefix>``, walked
+``supports()``           ``{cas, list}``
 ======================== =====================================================
 
 Three things the advisory lock depends on, and which are the reason this module
@@ -27,6 +28,13 @@ between the two.
 
 **A lost compare-and-set is a** :class:`~sopuli.store.protocol.CasConflictError`
 **and nothing else** (:mod:`._errors`).
+
+**Listing goes to the metadata endpoint, and that is not the same set of paths
+the data endpoint holds** (#150). Metadata outlives data in KV v2, so a
+soft-deleted path is still listed and still reads as ``None``. The protocol says
+so out loud rather than hiding it: for the case listing exists for -- a leftover
+lock record -- "what is out there" is the question, and a caller that wants
+contents reads and finds out.
 """
 
 from __future__ import annotations
@@ -35,8 +43,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from sopuli.store.hashicorp._errors import raise_for
+from sopuli.store.hashicorp._listing import keys_of, walk
 from sopuli.store.hashicorp._transport import Response, Transport
-from sopuli.store.protocol import CAS, PathMetadata, Stored, StoreError
+from sopuli.store.protocol import CAS, LIST, PathMetadata, Stored, StoreError
 
 #: Vault's "no per-path limit" for ``max_versions``: the mount's own setting
 #: applies. Reported as ``None`` rather than 0, because ``PathMetadata`` means
@@ -52,9 +61,11 @@ class Kv2Store:
     mount: str
 
     def supports(self) -> frozenset[str]:
-        """KV v2 has compare-and-set. That is the whole capability set the lock
-        asks about; the rest of P2's table arrives with the secret side."""
-        return frozenset({CAS})
+        """KV v2 has compare-and-set, and it can be listed. The rest of P2's
+        table -- versioning, staging labels, soft delete -- arrives with the
+        secret side, which is the half of the interface that reads a *secret*
+        rather than a lock record."""
+        return frozenset({CAS, LIST})
 
     def read(self, path: str) -> Stored | None:
         response = self.transport.request("GET", f"{self.mount}/data/{path}")
@@ -105,6 +116,24 @@ class Kv2Store:
             cas_required=bool(payload.get("cas_required")),
             max_versions=None if maximum in (None, UNLIMITED) else int(maximum),
         )
+
+    def list(self, prefix: str) -> tuple[str, ...]:
+        """Every path under ``prefix``, walked out of KV's one-level listing.
+
+        The recursion and the sorting are :mod:`._listing`'s; what is here is the
+        endpoint and the shape of one level.
+        """
+        return walk(self._level, prefix)
+
+    def _level(self, prefix: str) -> tuple[str, ...] | None:
+        response = self.transport.request("LIST", f"{self.mount}/metadata/{prefix}")
+        if response.status == 404:
+            # A prefix with nothing under it, which is the ordinary state of the
+            # lock prefix in a store nobody has locked anything in. Not a
+            # failure, for the same reason `metadata`'s 404 is not one.
+            return None
+        _check(response, path=prefix)
+        return keys_of(response, prefix=prefix)
 
 
 def _check(response: Response, *, path: str) -> None:

@@ -461,8 +461,9 @@ def lock_status(
     account to, deduplicated through the same key the manager locks on, so two
     accounts sharing one document are one row here exactly as they are one lock
     during a rotation. A record left at a path the file no longer declares is
-    invisible to this, and seeing one needs a store capability that does not
-    exist yet (#150).
+    invisible to this. The store capability that would find one landed in #150
+    -- ``list`` on :mod:`sopuli.store.protocol` -- and reporting what it finds is
+    the other half of that issue, still to come; nothing here calls it yet.
 
     Always exit 0 when it could look. A held lock is a finding, not a failure --
     exit 7 means *this run could not proceed*, and this run had nothing to

@@ -134,8 +134,32 @@ one**, because that returned version is the lock's fencing token — a write tha
 only said "ok" would leave the design with nothing to fence with. **`metadata`
 reads what a store knows about a path apart from its contents**, so pre-flight
 can check that a lock path is not configured to accept writes without a CAS: a
-guarantee the tool cannot check is one it should not claim. The slice the lock
-uses is `sopuli/store/protocol.py`; the rest arrives with the first real backend.
+guarantee the tool cannot check is one it should not claim.
+
+**`list` was in the sketch and is now specified** (#150). Four properties, all of
+them things a backend's own listing endpoint does not give a caller unaided, and
+each one a place two adapters would otherwise disagree:
+
+- it returns **full paths**, which can be handed straight to `read` — not the
+  tails a KV mount answers with;
+- it is **recursive and returns leaves only**. KV answers one level at a time and
+  marks a subtree with a trailing `/`; walking that is the adapter's job, or every
+  caller writes the same walk once per backend;
+- **knowing about a path is not the same as having something to read.** A
+  soft-deleted path keeps its metadata in KV v2, so it is listed and reads as
+  nothing. That pair is exactly what `lock status` needs: a leftover record is
+  *found* by listing and then reported on by reading;
+- the prefix matches on a **segment boundary**, so `locks` does not return
+  `locksmiths/db`, and it is **sorted**, so two surveys of one estate are the same
+  survey.
+
+A store without the capability **raises** rather than answering `()`: "I looked
+and found nothing" and "I cannot look" are the two answers a caller must never
+confuse, since it acts on the first by concluding there is nothing out there.
+
+The slice implemented is `sopuli/store/protocol.py`; `health`, and what a
+*secret* value looks like as opposed to a lock record, arrive with the secret
+side.
 
 ### Backends in scope
 
@@ -154,13 +178,25 @@ uses is `sopuli/store/protocol.py`; the rest arrives with the first real backend
 |---|---|---|---|---|
 | `versioning` | yes | no | yes | optional |
 | `cas` (compare-and-set) | yes | no | via ETag | no |
+| `list` (paths below a prefix) | yes | yes | yes | yes |
 | `staging_labels` | emulated in payload | emulated | native | emulated |
 | `structured_value` (JSON inside a secret) | yes | yes | yes (base64 content) | yes |
 | `soft_delete` / undelete | yes | no | yes | no |
 
+**Capabilities are per capability, not a tier**, and the `list` row is what makes
+that concrete: KV v1 has no compare-and-set and enumerates perfectly well.
+Reporting an empty capability set because the interesting one is missing would
+deny `lock status` a leftover record it could have found.
+
 Where a capability is missing the tool **emulates it in the secret payload**
 (explicit `current` / `pending` / `previous` fields) rather than pretending the
 guarantee exists. Emulation is not atomic; commands must say so in dry-run output.
+
+`list` is neither emulated nor fatal, and is the first capability with a third
+answer: a command that wanted it **reports what it could reach and says it could
+not look further**. Refusing would make `lock status` a command that works on some
+backends and not others, which is worse than a partial answer that admits to being
+one (#150).
 
 **`cas` is the one capability that cannot be emulated**, since "not atomic" is
 precisely what it is for. A store without it therefore gets no lock rather than a

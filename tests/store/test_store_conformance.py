@@ -17,6 +17,12 @@ Three of these are the properties #83's design actually depends on:
 * **a lost compare-and-set is a ``CasConflictError``**, and never anything else.
 * **the version comes back from the write**, so there is something to fence with.
 
+Listing (#150) joined them, and it is the one where the fake is most likely to
+be the liar: a dictionary makes "every path under this prefix" trivial, while a
+KV mount answers one level at a time, marks subtrees with a trailing separator,
+and lists paths whose data has been deleted. Every one of those is somewhere an
+adapter can quietly disagree with the reference reading.
+
 The harness gives each store the same three operations the protocol does not
 have but the tests need -- wipe, soft-delete and configure -- because they are
 the operations an *operator* has, and the traps above are about what happens
@@ -34,7 +40,14 @@ import pytest
 from sopuli.config.model import Vault
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore
-from sopuli.store.protocol import CAS, CasConflictError, PathMetadata, SecretStore, StoreError
+from sopuli.store.protocol import (
+    CAS,
+    LIST,
+    CasConflictError,
+    PathMetadata,
+    SecretStore,
+    StoreError,
+)
 
 
 class Admin(Protocol):
@@ -128,8 +141,41 @@ def harness(request: pytest.FixtureRequest) -> Iterator[Harness]:
     admin.wipe(stack.scratch)
 
 
+#: The three paths every listing test writes, relative to the prefix the
+#: :func:`tree` fixture yields.
+#:
+#: ``nested/gamma`` is the one that matters: it is the entry a KV mount answers
+#: as a subtree marker rather than a document, so an adapter that forwarded the
+#: raw level would return ``nested/`` and never see ``gamma`` at all.
+TREE = ("alpha", "beta", "nested/gamma")
+
+
+@pytest.fixture
+def tree(harness: Harness) -> Iterator[str]:
+    """Three documents under a prefix of their own, cleaned up afterwards.
+
+    A *sibling* of ``harness.path`` rather than a subtree of it, so that the two
+    coexist -- which is what makes the segment-boundary test mean something,
+    since ``…/conformance`` and ``…/conformance-tree`` share every character of
+    the first and differ only after it.
+
+    Wiped key by key: the harness's own teardown wipes one path, and on a real
+    Vault ``metadata delete`` on a prefix removes nothing under it.
+    """
+    prefix = f"{harness.path}-tree"
+    for leaf in TREE:
+        harness.store.write(f"{prefix}/{leaf}", {"leaf": leaf}, cas=0)
+    yield prefix
+    for leaf in TREE:
+        harness.admin.wipe(f"{prefix}/{leaf}")
+
+
 def test_a_store_with_compare_and_set_says_so(harness: Harness) -> None:
     assert CAS in harness.store.supports()
+
+
+def test_a_store_that_can_be_listed_says_so(harness: Harness) -> None:
+    assert LIST in harness.store.supports()
 
 
 def test_a_fresh_path_reads_as_nothing(harness: Harness) -> None:
@@ -232,6 +278,87 @@ def test_an_unguarded_write_is_refused_where_cas_is_required(harness: Harness) -
         harness.store.write(harness.path, {"holder": "unguarded"}, cas=None)
 
     assert not isinstance(caught.value, CasConflictError)
+
+
+# ------------------------------------------------------------- listing (#150) ---
+
+
+def test_a_prefix_with_nothing_under_it_lists_as_empty(harness: Harness) -> None:
+    """Not an error. The ordinary state of the lock prefix in a store nobody has
+    locked anything in, which is most stores most of the time."""
+    assert harness.store.list(f"{harness.path}-nothing-here") == ()
+
+
+def test_listing_returns_full_paths_that_can_be_read(harness: Harness, tree: str) -> None:
+    """The property the protocol promises, asserted the way a caller uses it.
+
+    Not "the right number of entries": every path that comes back is handed
+    straight to `read`, which is what a caller does with them and what an adapter
+    returning KV's tails would fail.
+    """
+    listed = harness.store.list(tree)
+
+    assert listed == tuple(sorted(f"{tree}/{leaf}" for leaf in TREE))
+    for path in listed:
+        stored = harness.store.read(path)
+        assert stored is not None, f"{path} was listed and could not be read"
+
+
+def test_listing_recurses_and_returns_no_subtree_markers(harness: Harness, tree: str) -> None:
+    """KV answers one level and marks a subtree with a trailing separator.
+
+    Walking that is the adapter's job (`sopuli/store/hashicorp/_listing.py`), so
+    the caller never sees `nested/` -- it sees `nested/gamma`, which is a path it
+    can read.
+    """
+    listed = harness.store.list(tree)
+
+    assert f"{tree}/nested/gamma" in listed
+    assert not [path for path in listed if path.endswith("/")]
+
+
+def test_listing_is_sorted(harness: Harness, tree: str) -> None:
+    """Store order is nobody's contract, and a report whose rows move between
+    runs is a report nobody can diff."""
+    listed = harness.store.list(tree)
+
+    assert list(listed) == sorted(listed)
+
+
+def test_a_prefix_stops_at_a_segment_boundary(harness: Harness, tree: str) -> None:
+    """`…/conformance` must not return `…/conformance-tree/alpha`.
+
+    The failure a bare string comparison gives you, and the reason
+    `bounded_prefix` is in the protocol module rather than in one store: two
+    applications whose names share a first word are not one prefix.
+
+    The prefix is a boundary and never an entry in its own right, which the same
+    setup asserts: a document written *at* `harness.path` is not below it.
+    """
+    harness.store.write(harness.path, {"holder": "one"}, cas=0)
+
+    listed = harness.store.list(harness.path)
+
+    assert not [path for path in listed if path.startswith(tree)]
+    assert harness.path not in listed
+
+
+def test_a_deleted_path_is_still_listed_though_it_reads_as_nothing(
+    harness: Harness, tree: str
+) -> None:
+    """Metadata outlives data, so listing and reading answer different questions.
+
+    The divergence a dictionary-backed fake would never produce on its own, and
+    the one an adapter cannot avoid: KV v2 lists `metadata/`, and a soft-deleted
+    path still has metadata. Written down here because `lock status` depends on
+    the pair -- a leftover path is *found* by listing and then reported as
+    carrying no record, which is a different row from one nobody listed.
+    """
+    victim = f"{tree}/alpha"
+    harness.admin.soft_delete(victim)
+
+    assert victim in harness.store.list(tree)
+    assert harness.store.read(victim) is None
 
 
 def test_a_read_does_not_hand_back_the_stores_own_state(harness: Harness) -> None:
