@@ -32,7 +32,7 @@ from sopuli.config.fields import (
     required_string,
 )
 from sopuli.config.locking import build_lock_mode
-from sopuli.config.model import Vault, VaultAuth, VaultTls
+from sopuli.config.model import Vault, VaultAuth, VaultPatch, VaultTls
 
 VAULT_KEYS = (
     "type",
@@ -50,6 +50,37 @@ VAULT_KEYS = (
 #: ``tls:`` (ADR-005). Five paths and a boolean, and the boolean is the one
 #: that is not ordinary config -- see :class:`~sopuli.config.model.VaultTls`.
 TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")
+
+#: The three keys a partial entry may **not** carry (C13, §5), each with why.
+#:
+#: The reasons differ and the messages say so, because the remedies differ. Two
+#: are invariant 10 -- a guardrail must not be reachable from the invocation
+#: context -- and one is not a safety setting at all, so its message must not
+#: claim the ratchet. Somebody told "the safety ratchet forbids it" about ``type``
+#: would go looking for a way to relax a ratchet, and there is nothing there.
+UNPATCHABLE_KEYS = {
+    "type": (
+        "a store that is HashiCorp from a laptop and OCI from CI is two stores; "
+        "declare the second one under `vaults:` and name it"
+    ),
+    "non_production": (
+        "it is a guardrail -- §10 checks it against a `prod` target -- and invariant 10 "
+        "keeps a guardrail out of the invocation context"
+    ),
+    "locking": (
+        "it is a guardrail -- `advisory-only` concedes that a store cannot hold P5's "
+        "lock -- and invariant 10 keeps a guardrail out of the invocation context"
+    ),
+}
+
+#: What a partial entry may carry: the complement, never a second list.
+#:
+#: §5's table names ``addr`` / ``mount`` / ``kv_version`` / ``auth``, written
+#: before ``namespace``, ``timeout_s`` and ``tls`` existed (#135). Deriving it
+#: means a key added to :data:`VAULT_KEYS` becomes patchable unless somebody
+#: writes down why it is not, which is the direction that fails safe for
+#: readers of the file and loudly for whoever adds a guardrail.
+PATCHABLE_KEYS = tuple(key for key in VAULT_KEYS if key not in UNPATCHABLE_KEYS)
 
 #: The backends P2 puts in scope. `aws`/`azure` are listed there as "later" and
 #: are absent on purpose: a config that declares a store the tool cannot reach
@@ -155,13 +186,6 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
             at=at.key("type"),
             noun="vault type",
         ),
-        addr=optional_string(entry, "addr", at=at),
-        mount=optional_string(entry, "mount", at=at),
-        kv_version=_build_kv_version(entry, at=at),
-        namespace=optional_string(entry, "namespace", at=at),
-        timeout_s=_build_timeout(entry, at=at),
-        tls=_build_tls(entry.get("tls"), at=at.key("tls")),
-        auth=_build_auth(entry.get("auth"), at=at.key("auth")),
         # Absent means production. §10 refuses a prod target pointed at a
         # non-production store, and defaulting the other way would make that
         # rule fire on every vault nobody has labelled yet.
@@ -170,7 +194,73 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
         # store gets a real lock unless somebody wrote down that it cannot have
         # one (#83).
         locking=build_lock_mode(entry, at=at),
+        **_reach(entry, at=at),
     )
+
+
+def build_vault_patches(container: dict[str, Any], *, at: KeyPath) -> tuple[VaultPatch, ...]:
+    """A ``vaults:`` block under ``defaults:`` or in a profile (C13, #136).
+
+    Partial entries: every key optional, and ``type`` not accepted at all --
+    because there is nothing here to declare. The store is declared once, at the
+    top level, and this says something *about* it. A name that matches no
+    declaration is refused where every other dangling name in the file is
+    (:mod:`sopuli.config.references`), so the message and the exit code are the
+    ones a reader already knows.
+
+    What a layer may say is :data:`PATCHABLE_KEYS`, and the three it may not each
+    get their own refusal rather than an unknown-key message: a whitelist reply
+    would send somebody looking for the right spelling of a key that must not
+    exist here, which is the same defect :func:`sopuli.config.profiles._reject_forbidden_keys`
+    avoids for ``targets:``.
+    """
+    if "vaults" not in container:
+        return ()
+    entries = mapping(container["vaults"], at=at.key("vaults"))
+    return tuple(
+        _build_patch(name, entry, at=at.key("vaults").key(name)) for name, entry in entries.items()
+    )
+
+
+def _build_patch(name: str, raw: Any, *, at: KeyPath) -> VaultPatch:
+    entry = mapping(raw, at=at)
+    _reject_unpatchable_keys(entry, at=at)
+    reject_unknown_keys(entry, allowed=PATCHABLE_KEYS, at=at)
+    return VaultPatch(name=name, **_reach(entry, at=at))
+
+
+def _reject_unpatchable_keys(entry: dict[str, Any], *, at: KeyPath) -> None:
+    """The three keys of :data:`UNPATCHABLE_KEYS`, refused before the whitelist.
+
+    Order matters for the message and not for the outcome, exactly as it does in
+    a profile's blocklist: "unknown key `locking`" beside a list of the known ones
+    reads as a typo in a key that is spelled perfectly correctly.
+    """
+    for key in sorted(entry):
+        if key in UNPATCHABLE_KEYS:
+            raise ConfigError(
+                f"`{key}:` cannot be set on a partial `vaults:` entry",
+                at=at.key(key),
+                hint=f"{UNPATCHABLE_KEYS[key]} (§5, C13)",
+            )
+
+
+def _reach(entry: dict[str, Any], *, at: KeyPath) -> dict[str, Any]:
+    """The keys that say how to *reach* a store, read the same way in both shapes.
+
+    One reader for a declaration and for a patch, so a key cannot be validated
+    strictly in one and loosely in the other -- which would let a profile write a
+    ``timeout_s: 0`` the top-level entry is refused.
+    """
+    return {
+        "addr": optional_string(entry, "addr", at=at),
+        "mount": optional_string(entry, "mount", at=at),
+        "kv_version": _build_kv_version(entry, at=at),
+        "namespace": optional_string(entry, "namespace", at=at),
+        "timeout_s": _build_timeout(entry, at=at),
+        "tls": _build_tls(entry.get("tls"), at=at.key("tls")),
+        "auth": _build_auth(entry.get("auth"), at=at.key("auth")),
+    }
 
 
 def _shape(key: str) -> str:
@@ -289,11 +379,11 @@ def _build_auth(raw: Any, *, at: KeyPath) -> VaultAuth | None:
 #:
 #: Settings *of* a store are reached by naming it under `vaults:`, which
 #: `defaults:` and a profile may each carry as partial entries patching a
-#: top-level declaration. That is C13, decided in #31, and it is §6's
-#: `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair written in the file
-#: rather than a second addressing scheme. Parsing those blocks arrives with the
-#: vault layer (#103); until then the closed whitelists refuse them, so the only
-#: block form reachable here is a mapping written directly under `vault:`.
+#: top-level declaration (:func:`build_vault_patches`, #136). That is C13, decided
+#: in #31, and it is §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair
+#: written in the file rather than a second addressing scheme. So the block form
+#: this refuses is specifically a mapping written directly under `vault:`, which
+#: is the shape that would name no store at all.
 VAULT_IS_A_NAME = (
     "`vault:` is a store name everywhere in this file (see `SOPULI_VAULT`); "
     "settings of a store go under `vaults:` keyed by its name, which `defaults:` "

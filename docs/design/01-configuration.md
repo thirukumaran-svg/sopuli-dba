@@ -12,7 +12,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.2.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.3.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -91,7 +91,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.2.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.3.schema.json
 version: 1
 
 runtime:
@@ -467,9 +467,29 @@ of P3 stating which store it is talking about, which the alternative — a key
 meaning "whichever store is active" — could not: auth written for dev would
 follow a changed `vault:` to prod without anything in the file having changed.
 
-§5 has the profile case and the keys a profile may patch. Parsing these blocks
-arrives with the vault layer (#103); until then the closed whitelists refuse
-them, because a shape nothing reads is a contract no test can mean anything by.
+**Which layer wins is P3's answer, and it is not the same in both positions.** A
+top-level `vaults:` entry is layer 4 and `defaults.vaults:` is layer 5, so a
+`defaults:` block **supplies keys the declaration did not write** rather than
+replacing ones it did — the word "patch" reads the other way and is right only
+for a profile, which is layer 3 and above the declaration.
+
+The one exception is `tls.verify`, which is under the safety ratchet: there the
+safest layer wins whichever it is, so a `verify: true` written anywhere holds
+against a `verify: false` written anywhere else, and the request that lost is
+reported as a warning naming both ends (invariant 10).
+
+`auth:` is **replaced whole** and `tls:` is **merged key by key**. Not an
+inconsistency: an `auth:` block's keys are only meaningful together with a
+`method`, so a key-by-key merge produces credentials nobody wrote — `method:
+approle` carrying a leftover `token:` authenticates as nobody. A `tls:` block's
+keys are independent facts about one connection, and one of them is a guardrail,
+so replacing the block whole would let a layer mentioning only `ca_file` drop a
+`verify: true` it never spoke about.
+
+§5 has the profile case and the keys a profile may patch. Implemented in
+`sopuli/config/vault_layers.py` (#136) for the two layers the file can supply
+today; a profile's block is parsed and validated there and applied when something
+activates a profile (#153).
 
 ### `locking:` — on a store, and as a block
 
@@ -969,7 +989,7 @@ A closed list. Anything else is a validation error.
 | Key | Effect |
 |---|---|
 | `vault` | which named store to use, by name |
-| `vaults.<name>.*` | how to *reach* a named store — `addr`, `mount`, `kv_version`, `auth`. This is what lets a profile say "token from a laptop, AppRole from CI" without re-declaring the store. Not `type`, and not `non_production` or `locking` — see below (C13) |
+| `vaults.<name>.*` | how to *reach* a named store — everything except the three below. This is what lets a profile say "token from a laptop, AppRole from CI" without re-declaring the store. Not `type`, and not `non_production` or `locking` — see below (C13) |
 | `verify.method` | `login` \| `hash` \| `both` \| `none` |
 | `verify.lockout_margin` | how close to `FAILED_LOGIN_ATTEMPTS` to stop trying |
 | `safety.*` | `max_targets`, `confirm_environments`, `readonly` |
@@ -1013,6 +1033,20 @@ reason — both are guardrails. `non_production` is what §10 checks a `prod` ta
 against, and `locking: advisory-only` is the operator conceding a store cannot
 hold P5's lock. A profile that could set either would be a way to relax a safety
 setting from the invocation context, which invariant 10 forbids outright.
+
+**Everything else is patchable**, which is the rule rather than the four keys the
+table above used to list: that list was written before `namespace`, `timeout_s`
+and the `tls:` block existed (#135). Stating it as the complement means a key
+added to a vault entry becomes patchable unless somebody writes down why it is
+not — which fails loudly for whoever adds the next guardrail and quietly for
+nobody.
+
+> **Not yet applied.** A profile's `vaults:` block is parsed and validated as of
+> #136, and no run reads it, because nothing activates a profile yet (#153) —
+> there is no `--profile`, `SOPULI_PROFILE` is wired to nothing, and no key
+> inside a profile has ever changed a run. The refusals above are the half that
+> is useful without activation: a profile writing `vaults.<name>.locking` is
+> wrong whether or not any run reads it, and `config validate` says so now.
 
 ### What a profile may not contain
 
@@ -1568,7 +1602,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-1.2.schema.json`](../schemas/sopuli-config-1.2.schema.json),
+[`docs/schemas/sopuli-config-1.3.schema.json`](../schemas/sopuli-config-1.3.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -1579,7 +1613,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-1.2.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.3.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -1629,7 +1663,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.2.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.3.schema.json
 version: 1
 ```
 
@@ -1640,7 +1674,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.2.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.3.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -1866,6 +1900,6 @@ notices until a rotation.
 | C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
-| C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. Parsing arrives with the vault layer (#103) |
+| C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. **Implemented in #136** for the layers the file supplies, with one correction to the sentence above: `defaults.vaults:` is layer 5 and therefore *outranked* by the declaration, so it fills gaps rather than patching — only a profile's block, at layer 3, patches in the direction the word suggests. The `addr` / `mount` / `kv_version` / `auth` restriction became the complement of the three unpatchable keys, since #135 added three more reach settings the original list could not have named. Applying a profile's block waits on profile activation (#153); the environment's half of the addressing is #154 |
 | C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. `sopuli-run-1.8.schema.json` is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
 | C15 | ~~A binding names a secret and no store, anywhere — refuse, warn, or leave it to plan time?~~ | **decided in #118: mostly plan time, refused only when nothing could ever complete it.** `_vault_for`'s chain resolving to `None` is not always a mistake — a profile's `vault:` or `SOPULI_VAULT` may still supply one, and neither is consulted while bindings are built (§5, §9), so the null can be a real, temporary state rather than an error. Left alone: `config show --resolved` renders it as `-` (§10), and the command that actually needs a store fails there, once a run's profile is known and the answer is exact. Refused at load only for the narrower, genuinely unrecoverable case — `vaults:` declaring nothing at all, so there is no name even a profile or `SOPULI_VAULT` could point at (§10). The naive rule — refuse whenever a binding's store is unnamed — was rejected first: it rejects the legitimate config where one profile sets `vault:` and a run selects a different one that inherits `defaults.vault` instead |

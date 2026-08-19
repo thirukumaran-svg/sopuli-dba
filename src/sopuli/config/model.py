@@ -332,6 +332,56 @@ class Vault:
     #: compare-and-set or it does not, and no other precedence layer has an
     #: opinion about one store, so there is nothing to be safest of later.
     locking: str = "required"
+    #: The keys some layer other than this entry supplied (C13, #136), sorted.
+    #:
+    #: Provenance rather than data: every field above already holds the effective
+    #: value, and this says which of them did not come from the ``vaults:`` block
+    #: itself. It exists because ``config show`` renders a store from this object,
+    #: and a table showing an address the entry never wrote -- with nothing to say
+    #: so -- would answer "did my YAML say what I think it says" with a value from
+    #: a different part of the file.
+    #:
+    #: Key names, not layers. Which layer won is the resolver's answer and belongs
+    #: in ``--explain`` beside every other setting (#153); what belongs here is the
+    #: one bit a reader of this table needs, which is *this was not written here*.
+    patched: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class VaultPatch:
+    """A partial ``vaults:`` entry, written under ``defaults:`` or in a profile.
+
+    C13 (#31): **`vault:` is a store name everywhere and never a block**, so a
+    layer that wants to say something *about* a store names it under ``vaults:``
+    -- the file's half of §6's ``SOPULI_VAULT__VAULT_DEV__ADDR``.
+
+    Shaped as :class:`Vault` minus three fields rather than as a ``Vault`` with
+    ``type`` made optional, and the difference is the point: what a layer may say
+    about a store is a smaller vocabulary than what declares one, and a type that
+    could be ``None`` here would be a type that could be ``None`` everywhere.
+
+    * ``type`` is absent because a store that is HashiCorp from a laptop and OCI
+      from CI is *two stores*, and one ``vaults:`` name meaning two things is a
+      name the audit trail cannot be read with.
+    * ``non_production`` and ``locking`` are absent because both are guardrails
+      -- §10 checks the first against a ``prod`` target, and ``advisory-only`` is
+      the operator conceding a store cannot hold P5's lock. A layer that could
+      set either would relax a safety setting from the invocation context, which
+      invariant 10 forbids outright.
+
+    Every field is optional and ``None`` means *this layer said nothing*, which
+    is what :mod:`sopuli.config.vault_layers` merges on. That distinction is
+    load-bearing for ``tls.verify`` in particular -- see :class:`VaultTls`.
+    """
+
+    name: str
+    addr: str | None = None
+    mount: str | None = None
+    kv_version: int | None = None
+    namespace: str | None = None
+    timeout_s: int | None = None
+    tls: VaultTls | None = None
+    auth: VaultAuth | None = None
 
 
 @dataclass(frozen=True)
@@ -643,6 +693,15 @@ class Profile:
     log_level: str | None = None
     log_file: str | None = None
     db: ProfileDb = field(default_factory=ProfileDb)
+    #: Partial entries patching stores declared at the top level (C13, #136).
+    #:
+    #: Layer 3, the highest the file can supply, so these **override** what the
+    #: declaration wrote -- which is the case §5 exists for: token from a laptop,
+    #: AppRole from CI, one store, one name in the audit trail.
+    #:
+    #: Parsed and validated; **not yet applied**, because nothing activates a
+    #: profile (#153). A run has no active profile to take these from.
+    vaults: tuple[VaultPatch, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -654,6 +713,12 @@ class Defaults:
     profile: str | None = None
     safety: Safety | None = None
     locking: Locking | None = None
+    #: Partial entries patching stores declared at the top level (C13, #136).
+    #:
+    #: Layer 5, so these are **outranked by the declaration itself**: they supply
+    #: keys the ``vaults:`` entry did not write rather than replacing ones it did.
+    #: A profile's block is the other way round, being layer 3.
+    vaults: tuple[VaultPatch, ...] = ()
 
 
 @dataclass(frozen=True)

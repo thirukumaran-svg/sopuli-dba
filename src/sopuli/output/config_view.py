@@ -261,18 +261,28 @@ def _vault_rows(config: Config) -> list[str]:
 def _vault_note(vault: Vault) -> Cell | str:
     """What is worth saying about a store beyond its type and address.
 
-    Both notes are the same kind of thing -- a store that is *less* than the
-    default assumption -- so they share the column and the ``notable`` role
+    The first two notes are the same kind of thing -- a store that is *less* than
+    the default assumption -- so they share the column and the ``notable`` role
     rather than each getting one. ``advisory-only`` is here because a store that
     cannot hold a real lock is exactly what somebody reading this table needs to
     notice, and the run document's ``lock.mode: none`` says the same thing to the
     other reader (#83).
+
+    The third is a different kind of remark and shares the column anyway: this
+    table renders **effective** values (C13, #136), so a row can show an address
+    the ``vaults:`` entry never wrote. Without saying so, the view answers "did my
+    YAML say what I think it says" with a value from a different part of the file,
+    which is the one question this view exists for. Which layer supplied it is
+    ``--explain``'s answer and not this column's -- what belongs here is that it
+    was not written on the entry.
     """
     notes = []
     if vault.non_production:
         notes.append("non-production")
     if vault.locking != LOCK_REQUIRED:
         notes.append(vault.locking)
+    if vault.patched:
+        notes.append(f"layered: {', '.join(vault.patched)}")
     return Cell(", ".join(notes), Role.NOTABLE) if notes else ""
 
 

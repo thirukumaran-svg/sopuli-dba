@@ -43,6 +43,15 @@ target and ``safety.max_targets`` has no business arriving from an environment
 variable; a resolver that silently accepted either would make the precedence
 table a description of intent rather than of behaviour.
 
+**One entry can stand for many objects.** ``vaults.*.addr`` is *one* setting with
+``*`` where a store name goes, not one setting per declared store (C13, #136).
+Registering per store would mean building this mapping from a config file, and
+the value of :data:`SAFETY_SETTINGS` being a literal is exactly that a reviewer
+can read the ratcheted set without one. Which store a contribution came from is a
+*location*, so it travels on :attr:`~sopuli.settings.resolver.Contribution.detail`
+-- ``defaults.vaults.vault-dev.tls.verify`` -- where locations already live.
+:mod:`sopuli.config.vault_layers` builds those names.
+
 Two settings that look like they belong here and do not:
 
 * ``--color`` -- :func:`sopuli.output.color.resolve_color` owns it, and mixes in
@@ -128,6 +137,7 @@ SAFETY_SETTINGS = frozenset(
         "safety.max_targets",
         "safety.confirm_environments",
         "locking.break_expired",
+        "vaults.*.tls.verify",
     }
 )
 
@@ -252,13 +262,37 @@ def _setting(
     )
 
 
+def _vault_setting(key: str, *, type: type) -> Setting:  # noqa: A002 - see `_setting`
+    """One per-store vault key, at the three layers the file and P3 give it.
+
+    Every one of them is :attr:`MergePolicy.OVERRIDE`: an address or a mount has
+    no safe direction, so the highest layer that wrote one wins. The exception --
+    ``tls.verify`` -- is written out in full below rather than passed through
+    here, because a ratcheted setting is worth reading beside its reason.
+    """
+    return _setting(
+        f"vaults.*.{key}",
+        type=type,
+        layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
+        policy=MergePolicy.OVERRIDE,
+    )
+
+
 #: Every setting the resolver knows about.
 #:
 #: Deliberately only what has a producer today plus the safety block, which
 #: :mod:`sopuli.config.safety` already parses and which is the reason the ratchet
-#: exists at all. Entries for settings nothing reads yet -- ``vault.addr``,
-#: ``verify.method``, the ``db`` timeouts -- would be a contract stated in a place
-#: no test can mean anything about; they arrive with their consumers.
+#: exists at all. Entries for settings nothing reads yet -- ``verify.method``, the
+#: ``db`` timeouts -- would be a contract stated in a place no test can mean
+#: anything about; they arrive with their consumers.
+#:
+#: The ``vaults.*`` entries arrived with theirs (#136): a top-level ``vaults:``
+#: declaration and a ``defaults.vaults:`` block are two layers of one setting, so
+#: there is a merge to have an opinion about. They declare
+#: :attr:`Layer.PROFILE` as well, which nothing supplies yet -- that is a
+#: statement about where a profile's block *will* land (#153) rather than a
+#: producer, and the enforcement in :func:`~sopuli.settings.resolver._checked`
+#: runs the other way: it refuses a layer, it does not require one.
 SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
     {
         setting.name: setting
@@ -305,6 +339,46 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             _setting(
                 "safety.confirm_environments",
                 type=tuple,
+                layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
+                policy=MergePolicy.RATCHET,
+            ),
+            # --- one store, several layers (C13, #136) -----------------------
+            #
+            # `*` is the store name; see the module note. `type`,
+            # `non_production` and `locking` are deliberately absent and always
+            # will be: a layer may not write them at all, so there is nothing to
+            # merge and an entry here would advertise one.
+            #
+            # `auth:` is absent for a different reason -- it is a block, not a
+            # scalar, and `SETTING_TYPES` has no shape for it. It is replaced
+            # whole by the highest layer that wrote one, which needs no merge
+            # rule; `sopuli/config/vault_layers.py` says why whole rather than
+            # key by key.
+            _vault_setting("addr", type=str),
+            _vault_setting("mount", type=str),
+            _vault_setting("kv_version", type=int),
+            _vault_setting("namespace", type=str),
+            _vault_setting("timeout_s", type=int),
+            _vault_setting("tls.ca_file", type=str),
+            _vault_setting("tls.ca_path", type=str),
+            _vault_setting("tls.client_cert", type=str),
+            _vault_setting("tls.client_key", type=str),
+            _vault_setting("tls.server_name", type=str),
+            _setting(
+                # The one vault key invariant 10 governs, and the reason the
+                # merge goes through this resolver at all. Certificate
+                # verification is the safe value, so `true` wins wherever it is
+                # written -- a layer that says `false` against a layer that said
+                # `true` is refused, whichever of them is higher.
+                #
+                # No built-in, and that is not the same as defaulting to `false`:
+                # an unwritten `verify` is read through `VaultTls.verified`,
+                # which treats absent as verified. A built-in `true` here would
+                # take part in the ratchet and make `verify: false` unreachable
+                # from every layer at once -- which is a decision to remove the
+                # key, not a default.
+                "vaults.*.tls.verify",
+                type=bool,
                 layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
                 policy=MergePolicy.RATCHET,
             ),

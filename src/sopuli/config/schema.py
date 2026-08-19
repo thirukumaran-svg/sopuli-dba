@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.2.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.3.schema.json
 """
 
 from __future__ import annotations
@@ -68,7 +68,13 @@ from sopuli.config import (
 #: `timeout_s` and the `tls:` block. Optional again -- a file that named none of
 #: them means exactly what it did before -- which is what makes it a minor bump
 #: rather than the other kind.
-SCHEMA_VERSION = "1.2"
+#:
+#: 1.2 became 1.3 with C13's partial `vaults:` blocks (#136): a `vaults:` key
+#: under `defaults:` and inside a profile, holding entries that patch a store
+#: rather than declare one. Minor for the same reason once more -- and the
+#: interesting half is what the new shape *refuses*, since `type`,
+#: `non_production` and `locking` are absent from it by construction.
+SCHEMA_VERSION = "1.3"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -257,54 +263,66 @@ def _locking() -> Schema:
     )
 
 
+def _vault_types() -> dict[str, Schema]:
+    """How each key of a vault entry is typed.
+
+    One producer because a declaration and a partial entry (C13) describe the
+    same keys, and two copies would be two places for one key's description to
+    drift -- the same reason ``_APPLICATION_TYPES`` exists for the inline and
+    named application forms. A function rather than a constant only because
+    ``_method_or_shorthand`` is defined below it.
+    """
+    return {
+        "type": _enum(vaults.VAULT_TYPES),
+        "addr": STRING,
+        "mount": STRING,
+        "kv_version": _int_enum(vaults.KV_VERSIONS),
+        "namespace": {
+            **STRING,
+            "description": (
+                "HashiCorp Enterprise namespace, sent as X-Vault-Namespace. Absent "
+                "means the header is not sent at all, which is not the same request "
+                "as sending it empty."
+            ),
+        },
+        "timeout_s": {
+            **POSITIVE_INT,
+            "description": (
+                "Request timeout against this store, in seconds. Not optional the "
+                "way a stdlib client's would be: httpx has no default (ADR-005), and "
+                "the advisory lock is held while the request is outstanding. Zero is "
+                "refused rather than read as 'no timeout'."
+            ),
+        },
+        "tls": _ref("vault_tls"),
+        "auth": _method_or_shorthand("vault_auth", vaults.AUTH_METHODS),
+        "non_production": {
+            **BOOLEAN,
+            "description": (
+                "Absent means production. A target with environment: prod pointed at "
+                "a store marked here is refused (§10)."
+            ),
+        },
+        "locking": {
+            **_enum(locking.LOCK_MODES),
+            "default": locking.DEFAULT_LOCK_MODE,
+            "description": (
+                "Whether this store can hold P5's advisory lock. `required` is the "
+                "default and needs no compare-and-set capability written down: KV "
+                "v2 and OCI have one, KV v1 and the file backend do not, and a "
+                "mutating command refuses on a store that cannot lock. "
+                "`advisory-only` is the operator saying so deliberately -- the "
+                "record is still written, every run warns, and the run document "
+                "reports lock.mode: none (#83)."
+            ),
+        },
+    }
+
+
 def _vault() -> Schema:
     return _object(
         keys=vaults.VAULT_KEYS,
-        types={
-            "type": _enum(vaults.VAULT_TYPES),
-            "addr": STRING,
-            "mount": STRING,
-            "kv_version": _int_enum(vaults.KV_VERSIONS),
-            "namespace": {
-                **STRING,
-                "description": (
-                    "HashiCorp Enterprise namespace, sent as X-Vault-Namespace. Absent "
-                    "means the header is not sent at all, which is not the same request "
-                    "as sending it empty."
-                ),
-            },
-            "timeout_s": {
-                **POSITIVE_INT,
-                "description": (
-                    "Request timeout against this store, in seconds. Not optional the "
-                    "way a stdlib client's would be: httpx has no default (ADR-005), and "
-                    "the advisory lock is held while the request is outstanding. Zero is "
-                    "refused rather than read as 'no timeout'."
-                ),
-            },
-            "tls": _ref("vault_tls"),
-            "auth": _method_or_shorthand("vault_auth", vaults.AUTH_METHODS),
-            "non_production": {
-                **BOOLEAN,
-                "description": (
-                    "Absent means production. A target with environment: prod pointed at "
-                    "a store marked here is refused (§10)."
-                ),
-            },
-            "locking": {
-                **_enum(locking.LOCK_MODES),
-                "default": locking.DEFAULT_LOCK_MODE,
-                "description": (
-                    "Whether this store can hold P5's advisory lock. `required` is the "
-                    "default and needs no compare-and-set capability written down: KV "
-                    "v2 and OCI have one, KV v1 and the file backend do not, and a "
-                    "mutating command refuses on a store that cannot lock. "
-                    "`advisory-only` is the operator saying so deliberately -- the "
-                    "record is still written, every run warns, and the run document "
-                    "reports lock.mode: none (#83)."
-                ),
-            },
-        },
+        types=_vault_types(),
         required=("type",),
         description=(
             "One named secret store. Only `type` is required: the backends differ "
@@ -336,6 +354,43 @@ def _method_or_shorthand(block: str, methods: dict[str, auth.Method]) -> Schema:
             ),
         ]
     }
+
+
+def _vault_patches() -> Schema:
+    """``vaults:`` under ``defaults:`` or in a profile -- partial entries (C13)."""
+    return {
+        "type": "object",
+        "description": (
+            "Settings *of* stores declared at the top level, keyed by name. `vault:` "
+            "is always a store name and never a block, so a layer that wants to say "
+            "something about a store names it here (C13, decided in issue #31). The "
+            "entries are partial: they patch a declaration rather than making one, and "
+            "a name not declared under the top-level `vaults:` is an error. Under "
+            "`defaults:` this is precedence layer 5, so it is outranked by the "
+            "declaration; in a profile it is layer 3, so it outranks it (P3)."
+        ),
+        "additionalProperties": _ref("vault_patch"),
+    }
+
+
+def _vault_patch() -> Schema:
+    types = _vault_types()
+    return _object(
+        keys=vaults.PATCHABLE_KEYS,
+        # The declaration's own types, narrowed to what a layer may write. Taken
+        # from the same producer rather than rewritten, so `addr` cannot come to
+        # mean one thing in a declaration and another in a patch.
+        types={key: types[key] for key in vaults.PATCHABLE_KEYS},
+        description=(
+            "What a layer may say about a store it did not declare. `type` is absent "
+            "because a store that is HashiCorp from a laptop and OCI from CI is two "
+            "stores, and one name meaning two things is a name the audit trail cannot "
+            "be read with. `non_production` and `locking` are absent because both are "
+            "guardrails, and invariant 10 keeps a guardrail out of the invocation "
+            "context. Every remaining key is optional: absent means this layer said "
+            "nothing, which is what the merge reads."
+        ),
+    )
 
 
 def _vault_tls() -> Schema:
@@ -708,6 +763,7 @@ def _profile() -> Schema:
         keys=profiles.PROFILE_KEYS,
         types={
             "vault": {**STRING, "description": "The name of an entry in `vaults:`."},
+            "vaults": _ref("vault_patches"),
             "verify": _ref("verify_policy"),
             "rotation": _ref("profile_rotation"),
             "safety": _ref("safety"),
@@ -751,6 +807,7 @@ def _defaults() -> Schema:
         keys=defaults.DEFAULTS_KEYS,
         types={
             "vault": {**STRING, "description": "The name of an entry in `vaults:`."},
+            "vaults": _ref("vault_patches"),
             "policy": STRING,
             "profile": STRING,
             "safety": _ref("safety"),
@@ -962,6 +1019,8 @@ def build_schema() -> Schema:
             "safety": _safety(),
             "locking": _locking(),
             "vault": _vault(),
+            "vault_patches": _vault_patches(),
+            "vault_patch": _vault_patch(),
             "vault_auth": _vault_auth(),
             "vault_tls": _vault_tls(),
             "material_ref": _material_ref(),

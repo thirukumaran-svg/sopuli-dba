@@ -30,12 +30,13 @@ patch that breaks it, and invariant 4 wants the refusal at plan time.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
-from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking
+from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking, VaultPatch
 from sopuli.config.targets import EXTERNAL
 
 #: A store in this file does not verify the certificate it is offered (§3a).
@@ -141,11 +142,31 @@ def _vault_references(config: Config) -> list[_Reference]:
     for profile in config.profiles:
         if profile.vault is not None:
             found.append(_Reference(profile.vault, at.key(profile.name).key("vault")))
+        found.extend(_patch_references(profile.vaults, at=at.key(profile.name)))
 
     if config.defaults.vault is not None:
         found.append(_Reference(config.defaults.vault, ROOT.key("defaults").key("vault")))
+    found.extend(_patch_references(config.defaults.vaults, at=ROOT.key("defaults")))
 
     return found
+
+
+def _patch_references(patches: Sequence[VaultPatch], *, at: KeyPath) -> list[_Reference]:
+    """The names a partial `vaults:` block writes (C13, #136).
+
+    A patch **names** a store rather than declaring one, which is the whole of
+    C13: one `vaults:` name means one thing everywhere, including in the audit
+    trail. So an undeclared name here is a dangling reference like every other,
+    reported by the same function with the same message -- and the merge in
+    `vault_layers.py` therefore does not need a second one of its own.
+
+    The failure this catches is the one worth catching: a store renamed in
+    `vaults:` and not in `defaults:` leaves a patch that matches nothing. Silently
+    ignoring it would mean an `auth:` block written for CI quietly not applying,
+    and a run authenticating some other way -- which is the same class of mistake
+    as a dangling `vault:` and is invisible for longer.
+    """
+    return [_Reference(patch.name, at.key("vaults").key(patch.name)) for patch in patches]
 
 
 def _check_policies(config: Config) -> None:

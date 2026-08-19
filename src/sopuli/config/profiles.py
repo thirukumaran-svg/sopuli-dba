@@ -34,12 +34,13 @@ from sopuli.config.locking import build_locking
 from sopuli.config.model import Profile, ProfileDb
 from sopuli.config.policies import ROTATION_STRATEGIES, build_verify
 from sopuli.config.safety import build_safety
-from sopuli.config.vaults import vault_name
+from sopuli.config.vaults import build_vault_patches, vault_name
 
 #: §5's whitelist. Everything here changes how the run behaves; nothing here
 #: changes what it acts on.
 PROFILE_KEYS = (
     "vault",
+    "vaults",
     "verify",
     "rotation",
     "safety",
@@ -102,6 +103,12 @@ def _build_profile(name: str, raw: Any, *, at: KeyPath) -> Profile:
         log_level=_closed(entry, "log_level", allowed=LOG_LEVELS, noun="log level", at=at),
         log_file=optional_string(entry, "log_file", at=at),
         db=_build_db(entry.get("db"), at=at.key("db")),
+        # Parsed and validated here; **not applied**, because nothing selects a
+        # profile yet (#153). The refusals are the half that is useful without
+        # activation: a profile writing `vaults.<name>.locking` is wrong whether
+        # or not any run ever reads it, and `config validate` is where somebody
+        # finds that out.
+        vaults=build_vault_patches(entry, at=at),
     )
 
 

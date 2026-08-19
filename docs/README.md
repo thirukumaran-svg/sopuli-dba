@@ -16,7 +16,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-1.2.schema.json](schemas/sopuli-config-1.2.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-config-1.3.schema.json](schemas/sopuli-config-1.3.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
 | [schemas/sopuli-run-1.8.schema.json](schemas/sopuli-run-1.8.schema.json) | JSON Schema (2020-12) for the `--output json` document |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
@@ -37,7 +37,7 @@ run schema. That is no longer an assertion in prose: `tests/test_schemas.py`
 checks it, and CI runs it on every push and pull request (invariant 12).
 
 To get completion and inline errors while editing a config, put
-`# yaml-language-server: $schema=./sopuli-config-1.2.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-1.3.schema.json` on the file's
 first line — see [design/01-configuration.md](design/01-configuration.md) §9b,
 which also explains why the schema's `$id` is not a URL to paste there.
 
@@ -115,8 +115,11 @@ under `defaults`/`profiles` is a name or a block~~ (C13 — **decided in #31: a
 name, everywhere.** Settings *of* a store are reached by naming it under
 `vaults:`, which `defaults:` and a profile may each carry as partial entries;
 this is §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair written in the
-file. A profile may patch `addr`, `mount`, `kv_version` and `auth`, but not
-`type` and not the guardrails `non_production` and `locking`), ~~the `@version=` and `@stage=` vocabularies in a
+file. A layer may set every reach setting a store has, but not `type` and not the
+guardrails `non_production` and `locking`. Implemented in #136 for the layers the
+file supplies, which corrected one word: `defaults.vaults:` is layer 5 and so
+fills gaps rather than patching — only a profile, at layer 3, is above the
+declaration. Applying a profile's block is #153; the environment's half is #154), ~~the `@version=` and `@stage=` vocabularies in a
 SecretRef and who owns them~~ (C14 — **decided in #40: the tool owns both.**
 `stage` is `current` / `pending` / `previous`, any case in, lower case out;
 `version` is a whole number from 1; neither may hold a `{token}`. OCI's rotation

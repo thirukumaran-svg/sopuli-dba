@@ -287,6 +287,13 @@ written under `vaults:` keyed by its name, which `defaults:` and a profile may
 each carry as a partial entry. C13, decided in #31; `01-configuration.md` §3a
 and §5 are the specification.
 
+Layers 4 and 5 of that merge are implemented (`sopuli/config/vault_layers.py`,
+#136) and go through the one resolver in `sopuli/settings/`, which is what makes
+`vaults.*.tls.verify` ratchet rather than being overwritten by whichever layer is
+higher. Layer 3 waits on profile activation (#153) and layers 1–2 on #154, so
+**the direction is worth reading off the table rather than off the word "patch"**:
+`defaults:` is *below* the declaration and fills gaps; only a profile is above it.
+
 A profile is named after **how the run was invoked** — `interactive`, `ci`,
 `scheduled` — never after an environment. `--profile prod` reads like a target
 selector and is not one; profiles change behaviour, never scope.
@@ -375,7 +382,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-1.2.schema.json`, generated from the
+The schema is `docs/schemas/sopuli-config-1.3.schema.json`, generated from the
 config layer by `sopuli/config/schema.py` so that it cannot drift from what the
 tool actually accepts. It is structural: an editor pointed at it catches the
 typo, and the cross-key rules stay in the validators, where an error can name the

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-config-1.2.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-config-1.3.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
@@ -218,6 +218,67 @@
           ],
           "default": "required",
           "description": "Whether this store can hold P5's advisory lock. `required` is the default and needs no compare-and-set capability written down: KV v2 and OCI have one, KV v1 and the file backend do not, and a mutating command refuses on a store that cannot lock. `advisory-only` is the operator saying so deliberately -- the record is still written, every run warns, and the run document reports lock.mode: none (#83)."
+        }
+      }
+    },
+    "vault_patches": {
+      "type": "object",
+      "description": "Settings *of* stores declared at the top level, keyed by name. `vault:` is always a store name and never a block, so a layer that wants to say something about a store names it here (C13, decided in issue #31). The entries are partial: they patch a declaration rather than making one, and a name not declared under the top-level `vaults:` is an error. Under `defaults:` this is precedence layer 5, so it is outranked by the declaration; in a profile it is layer 3, so it outranks it (P3).",
+      "additionalProperties": {
+        "$ref": "#/$defs/vault_patch"
+      }
+    },
+    "vault_patch": {
+      "type": "object",
+      "description": "What a layer may say about a store it did not declare. `type` is absent because a store that is HashiCorp from a laptop and OCI from CI is two stores, and one name meaning two things is a name the audit trail cannot be read with. `non_production` and `locking` are absent because both are guardrails, and invariant 10 keeps a guardrail out of the invocation context. Every remaining key is optional: absent means this layer said nothing, which is what the merge reads.",
+      "additionalProperties": false,
+      "properties": {
+        "addr": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mount": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kv_version": {
+          "type": "integer",
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "HashiCorp Enterprise namespace, sent as X-Vault-Namespace. Absent means the header is not sent at all, which is not the same request as sending it empty."
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Request timeout against this store, in seconds. Not optional the way a stdlib client's would be: httpx has no default (ADR-005), and the advisory lock is held while the request is outstanding. Zero is refused rather than read as 'no timeout'."
+        },
+        "tls": {
+          "$ref": "#/$defs/vault_tls"
+        },
+        "auth": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/vault_auth"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "config_file",
+                "instance_principal",
+                "oidc",
+                "resource_principal",
+                "session_token",
+                "token"
+              ],
+              "description": "Shorthand for `{ method: NAME }`, available where the method needs nothing else."
+            }
+          ]
         }
       }
     },
@@ -749,6 +810,9 @@
           "minLength": 1,
           "description": "The name of an entry in `vaults:`."
         },
+        "vaults": {
+          "$ref": "#/$defs/vault_patches"
+        },
         "verify": {
           "$ref": "#/$defs/verify_policy"
         },
@@ -830,6 +894,9 @@
           "type": "string",
           "minLength": 1,
           "description": "The name of an entry in `vaults:`."
+        },
+        "vaults": {
+          "$ref": "#/$defs/vault_patches"
         },
         "policy": {
           "type": "string",

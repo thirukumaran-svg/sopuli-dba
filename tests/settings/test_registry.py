@@ -85,7 +85,9 @@ def test_the_safety_settings_are_the_ones_p3_names() -> None:
     ``locking.break_expired`` joined the set with the advisory lock (#83). P3 does
     not name it because it did not exist when P3 was written, which is the case
     this assertion is meant to catch: it is here on the same argument, not by
-    resemblance.
+    resemblance. ``vaults.*.tls.verify`` joined with C13's partial blocks (#136)
+    on the same argument again: §3a puts it under the ratchet, and until a second
+    layer could supply it there was nothing for the ratchet to do.
     """
     assert set(SAFETY_SETTINGS) == {
         "safety.dry_run",
@@ -93,6 +95,7 @@ def test_the_safety_settings_are_the_ones_p3_names() -> None:
         "safety.max_targets",
         "safety.confirm_environments",
         "locking.break_expired",
+        "vaults.*.tls.verify",
     }
 
 
