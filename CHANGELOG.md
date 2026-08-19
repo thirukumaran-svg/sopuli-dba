@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/futville/sopuli-dba/compare/v0.29.0...v0.30.0) (2026-08-19)
+
+
+### Features
+
+* **config:** activate a profile, so precedence layer 3 is reachable ([#163](https://github.com/futville/sopuli-dba/issues/163)) ([88a9531](https://github.com/futville/sopuli-dba/commit/88a9531898023fb4fcc19e301de4c57e0e25414c)), closes [#153](https://github.com/futville/sopuli-dba/issues/153)
+
 ## [0.29.0](https://github.com/futville/sopuli-dba/compare/v0.28.0...v0.29.0) (2026-08-19)
 
 
