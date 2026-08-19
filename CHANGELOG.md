@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.25.0](https://github.com/futville/sopuli-dba/compare/v0.24.0...v0.25.0) (2026-08-18)
+
+
+### Features
+
+* **config:** a vault's transport settings — namespace, timeout_s and tls: ([#141](https://github.com/futville/sopuli-dba/issues/141)) ([1fd4547](https://github.com/futville/sopuli-dba/commit/1fd454716e450f196f3bd5a89d83ab2372d09186))
+* **packaging:** extras in pyproject, and a store registry that imports lazily ([#139](https://github.com/futville/sopuli-dba/issues/139)) ([f02247e](https://github.com/futville/sopuli-dba/commit/f02247ec2c917c83f0e1501b0c4caeba8c1dbf57))
+* **vault:** HashiCorp auth methods — token, AppRole, Kubernetes, userpass ([#146](https://github.com/futville/sopuli-dba/issues/146)) ([1d3b128](https://github.com/futville/sopuli-dba/commit/1d3b128ec03ff8ed13ccb92e3003db0267df65b4))
+* **vault:** HashiCorp KV v2 store adapter, conformance-tested against the fake ([#142](https://github.com/futville/sopuli-dba/issues/142)) ([216d57b](https://github.com/futville/sopuli-dba/commit/216d57b2bc379e1d5c6a2b2815da7f0bf365c3e7))
+* **vault:** resolve a MaterialRef to a Secret — env, file, and the token chain ([#144](https://github.com/futville/sopuli-dba/issues/144)) ([766257d](https://github.com/futville/sopuli-dba/commit/766257db620dd0e04ea4c486a0e4a39736570f10))
+
+
+### Bug Fixes
+
+* **test:** race the lock on a handshake, not on a guess about startup time ([#148](https://github.com/futville/sopuli-dba/issues/148)) ([cf25879](https://github.com/futville/sopuli-dba/commit/cf258796f36c61043197e997277f21a54cdec84c))
+
 ## [0.24.0](https://github.com/futville/sopuli-dba/compare/v0.23.0...v0.24.0) (2026-08-18)
 
 
