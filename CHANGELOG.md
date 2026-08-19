@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/futville/sopuli-dba/compare/v0.27.0...v0.28.0) (2026-08-19)
+
+
+### Features
+
+* **vault:** `--vault-token-file` takes a path; `--vault-token` is refused ([#157](https://github.com/futville/sopuli-dba/issues/157)) ([34476a1](https://github.com/futville/sopuli-dba/commit/34476a1bfb7dafdc10b0a51af22c9ce8be75bc55))
+
 ## [0.27.0](https://github.com/futville/sopuli-dba/compare/v0.26.0...v0.27.0) (2026-08-19)
 
 
