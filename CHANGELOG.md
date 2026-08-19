@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/futville/sopuli-dba/compare/v0.26.0...v0.27.0) (2026-08-19)
+
+
+### Features
+
+* **config:** partial `vaults:` blocks, and the file's layers of the merge ([#155](https://github.com/futville/sopuli-dba/issues/155)) ([a1f1f11](https://github.com/futville/sopuli-dba/commit/a1f1f11ef9636e4998e062f4e09c81adacd51bb3))
+
 ## [0.26.0](https://github.com/futville/sopuli-dba/compare/v0.25.0...v0.26.0) (2026-08-19)
 
 
