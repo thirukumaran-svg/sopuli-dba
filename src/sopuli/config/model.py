@@ -699,8 +699,9 @@ class Profile:
     #: declaration wrote -- which is the case §5 exists for: token from a laptop,
     #: AppRole from CI, one store, one name in the audit trail.
     #:
-    #: Parsed and validated; **not yet applied**, because nothing activates a
-    #: profile (#153). A run has no active profile to take these from.
+    #: Applied when this profile is the one :attr:`Config.active_profile` names
+    #: (#153), in the same pass that merges layers 4 and 5. A declared profile
+    #: nobody selected patches nothing: §5 rule 1 makes exactly one active.
     vaults: tuple[VaultPatch, ...] = ()
 
 
@@ -788,6 +789,15 @@ class Config:
     groups: tuple[Group, ...] = ()
     policies: tuple[Policy, ...] = ()
     profiles: tuple[Profile, ...] = ()
+    #: The one profile this run is invoked under, or ``None`` (§5, #153).
+    #:
+    #: A property of the *run* rather than of the file, and it lives here anyway
+    #: because it is what makes layer 3 reachable: `vaults:` patching happens
+    #: while the file is being built, and it cannot know which patches apply
+    #: until the profile is chosen. Selected by
+    #: :func:`~sopuli.config.profiles.select_profile` from the name the command
+    #: line or the environment supplied, falling back to `defaults.profile`.
+    active_profile: Profile | None = None
     defaults: Defaults = field(default_factory=Defaults)
     runtime: Runtime = field(default_factory=Runtime)
     #: Non-fatal findings, in the order they were made. Empty for a clean file.

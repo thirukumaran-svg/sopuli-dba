@@ -487,9 +487,9 @@ so replacing the block whole would let a layer mentioning only `ca_file` drop a
 `verify: true` it never spoke about.
 
 §5 has the profile case and the keys a profile may patch. Implemented in
-`sopuli/config/vault_layers.py` (#136) for the two layers the file can supply
-today; a profile's block is parsed and validated there and applied when something
-activates a profile (#153).
+`sopuli/config/vault_layers.py` for all three layers the file supplies — the
+declaration and `defaults:` in #136, the active profile's block in #153 — merged
+in one pass so that `tls.verify` ratchets across the three at once.
 
 ### `locking:` — on a store, and as a block
 
@@ -1064,12 +1064,16 @@ added to a vault entry becomes patchable unless somebody writes down why it is
 not — which fails loudly for whoever adds the next guardrail and quietly for
 nobody.
 
-> **Not yet applied.** A profile's `vaults:` block is parsed and validated as of
-> #136, and no run reads it, because nothing activates a profile yet (#153) —
-> there is no `--profile`, `SOPULI_PROFILE` is wired to nothing, and no key
-> inside a profile has ever changed a run. The refusals above are the half that
-> is useful without activation: a profile writing `vaults.<name>.locking` is
-> wrong whether or not any run reads it, and `config validate` says so now.
+Applied as of #153, in the same single pass that merges layers 4 and 5
+(`sopuli/config/vault_layers.py`). Resolving those two first and folding the
+profile in afterwards would give the right *value* for an overridden key and the
+wrong *provenance* — and for `tls.verify`, the one vault key under the ratchet,
+it would report the winner of the first pass rather than the layer somebody has
+to go and edit. So the active profile has to be chosen before the file's stores
+are merged, which is why `build_config` takes the profile name.
+
+A profile that is declared and not active patches nothing: rule 1 below is that
+exactly one profile is active, so the rest are inert text in the file.
 
 ### What a profile may not contain
 
@@ -1091,7 +1095,11 @@ Rejected at validation, with a message naming the key:
 
 1. **Exactly one profile is active.** Selected by `--profile NAME`, else
    `SOPULI_PROFILE`, else `defaults.profile`, else none. Multiple profiles do not
-   compose; if you want a variant, write it out.
+   compose; if you want a variant, write it out. The chain is the ordinary one —
+   `--profile` and `SOPULI_PROFILE` are layers 1 and 2 of the `profile` setting,
+   and `defaults.profile` is layer 5 — so it is resolved by the same resolver as
+   everything else, and `config show --explain` attributes the *choice* as well
+   as what it supplied.
 2. **No inheritance.** Profiles are flat and independent. A three-line duplicate
    is cheaper to read than an inheritance graph in a credential tool.
 3. **Keys sit directly in the profile**, mirroring the shape they have under
@@ -1104,7 +1112,19 @@ Rejected at validation, with a message naming the key:
    cannot be undone by a profile.
 6. **Selecting an undefined profile is an error**, not a silent fallback to
    defaults. A typo in `--profile` must not quietly give you interactive
-   behaviour in a scheduler.
+   behaviour in a scheduler. Exit 9, like every other name in the file that names
+   nothing, and the message lists the profiles that are declared. A name written
+   in `defaults.profile` is reported against that key; one typed on the command
+   line has no line to point at, so it is reported against the file.
+
+**Not every key a profile may write is a setting yet.** `verify.*`, `confirm`,
+`log_level`, `log_file`, `rotation.strategy`, `db.*` and `vault` are parsed and
+validated, and reach nothing, because nothing consumes them — they join the
+resolver with their consumers, which is the rule `sopuli/settings/registry.py`
+states. What layer 3 supplies today is `output`, `safety.*`,
+`locking.break_expired` and `vaults.<name>.*`. A profile writing one of the
+others is not an error and does not appear in `invocation.options`, because it
+changed nothing.
 
 ### Naming
 
@@ -1122,12 +1142,22 @@ The active profile appears in `config show --explain` and in the JSON output's
 `invocation.profile`, and every setting it supplied is attributed to it:
 
 ```
-verify.method      = hash    [profile scheduled]
-output             = jsonl   [profile scheduled]
-safety.max_targets = 1       [defaults]        ← profile asked for 200, ratchet held
+output             = json    [profiles.scheduled.output]
+profile            = scheduled  [cli --profile (verb)]
+safety.max_targets = 1       [defaults.safety.max_targets]
+                     profiles.scheduled.safety.max_targets asked for 200; …
 ```
 
-That last line is the case worth being able to see.
+That last line is the case worth being able to see. The source is the key path
+rather than the layer word plus the profile name — the same choice `defaults.*`
+rows already make (#53): the question the view answers is *what do I edit*, and a
+key path answers it while `[profile scheduled]` sends somebody looking.
+
+`invocation.profile` is reported whether or not the profile changed anything,
+unlike `options`: *which* profile a scheduled run was invoked under is the first
+question when two runs over one config behaved differently, and answering it only
+when a key happened to differ would be answering a different one. It is omitted
+when no profile is active.
 
 ---
 
@@ -1923,7 +1953,7 @@ notices until a rotation.
 | C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
-| C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. **Implemented in #136** for the layers the file supplies, with one correction to the sentence above: `defaults.vaults:` is layer 5 and therefore *outranked* by the declaration, so it fills gaps rather than patching — only a profile's block, at layer 3, patches in the direction the word suggests. The `addr` / `mount` / `kv_version` / `auth` restriction became the complement of the three unpatchable keys, since #135 added three more reach settings the original list could not have named. Applying a profile's block waits on profile activation (#153); the environment's half of the addressing is #154 |
+| C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. **Implemented in #136** for the layers the file supplies, with one correction to the sentence above: `defaults.vaults:` is layer 5 and therefore *outranked* by the declaration, so it fills gaps rather than patching — only a profile's block, at layer 3, patches in the direction the word suggests. The `addr` / `mount` / `kv_version` / `auth` restriction became the complement of the three unpatchable keys, since #135 added three more reach settings the original list could not have named. **Applying a profile's block landed in #153**, in the same pass as the other two; the environment's half of the addressing is #154 |
 | C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. The run schema is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
 | C15 | ~~A binding names a secret and no store, anywhere — refuse, warn, or leave it to plan time?~~ | **decided in #118: mostly plan time, refused only when nothing could ever complete it.** `_vault_for`'s chain resolving to `None` is not always a mistake — a profile's `vault:` or `SOPULI_VAULT` may still supply one, and neither is consulted while bindings are built (§5, §9), so the null can be a real, temporary state rather than an error. Left alone: `config show --resolved` renders it as `-` (§10), and the command that actually needs a store fails there, once a run's profile is known and the answer is exact. Refused at load only for the narrower, genuinely unrecoverable case — `vaults:` declaring nothing at all, so there is no name even a profile or `SOPULI_VAULT` could point at (§10). The naive rule — refuse whenever a binding's store is unnamed — was rejected first: it rejects the legitimate config where one profile sets `vault:` and a run selects a different one that inherits `defaults.vault` instead |
 | C16 | ~~What does `--vault-token` take? Every document treated it as a step in a chain and none said what an operator types after it~~ | **decided: nothing — it takes a path under a different name.** `--vault-token-file PATH` is the command line's position in `method: token`'s chain (§3a), and a bare `--vault-token` is **refused** with a message naming invariant 1 and all four working sources. A token as an option *value* is visible in `ps` and in the Windows process list, and P5's "or a vault ref" escape cannot apply to vault auth itself, since a ref is resolved *by* an authenticated store — the same bootstrap shape P2 already describes for the database admin credential, one layer earlier. `--vault-token-stdin` is deferred rather than rejected, because `--from-stdin` (UC-1 §5) already claims the pipe; the constraint it will have to satisfy is banked in P5 today. Reusing the MaterialRef grammar (`--vault-token env:NAME`) was rejected outright: `env:` / `file:` in a SecretRef means "resolve this via an already-authenticated store", so two identical-looking grammars would have opposite resolution order. Filed as #145 and recorded in [ADR-007](../decisions/adr-007-vault-token-flag.md), which also confirms `vault login` plus `~/.vault-token` as the intended bootstrap for a human at a terminal, and gives the flag's file P4's permission check |

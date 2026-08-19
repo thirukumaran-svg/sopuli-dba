@@ -351,3 +351,130 @@ def test_no_guardrail_has_a_setting_to_be_supplied_through() -> None:
 
     for absent in ("type", "non_production", "locking"):
         assert f"vaults.*.{absent}" not in SETTINGS
+
+
+# -------------------------------------------------------------- layer 3 ---
+#
+# The profile's own `vaults:` block (#153). Same merge, one layer up -- and the
+# direction inverts here, which is the whole reason the word "patch" is only
+# right for a profile: layer 3 is *above* the declaration, so it replaces what
+# layer 4 wrote rather than filling a gap.
+
+PROFILE = "ci"
+
+
+def under_profile(**patch: Any) -> dict[str, Any]:
+    return {"profiles": {PROFILE: {"vaults": {STORE: patch}}}}
+
+
+def active(vault: dict[str, Any] | None = None, **sections: Any) -> Vault:
+    """The one store, with profile ``ci`` selected."""
+    config = build_config(document(vault, **sections), profile=PROFILE)
+    assert len(config.vaults) == 1
+    return config.vaults[0]
+
+
+def test_a_profile_overrides_the_declaration() -> None:
+    """The case §5 exists for, in its simplest shape: one store, reached from a
+    different address when the run was started from CI."""
+    vault = active(
+        {"addr": "https://vault.example.com"},
+        **under_profile(addr="https://vault-ci.example.com"),
+    )
+
+    assert vault.addr == "https://vault-ci.example.com"
+    assert vault.patched == ("addr",)
+
+
+def test_a_profile_outranks_defaults_for_the_same_key() -> None:
+    """Layer 3 against layer 5, with layer 4 silent. The declaration says nothing
+    about the address; both blocks do, and the higher one is the answer."""
+    sections = {**under_profile(addr="https://vault-ci.example.com")}
+    sections["defaults"] = {"vaults": {STORE: {"addr": "https://vault-shared.example.com"}}}
+
+    assert active(**sections).addr == "https://vault-ci.example.com"
+
+
+def test_a_profile_that_is_not_active_patches_nothing() -> None:
+    """§5 rule 1: exactly one profile is active, so the rest are inert text.
+
+    The same document, read twice -- which is what makes this a statement about
+    activation rather than about parsing.
+    """
+    document_with_patch = document(
+        {"addr": "https://vault.example.com"},
+        **under_profile(addr="https://vault-ci.example.com"),
+    )
+
+    inactive = build_config(document_with_patch)
+    selected = build_config(document_with_patch, profile=PROFILE)
+
+    assert inactive.vaults[0].addr == "https://vault.example.com"
+    assert inactive.vaults[0].patched == ()
+    assert selected.vaults[0].addr == "https://vault-ci.example.com"
+
+
+def test_a_profile_replaces_the_auth_block_whole() -> None:
+    """ "Token from a laptop, AppRole from CI" -- §5's own example, and the reason
+    `auth:` is replaced rather than merged: an approle carrying a leftover
+    `token:` authenticates as nobody."""
+    vault = active(
+        {"auth": {"method": "token", "token": {"env": "VAULT_TOKEN"}}},
+        **under_profile(
+            auth={
+                "method": "approle",
+                "role_id": {"env": "SOPULI_VAULT_ROLE_ID"},
+                "secret_id": {"env": "SOPULI_VAULT_SECRET_ID"},
+            }
+        ),
+    )
+
+    assert vault.auth is not None
+    assert vault.auth.method == "approle"
+    assert vault.auth.token is None
+
+
+def test_a_profile_may_not_relax_certificate_verification() -> None:
+    """Invariant 10 from the layer most likely to try it, and the case the issue
+    names: layer 3 is the highest the file has, and it still loses."""
+    vault = active({"tls": {"verify": True}}, **under_profile(tls={"verify": False}))
+
+    assert vault.tls is not None
+    assert vault.tls.verify is True
+
+
+def test_a_profile_may_tighten_certificate_verification() -> None:
+    """The ratchet in the direction it does allow, so the test above is about
+    safety rather than about layer 3 being ignored."""
+    vault = active({"tls": {"verify": False}}, **under_profile(tls={"verify": True}))
+
+    assert vault.tls is not None
+    assert vault.tls.verify is True
+
+
+def test_the_defeated_relaxation_is_reported_from_layer_three() -> None:
+    config = build_config(
+        document({"tls": {"verify": True}}, **under_profile(tls={"verify": False})),
+        profile=PROFILE,
+    )
+
+    assert len(config.warnings) == 1
+    message = config.warnings[0].message
+    assert "profiles.ci.vaults.vault-prod.tls.verify asked for false" in message
+    assert "vaults.vault-prod.tls.verify" in message
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("type", "hashicorp"), ("non_production", True), ("locking", "advisory-only")],
+)
+def test_the_three_unpatchable_keys_stay_unpatchable_from_a_profile(key: str, value: Any) -> None:
+    """C13's three, and activation does not widen them. `type` because a store
+    that is HashiCorp from a laptop and something else from CI is two stores;
+    the other two because both are guardrails, and a profile that could set
+    either would be a way to relax a safety setting from the invocation context.
+    """
+    with pytest.raises(ConfigError) as caught:
+        build_config(document(**under_profile(**{key: value})), profile=PROFILE)
+
+    assert f"`{key}:`" in str(caught.value)

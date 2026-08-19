@@ -15,7 +15,8 @@ from typing import Any
 import pytest
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.profiles import build_profiles
+from sopuli.config.loading import build_config
+from sopuli.config.profiles import build_profiles, select_profile
 
 SCHEDULED: dict[str, Any] = {
     "verify": {"method": "hash"},
@@ -190,3 +191,93 @@ def test_safety_in_a_profile_is_read_like_any_other() -> None:
     assert profile.safety is not None
     assert profile.safety.max_targets == 200
     assert profile.safety.confirm_environments == ("prod",)
+
+
+# ------------------------------------------------------------- activation ---
+#
+# §5's resolution rules 1 and 6 (#153). The chain itself -- `--profile`, then
+# `SOPULI_PROFILE`, then `defaults.profile` -- is merged by the one resolver and
+# arrives here as one name; what this layer decides is what that name resolves
+# to, and what happens when it resolves to nothing.
+
+
+def test_no_name_anywhere_leaves_no_profile_active() -> None:
+    """ "Else none" is a real answer, and not the same as an empty profile: a run
+    with none is one where layer 3 supplied nothing at all."""
+    assert select_profile((), requested=None, declared_default=None) is None
+
+
+def test_a_requested_name_selects_that_profile() -> None:
+    profiles = build_profiles(document(ci={"output": "json"}, scheduled=SCHEDULED))
+
+    active = select_profile(profiles, requested="ci", declared_default=None)
+
+    assert active is not None
+    assert active.name == "ci"
+
+
+def test_defaults_profile_answers_when_nothing_was_requested() -> None:
+    profiles = build_profiles(document(ci={"output": "json"}, scheduled=SCHEDULED))
+
+    active = select_profile(profiles, requested=None, declared_default="scheduled")
+
+    assert active is not None
+    assert active.name == "scheduled"
+
+
+def test_a_requested_name_outranks_defaults_profile() -> None:
+    """Rule 4: layer 5 is the bottom of the file, and a name from above it wins."""
+    profiles = build_profiles(document(ci={"output": "json"}, scheduled=SCHEDULED))
+
+    active = select_profile(profiles, requested="ci", declared_default="scheduled")
+
+    assert active is not None
+    assert active.name == "ci"
+
+
+def test_an_unknown_requested_name_is_refused_and_never_falls_back() -> None:
+    """Rule 6, and the reason it is a rule: a typo in `--profile` that quietly
+    gave you `defaults.profile` would give a scheduler interactive behaviour."""
+    profiles = build_profiles(document(scheduled=SCHEDULED))
+
+    with pytest.raises(ConfigError) as caught:
+        select_profile(profiles, requested="schedluled", declared_default="scheduled")
+
+    rendered = str(caught.value)
+    assert "no profile named 'schedluled' is declared" in rendered
+    assert "declared profiles: scheduled" in rendered
+
+
+def test_an_unknown_defaults_profile_names_the_key_it_was_written_in() -> None:
+    """A name the file wrote has a line to go and fix; one typed does not."""
+    profiles = build_profiles(document(scheduled=SCHEDULED))
+
+    with pytest.raises(ConfigError) as caught:
+        select_profile(profiles, requested=None, declared_default="nosuch")
+
+    rendered = str(caught.value)
+    assert "defaults.profile" in rendered
+    assert "no profile named 'nosuch' is declared" in rendered
+
+
+def test_the_refusal_says_so_when_the_file_declares_no_profiles_at_all() -> None:
+    with pytest.raises(ConfigError) as caught:
+        select_profile((), requested="ci", declared_default=None)
+
+    assert "there is no `profiles:`" in str(caught.value)
+
+
+def test_selecting_a_profile_reaches_the_built_config() -> None:
+    """Through `build_config`, because that is where the name is handed in and
+    where everything downstream of it -- the vault patch -- reads the answer."""
+    built = build_config({**document(ci={"output": "json"}), "defaults": {"profile": "ci"}})
+
+    assert built.active_profile is not None
+    assert built.active_profile.name == "ci"
+
+
+def test_a_config_built_without_a_name_has_no_active_profile() -> None:
+    built = build_config(document(scheduled=SCHEDULED))
+
+    assert built.profiles != ()
+    assert built.active_profile is None

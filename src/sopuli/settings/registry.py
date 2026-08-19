@@ -284,15 +284,22 @@ def _vault_setting(key: str, *, type: type) -> Setting:  # noqa: A002 - see `_se
 #: :mod:`sopuli.config.safety` already parses and which is the reason the ratchet
 #: exists at all. Entries for settings nothing reads yet -- ``verify.method``, the
 #: ``db`` timeouts -- would be a contract stated in a place no test can mean
-#: anything about; they arrive with their consumers.
+#: anything about; they arrive with their consumers. Profile activation (#153)
+#: did not change that: a profile may write ``verify.method``, the config layer
+#: validates it, and it reaches no setting until something verifies.
 #:
 #: The ``vaults.*`` entries arrived with theirs (#136): a top-level ``vaults:``
 #: declaration and a ``defaults.vaults:`` block are two layers of one setting, so
-#: there is a merge to have an opinion about. They declare
-#: :attr:`Layer.PROFILE` as well, which nothing supplies yet -- that is a
-#: statement about where a profile's block *will* land (#153) rather than a
-#: producer, and the enforcement in :func:`~sopuli.settings.resolver._checked`
-#: runs the other way: it refuses a layer, it does not require one.
+#: there is a merge to have an opinion about. Their :attr:`Layer.PROFILE` is
+#: supplied as of #153, in the same single pass, which is what makes a profile
+#: able to say "token from a laptop, AppRole from CI" about one store.
+#:
+#: :attr:`Layer.OBJECT` is still unsupplied for the ``safety.*`` settings, and
+#: will stay that way here: a ``safety:`` block on a target or a group is not a
+#: property of the run, so it is merged when a command reaches that target rather
+#: than when the invocation resolves. The enforcement in
+#: :func:`~sopuli.settings.resolver._checked` runs the other way in any case: it
+#: refuses a layer a setting does not declare, and never requires one.
 SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
     {
         setting.name: setting
@@ -307,8 +314,10 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             _setting(
                 # Which profile is active (§5). Not a selector, and layer 3 is
                 # what it *supplies*, not where it is chosen from -- so it takes
-                # `SOPULI_PROFILE` and `defaults.profile` and, when the flag
-                # lands, the command line.
+                # `--profile`, `SOPULI_PROFILE` and `defaults.profile`, in that
+                # order, and never `Layer.PROFILE` itself. A profile naming the
+                # profile would be §5 rule 2's inheritance graph arriving by the
+                # back door.
                 "profile",
                 type=str,
                 layers=(Layer.CLI, Layer.ENV, Layer.DEFAULTS),

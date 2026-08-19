@@ -120,7 +120,7 @@ file. A layer may set every reach setting a store has, but not `type` and not th
 guardrails `non_production` and `locking`. Implemented in #136 for the layers the
 file supplies, which corrected one word: `defaults.vaults:` is layer 5 and so
 fills gaps rather than patching — only a profile, at layer 3, is above the
-declaration. Applying a profile's block is #153; the environment's half is #154), ~~the `@version=` and `@stage=` vocabularies in a
+declaration. A profile's block was applied in #153, in the same pass; the environment's half is #154), ~~the `@version=` and `@stage=` vocabularies in a
 SecretRef and who owns them~~ (C14 — **decided in #40: the tool owns both.**
 `stage` is `current` / `pending` / `previous`, any case in, lower case out;
 `version` is a whole number from 1; neither may hold a `{token}`. OCI's rotation

@@ -44,7 +44,7 @@ from sopuli.config.groups import build_groups
 from sopuli.config.model import Config
 from sopuli.config.permissions import check_permissions
 from sopuli.config.policies import build_policies
-from sopuli.config.profiles import build_profiles
+from sopuli.config.profiles import build_profiles, select_profile
 from sopuli.config.references import check_references
 from sopuli.config.target_sets import build_target_sets
 from sopuli.config.targets import build_targets
@@ -152,18 +152,21 @@ def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def load_config(path: Path) -> Config:
+def load_config(path: Path, *, profile: str | None = None) -> Config:
     """Read one config file and validate it into typed objects.
 
     The two steps stay separate because they fail for different reasons and are
     worth testing apart: :func:`load_document` is about the file, this is about
     what is written in it. Anything raised here already knows which key it is
     complaining about.
+
+    ``profile`` is the name ``--profile`` or ``SOPULI_PROFILE`` supplied, or
+    ``None``. See :func:`build_config`.
     """
-    return _validate(load_document(path), source=path)
+    return _validate(load_document(path), source=path, profile=profile)
 
 
-def load_config_from(paths: Sequence[Path]) -> Config:
+def load_config_from(paths: Sequence[Path], *, profile: str | None = None) -> Config:
     """Read one or more layered config files and validate the result.
 
     What :func:`~sopuli.config.discovery.discover` returns goes straight in
@@ -173,10 +176,12 @@ def load_config_from(paths: Sequence[Path]) -> Config:
     about a *file* -- unreadable, unparseable, unversioned -- are raised before
     the merge and still say which one.
     """
-    return load_layers(paths)[1]
+    return load_layers(paths, profile=profile)[1]
 
 
-def load_layers(paths: Sequence[Path]) -> tuple[dict[str, Any], Config]:
+def load_layers(
+    paths: Sequence[Path], *, profile: str | None = None
+) -> tuple[dict[str, Any], Config]:
     """The merged document *and* the config built from it.
 
     ``config show`` needs both: once several ``--config`` files have been
@@ -197,13 +202,13 @@ def load_layers(paths: Sequence[Path]) -> tuple[dict[str, Any], Config]:
     # With one file a validation error can name it. With several it cannot: the
     # offending value may have been written in one and overridden in another.
     source = paths[0] if len(paths) == 1 else None
-    return document, _validate(document, source=source)
+    return document, _validate(document, source=source, profile=profile)
 
 
-def _validate(document: dict[str, Any], *, source: Path | None) -> Config:
+def _validate(document: dict[str, Any], *, source: Path | None, profile: str | None) -> Config:
     try:
         reject_unknown_keys(document, allowed=TOP_LEVEL_KEYS, at=ROOT)
-        config = build_config(document)
+        config = build_config(document, profile=profile)
     except ConfigError as error:
         # The builders work on raw data and have never seen a filename. Filling
         # it in here means every message says which file, without threading a
@@ -214,15 +219,25 @@ def _validate(document: dict[str, Any], *, source: Path | None) -> Config:
     return config
 
 
-def build_config(document: dict[str, Any]) -> Config:
+def build_config(document: dict[str, Any], *, profile: str | None = None) -> Config:
     """Validate raw data into a :class:`Config`, with no filesystem involved.
 
     Sections are built estate-first so that the first error a half-finished file
     produces is about the estate it declares rather than about the application
     bound to it. Then, in order, because each step needs the one before it: the
-    vault layers are merged, the target sets are expanded, every name is resolved
-    -- a set's ``vault: "{vault}"`` names nothing until it has been rendered --
-    and the application bindings are built over the estate that results.
+    profile is selected, the vault layers are merged, the target sets are
+    expanded, every name is resolved -- a set's ``vault: "{vault}"`` names nothing
+    until it has been rendered -- and the application bindings are built over the
+    estate that results.
+
+    ``profile`` is the name the command line or the environment asked for, as a
+    plain string: this layer does not know what a flag is. It arrives here rather
+    than at the boundary because **layer 3 is applied while the file is being
+    built** -- a profile's ``vaults:`` block patches a store declaration, and
+    :mod:`sopuli.config.vault_layers` merges all three file layers in one pass
+    (§5, #153). ``None`` means neither said anything, which leaves
+    ``defaults.profile`` to answer, and a name nothing declares is refused here
+    the same way every other dangling name in the file is.
     """
     config = Config(
         version=document["version"],
@@ -235,6 +250,15 @@ def build_config(document: dict[str, Any]) -> Config:
         defaults=build_defaults(document),
         runtime=build_runtime(document),
         applications=build_applications(document),
+    )
+    # Exactly one profile is active (§5 rule 1), and it has to be settled before
+    # the vault layers are merged: layer 3 *is* the active profile's `vaults:`
+    # block, and a merge that ran first would have nothing to put there.
+    config = replace(
+        config,
+        active_profile=select_profile(
+            config.profiles, requested=profile, declared_default=config.defaults.profile
+        ),
     )
     # The file's own precedence layers, merged before anything reads a store
     # (C13, #136). Before `check_references`, because that is where §10's

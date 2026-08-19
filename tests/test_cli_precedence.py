@@ -14,19 +14,25 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import click
 import pytest
 from click.testing import CliRunner
+from jsonschema import Draft202012Validator
 
 from sopuli import invocation
 from sopuli.cli import cli
+from sopuli.config import ArgumentError, ConfigError
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import GLOBAL_PARAMS, INVOCATION_PARAM
 from sopuli.output.document import SCHEMA_VERSION
+
+#: The same alias `tests/conftest.py` gives the fixture, spelled locally rather
+#: than imported: the suite has no package for a relative import to reach.
+WriteConfig = Callable[[str], Path]
 
 SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -49,7 +55,7 @@ def show(config_file: Path) -> list[str]:
 @pytest.fixture(autouse=True)
 def _no_ambient_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Nobody's own ``SOPULI_OUTPUT`` decides the result of these tests."""
-    for variable in ("SOPULI_OUTPUT", "SOPULI_DRY_RUN"):
+    for variable in ("SOPULI_OUTPUT", "SOPULI_DRY_RUN", "SOPULI_PROFILE"):
         monkeypatch.delenv(variable, raising=False)
 
 
@@ -411,3 +417,280 @@ def test_every_verb_receives_the_resolved_invocation(path: str, command: click.C
     # `inspect.signature` follows `__wrapped__` through both decorators, so this
     # is the verb's own signature rather than click's wrapper.
     assert INVOCATION_PARAM in inspect.signature(command.callback).parameters, path
+
+
+# ------------------------------------------------ profile activation (#153) ---
+#
+# Layer 3 as a run actually meets it. What a profile *is* is `tests/config/`;
+# what the merge rule *does* is `tests/settings/`. This is the seam: that
+# `--profile`, `SOPULI_PROFILE` and `defaults.profile` reach the one resolver in
+# that order, and that what the chosen profile wrote changes the run.
+
+ESTATE = """\
+version: 1
+profiles:
+  ci:
+    output: json
+    safety:
+      readonly: false
+      max_targets: 200
+    locking:
+      break_expired: true
+  scheduled:
+    output: json
+  laptop:
+    output: text
+defaults:
+  safety:
+    readonly: true
+    max_targets: 1
+  locking:
+    break_expired: false
+"""
+
+
+@pytest.fixture
+def estate(write_config: WriteConfig) -> Path:
+    return write_config(ESTATE)
+
+
+def document_of(result: Any) -> dict[str, Any]:
+    parsed: dict[str, Any] = json.loads(result.output)
+    return parsed
+
+
+def test_a_run_with_no_profile_says_so_by_omission(runner: CliRunner, estate: Path) -> None:
+    """`invocation.profile` is absent rather than null: a key with no name in it
+    would read as "a profile was considered and found"."""
+    result = runner.invoke(cli, ["config", "show", "--config", str(estate), "--output", "json"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "profile" not in document_of(result)["invocation"]
+
+
+def test_the_flag_selects_a_profile_and_the_document_names_it(
+    runner: CliRunner, estate: Path
+) -> None:
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(estate), "--profile", "ci", "--output", "json"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert document_of(result)["invocation"]["profile"] == "ci"
+
+
+def test_the_environment_selects_a_profile(
+    runner: CliRunner, estate: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§6's usual way a CI job or a scheduler picks one."""
+    monkeypatch.setenv("SOPULI_PROFILE", "ci")
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(estate), "--output", "json"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert options(result)["profile"]["source"] == "env"
+    assert options(result)["profile"]["source_detail"] == "SOPULI_PROFILE"
+
+
+def test_the_flag_beats_the_environment(
+    runner: CliRunner, estate: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SOPULI_PROFILE", "scheduled")
+
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(estate), "--profile", "ci", "--output", "json"]
+    )
+
+    assert document_of(result)["invocation"]["profile"] == "ci"
+    assert options(result)["profile"]["source"] == "cli"
+
+
+def test_the_environment_beats_defaults_profile(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bottom two rungs of §5's chain, which the two tests above do not reach."""
+    path = write_config(ESTATE.replace("defaults:\n", "defaults:\n  profile: scheduled\n"))
+    monkeypatch.setenv("SOPULI_PROFILE", "ci")
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path), "--output", "json"])
+
+    assert document_of(result)["invocation"]["profile"] == "ci"
+    assert options(result)["profile"]["source"] == "env"
+
+
+def test_defaults_profile_answers_when_nothing_else_does(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    path = write_config(ESTATE.replace("defaults:\n", "defaults:\n  profile: scheduled\n"))
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path), "--output", "json"])
+
+    assert document_of(result)["invocation"]["profile"] == "scheduled"
+    assert options(result)["profile"]["source"] == "defaults"
+
+
+def test_a_profile_that_does_not_exist_is_refused(runner: CliRunner, estate: Path) -> None:
+    """§5 rule 6: never a silent fallback. Exit 9, because answering it needs the
+    file -- the same code an undeclared `policy sample` name already gets."""
+    result = runner.invoke(cli, ["config", "show", "--config", str(estate), "--profile", "nosuch"])
+
+    # Exit 9 through `main`, which is what maps a `ConfigError` to a code; the
+    # runner re-raises instead, so the code is asserted on the error itself.
+    assert isinstance(result.exception, ConfigError)
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    message = str(result.exception)
+    assert "no profile named 'nosuch' is declared" in message
+    assert "declared profiles: ci, laptop, scheduled" in message
+
+
+def test_a_profile_supplies_output_and_the_run_emits_it(runner: CliRunner, estate: Path) -> None:
+    """The reason the file is read before the verb runs: a profile's `output:`
+    has to reach the emitter, and by the time a verb starts it is too late."""
+    result = runner.invoke(cli, ["config", "show", "--config", str(estate), "--profile", "ci"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert options(result)["output"] == {
+        "value": "json",
+        "source": "profile",
+        "source_detail": "profiles.ci.output",
+    }
+
+
+def test_a_flag_still_beats_the_profile_that_supplied_it(runner: CliRunner, estate: Path) -> None:
+    """§9's own example, one layer down: the operator at the keyboard is the more
+    specific intent, so `--output text` wins over `profiles.ci.output: json`."""
+    result = runner.invoke(
+        cli,
+        ["config", "show", "--config", str(estate), "--profile", "ci", "--output", "text"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert not result.output.startswith("{")
+
+
+def test_a_profile_cannot_relax_the_safety_block(runner: CliRunner, estate: Path) -> None:
+    """Invariant 10 against the layer most likely to try it -- and the `defaults:`
+    values are the ones that hold, in both of the ratchet's shapes."""
+    result = runner.invoke(
+        cli,
+        ["config", "show", "--config", str(estate), "--profile", "ci", "--output", "json"],
+    )
+
+    reported = options(result)
+    assert reported["safety.readonly"]["value"] is True
+    assert reported["safety.readonly"]["source"] == "defaults"
+    assert reported["safety.max_targets"]["value"] == 1
+    assert reported["safety.max_targets"]["source"] == "defaults"
+
+
+def test_break_expired_ratchets_the_other_way_round(runner: CliRunner, estate: Path) -> None:
+    """The one ratcheted boolean whose safe value is `false` (#83): a profile
+    asking for permission to break an expired lock is the defeated request, which
+    is the opposite polarity to `readonly` one test up."""
+    result = runner.invoke(
+        cli,
+        ["config", "show", "--config", str(estate), "--profile", "ci", "--output", "json"],
+    )
+
+    reported = options(result)
+    assert reported["locking.break_expired"]["value"] is False
+    assert reported["locking.break_expired"]["source"] == "defaults"
+
+
+def test_every_defeated_request_is_reported_as_a_diagnostic(
+    runner: CliRunner, estate: Path
+) -> None:
+    """A ratchet that holds silently is a surprise, which is what P3's `--explain`
+    example is about -- and this reaches JSON on every run, not only under it."""
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(estate), "--profile", "ci", "--output", "json"]
+    )
+
+    messages = [one["message"] for one in document_of(result)["diagnostics"]]
+    assert any("profiles.ci.safety.readonly asked for false" in one for one in messages)
+    assert any("profiles.ci.safety.max_targets asked for 200" in one for one in messages)
+    assert any("profiles.ci.locking.break_expired asked for true" in one for one in messages)
+
+
+def test_explain_attributes_a_profile_supplied_value_to_layer_three(
+    runner: CliRunner, estate: Path
+) -> None:
+    """P3's "making precedence debuggable", for the layer that until now could not
+    produce a single row in that table."""
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(estate), "--profile", "laptop", "--explain"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "[profiles.laptop.output]" in result.output
+    # The key path rather than "[profile laptop]", which is how P3's sketch drew
+    # it: `defaults.safety.readonly` already renders the same way, and naming the
+    # key is what sends somebody to the line they have to edit (#53).
+    assert "output" in result.output
+
+
+def test_a_profile_key_with_no_consumer_reaches_no_setting(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """§5's list is longer than the registry's, deliberately. `verify.method` is
+    parsed and validated and reaches nothing, because nothing verifies yet -- and
+    a row in `invocation.options` for it would claim otherwise."""
+    path = write_config("version: 1\nprofiles:\n  ci:\n    verify:\n      method: hash\n")
+
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(path), "--profile", "ci", "--output", "json"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert document_of(result)["invocation"]["profile"] == "ci"
+    assert "verify.method" not in options(result)
+
+
+def test_the_run_document_still_validates_with_a_profile(runner: CliRunner, estate: Path) -> None:
+    validator = Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(estate), "--profile", "ci", "--output", "json"]
+    )
+
+    assert list(validator.iter_errors(document_of(result))) == []
+
+
+def test_an_output_format_this_build_lacks_is_refused_from_a_profile(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """`jsonl` is in §6's table and not implemented (#9), and a profile may write
+    it -- so the refusal has to survive arriving from layer 3.
+
+    Exit 2, like the same value from `SOPULI_OUTPUT`: what failed is not the file
+    but the run's ability to say anything about itself, and a document is exactly
+    what cannot be produced. The message still names the key.
+
+    The regression this guards is the *second* exception. A profile-supplied
+    value is refused inside the exit handler, which asks the invocation whether
+    the run is JSON before deciding whether to emit a document -- and reading
+    that through `OutputMode` raised `ValueError`, replacing a clean exit 2 with
+    a traceback about an enum on exit 1.
+    """
+    path = write_config("version: 1\nprofiles:\n  ci:\n    output: jsonl\n")
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path), "--profile", "ci"])
+
+    assert isinstance(result.exception, ArgumentError)
+    assert result.exception.exit_code == ExitCode.USAGE
+    message = str(result.exception)
+    assert "profiles.ci.output" in message
+    assert "'jsonl' is not an output format" in message
+
+
+def test_the_refusal_leaves_stdout_byte_empty(runner: CliRunner, write_config: WriteConfig) -> None:
+    """J7's other half: exit 2 carries no run document, whichever layer wrote the
+    format the tool could not read."""
+    path = write_config("version: 1\nprofiles:\n  ci:\n    output: jsonl\n")
+
+    result = runner.invoke(
+        cli,
+        ["config", "show", "--config", str(path), "--profile", "ci"],
+        catch_exceptions=True,
+    )
+
+    assert result.stdout == ""

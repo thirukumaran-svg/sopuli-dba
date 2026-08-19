@@ -15,10 +15,17 @@ supplies keys the declaration did not write rather than replacing ones it did.
 The word "patch" reads the other way and is right only for a profile, which is
 layer 3 and above the declaration.
 
-**Layer 3 is deliberately not merged here.** Nothing activates a profile (#153):
-there is no ``--profile``, ``SOPULI_PROFILE`` is wired to nothing, and no key
-inside a profile has ever changed a run. A profile's ``vaults:`` block is parsed
-and validated, and applying it needs a run to have chosen one.
+**All three layers are merged in one pass**, which is why the active profile has
+to be known before this runs (#153). Resolving 4 against 5 first and folding 3 in
+afterwards would give the right *value* for an overridden key and the wrong
+*provenance* for it -- and for ``tls.verify``, whose ratchet is the reason this
+goes through the resolver at all, it would report the winner of the first pass
+rather than the layer somebody has to go and edit.
+
+The active profile is chosen by :func:`sopuli.config.profiles.select_profile` and
+reaches here on :attr:`~sopuli.config.model.Config.active_profile`. A profile
+that is declared and not active contributes nothing: §5 rule 1 is that exactly
+one profile is active, so the others are inert text in the file.
 
 **Not a second resolver.** :mod:`sopuli.settings` owns the merge rule, and every
 key here goes through it -- which is the whole reason ``vaults.*.tls.verify``
@@ -85,6 +92,14 @@ def apply_vault_layers(config: Config) -> tuple[tuple[Vault, ...], tuple[ConfigW
     same mistake -- and nothing can proceed past that check either way.
     """
     by_name: dict[str, list[tuple[Layer, KeyPath, VaultPatch]]] = {}
+    # Highest authority first, because `_highest` reads `auth:` off the front of
+    # this list. The resolver sorts for itself; that one key does not go through
+    # it, being replaced whole rather than merged.
+    profile = config.active_profile
+    if profile is not None:
+        at = ROOT.key("profiles").key(profile.name).key("vaults")
+        for patch in profile.vaults:
+            by_name.setdefault(patch.name, []).append((Layer.PROFILE, at.key(patch.name), patch))
     for patch in config.defaults.vaults:
         by_name.setdefault(patch.name, []).append(
             (Layer.DEFAULTS, ROOT.key("defaults").key("vaults").key(patch.name), patch)

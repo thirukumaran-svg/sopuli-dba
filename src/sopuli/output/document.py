@@ -216,6 +216,16 @@ class RunDocument:
     started_at: datetime
     actor: Actor
     dry_run: bool = False
+    #: ``invocation.profile`` -- the active profile's name, or ``None`` (§5, #153).
+    #:
+    #: Reported whether or not the profile changed anything, unlike ``options``:
+    #: *which* profile a scheduled run was invoked under is the first thing
+    #: somebody asks when two runs over one config behaved differently, and
+    #: answering it only when a key happened to differ would be answering a
+    #: different question. Omitted when there is none -- the schema allows null,
+    #: and a document that carries the key with no name in it says the run
+    #: considered a profile and found one.
+    profile: str | None = None
     finished_at: datetime | None = None
     summary: Summary = field(default_factory=Summary)
     exit_code: int = 0
@@ -300,6 +310,8 @@ class RunDocument:
             "actor": self.actor.to_dict(),
             "dry_run": self.dry_run,
         }
+        if self.profile is not None:
+            invocation["profile"] = self.profile
         if self.selection is not None:
             invocation["selection"] = {"select": self.selection}
         if self.options:

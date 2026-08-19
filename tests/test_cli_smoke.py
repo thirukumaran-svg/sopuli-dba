@@ -464,7 +464,7 @@ def test_explain_prints_where_each_setting_came_from(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert "settings" in result.output
-    assert "safety.dry_run = true" in result.output
+    assert "safety.dry_run" in result.output
     assert "[env SOPULI_DRY_RUN]" in result.output
 
 

@@ -15,6 +15,16 @@ telling them the known keys would not fix it.
 The naming rule (`--profile prod` reads like a selector) needs the estate to
 check against, so it lives in :mod:`sopuli.config.references` with the other
 cross-section rules.
+
+:func:`select_profile` is the other half, and it is here rather than at the
+boundary for one reason: **applying layer 3 happens while the file is being
+built**. A profile's ``vaults:`` block patches a store declaration, and
+:mod:`sopuli.config.vault_layers` merges the three file layers in a single pass
+so that ``tls.verify`` ratchets across all of them at once -- which it can only
+do if it already knows which profile is active. So the *name* arrives from
+outside as a plain string (:mod:`sopuli.invocation` resolves it from
+``--profile`` and ``SOPULI_PROFILE``), and everything downstream of the name is
+decided here, with no I/O and no click.
 """
 
 from __future__ import annotations
@@ -33,6 +43,7 @@ from sopuli.config.fields import (
 from sopuli.config.locking import build_locking
 from sopuli.config.model import Profile, ProfileDb
 from sopuli.config.policies import ROTATION_STRATEGIES, build_verify
+from sopuli.config.references import dangling
 from sopuli.config.safety import build_safety
 from sopuli.config.vaults import build_vault_patches, vault_name
 
@@ -103,13 +114,46 @@ def _build_profile(name: str, raw: Any, *, at: KeyPath) -> Profile:
         log_level=_closed(entry, "log_level", allowed=LOG_LEVELS, noun="log level", at=at),
         log_file=optional_string(entry, "log_file", at=at),
         db=_build_db(entry.get("db"), at=at.key("db")),
-        # Parsed and validated here; **not applied**, because nothing selects a
-        # profile yet (#153). The refusals are the half that is useful without
-        # activation: a profile writing `vaults.<name>.locking` is wrong whether
-        # or not any run ever reads it, and `config validate` is where somebody
-        # finds that out.
+        # Applied at layer 3 when this profile is the active one (#153), by
+        # `sopuli.config.vault_layers`. The refusals are useful either way: a
+        # profile writing `vaults.<name>.locking` is wrong whether or not any run
+        # ever selects it, and `config validate` is where somebody finds that out.
         vaults=build_vault_patches(entry, at=at),
     )
+
+
+def select_profile(
+    profiles: tuple[Profile, ...], *, requested: str | None, declared_default: str | None
+) -> Profile | None:
+    """The one profile this run is invoked under, or ``None`` (§5, rules 1 and 6).
+
+    ``requested`` is what ``--profile`` or ``SOPULI_PROFILE`` said, already
+    merged by the one resolver; ``declared_default`` is ``defaults.profile``.
+    The chain is §5's, in order, and it stops at the first answer -- so a
+    ``--profile`` that names nothing is refused rather than falling through to
+    the file's default. **A typo must not quietly give you interactive behaviour
+    in a scheduler**, which is the whole of rule 6.
+
+    Exactly one, and no composition: C11 settled that in #31, so there is a name
+    here and never a list.
+
+    The error points at ``defaults.profile`` when that is where the name was
+    written and at the document root when it was typed, which is the same
+    distinction ``policy sample`` already makes about a policy name: a name the
+    file wrote has a line to go and fix, and one typed on the command line does
+    not.
+    """
+    chosen = requested if requested is not None else declared_default
+    if chosen is None:
+        return None
+    dangling(
+        chosen,
+        {profile.name for profile in profiles},
+        noun="profile",
+        section="profiles",
+        at=ROOT if requested is not None else ROOT.key("defaults").key("profile"),
+    )
+    return next(profile for profile in profiles if profile.name == chosen)
 
 
 def _reject_forbidden_keys(entry: dict[str, Any], *, at: KeyPath) -> None:

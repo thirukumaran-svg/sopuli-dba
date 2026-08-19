@@ -7,12 +7,15 @@ variables do once they reach a command is ``tests/test_cli_precedence.py``.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from sopuli.config.errors import ConfigError
+from sopuli.config.loading import build_config
 from sopuli.exit_codes import ExitCode
-from sopuli.settings import Layer
-from sopuli.settings.sources import ENV_SETTINGS, env_contributions
+from sopuli.settings import Layer, setting
+from sopuli.settings.sources import ENV_SETTINGS, config_contributions, env_contributions
 
 
 def test_nothing_set_contributes_nothing() -> None:
@@ -101,3 +104,104 @@ def test_the_refusal_exits_nine_and_says_what_to_write_instead() -> None:
 
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
     assert "verify: false" in (caught.value.hint or "")
+
+
+# ------------------------------------------------- the file's own layers ---
+#
+# Layers 3 and 5 (#153). Same shape as the environment's half: a value object in,
+# contributions out, no I/O -- so the ratchet across a profile and `defaults:` can
+# be asserted without a file or a command line anywhere near it.
+
+
+def contributions(profile: str | None = None, **sections: Any) -> dict[str, list[Any]]:
+    return config_contributions(build_config({"version": 1, **sections}, profile=profile))
+
+
+def test_a_file_that_says_nothing_contributes_nothing() -> None:
+    assert contributions() == {}
+
+
+def test_defaults_contributes_at_layer_five() -> None:
+    supplied = contributions(defaults={"safety": {"readonly": True}})
+
+    [one] = supplied["safety.readonly"]
+    assert one.layer is Layer.DEFAULTS
+    assert one.value is True
+    assert one.detail == "defaults.safety.readonly"
+
+
+def test_the_active_profile_contributes_at_layer_three() -> None:
+    supplied = contributions(
+        "ci", profiles={"ci": {"output": "json", "safety": {"max_targets": 200}}}
+    )
+
+    [output] = supplied["output"]
+    assert output.layer is Layer.PROFILE
+    assert output.detail == "profiles.ci.output"
+    [targets] = supplied["safety.max_targets"]
+    assert targets.layer is Layer.PROFILE
+    assert targets.value == 200
+
+
+def test_a_profile_nobody_selected_contributes_nothing() -> None:
+    """§5 rule 1. The keys are parsed and validated either way; contributing
+    them would be layer 3 arriving without anybody having asked for it."""
+    assert contributions(profiles={"ci": {"output": "json"}}) == {}
+
+
+def test_defaults_profile_is_reported_as_a_contribution_of_its_own() -> None:
+    """So `--explain` can attribute the *choice* as well as what it supplied.
+
+    Layer 5, because it is written in `defaults:` -- and `--profile` and
+    `SOPULI_PROFILE` outrank it exactly as they outrank anything else there.
+    """
+    supplied = contributions("ci", profiles={"ci": {}}, defaults={"profile": "ci"})
+
+    [one] = supplied["profile"]
+    assert one.layer is Layer.DEFAULTS
+    assert one.detail == "defaults.profile"
+
+
+def test_an_empty_confirm_environments_list_says_nothing() -> None:
+    """`Safety` cannot tell a key nobody wrote from one written empty, and under
+    a union ratchet the two mean the same thing. Reporting `defaults:` as the
+    source of the empty answer would put a row in every run document."""
+    supplied = contributions(defaults={"safety": {"confirm_environments": []}})
+
+    assert "safety.confirm_environments" not in supplied
+
+
+def test_locking_break_expired_reaches_the_resolver_from_both_layers() -> None:
+    supplied = contributions(
+        "ci",
+        profiles={"ci": {"locking": {"break_expired": True}}},
+        defaults={"locking": {"break_expired": False}},
+    )
+
+    layers = [one.layer for one in supplied["locking.break_expired"]]
+    assert layers == [Layer.PROFILE, Layer.DEFAULTS]
+
+
+def test_every_setting_the_file_supplies_declares_the_layer_it_arrives_on() -> None:
+    """The registry enforces this at merge time; asserting it here is what makes
+    a new key added to `config_contributions` fail in the module that produced
+    it rather than three frames away in somebody else's run."""
+    supplied = contributions(
+        "ci",
+        profiles={
+            "ci": {
+                "output": "json",
+                "safety": {"readonly": True, "max_targets": 5, "confirm_environments": ["prod"]},
+                "locking": {"break_expired": True},
+            }
+        },
+        defaults={
+            "profile": "ci",
+            "safety": {"readonly": False, "max_targets": 9, "confirm_environments": ["dev"]},
+            "locking": {"break_expired": False},
+        },
+    )
+
+    for name, made in supplied.items():
+        for one in made:
+            assert one.layer in setting(name).layers, f"{name} from {one.layer}"

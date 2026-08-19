@@ -336,12 +336,24 @@ written under `vaults:` keyed by its name, which `defaults:` and a profile may
 each carry as a partial entry. C13, decided in #31; `01-configuration.md` §3a
 and §5 are the specification.
 
-Layers 4 and 5 of that merge are implemented (`sopuli/config/vault_layers.py`,
-#136) and go through the one resolver in `sopuli/settings/`, which is what makes
-`vaults.*.tls.verify` ratchet rather than being overwritten by whichever layer is
-higher. Layer 3 waits on profile activation (#153) and layers 1–2 on #154, so
-**the direction is worth reading off the table rather than off the word "patch"**:
-`defaults:` is *below* the declaration and fills gaps; only a profile is above it.
+Layers 3, 4 and 5 of that merge are implemented (`sopuli/config/vault_layers.py`,
+#136 and #153) and go through the one resolver in `sopuli/settings/`, which is
+what makes `vaults.*.tls.verify` ratchet rather than being overwritten by
+whichever layer is higher. All three are merged in one pass, because resolving
+two of them first and folding the third in afterwards reports the winner of the
+first pass rather than the layer somebody has to edit. Layers 1–2 wait on #154,
+so **the direction is worth reading off the table rather than off the word
+"patch"**: `defaults:` is *below* the declaration and fills gaps; only a profile
+is above it.
+
+**The config file is read at the boundary, before a verb runs** (#153). It has to
+be: a profile is layer 3 and may supply `output`, and a run whose output format
+is settled after the verb started has already chosen an emitter. So
+`sopuli/invocation.py` discovers the file, reads it under whichever profile
+`--profile` or `SOPULI_PROFILE` asked for, and resolves all six layers; a verb
+receives the loaded config rather than loading one. The run document is opened
+first, over the command line alone, so that an unreadable file still reports
+itself on exit 9 with a document (J7).
 
 A profile is named after **how the run was invoked** — `interactive`, `ci`,
 `scheduled` — never after an environment. `--profile prod` reads like a target

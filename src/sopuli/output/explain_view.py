@@ -119,9 +119,16 @@ def _source(answer: Resolved) -> str:
         # source names itself -- and the layer is still a better answer than an
         # empty bracket if one ever does.
         return str(answer.layer)
-    if answer.detail.startswith(str(answer.layer)):
+    if answer.detail.split(".", 1)[0].startswith(str(answer.layer)):
         # `defaults defaults.safety.readonly` says it twice. A config key path
         # already begins with the section it lives in, so the layer word adds
         # nothing; `env SOPULI_DRY_RUN` is the case where it does.
+        #
+        # Matched on the *first segment*, and by prefix within it, because the
+        # section a profile lives in is the layer word pluralised:
+        # `profiles.ci.output` says "profile" as plainly as `defaults.…` says
+        # "defaults". Against the whole string this would also fire on any detail
+        # that merely began with a layer's name, which is a coincidence rather
+        # than a repetition.
         return answer.detail
     return f"{answer.layer} {answer.detail}"

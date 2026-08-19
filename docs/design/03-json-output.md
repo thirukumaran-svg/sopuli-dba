@@ -238,6 +238,26 @@ empty array would claim the tool weighed a selector it has not implemented.
 more than it looks — a consumer reading `total: 2` cannot otherwise tell a small
 estate from a filtered one, and "2 rotated" means very different things in each.
 
+### `invocation.profile`
+
+The active profile's name, or absent (`01-configuration.md` §5, #153).
+
+Reported whether or not the profile changed anything, unlike `options` — which
+carries only what changed behaviour. *Which* profile a scheduled run was invoked
+under is the first question when two runs over one config behaved differently,
+and answering it only when some key happened to differ would be answering a
+different question.
+
+Absent rather than `null` when no profile is active. The schema allows either;
+the key with no name in it reads as "a profile was considered and found", which
+is not what happened.
+
+The *choice* is also a resolved setting in its own right — `profile`, from
+`--profile`, `SOPULI_PROFILE` or `defaults.profile` — so `options` says where the
+name came from, and this says what it resolved to. The two differ in exactly one
+case worth being exact about: nobody asked and the file's default did not either,
+so `options` has no `profile` row and this is absent.
+
 ### `invocation.correlation_id`
 
 A UUID per run. The tool also:

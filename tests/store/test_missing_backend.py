@@ -28,6 +28,7 @@ from click.testing import CliRunner
 from jsonschema import Draft202012Validator
 
 from sopuli import cli as cli_module
+from sopuli import invocation as invocation_module
 from sopuli.cli import cli
 from sopuli.diagnostics import MISSING_BACKEND, WARNINGS
 from sopuli.exit_codes import ExitCode
@@ -172,7 +173,7 @@ def test_resolving_an_uninstalled_backend_exits_nine_with_the_code(
     and `main` is what maps a `ConfigError` onto it.
     """
     path = write_config(CONFIG)
-    monkeypatch.setattr(cli_module, "discover", _refuse)
+    monkeypatch.setattr(invocation_module, "discover", _refuse)
     monkeypatch.setattr(sys, "argv", ["sopuli", "config", "validate", "--config", str(path)])
 
     with pytest.raises(SystemExit) as exit_info:
@@ -191,7 +192,7 @@ def test_the_failure_document_carries_the_error_code(
     """The reason the code exists at all: a scheduler branches on *this* failure
     rather than on config errors generally, without parsing the message."""
     path = write_config(CONFIG)
-    monkeypatch.setattr(cli_module, "discover", _refuse)
+    monkeypatch.setattr(invocation_module, "discover", _refuse)
     monkeypatch.setattr(
         sys,
         "argv",

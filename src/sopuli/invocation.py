@@ -45,6 +45,23 @@ travels is a boolean saying the flag was written.
 most specific wins, and nothing is at stake. ``--config`` is the exception in
 shape rather than in rule -- it is a list that layers left to right (§9), so both
 positions are *kept*, group first, exactly as repeating the flag would.
+
+**The config file is read here, before the verb runs** (#153). It used to be read
+by each verb, and profile activation is what made that impossible: a profile is
+layer 3, it can supply ``output``, and a run whose output format is settled after
+the verb has started has already chosen an emitter. So the boundary discovers the
+file, reads it with the profile the command line asked for, and resolves all six
+layers -- and a verb receives the loaded config on its :class:`Invocation` rather
+than loading one of its own. Every verb needed the file anyway; what changes is
+that none of them decides *when*.
+
+It happens in two steps, and the order is J7's (#8) rather than convenience.
+:func:`resolve_invocation` runs first over the command line and the environment
+alone, which opens the run document -- so a file that turns out to be unreadable
+has somewhere to report itself, on exit 9 with a document, instead of failing
+before the run exists. Then :func:`load_config_layers` reads it and
+:func:`resolve_invocation` runs again over all six layers, refreshing that same
+document rather than opening a second one: one run, one correlation id.
 """
 
 from __future__ import annotations
@@ -58,7 +75,10 @@ from typing import Any, TypeVar
 
 import click
 
+from sopuli.config.discovery import discover
 from sopuli.config.errors import ArgumentError, ConfigError
+from sopuli.config.loading import load_layers
+from sopuli.config.model import Config
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.material import TOKEN_FLAG, TOKEN_SOURCES
@@ -67,7 +87,7 @@ from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.explain_view import ratchet_notes
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
-from sopuli.settings.sources import env_contributions
+from sopuli.settings.sources import config_contributions, env_contributions
 from sopuli.store.protocol import StoreError
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -88,6 +108,7 @@ GLOBAL_PARAMS = (
     "config_paths",
     "output_mode",
     "color_choice",
+    "profile_name",
     "dry_run",
     "vault_token_file",
     "vault_token_given",
@@ -99,10 +120,26 @@ GLOBAL_PARAMS = (
 #: when it has a built-in default -- ``output`` is ``text`` on a bare command
 #: line. Listing them is what asks the resolver the question; a setting left off
 #: this list is simply never asked, which is why it is short and explicit rather
-#: than "everything in the registry". It grows as consumers arrive: the safety
-#: block needs the config layer to reach it, and `profile` needs profile
-#: activation to mean anything.
-RESOLVED_SETTINGS = ("output", "safety.dry_run")
+#: than "everything in the registry". It grows as consumers arrive, and #153 is
+#: where most of it arrived at once: the config file now reaches this resolver, so
+#: the safety block and `locking.break_expired` have layers to come from and
+#: `profile` has something to select.
+#:
+#: `verify.method`, `confirm`, `log_level` and the `db` budgets are still absent,
+#: and a profile may still write every one of them: they are parsed, validated and
+#: waiting for a consumer, which is the rule `sopuli/settings/registry.py` states.
+#: `vaults.*` is absent for a different reason -- it is resolved inside the file,
+#: by `sopuli/config/vault_layers.py`, because it describes a store rather than
+#: a run.
+RESOLVED_SETTINGS = (
+    "locking.break_expired",
+    "output",
+    "profile",
+    "safety.confirm_environments",
+    "safety.dry_run",
+    "safety.max_targets",
+    "safety.readonly",
+)
 
 #: What an :class:`Invocation` built without a command is called. Only reachable
 #: from a test that constructs one directly -- every real run derives the name
@@ -124,6 +161,9 @@ class GlobalOptions:
     config_paths: tuple[Path, ...] = ()
     output_mode: str | None = None
     color_choice: str | None = None
+    #: ``--profile``'s value. A profile *name*, never a selector -- §5's whole
+    #: distinction, and the reason this is not beside ``--select``.
+    profile_name: str | None = None
     dry_run: bool = False
     vault_token_file: Path | None = None
     #: Whether ``--vault-token`` was written, and **never what it carried**. The
@@ -138,10 +178,33 @@ class GlobalOptions:
             config_paths=tuple(params.get("config_paths") or ()),
             output_mode=params.get("output_mode"),
             color_choice=params.get("color_choice"),
+            profile_name=params.get("profile_name"),
             dry_run=bool(params.get("dry_run", False)),
             vault_token_file=params.get("vault_token_file"),
             vault_token_given=bool(params.get("vault_token_given", False)),
         )
+
+
+@dataclass(frozen=True)
+class LoadedConfig:
+    """The configuration this run read, in both the forms a command needs.
+
+    One object rather than three fields on :class:`Invocation`, because the three
+    are one answer: they come from one read, and a command holding two of them
+    from different reads would be describing a file that never existed.
+    """
+
+    #: What discovery settled on -- the files actually read, in layering order.
+    #: Not the same as :attr:`Invocation.config_paths`, which is what ``--config``
+    #: was given; with no flag at all that is empty and this is not.
+    paths: tuple[Path, ...]
+    #: The merged raw document. ``config show`` renders it as "the configuration
+    #: as loaded", which after several ``--config`` layers is a thing no file on
+    #: disk holds.
+    declared: dict[str, Any]
+    #: The validated file, with its own precedence layers already merged and the
+    #: active profile chosen (:attr:`~sopuli.config.model.Config.active_profile`).
+    config: Config
 
 
 @dataclass(frozen=True)
@@ -161,6 +224,13 @@ class Invocation:
     #: no socket never reads it and no invocation ever holds a credential.
     vault_token_file: Path | None = None
     resolved: Mapping[str, Resolved] = field(default_factory=dict)
+    #: The configuration, read by the boundary before the verb ran (#153).
+    #:
+    #: ``None`` only where no file has been read: an :class:`Invocation` built
+    #: directly in a test, or the preliminary one that exists between the command
+    #: line resolving and the file being opened. Every verb receives a loaded one,
+    #: and :attr:`config` says so rather than making each of them check.
+    loaded: LoadedConfig | None = None
     #: The run document, **open from the moment the invocation resolves**. A verb
     #: fills in its sections and finishes it; it is serialised once, by
     #: :func:`_pass_invocation`. Building it here rather than at the end is what
@@ -178,8 +248,65 @@ class Invocation:
 
     @property
     def is_json(self) -> bool:
-        """Whether this run's output is the machine-readable contract."""
-        return self.output_mode is OutputMode.JSON
+        """Whether this run's output is the machine-readable contract.
+
+        Compared against the resolved value rather than through
+        :attr:`output_mode`, so that a format this build does not have answers
+        ``False`` instead of raising. A run can reach here holding one: a profile
+        may write ``output: jsonl`` (#153), :func:`check_output_mode` refuses it,
+        and the refusal travels out through the exit handler -- which asks this
+        question on the way past. Raising there would replace a usage error
+        naming ``profiles.ci.output`` with a ``ValueError`` about an enum, and
+        ``False`` is the true answer in any case: a run that could not read its
+        own ``--output`` emits no document at all.
+        """
+        return bool(self.value("output") == OutputMode.JSON)
+
+    @property
+    def profile(self) -> str | None:
+        """The active profile's name, or ``None`` (§5). What the JSON contract
+        reports as ``invocation.profile``.
+
+        Read off the loaded config rather than off ``resolved["profile"]``: the
+        setting is what was *asked for*, and this is what the file resolved it to.
+        The two agree whenever a profile is active, and differ in the case worth
+        being exact about -- nobody asked, and ``defaults.profile`` did not
+        either, so the answer is that there is no profile rather than a name.
+        """
+        if self.loaded is None or self.loaded.config.active_profile is None:
+            return None
+        return self.loaded.config.active_profile.name
+
+    @property
+    def config(self) -> Config:
+        """The configuration this run read.
+
+        Raises rather than returning ``None``: a verb runs only after the
+        boundary has loaded the file, so an absent one here is a programming
+        error -- a command invoked around :func:`_pass_invocation` -- and not a
+        condition any command should be written to handle. Three accessors rather
+        than one, because a command wants one of the three and should not have to
+        reach through an object to say which.
+        """
+        return self._loaded().config
+
+    @property
+    def sources(self) -> tuple[Path, ...]:
+        """The config files that were read, in layering order. See :attr:`config`."""
+        return self._loaded().paths
+
+    @property
+    def declared(self) -> dict[str, Any]:
+        """The merged raw document. See :attr:`config`."""
+        return self._loaded().declared
+
+    def _loaded(self) -> LoadedConfig:
+        if self.loaded is None:
+            raise RuntimeError(
+                "no configuration has been loaded on this invocation; a verb "
+                "receives one from `_pass_invocation` (#153)"
+            )
+        return self.loaded
 
     def value(self, name: str) -> Any:
         """The effective value of a setting, or ``None`` if no layer supplied one."""
@@ -194,6 +321,22 @@ class Invocation:
 def open_document(command: str, invocation: Invocation) -> RunDocument:
     """A run document carrying this invocation's own settings.
 
+    Opened as soon as the command line resolves, which is before the config file
+    is read: a file that turns out to be unreadable reports itself *in* a run
+    document on exit 9, and there has to be one for it to go in (J7, #8).
+    :func:`refresh_document` then fills in what the file changed.
+    """
+    return refresh_document(RunDocument.start(command), invocation)
+
+
+def refresh_document(document: RunDocument, invocation: Invocation) -> RunDocument:
+    """Re-state what this run was asked to do, after a layer joined.
+
+    Called twice per run -- once when the document is opened over the command
+    line and the environment, once when the config file's three layers arrive
+    (#153). The same document both times, so a run keeps one ``correlation_id``
+    and one ``started_at`` however many layers it took to settle.
+
     ``options`` reports what *changed behaviour*, which is the schema's own
     wording: a setting answered by its built-in default changed nothing, and
     ``output: text [builtin]`` on every clean run would be noise in a document
@@ -203,18 +346,19 @@ def open_document(command: str, invocation: Invocation) -> RunDocument:
     A defeated relaxation becomes a diagnostic here rather than under
     ``--explain``, because it is true of every run: something was asked for and
     safely refused, and a run that says nothing about it is the surprise
-    invariant 10 exists to prevent.
+    invariant 10 exists to prevent. The notes are *replaced* rather than
+    appended, because the second call resolves the same settings again and would
+    otherwise say each one twice. Nothing else has written a diagnostic yet: this
+    runs before the verb does.
     """
-    document = RunDocument.start(
-        command,
-        dry_run=invocation.dry_run,
-        options={
-            name: option
-            for name, option in all_options(invocation).items()
-            if invocation.resolved[name].layer is not Layer.BUILTIN
-        },
-    )
-    document.diagnostics.extend(ratchet_notes(invocation.resolved))
+    document.dry_run = invocation.dry_run
+    document.profile = invocation.profile
+    document.options = {
+        name: option
+        for name, option in all_options(invocation).items()
+        if invocation.resolved[name].layer is not Layer.BUILTIN
+    }
+    document.diagnostics[:] = ratchet_notes(invocation.resolved)
     return document
 
 
@@ -365,22 +509,37 @@ def resolve_invocation(
     *,
     env: Mapping[str, str],
     command: str = NO_COMMAND,
+    loaded: LoadedConfig | None = None,
+    document: RunDocument | None = None,
 ) -> Invocation:
-    """Merge both parser positions with the environment, and resolve.
+    """Merge both parser positions with the environment and the file, and resolve.
 
-    Pure: the environment arrives as a mapping. The process supplies its own in
-    :func:`_pass_invocation`, which is the only place it is read.
+    Pure: the environment arrives as a mapping and the configuration arrives
+    already read. The process supplies its own of each in
+    :func:`_pass_invocation`, which is the only place either is fetched.
 
-    The run document is opened here, at the end, because *here* is the moment the
-    invocation resolves -- which J7 makes the moment a run begins. Which is why
-    :func:`check_vault_token` is the first thing that happens: a refused flag
-    means the invocation never resolved, so there is nothing yet to describe.
+    ``loaded`` is ``None`` on the first pass, because the file cannot be read
+    until the command line has said which one and under which profile. Called
+    again with it -- and with the document the first pass opened -- the file's
+    three layers join the same merge and the same document is refreshed. A caller
+    with nothing to load, which is every test whose subject is the command line,
+    simply never makes the second call.
+
+    :func:`check_vault_token` is the first thing that happens either way: a
+    refused flag means the invocation never resolved, so there is nothing yet to
+    describe (J7, #8).
     """
     check_vault_token(group, verb)
 
     contributions: dict[str, list[Contribution]] = {name: [] for name in RESOLVED_SETTINGS}
+    if loaded is not None:
+        # Lowest first, so the insertions below land in front of it. Order within
+        # a layer is the caller's to express and only matters there; between
+        # layers the resolver sorts for itself.
+        for name, supplied in config_contributions(loaded.config).items():
+            _wired(contributions, name).extend(supplied)
     for name, supplied in env_contributions(env).items():
-        _wired(contributions, name).extend(supplied)
+        _wired(contributions, name)[:0] = supplied
     for name, contribution in _cli_contributions(group, verb):
         # The command line outranks the environment, and within one layer the
         # first contribution wins -- so the CLI's goes in front of whatever the
@@ -394,8 +553,28 @@ def resolve_invocation(
         color_choice=ColorChoice(_first_given(verb.color_choice, group.color_choice)),
         vault_token_file=_first_path(verb.vault_token_file, group.vault_token_file),
         resolved=resolve_all(contributions),
+        loaded=loaded,
     )
-    return replace(invocation, document=open_document(command, invocation))
+    if document is None:
+        return replace(invocation, document=open_document(command, invocation))
+    return replace(invocation, document=refresh_document(document, invocation))
+
+
+def load_config_layers(invocation: Invocation, *, env: Mapping[str, str]) -> LoadedConfig:
+    """Discover and read the configuration, under the profile that was asked for.
+
+    The one place a command's file is opened. The profile *name* comes from the
+    resolver rather than from ``--profile`` directly, so ``SOPULI_PROFILE`` is
+    honoured here without this function knowing it exists; the file then supplies
+    ``defaults.profile`` where neither spoke, and refuses a name nothing declares
+    (:func:`sopuli.config.profiles.select_profile`).
+
+    Reading the file is what makes layers 3 to 5 reachable, so it cannot be
+    deferred to the verb -- see the module note.
+    """
+    paths = discover(invocation.config_paths, env=env)
+    declared, config = load_layers(paths, profile=invocation.value("profile"))
+    return LoadedConfig(paths=paths, declared=declared, config=config)
 
 
 def _wired(contributions: dict[str, list[Contribution]], name: str) -> list[Contribution]:
@@ -435,6 +614,12 @@ def check_output_mode(invocation: Invocation) -> None:
     ``--output json`` is itself a request that has to parse, and the tool cannot
     honour one it failed to read. It does not matter that the value arrived in a
     variable rather than in argv -- the invocation did not resolve either way.
+
+    A profile is the third source (#153), and gets the same answer for the same
+    reason, exit 2 rather than a bad-configuration exit 9: what failed is not the
+    file but the run's ability to say anything about itself, and a document is
+    the thing that cannot be produced. The message names ``profiles.ci.output``,
+    so the line to fix is still in it.
     """
     answer = invocation.resolved.get("output")
     if answer is None or answer.value in {mode.value for mode in OutputMode}:
@@ -480,6 +665,15 @@ def _options(func: F, *, hidden: bool) -> F:
         help="Colour in text output. auto follows the terminal; NO_COLOR disables"
         " it.  [default: auto]",
     )
+    profile = click.option(
+        "--profile",
+        "profile_name",
+        metavar="NAME",
+        default=None,
+        hidden=hidden,
+        help="Run under a profile declared in `profiles:`. Not a selector: it"
+        " changes how the run behaves, never what it acts on.",
+    )
     vault_token_file = click.option(
         TOKEN_FLAG,
         "vault_token_file",
@@ -518,7 +712,7 @@ def _options(func: F, *, hidden: bool) -> F:
             help="Print the plan and make no changes.",
         )
     )
-    return color(output(vault_token(vault_token_file(dry_run(config(func))))))
+    return color(profile(output(vault_token(vault_token_file(dry_run(config(func)))))))
 
 
 def _pass_invocation(func: F) -> F:
@@ -535,15 +729,35 @@ def _pass_invocation(func: F) -> F:
         for name in GLOBAL_PARAMS:
             kwargs.pop(name, None)
         group = ctx.find_root().obj or GlobalOptions()
-        invocation = resolve_invocation(group, verb, env=os.environ, command=command_path(ctx))
+        command = command_path(ctx)
+        invocation = resolve_invocation(group, verb, env=os.environ, command=command)
         check_output_mode(invocation)
-        kwargs[INVOCATION_PARAM] = invocation
 
         # Everything from here is the exit handler. It is one function applied to
         # every verb rather than a global, which is what "serialised once" means
         # in practice: a verb cannot forget it, and there is no ambient state
         # holding a half-built document.
+        #
+        # The config file is read *inside* it, and that is the point: a bad file
+        # is exit 9 with a run document (J7, #8), which needs the document above
+        # to be open already and this handler to be watching. Rebinding
+        # `invocation` is what the handler then reports against -- the resolved
+        # one if the file was read, the command line's own if it was not.
         try:
+            loaded = load_config_layers(invocation, env=os.environ)
+            invocation = resolve_invocation(
+                group,
+                verb,
+                env=os.environ,
+                command=command,
+                loaded=loaded,
+                document=invocation.document,
+            )
+            # Again, because a profile may have supplied `output` -- and an
+            # output format the tool does not have is still not a request it can
+            # honour, wherever it was written.
+            check_output_mode(invocation)
+            kwargs[INVOCATION_PARAM] = invocation
             text = ctx.invoke(func, **kwargs)
         except click.Abort as exc:
             # click would print "Aborted!" and exit 1. P5 puts "aborted by user /
@@ -690,6 +904,10 @@ def _cli_contributions(group: GlobalOptions, verb: GlobalOptions) -> list[tuple[
     output = _positioned(verb.output_mode, group.output_mode, flag="--output")
     if output is not None:
         contributions.append(("output", output))
+
+    profile = _positioned(verb.profile_name, group.profile_name, flag="--profile")
+    if profile is not None:
+        contributions.append(("profile", profile))
 
     if verb.dry_run:
         # Trailing-only, so there is no position worth recording -- and no group

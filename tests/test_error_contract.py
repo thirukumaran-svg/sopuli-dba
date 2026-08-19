@@ -31,6 +31,7 @@ from click.testing import CliRunner
 from jsonschema import Draft202012Validator
 
 from sopuli import cli as cli_module
+from sopuli import invocation as invocation_module
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
 from sopuli.lock import LockDeniedError, LockKey, LockStolenError
@@ -375,7 +376,7 @@ def test_an_unexpected_exception_still_emits_a_valid_document(
     def explode(*args: object, **kwargs: object) -> None:
         raise RuntimeError("something went wrong")
 
-    monkeypatch.setattr(cli_module, "load_layers", explode)
+    monkeypatch.setattr(invocation_module, "load_layers", explode)
 
     code = run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
     document = emitted(capsys)
@@ -415,7 +416,7 @@ def test_a_lock_denial_exits_seven_with_the_holder(
             hint="wait for it to finish, or coordinate with whoever is running it",
         )
 
-    monkeypatch.setattr(cli_module, "load_layers", denied)
+    monkeypatch.setattr(invocation_module, "load_layers", denied)
 
     code = run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
     document = emitted(capsys)
@@ -456,7 +457,7 @@ def test_a_stolen_lock_does_not_claim_that_nothing_ran(
             key=LockKey(store="vault-prod", path="apps/acme/db"),
         )
 
-    monkeypatch.setattr(cli_module, "load_layers", stolen)
+    monkeypatch.setattr(invocation_module, "load_layers", stolen)
 
     code = run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
     document = emitted(capsys)
@@ -488,7 +489,7 @@ def test_an_abort_exits_eight_with_a_document(
     def abort(*args: object, **kwargs: object) -> None:
         raise click.Abort
 
-    monkeypatch.setattr(cli_module, "load_layers", abort)
+    monkeypatch.setattr(invocation_module, "load_layers", abort)
 
     code = run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
     document = emitted(capsys)

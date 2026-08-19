@@ -6,7 +6,13 @@ Grammar is noun-verb (D2): ``sopuli <noun> <verb>``. Each noun is a
 status`` is the first verb that opens a socket, and the seam between the two is
 worth keeping visible rather than letting it blur one command at a time.
 
-Three things about the structure are deliberate:
+Four things about the structure are deliberate:
+
+**The configuration is read by the boundary, not by the verbs.** A profile is
+precedence layer 3 and can supply ``output``, so the file has to be read before a
+run picks an emitter -- which is before any verb starts. :mod:`sopuli.invocation`
+does it, and a verb asks ``run`` for the loaded config (#153). A verb that read
+its own would be one that could disagree with the settings the run resolved.
 
 **Global options are declared in both parser positions, and resolved in one.**
 click's group parser and verb parser never see each other's options, so
@@ -48,9 +54,7 @@ from sopuli.config import (
     PasswordPolicy,
     as_dict,
     dangling,
-    discover,
     filter_estate,
-    load_layers,
     parse_selector,
 )
 from sopuli.diagnostics import backend_diagnostics, unlistable_stores
@@ -126,6 +130,7 @@ def cli(
     config_paths: tuple[Path, ...],
     output_mode: str | None,
     color_choice: str | None,
+    profile_name: str | None,
     vault_token_file: Path | None,
     vault_token_given: bool,
 ) -> None:
@@ -140,6 +145,7 @@ def cli(
         config_paths=config_paths,
         output_mode=output_mode,
         color_choice=color_choice,
+        profile_name=profile_name,
         vault_token_file=vault_token_file,
         vault_token_given=vault_token_given,
     )
@@ -188,12 +194,13 @@ def config_show(
     so it is safe to run against a production config from a laptop. A secret ref
     is an address and never a value.
 
-    A bad config file raises out of here rather than being caught: the boundary
-    in :func:`main` maps it to exit 9, which J7 (issue #8) settled as the code
-    that *does* carry a run document -- the invocation resolved, and it is the
-    file that turned out to be unusable. Emitting that document is the exit
-    handler's job rather than this command's, so there is one place it happens
-    instead of one per verb.
+    The file is read before this runs, by the boundary (#153), and a bad one never
+    reaches here at all: the exit handler in :mod:`sopuli.invocation` catches it,
+    emits the run document and lets it out to exit 9 -- which J7 (issue #8)
+    settled as the code that *does* carry a document, the invocation having
+    resolved before the file turned out to be unusable. That is one place it
+    happens rather than one per verb, and it is why this command asks ``run`` for
+    a configuration instead of loading one.
     """
     document = run.document
 
@@ -215,14 +222,13 @@ def config_show(
             "is --resolved"
         )
 
-    paths = discover(run.config_paths)
-    declared, config = load_layers(paths)
-    config = filter_estate(config, match)
+    paths = run.sources
+    config = filter_estate(run.config, match)
 
     targets = len(config.expanded_targets)
     document.diagnostics.extend(config_diagnostics(config))
     document.selection = as_dict(match) or None
-    document.config = build_section(paths, config, declared, resolved=resolved)
+    document.config = build_section(paths, config, run.declared, resolved=resolved)
     if explain:
         # The same data the JSON document already carries, widened: `--explain`
         # means "show everything you consulted", built-in defaults included.
@@ -265,16 +271,15 @@ def target_list(
     *exist*, never which are reachable -- that is a different command with a
     different failure mode, and it must not arrive as a flag on this one.
 
-    A bad config file raises out of here rather than being caught, for the
-    reason ``config show`` gives: exit 9 carries a document, and the boundary
-    emits it (J7, issue #8).
+    A bad config file never reaches here, for the reason ``config show`` gives:
+    the boundary reads it, and its exit handler emits the document on exit 9
+    (J7, issue #8).
     """
     document = run.document
 
     match = parse_selector(selectors)
-    paths = discover(run.config_paths)
-    declared, config = load_layers(paths)
-    config = filter_estate(config, match)
+    paths = run.sources
+    config = filter_estate(run.config, match)
 
     targets = len(config.expanded_targets)
     document.diagnostics.extend(config_diagnostics(config))
@@ -284,7 +289,7 @@ def target_list(
     # one question -- exactly what invariant 12 exists to prevent. The cost is
     # that `bindings` rides along where the text view has no column for it,
     # which is the cheaper of the two mistakes.
-    document.config = build_section(paths, config, declared, resolved=True)
+    document.config = build_section(paths, config, run.declared, resolved=True)
     document.finish(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
@@ -374,8 +379,8 @@ def policy_sample(
             "       appears in it -- drop --reveal, or use the text output"
         )
 
-    paths = discover(run.config_paths)
-    _, config = load_layers(paths)
+    paths = run.sources
+    config = run.config
     chosen, policy = _policy_to_sample(config, name)
 
     limit = None if max_bytes is None else ByteLimit(max_bytes=max_bytes, encoding=encoding)
@@ -482,8 +487,8 @@ def lock_status(
     document = run.document
 
     match = parse_selector(selectors)
-    paths = discover(run.config_paths)
-    _, config = load_layers(paths)
+    paths = run.sources
+    config = run.config
     # Both estates: the filtered one decides what is surveyed and which stores
     # are opened, and the whole one decides what counts as *declared*. A path
     # `--select` excluded is still one this configuration declares, and reporting
@@ -565,17 +570,18 @@ def config_validate(
     Offline, like ``config show``: no vault and no database is contacted, so it
     is safe to point at a production config from a laptop.
 
-    A bad file raises out of here rather than being caught. The boundary in
-    :func:`main` maps it to exit 9 and emits the run document, which matters more
-    for this verb than for any other: reporting configuration problems is its
-    entire purpose, and a validator that goes silent under ``--output json``
-    exactly when it has something to say is not a validator. That argument is
-    what settled J7 (issue #8).
+    A bad file never reaches here: the boundary reads it, maps it to exit 9 and
+    emits the run document. That matters more for this verb than for any other --
+    reporting configuration problems is its entire purpose, and a validator that
+    goes silent under ``--output json`` exactly when it has something to say is
+    not a validator. That argument is what settled J7 (issue #8). Which is also
+    why this verb reads as thin as it does: everything it checks has already
+    happened by the time it is called, and what is left is saying so.
     """
     document = run.document
 
-    paths = discover(run.config_paths)
-    _, config = load_layers(paths)
+    paths = run.sources
+    config = run.config
 
     # A configured-but-uninstalled backend warns here and **exits 0** (ADR-006,
     # E4): the config is valid, the install is incomplete, and the two are
