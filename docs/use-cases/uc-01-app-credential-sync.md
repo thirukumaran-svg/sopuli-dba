@@ -584,6 +584,12 @@ Implemented in `sopuli/lock/` (#95), which holds the keying, the record and the
 acquire/take-over/refuse decision as pure logic; the store, the fence and the
 `finally` are #96.
 
+**Reading one without holding it** is `sopuli lock status` (#105): the declared
+set of secret paths, surveyed for records, with the holder reported the way exit
+7 reports it. It takes no lock — it is a `status` verb, and the rule above
+applies to it — so an hourly survey never blocks a rotation. Breaking a lock is
+deliberately not the same command and not self-service (#149).
+
 **Failure at each step**
 
 | Fails at | State afterwards | Recovery |

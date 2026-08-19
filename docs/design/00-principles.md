@@ -478,7 +478,10 @@ question is where their test database lives.
   per-account misses two accounts sharing one document. The mutated resource is
   the vault document, and compare-and-set operates on exactly that.
   `check`, `status` and every `--dry-run` take no lock at all — otherwise an
-  hourly scheduled check blocks rotations.
+  hourly scheduled check blocks rotations. `sopuli lock status` reads the
+  records without taking one (#105), which is how anybody other than the holder
+  finds out what exit 7 was about; breaking one is deliberately not
+  self-service (#149).
 
 **Idempotency**
 

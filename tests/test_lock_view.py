@@ -2,7 +2,7 @@
 
 Invariant 12: the schema is the test fixture, not documentation written
 afterwards. Every section built here goes through
-``sopuli-run-1.7.schema.json`` -- which is stricter than it looks, because #98's
+``sopuli-run-1.8.schema.json`` -- which is stricter than it looks, because #98's
 review tightened it: every field of a `held` entry is required, and a `denied`
 whose reason is `held` must describe the holder.
 """
@@ -30,9 +30,10 @@ from sopuli.lock import (
     LockManager,
     lock_path,
 )
-from sopuli.output.document import RunDocument, Summary
-from sopuli.output.lock_view import build_section
-from sopuli.store import MemoryStore
+from sopuli.lock.inspect import survey
+from sopuli.output.document import SCHEMA_VERSION, RunDocument, Summary
+from sopuli.output.lock_view import build_section, build_status_section, render_status
+from sopuli.store import CAS, MemoryStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STORE = "vault-prod"
@@ -54,7 +55,7 @@ class Clock:
 
 @pytest.fixture(scope="module")
 def validator() -> Draft202012Validator:
-    schema = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.7.schema.json"
+    schema = REPO_ROOT / "docs" / "schemas" / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
     return Draft202012Validator(json.loads(schema.read_text(encoding="utf-8")))
 
 
@@ -76,8 +77,10 @@ def manager(
     )
 
 
-def document_with(section: dict[str, Any] | None) -> dict[str, Any]:
-    document = RunDocument.start("creds.rotate")
+def document_with(
+    section: dict[str, Any] | None, *, command: str = "creds.rotate"
+) -> dict[str, Any]:
+    document = RunDocument.start(command)
     document.lock = section
     return document.finish(ExitCode.SUCCESS, Summary()).to_dict()
 
@@ -323,3 +326,150 @@ def test_a_diagnostic_reaches_the_document_with_its_code(
 
     assert rendered["diagnostics"][0]["code"] == ADVISORY_LOCKING
     assert not list(validator.iter_errors(rendered))
+
+
+# ------------------------------------------------------------------ found ---
+#
+# `lock status` (#105): records read at paths this run does not hold. A separate
+# array from `held`, and these are the tests that say why -- the two describe
+# different relationships to a lock, and one shape for both would make `released`
+# mean two things depending on `command`.
+
+
+def status_of(state: str = "held", *, capabilities: frozenset[str] = frozenset({CAS})) -> Any:
+    """Put a record at the key and survey it, as somebody who does not hold it."""
+    store = MemoryStore(capabilities=capabilities)
+    locking = LOCK_REQUIRED if CAS in capabilities else LOCK_ADVISORY_ONLY
+    run = manager(store, locking=locking)
+    run.acquire([KEY])
+    if state != "held":
+        stored = store.read(lock_path(KEY))
+        assert stored is not None
+        store.write(lock_path(KEY), {**stored.data, "state": state}, cas=stored.version)
+    return survey([KEY], stores={STORE: store}, now=NOW)
+
+
+def test_a_survey_reports_the_holder_the_way_a_denial_does(
+    validator: Draft202012Validator,
+) -> None:
+    """The question at exit 7 and the question `lock status` answers are the same
+    question, so the answer is the same shape -- which is what the shared
+    `lock_holder` definition in the schema is for."""
+    section = build_status_section(status_of(), mode="cas")
+
+    assert section == {
+        "mode": "cas",
+        "found": [
+            {
+                "vault": STORE,
+                "path": "apps/acme/db",
+                "held": True,
+                "state": "held",
+                "expired": False,
+                "version": 1,
+                "acquired_at": "2026-08-16T12:00:00Z",
+                "expires_at": "2026-08-16T12:15:00Z",
+                "holder": {
+                    "host": "ci-runner-3",
+                    "pid": 8821,
+                    "os_user": "svc_sopuli",
+                    "correlation_id": "01JMINE",
+                    "command": "creds rotate",
+                },
+            }
+        ],
+    }
+    assert not list(validator.iter_errors(document_with(section, command="lock.status")))
+
+
+def test_a_released_record_is_reported_as_not_held() -> None:
+    """`held: false` here means the path is free, which is emphatically not what
+    `held[].released: true` means on a rotation -- there it means this run let go
+    cleanly. Two meanings, two arrays."""
+    section = build_status_section(status_of("released"), mode="cas")
+
+    assert section["found"][0]["held"] is False
+    assert section["found"][0]["state"] == "released"
+
+
+def test_an_unrecognised_state_is_reported_as_written_and_treated_as_held() -> None:
+    """`held` is the verdict and `state` is the evidence. Flattening the second
+    into the first would hide a record written by a newer sopuli behind a
+    perfectly ordinary-looking row."""
+    section = build_status_section(status_of("quiescing"), mode="cas")
+
+    assert section["found"][0]["held"] is True
+    assert section["found"][0]["state"] == "quiescing"
+
+
+def test_a_survey_of_a_store_that_cannot_fence_reports_no_version(
+    validator: Draft202012Validator,
+) -> None:
+    """Null for the reason `held[].fence` is null under mode `none`: the number
+    exists and guarantees nothing, and offering it to a takeover would offer a
+    comparison that always matches."""
+    section = build_status_section(status_of(capabilities=frozenset()), mode="none")
+
+    assert section["found"][0]["version"] is None
+    assert not list(validator.iter_errors(document_with(section, command="lock.status")))
+
+
+def test_a_free_path_is_not_an_entry(validator: Draft202012Validator) -> None:
+    """`found` is what was read. How many paths were examined is
+    `summary.total`, and the difference between the two is how many are free --
+    which keeps every member of an entry required."""
+    states = survey([KEY], stores={STORE: MemoryStore()}, now=NOW)
+    section = build_status_section(states, mode="cas")
+
+    assert section == {"mode": "cas", "found": []}
+    assert not list(validator.iter_errors(document_with(section, command="lock.status")))
+
+
+def test_the_quiet_estate_still_emits_a_section() -> None:
+    """The one place an empty `lock` section is right. Absent means *no lock was
+    needed*; here an empty `found` is the finding, and omitting it would make a
+    quiet estate indistinguishable from a command that did not look."""
+    assert "lock" in document_with(build_status_section((), mode="cas"), command="lock.status")
+
+
+# ----------------------------------------------------------- the text view ---
+
+
+def test_the_text_view_leads_with_the_string_lock_break_will_take() -> None:
+    """`store:path` in one cell, because that spelling is what exit 7 prints and
+    what #149 will accept. Two columns would make the operator reassemble by
+    hand the one string they are about to paste."""
+    rendered = render_status([Path("sopuli.yaml")], status_of(), mode="cas")
+
+    assert "vault-prod:apps/acme/db" in rendered
+    assert "svc_sopuli@ci-runner-3" in rendered
+    assert "1 of 1 declared lock paths held" in rendered
+
+
+def test_the_text_view_marks_a_lapsed_claim() -> None:
+    store = MemoryStore()
+    clock = Clock()
+    manager(store, clock=clock).acquire([KEY])
+    later = NOW + DEFAULT_TTL + CLOCK_SKEW + timedelta(seconds=1)
+
+    rendered = render_status(
+        [Path("sopuli.yaml")],
+        survey([KEY], stores={STORE: store}, now=later),
+        mode="cas",
+    )
+
+    assert "expired" in rendered
+    assert "1 past expiry" in rendered
+
+
+def test_the_text_view_shows_no_table_when_nothing_is_locked() -> None:
+    """A table of forty free paths so that nothing can hide in it is a table
+    nobody scans. The count is the answer."""
+    rendered = render_status(
+        [Path("sopuli.yaml")],
+        survey([KEY], stores={STORE: MemoryStore()}, now=NOW),
+        mode="cas",
+    )
+
+    assert "LOCK" not in rendered
+    assert "0 of 1 declared lock paths held" in rendered

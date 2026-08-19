@@ -49,9 +49,12 @@ error: vault "oci-prod" declares type "oci", but that backend is not installed
 The rule and what it costs: [ADR-006](docs/decisions/adr-006-optional-dependencies.md).
 
 > **Status: pre-implementation.** The extras above are declared in
-> `pyproject.toml` and the registry behind them resolves a backend on first use,
-> but no backend is written yet — a store that is installed still reports that
-> this build has no module for it. Nothing is on PyPI yet.
+> `pyproject.toml` and the registry behind them resolves a backend on first use.
+> **`hashicorp` is the one backend that exists** — KV v2 and KV v1, with token,
+> AppRole, Kubernetes and userpass auth — and `sopuli lock status` is so far the
+> only command that reaches it. `oci`, `file` and `keyring` are accepted in a
+> config and report that this build has no module for them. Nothing is on PyPI
+> yet.
 
 ---
 

@@ -176,7 +176,7 @@ nothing else in the suite can see rule 3 break.
 
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
-| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, and the install-shape assertions in §3 |
+| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, `lock status` with the store handed in, and the install-shape assertions in §3 |
 | 1 | every PR | public CI | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
 | 2 | nightly | public CI | < 30 min | 21c XE, 18c XE, 11g XE, PostgreSQL matrix; fault injection |
 | 3 | pre-release | maintainer | manual | built 19c, real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
@@ -281,6 +281,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | Schema-privilege regression (P7, answered): `GRANT ALTER USER ON SCHEMA` must still fail with `ORA-00990`, while `GRANT SELECT ANY TABLE ON SCHEMA` must still succeed. **Assert both** — without the control, a future release that dropped schema privileges entirely would look like the same pass. A newly-succeeding `ALTER USER` grant re-opens the privilege model, so this is a test worth keeping rather than a question worth deleting | 23-codebase (tier 1) |
 | Shared JSON document: writing one account's password leaves siblings byte-identical | any + Vault |
 | KV v1 degradation: no versioning, staging emulated in payload, and the tool says so | Vault KV v1 mount |
+| `lock status` reads a record the tool did not write: a config entry opens a store, authenticates, and reports somebody else's held lock — and the survey leaves the version counter where it found it, because `status` takes no lock (#105) | Vault |
 
 ### Fault injection (tier 2)
 

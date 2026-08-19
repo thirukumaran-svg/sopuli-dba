@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.7.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.8.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -33,6 +33,7 @@
         "creds.generate", "creds.apply", "creds.check", "creds.rotate",
         "creds.status", "creds.promote", "creds.finish-rollover",
         "config.validate", "config.show", "target.list", "policy.sample",
+        "lock.status",
         "doctor", "admin.install"
       ]
     },
@@ -320,12 +321,12 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["mode"],
-      "description": "The advisory locks a mutating run took (00-principles.md P5, decided in issue #83). Locks live in the vault and are keyed on the store and the secret path being mutated -- not on the account and not on the target, because the mutated resource is the vault document and compare-and-set operates on exactly that. Absent on a run that takes none: `check`, `status` and every `--dry-run`.",
+      "description": "Advisory locks (00-principles.md P5, decided in issue #83). Locks live in the vault and are keyed on the store and the secret path being mutated -- not on the account and not on the target, because the mutated resource is the vault document and compare-and-set operates on exactly that. Three arrays, and which one a lock is in says whose it is: `held` is what this run took, `denied` is the one that stopped it, and `found` is what `lock status` read at paths it does not hold (issue #105). Absent on a run that neither took a lock nor went looking: `check`, `status` and every `--dry-run`.",
       "properties": {
         "mode": {
           "type": "string",
           "enum": ["cas", "none"],
-          "description": "The guarantee, not the mechanism. `cas` means every acquisition was compare-and-set guarded and carries a fence. `none` means the store has no atomic primitive (KV v1, the file backend) and was configured `locking: advisory-only`, so the record is a courtesy that catches operators minutes apart and misses two jobs in the same second. A consumer branches on this without knowing what KV v1 is."
+          "description": "The guarantee available in the stores this section is about, not the mechanism. `cas` means every one of them has compare-and-set, so an acquisition carries a fence; `none` means at least one has no atomic primitive (KV v1, the file backend) and was configured `locking: advisory-only`, making the record a courtesy that catches operators minutes apart and misses two jobs in the same second. On a run that took locks that is what it took them under; on `lock status`, which takes none, it is what a lock in those stores would be worth. A consumer branches on this without knowing what KV v1 is."
         },
         "held": {
           "type": "array",
@@ -351,6 +352,39 @@
             }
           }
         },
+        "found": {
+          "type": "array",
+          "description": "Lock records read at paths this run does not hold -- what `lock status` went looking for (issue #105). Separate from `held` because `held` is possessive: there `released: true` means this run let go cleanly, and here it would mean the path is free, which is one field meaning two things depending on `command`. In key order, which is the sorted order acquisition uses. A declared path with no record at it is not an entry: `found` is what was read, and how many paths were examined is `summary.total` -- the difference between the two is how many are free. Emitted empty rather than omitted, because on `lock status` an empty array is the finding.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["vault", "path", "held", "state", "expired", "version", "acquired_at", "expires_at", "holder"],
+            "description": "One record, described by somebody who does not hold it. Every field is required for the reason `held[]`'s are: the entry exists because a record was read, so there is nothing about it left unknown.",
+            "properties": {
+              "vault": { "type": "string" },
+              "path": { "type": "string", "description": "The secret path, not the lock record's own path. Where the record is written is the store's business." },
+              "held": {
+                "type": "boolean",
+                "description": "Whether this record stands in the way of taking the lock. Anything that is not `released` is held, including a `state` this build has never heard of -- treating an unknown state as free is the one guess that ends with two runs rotating one credential."
+              },
+              "state": {
+                "type": "string",
+                "description": "What the record says, as written. `held` and `released` are the two this build writes; anything else came from a newer sopuli, or from a half-written record, and is reported rather than flattened so that it stays recognisable. Not an enum, for that reason. `held` above is the verdict; this is the evidence."
+              },
+              "expired": {
+                "type": "boolean",
+                "description": "Whether the holder's claim has lapsed, allowing for a clock-skew margin. False on a released record, which is not a claim and has nothing to lapse."
+              },
+              "version": {
+                "type": ["integer", "null"],
+                "description": "The store's version of the record. Deliberately not called a fence -- a fence is a claim, and nothing here holds one -- but it is what a takeover has to compare-and-set against, and a version that moves between two surveys is a lock somebody is renewing. Null under mode `none`, where the number exists and guarantees nothing."
+              },
+              "acquired_at": { "$ref": "#/$defs/timestamp" },
+              "expires_at": { "$ref": "#/$defs/timestamp" },
+              "holder": { "$ref": "#/$defs/lock_holder" }
+            }
+          }
+        },
         "denied": {
           "type": "object",
           "additionalProperties": false,
@@ -364,18 +398,7 @@
               "enum": ["held", "race"],
               "description": "How the run lost. `held` means a held, unexpired record was read, and the holder and timestamps below describe it. `race` means the compare-and-set write itself was refused, which is another run acquiring between this run's read and its write -- there is nothing to report about the winner, because the winner's record was never read and re-reading it is a second round trip to answer a question the operator can answer by running again. This is why `holder` is optional: it is present exactly when it was read, and absent is a fact rather than a gap."
             },
-            "holder": {
-              "type": "object",
-              "additionalProperties": false,
-              "description": "Who holds it, in the same shape this run's own actor is reported in.",
-              "properties": {
-                "host": { "type": ["string", "null"] },
-                "pid": { "type": ["integer", "null"] },
-                "os_user": { "type": ["string", "null"] },
-                "correlation_id": { "type": ["string", "null"], "description": "The holder's run, joinable to its own output and to the database audit trail." },
-                "command": { "type": ["string", "null"] }
-              }
-            },
+            "holder": { "$ref": "#/$defs/lock_holder" },
             "acquired_at": { "$ref": "#/$defs/timestamp" },
             "expires_at": { "$ref": "#/$defs/timestamp" },
             "expired": {
@@ -393,6 +416,19 @@
             }
           ]
         }
+      }
+    },
+
+    "lock_holder": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Who holds a lock, in the same shape this run's own actor is reported in. Every member is nullable and every one degrades on its own: a record written by another version, or half-written, still has to be reportable, because the alternative is a lock nobody can explain and nobody can break. Never a value -- a lock record carries an identity and a command, and no credential.",
+      "properties": {
+        "host": { "type": ["string", "null"] },
+        "pid": { "type": ["integer", "null"] },
+        "os_user": { "type": ["string", "null"] },
+        "correlation_id": { "type": ["string", "null"], "description": "The holder's run, joinable to its own output and to the database audit trail." },
+        "command": { "type": ["string", "null"] }
       }
     },
 

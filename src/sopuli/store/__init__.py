@@ -6,11 +6,17 @@ tier 0 and doubles as the reference reading of those semantics. The real
 backends -- HashiCorp KV v2 first, per P2's priority order -- arrive with the
 rest of the interface.
 
-:mod:`sopuli.store.registry` is what will find them: a mapping from
-``vaults.*.type`` to a module path, imported on first use so that a vendor client
-is a dependency only of the site that configured its backend (ADR-006). Importing
-this package therefore imports no client, and importing a client from anywhere
-outside a backend module is what ``tests/store/test_install_shape.py`` fails on.
+:mod:`sopuli.store.registry` is what finds them: a mapping from ``vaults.*.type``
+to a module path, imported on first use so that a vendor client is a dependency
+only of the site that configured its backend (ADR-006). Importing this package
+therefore imports no client, and importing a client from anywhere outside a
+backend module is what ``tests/store/test_install_shape.py`` fails on.
+
+:func:`sopuli.store.registry.connect` is the front door: a config entry in, an
+authenticated store out, with the backend chosen by ``type:``. Everything above
+this package -- ``lock status`` today, the ``creds`` verbs next -- goes through
+it rather than importing a backend by name, which is what keeps the choice of
+store in the config file where §3a puts it.
 """
 
 from sopuli.store.memory import MemoryStore
@@ -28,6 +34,7 @@ from sopuli.store.registry import (
     Backend,
     BackendNotImplementedError,
     BackendNotInstalledError,
+    connect,
     installed,
     resolve,
 )
@@ -45,6 +52,7 @@ __all__ = [
     "SecretStore",
     "Stored",
     "StoreError",
+    "connect",
     "installed",
     "resolve",
 ]

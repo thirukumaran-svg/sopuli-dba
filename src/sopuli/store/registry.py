@@ -26,11 +26,13 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import ModuleType
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
+from sopuli.store.protocol import SecretStore
 
 #: ``error.code`` for a configured backend whose client is not installed
 #: (``03-json-output.md`` §3). Carried so a consumer can branch on this case
@@ -204,3 +206,45 @@ def resolve(vault: Vault) -> ModuleType:
                 hint="this is not something to install -- the backend is not written yet",
             ) from exc
         raise
+
+
+def connect(vault: Vault, *, env: Mapping[str, str]) -> SecretStore:
+    """An authenticated store for ``vault``, whichever backend serves it.
+
+    **This settles what a backend module must expose**, which :func:`resolve`
+    deliberately left open until there was an implementation to hold the
+    contract: a module named in :data:`BACKENDS` provides
+
+    .. code-block:: python
+
+        def connect(vault: Vault, *, env: Mapping[str, str], flag: Secret | None = None)
+            -> SecretStore
+
+    and nothing else is required of it. :mod:`sopuli.store.hashicorp` defines it
+    that way already (#104, #138); this is the one line that says every backend
+    must, rather than each caller learning the shape from whichever module it
+    happened to import.
+
+    ``env`` is passed rather than read, for the reason the rest of the tool
+    passes it: half of §3a's auth material lives in the environment, and a
+    function that reaches for :data:`os.environ` itself cannot be tested against
+    a different one.
+
+    ``flag`` is not forwarded, because there is no flag yet -- what
+    ``--vault-token`` takes is #145, and a parameter wired through to an option
+    that does not exist would be a decision made in a signature. A caller with a
+    credential in hand goes to the backend directly, which is what
+    :func:`sopuli.store.hashicorp.open_store` is for.
+
+    Calling this is what makes a run *reach* a store, which is the line
+    ``01-configuration.md`` §3a draws: declaring a store is config, and reaching
+    one is not. Every failure below that line -- a missing client, a refused
+    login, an unreachable host -- arrives from here rather than from the loader.
+    """
+    module = resolve(vault)
+    # No `getattr` guard. A module in `BACKENDS` that does not define `connect`
+    # is a bug in this project, and an `AttributeError` naming the module is a
+    # better report of it than a message telling the operator to install
+    # something -- the same reasoning as `resolve`'s third row.
+    store: SecretStore = module.connect(vault, env=env)
+    return store

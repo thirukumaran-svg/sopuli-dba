@@ -1,10 +1,10 @@
 """The ``sopuli`` command line.
 
 Grammar is noun-verb (D2): ``sopuli <noun> <verb>``. Each noun is a
-:class:`click.Group`, each verb a command inside it. So far the ``config`` verbs,
-``target list`` and ``policy sample`` exist — none touches a vault or a database,
-and they are here so the shape is established once instead of being improvised by
-whichever command lands first.
+:class:`click.Group`, each verb a command inside it. The ``config`` verbs,
+``target list`` and ``policy sample`` touch nothing outside the file; ``lock
+status`` is the first verb that opens a socket, and the seam between the two is
+worth keeping visible rather than letting it blur one command at a time.
 
 Three things about the structure are deliberate:
 
@@ -32,7 +32,8 @@ with ``--output json``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -60,6 +61,7 @@ from sopuli.invocation import (
     group_options,
 )
 from sopuli.lock.errors import LockDeniedError, LockError
+from sopuli.lock.inspect import declared_locks, mode_of, survey
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -67,10 +69,12 @@ from sopuli.output.config_view import (
     render_validation,
 )
 from sopuli.output.document import Diagnostic, Summary
+from sopuli.output.lock_view import build_status_section, render_status
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.stream import configure_streams
 from sopuli.passwords import ByteLimit, generate
+from sopuli.store import SecretStore, connect
 from sopuli.version import get_version
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -414,6 +418,91 @@ def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPo
         at=ROOT.key("defaults").key("policy") if name is None else ROOT,
     )
     return chosen, next(policy for policy in config.policies if policy.name == chosen).password
+
+
+@cli.group("lock")
+def lock_group() -> None:
+    """Inspect the advisory locks."""
+
+
+@lock_group.command("status")
+@select_option
+@global_options
+def lock_status(
+    selectors: tuple[str, ...],
+    run: Invocation,
+) -> str:
+    """Show which secret paths are locked, and by whom.
+
+    The answer to exit 7. A mutating run that loses a lock prints the holder and
+    stops; this is how anybody else finds out the same thing without racing for
+    it -- what is held, by whom, since when, and whether the claim has lapsed.
+
+    **It takes no lock itself.** #83 settled that for `check`, `status` and every
+    `--dry-run`, and the reason is not politeness: an hourly survey that locked
+    would block the rotations it exists to report on, and the concurrency gate
+    would start failing for the wrong reason.
+
+    **This is the first verb that opens a socket.** `config show`, `target list`
+    and `policy sample` are offline by design and safe to point at a production
+    config from a laptop; this one authenticates to every store its selection
+    touches and reads from it. Nothing it reads is a secret -- a lock record
+    carries an identity, a command and two timestamps, and never a value -- but
+    the connection is real, and `--select` is how a survey is kept to the estate
+    somebody meant.
+
+    It reports the **declared** set: every secret path the configuration binds an
+    account to, deduplicated through the same key the manager locks on, so two
+    accounts sharing one document are one row here exactly as they are one lock
+    during a rotation. A record left at a path the file no longer declares is
+    invisible to this, and seeing one needs a store capability that does not
+    exist yet (#150).
+
+    Always exit 0 when it could look. A held lock is a finding, not a failure --
+    exit 7 means *this run could not proceed*, and this run had nothing to
+    proceed with.
+    """
+    document = run.document
+
+    match = parse_selector(selectors)
+    paths = discover(run.config_paths)
+    _, config = load_layers(paths)
+    config = filter_estate(config, match)
+
+    keys = declared_locks(config)
+    stores = _stores_for({key.store for key in keys}, config)
+    states = survey(keys, stores=stores)
+    mode = mode_of(stores)
+
+    document.diagnostics.extend(config_diagnostics(config))
+    document.selection = as_dict(match) or None
+    document.lock = build_status_section(states, mode=mode)
+    document.finish(
+        ExitCode.SUCCESS,
+        # `ok` is every path that was looked at, because looking succeeded. A
+        # held lock is not a failed path -- `failed` here would put a red number
+        # in front of a colleague doing their job.
+        Summary(total=len(keys), ok=len(keys), changed=0, failed=0),
+    )
+    return render_status(paths, states, match=match, mode=mode)
+
+
+def _stores_for(names: set[str], config: Config) -> Mapping[str, SecretStore]:
+    """Open every store a survey needs, and only those.
+
+    One connection per store rather than one per path: a store is a client, and
+    an estate with forty paths in one vault should authenticate once.
+
+    The names are resolved against `vaults:` with the same `dangling` message
+    every other name in the file gets. `references.py` has already checked them,
+    so this is unreachable through a config file -- and it is here anyway,
+    because the alternative when it ever *is* reachable is a `KeyError` naming a
+    dictionary.
+    """
+    declared = {vault.name: vault for vault in config.vaults}
+    for name in sorted(names):
+        dangling(name, set(declared), noun="vault", section="vaults", at=ROOT.key("vaults"))
+    return {name: connect(declared[name], env=os.environ) for name in sorted(names)}
 
 
 @config_group.command("validate")

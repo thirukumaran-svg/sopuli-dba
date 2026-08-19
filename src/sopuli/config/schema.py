@@ -57,7 +57,7 @@ from sopuli.config import (
 )
 
 #: The artefact's own version, which is not the config file's ``version:``. This
-#: one tracks the schema contract the way `sopuli-run-1.7` does -- a new optional
+#: one tracks the schema contract the way `sopuli-run-1.8` does -- a new optional
 #: key is a minor bump and does not touch a file that already says `version: 1`.
 #:
 #: 1.0 became 1.1 when `locking:` arrived (#83): a store's `locking:` and a

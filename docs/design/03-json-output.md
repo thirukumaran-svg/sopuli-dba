@@ -7,13 +7,15 @@ text|json`, colour resolution, the `config` section, `diagnostics` and
 so everything about them here is still a sketch, and so are the other members of
 `invocation.selection`.
 
-**`lock` is built and schema-checked but nothing emits it yet.**
-`sopuli/output/lock_view.py` produces the section from a held
-`sopuli.lock.LockManager`, and `tests/test_lock_view.py` validates every shape it
-can produce against the published schema — but the first command that takes a
-lock is `creds generate`, which does not exist. The `lock.*` events are the other
-half of the same wait: they need `--output jsonl` (#9), which has no emitter, so
-their payloads are specified in §5 and not yet produced by anything.
+**`lock` is emitted by `lock status`, and by nothing else yet** (#105).
+`sopuli/output/lock_view.py` produces the whole section, and
+`tests/test_lock_view.py` validates every shape it can produce against the
+published schema. What `lock status` fills in is `found[]` — records it read at
+paths it does not hold. `held[]` and `denied` still wait on a command that
+*takes* a lock, and the first of those is `creds generate`, which does not exist.
+The `lock.*` events are the other half of the same wait: they need
+`--output jsonl` (#9), which has no emitter, so their payloads are specified in
+§5 and not yet produced by anything.
 
 `diagnostics` carries what §10 of `01-configuration.md` calls warnings: findings
 the loader decided not to refuse to run over. They are run-level because a config
@@ -23,7 +25,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.7.schema.json`](../schemas/sopuli-run-1.7.schema.json),
+Schemas: [`../schemas/sopuli-run-1.8.schema.json`](../schemas/sopuli-run-1.8.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -159,7 +161,7 @@ unchanged, which is precisely what the UTF-8 streams make safe.
   invocation { correlation_id, timing, actor, dry_run, profile, selection, options },
   config     { sources[], resolved, declared | targets[] + bindings[] },
   plan       { units[], shared_secrets[], confirmation_required, blast_radius },
-  lock       { mode, held[], denied },
+  lock       { mode, held[], denied, found[] },
   results    [ { account, target, scope, secret, state, changed, actions[],
                  verification, rollover, error, warnings[] } ],
   summary    { total, ok, changed, drift, unverifiable, skipped, failed, by_state },
@@ -412,6 +414,50 @@ the tool does not know.
 **The section is absent on a run that takes no lock**, which is `check`,
 `status` and every `--dry-run`. Absent means none was needed, not none was
 available.
+
+**`found[]` is the third array, and it is somebody else's locks** (#105).
+`sopuli lock status` takes no lock and reads the records at every secret path the
+config declares:
+
+```json
+"lock": {
+  "mode": "cas",
+  "found": [ { "vault": "vault-prod", "path": "apps/acme/db",
+               "held": true, "state": "held", "expired": false, "version": 41,
+               "acquired_at": "…", "expires_at": "…",
+               "holder": { "host": "ci-runner-3", "pid": 8821,
+                           "os_user": "svc_sopuli", "correlation_id": "…",
+                           "command": "creds rotate" } } ]
+}
+```
+
+It is a separate array rather than a reuse of `held[]`, and the reason is that
+**`held` is possessive**. There, `released: true` means *this run let go
+cleanly*; in a survey the same word would mean *this path is free*. That is one
+field meaning two things depending on `command`, which is what §8's stability
+rules exist to prevent — and a consumer aggregating held locks across runs would
+start counting surveys as acquisitions. The holder is reported through the same
+definition `denied.holder` uses, because the question at exit 7 and the question
+`lock status` answers are the same question.
+
+`held` and `state` are the verdict and the evidence, and they are not the same
+field twice. Anything that is not `released` is held, **including a state this
+build has never heard of** — treating an unknown state as free is the one guess
+that ends with two runs rotating one credential — and a consumer that saw only
+`held: true` could not tell such a record from an ordinary one. `version` is the
+store's version and is deliberately not called a fence: a fence is a claim, and
+nothing in a survey holds one.
+
+**A declared path with no record at it is not an entry.** `found` is what was
+read, which is what keeps every member of an entry required; how many paths were
+examined is `summary.total`, and the difference between the two numbers is how
+many are free. On `lock status` the array is emitted even when empty, because
+there an empty array is the finding — a quiet estate must not be
+indistinguishable from a command that did not look.
+
+`mode` means one thing in both arrays: the guarantee available in the stores the
+section is about. On a run that took locks that is what it took them under; on a
+survey it is what a lock in those stores would be worth.
 
 ### `results[].changed` vs `results[].state`
 
@@ -781,6 +827,19 @@ having sat unimplemented since 1.0: the schema is a producer-side guard on the
 shape, and a section nothing emits constrains nothing. What it does buy is that
 the decision in issue #83 has one written form, in the file CI validates against,
 rather than two that can disagree.
+
+**1.5 became 1.6 with the staged payload** (#85, #109) **and 1.6 became 1.7 with
+`config.shared_secrets`** (#110) — optional properties both, and neither was
+recorded here at the time. Written down now because a list that stops at 1.5 and
+resumes at 1.8 reads as two renames nobody can account for, which is worse than
+either entry is interesting.
+
+**1.7 became 1.8 when `lock status` arrived** (#105): `lock.status` joined the
+`command` enum and `lock.found[]` joined the section, which is the minor rule
+twice over again. Nothing existing changed meaning — `found` was added *beside*
+`held` precisely so that `held` would not have to. The `denied.holder` object
+moved into a `$defs/lock_holder` the two arrays share, which is a refactor of the
+schema file and not of the contract: the shape a consumer sees is byte-identical.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles
