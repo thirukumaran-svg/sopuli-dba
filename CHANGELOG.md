@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.29.0](https://github.com/futville/sopuli-dba/compare/v0.28.0...v0.29.0) (2026-08-19)
+
+
+### Features
+
+* **lock:** `lock status` reports records the config does not declare ([#161](https://github.com/futville/sopuli-dba/issues/161)) ([52ff2fe](https://github.com/futville/sopuli-dba/commit/52ff2fe5a80f81cbb65572f690a35a1814f0aafa))
+* **store:** `list(prefix)` on the store protocol, and both KV mounts ([#159](https://github.com/futville/sopuli-dba/issues/159)) ([953329a](https://github.com/futville/sopuli-dba/commit/953329a616444f296e09931dc1701d6680a407b8))
+
 ## [0.28.0](https://github.com/futville/sopuli-dba/compare/v0.27.0...v0.28.0) (2026-08-19)
 
 
