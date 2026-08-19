@@ -188,9 +188,9 @@ def read_material_key(entry: dict[str, Any], key: str, *, at: KeyPath) -> Materi
     """One optional MaterialRef inside a method block.
 
     Absent stays absent. ``method: token`` with no ``token:`` is the fall-through
-    P2 describes -- ``--vault-token``, then ``$VAULT_TOKEN``, then
-    ``~/.vault-token`` -- and a default written in here would turn a documented
-    source chain into a path this layer had guessed at.
+    P2 describes -- ``--vault-token-file``, then ``$SOPULI_VAULT_TOKEN``, then
+    ``$VAULT_TOKEN``, then ``~/.vault-token`` -- and a default written in here
+    would turn a documented source chain into a path this layer had guessed at.
     """
     if key not in entry:
         return None

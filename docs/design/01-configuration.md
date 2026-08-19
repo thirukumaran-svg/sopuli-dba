@@ -113,7 +113,7 @@ vaults:
     mount: kv
     kv_version: 2
     auth:
-      method: token        # --vault-token, then $VAULT_TOKEN, then ~/.vault-token
+      method: token        # --vault-token-file, $VAULT_TOKEN, ~/.vault-token
   vault-test:
     type: hashicorp
     addr: https://vault-test.example.com
@@ -559,7 +559,7 @@ may **not**: there is nowhere in a scalar to say where the material comes from.
 
 | `method` | Its keys |
 |---|---|
-| `token` | `token` (optional — without it, `--vault-token`, then `$SOPULI_VAULT_TOKEN`, then `$VAULT_TOKEN`, then `~/.vault-token`) |
+| `token` | `token` (optional — without it, `--vault-token-file PATH`, then `$SOPULI_VAULT_TOKEN`, then `$VAULT_TOKEN`, then `~/.vault-token`) |
 | `approle` | `role_id`, `secret_id`, and optionally `mount` |
 | `kubernetes` | `role`, `jwt`, and optionally `mount` |
 | `oidc` | optionally `role` and `mount` |
@@ -628,17 +628,40 @@ Two properties follow from the shape and are worth stating, because they are the
 reason for it:
 
 - **A source chain stays inside one method.** `method: token` falls through
-  `--vault-token` → `$SOPULI_VAULT_TOKEN` → `$VAULT_TOKEN` → `~/.vault-token`, and
-  stops there. An earlier draft fell through to AppRole after that; falling into a
-  *different* method makes an authentication failure impossible to explain. The
-  `SOPULI_` variable is in the chain because §6 ranks every honoured third-party
-  variable below its `SOPULI_*` equivalent — one order, stated in one place, rather
-  than a second one implied here.
+  `--vault-token-file PATH` → `$SOPULI_VAULT_TOKEN` → `$VAULT_TOKEN` →
+  `~/.vault-token`, and stops there. An earlier draft fell through to AppRole
+  after that; falling into a *different* method makes an authentication failure
+  impossible to explain. The `SOPULI_` variable is in the chain because §6 ranks
+  every honoured third-party variable below its `SOPULI_*` equivalent — one
+  order, stated in one place, rather than a second one implied here.
+- **The flag takes a path, and `--vault-token` is refused** (#145,
+  [ADR-007](../decisions/adr-007-vault-token-flag.md)). A token as a
+  command-line *value* is visible in `ps` and in the Windows process list, which
+  invariant 1 forbids without qualification — and the vault-ref escape in P5's
+  wording cannot apply here, because a ref is resolved *by* an authenticated
+  store. So the command line names the location, exactly as `token: { file: … }`
+  does in the file, and `--vault-token` is declared only so that somebody who
+  types what Vault's own CLI takes gets an explanation instead of "no such
+  option". Accepting it silently would be worse than either: a run that looks
+  like it accounted for authentication and did not. The refusal exits 2 and names
+  all four working sources, not only the file form — a CI job that cannot write a
+  token to disk already has `SOPULI_VAULT_TOKEN`. This chain, and not the settings
+  resolver, is where the flag merges: the flag has no per-store key to layer
+  against, and half a chain in the registry would be a second resolver for one
+  question.
 - **A `file:` MaterialRef is not permission-checked**, unlike the config file
   itself. P4 guards `sopuli.yaml` because the tool chose where it lives and reads
   it on every invocation; `/run/secrets/…` belongs to whatever mounted it, and a
   Kubernetes projected token arrives mode 0644. Refusing to read it would break a
   method P2 lists, so the asymmetry is deliberate rather than an oversight.
+  **`--vault-token-file` is the one exception**: it is a bearer token at a path
+  the operator typed for *this* run, so it gets P4's check and refuses when
+  anyone else can reach the file — the same reasoning P4 itself gives, that the
+  person reading the message is the one who can fix it, here, now. The
+  `~/.vault-token` fallback stays unchecked with the config form: it is Vault's
+  own file, written 0600 by `vault login`, and refusing the file another tool
+  just wrote would refuse the bootstrap ADR-007 names as the answer for a human
+  at a terminal.
 - **Exactly one trailing newline is stripped**, and nothing else. Vault's own CLI
   writes `~/.vault-token` without one and every editor adds one, and a token
   carrying a trailing newline fails with a 403 that mentions no whitespace.
@@ -1118,7 +1141,7 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 | `SOPULI_PROFILE` | active profile (§5) — the usual way a CI job or scheduler selects one |
 | `SOPULI_VAULT` | default vault name |
 | `SOPULI_VAULT_ADDR` | address of the active vault |
-| `SOPULI_VAULT_TOKEN` | token for the active vault |
+| `SOPULI_VAULT_TOKEN` | token for the active vault. Outranked by `--vault-token-file` and by a store's own `token:` (§3a); there is deliberately no flag carrying a token value, so this is the answer where writing one to disk is awkward |
 | `SOPULI_VAULT__VAULT_DEV__ADDR` | address of a *specific* named vault |
 | `SOPULI_DB_ADMIN_USER` / `SOPULI_DB_ADMIN_PASSWORD` | admin credentials (password is low-assurance, flagged in output). The password pair is the default for `admin.auth: { method: env }`; a target may name its own variable with `password_env:` (§3a) |
 | `SOPULI_ORACLE_CLIENT_LIB_DIR` | Oracle client directory for thick mode |
@@ -1903,3 +1926,4 @@ notices until a rotation.
 | C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. **Implemented in #136** for the layers the file supplies, with one correction to the sentence above: `defaults.vaults:` is layer 5 and therefore *outranked* by the declaration, so it fills gaps rather than patching — only a profile's block, at layer 3, patches in the direction the word suggests. The `addr` / `mount` / `kv_version` / `auth` restriction became the complement of the three unpatchable keys, since #135 added three more reach settings the original list could not have named. Applying a profile's block waits on profile activation (#153); the environment's half of the addressing is #154 |
 | C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. `sopuli-run-1.8.schema.json` is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
 | C15 | ~~A binding names a secret and no store, anywhere — refuse, warn, or leave it to plan time?~~ | **decided in #118: mostly plan time, refused only when nothing could ever complete it.** `_vault_for`'s chain resolving to `None` is not always a mistake — a profile's `vault:` or `SOPULI_VAULT` may still supply one, and neither is consulted while bindings are built (§5, §9), so the null can be a real, temporary state rather than an error. Left alone: `config show --resolved` renders it as `-` (§10), and the command that actually needs a store fails there, once a run's profile is known and the answer is exact. Refused at load only for the narrower, genuinely unrecoverable case — `vaults:` declaring nothing at all, so there is no name even a profile or `SOPULI_VAULT` could point at (§10). The naive rule — refuse whenever a binding's store is unnamed — was rejected first: it rejects the legitimate config where one profile sets `vault:` and a run selects a different one that inherits `defaults.vault` instead |
+| C16 | ~~What does `--vault-token` take? Every document treated it as a step in a chain and none said what an operator types after it~~ | **decided: nothing — it takes a path under a different name.** `--vault-token-file PATH` is the command line's position in `method: token`'s chain (§3a), and a bare `--vault-token` is **refused** with a message naming invariant 1 and all four working sources. A token as an option *value* is visible in `ps` and in the Windows process list, and P5's "or a vault ref" escape cannot apply to vault auth itself, since a ref is resolved *by* an authenticated store — the same bootstrap shape P2 already describes for the database admin credential, one layer earlier. `--vault-token-stdin` is deferred rather than rejected, because `--from-stdin` (UC-1 §5) already claims the pipe; the constraint it will have to satisfy is banked in P5 today. Reusing the MaterialRef grammar (`--vault-token env:NAME`) was rejected outright: `env:` / `file:` in a SecretRef means "resolve this via an already-authenticated store", so two identical-looking grammars would have opposite resolution order. Filed as #145 and recorded in [ADR-007](../decisions/adr-007-vault-token-flag.md), which also confirms `vault login` plus `~/.vault-token` as the intended bootstrap for a human at a terminal, and gives the flag's file P4's permission check |

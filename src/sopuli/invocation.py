@@ -30,6 +30,17 @@ that says where the flag goes, and no group-position safety value ever reaches
 the resolver. Invariant 10 cannot be violated here because there is nothing to
 merge.
 
+**One option is declared only to be refused.** ``--vault-token`` is not an
+option this tool has: a token given as a command-line value is visible in ``ps``
+and in the Windows process list, which is invariant 1 without qualification.
+Vault's own CLI accepts ``-token=``, so somebody will type it, and *absent* would
+answer them with "no such option" -- correct, and teaching nothing about why.
+Worse would be accepting it and doing nothing, which is a run that looks like it
+accounted for authentication and did not. So it is declared, hidden, in both
+positions, and :func:`check_vault_token` refuses it before anything else in a run
+happens (#145, ADR-007). The value it carried dies in the parser callback: what
+travels is a boolean saying the flag was written.
+
 **Which position wins where both were given.** The verb's, for the inert options:
 most specific wins, and nothing is at stake. ``--config`` is the exception in
 shape rather than in rule -- it is a list that layers left to right (§9), so both
@@ -50,6 +61,7 @@ import click
 from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockError
+from sopuli.material import TOKEN_FLAG, TOKEN_SOURCES
 from sopuli.output.color import ColorChoice
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
@@ -72,7 +84,14 @@ GROUP = "group"
 #: The global options, as click parameter names. Popped from a verb's keyword
 #: arguments before it is called, so a command cannot read one directly and miss
 #: the layer beneath it.
-GLOBAL_PARAMS = ("config_paths", "output_mode", "color_choice", "dry_run")
+GLOBAL_PARAMS = (
+    "config_paths",
+    "output_mode",
+    "color_choice",
+    "dry_run",
+    "vault_token_file",
+    "vault_token_given",
+)
 
 #: The settings every run consults, whether or not any layer mentioned them.
 #:
@@ -106,6 +125,11 @@ class GlobalOptions:
     output_mode: str | None = None
     color_choice: str | None = None
     dry_run: bool = False
+    vault_token_file: Path | None = None
+    #: Whether ``--vault-token`` was written, and **never what it carried**. The
+    #: parser callback throws the value away, so there is no field on this class,
+    #: on :class:`Invocation`, or anywhere between them that a token could sit in.
+    vault_token_given: bool = False
 
     @classmethod
     def from_params(cls, params: Mapping[str, Any]) -> GlobalOptions:
@@ -115,6 +139,8 @@ class GlobalOptions:
             output_mode=params.get("output_mode"),
             color_choice=params.get("color_choice"),
             dry_run=bool(params.get("dry_run", False)),
+            vault_token_file=params.get("vault_token_file"),
+            vault_token_given=bool(params.get("vault_token_given", False)),
         )
 
 
@@ -129,6 +155,11 @@ class Invocation:
 
     config_paths: tuple[Path, ...] = ()
     color_choice: ColorChoice = ColorChoice.AUTO
+    #: ``--vault-token-file``'s path, or ``None``. A **location**, like every
+    #: other step of §3a's token chain -- the file is read when a run reaches a
+    #: store, by :func:`sopuli.material.resolve_token`, so a command that opens
+    #: no socket never reads it and no invocation ever holds a credential.
+    vault_token_file: Path | None = None
     resolved: Mapping[str, Resolved] = field(default_factory=dict)
     #: The run document, **open from the moment the invocation resolves**. A verb
     #: fills in its sections and finishes it; it is serialised once, by
@@ -277,6 +308,57 @@ def trailing_only(ctx: click.Context, param: click.Parameter, value: bool) -> bo
     )
 
 
+def token_given(ctx: click.Context, param: click.Parameter, value: str | None) -> bool:
+    """Keep *that* ``--vault-token`` was written; drop what it carried.
+
+    The one place the refused flag's value is ever in a variable, and it does not
+    leave this function. Returning the value so that
+    :func:`check_vault_token` could quote it would put a token on
+    :class:`GlobalOptions`, in a traceback frame, and in every ``repr`` of an
+    invocation -- for a message that must not print it anyway.
+
+    Declared with ``flag_value`` and ``is_flag=False``, so click accepts all four
+    ways somebody will write it -- ``--vault-token``, ``--vault-token X``,
+    ``--vault-token=X`` -- and every one of them lands here. A plain flag would
+    leave ``X`` behind as an unexpected argument, and a plain value option would
+    answer the bare form with "requires an argument": both are click explaining
+    its own parser instead of the tool explaining invariant 1.
+    """
+    del ctx, param
+    return value is not None
+
+
+def check_vault_token(group: GlobalOptions, verb: GlobalOptions) -> None:
+    """Refuse ``--vault-token``, and name every source that does work.
+
+    **Exit 2, and not a plan-time capability refusal.** P5 puts exit 2 at "argv
+    did not resolve to a valid command and options", which is exactly this: the
+    flag is not an option the tool has. J7 (issue #8) then makes exit 2 the one
+    code that carries no run document, so this cannot be reported *in* a plan the
+    way a missing capability is -- there is no run to describe. What it keeps
+    from that mechanism is the part that matters: it fires before anything else a
+    run does, ``--dry-run`` included, so a rehearsal cannot come back clean while
+    the flag silently did nothing.
+
+    The hint lists all four working sources rather than recommending the file
+    form alone. A CI job where writing a token to disk is awkward is precisely
+    the case that hits this, and it already has an answer: exporting
+    ``SOPULI_VAULT_TOKEN`` for the run. A hint naming only ``--vault-token-file``
+    would hide it.
+    """
+    if not (group.vault_token_given or verb.vault_token_given):
+        return
+    raise ArgumentError(
+        "--vault-token is not an option: a token given on the command line is "
+        "visible in `ps` and in the Windows process list (P5, invariant 1)",
+        hint=(
+            f"name where the token is instead of passing it. Any of: "
+            f"{', '.join(TOKEN_SOURCES[:-1])}, or `vault login`, which writes "
+            f"{TOKEN_SOURCES[-1]}"
+        ),
+    )
+
+
 def resolve_invocation(
     group: GlobalOptions,
     verb: GlobalOptions,
@@ -290,8 +372,12 @@ def resolve_invocation(
     :func:`_pass_invocation`, which is the only place it is read.
 
     The run document is opened here, at the end, because *here* is the moment the
-    invocation resolves -- which J7 makes the moment a run begins.
+    invocation resolves -- which J7 makes the moment a run begins. Which is why
+    :func:`check_vault_token` is the first thing that happens: a refused flag
+    means the invocation never resolved, so there is nothing yet to describe.
     """
+    check_vault_token(group, verb)
+
     contributions: dict[str, list[Contribution]] = {name: [] for name in RESOLVED_SETTINGS}
     for name, supplied in env_contributions(env).items():
         _wired(contributions, name).extend(supplied)
@@ -306,6 +392,7 @@ def resolve_invocation(
         # `--config` layers files rather than replacing them (§9).
         config_paths=(*group.config_paths, *verb.config_paths),
         color_choice=ColorChoice(_first_given(verb.color_choice, group.color_choice)),
+        vault_token_file=_first_path(verb.vault_token_file, group.vault_token_file),
         resolved=resolve_all(contributions),
     )
     return replace(invocation, document=open_document(command, invocation))
@@ -393,6 +480,27 @@ def _options(func: F, *, hidden: bool) -> F:
         help="Colour in text output. auto follows the terminal; NO_COLOR disables"
         " it.  [default: auto]",
     )
+    vault_token_file = click.option(
+        TOKEN_FLAG,
+        "vault_token_file",
+        type=click.Path(path_type=Path),
+        default=None,
+        hidden=hidden,
+        help="File holding the vault token. The command line's position in the"
+        " token chain; the token itself is never an option value.",
+    )
+    # Always hidden, in both positions: the help must not advertise a flag whose
+    # only behaviour is to refuse. Somebody arrives here by typing what Vault's
+    # own CLI takes, not by reading `--help`.
+    vault_token = click.option(
+        "--vault-token",
+        "vault_token_given",
+        is_flag=False,
+        flag_value="",
+        default=None,
+        hidden=True,
+        callback=token_given,
+    )
     dry_run = (
         click.option(
             "--dry-run",
@@ -410,7 +518,7 @@ def _options(func: F, *, hidden: bool) -> F:
             help="Print the plan and make no changes.",
         )
     )
-    return color(output(dry_run(config(func))))
+    return color(output(vault_token(vault_token_file(dry_run(config(func))))))
 
 
 def _pass_invocation(func: F) -> F:
@@ -596,6 +704,20 @@ def _positioned(verb: str | None, group: str | None, *, flag: str) -> Contributi
         return Contribution(Layer.CLI, verb, f"{flag} ({VERB})")
     if group is not None:
         return Contribution(Layer.CLI, group, f"{flag} ({GROUP})")
+    return None
+
+
+def _first_path(verb: Path | None, group: Path | None) -> Path | None:
+    """The same rule again, for the one global option that carries a path.
+
+    ``--vault-token-file`` is not a setting, so it does not go through the
+    resolver: §3a's token chain *is* its merge, and registering half of that
+    chain here would leave the tool with two of them. It still accepts both
+    parser positions, and settles them the way everything else does.
+    """
+    for value in (verb, group):
+        if value is not None:
+            return value
     return None
 
 

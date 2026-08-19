@@ -34,10 +34,29 @@ from pathlib import Path
 
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import MaterialRef
+from sopuli.config.permissions import check_permissions
 from sopuli.secrets import Secret
 
 #: Vault's own convention, and the last step of ``method: token``'s chain.
 TOKEN_FILE = "~/.vault-token"
+
+#: The flag that occupies the command line's position in that chain, decided in
+#: #145. It takes a **path**, never a token: a token as a command-line value is
+#: visible in ``ps`` and in the Windows process list, which is invariant 1.
+#: :mod:`sopuli.invocation` declares it and refuses the bare ``--vault-token``
+#: somebody will type instead, because Vault's own CLI accepts ``-token=``.
+TOKEN_FLAG = "--vault-token-file"
+
+#: How the refusal and the exhausted-chain hint name every place a token may
+#: come from. All four, in chain order, because somebody in a CI job where
+#: writing a token to disk is awkward needs to know the variables already work --
+#: a hint naming only the flag reads like the file form is the only way out.
+TOKEN_SOURCES = (
+    f"{TOKEN_FLAG} PATH",
+    "$SOPULI_VAULT_TOKEN",
+    "$VAULT_TOKEN",
+    TOKEN_FILE,
+)
 
 #: The token chain of §3a, ranked. ``SOPULI_VAULT_TOKEN`` is not in §3a's
 #: sentence and belongs here anyway: §6 lists it, and says the honoured
@@ -91,15 +110,24 @@ def resolve_token(
     *,
     ref: MaterialRef | None,
     env: Mapping[str, str],
-    flag: Secret | None = None,
+    token_file: Path | None = None,
     home: Path | None = None,
     where: str,
 ) -> Secret:
     """``method: token``'s source chain (§3a), in order, stopping at the end.
 
     ``token:`` written in the file wins outright -- a chain exists because the
-    key is *optional*, not to be preferred over it. Then ``--vault-token``, then
-    the variables in :data:`TOKEN_VARIABLES`, then ``~/.vault-token``.
+    key is *optional*, not to be preferred over it. Then
+    :data:`TOKEN_FLAG`'s path, then the variables in :data:`TOKEN_VARIABLES`,
+    then ``~/.vault-token``.
+
+    ``token_file`` is a **path and not a** :class:`~sopuli.secrets.Secret`, which
+    is #145's decision made structural: there is no parameter anywhere on this
+    chain that a command-line *value* could arrive on, so invariant 1 is not
+    something a future caller has to remember. It is also why resolution happens
+    here rather than at the CLI boundary -- the flag stays a location for as long
+    as every other step in the chain does, and a run that never reaches a store
+    never reads the file.
 
     **The chain stays inside one method**, and that is the property worth
     protecting. An earlier draft fell through to AppRole after the last step;
@@ -109,8 +137,8 @@ def resolve_token(
     """
     if ref is not None:
         return resolve(ref, env=env, where=where)
-    if flag is not None:
-        return flag
+    if token_file is not None:
+        return _from_token_file(token_file, where=where)
     for variable in TOKEN_VARIABLES:
         if env.get(variable):
             return Secret(env[variable])
@@ -134,10 +162,65 @@ def resolve_token(
             f"{where}: no token, and none of the places it is looked for had one",
             at=ROOT,
             hint=(
-                f"write `token: {{ file: … }}` on the store, pass --vault-token, set "
-                f"{' or '.join(TOKEN_VARIABLES)}, or log in so that {TOKEN_FILE} exists"
+                f"write `token: {{ file: … }}` on the store, or supply one of: "
+                f"{', '.join(TOKEN_SOURCES[:-1])}, or `vault login` so that "
+                f"{TOKEN_FILE} exists"
             ),
         ) from error
+
+
+def _from_token_file(path: Path, *, where: str) -> Secret:
+    """:data:`TOKEN_FLAG`'s file: read like any other, and permission-checked.
+
+    **The one** ``file:`` **source that is permission-checked**, and the
+    asymmetry is deliberate rather than an oversight. ``01-configuration.md``
+    §3a keeps a config-written ``token: { file: … }`` unchecked because that path
+    belongs to whatever provisioned it -- a Kubernetes projected token arrives
+    mode 0644, and refusing to read it would break a method P2 lists. The
+    ``~/.vault-token`` fallback stays unchecked for a different reason: it is
+    Vault's own file, written 0600 by ``vault login``, and refusing the file
+    another tool just wrote is refusing the bootstrap path ADR-007 names as the
+    answer for a human at a terminal.
+
+    What is left is the path an operator typed for *this* run, which is exactly
+    P4's own case for the config file: the person reading the message is the one
+    who can fix it, here, now.
+
+    **Checked after reading, not before.** The check asks whether *others* can
+    read the file, never whether we may -- so establishing that the file is there
+    first costs nothing and buys the precise message ``_from_file`` already has
+    for missing, empty, non-UTF-8 and unreadable. Asking ``path.exists()`` first
+    would answer those worse and open a window between the question and the read
+    besides. The secret is in memory either way; what the refusal prevents is
+    *using* it.
+
+    **The refusal names the file**, in this module's own shape rather than P4's:
+    the path as the operator wrote it goes in the message, and what it expanded
+    to goes in the hint, exactly as :func:`_from_file`'s four failures already do.
+    Not :attr:`~sopuli.config.errors.ConfigError.source`, which the boundary
+    renders as a ``file:line:col`` prefix and which means *the document being
+    parsed* everywhere else -- a token file is not one, and putting it there
+    would print the path in front of the ``vault "..."`` breadcrumb that says
+    which store asked. The flag goes in the hint too: an operator with a token
+    file, a ``token:`` key and two variables in play needs to know which of the
+    four the run had in force.
+    """
+    wrote = str(path)
+    secret = _from_file(path, where=where, wrote=wrote)
+    resolved = path.expanduser()
+    try:
+        check_permissions(resolved, what=f"the token file {wrote}")
+    except ConfigError as error:
+        raise MaterialError(
+            f"{where}: {error.message}",
+            at=ROOT,
+            hint="; ".join(
+                part
+                for part in (error.hint, f"{TOKEN_FLAG} named it, looked in {resolved}")
+                if part
+            ),
+        ) from error
+    return secret
 
 
 def _from_env(name: str, *, env: Mapping[str, str], where: str) -> Secret:

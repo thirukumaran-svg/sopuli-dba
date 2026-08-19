@@ -73,8 +73,10 @@ class Contribution:
     config layer points at a key path rather than saying "config".
 
     Keeping it a location is also what puts it inside ``03-json-output.md`` §4's
-    redaction rule for free: ``--vault-token`` names the flag, and no code path
-    puts a token here at all.
+    redaction rule for free: there is nowhere here for a value, so no code path
+    can put a credential in one. No setting is secret-valued today -- #145 settled
+    that the command line names a token's *location* (``--vault-token-file``) and
+    never carries one -- and this holds whether or not that stays true.
     """
 
     layer: Layer

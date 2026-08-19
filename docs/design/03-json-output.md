@@ -277,10 +277,21 @@ Two rules about the pair, both load-bearing:
 **`source_detail` is a location, never a value.** The flag as typed (`-o` records
 as `-o`), the variable name, the config key. It exists so somebody can find the
 thing in their own command line or CI job definition — which is why the config
-layer points at `profiles.ci.verify.method` rather than just `"profile"`.
-`--vault-token` names the flag; the token never appears. That keeps the field
-inside §4's redaction rule for free, because no code path puts a value there at
-all.
+layer points at `profiles.ci.verify.method` rather than just `"profile"`. That
+keeps the field inside §4's redaction rule for free, because no code path puts a
+value there at all.
+
+This paragraph used to offer `--vault-token` as the example of a flag whose
+*value* is a secret and whose `source_detail` is only its name. #145 removed the
+example by removing the flag: `--vault-token-file PATH` is what exists, it takes
+a location, and `--vault-token` is refused (§3a of `01-configuration.md`,
+[ADR-007](../decisions/adr-007-vault-token-flag.md)). Worth recording, because
+the two rules were easy to read as one and are not: this one is about what may
+appear **in the document**, and invariant 1 is about what may appear **in argv**.
+A flag carrying a token would have satisfied this rule perfectly and still been
+forbidden. Neither `--vault-token-file` nor the rest of §3a's token chain appears
+in `invocation.options` at all — the chain is its own merge, resolved when a run
+reaches a store, and nothing in the settings registry claims to have settled it.
 
 **For a ratcheted setting, `source` names the layer that determined the effective
 value, not the highest layer present.** If `defaults.safety.readonly` is `true`

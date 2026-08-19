@@ -135,6 +135,57 @@ def test_config_layers_across_both_positions(
     ]
 
 
+def test_the_token_file_flag_takes_both_positions_and_the_verb_wins() -> None:
+    """``--vault-token-file`` is not a setting, and still follows the same rule.
+
+    §3a's token chain *is* its merge -- a config-written ``token:``, then this
+    flag, then the variables, then ``~/.vault-token`` -- so registering half of
+    it in ``sopuli/settings/`` would leave the tool with two resolvers for one
+    question (#145). What it shares with every other inert global option is that
+    both click parsers accept it and the more specific position wins.
+    """
+    group = invocation.GlobalOptions(vault_token_file=Path("group.token"))
+    verb = invocation.GlobalOptions(vault_token_file=Path("verb.token"))
+
+    assert invocation.resolve_invocation(group, verb, env={}).vault_token_file == Path("verb.token")
+    assert invocation.resolve_invocation(
+        group, invocation.GlobalOptions(), env={}
+    ).vault_token_file == Path("group.token")
+    assert (
+        invocation.resolve_invocation(
+            invocation.GlobalOptions(), invocation.GlobalOptions(), env={}
+        ).vault_token_file
+        is None
+    )
+
+
+def test_the_token_file_flag_is_not_a_reported_setting(
+    runner: CliRunner, config_file: Path, tmp_path: Path
+) -> None:
+    """And therefore does not appear in ``invocation.options``.
+
+    Reporting it there would claim the resolver settled it, which is the lie
+    ``_wired`` exists to prevent for the other direction: the chain that settles
+    it runs when a store is reached, not here.
+    """
+    result = runner.invoke(
+        cli,
+        [
+            "config",
+            "show",
+            "--config",
+            str(config_file),
+            "--output",
+            "json",
+            "--vault-token-file",
+            str(tmp_path / "token"),
+        ],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "vault_token_file" not in json.dumps(options(result))
+
+
 # --------------------------------------------------------- the safety trap ---
 
 

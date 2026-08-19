@@ -20,6 +20,7 @@ interpolating one gets ``***`` rather than the credential (invariant 2).
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -78,13 +79,20 @@ class MethodNotImplementedError(StoreError):
     exit_code = ExitCode.CONFIG_INVALID
 
 
-def authenticate(vault: Vault, *, env: Mapping[str, str], flag: Secret | None = None) -> Secret:
+def authenticate(vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None) -> Secret:
     """A token for ``vault``, by whichever method its ``auth:`` names.
 
-    ``flag`` is ``--vault-token``'s value, which does not exist yet: what the
-    flag *takes* is an open decision (#145), because a token as a command-line
-    value is exactly what invariant 1 forbids. The parameter is here so that
-    answering it touches the CLI layer and not this one.
+    ``token_file`` is ``--vault-token-file``'s path (#145, ADR-007). A **path**
+    and not a :class:`~sopuli.secrets.Secret`: a token as a command-line value is
+    exactly what invariant 1 forbids, so the flag names where the token lives and
+    the value is read on the chain in :func:`~sopuli.material.resolve_token`,
+    beside every other step of it.
+
+    It reaches ``method: token`` and nothing else, the same way ``$VAULT_TOKEN``
+    does. A store authenticating by AppRole is not asked for a token, so a run
+    naming both a token file and an AppRole store is not a contradiction to
+    refuse -- it is a chain with no position in force, exactly as an inherited
+    ``$VAULT_TOKEN`` already is.
 
     An absent ``auth:`` block means ``method: token``, which is what makes a
     laptop with `~/.vault-token` work against a two-line config. §3a's table
@@ -103,7 +111,10 @@ def authenticate(vault: Vault, *, env: Mapping[str, str], flag: Secret | None = 
         )
     if method == "token":
         return resolve_token(
-            ref=auth.token if auth is not None else None, env=env, flag=flag, where=where
+            ref=auth.token if auth is not None else None,
+            env=env,
+            token_file=token_file,
+            where=where,
         )
     if method == "approle":
         return _approle(vault, _required(auth), env=env, where=where)
@@ -331,7 +342,7 @@ def _hint(status: int) -> str:
 
 
 def build_authenticated_transport(
-    vault: Vault, *, env: Mapping[str, str], flag: Secret | None = None
+    vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
 ) -> Transport:
     """A transport carrying a token obtained by ``vault``'s own auth method."""
-    return build_transport(vault, token=authenticate(vault, env=env, flag=flag))
+    return build_transport(vault, token=authenticate(vault, env=env, token_file=token_file))

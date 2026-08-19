@@ -13,14 +13,19 @@ places.
 
 from __future__ import annotations
 
+import inspect
 import os
 import pathlib
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from sopuli.config.model import MaterialRef
 from sopuli.material import (
+    TOKEN_FLAG,
+    TOKEN_SOURCES,
     TOKEN_VARIABLES,
     MaterialError,
     resolve,
@@ -29,6 +34,41 @@ from sopuli.material import (
 from sopuli.secrets import Secret
 
 WHERE = 'vault "vault-prod" auth method "approle" key "secret_id"'
+
+posix_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX file modes; Windows has no st_mode worth reading",
+)
+windows_only = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows ACLs; there is no DACL to walk on this platform",
+)
+
+
+def owner_only(path: Path) -> Path:
+    """``path``, reachable by nobody but its owner, on either platform.
+
+    The check ``--vault-token-file`` goes through is P4's, so a token file a test
+    means to be *acceptable* has to actually be locked down -- a file written
+    under ``tmp_path`` on POSIX inherits the umask and is usually 0644.
+    """
+    if sys.platform == "win32":
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{os.environ['USERNAME']}:F"],
+            capture_output=True,
+            check=True,
+        )
+    else:
+        path.chmod(0o600)
+    return path
+
+
+def token_file(directory: Path, value: str = "s.from-flag") -> Path:
+    """A token file the permission check accepts."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "token"
+    path.write_text(value, encoding="utf-8")
+    return owner_only(path)
 
 
 def env_ref(name: str = "SOPULI_VAULT_SECRET_ID") -> MaterialRef:
@@ -224,7 +264,7 @@ def test_a_written_token_wins_outright(tmp_path: Path) -> None:
     secret = resolve_token(
         ref=file_ref(path),
         env={"VAULT_TOKEN": "s.from-env"},
-        flag=Secret("s.from-flag"),
+        token_file=token_file(tmp_path / "flag"),
         where=WHERE,
     )
 
@@ -233,10 +273,168 @@ def test_a_written_token_wins_outright(tmp_path: Path) -> None:
 
 def test_the_flag_outranks_the_environment(tmp_path: Path) -> None:
     secret = resolve_token(
-        ref=None, env={"VAULT_TOKEN": "s.from-env"}, flag=Secret("s.from-flag"), where=WHERE
+        ref=None,
+        env={"VAULT_TOKEN": "s.from-env"},
+        token_file=token_file(tmp_path),
+        where=WHERE,
     )
 
     assert secret.reveal() == "s.from-flag"
+
+
+# ------------------------------------------------ --vault-token-file (#145) ---
+
+
+def test_the_flag_names_a_path_and_never_a_token() -> None:
+    """#145's decision, as the only shape the signature admits.
+
+    ``resolve_token`` takes a *path*; there is no parameter anywhere on this
+    chain that a command-line **value** could arrive on, which is what makes
+    invariant 1 structural here rather than remembered. The assertion is on the
+    signature because that is the thing a future edit would break.
+    """
+    parameters = inspect.signature(resolve_token).parameters
+
+    assert parameters["token_file"].annotation == "Path | None"
+    assert "flag" not in parameters
+
+
+def test_the_flags_file_is_read_like_any_other(tmp_path: Path) -> None:
+    """One trailing newline stripped, bytes rather than text -- the token file
+    the flag names gets the same treatment as the one the config names."""
+    path = tmp_path / "token"
+    path.write_bytes(b"s.from-flag\n")
+    owner_only(path)
+
+    assert resolve_token(ref=None, env={}, token_file=path, where=WHERE).reveal() == "s.from-flag"
+
+
+def test_a_tilde_in_the_flags_path_is_quoted_as_written_and_expanded_in_the_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_from_file`'s split, applied to the refusal as well as to the read.
+
+    The message quotes the line the operator typed and the hint shows where it
+    looked, so a `~` that expanded somewhere surprising is visible rather than
+    silently substituted.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    (tmp_path / "tok").write_text("s.exposed", encoding="utf-8")
+    if sys.platform != "win32":
+        (tmp_path / "tok").chmod(0o644)
+    else:
+        subprocess.run(
+            ["icacls", str(tmp_path / "tok"), "/grant", "*S-1-1-0:(R)"],
+            capture_output=True,
+            check=True,
+        )
+
+    written = Path("~/tok")
+
+    with pytest.raises(MaterialError) as caught:
+        resolve_token(ref=None, env={}, token_file=written, where=WHERE)
+
+    message = str(caught.value)
+    # `str(written)`, not the literal: click hands the flag over as a `Path`, so
+    # what the operator "wrote" is already in the platform's own spelling.
+    assert str(written) in message
+    assert str(tmp_path / "tok") in message
+
+
+def test_a_missing_file_named_by_the_flag_says_so_rather_than_ending_the_chain(
+    tmp_path: Path,
+) -> None:
+    """Naming a file that is not there is a typo, not an exhausted chain.
+
+    Falling through to the variables would be the worse answer twice over: the
+    run would authenticate with something the operator did not ask for, or fail
+    with "no token anywhere" against a path they can see in their own shell
+    history.
+    """
+    with pytest.raises(MaterialError) as caught:
+        resolve_token(
+            ref=None,
+            env={"VAULT_TOKEN": "s.from-env"},
+            token_file=tmp_path / "gone",
+            where=WHERE,
+        )
+
+    assert "no file at" in str(caught.value)
+
+
+@posix_only
+def test_a_token_file_others_can_read_is_refused(tmp_path: Path) -> None:
+    """P4's check, on the one ``file:`` source that gets it (ADR-007).
+
+    A bearer token 0644 on a shared box is what the config-file check exists to
+    prevent, one layer down -- and unlike a Kubernetes projected token, this path
+    is one the operator typed for this run and can fix now.
+
+    The refusal has to name the *file*, not only the flag: "chmod 600 the file"
+    is not actionable against a run with a token file, a `token:` key and two
+    variables in play. Which one was in force is the flag's job to say, and which
+    file it was is the path's.
+    """
+    path = tmp_path / "token"
+    path.write_text("s.exposed", encoding="utf-8")
+    path.chmod(0o644)
+
+    with pytest.raises(MaterialError) as caught:
+        resolve_token(ref=None, env={}, token_file=path, where=WHERE)
+
+    message = str(caught.value)
+    assert str(path) in message
+    assert "0644" in message
+    assert TOKEN_FLAG in message
+    assert "chmod 600" in message
+
+
+@windows_only
+def test_a_token_file_granted_to_a_third_party_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "token"
+    path.write_text("s.exposed", encoding="utf-8")
+    owner_only(path)
+    subprocess.run(
+        ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],  # Everyone, read
+        capture_output=True,
+        check=True,
+    )
+
+    with pytest.raises(MaterialError) as caught:
+        resolve_token(ref=None, env={}, token_file=path, where=WHERE)
+
+    message = str(caught.value)
+    assert str(path) in message
+    assert TOKEN_FLAG in message
+
+
+@posix_only
+def test_a_config_written_token_file_is_still_not_permission_checked(tmp_path: Path) -> None:
+    """§3a's asymmetry, which ADR-007 keeps rather than widens.
+
+    ``/run/secrets/...`` belongs to whatever mounted it and a Kubernetes
+    projected token arrives 0644. Refusing it would break a method P2 lists, so
+    only the path the *command line* names is checked.
+    """
+    path = tmp_path / "mounted-token"
+    path.write_text("s.mounted", encoding="utf-8")
+    path.chmod(0o644)
+
+    assert resolve_token(ref=file_ref(path), env={}, where=WHERE).reveal() == "s.mounted"
+
+
+@posix_only
+def test_the_home_token_file_is_still_not_permission_checked(tmp_path: Path) -> None:
+    """The last step of the chain is Vault's own file, written 0600 by ``vault
+    login`` -- and that login is the bootstrap ADR-007 names as the answer for a
+    human at a terminal. Refusing to read the file another tool just wrote for us
+    would refuse that path."""
+    path = tmp_path / ".vault-token"
+    path.write_text("s.from-home", encoding="utf-8")
+    path.chmod(0o644)
+
+    assert resolve_token(ref=None, env={}, home=tmp_path, where=WHERE).reveal() == "s.from-home"
 
 
 def test_the_sopuli_variable_outranks_the_third_party_one() -> None:
@@ -289,9 +487,10 @@ def test_the_chain_ends_rather_than_falling_into_another_method(tmp_path: Path) 
         resolve_token(ref=None, env={}, home=tmp_path, where=WHERE)
 
     message = str(caught.value)
-    assert "--vault-token" in message
-    assert "VAULT_TOKEN" in message
-    assert "~/.vault-token" in message
+    # All four sources, not just the flag: somebody in a CI job where writing a
+    # token to disk is awkward needs to know the variables already work.
+    for source in TOKEN_SOURCES:
+        assert source in message
     # Every step it tried, and nothing about a method it did not.
     assert "approle" not in message.lower().replace(WHERE.lower(), "")
 

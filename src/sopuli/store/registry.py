@@ -28,6 +28,7 @@ import importlib
 import importlib.util
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import ModuleType
 
 from sopuli.config.errors import ConfigError
@@ -208,7 +209,7 @@ def resolve(vault: Vault) -> ModuleType:
         raise
 
 
-def connect(vault: Vault, *, env: Mapping[str, str]) -> SecretStore:
+def connect(vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None) -> SecretStore:
     """An authenticated store for ``vault``, whichever backend serves it.
 
     **This settles what a backend module must expose**, which :func:`resolve`
@@ -217,7 +218,7 @@ def connect(vault: Vault, *, env: Mapping[str, str]) -> SecretStore:
 
     .. code-block:: python
 
-        def connect(vault: Vault, *, env: Mapping[str, str], flag: Secret | None = None)
+        def connect(vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None)
             -> SecretStore
 
     and nothing else is required of it. :mod:`sopuli.store.hashicorp` defines it
@@ -230,11 +231,13 @@ def connect(vault: Vault, *, env: Mapping[str, str]) -> SecretStore:
     function that reaches for :data:`os.environ` itself cannot be tested against
     a different one.
 
-    ``flag`` is not forwarded, because there is no flag yet -- what
-    ``--vault-token`` takes is #145, and a parameter wired through to an option
-    that does not exist would be a decision made in a signature. A caller with a
-    credential in hand goes to the backend directly, which is what
-    :func:`sopuli.store.hashicorp.open_store` is for.
+    ``token_file`` is ``--vault-token-file``'s path, forwarded since #145
+    answered what the flag takes: a **path**, because a token as a command-line
+    value is what invariant 1 forbids. It stays a location all the way down --
+    the value is read on §3a's chain in :func:`sopuli.material.resolve_token` --
+    so no signature between the CLI and the chain has a slot a credential could
+    sit in. A caller that already holds a token goes to the backend directly,
+    which is what :func:`sopuli.store.hashicorp.open_store` is for.
 
     Calling this is what makes a run *reach* a store, which is the line
     ``01-configuration.md`` §3a draws: declaring a store is config, and reaching
@@ -246,5 +249,5 @@ def connect(vault: Vault, *, env: Mapping[str, str]) -> SecretStore:
     # is a bug in this project, and an `AttributeError` naming the module is a
     # better report of it than a message telling the operator to install
     # something -- the same reasoning as `resolve`'s third row.
-    store: SecretStore = module.connect(vault, env=env)
+    store: SecretStore = module.connect(vault, env=env, token_file=token_file)
     return store

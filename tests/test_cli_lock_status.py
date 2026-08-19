@@ -118,7 +118,9 @@ def with_locks(monkeypatch: pytest.MonkeyPatch) -> Stores:
             store = stores.setdefault(key.store, MemoryStore())
             store.write(lock_path(key), data, cas=0)
 
-        def fake_connect(vault: Vault, *, env: Mapping[str, str]) -> SecretStore:
+        def fake_connect(
+            vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
+        ) -> SecretStore:
             return stores.setdefault(vault.name, MemoryStore())
 
         monkeypatch.setattr("sopuli.cli.connect", fake_connect)
@@ -246,6 +248,37 @@ def test_the_selection_is_recorded_in_the_document(
     result = run(runner, write_config(CONFIG), "--select", "env=dev", "--output", "json")
 
     assert json.loads(result.output)["invocation"]["selection"]["select"] == {"env": "dev"}
+
+
+def test_the_token_file_flag_reaches_the_store(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """#145's wiring, end to end: the flag is a *location* all the way down.
+
+    `lock status` is the first verb that opens a socket, so it is the first one
+    where the command line can supply a token at all. What is asserted is what
+    arrives at the backend -- a path, never a `Secret` -- because that is the
+    property invariant 1 rests on: no signature between the parser and §3a's
+    chain has a slot a credential could sit in.
+    """
+    seen: list[Path | None] = []
+
+    def fake_connect(
+        vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
+    ) -> SecretStore:
+        seen.append(token_file)
+        return MemoryStore()
+
+    monkeypatch.setattr("sopuli.cli.connect", fake_connect)
+    path = tmp_path / "token"
+
+    result = run(runner, write_config(CONFIG), "--vault-token-file", str(path))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert seen == [path, path]  # one per declared store
 
 
 def test_it_takes_no_lock_of_its_own(

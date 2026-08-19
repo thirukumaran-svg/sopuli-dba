@@ -223,8 +223,10 @@ def test_a_clean_run_has_no_ratchet_diagnostics() -> None:
 def test_a_secret_valued_setting_shows_its_layer_and_never_its_value() -> None:
     """Invariant 2, from the direction this view could have broken it.
 
-    No setting is secret-valued today -- `--vault-token` does not exist -- which
-    is exactly why this is here now: the view renders whatever the resolver hands
+    No setting is secret-valued today, and #145 makes that more than an accident:
+    the command line names a token's *location* and never carries one, and §3a's
+    chain is resolved outside the settings registry. Which is exactly why this is
+    here now: the view renders whatever the resolver hands
     it, and the day one arrives, the redaction has to already be true. It is,
     because the value is rendered through `render_value`, which stringifies, and
     a `Secret` stringifies to `***`. There is no branch here that could be

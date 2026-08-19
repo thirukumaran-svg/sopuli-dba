@@ -21,7 +21,9 @@ can read a value that skipped the layers beneath it.
 as a command-line value — it is visible in ``ps`` and in the Windows process
 list. Passwords arrive from stdin, a file, or a vault reference.
 ``tests/test_cli_smoke.py`` walks the command tree and fails if an option name
-ever looks like a credential.
+ever looks like a credential — with two exceptions it checks rather than trusts:
+``--vault-token-file`` carries a *path*, and ``--vault-token`` exists only to be
+refused (#145, ADR-007).
 
 **One command prints a password on purpose.** ``policy sample --reveal`` is
 invariant 2's third exception, because a sample is not a credential: nothing
@@ -122,6 +124,8 @@ def cli(
     config_paths: tuple[Path, ...],
     output_mode: str | None,
     color_choice: str | None,
+    vault_token_file: Path | None,
+    vault_token_given: bool,
 ) -> None:
     """Manage database account credentials with a vault as the master record."""
     # The group's copies of the global options are hidden and do nothing on their
@@ -134,6 +138,8 @@ def cli(
         config_paths=config_paths,
         output_mode=output_mode,
         color_choice=color_choice,
+        vault_token_file=vault_token_file,
+        vault_token_given=vault_token_given,
     )
 
 
@@ -470,7 +476,7 @@ def lock_status(
     config = filter_estate(config, match)
 
     keys = declared_locks(config)
-    stores = _stores_for({key.store for key in keys}, config)
+    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
     states = survey(keys, stores=stores)
     mode = mode_of(stores)
 
@@ -487,11 +493,18 @@ def lock_status(
     return render_status(paths, states, match=match, mode=mode)
 
 
-def _stores_for(names: set[str], config: Config) -> Mapping[str, SecretStore]:
+def _stores_for(
+    names: set[str], config: Config, *, token_file: Path | None = None
+) -> Mapping[str, SecretStore]:
     """Open every store a survey needs, and only those.
 
     One connection per store rather than one per path: a store is a client, and
     an estate with forty paths in one vault should authenticate once.
+
+    ``token_file`` is ``--vault-token-file``'s path, forwarded as a location: it
+    reaches ``method: token`` stores and is read there, on §3a's chain, so this
+    is the first command line able to authenticate a store without a variable or
+    a file in a fixed place (#145).
 
     The names are resolved against `vaults:` with the same `dangling` message
     every other name in the file gets. `references.py` has already checked them,
@@ -502,7 +515,10 @@ def _stores_for(names: set[str], config: Config) -> Mapping[str, SecretStore]:
     declared = {vault.name: vault for vault in config.vaults}
     for name in sorted(names):
         dangling(name, set(declared), noun="vault", section="vaults", at=ROOT.key("vaults"))
-    return {name: connect(declared[name], env=os.environ) for name in sorted(names)}
+    return {
+        name: connect(declared[name], env=os.environ, token_file=token_file)
+        for name in sorted(names)
+    }
 
 
 @config_group.command("validate")

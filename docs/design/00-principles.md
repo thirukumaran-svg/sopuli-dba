@@ -258,6 +258,19 @@ Sources, in order of preference:
 
 Storing the admin password in the config file is not supported at all.
 
+**The same shape, one layer earlier: the vault's own credential.** The list above
+is about reaching the *database*; reaching the *store* has the identical problem,
+and it is worth naming as the same problem rather than discovering it twice. A
+SecretRef cannot be the answer there — a ref is resolved *by* an authenticated
+store, so it cannot be what authenticates one — which is the list above with its
+second entry struck out, since the second entry is the circular one. What is left
+is external/machine identity (AppRole, Kubernetes, instance principal), a file
+in its place, an interactive act, and the environment. `--vault-token-file` is the
+command-line form of the file case, and it takes a **path** for the reason
+invariant 1 gives: a token as an option *value* is visible in `ps`. Decided in
+issue #145, recorded in [ADR-007](../decisions/adr-007-vault-token-flag.md);
+`01-configuration.md` §3a is the specification.
+
 ---
 
 ## P3. Structured configuration file with documented precedence
@@ -508,7 +521,16 @@ tool safe to run from a scheduler.
 **Secret hygiene**
 
 - Secrets are never passed as command-line arguments (visible in `ps` and in the
-  Windows process list). They come from stdin, a file, or a vault ref.
+  Windows process list). They come from stdin, a file, or a vault ref. Where a
+  flag must name a secret it names its **location**: `--vault-token-file PATH`,
+  never `--vault-token VALUE` (#145). The vault-ref branch of this rule does not
+  reach vault auth itself — see P2's bootstrap note.
+- **One stream, one reader.** stdin carries at most one secret per run, and a
+  command that would need two refuses at plan time rather than reading them in an
+  order nobody can see. This is banked before anything needs it, because the
+  collision is already there: `--from-stdin` (UC-1 §5) claims the pipe for a
+  supplied password on `creds apply`, so there is no `--vault-token-stdin` — the
+  rule has to exist before that flag can, not after somebody discovers the clash.
 - Never written to temp files, never logged, never in exception messages.
   Redaction is applied at the output sink, not hopefully at each call site.
 - On Oracle the tool must document that `ALTER USER ... IDENTIFIED BY` text can

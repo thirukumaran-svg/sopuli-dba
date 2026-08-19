@@ -18,6 +18,7 @@ from click.testing import CliRunner
 
 from sopuli import cli as cli_module
 from sopuli import invocation as invocation_module
+from sopuli import material
 from sopuli.cli import cli
 from sopuli.config import ConfigError
 from sopuli.exit_codes import ExitCode
@@ -656,6 +657,20 @@ def _write(path: Path, text: str) -> Path:
 
 SECRET_LIKE = ("password", "passwd", "secret", "token", "credential", "apikey", "api-key")
 
+#: The two secret-like option names that are allowed, each with the reason it
+#: carries no secret and a test below that holds it to that reason.
+#:
+#: Kept as a literal rather than as a rule over the names, so adding a third is a
+#: line somebody has to write and defend. A suffix rule -- "anything ending
+#: `-file` names a location" -- would let `--password-file` in silently, and
+#: whether *that* is acceptable is UC-1's decision to make, not this list's.
+SECRET_LIKE_EXCEPTIONS = {
+    #: Takes a path (#145, ADR-007). `test_the_token_flag_takes_a_path` holds it.
+    "--vault-token-file",
+    #: Exists only to be refused. `test_the_bare_token_flag_is_refused` holds it.
+    "--vault-token",
+}
+
 
 def _command_paths(command: click.Command, path: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
     """Every invocable path in the tree, including the root."""
@@ -687,9 +702,113 @@ def test_no_command_accepts_a_secret_on_the_command_line() -> None:
     offenders = [
         (where, opt)
         for where, opt in _walk(cli)
-        if any(token in opt.lower().lstrip("-") for token in SECRET_LIKE)
+        if opt not in SECRET_LIKE_EXCEPTIONS
+        and any(token in opt.lower().lstrip("-") for token in SECRET_LIKE)
     ]
     assert not offenders, f"secret-like CLI options are forbidden: {offenders}"
+
+
+def test_every_secret_like_exception_is_actually_declared() -> None:
+    """The allowlist may not outlive the options it excuses.
+
+    An entry for an option nobody declares any more is an entry that would
+    silently excuse a *future* option of the same name -- which is exactly the
+    hole the guard above exists to close.
+    """
+    declared = {opt for _where, opt in _walk(cli)}
+
+    assert declared >= SECRET_LIKE_EXCEPTIONS
+
+
+def test_the_token_flag_takes_a_path(runner: CliRunner, show: list[str], tmp_path: Path) -> None:
+    """`--vault-token-file` is the command line's position in §3a's token chain,
+    and what it takes is a location. Accepted by a command that never reaches a
+    store, because the flag is a location until something needs the value."""
+    result = runner.invoke(cli, [*show, "--vault-token-file", str(tmp_path / "token")])
+
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        ["--vault-token"],
+        ["--vault-token", "s.notatoken"],
+        ["--vault-token=s.notatoken"],
+    ],
+    ids=["bare", "separate value", "attached value"],
+)
+def test_the_bare_token_flag_is_refused(
+    runner: CliRunner, show: list[str], written: list[str]
+) -> None:
+    """#145: refused rather than absent, and refused rather than ignored.
+
+    All three spellings, because the one somebody types is whichever Vault's own
+    CLI taught them. A plain flag would answer the second with "unexpected extra
+    argument" and a plain value option would answer the first with "requires an
+    argument" -- click explaining its parser instead of the tool explaining
+    invariant 1.
+
+    `ArgumentError` rather than a `click.UsageError`, so the exit code is
+    asserted on the exception: only the boundary in `main` maps one onto the
+    process, which `tests/test_error_contract.py` drives for real.
+    """
+    result = runner.invoke(cli, [*show, *written])
+
+    assert isinstance(result.exception, ConfigError)
+    assert result.exception.exit_code == ExitCode.USAGE
+    assert "--vault-token is not an option" in str(result.exception)
+
+
+def test_the_refusal_names_every_source_that_does_work(runner: CliRunner, show: list[str]) -> None:
+    """All four, not just the file form. A CI job where writing a token to disk
+    is awkward is exactly the case that hits this, and `SOPULI_VAULT_TOKEN=...`
+    already works -- a hint naming only the flag would hide that."""
+    result = runner.invoke(cli, [*show, "--vault-token", "s.notatoken"])
+
+    for source in material.TOKEN_SOURCES:
+        assert source in str(result.exception)
+
+
+def test_the_token_flag_is_refused_in_the_group_position_too(
+    runner: CliRunner, config_file: Path
+) -> None:
+    """Both click parsers, one answer. The group's copy is where somebody who
+    writes it the way Vault's CLI takes it will land."""
+    result = runner.invoke(
+        cli, ["--vault-token", "s.notatoken", "config", "show", "--config", str(config_file)]
+    )
+
+    assert isinstance(result.exception, ConfigError)
+    assert result.exception.exit_code == ExitCode.USAGE
+
+
+def test_the_refusal_survives_dry_run(runner: CliRunner, show: list[str]) -> None:
+    """The property worth keeping from the plan-first mechanism: a rehearsal
+    cannot come back clean while the flag silently did nothing."""
+    result = runner.invoke(cli, [*show, "--dry-run", "--vault-token", "s.notatoken"])
+
+    assert isinstance(result.exception, ConfigError)
+    assert result.exception.exit_code == ExitCode.USAGE
+
+
+def test_the_refusal_never_echoes_what_the_flag_carried(runner: CliRunner, show: list[str]) -> None:
+    """Refusing is not a reason to print it. The value dies in the parser
+    callback, so there is nothing in the invocation for a message -- or a
+    traceback, or a `repr` -- to reach for."""
+    result = runner.invoke(cli, [*show, "--vault-token", "s.notatoken"])
+
+    assert "s.notatoken" not in str(result.exception)
+    assert "s.notatoken" not in result.output
+
+
+def test_the_refused_flag_is_hidden_from_help(runner: CliRunner) -> None:
+    """Help must not advertise a flag whose only behaviour is to refuse.
+    `--vault-token-file`, which works, is listed."""
+    text = runner.invoke(cli, ["config", "show", "--help"]).output
+
+    assert "--vault-token-file" in text
+    assert "--vault-token " not in text.replace("--vault-token-file", "")
 
 
 #: Two environments and an application, which `ESTATE` deliberately lacks: a

@@ -160,8 +160,10 @@ class Option:
     :class:`sopuli.settings.registry.Layer` serialised; ``source_detail`` is a
     **location** and never a value (``03-json-output.md``
     §``invocation.options``). There is no field for a value's origin *and* its
-    content, which is what keeps a ``--vault-token`` entry safe to emit: the flag
-    is named, the token has nowhere to sit.
+    content, so an entry is safe to emit whatever it describes: the location is
+    named, and a credential has nowhere to sit. §3a's token chain does not appear
+    here at all -- it is its own merge, resolved when a run reaches a store, and
+    ``--vault-token-file`` is not a registered setting (#145).
 
     Kept deliberately dumb -- no import of the resolver -- so the run document
     stays a description of output rather than a second consumer of the

@@ -175,6 +175,40 @@ def test_a_malformed_selector_is_a_usage_error(
     assert "--select" in captured.err
 
 
+def test_the_refused_vault_token_flag_exits_two_and_prints_no_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], config_file: Path
+) -> None:
+    """#145, at the real boundary, in all three halves of the contract.
+
+    Exit 2 rather than a plan-time refusal with a document: P5 puts exit 2 at
+    "argv did not resolve to a valid command and options", which is what a flag
+    the tool does not have is, and J7 then makes exit 2 the one code that carries
+    no document. Asking for `--output json` does not change that -- the request
+    parsed, and there is still no run to describe.
+
+    The third half is the one this flag adds: whatever the operator typed after
+    it must not come back out. It never reaches an exception, a document or a
+    stream, because the parser callback drops it.
+    """
+    exit_code = run_main(
+        monkeypatch,
+        "config",
+        "show",
+        "--output",
+        "json",
+        "--config",
+        str(config_file),
+        "--vault-token",
+        "s.notatoken",
+    )
+
+    assert exit_code == ExitCode.USAGE
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--vault-token is not an option" in captured.err
+    assert "s.notatoken" not in captured.err
+
+
 # ------------------------------------------------ exit 9: a run to describe ---
 
 

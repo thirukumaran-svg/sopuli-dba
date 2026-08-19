@@ -12,6 +12,14 @@ not only on the read bits that ``01-configuration.md`` §10 names. Refusing a
 world-*readable* file while accepting a group-*writable* one would be guarding
 the smaller problem. The doc has been updated to match.
 
+**Two callers, one check.** ``--vault-token-file`` (#145) points at a bearer
+token on disk, which is exactly the thing this guards against being readable by
+somebody else, so it goes through here too -- with ``what`` naming which file the
+message is about. It is deliberately *not* extended to every ``file:``
+MaterialRef: ``01-configuration.md`` §3a records that asymmetry and why it has to
+stay (a Kubernetes projected token arrives mode 0644, and refusing it would break
+a method P2 lists).
+
 The two platforms need genuinely different code, which is the whole reason this
 is its own module:
 
@@ -45,7 +53,7 @@ POSIX_HINT = "chmod 600 the file, or move it somewhere only you can reach"
 WINDOWS_HINT = 'remove the extra grant, e.g. icacls "<file>" /inheritance:r /grant:r "%USERNAME%:R"'
 
 
-def check_permissions(path: Path) -> None:
+def check_permissions(path: Path, *, what: str = "config file") -> None:
     """Raise :class:`ConfigError` unless only the owner can reach ``path``.
 
     "Owner" is joined by the platform's own administrative identities, which can
@@ -53,25 +61,30 @@ def check_permissions(path: Path) -> None:
     ``Administrators`` has access would refuse every file on the system. On
     Windows it is also joined by ``OWNER RIGHTS`` and ``CREATOR OWNER``, which
     are not accounts at all -- they resolve to whoever owns the file.
+
+    ``what`` opens every message this raises. It is a parameter rather than a
+    fixed string because the second caller guards a token file rather than the
+    config (#145), and "config file is accessible to others" pointing at
+    ``~/.vault-token`` would send somebody to edit the wrong file.
     """
     if sys.platform == "win32":
-        _check_windows_acl(path)
+        _check_windows_acl(path, what)
     else:
-        _check_posix_mode(path)
+        _check_posix_mode(path, what)
 
 
-def _check_posix_mode(path: Path) -> None:
+def _check_posix_mode(path: Path, what: str) -> None:
     mode = path.stat().st_mode & 0o777
     offending = mode & GROUP_AND_OTHER
     if offending:
         raise ConfigError(
-            f"config file is accessible to others (mode {mode:04o})",
+            f"{what} is accessible to others (mode {mode:04o})",
             source=path,
             hint=POSIX_HINT,
         )
 
 
-def _check_windows_acl(path: Path) -> None:
+def _check_windows_acl(path: Path, what: str) -> None:
     """Walk the DACL and refuse if anyone unexpected is granted access.
 
     "Access" means read *or* write, matching the POSIX side -- see
@@ -106,7 +119,7 @@ def _check_windows_acl(path: Path) -> None:
         )
     except pywintypes.error as error:
         raise ConfigError(
-            f"cannot read the security descriptor of the config file: {error.strerror}",
+            f"cannot read the security descriptor of the {what}: {error.strerror}",
             source=path,
             hint="check the file is on a filesystem that supports ACLs",
         ) from error
@@ -117,7 +130,7 @@ def _check_windows_acl(path: Path) -> None:
         # A NULL DACL is not "no permissions" -- it grants everyone full
         # control. The one case where the absence of a rule is the worst case.
         raise ConfigError(
-            "config file has a NULL DACL, which grants everyone full control",
+            f"{what} has a NULL DACL, which grants everyone full control",
             source=path,
             hint=WINDOWS_HINT,
         )
@@ -136,7 +149,7 @@ def _check_windows_acl(path: Path) -> None:
         if any(sid == permitted for permitted in allowed):
             continue
         raise ConfigError(
-            f"config file is accessible to {_name_of(sid)}",
+            f"{what} is accessible to {_name_of(sid)}",
             source=path,
             hint=WINDOWS_HINT,
         )

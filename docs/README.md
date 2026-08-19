@@ -29,6 +29,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | [decisions/adr-004-yaml-parser.md](decisions/adr-004-yaml-parser.md) | PyYAML on a hardened `SafeLoader`, why not ruamel, and the pywin32 dependency for the P4 permission check |
 | [decisions/adr-005-vault-client.md](decisions/adr-005-vault-client.md) | The HTTP API directly, over `httpx`, not `hvac` — measured against a real Vault, why renewal doesn't change the answer, and what still binds OCI to its own SDK |
 | [decisions/adr-006-optional-dependencies.md](decisions/adr-006-optional-dependencies.md) | Vendor clients are install extras: what base carries, why base opens no sockets, and what a configured-but-uninstalled backend does |
+| [decisions/adr-007-vault-token-flag.md](decisions/adr-007-vault-token-flag.md) | `--vault-token-file` takes a path and `--vault-token` is refused; why a SecretRef cannot authenticate the store it lives in, and where the token chain merges |
 | `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 
@@ -133,7 +134,22 @@ are built once at load — so it is left alone, shown as `-` by `config show
 --resolved`, and caught exactly by the first command that needs a store.
 Refused at load only for the narrower case nothing at run time can ever
 complete: `vaults:` declaring no store at all, so there is nothing for a
-profile or `SOPULI_VAULT` to name).
+profile or `SOPULI_VAULT` to name), ~~what does `--vault-token` take~~ (C16 —
+**decided in #145: a path, under a different name.** `--vault-token-file PATH`
+hoists §3a's `token: { file: … }` onto the command line, and a bare
+`--vault-token` is **refused** with a message naming invariant 1 and all four
+working sources — refused rather than absent, because Vault's own CLI accepts
+`-token=` and somebody will try it, and refused rather than ignored, because a
+flag that parsed and did nothing is a plan that looks like it accounted for auth
+and did not. The crux is that P5's "or a vault ref" escape cannot apply to vault
+auth itself: a ref is resolved *by* an authenticated store, which is P2's
+bootstrap problem one layer earlier. Reusing the MaterialRef grammar
+(`--vault-token env:NAME`) was rejected as a semantic collision rather than mere
+cleverness — two identical-looking grammars with opposite resolution order.
+`--vault-token-stdin` is deferred because `--from-stdin` claims the pipe, and the
+rule it will have to satisfy is banked in P5 now. Recorded in
+[ADR-007](decisions/adr-007-vault-token-flag.md), which also confirms `vault
+login` as the human bootstrap and gives the flag's file P4's permission check).
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
 documented default (P1), ~~grant `SELECT ON SYS.USER$` by default~~ (P2 —

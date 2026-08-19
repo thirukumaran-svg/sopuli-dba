@@ -14,6 +14,7 @@ compare-and-set and the other cannot have it emulated.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
 from sopuli.config.model import Vault
 from sopuli.secrets import Secret
@@ -34,7 +35,7 @@ DEFAULT_KV_VERSION = 2
 DEFAULT_MOUNT = "secret"
 
 
-def connect(vault: Vault, *, env: Mapping[str, str], flag: Secret | None = None) -> SecretStore:
+def connect(vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None) -> SecretStore:
     """A usable store from a config entry, and the first function that is one.
 
     The whole chain in one line, which is worth naming because until now each
@@ -45,9 +46,11 @@ def connect(vault: Vault, *, env: Mapping[str, str], flag: Secret | None = None)
 
     ``env`` is passed in rather than read here, the arrangement the rest of the
     tool already uses -- and it matters more here than elsewhere, because the
-    environment is where half of §3a's auth material lives.
+    environment is where half of §3a's auth material lives. ``token_file`` is
+    ``--vault-token-file``'s path (#145) and travels the same way, for the same
+    reason: it is a location, and the value behind it is read on §3a's chain.
     """
-    return open_store(vault, token=authenticate(vault, env=env, flag=flag))
+    return open_store(vault, token=authenticate(vault, env=env, token_file=token_file))
 
 
 def open_store(vault: Vault, *, token: Secret) -> SecretStore:
