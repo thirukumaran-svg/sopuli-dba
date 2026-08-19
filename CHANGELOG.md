@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/futville/sopuli-dba/compare/v0.25.0...v0.26.0) (2026-08-19)
+
+
+### Features
+
+* **lock:** `sopuli lock status` — what is held, by whom, and since when ([#151](https://github.com/futville/sopuli-dba/issues/151)) ([7cde306](https://github.com/futville/sopuli-dba/commit/7cde3065bfe870d20bf5b81e1692cbc8f61d9c71))
+
 ## [0.25.0](https://github.com/futville/sopuli-dba/compare/v0.24.0...v0.25.0) (2026-08-18)
 
 
