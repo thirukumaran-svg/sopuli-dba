@@ -536,8 +536,11 @@ question is where their test database lives.
   `check`, `status` and every `--dry-run` take no lock at all — otherwise an
   hourly scheduled check blocks rotations. `sopuli lock status` reads the
   records without taking one (#105), which is how anybody other than the holder
-  finds out what exit 7 was about; breaking one is deliberately not
-  self-service (#149).
+  finds out what exit 7 was about; it also **lists** each store's lock prefix, so
+  a record left at a path the config no longer declares is reported rather than
+  invisible (#150, marked `declared: false`). That is not a breach of invariant
+  5 — the config whitelists what the tool may *touch*, and a survey touches
+  nothing. Breaking one is deliberately not self-service (#149).
 
 **Idempotency**
 

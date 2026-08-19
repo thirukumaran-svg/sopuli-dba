@@ -2,7 +2,7 @@
 
 What a run says about the locks it took, on exit 7 about the one it did not get,
 and — for ``lock status`` — about locks that are somebody else's entirely. The
-shape is pinned by ``sopuli-run-1.8.schema.json``; this is the only producer of
+shape is pinned by ``sopuli-run-1.9.schema.json``; this is the only producer of
 it, the same arrangement :mod:`sopuli.output.config_view` and
 :mod:`sopuli.output.policy_view` have with their sections.
 
@@ -22,6 +22,13 @@ part of the holder, because there the run being described is somebody else's and
 **A lock somebody else holds is a different array from one this run took.**
 ``held[]`` is possessive and ``found[]`` is not; :func:`build_status_section`
 says why they are two.
+
+**A record the configuration does not declare is marked, not separated.** It
+goes in ``found[]`` with ``declared: false`` (#150) rather than in a third array,
+because it is the same kind of thing described the same way -- what differs is
+whose it is, which is one boolean. The *text* view does split them, and that is
+a rendering decision rather than a contract one: a table is read by eye, and "is
+this mine" is the first question somebody asks of a row.
 """
 
 from __future__ import annotations
@@ -144,6 +151,14 @@ def build_status_section(states: Sequence[LockState], *, mode: str) -> dict[str,
     Absent there means *no lock was needed*; here an empty ``found`` is the
     finding -- nothing is locked -- and withholding it would make a quiet estate
     indistinguishable from a command that did not look.
+
+    **A record at a path the config does not declare is an entry like any other**,
+    carrying ``declared: false`` (#150). Not a third array beside ``held`` and
+    ``found``: the argument that split those two was that one field would mean
+    different things in each, and nothing of the sort happens here -- every field
+    means exactly what it means for a declared record, and the one thing that
+    differs is whose the record is. A consumer keeping only its own locks filters
+    on a boolean that is always present.
     """
     return {
         "mode": mode,
@@ -153,6 +168,11 @@ def build_status_section(states: Sequence[LockState], *, mode: str) -> dict[str,
 
 def _found(state: LockState, record: LockRecord) -> dict[str, Any]:
     """One record, described from outside.
+
+    ``declared`` says whether this configuration binds an account to the path.
+    It is on every entry rather than only on the leftovers, because a consumer
+    that had to read it as "absent means mine" would be branching on a gap, and
+    a gap is what a producer that forgot the field also emits.
 
     ``state`` is reported as written and ``held`` as
     :attr:`~sopuli.lock.inspect.LockState.is_held` reads it, which is not the
@@ -170,6 +190,7 @@ def _found(state: LockState, record: LockRecord) -> dict[str, Any]:
         "vault": state.key.store,
         "path": state.key.path,
         "held": state.is_held,
+        "declared": state.declared,
         "state": record.state,
         "expired": state.expired,
         "version": state.version,
@@ -199,6 +220,15 @@ def render_status(
     ``sopuli lock break`` will take (#149). Splitting it into a VAULT column and
     a PATH column would make the operator reassemble by hand the one string they
     are about to paste.
+
+    **Leftovers get a table of their own** (#150), under a heading that says what
+    they are. The alternatives were both worse: a seventh column carrying
+    ``yes`` / ``no`` costs width on every row to answer a question that is
+    usually "yes", and a marker appended to the LOCK cell would corrupt the one
+    string the operator is about to paste into ``lock break``. Two tables also
+    put the answer in the heading rather than in a cell, which is where somebody
+    scanning the output will actually read it -- and colour alone could not have
+    carried it, since ``NO_COLOR`` is honoured.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -207,29 +237,43 @@ def render_status(
     lines.append(f"mode:   {mode}")
 
     found = [state for state in states if state.record is not None]
-    if not found:
-        lines.extend(["", _summary(states, found)])
-        return "\n".join(lines)
+    mine = [state for state in found if state.declared]
+    leftovers = [state for state in found if not state.declared]
 
-    lines.extend(
-        [
-            "",
-            *render_table(
-                [
-                    Column("LOCK", _LOCK),
-                    Column("STATE"),
-                    Column("HOLDER", _HOLDER),
-                    Column("COMMAND", _COMMAND),
-                    Column("SINCE"),
-                    Column("EXPIRES"),
-                ],
-                [_row(state) for state in found],
-            ),
-            "",
-            _summary(states, found),
-        ]
-    )
+    if mine:
+        lines.extend(["", *_table(mine)])
+    if leftovers:
+        lines.extend(
+            [
+                "",
+                "not declared by this config -- a leftover, or another config's:",
+                *_table(leftovers),
+            ]
+        )
+    lines.extend(["", _summary(states, found)])
     return "\n".join(lines)
+
+
+def _table(states: Sequence[LockState]) -> list[str]:
+    """One table of records, whosever they are.
+
+    The same columns for both halves, deliberately: a leftover is described by
+    exactly the same facts as a declared lock, and giving it a different shape
+    would suggest the tool knows less about it than it does.
+    """
+    return list(
+        render_table(
+            [
+                Column("LOCK", _LOCK),
+                Column("STATE"),
+                Column("HOLDER", _HOLDER),
+                Column("COMMAND", _COMMAND),
+                Column("SINCE"),
+                Column("EXPIRES"),
+            ],
+            [_row(state) for state in states],
+        )
+    )
 
 
 #: Column caps. `_LOCK` is `_REF`'s width in `config_view`, because it holds the
@@ -287,12 +331,27 @@ def _summary(states: Sequence[LockState], found: Sequence[LockState]) -> str:
     ``held`` is what would stop a rotation now, ``expired`` is what somebody
     could clear, and the total is what makes the first two a proportion rather
     than a bare count.
+
+    **The proportion counts declared paths only** (#150). A leftover was never in
+    the denominator -- it is not a path this configuration would lock -- and
+    folding discovered records in would make "3 of 5" move when somebody else's
+    estate changed. They are counted afterwards, in their own clause, because
+    finding one is a separate thing to have learned.
     """
-    if not states:
+    declared = [state for state in states if state.declared]
+    leftovers = [state for state in found if not state.declared]
+    if not declared and not leftovers:
         return "no lock paths are declared"
-    held = [state for state in found if state.is_held]
+
+    held = [state for state in found if state.declared and state.is_held]
     expired = [state for state in held if state.expired]
-    body = f"{len(held)} of {len(states)} declared lock paths held"
+    body = f"{len(held)} of {len(declared)} declared lock paths held"
     if expired:
         body += f", {len(expired)} past expiry"
+    if leftovers:
+        held_leftovers = [state for state in leftovers if state.is_held]
+        body += (
+            f"; {len(leftovers)} record{'' if len(leftovers) == 1 else 's'} "
+            f"at paths this config does not declare ({len(held_leftovers)} held)"
+        )
     return body

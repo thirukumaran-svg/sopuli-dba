@@ -8,14 +8,15 @@ in the config file, which is only useful if a consumer can recognise it.
 
 **J3 itself stays open**, and the way this registry has grown is the evidence.
 What is decided is the spelling ``SOPULI-Wnnn``, which `03-json-output.md`
-already used as its example, and that these four warnings have codes: the two
-the advisory lock needed (#83), a configured-but-uninstalled backend (#130), and
-a store that does not verify its certificate (#135). Every one was allocated by
-hand, at the moment something needed it.
+already used as its example, and that these five warnings have codes: the two
+the advisory lock needed (#83), a configured-but-uninstalled backend (#130), a
+store that does not verify its certificate (#135), and a store that could not be
+listed (#150). Every one was allocated by hand, at the moment something needed
+it.
 
 Whether *every* warning gets one -- the config layer's §10 findings still do not
 -- and how numbers are allocated across categories is the part of J3 nobody has
-answered, and four hand-picked numbers answer it no better than two did.
+answered, and five hand-picked numbers answer it no better than two did.
 
 A code, once emitted, is part of the contract in the same way an enum value is
 (``03-json-output.md`` §8): adding one is a minor bump, changing what one means
@@ -46,6 +47,10 @@ LOCK_TAKEN_OVER = "SOPULI-W002"
 
 #: A ``vaults:`` entry names a backend whose client is not installed (#130).
 MISSING_BACKEND = "SOPULI-W003"
+
+#: A store in the survey has no ``list`` capability, so the report covers only
+#: the paths the configuration declares (#150).
+UNLISTABLE_STORE = "SOPULI-W005"
 
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
@@ -80,8 +85,47 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "that crosses. The key is under the safety ratchet, so no layer can weaken "
             "this further -- but nothing in the run undoes it either."
         ),
+        UNLISTABLE_STORE: (
+            "A store in this survey has no `list` capability, so `lock status` reported "
+            "only the paths this configuration declares. A lock record left at a path the "
+            "file no longer names would not appear -- in that store. Everything reported "
+            "is accurate; the survey is narrower than it looks."
+        ),
     }
 )
+
+
+def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
+    """Say that part of the survey could not be looked at (#150).
+
+    A **warning and not a refusal**, which is P2's third answer to a missing
+    capability and the reason `list` needed one: refusing would make `lock
+    status` a command that works on some backends and not others, and an operator
+    with one such store would lose the report for every other store as well.
+
+    But it cannot be silent either, and that is the whole point of emitting it.
+    An empty `found[]` is something a consumer acts on -- it concludes there are
+    no leftover locks -- and that conclusion has to be earned by having looked.
+    A survey that could not look at one store and said nothing would be handing
+    back the same document as a clean estate.
+
+    One entry naming every such store rather than one each: the operator's
+    question is "how much of this did you actually see", which is one question
+    however many stores answer it.
+    """
+    if not names:
+        return []
+    return [
+        Diagnostic(
+            level="warning",
+            code=UNLISTABLE_STORE,
+            message=(
+                f"could not list {_names(sorted(names))}: this survey covers the lock "
+                f"paths this configuration declares, and a record left at a path it no "
+                f"longer names would not appear"
+            ),
+        )
+    ]
 
 
 def lock_diagnostics(manager: LockManager) -> list[Diagnostic]:

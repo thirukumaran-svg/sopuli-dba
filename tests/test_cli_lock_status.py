@@ -27,12 +27,13 @@ from jsonschema import Draft202012Validator
 
 from sopuli.cli import cli
 from sopuli.config.model import Vault
+from sopuli.diagnostics import UNLISTABLE_STORE, WARNINGS
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import lock_path
 from sopuli.lock.record import DEFAULT_TTL, Holder, LockRecord
 from sopuli.output.document import SCHEMA_VERSION
-from sopuli.store import MemoryStore, SecretStore
+from sopuli.store import CAS, MemoryStore, SecretStore
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -75,6 +76,10 @@ applications:
 
 DEV = LockKey(store="vault-dev", path="apps/acme/appdb-alpha")
 PROD = LockKey(store="vault-prod", path="apps/acme/appdb-beta")
+
+#: A record at a path `CONFIG` does not declare -- the application was renamed,
+#: or removed, and nothing points at its lock any more (#150).
+LEFTOVER = LockKey(store="vault-dev", path="apps/acme/appdb-retired")
 
 
 @pytest.fixture
@@ -279,6 +284,208 @@ def test_the_token_file_flag_reaches_the_store(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert seen == [path, path]  # one per declared store
+
+
+# --------------------------------------- records this config does not declare ---
+
+
+def test_a_leftover_record_is_reported_and_marked(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """The case #150 exists for. A record nothing points at any more is invisible
+    to a survey of the declared set, and a lock nobody can see is a lock nobody
+    can clear."""
+    with_locks((LEFTOVER, held()))
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    entries = {entry["path"]: entry for entry in section(result)["found"]}
+    assert entries[LEFTOVER.path]["declared"] is False
+
+
+def test_a_declared_record_is_marked_as_one(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """`declared` is on every entry, not only the leftovers: a consumer keeping
+    its own locks filters on a field that is always there rather than on an
+    absence, which is also what a producer that forgot the field emits."""
+    with_locks((DEV, held()))
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert [entry["declared"] for entry in section(result)["found"]] == [True]
+
+
+def test_the_text_view_puts_leftovers_under_a_heading_of_their_own(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """A seventh column would cost width on every row to answer a question that
+    is usually "yes", and a marker on the LOCK cell would corrupt the one string
+    the operator is about to paste into `lock break`. The heading carries it, and
+    carries it without colour -- NO_COLOR is honoured."""
+    with_locks((DEV, held()), (LEFTOVER, held()))
+    result = run(runner, write_config(CONFIG))
+
+    assert "not declared by this config" in result.output
+    body = result.output.split("not declared by this config")[1]
+    assert str(LEFTOVER) in body
+    assert str(DEV) not in body
+
+
+def test_a_clean_estate_shows_no_heading_at_all(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """The common case, and it must stay quiet: a heading that appeared on every
+    run with nothing under it would train people not to read it."""
+    with_locks((DEV, held()))
+    result = run(runner, write_config(CONFIG))
+
+    assert "not declared" not in result.output
+
+
+def test_the_summary_counts_leftovers_apart_from_the_declared_proportion(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """A leftover was never in the denominator -- it is not a path this config
+    would lock -- so folding it in would make "1 of 2" move when somebody else's
+    estate changed."""
+    with_locks((DEV, held()), (LEFTOVER, held()))
+    result = run(runner, write_config(CONFIG))
+
+    assert "1 of 2 declared lock paths held" in result.output
+    assert "1 record at paths this config does not declare (1 held)" in result.output
+
+
+def test_a_leftover_is_examined_and_counted_in_the_summary_total(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """`summary.total` is what was examined, and a discovered path was examined.
+    Two declared paths plus one leftover is three."""
+    with_locks((LEFTOVER, held()))
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert json.loads(result.output)["summary"] == {
+        "total": 3,
+        "ok": 3,
+        "changed": 0,
+        "failed": 0,
+    }
+
+
+def test_a_document_with_a_leftover_still_validates(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    with_locks: Stores,
+    validator: Draft202012Validator,
+) -> None:
+    """Invariant 12: `declared` is a new required field, so the schema moved to
+    1.9 and the samples have to prove it."""
+    with_locks((DEV, held()), (LEFTOVER, held()))
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert not list(validator.iter_errors(json.loads(result.output)))
+
+
+def test_selecting_does_not_turn_a_filtered_path_into_a_leftover(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """`declared` is judged against the **unfiltered** estate.
+
+    `--select env=dev` narrows what is surveyed and which stores are opened; it
+    does not un-declare the prod path. Reporting somebody's own lock as a
+    leftover because this run was not looking at it would be alarming and wrong
+    -- and the prod store is not contacted at all, so its record does not appear.
+    """
+    with_locks((DEV, held()), (PROD, held()))
+    result = run(runner, write_config(CONFIG), "--select", "env=dev", "--output", "json")
+
+    entries = section(result)["found"]
+    assert [entry["path"] for entry in entries] == [DEV.path]
+    assert entries[0]["declared"] is True
+
+
+def test_a_leftover_is_still_found_under_a_selector(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """The filter decides which vaults are contacted; inside one that is, the
+    whole lock prefix is still listed. Otherwise a narrowed survey would hide the
+    leftovers in exactly the store the operator was looking at."""
+    with_locks((DEV, held()), (LEFTOVER, held()))
+    result = run(runner, write_config(CONFIG), "--select", "env=dev", "--output", "json")
+
+    assert {entry["path"] for entry in section(result)["found"]} == {DEV.path, LEFTOVER.path}
+
+
+# ------------------------------------------- a store that cannot be listed ---
+
+
+@pytest.fixture
+def unlistable(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Mapping[str, SecretStore]]:
+    """Stores with no `list` capability, holding whatever records a test names."""
+
+    def install(*records: tuple[LockKey, dict[str, Any]]) -> Mapping[str, SecretStore]:
+        stores: dict[str, SecretStore] = {}
+        for key, data in records:
+            store = stores.setdefault(key.store, MemoryStore(capabilities=frozenset({CAS})))
+            store.write(lock_path(key), data, cas=0)
+
+        def fake_connect(
+            vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
+        ) -> SecretStore:
+            return stores.setdefault(vault.name, MemoryStore(capabilities=frozenset({CAS})))
+
+        monkeypatch.setattr("sopuli.cli.connect", fake_connect)
+        return stores
+
+    return install
+
+
+def test_a_store_that_cannot_be_listed_warns_rather_than_failing(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    unlistable: Callable[..., Mapping[str, SecretStore]],
+) -> None:
+    """P2's third answer to a missing capability. Refusing would make `lock
+    status` work on some backends and not others, and would cost the operator
+    the report for every other store too."""
+    unlistable((DEV, held()))
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    document = json.loads(result.output)
+    codes = [diagnostic["code"] for diagnostic in document["diagnostics"]]
+    assert UNLISTABLE_STORE in codes
+    assert [entry["path"] for entry in document["lock"]["found"]] == [DEV.path]
+
+
+def test_the_unlistable_warning_says_how_much_of_the_estate_was_seen(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    unlistable: Callable[..., Mapping[str, SecretStore]],
+) -> None:
+    """An empty `found[]` is something a consumer acts on -- it concludes there
+    are no leftovers -- so a survey that could not look has to say so, or it
+    hands back the same document as a clean estate."""
+    unlistable()
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    messages = [d["message"] for d in json.loads(result.output)["diagnostics"]]
+    assert any("could not list" in message for message in messages)
+    assert any("vault-dev" in message and "vault-prod" in message for message in messages)
+
+
+def test_the_unlistable_warning_is_described_in_the_registry() -> None:
+    """A code, once emitted, is part of the contract in the same way an enum
+    value is (03-json-output.md §8)."""
+    assert UNLISTABLE_STORE in WARNINGS
+    assert "list" in WARNINGS[UNLISTABLE_STORE]
+
+
+def test_a_listable_store_produces_no_such_warning(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    with_locks((DEV, held()))
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert "diagnostics" not in json.loads(result.output)
 
 
 def test_it_takes_no_lock_of_its_own(

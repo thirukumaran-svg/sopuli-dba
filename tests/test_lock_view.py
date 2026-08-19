@@ -364,6 +364,10 @@ def test_a_survey_reports_the_holder_the_way_a_denial_does(
                 "vault": STORE,
                 "path": "apps/acme/db",
                 "held": True,
+                # `survey` was given no declared set, which means "every key here
+                # is declared" -- the answer for a caller that did not go looking
+                # (#150). `lock status` passes one; this test is about the holder.
+                "declared": True,
                 "state": "held",
                 "expired": False,
                 "version": 1,

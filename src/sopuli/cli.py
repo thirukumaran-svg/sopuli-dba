@@ -53,7 +53,7 @@ from sopuli.config import (
     load_layers,
     parse_selector,
 )
-from sopuli.diagnostics import backend_diagnostics
+from sopuli.diagnostics import backend_diagnostics, unlistable_stores
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import (
     GlobalOptions,
@@ -64,6 +64,8 @@ from sopuli.invocation import (
 )
 from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.lock.inspect import declared_locks, mode_of, survey
+from sopuli.lock.inspect import discover as discover_locks
+from sopuli.lock.keys import acquisition_order
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -460,36 +462,54 @@ def lock_status(
     It reports the **declared** set: every secret path the configuration binds an
     account to, deduplicated through the same key the manager locks on, so two
     accounts sharing one document are one row here exactly as they are one lock
-    during a rotation. A record left at a path the file no longer declares is
-    invisible to this. The store capability that would find one landed in #150
-    -- ``list`` on :mod:`sopuli.store.protocol` -- and reporting what it finds is
-    the other half of that issue, still to come; nothing here calls it yet.
+    during a rotation.
+
+    **And then it looks beside it** (#150). Each store's lock prefix is listed,
+    and a record at a path this configuration does not declare is reported with
+    `declared: false` -- an application renamed or removed, or another config's
+    estate sharing the mount. That is the record nobody could otherwise see, and
+    a lock nobody can see is a lock nobody can clear. Invariant 5 is untouched:
+    the config whitelists what the tool may *touch*, and this command touches
+    nothing. A store with no `list` capability is named in a warning rather than
+    refused, so a survey never becomes a command that works on some backends and
+    not others.
 
     Always exit 0 when it could look. A held lock is a finding, not a failure --
     exit 7 means *this run could not proceed*, and this run had nothing to
-    proceed with.
+    proceed with. A store that could not be *listed* is not a failure either: the
+    warning says how much of the estate the answer covers.
     """
     document = run.document
 
     match = parse_selector(selectors)
     paths = discover(run.config_paths)
     _, config = load_layers(paths)
-    config = filter_estate(config, match)
+    # Both estates: the filtered one decides what is surveyed and which stores
+    # are opened, and the whole one decides what counts as *declared*. A path
+    # `--select` excluded is still one this configuration declares, and reporting
+    # it as a leftover because this run was not looking at it would be alarming
+    # and wrong.
+    everything = declared_locks(config)
+    keys = declared_locks(filter_estate(config, match))
 
-    keys = declared_locks(config)
     stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
-    states = survey(keys, stores=stores)
+    leftovers = discover_locks(everything, stores=stores)
+    states = survey(
+        acquisition_order([*keys, *leftovers.keys]), stores=stores, declared=set(everything)
+    )
     mode = mode_of(stores)
 
-    document.diagnostics.extend(config_diagnostics(config))
+    document.diagnostics.extend(config_diagnostics(filter_estate(config, match)))
+    document.diagnostics.extend(unlistable_stores(leftovers.unlistable))
     document.selection = as_dict(match) or None
     document.lock = build_status_section(states, mode=mode)
     document.finish(
         ExitCode.SUCCESS,
         # `ok` is every path that was looked at, because looking succeeded. A
         # held lock is not a failed path -- `failed` here would put a red number
-        # in front of a colleague doing their job.
-        Summary(total=len(keys), ok=len(keys), changed=0, failed=0),
+        # in front of a colleague doing their job. Discovered paths count too:
+        # they were examined, and `summary.total` is what was examined.
+        Summary(total=len(states), ok=len(states), changed=0, failed=0),
     )
     return render_status(paths, states, match=match, mode=mode)
 

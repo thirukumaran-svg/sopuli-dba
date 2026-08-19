@@ -11,8 +11,9 @@ so everything about them here is still a sketch, and so are the other members of
 `sopuli/output/lock_view.py` produces the whole section, and
 `tests/test_lock_view.py` validates every shape it can produce against the
 published schema. What `lock status` fills in is `found[]` — records it read at
-paths it does not hold. `held[]` and `denied` still wait on a command that
-*takes* a lock, and the first of those is `creds generate`, which does not exist.
+paths it does not hold, whether or not the config declares them (#150). `held[]`
+and `denied` still wait on a command that *takes* a lock, and the first of those
+is `creds generate`, which does not exist.
 The `lock.*` events are the other half of the same wait: they need
 `--output jsonl` (#9), which has no emitter, so their payloads are specified in
 §5 and not yet produced by anything.
@@ -25,7 +26,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.8.schema.json`](../schemas/sopuli-run-1.8.schema.json),
+Schemas: [`../schemas/sopuli-run-1.9.schema.json`](../schemas/sopuli-run-1.9.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -427,14 +428,16 @@ the tool does not know.
 available.
 
 **`found[]` is the third array, and it is somebody else's locks** (#105).
-`sopuli lock status` takes no lock and reads the records at every secret path the
-config declares:
+`sopuli lock status` takes no lock, reads the records at every secret path the
+config declares, and — since #150 — lists each store's lock prefix so that a
+record at a path the config *does not* declare is reported too:
 
 ```json
 "lock": {
   "mode": "cas",
   "found": [ { "vault": "vault-prod", "path": "apps/acme/db",
-               "held": true, "state": "held", "expired": false, "version": 41,
+               "held": true, "declared": true, "state": "held",
+               "expired": false, "version": 41,
                "acquired_at": "…", "expires_at": "…",
                "holder": { "host": "ci-runner-3", "pid": 8821,
                            "os_user": "svc_sopuli", "correlation_id": "…",
@@ -450,6 +453,30 @@ rules exist to prevent — and a consumer aggregating held locks across runs wou
 start counting surveys as acquisitions. The holder is reported through the same
 definition `denied.holder` uses, because the question at exit 7 and the question
 `lock status` answers are the same question.
+
+**`declared` says whose the record is** (#150). `false` is one the store holds
+and the file does not name — an application renamed or removed, or another
+config's estate sharing the mount — and it is the entry an operator cannot
+otherwise see, which is the entire reason for listing. Invariant 5 is not
+strained: the config whitelists what the tool may *touch*, and a survey touches
+nothing. It is judged against the **unfiltered** estate, so `--select` narrowing
+a survey never turns somebody's own lock into a leftover, and it is required on
+every entry rather than written only on the leftovers — a consumer that had to
+read absence as "mine" would be branching on a gap, which is also what a producer
+that forgot the field emits.
+
+A **fourth array was rejected.** What split `held` from `found` was that one
+field would have meant different things in each; nothing of the sort happens
+here, since every field means exactly what it means for a declared record and
+only ownership differs. The text view does render the two separately, which is a
+rendering decision rather than a contract one.
+
+**A store with no `list` capability is named in a warning, not refused**
+(`SOPULI-W005`). Refusing would make `lock status` a command that works on some
+backends and not others, and would cost the operator the report for every other
+store as well. But it cannot be silent either: an empty `found[]` is something a
+consumer acts on — it concludes there are no leftovers — and that conclusion has
+to be earned by having looked.
 
 `held` and `state` are the verdict and the evidence, and they are not the same
 field twice. Anything that is not `released` is held, **including a state this
@@ -535,13 +562,15 @@ is not contract and may improve.
 | `SOPULI-W002` | This run took a lock that was past its expiry, which `locking.break_expired` permits. The previous holder is fenced — its next check will fail — but it may have applied changes before that |
 | `SOPULI-W003` | A `vaults:` entry names a backend that is not installed. Emitted by `config validate`, which warns rather than fails: the config is valid and the install is incomplete (ADR-006, E4). Any command that resolves the store to a client fails instead, with `SOPULI-20001` |
 | `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked and anything on the path can read every secret that crosses. Under P3's safety ratchet, so no layer can weaken it further — but nothing in the run undoes it either (#135, ADR-005) |
+| `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record left at a path the file no longer names would not appear — in that store. Everything reported is accurate; the survey is narrower than it looks (#150) |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
 answered**: what is settled is the spelling this document already used as its
-example and that these four warnings have codes. Whether *every* warning gets one
+example and that these five warnings have codes. Whether *every* warning gets one
 — the config layer's §10 findings still do not — and how numbers are allocated
-across categories is the part still open.
+across categories is the part still open. `SOPULI-W005` was allocated by hand
+like the four before it, which is the evidence rather than the answer.
 
 ### Error codes
 
@@ -851,6 +880,15 @@ twice over again. Nothing existing changed meaning — `found` was added *beside
 `held` precisely so that `held` would not have to. The `denied.holder` object
 moved into a `$defs/lock_holder` the two arrays share, which is a refactor of the
 schema file and not of the contract: the shape a consumer sees is byte-identical.
+
+**1.8 became 1.9 when the survey started looking past the declared set** (#150):
+`lock.found[].declared` joined the entry, required. A new *required* property is
+still a minor bump under §8's rule — the rule is about what a consumer that knows
+1.8 can still do, and every 1.8 field means what it meant. What changed is that
+`found[]` may now carry entries a 1.8 consumer would not have received at all,
+and `declared` is the field that tells it so. A consumer that ignores the field
+sees more rows than before; one that reads it sees exactly what it saw in 1.8 by
+keeping `declared: true`.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles

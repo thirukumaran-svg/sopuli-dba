@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.8.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.9.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -354,11 +354,11 @@
         },
         "found": {
           "type": "array",
-          "description": "Lock records read at paths this run does not hold -- what `lock status` went looking for (issue #105). Separate from `held` because `held` is possessive: there `released: true` means this run let go cleanly, and here it would mean the path is free, which is one field meaning two things depending on `command`. In key order, which is the sorted order acquisition uses. A declared path with no record at it is not an entry: `found` is what was read, and how many paths were examined is `summary.total` -- the difference between the two is how many are free. Emitted empty rather than omitted, because on `lock status` an empty array is the finding.",
+          "description": "Lock records read at paths this run does not hold -- what `lock status` went looking for (issue #105). Separate from `held` because `held` is possessive: there `released: true` means this run let go cleanly, and here it would mean the path is free, which is one field meaning two things depending on `command`. In key order, which is the sorted order acquisition uses. A declared path with no record at it is not an entry: `found` is what was read, and how many paths were examined is `summary.total` -- the difference between the two is how many are free. Emitted empty rather than omitted, because on `lock status` an empty array is the finding. Entries are not all from the configuration's own estate: since issue #150 the survey also lists each store's lock prefix, so a record left at a path the file no longer declares appears here with `declared: false`. Invariant 5 is untouched by that -- the config whitelists what the tool may *touch*, and `lock status` touches nothing.",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["vault", "path", "held", "state", "expired", "version", "acquired_at", "expires_at", "holder"],
+            "required": ["vault", "path", "held", "declared", "state", "expired", "version", "acquired_at", "expires_at", "holder"],
             "description": "One record, described by somebody who does not hold it. Every field is required for the reason `held[]`'s are: the entry exists because a record was read, so there is nothing about it left unknown.",
             "properties": {
               "vault": { "type": "string" },
@@ -366,6 +366,10 @@
               "held": {
                 "type": "boolean",
                 "description": "Whether this record stands in the way of taking the lock. Anything that is not `released` is held, including a `state` this build has never heard of -- treating an unknown state as free is the one guess that ends with two runs rotating one credential."
+              },
+              "declared": {
+                "type": "boolean",
+                "description": "Whether the configuration this run read binds an account to the path (issue #150). False is a record the store holds and the file does not name -- an application renamed or removed, or another configuration's estate sharing the mount. It is the entry an operator cannot otherwise see, and the one they are most likely to want cleared. Judged against the *unfiltered* estate, so narrowing a survey with `--select` never turns somebody's own lock into a leftover. Required, and present on the ordinary entries too, so a consumer keeping only its own locks filters on a field that is always there rather than on an absence."
               },
               "state": {
                 "type": "string",
