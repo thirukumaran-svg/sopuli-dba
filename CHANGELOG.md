@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.0](https://github.com/futville/sopuli-dba/compare/v0.33.0...v0.34.0) (2026-08-20)
+
+
+### Features
+
+* **driver:** a driver registry, and the mechanism it shares with stores ([#190](https://github.com/futville/sopuli-dba/issues/190)) ([72ba37d](https://github.com/futville/sopuli-dba/commit/72ba37dddbb6d96788c36ba31aff058376d9f2d3))
+
 ## [0.33.0](https://github.com/futville/sopuli-dba/compare/v0.32.0...v0.33.0) (2026-08-20)
 
 
