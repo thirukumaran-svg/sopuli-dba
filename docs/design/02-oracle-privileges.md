@@ -301,6 +301,33 @@ unusual (P3, decided in #89). It is recorded in the audit event and in the JSON
 output; it never overrides 1, because acting on an account absent from the config
 would make the tool's own audit trail meaningless.
 
+Implemented in `sopuli/driver/guardrails.py` (#173), which reviews and does not
+decide — the same shape as the error mapping. Three things it settles:
+
+- **What a refusal does depends on how the account was selected**, and the rule
+  is one rule for every mutating verb. An account the operator **named** —
+  `--account DBSNMP` — refuses the run: they asked for something the tool will
+  not do, and quietly skipping it would report success for work nobody did. An
+  account that merely **fell inside** a broad selection is `SKIPPED` with its
+  reason, and the run does the rest of its job; refusing 200 rotations because
+  the 47th selected account turned out to be `ORACLE_MAINTAINED` would make the
+  guardrail more disruptive than the mistake it caught. Selection is what the
+  command layer knows and the driver does not, so the rule is written here and
+  applied there.
+- **Check 5 is consulted only where check 2 had nothing to say.** Where the
+  database can report `ORACLE_MAINTAINED`, that answer wins outright — including
+  when it says *no* about a name on the list. Sites do call an account `SCOTT`,
+  and a list maintained by us overruling the database describing itself would
+  make it a second whitelist nobody agreed to. The list is deliberately long
+  rather than exact: a missing entry means one old version misses one check, a
+  spurious entry means an audited `--force`, and those costs are not symmetrical.
+- **Check 1 compares case-folded.** `01-configuration.md` writes
+  `acme_web_user` and Oracle stores `ACME_WEB_USER`, because an unquoted
+  identifier is upper-cased on the way in. Comparing exactly would refuse every
+  correctly-declared account on Oracle — a guardrail that fires only on its own
+  users. The residual risk, an estate holding both `ACME_WEB_USER` and a quoted
+  `"acme_web_user"`, is named rather than solved.
+
 **One more refusal joined its catalogue, and it is not an account check** (#149).
 `sopuli lock break` refuses a lock that has not expired, and `--force` is what
 takes it anyway. The generalisation that makes both cases one flag is *an audited
