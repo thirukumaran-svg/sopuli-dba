@@ -387,7 +387,14 @@ Two deliberate exceptions, documented as such:
   equivalent, so `SOPULI_VAULT_ADDR` beats `VAULT_ADDR`.
 - **Safety settings only ratchet toward safe.** `--dry-run`, `--confirm`,
   `--max-targets` and `readonly: true` cannot be relaxed by any source. If config
-  says `readonly: true`, no command-line flag re-enables writes.
+  says `readonly: true`, no command-line flag re-enables writes — including
+  `--force`, which is not a setting and has no layer to arrive on. The first
+  command to consume `readonly` is `lock break` (#149), which refuses on **exit
+  8**: the file is not invalid, so this is not exit 9; the operator declined in
+  advance by writing it, which is what exit 8 already means. `--dry-run` is
+  refused with it, because "under `readonly` the mutating verbs are unavailable
+  and the read-only verb is how you ask" is a rule that holds without being
+  reasoned about per flag.
 
 ### Making precedence debuggable
 
@@ -559,7 +566,25 @@ question is where their test database lives.
   a record left at a path the config no longer declares is reported rather than
   invisible (#150, marked `declared: false`). That is not a breach of invariant
   5 — the config whitelists what the tool may *touch*, and a survey touches
-  nothing. Breaking one is deliberately not self-service (#149).
+  nothing.
+- **Breaking a lock is a verb, and it is not self-service** (#149).
+  `sopuli lock break <vault>:<path>` writes a `released` record over the held
+  one, with `cas` set to the version it read — never a delete, because a delete
+  leaves the metadata behind and a first acquisition could then never
+  compare-and-set against version 0 again. The write bumps the version, which
+  **fences** whoever held it: their next check fails and they stop before their
+  next mutation. That fence is what makes the verb survivable, so a store that
+  cannot fence is refused with exit 5 rather than served a weaker version of it —
+  **including one declared `locking: advisory-only`, whatever it turns out to
+  support.** The declaration decides, because `locking.break_expired` is refused
+  against the same combination (#94) and two guards disagreeing about one
+  configuration is worse than either answer. It takes confirmation, and a lock that has *not* expired takes
+  `--force` as well; refusing one is exit 7, naming the holder, in the words a
+  rotation losing the same lock would use. It may clear a record at a path this
+  config does not declare — the leftover `lock status` surfaces is precisely the
+  one nobody else can clear — and invariant 5 is untouched because the write
+  lands under the store's lock prefix, in a store `vaults:` declares, and never
+  on the secret the lock guards.
 
 **Idempotency**
 

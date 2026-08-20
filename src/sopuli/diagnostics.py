@@ -42,7 +42,11 @@ from sopuli.store.registry import BACKENDS, installed
 #: A store is holding locks it cannot guard (``locking: advisory-only``, #94).
 ADVISORY_LOCKING = "SOPULI-W001"
 
-#: A lock past its expiry was taken from whoever held it (``break_expired``).
+#: A lock was taken from whoever held it -- automatically, because it was past
+#: its expiry and ``locking.break_expired`` permits that, or deliberately by
+#: ``sopuli lock break`` (#149). One code, because it is one event: what differs
+#: is whether a config key or a person decided it, and a consumer alerting on
+#: "somebody's lock was taken" wants both.
 LOCK_TAKEN_OVER = "SOPULI-W002"
 
 #: A ``vaults:`` entry names a backend whose client is not installed (#130).
@@ -70,9 +74,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "runs starting in the same second can both believe they hold the lock."
         ),
         LOCK_TAKEN_OVER: (
-            "This run took a lock that was past its expiry, which `locking.break_expired` "
-            "permits. The previous holder is fenced -- its next check will fail -- but it "
-            "may have applied changes before that."
+            "A lock was taken from its holder: automatically, because it was past its "
+            "expiry and `locking.break_expired` permits that, or deliberately by `sopuli "
+            "lock break`. The previous holder is fenced -- its next check will fail -- but "
+            "it may have applied changes before that."
         ),
         MISSING_BACKEND: (
             "A `vaults:` entry names a backend whose client is not installed. The config "
@@ -166,7 +171,7 @@ def _advisory(stores: Mapping[str, LockableStore]) -> list[Diagnostic]:
 
 
 def _taken_over(key: LockKey, broke: LockRecord) -> Diagnostic:
-    """Somebody's lock was taken. Said out loud, on the run that took it.
+    """Somebody's lock was taken by a run that wanted it. Said out loud.
 
     The evidence is gone from the path the moment the takeover write lands, so if
     this run does not report it, nothing ever does.
@@ -181,6 +186,39 @@ def _taken_over(key: LockKey, broke: LockRecord) -> Diagnostic:
             f"since {to_rfc3339(broke.acquired_at)}"
         ),
     )
+
+
+def lock_broken(key: LockKey, broke: LockRecord, *, expired: bool) -> list[Diagnostic]:
+    """Somebody's lock was taken by a person who asked for it (#149).
+
+    The same code as :func:`_taken_over` and a different sentence, which is the
+    arrangement §3 already describes: the code is the contract and the wording
+    around it is not. Saying "took over the expired lock" here would be wrong
+    half the time -- ``lock break --force`` takes a lock that is still live, and
+    that is the case somebody reading the audit trail most needs to see named.
+
+    A **warning** rather than an error, for the reason both of this module's lock
+    warnings are: nothing failed. The run did exactly what it was asked, and what
+    the operator should be able to see afterwards -- without going and reading
+    the vault -- is whose claim it ended.
+
+    A list, so that a caller with nothing to report drops it in the same way it
+    drops :func:`unlistable_stores`.
+    """
+    holder = broke.holder
+    who = "an unknown holder" if holder is None else f"{holder.os_user}@{holder.host}"
+    claim = "expired" if expired else "live"
+    return [
+        Diagnostic(
+            level="warning",
+            code=LOCK_TAKEN_OVER,
+            message=(
+                f"broke the {claim} lock on {key}, held by {who} "
+                f"since {to_rfc3339(broke.acquired_at)}; they are fenced and stop at "
+                f"their next check"
+            ),
+        )
+    ]
 
 
 def _names(names: Sequence[str]) -> str:

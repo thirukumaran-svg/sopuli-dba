@@ -301,6 +301,17 @@ unusual (P3, decided in #89). It is recorded in the audit event and in the JSON
 output; it never overrides 1, because acting on an account absent from the config
 would make the tool's own audit trail meaningless.
 
+**One more refusal joined its catalogue, and it is not an account check** (#149).
+`sopuli lock break` refuses a lock that has not expired, and `--force` is what
+takes it anyway. The generalisation that makes both cases one flag is *an audited
+override of a guardrail that is asked of one thing at one moment* — this account,
+now; this lock, now — as opposed to a safety setting, which is resolved from
+layers and ratchets. #89 delimited the flag to checks 2–5 because those were the
+guardrails that existed; the boundary it actually drew is the one below, and the
+lock refusal is on the same side of it. Both cases report the override the same
+way, and the second is visible in the run document as `lock.broken[].expired:
+false`.
+
 **`DBSNMP` is the case it exists for.** Rotating its password is ordinary DBA
 work, and it is `ORACLE_MAINTAINED = 'Y'`, so check 2 refuses it. A tool with no
 override does not prevent that rotation — it moves it to SQL\*Plus, where nothing

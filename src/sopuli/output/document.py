@@ -1,6 +1,6 @@
 """The run document (``docs/design/03-json-output.md`` §2).
 
-There is no such thing as a placeholder run document. ``sopuli-run-1.9.schema.json``
+There is no such thing as a placeholder run document. ``sopuli-run-1.10.schema.json``
 sets ``additionalProperties: false`` at the root and requires six top-level
 fields, two of which have required members of their own, so the smallest thing
 that validates is a complete document. Building it properly now is cheaper than
@@ -27,7 +27,7 @@ from typing import Any
 # format (#83), and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.9"
+SCHEMA_VERSION = "1.10"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -299,7 +299,7 @@ class RunDocument:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Render to the shape ``sopuli-run-1.9.schema.json`` describes."""
+        """Render to the shape ``sopuli-run-1.10.schema.json`` describes."""
         finished_at = self.finished_at or utc_now()
         duration_ms = int((finished_at - self.started_at).total_seconds() * 1000)
         invocation: dict[str, Any] = {

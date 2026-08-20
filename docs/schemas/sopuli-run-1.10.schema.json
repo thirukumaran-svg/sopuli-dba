@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.9.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.10.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -34,6 +34,7 @@
         "creds.status", "creds.promote", "creds.finish-rollover",
         "config.validate", "config.show", "target.list", "policy.sample",
         "lock.status",
+        "lock.break",
         "doctor", "admin.install"
       ]
     },
@@ -321,7 +322,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["mode"],
-      "description": "Advisory locks (00-principles.md P5, decided in issue #83). Locks live in the vault and are keyed on the store and the secret path being mutated -- not on the account and not on the target, because the mutated resource is the vault document and compare-and-set operates on exactly that. Three arrays, and which one a lock is in says whose it is: `held` is what this run took, `denied` is the one that stopped it, and `found` is what `lock status` read at paths it does not hold (issue #105). Absent on a run that neither took a lock nor went looking: `check`, `status` and every `--dry-run`.",
+      "description": "Advisory locks (00-principles.md P5, decided in issue #83). Locks live in the vault and are keyed on the store and the secret path being mutated -- not on the account and not on the target, because the mutated resource is the vault document and compare-and-set operates on exactly that. Four arrays, and which one a lock is in says what became of it: `held` is what this run took, `denied` is the one that stopped it, `found` is what `lock status` read at paths it does not hold (issue #105), and `broken` is what `lock break` took from its holder (issue #149). Absent on a run that neither took a lock nor went looking: `check`, `status` and every `--dry-run` of a command that would have taken one.",
       "properties": {
         "mode": {
           "type": "string",
@@ -382,6 +383,57 @@
               "version": {
                 "type": ["integer", "null"],
                 "description": "The store's version of the record. Deliberately not called a fence -- a fence is a claim, and nothing here holds one -- but it is what a takeover has to compare-and-set against, and a version that moves between two surveys is a lock somebody is renewing. Null under mode `none`, where the number exists and guarantees nothing."
+              },
+              "acquired_at": { "$ref": "#/$defs/timestamp" },
+              "expires_at": { "$ref": "#/$defs/timestamp" },
+              "holder": { "$ref": "#/$defs/lock_holder" }
+            }
+          }
+        },
+        "broken": {
+          "type": "array",
+          "description": "Locks this run ended, which today is the one `sopuli lock break` was given (issue #149). Separate from `held` and from `found` for the reason those two are separate from each other: `held` is possessive and describes a claim this run holds, `found` is a record a survey read and changed nothing about, and this is one the run *wrote over*. The fields that matter are the ones neither of the others has -- which version the write compared against, which version now fences the previous holder, and whether the write happened at all. An array although the verb takes one lock: `denied` is a single object because acquisition is all-or-nothing and stops at the first refusal, which is an argument about acquiring rather than about this. Emitted empty rather than omitted, because there an empty array is the finding -- there was no claim at the path, so nothing was broken and nothing changed.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "vault",
+              "path",
+              "applied",
+              "state",
+              "expired",
+              "version",
+              "new_version",
+              "acquired_at",
+              "expires_at",
+              "holder"
+            ],
+            "description": "One lock taken from its holder, described by the run that took it. Every field is required for the reason `found[]`'s are: the entry exists because a record was read, so there is nothing about it left unknown. This is also the only place the holder is named afterwards -- the write replaces their record with a released one, so if the entry does not describe them, nothing does.",
+            "properties": {
+              "vault": { "type": "string" },
+              "path": {
+                "type": "string",
+                "description": "The secret path, not the lock record's own path. Where the record is written is the store's business."
+              },
+              "applied": {
+                "type": "boolean",
+                "description": "Whether the write happened. False under `--dry-run`, which is what makes a plan and the run that follows it one shape rather than two -- a consumer diffing them compares like with like (invariant 8). `summary.changed` is 0 whenever this is false."
+              },
+              "state": {
+                "type": "string",
+                "description": "What the broken record said, as written: the evidence, as in `found[]`. `held` is the ordinary case, and anything else came from a newer sopuli or from a half-written record. A state this build has never heard of is treated as held, and is therefore breakable -- which is what makes an unreadable lock clearable rather than permanent."
+              },
+              "expired": {
+                "type": "boolean",
+                "description": "Whether the holder's claim had lapsed, allowing for a clock-skew margin. False means a lock that was still live was taken, which requires `--force` and is the case somebody reading an audit trail most needs to see named."
+              },
+              "version": {
+                "type": "integer",
+                "description": "The store version the record was read at, and what the write compared against. Never null, unlike `found[].version`: a store with no compare-and-set is refused before the read, because the write that breaks a lock is the only thing fencing its holder."
+              },
+              "new_version": {
+                "type": ["integer", "null"],
+                "description": "The version the write produced. This is what the previous holder's next fence check fails against, which is what makes taking their lock survivable rather than reckless. Null under `--dry-run`, where no version was produced -- repeating the old one there would suggest something had happened."
               },
               "acquired_at": { "$ref": "#/$defs/timestamp" },
               "expires_at": { "$ref": "#/$defs/timestamp" },

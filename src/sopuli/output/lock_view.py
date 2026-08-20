@@ -1,12 +1,13 @@
-"""The run document's ``lock`` section (``03-json-output.md`` §2, #83, #105).
+"""The run document's ``lock`` section (``03-json-output.md`` §2, #83, #105, #149).
 
 What a run says about the locks it took, on exit 7 about the one it did not get,
-and — for ``lock status`` — about locks that are somebody else's entirely. The
-shape is pinned by ``sopuli-run-1.9.schema.json``; this is the only producer of
+for ``lock status`` about locks that are somebody else's entirely, and for ``lock
+break`` about one it ended. The
+shape is pinned by ``sopuli-run-1.10.schema.json``; this is the only producer of
 it, the same arrangement :mod:`sopuli.output.config_view` and
 :mod:`sopuli.output.policy_view` have with their sections.
 
-Three things here are translation rather than transcription.
+Four things here are translation rather than transcription.
 
 **The section reports a guarantee, not a mechanism.** ``mode`` is ``cas`` or
 ``none``, so a consumer branches on whether the run was actually protected
@@ -21,7 +22,9 @@ part of the holder, because there the run being described is somebody else's and
 
 **A lock somebody else holds is a different array from one this run took.**
 ``held[]`` is possessive and ``found[]`` is not; :func:`build_status_section`
-says why they are two.
+says why they are two. ``broken[]`` is a third for the same kind of reason: it is
+neither a lock this run holds nor one it merely read, but one it *ended*, and
+:func:`build_break_section` says what an entry in it has to carry.
 
 **A record the configuration does not declare is marked, not separated.** It
 goes in ``found[]`` with ``declared: false`` (#150) rather than in a third array,
@@ -40,8 +43,9 @@ from typing import Any
 from sopuli.clock import to_rfc3339
 from sopuli.lock.errors import LockDeniedError
 from sopuli.lock.inspect import LockState
-from sopuli.lock.manager import HeldLock, LockManager
+from sopuli.lock.manager import HeldLock, LockManager, describe_holder
 from sopuli.lock.record import HELD, RELEASED, LockRecord
+from sopuli.lock.takeover import ABSENT, Nothing, Outcome, Take
 from sopuli.output.palette import Role
 from sopuli.output.table import Cell, Column, render_table
 
@@ -355,3 +359,155 @@ def _summary(states: Sequence[LockState], found: Sequence[LockState]) -> str:
             f"at paths this config does not declare ({len(held_leftovers)} held)"
         )
     return body
+
+
+# ------------------------------------------------------------- breaking one ---
+
+
+def build_break_section(
+    outcome: Outcome, *, mode: str, applied: bool, new_version: int | None = None
+) -> dict[str, Any]:
+    """The ``lock`` section for ``sopuli lock break`` (#149).
+
+    ``broken[]`` rather than an entry in ``held[]`` or ``found[]``, and the
+    argument is the one that split those two. ``held`` is possessive and every
+    field in it describes a claim this run holds; ``found`` is what a survey read
+    and changed nothing about. A broken lock is neither -- it is a record this
+    run *wrote over*, and the fields that matter are ones neither of the others
+    has: which version was compared against, which version now fences the
+    previous holder, and whether the write happened at all.
+
+    **An array, though the verb takes exactly one lock.** ``denied`` is a single
+    object because acquisition is all-or-nothing and stops at the first refusal,
+    which is an argument about acquisition rather than about this. Nothing here
+    says a run can only ever break one, so an array costs nothing now and does
+    not have to become a breaking change later.
+
+    **Emitted even when it is empty**, like ``found`` on a survey and unlike
+    every other run's ``lock`` section. Absent means *this run needed no lock*;
+    here an empty ``broken`` is the finding -- there was no claim at the path --
+    and a consumer has to be able to tell it from a command that did not look.
+
+    ``applied`` is what makes ``--dry-run`` and a real run one shape rather than
+    two. The plan *is* the entry; whether it happened is a boolean inside it, so
+    a consumer diffing a dry run against the run that followed compares like with
+    like (invariant 8).
+    """
+    section: dict[str, Any] = {"mode": mode, "broken": []}
+    if isinstance(outcome, Take):
+        section["broken"] = [_broken(outcome, applied=applied, new_version=new_version)]
+    return section
+
+
+def _broken(take: Take, *, applied: bool, new_version: int | None) -> dict[str, Any]:
+    """One lock taken from its holder, with everything that describes the act.
+
+    The holder is reported through the same definition ``denied`` and ``found``
+    use, because it is the same question -- *who was that* -- and by the time
+    this is written the answer is no longer at the path to look up.
+
+    ``version`` and ``new_version`` are two facts and neither is called a fence.
+    ``version`` is what the write compared against, which is this run's claim
+    about what it had read. ``new_version`` is what the write produced, and that
+    is what the previous holder's next check fails against -- null under
+    ``--dry-run``, where no version was produced and repeating the old one would
+    suggest something happened.
+    """
+    record = take.record
+    return {
+        "vault": take.key.store,
+        "path": take.key.path,
+        "applied": applied,
+        "state": record.state,
+        "expired": take.state.expired,
+        "version": take.version,
+        "new_version": new_version,
+        "acquired_at": to_rfc3339(record.acquired_at),
+        "expires_at": to_rfc3339(record.expires_at),
+        "holder": _holder(record),
+    }
+
+
+def build_denied_section(denied: LockDeniedError, *, mode: str) -> dict[str, Any]:
+    """The ``lock`` section for a run that was refused one, with no manager.
+
+    :func:`build_section` answers this for a run that was acquiring, and it asks
+    a :class:`~sopuli.lock.manager.LockManager` because such a run may be holding
+    others as well. ``lock break`` holds none and has no manager, and the refusal
+    it reports is the same event -- so it goes through the same ``denied``
+    producer rather than growing a second shape for one field.
+    """
+    return {"mode": mode, "denied": _denied(denied)}
+
+
+def render_break(
+    paths: Sequence[Path],
+    outcome: Outcome,
+    *,
+    mode: str,
+    applied: bool,
+    dry_run: bool = False,
+    new_version: int | None = None,
+) -> str:
+    """``lock break`` in text -- the plan, or what became of it.
+
+    The same table ``lock status`` renders, for the one row this is about. A verb
+    acting on a single lock could have described it in a sentence; using the
+    survey's columns instead means the operator reads the record they are about
+    to end in exactly the shape they read it in when they found it.
+
+    The closing line carries the whole difference between the four outcomes, and
+    each is a different thing to have learned:
+
+    * nothing at the path, or a record already released -- there was no claim,
+      and nothing was written
+    * a plan on its way to a prompt -- what is about to happen, before it does
+      (invariant 8)
+    * a dry run -- the same plan, and an explicit statement that it stopped there
+    * a break -- the version that now fences the previous holder, which is what
+      makes the takeover safe and the one thing a reader cannot get elsewhere
+    """
+    lines = [f"config: {paths[0]}"]
+    lines.extend(f"        {path} (layered)" for path in paths[1:])
+    lines.append(f"lock:   {outcome.key}")
+    lines.append(f"mode:   {mode}")
+    if isinstance(outcome, Nothing):
+        lines.extend(["", _nothing(outcome)])
+        return "\n".join(lines)
+    lines.extend(
+        [
+            "",
+            *_table([outcome.state]),
+            "",
+            _outcome_line(outcome, applied=applied, dry_run=dry_run, new_version=new_version),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _nothing(outcome: Nothing) -> str:
+    """What was learned about a path with no claim on it.
+
+    Two sentences rather than one, because the two states are not the same news.
+    A path nobody has locked may be the wrong path -- a typo, or the lock meant
+    is in the other store -- while a released record is the one they were looking
+    at, now clear.
+    """
+    if outcome.reason == ABSENT:
+        return f"nothing is locked at {outcome.key}, so there is nothing to break"
+    return f"the lock at {outcome.key} was already released; nothing to break"
+
+
+def _outcome_line(take: Take, *, applied: bool, dry_run: bool, new_version: int | None) -> str:
+    who = describe_holder(take.record)
+    if applied:
+        return (
+            f"broke this lock at version {take.version}; {who} is fenced at version "
+            f"{new_version} and stops at its next check"
+        )
+    if dry_run:
+        return (
+            f"would take this lock from {who}, comparing against version "
+            f"{take.version} -- nothing was written (--dry-run)"
+        )
+    return f"about to take this lock from {who}, comparing against version {take.version}"

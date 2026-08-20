@@ -7,13 +7,14 @@ text|json`, colour resolution, the `config` section, `diagnostics` and
 so everything about them here is still a sketch, and so are the other members of
 `invocation.selection`.
 
-**`lock` is emitted by `lock status`, and by nothing else yet** (#105).
-`sopuli/output/lock_view.py` produces the whole section, and
+**`lock` is emitted by the two `lock` verbs, and by nothing else yet** (#105,
+#149). `sopuli/output/lock_view.py` produces the whole section, and
 `tests/test_lock_view.py` validates every shape it can produce against the
-published schema. What `lock status` fills in is `found[]` — records it read at
-paths it does not hold, whether or not the config declares them (#150). `held[]`
-and `denied` still wait on a command that *takes* a lock, and the first of those
-is `creds generate`, which does not exist.
+published schema. `lock status` fills in `found[]` — records it read at paths it
+does not hold, whether or not the config declares them (#150). `lock break`
+fills in `broken[]`, and `denied` when it is refused a live lock. `held[]` still
+waits on a command that *takes* a lock for itself, and the first of those is
+`creds generate`, which does not exist.
 The `lock.*` events are the other half of the same wait: they need
 `--output jsonl` (#9), which has no emitter, so their payloads are specified in
 §5 and not yet produced by anything.
@@ -26,7 +27,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.9.schema.json`](../schemas/sopuli-run-1.9.schema.json),
+Schemas: [`../schemas/sopuli-run-1.10.schema.json`](../schemas/sopuli-run-1.10.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -513,9 +514,62 @@ many are free. On `lock status` the array is emitted even when empty, because
 there an empty array is the finding — a quiet estate must not be
 indistinguishable from a command that did not look.
 
-`mode` means one thing in both arrays: the guarantee available in the stores the
+`mode` means one thing in every array: the guarantee available in the stores the
 section is about. On a run that took locks that is what it took them under; on a
 survey it is what a lock in those stores would be worth.
+
+**`broken[]` is the fourth array, and it is a lock this run ended** (#149).
+`sopuli lock break` writes a `released` record over a held one, comparing against
+the version it read:
+
+```json
+"lock": {
+  "mode": "cas",
+  "broken": [ { "vault": "vault-prod", "path": "apps/acme/db",
+                "applied": true, "state": "held", "expired": true,
+                "version": 41, "new_version": 42,
+                "acquired_at": "…", "expires_at": "…",
+                "holder": { "host": "ci-runner-3", "pid": 8821,
+                            "os_user": "svc_sopuli", "correlation_id": "…",
+                            "command": "creds rotate" } } ]
+}
+```
+
+Its own array for the reason that split `held` from `found`: this is neither a
+claim the run holds nor a record it merely read. The fields that matter are the
+ones neither of the others has. **`version` is what the write compared against**
+and **`new_version` is what it produced** — and it is the second that fences the
+previous holder, whose next check now fails. Neither is called a fence: `held[]`'s
+`fence` is a claim *this* run holds, and after a break nobody holds anything.
+`version` is never null here, unlike `found[].version`, because a store that
+cannot fence is refused before the read (exit 5) — and so is one *declared*
+`locking: advisory-only`, whatever it turns out to support. An unfenced "break"
+is worse than a weaker guarantee: the released record keeps the holder's own
+`correlation_id`, so with no version to compare, their next check would find a
+record that still answers "mine" and they would carry on rotating, never told.
+
+**`applied` is what makes `--dry-run` and the run that follows one shape.** The
+plan *is* the entry; whether it happened is a boolean inside it, so a consumer
+diffing them compares like with like rather than two documents (invariant 8). It
+is false under `--dry-run`, where `new_version` is null because no version was
+produced.
+
+**An empty `broken[]` is the finding**, as an empty `found[]` is on a survey:
+there was no claim at the path — nothing there, or a record already released — so
+nothing was broken, `summary.changed` is 0 and the run exits 0. That is where
+invariant 9 comes from for this verb rather than being arranged: the second `lock
+break` on a path finds the record the first one wrote.
+
+**The holder is reported here and nowhere else afterwards.** The write replaces
+their record with a released one that still carries their name, so a later `lock
+status` cannot tell a break from a clean release. That cost is the one already
+accepted for `locking.break_expired`, where the takeover overwrites the record
+entirely: the path is not the audit trail, the run document is. `SOPULI-W002` says
+the same thing in words.
+
+An unexpired lock is **not** in this array — it is `denied`, on exit 7, with the
+holder named. Same object, same wording as a rotation that lost the same lock,
+because it is the same question being answered to the same person.
 
 ### `results[].changed` vs `results[].state`
 
@@ -579,7 +633,7 @@ is not contract and may improve.
 | Code | Meaning |
 |---|---|
 | `SOPULI-W001` | A store in this run is `locking: advisory-only`, so its lock record was written without compare-and-set. The run has no fence: two runs starting in the same second can both believe they hold the lock (#83) |
-| `SOPULI-W002` | This run took a lock that was past its expiry, which `locking.break_expired` permits. The previous holder is fenced — its next check will fail — but it may have applied changes before that |
+| `SOPULI-W002` | A lock was taken from its holder: automatically, because it was past its expiry and `locking.break_expired` permits that, or deliberately by `sopuli lock break` (#149). The previous holder is fenced — its next check will fail — but it may have applied changes before that |
 | `SOPULI-W003` | A `vaults:` entry names a backend that is not installed. Emitted by `config validate`, which warns rather than fails: the config is valid and the install is incomplete (ADR-006, E4). Any command that resolves the store to a client fails instead, with `SOPULI-20001` |
 | `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked and anything on the path can read every secret that crosses. Under P3's safety ratchet, so no layer can weaken it further — but nothing in the run undoes it either (#135, ADR-005) |
 | `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record left at a path the file no longer names would not appear — in that store. Everything reported is accurate; the survey is narrower than it looks (#150) |
@@ -591,6 +645,13 @@ example and that these five warnings have codes. Whether *every* warning gets on
 — the config layer's §10 findings still do not — and how numbers are allocated
 across categories is the part still open. `SOPULI-W005` was allocated by hand
 like the four before it, which is the evidence rather than the answer.
+
+`SOPULI-W002` gained a second emitter in #149 and **did not gain a second
+meaning**, which is the distinction the rule above draws. It has always meant *a
+lock was taken from its holder*; what `lock break` adds is a person deciding it
+rather than a config key. The wording in the table widened to cover both, and the
+wording is not contract. A second code would have told a consumer alerting on
+"somebody's lock was taken" that there were now two things to watch for.
 
 ### Error codes
 
@@ -909,6 +970,15 @@ still a minor bump under §8's rule — the rule is about what a consumer that k
 and `declared` is the field that tells it so. A consumer that ignores the field
 sees more rows than before; one that reads it sees exactly what it saw in 1.8 by
 keeping `declared: true`.
+
+**1.9 became 1.10 when a lock could be broken** (#149): `lock.break` joined the
+`command` enum and `lock.broken[]` joined the section, which is the minor rule
+twice over — for the fourth time, and by now that is the pattern rather than a
+coincidence. A verb arrives, it needs a name in the enum and an array of its own
+beside the ones that already mean something else, and nothing existing changes
+meaning. `SOPULI-W002`'s description widened in the same change and is
+deliberately *not* a schema matter: a code's meaning is contract, its wording is
+not, and this widening was neither.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles

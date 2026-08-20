@@ -587,8 +587,41 @@ acquire/take-over/refuse decision as pure logic; the store, the fence and the
 **Reading one without holding it** is `sopuli lock status` (#105): the declared
 set of secret paths, surveyed for records, with the holder reported the way exit
 7 reports it. It takes no lock — it is a `status` verb, and the rule above
-applies to it — so an hourly survey never blocks a rotation. Breaking a lock is
-deliberately not the same command and not self-service (#149).
+applies to it — so an hourly survey never blocks a rotation.
+
+**Taking one back** is `sopuli lock break <vault>:<path>` (#149), deliberately a
+different command from the one that reads:
+
+```
+$ sopuli lock break vault-prod:apps/acme/appdb-beta --confirm
+
+LOCK                             STATE    HOLDER                  COMMAND       SINCE                 EXPIRES
+vault-prod:apps/acme/appdb-beta  expired  svc_sopuli@ci-runner-3  creds rotate  2026-08-16T12:00:00Z  2026-08-16T12:15:00Z
+
+broke this lock at version 41; svc_sopuli@ci-runner-3 pid 8821 running creds rotate is fenced at version 42 and stops at its next check
+```
+
+The argument is spelled the way exit 7 and `lock status` print it, so the
+invocation in a refusal is a paste. It writes a `released` record over the held
+one with `cas` set to the version it read — never a delete, for the reason above
+— and the resulting version bump is the fence: the run it was taken from stops at
+its next check rather than applying a password the vault no longer advertises.
+That is what makes the verb survivable, so a store that cannot fence is refused
+(exit 5) rather than given a version of it that guarantees nothing — and so is one
+declared `locking: advisory-only`, whatever the mount turns out to support, which
+is the combination `locking.break_expired` is already refused against.
+
+It takes confirmation. A lock that has **not** expired takes `--force` as well,
+and refusing one is exit 7 naming the holder — the answer to a colleague
+mid-rotation is usually to talk to them. `--dry-run` prints the plan and writes
+nothing; `safety.readonly` refuses the verb outright, on exit 8. A path with no
+record, or one already released, is exit 0 having changed nothing, which is what
+makes running it twice safe.
+
+It will clear a record at a path this config no longer declares — the leftover
+`lock status` surfaces (#150) is exactly the one nobody else can clear — and that
+is not a breach of invariant 5: the write lands under the store's `locks/` prefix,
+in a store `vaults:` declares, and never touches the secret the lock guards.
 
 **Failure at each step**
 

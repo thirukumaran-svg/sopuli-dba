@@ -1,8 +1,10 @@
-"""Why a run stopped over a lock (#83).
+"""Why a run stopped over a lock (#83, #149).
 
-Two failures, and they are not the same event. One happens before anything has
-been touched; the other happens with a rotation half done, which is the whole
-reason the fence exists.
+Three failures, and they are not the same event. One happens before anything has
+been touched; the second happens with a rotation half done, which is the whole
+reason the fence exists; the third is a store that could never have made a
+takeover safe, and it is the one that carries an exit code -- see
+:class:`NoFenceError` for why the other two must not.
 
 Both carry ``category = "lock"``, which is already a value in the run schema's
 ``error.category`` enum. The exception says what kind of failure it is rather
@@ -19,8 +21,10 @@ the moment something did.
 
 from __future__ import annotations
 
+from sopuli.exit_codes import ExitCode
 from sopuli.lock.keys import LockKey
 from sopuli.lock.record import LockRecord
+from sopuli.store.protocol import StoreError
 
 
 class LockError(Exception):
@@ -82,3 +86,31 @@ class LockStolenError(LockError):
     stand, and `creds check` is what establishes the resulting state -- run by
     whoever holds the lock now.
     """
+
+
+class NoFenceError(StoreError):
+    """A lock in this store could not be taken from its holder safely. Exit 5.
+
+    Raised at plan time by ``sopuli lock break`` (#149) for a store with no
+    compare-and-set -- including one an operator configured
+    ``locking: advisory-only``, which is them conceding exactly this. Breaking a
+    lock is survivable only because the write bumps the version and the version
+    is the fence the broken run checks before its next mutation. Without one,
+    "breaking" a lock is deleting somebody's claim while they carry on rotating,
+    which is the outcome the whole design exists to prevent.
+    :meth:`~sopuli.lock.manager.LockManager.__post_init__` refuses the unattended
+    form of this for the same reason.
+
+    **A** :class:`~sopuli.store.protocol.StoreError` **and not a**
+    :class:`LockError`, which is the one thing worth explaining. It carries an
+    exit code, and the module note above says a lock error deliberately does not
+    -- because for those two the right code depends on what the run had already
+    applied, and only the command knows. This one has no such ambiguity: it is
+    invariant 4's plan-time capability refusal, raised before anything is read or
+    written, and 5 is the code that means it whoever is asking. Sitting in the
+    hierarchy that already carries ``exit_code`` and ``category`` is what keeps
+    that from being a special case at the boundary.
+    """
+
+    category = "capability"
+    exit_code = ExitCode.UNSUPPORTED_CAPABILITY

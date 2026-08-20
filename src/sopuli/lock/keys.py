@@ -37,6 +37,51 @@ class LockKey:
         return f"{self.store}:{self.path}"
 
 
+#: What :meth:`LockKey.__str__` puts between the two halves, and therefore what
+#: :func:`parse_lock_key` splits on.
+SEPARATOR = ":"
+
+
+def parse_lock_key(text: str) -> LockKey:
+    """Read back what :meth:`LockKey.__str__` writes (#149).
+
+    ``sopuli lock break`` takes its argument in exactly the spelling exit 7, the
+    ``lock.*`` events and ``lock status``'s first column already print, so the
+    invocation in a refusal is a paste rather than a translation. That only holds
+    if the two are one grammar, which is why this lives beside ``__str__`` rather
+    than in the command that calls it.
+
+    Split on the **first** separator rather than the last. A store name is a
+    ``vaults:`` key and cannot contain one; a secret path is somebody else's
+    namespace and might. Splitting from the right would address a different
+    document on exactly the input where the two rules disagree, and do it
+    silently.
+
+    The path goes through :func:`normalise_path` for the reason :func:`lock_key`
+    gives: a typed path and a configured one have to land on one key. Breaking a
+    lock is a write, and a key that differed by a doubled separator would write
+    *beside* the record instead of over it -- leaving the holder unfenced and the
+    operator believing otherwise.
+
+    Raises :class:`ValueError` rather than a ``ConfigError``: nothing is wrong
+    with any file, and the caller is a command line boundary that turns this into
+    click's own usage error -- exit 2, no run document (J7, #8).
+    """
+    store, separator, path = text.partition(SEPARATOR)
+    normalised = normalise_path(path)
+    if not separator:
+        raise ValueError(
+            f"{text!r} is not a lock: write it as `<vault>{SEPARATOR}<path>`, "
+            f"the way `sopuli lock status` and exit 7 print it"
+        )
+    if not store or not normalised:
+        raise ValueError(
+            f"{text!r} is not a lock: `<vault>{SEPARATOR}<path>` needs a vault name "
+            f"and a secret path, and this has only one of them"
+        )
+    return LockKey(store=store, path=normalised)
+
+
 def lock_key(ref: SecretRef, *, store: str) -> LockKey:
     """The lock a secret ref is mutated under.
 

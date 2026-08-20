@@ -236,7 +236,7 @@ class LockManager:
         )
         if isinstance(decision, Denied):
             raise LockDeniedError(
-                f"{key} is locked by {_describe(decision.record)}",
+                f"{key} is locked by {describe_holder(decision.record)}",
                 key=key,
                 record=decision.record,
                 expired=decision.expired,
@@ -310,13 +310,13 @@ class LockManager:
             if one.fence is not None and found.version != one.fence:
                 raise LockStolenError(
                     f"{one.key} was taken over: expected version {one.fence}, "
-                    f"found {found.version} held by {_describe(found.record)}",
+                    f"found {found.version} held by {describe_holder(found.record)}",
                     key=one.key,
                     hint="this run stopped before its next change; `creds check` says what is true",
                 )
             if not found.record.is_mine(self.correlation_id):
                 raise LockStolenError(
-                    f"{one.key} is now held by {_describe(found.record)}",
+                    f"{one.key} is now held by {describe_holder(found.record)}",
                     key=one.key,
                     hint="this run stopped before its next change; `creds check` says what is true",
                 )
@@ -378,8 +378,14 @@ class LockManager:
         return Found(record=LockRecord.from_dict(stored.data, now=now), version=stored.version)
 
 
-def _describe(record: LockRecord) -> str:
-    """The holder, as a message says it. Never a value -- see the record's shape."""
+def describe_holder(record: LockRecord) -> str:
+    """The holder, as a message says it. Never a value -- see the record's shape.
+
+    Public because ``lock break`` refuses in the same words (#149), and it is the
+    same question being answered to the same person: *is that me, a colleague, or
+    something that died*. Two spellings of one sentence would make the two
+    refusals read as two different findings.
+    """
     holder = record.holder
     who = (
         "an unknown holder"

@@ -3,10 +3,11 @@
 Grammar is noun-verb (D2): ``sopuli <noun> <verb>``. Each noun is a
 :class:`click.Group`, each verb a command inside it. The ``config`` verbs,
 ``target list`` and ``policy sample`` touch nothing outside the file; ``lock
-status`` is the first verb that opens a socket, and the seam between the two is
-worth keeping visible rather than letting it blur one command at a time.
+status`` is the first verb that opens a socket and ``lock break`` the first that
+writes through one, and both seams are worth keeping visible rather than letting
+them blur one command at a time.
 
-Four things about the structure are deliberate:
+Five things about the structure are deliberate:
 
 **The configuration is read by the boundary, not by the verbs.** A profile is
 precedence layer 3 and can supply ``output``, so the file has to be read before a
@@ -36,12 +37,21 @@ invariant 2's third exception, because a sample is not a credential: nothing
 authenticates with it and it is never stored. What keeps that narrow lives in
 :mod:`sopuli.output.policy_view`; what lives here is the refusal to combine it
 with ``--output json``.
+
+**One command mutates, and the gates it goes through are not its own** (#149).
+``lock break`` asks :func:`sopuli.safety.refuse_if_readonly` before it opens a
+store, :func:`sopuli.lock.takeover.check_fenceable` before it reads one, and
+:func:`sopuli.lock.takeover.plan_break` before it writes -- three refusals in
+three modules, each of which is a decision the command does not get to make
+locally. What is left here is the order they happen in, the confirmation, and the
+document. The verbs that mutate a database will inherit the same arrangement.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -57,7 +67,7 @@ from sopuli.config import (
     filter_estate,
     parse_selector,
 )
-from sopuli.diagnostics import backend_diagnostics, unlistable_stores
+from sopuli.diagnostics import backend_diagnostics, lock_broken, unlistable_stores
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import (
     GlobalOptions,
@@ -69,7 +79,16 @@ from sopuli.invocation import (
 from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.lock.inspect import declared_locks, mode_of, survey
 from sopuli.lock.inspect import discover as discover_locks
-from sopuli.lock.keys import acquisition_order
+from sopuli.lock.keys import LockKey, acquisition_order, parse_lock_key
+from sopuli.lock.manager import LockableStore, describe_holder
+from sopuli.lock.takeover import (
+    Nothing,
+    Outcome,
+    Take,
+    break_lock,
+    check_fenceable,
+    plan_break,
+)
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -77,12 +96,19 @@ from sopuli.output.config_view import (
     render_validation,
 )
 from sopuli.output.document import Diagnostic, Summary
-from sopuli.output.lock_view import build_status_section, render_status
+from sopuli.output.lock_view import (
+    build_break_section,
+    build_denied_section,
+    build_status_section,
+    render_break,
+    render_status,
+)
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.stream import configure_streams
 from sopuli.passwords import ByteLimit, generate
-from sopuli.store import SecretStore, connect
+from sopuli.safety import RefusedError, refuse_if_readonly
+from sopuli.store import SecretStore, StoreError, connect
 from sopuli.version import get_version
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -435,7 +461,7 @@ def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPo
 
 @cli.group("lock")
 def lock_group() -> None:
-    """Inspect the advisory locks."""
+    """Inspect the advisory locks, and take one back."""
 
 
 @lock_group.command("status")
@@ -517,6 +543,201 @@ def lock_status(
         Summary(total=len(states), ok=len(states), changed=0, failed=0),
     )
     return render_status(paths, states, match=match, mode=mode)
+
+
+@lock_group.command("break")
+@click.argument("lock", metavar="VAULT:PATH")
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Proceed without asking. Required where nothing can be asked.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Break a lock that has not expired. Its holder is probably working.",
+)
+@global_options
+def lock_break(
+    lock: str,
+    confirm: bool,
+    force: bool,
+    run: Invocation,
+) -> str:
+    """Take a lock from whoever holds it, and fence them.
+
+    The remedy `lock status` names and exit 7 points at. A run that was killed
+    leaves a held record behind; it expires, and until it does -- or if it never
+    does, because something wrote a record with no readable expiry -- nothing else
+    can rotate that credential. This is how a person clears it deliberately.
+
+    The argument is spelled the way exit 7, the `lock.*` events and `lock
+    status`'s first column already print it, so the invocation in a refusal is a
+    paste rather than a translation.
+
+    **It never deletes.** A `released` record is written over the held one, with
+    `cas` set to the version that was read. A KV v2 delete leaves the metadata
+    behind, after which a first acquisition can never compare-and-set against
+    version 0 again -- and that monotonic version *is* the fence, so a delete
+    would break every future lock on the path in order to clear one.
+
+    **It fences whoever held it**, and that is what makes breaking a lock
+    survivable rather than reckless: the write bumps the version, so the run that
+    held it fails its next fence check and stops before its next `ALTER USER`.
+    Which is also why a store that cannot fence is refused rather than served a
+    weaker version of this, and why a store *declared* `locking: advisory-only`
+    is refused whatever it supports -- there would be nothing to stop the run
+    whose lock was taken, which is precisely the situation that ends with two
+    runners applying different passwords to different targets.
+
+    **An expired lock takes confirmation; a live one takes `--force` as well.**
+    An expired holder is almost always a process that died. A live one is
+    somebody working, and the answer is usually to talk to them -- so that
+    refusal is exit 7, naming them, in the same words a rotation losing the same
+    lock would use.
+
+    **It is a mutation**, so `--dry-run` prints the plan and writes nothing, and
+    `safety.readonly` refuses it outright. Nothing to break -- a path with no
+    record, or one already released -- is exit 0 having changed nothing, which is
+    what makes running this twice safe.
+
+    It acts on the one lock named, whether or not this configuration declares a
+    binding for it: the leftover at a path the file no longer names is exactly
+    the record nobody else can clear (#150). The write still lands under the
+    store's lock prefix, in a store `vaults:` declares, and never touches the
+    secret the lock guards.
+    """
+    document = run.document
+
+    try:
+        key = parse_lock_key(lock)
+    except ValueError as exc:
+        # A malformed argument is exit 2 with no document (J7): argv did not
+        # resolve to a valid request, and nothing about any file is wrong.
+        raise click.UsageError(str(exc)) from exc
+
+    refuse_if_readonly(run.resolved, action=f"breaking the lock on {key}")
+
+    paths = run.sources
+    config = run.config
+    entry = _lockable_store(key, config, token_file=run.vault_token_file)
+    # Invariant 4: the capability is asked about before the record is read, so a
+    # store that can never serve this command says so rather than looking as
+    # though this particular lock could not be taken.
+    check_fenceable(key, entry)
+    mode = mode_of({key.store: entry.store})
+
+    document.diagnostics.extend(config_diagnostics(config))
+
+    try:
+        state = survey([key], stores={key.store: entry.store})[0]
+        outcome = plan_break(state, force=force)
+
+        if isinstance(outcome, Nothing) or run.dry_run:
+            return _report_plan(run, outcome, paths=paths, mode=mode)
+
+        _confirm_break(outcome, paths=paths, mode=mode, confirmed=confirm)
+        new_version = break_lock(outcome, entry.store)
+    except LockDeniedError as exc:
+        # The same `denied` object a rotation would emit, for the same reason:
+        # the question at exit 7 is who that is, and it must not depend on which
+        # command was asking.
+        document.lock = build_denied_section(exc, mode=mode)
+        raise
+
+    document.diagnostics.extend(
+        lock_broken(outcome.key, outcome.record, expired=outcome.state.expired)
+    )
+    document.lock = build_break_section(outcome, mode=mode, applied=True, new_version=new_version)
+    document.finish(ExitCode.SUCCESS, Summary(total=1, ok=1, changed=1, failed=0))
+    return render_break(paths, outcome, mode=mode, applied=True, new_version=new_version)
+
+
+def _report_plan(run: Invocation, outcome: Outcome, *, paths: Sequence[Path], mode: str) -> str:
+    """Finish a run that wrote nothing — a dry run, or nothing to break.
+
+    One function for both because the document is the same shape either way, and
+    that is the point of `applied` living inside the entry: a consumer diffing a
+    dry run against the run that followed compares like with like. What differs
+    is `summary.changed`, which is 0 in both cases and for the same reason —
+    nothing happened.
+
+    Invariant 9 falls out here rather than being arranged: the second `lock
+    break` on a path finds the record it wrote the first time, which is not a
+    claim, and reports `changed: false` without writing again.
+    """
+    document = run.document
+    if isinstance(outcome, Nothing):
+        # The text says this on its last line; a consumer reading the document
+        # gets an empty `broken` and would otherwise have to infer why.
+        document.diagnostics.append(Diagnostic(level="info", message=_nothing_to_break(outcome)))
+    document.lock = build_break_section(outcome, mode=mode, applied=False)
+    document.finish(ExitCode.SUCCESS, Summary(total=1, ok=1, changed=0, failed=0))
+    return render_break(paths, outcome, mode=mode, applied=False, dry_run=run.dry_run)
+
+
+def _nothing_to_break(outcome: Nothing) -> str:
+    return f"nothing to break at {outcome.key}: the path has no held record"
+
+
+def _confirm_break(outcome: Take, *, paths: Sequence[Path], mode: str, confirmed: bool) -> None:
+    """Print the plan and ask, unless somebody already answered.
+
+    Invariant 8's "prints a plan first", and the plan goes to **stderr**: under
+    `--output json` stdout carries the run document and nothing else may touch
+    it, and a prompt that appeared only in text mode would be a confirmation
+    somebody could skip by asking for JSON.
+
+    **Where nothing can be asked, this refuses rather than proceeding.** That is
+    the ratchet reading of P5's `--confirm`: the flag says *I have already
+    decided*, and a closed stdin is not somebody deciding. Exit 8 with a message
+    naming the flag is more use than a prompt that reads EOF and aborts, which is
+    what click would otherwise do — the operator would learn that it stopped and
+    not what to type instead.
+    """
+    if confirmed:
+        return
+    if not _can_prompt():
+        raise RefusedError(
+            "breaking a lock needs confirmation, and there is nobody here to ask",
+            hint=(
+                "pass --confirm to answer in advance, or --dry-run to see the plan "
+                "without touching anything"
+            ),
+        )
+    click.echo(render_break(paths, outcome, mode=mode, applied=False), err=True)
+    click.confirm(
+        f"take this lock from {describe_holder(outcome.record)}?",
+        abort=True,
+        err=True,
+    )
+
+
+def _can_prompt() -> bool:
+    """Whether there is somebody at a terminal to answer.
+
+    Not a flag and not a profile key — a run is unattended when nobody could have
+    been asked, which is what `invocation.actor.unattended` already says in the
+    document (`01-configuration.md` §5). A profile's `confirm:` is parsed and
+    waiting for a consumer; wiring it into the resolver is its own change.
+    """
+    return sys.stdin is not None and sys.stdin.isatty()
+
+
+def _lockable_store(
+    key: LockKey, config: Config, *, token_file: Path | None = None
+) -> LockableStore:
+    """The one store this lock lives in, and whether a lock in it can be fenced.
+
+    `locking` is carried alongside the client rather than re-read, for the reason
+    :class:`~sopuli.lock.manager.LockableStore` gives: a command must not be able
+    to disagree with what `config show` displayed about the same store.
+    """
+    store = _stores_for({key.store}, config, token_file=token_file)[key.store]
+    locking = next(vault.locking for vault in config.vaults if vault.name == key.store)
+    return LockableStore(store=store, locking=locking)
 
 
 def _stores_for(
@@ -642,6 +863,14 @@ def main() -> None:
         # defined as equal to the process's.
         click.echo(f"sopuli: {exc}", err=True)
         raise SystemExit(ExitCode.LOCK_HELD) from exc
+    except StoreError as exc:
+        # A store carries its own exit code and category (#138) -- a login
+        # failure is P5's exit 6, a store that cannot fence a lock is exit 5
+        # (#149) -- and the run document already reports it from `_classify`.
+        # Without this arm the process would exit 1 while its own document said
+        # otherwise, and `exit_code` is defined as equal to the process's.
+        click.echo(f"sopuli: {exc}", err=True)
+        raise SystemExit(exc.exit_code) from exc
     except LockError as exc:
         # Everything else about a lock, which today is `LockStolenError`, and
         # deliberately *not* 7. Exit 7 tells a scheduler nothing ran -- the

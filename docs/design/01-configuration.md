@@ -529,6 +529,11 @@ defaults:
     break_expired: true         # default: off
 ```
 
+`sopuli lock break` is the attended form of the same act (#149), and the two are
+deliberately different mechanisms: this key is a standing permission for a runner
+with nobody watching, and the verb is a person naming one path. They emit the same
+warning code, because it is the same event.
+
 `break_expired` lets an unattended runner take over a lock that is past
 `expires_at` plus a 60-second clock-skew margin. Breaking one is otherwise not
 self-service — the holder may be a colleague mid-rotation rather than a process
@@ -787,7 +792,7 @@ spells them:
 | `app_pdb` | an application PDB |
 
 That is `scope.type` from
-[`sopuli-run-1.9.schema.json`](../schemas/sopuli-run-1.9.schema.json), minus
+[`sopuli-run-1.10.schema.json`](../schemas/sopuli-run-1.10.schema.json), minus
 `unknown`. Adopting the vocabulary the run document has typed since it was written
 means the word a file *asserts* and the word the tool *reports* are the same word,
 so a mismatch between them needs no translation to explain. `unknown` is

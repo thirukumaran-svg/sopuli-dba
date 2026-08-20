@@ -59,12 +59,15 @@ Two settings that look like they belong here and do not:
 * ``--config`` -- P3's five-step first-match *file discovery* is a different
   chain, implemented in :mod:`sopuli.config.discovery`.
 * ``--force`` -- decided in #89, and deliberately absent. It overrides the
-  account guardrails of ``02-oracle-privileges.md`` §4 (checks 2--5), which are
-  not settings and have no precedence chain: they are asked of one account at one
-  moment. Keeping it out of the registry is what makes invariant 10 structural
-  rather than remembered -- a flag that is not a setting cannot relax
-  ``safety.readonly`` or ``safety.max_targets``, because there is no layer for it
-  to arrive on. If it is ever added here, that argument is gone.
+  account guardrails of ``02-oracle-privileges.md`` §4 (checks 2--5) and, since
+  #149, ``lock break``'s refusal of a lock that has not expired. Neither is a
+  setting and neither has a precedence chain: both are asked of one thing at one
+  moment -- this account, now; this lock, now. Keeping it out of the registry is
+  what makes invariant 10 structural rather than remembered -- a flag that is not
+  a setting cannot relax ``safety.readonly`` or ``safety.max_targets``, because
+  there is no layer for it to arrive on. If it is ever added here, that argument
+  is gone, and it is the argument that lets the catalogue grow safely: a second
+  guardrail joined it without touching this file.
 """
 
 from __future__ import annotations
@@ -82,7 +85,7 @@ class Layer(StrEnum):
     sorts by it rather than by a separate rank table that could disagree.
 
     The values are exactly the ``source`` enum published in
-    ``docs/schemas/sopuli-run-1.9.schema.json``, so a resolved setting can be
+    ``docs/schemas/sopuli-run-1.10.schema.json``, so a resolved setting can be
     serialised into ``invocation.options`` without a translation step -- and
     ``tests/settings/test_registry.py`` reads the schema to keep it that way.
 

@@ -51,8 +51,8 @@ The rule and what it costs: [ADR-006](docs/decisions/adr-006-optional-dependenci
 > **Status: pre-implementation.** The extras above are declared in
 > `pyproject.toml` and the registry behind them resolves a backend on first use.
 > **`hashicorp` is the one backend that exists** — KV v2 and KV v1, with token,
-> AppRole, Kubernetes and userpass auth — and `sopuli lock status` is so far the
-> only command that reaches it. `oci`, `file` and `keyring` are accepted in a
+> AppRole, Kubernetes and userpass auth — and the two `sopuli lock` verbs,
+> `status` and `break`, are so far the only commands that reach it. `oci`, `file` and `keyring` are accepted in a
 > config and report that this build has no module for them. Nothing is on PyPI
 > yet.
 

@@ -176,7 +176,7 @@ nothing else in the suite can see rule 3 break.
 
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
-| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, `lock status` with the store handed in, and the install-shape assertions in §3 |
+| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, `lock status` and `lock break` with the store handed in — including the live/expired/nothing matrix, which is a comparison rather than a container and a sleep — and the install-shape assertions in §3 |
 | 1 | every PR | public CI | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
 | 2 | nightly | public CI | < 30 min | 21c XE, 18c XE, 11g XE, PostgreSQL matrix; fault injection |
 | 3 | pre-release | maintainer | manual | built 19c, real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
@@ -284,6 +284,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | `lock status` reads a record the tool did not write: a config entry opens a store, authenticates, and reports somebody else's held lock — and the survey leaves the version counter where it found it, because `status` takes no lock (#105) | Vault |
 | `list` agrees between the fake and the real mount (#150): full readable paths, recursion through subtree markers, a prefix that stops on a segment boundary, and — the one a dictionary-backed fake would never produce on its own — a soft-deleted path that is still listed and still reads as nothing, because KV v2 lists metadata and metadata outlives data | Vault, both mounts |
 | `lock status` reports a record at a path the config does not declare (#150), marked `declared: false`, and a store with no `list` capability warns (`SOPULI-W005`) instead of failing the survey — so the command does not become one that works on some backends and not others | Vault |
+| `lock break` takes a record the tool did not write, with a compare-and-set against a version Vault issued, and **the manager that held it fails its next check** (#149). The fence is the whole reason the verb is allowed to exist, and it is the one thing about it a fake cannot establish: a store that counts integers agrees with the tool by construction | Vault |
 
 ### Fault injection (tier 2)
 
