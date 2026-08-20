@@ -70,17 +70,33 @@ for name in list(sys.modules):
 sys.meta_path.insert(0, Blocker())
 
 import sopuli
+from sopuli.driver.registry import DRIVERS
 from sopuli.store.registry import BACKENDS
 
-backends = tuple(backend.module for backend in BACKENDS.values())
+backends = tuple(backend.module for backend in BACKENDS.values()) + tuple(
+    driver.module for driver in DRIVERS.values()
+)
 imported = []
 for found in pkgutil.walk_packages(sopuli.__path__, "sopuli."):
     # Rule 1 puts the client import *inside* the backend module, so a backend is
     # the one place importing a client is correct. Everything else must not.
+    # Drivers are backends for this purpose (#170): `sopuli.driver.oracle` is
+    # where `oracledb` may be imported, and nowhere above it. Listed from the
+    # registry rather than by hand, so a second driver inherits the exemption
+    # instead of failing this on the day it is added.
     if any(found.name == module or found.name.startswith(module + ".") for module in backends):
         continue
     importlib.import_module(found.name)
     imported.append(found.name)
+
+# What the *walk* pulled in, before the command runs. `walk_packages` imports a
+# package in order to enumerate it, so a backend whose client import survives the
+# blocker lands in sys.modules here -- which says nothing about the command. Store
+# backends never showed up only because httpx is blocked and their import fails;
+# a driver package with no vendor import at module scope imports perfectly well.
+# The question this test asks is what the *command* loaded, so the baseline is
+# subtracted rather than assumed empty.
+preloaded = {{name for name in sys.modules if name in backends}}
 
 from click.testing import CliRunner
 
@@ -91,7 +107,9 @@ print(json.dumps({{
     "modules": len(imported),
     "exit_code": result.exit_code,
     "output": result.output,
-    "loaded_backends": [name for name in sys.modules if name in backends],
+    "loaded_backends": [
+        name for name in sys.modules if name in backends and name not in preloaded
+    ],
 }}))
 '''
 

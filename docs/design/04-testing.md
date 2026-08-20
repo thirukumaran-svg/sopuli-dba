@@ -149,6 +149,33 @@ password_reuse_policy      ✓         ✓       ✓       ✓        ✓
 The second skip count is the one to watch: capability skips are correct, missing
 environments are a coverage gap.
 
+Implemented in `tests/oracle_harness.py` and the tier-1 fixtures in
+`tests/conftest.py` (#174). Three things about it are decisions rather than
+mechanics:
+
+- **The probes are keyed on P1's capability list, not on a list of their own.**
+  The sketch in `test/capabilities.py` asked about three things no driver
+  reports and missed three that are capabilities — and a harness keyed on its
+  own list cannot do the job claimed above, because validating the model
+  requires asking the same question the driver answers. A test asserts the two
+  lists are one list, so a new capability has to choose a side.
+- **Not everything is a query.** Every supported Oracle can expire a password
+  and lock an account; those are properties of the product, not of the instance.
+  Writing `select 1 from dual` for them would look like a probe and measure
+  nothing, which is worse than saying so — a reader would believe it. They are
+  declared structural, with the reason attached, and the report can therefore
+  distinguish *asked and told yes* from *there was nothing to ask*.
+- **Three absences, three messages.** `oracledb` missing, Instant Client missing
+  and the database unreachable are different findings, and only the third is
+  what most people mean by "no test environment". Reporting the other two that
+  way sends somebody to `docker` for a `pip` problem — so the skip names which
+  it was, and the Instant Client case reads as itself rather than as `DPI-1047`.
+
+The report is ASCII rather than the check marks drawn above. P4's cp1252 story
+is exactly this: a redirected stream on Windows takes the locale codepage, and a
+box-drawing character kills the writer mid-line. A test report that cannot
+survive being piped into a log is not much of a report.
+
 ### Install shape is a dimension too (ADR-006)
 
 Capabilities describe what the thing at the far end can do. **Install shape
@@ -414,7 +441,7 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 | # | Question | Leaning |
 |---|---|---|
 | ~~T1~~ | ~~Does `gvenzl/oracle-xe:11` exist?~~ | **resolved 2026-08-08: yes.** `11.2.0.2-slim` pulls, starts in ~15 s and accepts the test profiles. 11.2 stays tier 2; D7 is cheap. amd64-only. See §2 |
-| T2 | `testcontainers-python` or `compose.yaml` + fixtures? | compose, for a tool whose users are DBAs who will want to run the stack by hand; testcontainers if session management gets fiddly |
+| ~~T2~~ | ~~`testcontainers-python` or `compose.yaml` + fixtures?~~ | **resolved 2026-08-20 in #174: compose.** The harness configures a DSN and probes whatever answers; it starts nothing and stops nothing. That is the choice made concrete rather than merely stated — a fixture that managed containers would be a second definition of the stack alongside `test/compose.yaml`, and the reason for compose in the first place is that this tool's users are DBAs who will want to run the stack by hand and look at it. `SOPULI_TEST_ORACLE_DSN` points it elsewhere; the default is the compose service |
 | T3 | Is LocalStack Secrets Manager in the community tier? | verify before committing to it as the AWS path |
 | T4 | Does OCI Vault cost enough to matter in a test loop? | check pricing; if so, tier 3 only and reuse one secret |
 | ~~T5~~ | ~~Public CI provider~~ | **resolved 2026-08-09: GitHub Actions.** Tier 0 runs in `.github/workflows/ci.yml`; the repository and release-please were already there, so a second provider would have bought nothing. Oracle Free containers run on amd64 hosted runners when tier 1 arrives. One constraint found while wiring it: branch protection is unavailable on a private repo on the free plan, so CI reports but cannot block — see `../workflow.md` |

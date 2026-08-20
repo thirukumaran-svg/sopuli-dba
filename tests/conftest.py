@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from oracle_harness import Environment, decide_skip, dsn_host, probe, render_matrix
 from sopuli.store.registry import BACKENDS
 
 #: Writes a config file and returns its path.
@@ -196,3 +197,196 @@ def vault_stack() -> Iterator[VaultStack]:
 
     yield VaultStack(addr=VAULT_ADDR, token=VAULT_TOKEN, client=client)
     client.close()
+
+
+# ---------------------------------------------------------- tier 1: Oracle ---
+#
+# The tier-1 Oracle fixture, and the markers that gate tests on capabilities.
+#
+# Everything that opens a socket is here; everything that can be decided without
+# one is in :mod:`oracle_harness` beside it, so the interesting half is tier 0.
+#
+# **A missing environment is a skip with a reason, never a failure** (§1). The
+# public suite has to be green on freely pullable images alone, and greener still
+# on a laptop with nothing running: `docker compose --profile tier1 up -d` from
+# `test/` is what turns these on. The skip says which part was missing, because
+# "skipped" without a reason is indistinguishable from a test nobody wrote.
+#
+# Three things can be absent and they are three different findings, so they get
+# three different messages:
+#
+# * ``oracledb`` is not installed — the extra was never asked for (ADR-006);
+# * **Instant Client** is not installed — thick mode cannot start, which is D3's
+#   runtime prerequisite and the thing that bites a new contributor first;
+# * the database is not reachable — no container, or the wrong DSN.
+#
+# Only the third is what most people mean by "no test environment", and reporting
+# the other two as that would send somebody to `docker` for a `pip` problem.
+
+
+#: Where the tier-1 database is. The default is `test/compose.yaml`'s
+#: `oracle-free` service, so a contributor who brought the stack up needs no
+#: environment variables at all.
+DSN = os.environ.get("SOPULI_TEST_ORACLE_DSN", "localhost:1521/FREEPDB1")
+USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
+PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
+
+#: Opt in to running against a non-loopback DSN.
+#:
+#: The same guard `vault_stack` has, and the argument is stronger here: these
+#: tests create and drop accounts, and a test has no config file whitelisting
+#: what it may touch, so invariant 5's protection does not reach them.
+#: Inheriting a DSN from a shell pointed at a real database is exactly the
+#: accident worth preventing.
+ALLOW_REMOTE = "SOPULI_TEST_ALLOW_REMOTE_ORACLE"
+
+#: How the environment is named in the matrix. One column today; the report
+#: takes a sequence so a second is data rather than code (`04-testing.md` §3).
+ENVIRONMENT_NAME = os.environ.get("SOPULI_TEST_ORACLE_NAME", "oracle")
+
+#: Filled by the fixture and read by the summary hook. Module state because a
+#: terminal hook has no access to fixtures, and the alternative -- stashing it on
+#: the session -- is the same thing with more ceremony.
+_ENVIRONMENTS: list[Environment] = []
+_SKIPS = {"capability": 0, "environment": 0}
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "requires_capability(*names): run only where the target reports every one",
+    )
+    config.addinivalue_line(
+        "markers",
+        "requires_no_capability(*names): run only where the target reports none of them",
+    )
+
+
+def _dsn_is_loopback(dsn: str) -> bool:
+    """The same question as :func:`_is_loopback`, asked of an Oracle DSN.
+
+    A DSN is not a URL, so the host is pulled out by
+    :func:`~oracle_harness.dsn_host` -- which is in the harness because that
+    parsing is the part with edge cases worth testing -- and then reshaped into
+    one. Delegating rather than growing a second notion of "loopback" is what
+    stops this recognising `127.0.0.1` and missing `127.0.0.2`.
+    """
+    return _is_loopback(f"//{dsn_host(dsn)}")
+
+
+@pytest.fixture(scope="session")
+def oracle_target() -> Iterator[Environment]:
+    """A probed Oracle, or an :class:`Environment` saying why there is not one.
+
+    Session-scoped, and deliberately: most Oracle containers take minutes to
+    start, so §4's rule is one long-running container per version per session
+    and state reset by dropping and recreating accounts — never by recreating
+    the container.
+
+    Yields rather than skips, so that the summary can report the gap. A test
+    that cannot run gets its skip from :func:`decide_skip` through the gate
+    below, which is also what keeps the two skip counts apart.
+    """
+    environment = Environment(name=ENVIRONMENT_NAME, dsn=DSN)
+
+    if not _dsn_is_loopback(DSN) and not os.environ.get(ALLOW_REMOTE):
+        environment.unreachable_reason = (
+            f"{DSN} is not loopback, and these tests create and drop accounts; "
+            f"set {ALLOW_REMOTE}=1 to allow it"
+        )
+        _ENVIRONMENTS.append(environment)
+        yield environment
+        return
+
+    try:
+        import oracledb
+    except ImportError:
+        environment.unreachable_reason = "oracledb is not installed; `pip install -e '.[oracle]'`"
+        _ENVIRONMENTS.append(environment)
+        yield environment
+        return
+
+    connection = None
+    try:
+        # Thick mode, always (D3): thin mode has no Native Network Encryption,
+        # so a harness that quietly used it would be exercising a configuration
+        # the tool cannot run in.
+        oracledb.init_oracle_client()
+        connection = oracledb.connect(user=USER, password=PASSWORD, dsn=DSN)
+        cursor = connection.cursor()
+        row = cursor.execute("select version_full from v$instance").fetchone()
+        environment.version = row[0] if row else None
+        environment.capabilities = probe(cursor)
+    except Exception as exc:  # noqa: BLE001 -- any failure means "not available"
+        environment.unreachable_reason = _why(exc)
+
+    _ENVIRONMENTS.append(environment)
+    try:
+        yield environment
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _why(exc: BaseException) -> str:
+    """A skip reason in the tool's own vocabulary.
+
+    Uses the driver's error mapping (#172) rather than a bare `str(exc)`, so
+    that "Instant Client is missing" reads as itself instead of as `DPI-1047`
+    — the failure a contributor hits first, and the one most likely to be
+    mistaken for a missing container.
+    """
+    from sopuli.driver.oracle.errors import CLIENT_LIBRARY, from_error
+
+    diagnosis = from_error(exc)
+    if diagnosis.kind == CLIENT_LIBRARY:
+        return f"{diagnosis.code}: Oracle Instant Client is not installed (D3)"
+    return f"{diagnosis.code or type(exc).__name__}: {diagnosis.message}".strip()
+
+
+@pytest.fixture(autouse=True)
+def _capability_gate(request: pytest.FixtureRequest) -> None:
+    """Apply `requires_capability` / `requires_no_capability`.
+
+    Autouse so a test declares what it needs and nothing else: no fixture to
+    remember to request, and no way to mark a test and have the mark do nothing.
+    A test with neither marker never asks for the environment, which is what
+    keeps the tier-0 tests in this directory free of it.
+    """
+    required = _names(request.node, "requires_capability")
+    forbidden = _names(request.node, "requires_no_capability")
+    if not required and not forbidden:
+        return
+
+    environment = request.getfixturevalue("oracle_target")
+    reason = decide_skip(environment, required=required, forbidden=forbidden)
+    if reason is None:
+        return
+
+    _SKIPS["environment" if reason.startswith("environment") else "capability"] += 1
+    pytest.skip(reason)
+
+
+def _names(node: pytest.Item, marker: str) -> tuple[str, ...]:
+    found = node.get_closest_marker(marker)
+    return tuple(found.args) if found else ()
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """§3's matrix, so that "green" is never ambiguous.
+
+    Printed only when something asked for an environment. A tier-0-only run --
+    which is every run on a laptop with no containers up -- says nothing, because
+    a report about a database nobody wanted is noise.
+    """
+    if not _ENVIRONMENTS:
+        return
+
+    terminalreporter.write_line("")
+    terminalreporter.write_line(
+        render_matrix(
+            _ENVIRONMENTS,
+            capability_skips=_SKIPS["capability"],
+            environment_skips=_SKIPS["environment"],
+        )
+    )

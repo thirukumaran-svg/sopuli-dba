@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -60,6 +59,7 @@ from sopuli.secrets import Secret
 ROOT = Path(__file__).resolve().parents[2]
 PRINCIPLES = ROOT / "docs" / "design" / "00-principles.md"
 RUN_SCHEMA = ROOT / "docs" / "schemas" / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
+INSTALL_SHAPE = ROOT / "tests" / "store" / "test_install_shape.py"
 
 #: P1's capability table: the section, then the first column of each row. Scoped
 #: to the section rather than run over the whole file, because the document is
@@ -262,12 +262,19 @@ def test_a_missing_account_is_none_rather_than_an_error() -> None:
     assert found.name == "ACME_WEB_USER"
 
 
-def test_the_interface_imports_no_database_client() -> None:
-    """ADR-006 rule 3, at the one boundary this issue can hold.
+def test_the_no_vendor_client_property_lives_in_the_install_shape_test() -> None:
+    """ADR-006 rule 3, pointed at the test that can actually hold it.
 
-    ``tests/store/test_install_shape.py`` is the general form and #170 extends
-    it to ``oracledb``. This is the cheap local version: importing the interface
-    every command depends on must not drag a vendor client in.
+    This asserted ``"oracledb" not in sys.modules`` until #174, which was never
+    the claim it appeared to be: it measured whether *anything in the process*
+    had imported the client, so it passed by luck until a tier-1 fixture
+    legitimately imported one, and would have gone on passing if this module
+    grew a vendor import that some earlier test happened to trigger first.
+
+    ``tests/store/test_install_shape.py`` is the real form and is strictly
+    stronger: a subprocess with every client blocked at the import system, then
+    every sopuli module outside a driver or a backend imported. What is left
+    here is the pointer, because deleting the test outright would leave the
+    property looking untested from this file.
     """
-    assert "sopuli.driver.protocol" in sys.modules
-    assert "oracledb" not in sys.modules
+    assert INSTALL_SHAPE.exists()

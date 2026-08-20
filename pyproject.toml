@@ -109,3 +109,11 @@ select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "PT", "RET", "SIM"]
 python_version = "3.11"
 files = ["src", "tests"]
 strict = true
+
+# `oracledb` is an extra (ADR-006), so it is absent from a base checkout and the
+# tier-1 fixture that imports it must still typecheck there. The import is inside
+# a function and guarded, which is the rule this override serves rather than
+# weakens: nothing at module scope reaches for a vendor client.
+[[tool.mypy.overrides]]
+module = ["oracledb"]
+ignore_missing_imports = true
