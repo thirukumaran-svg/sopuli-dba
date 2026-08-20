@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/futville/sopuli-dba/compare/v0.31.0...v0.32.0) (2026-08-20)
+
+
+### Features
+
+* **lock:** `sopuli lock break` — take a lock from its holder, and fence them ([#167](https://github.com/futville/sopuli-dba/issues/167)) ([82b41a5](https://github.com/futville/sopuli-dba/commit/82b41a5c73d0906898d092034a43731cd3c5aebc))
+
 ## [0.31.0](https://github.com/futville/sopuli-dba/compare/v0.30.0...v0.31.0) (2026-08-20)
 
 
