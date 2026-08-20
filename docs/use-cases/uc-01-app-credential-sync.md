@@ -338,6 +338,17 @@ Guardrails: refuse `CONTAINER=ALL` when not connected to a root; refuse to treat
 `OPEN READ WRITE`; skip (with a clear status) PDBs that are closed or in a
 standby, rather than failing the whole run.
 
+**Application containers are refused outright for now** (#171). The row above
+describes the scope correctly and nothing has ever run against one: whether an
+application-common user is `C##`-prefixed the way a CDB common user is has not
+been checked against a real application root, and `CONTAINER=ALL` there means
+something narrower than it does in `CDB$ROOT`. Guessing which of those applies
+would produce a statement that is either refused or — worse — accepted against
+the wrong set of containers, so `app_root` and `app_pdb` raise instead. The
+refusal names the scope and says why, which is what makes it a gap somebody can
+close rather than a silence. Closing it needs an application container to test
+against, not a decision.
+
 ### 6.3 Gradual password rollover (19.12+/21c) — the default strategy
 
 Where available, this makes zero-downtime rotation real:

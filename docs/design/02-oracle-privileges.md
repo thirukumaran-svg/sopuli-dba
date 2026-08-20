@@ -352,7 +352,20 @@ ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
   validation, never the raw string from config.
 - `CONTAINER=ALL` is appended only when the session is in `CDB$ROOT` **and** the
   account is a `C##` common user; otherwise the tool refuses rather than letting
-  Oracle produce a confusing error.
+  Oracle produce a confusing error. An **application** root or PDB is refused
+  either way, pending a real one to verify against — see UC-1 §6.2.
+- **The built statement redacts itself.** It carries a password, so it is as
+  sensitive as one: every stringification is `ALTER USER "X" IDENTIFIED BY ***`,
+  which is also the form `--dry-run` prints, and the plaintext is reachable only
+  through a `reveal()` named after the one on `Secret` so that grepping a single
+  method name still finds every place plaintext can be had.
+
+The statement layer refuses a password on its own terms, which is deliberately
+not the same act as `passwords.check` finding a policy violation. UC-1 §4 lets an
+operator waive the second with `--no-policy-check`; nothing waives the first. A
+rule that can be turned off and a rule that cannot are two rules even where they
+reject the same character, and merging them would make `--no-policy-check` a way
+to switch off invariant 11.
 
 ### Where the password text can surface
 
