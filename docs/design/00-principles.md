@@ -16,19 +16,50 @@ Every operation that touches a database goes through a **driver interface**. No
 command contains vendor SQL. Oracle is the first and only implemented driver;
 its shape must not leak into the interface.
 
-### Driver interface (conceptual)
+### Driver interface
 
 ```
 Driver
   connect(target, credential) -> Session
-  capabilities() -> CapabilitySet
-  resolve_scope(target) -> Scope          # CDB root / PDB / schema-only
-  user_exists(session, account) -> bool
-  describe_user(session, account) -> UserState
-  set_password(session, account, secret, opts) -> ChangeResult
-  verify_password(session|offline, account, secret) -> VerifyResult
-  apply_attributes(session, account, attrs) -> ChangeResult
+
+Session
+  scope() -> Scope                          # what this connection is, and can do
+  describe_user(account) -> UserState | none
+  set_password(account, secret) -> ChangeResult
+  verify_password(account, secret, method) -> VerifyResult
+  apply_attributes(account, attrs) -> ChangeResult
+  close()
 ```
+
+Four of those changed shape when the interface became code (#169), the way P2's
+`write` grew a compare-and-set when the advisory lock made it real. Each is a
+refinement of the same rule and none of them relaxes it:
+
+- **The session carries the operations.** The sketch threaded a session through
+  every call and gave `capabilities()` no argument at all — which cannot be right
+  for an estate where twenty-one PDBs answer differently. Capabilities are cached
+  **per session**, so a flat interface needs a cache keyed on a connection, which
+  is this object with extra steps.
+- **`capabilities()` and `resolve_scope()` are one call.** Both are observed at
+  one moment, from one connection, and cached together, and the run document
+  already prints them as one `scope` object. Two calls would mean two caches and
+  a merge at the output layer.
+- **`user_exists` is `describe_user(...) is not none`.** A caller asking whether
+  an account exists asks what it is in the next breath; UC-1 §5 step 3 is one
+  step, not two.
+- **`opts` has no members yet, so it has no type yet.** It is where UC-1 §5's
+  opt-in attributes will go. An untyped bag now would accept a misspelled
+  `container_clase: ALL` and silently do nothing, which is the failure
+  `01-configuration.md` §10 exists to prevent.
+
+The slice implemented is `sopuli/driver/protocol.py`, and it is types and
+vocabulary only: nothing behind it connects yet. `apply_attributes` is the one
+operation above that the code deliberately does **not** declare — the same seam
+P2 draws around `health`. A method on the protocol is a demand on every
+implementation, so declaring one nothing calls would oblige the Oracle driver to
+write a body for a caller that does not exist; it arrives with `creds apply`'s
+attributes. `Scope` is the run document's `scope` object minus `labels`, which
+belong to the config rather than to anything a driver can observe.
 
 ### Capability negotiation
 
