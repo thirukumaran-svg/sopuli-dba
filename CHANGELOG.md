@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/futville/sopuli-dba/compare/v0.30.0...v0.31.0) (2026-08-20)
+
+
+### Features
+
+* **config:** `SOPULI_VAULT__<NAME>__*` and the layer-3 vault variables ([#165](https://github.com/futville/sopuli-dba/issues/165)) ([8ec0e44](https://github.com/futville/sopuli-dba/commit/8ec0e44c21253d4c43bfb892335afcfdacfc60af))
+
 ## [0.30.0](https://github.com/futville/sopuli-dba/compare/v0.29.0...v0.30.0) (2026-08-19)
 
 
