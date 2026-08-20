@@ -389,6 +389,26 @@ Tool support:
 | ORA-65040 / ORA-65048 | container-clause misuse, error while applying to a PDB | scope guardrail message |
 | ORA-12154 / ORA-12541 | naming/listener | connectivity, distinct exit path |
 | ORA-28040 / ORA-01017 with version mismatch | verifier / `ALLOWED_LOGON_VERSION` mismatch | explain password-version implications |
+| DPI-1047 / DPY-3001 | the *client* library, not the server: Instant Client missing, or thin mode reached because thick-mode initialisation did not happen | `config` and exit 9 — the same landing ADR-006 gives a backend that is configured and not installed, because it is fixed on this machine by the person reading the message |
+
+Implemented in `sopuli/driver/oracle/errors.py` (#172), on three rules worth
+stating because each one is a decision the table above does not make:
+
+- **The mapping classifies; it does not decide.** Nothing there raises, because
+  `ORA-01017` means two different things depending on whose credential was
+  refused: exit 6 for the admin connection, `DRIFT` and exit 3 for a
+  verification login. It returns a value and the caller — which knows what it
+  was doing — decides whether that value is an exception, a state, or a reason
+  to draw another password.
+- **An unmapped code is terminal, and never regenerates.** It might be transient
+  and it might be a value the server will refuse forever; of the two ways to be
+  wrong, looping is the one that locks accounts. A code in Oracle's Net/TNS
+  range still lands as `connectivity` rather than as `database`, so an unnamed
+  member of a family is unknown without being misplaced.
+- **Exit codes are P5's and are not invented here.** Connectivity and
+  authorization have no number of their own and exit 1 carrying their own
+  *category*. "Distinct exit path" means a distinct thing the operator reads;
+  adding a number to P5's table is a change to a contract schedulers branch on.
 
 ---
 
