@@ -67,7 +67,12 @@ from sopuli.config import (
     filter_estate,
     parse_selector,
 )
-from sopuli.diagnostics import backend_diagnostics, lock_broken, unlistable_stores
+from sopuli.diagnostics import (
+    backend_diagnostics,
+    driver_diagnostics,
+    lock_broken,
+    unlistable_stores,
+)
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import (
     GlobalOptions,
@@ -809,7 +814,7 @@ def config_validate(
     # different findings about different machines. It is the only warning in this
     # command that the config layer did not make, because making it means asking
     # what is importable and the config layer asks nothing outside the document.
-    backends = backend_diagnostics(config.vaults)
+    backends = backend_diagnostics(config.vaults) + driver_diagnostics(config.expanded_targets)
     document.diagnostics.extend(config_diagnostics(config))
     document.diagnostics.extend(backends)
     targets = len(config.expanded_targets)

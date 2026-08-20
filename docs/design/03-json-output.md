@@ -637,6 +637,7 @@ is not contract and may improve.
 | `SOPULI-W003` | A `vaults:` entry names a backend that is not installed. Emitted by `config validate`, which warns rather than fails: the config is valid and the install is incomplete (ADR-006, E4). Any command that resolves the store to a client fails instead, with `SOPULI-20001` |
 | `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked and anything on the path can read every secret that crosses. Under P3's safety ratchet, so no layer can weaken it further — but nothing in the run undoes it either (#135, ADR-005) |
 | `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record left at a path the file no longer names would not appear — in that store. Everything reported is accurate; the survey is narrower than it looks (#150) |
+| `SOPULI-W006` | A `targets:` entry names a driver whose client is not installed (#170). The store's counterpart is `SOPULI-W003`, and they are deliberately two codes: one meaning "some backend or other is missing" would leave a consumer unable to tell a store it cannot reach from a database it cannot reach, which are different outages. Emitted once per driver *type* rather than once per target, since an estate generates targets by the dozen from one `target_sets:` entry |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
@@ -663,6 +664,7 @@ as the diagnostics above.
 | Code | Category | Exit | Meaning |
 |---|---|---|---|
 | `SOPULI-20001` | `config` | 9 | A `vaults:` entry names a backend whose client is not installed. The message names the store, its `type`, and the extra that supplies it (ADR-006, `01-configuration.md` §3a) |
+| `SOPULI-20002` | `config` | 9 | A `targets:` entry names a driver whose client is not installed. The same shape as `SOPULI-20001` and for the same reason (ADR-006 E1, E5): `python-oracledb` is `sopuli-dba[oracle]`, and a driver that is declared but absent is fixed on this machine by the person reading the message (#170) |
 
 `SOPULI-20001` was this document's illustrative placeholder for a tool-side code
 before it meant anything; #130 gave it something to mean rather than adding a

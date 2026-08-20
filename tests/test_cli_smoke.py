@@ -600,7 +600,13 @@ def test_config_validate_reports_warnings_both_ways(
     """§10's warnings are findings the loader decided not to refuse to run over,
     so they must survive into both views -- in full in the text, and as run-level
     ``diagnostics`` in the document, which is the only path by which a scheduler
-    ever sees one."""
+    ever sees one.
+
+    Asserted by *presence* rather than by count, since #170: whether the estate's
+    driver is installed is a property of the machine running the suite, so a
+    count here would mean one thing under `sopuli-dba[all]` and another under a
+    base install. `tests/driver/test_driver_registry.py` pins that warning
+    deterministically instead."""
     path = write_config(f"{ESTATE}\nprofiles:\n  dev: {{ output: json }}\n")
     command = ["config", "validate", "--config", str(path)]
 
@@ -608,12 +614,14 @@ def test_config_validate_reports_warnings_both_ways(
     emitted = runner.invoke(cli, [*command, "--output", "json"])
 
     assert text.exit_code == ExitCode.SUCCESS
-    assert "1 warning:" in text.output
+    assert "warning" in text.output
     assert "named after an environment" in text.output
     assert emitted.exit_code == ExitCode.SUCCESS
     document = json.loads(emitted.output)
-    assert [entry["level"] for entry in document["diagnostics"]] == ["warning"]
-    assert "named after an environment" in document["diagnostics"][0]["message"]
+    assert {entry["level"] for entry in document["diagnostics"]} == {"warning"}
+    assert any(
+        "named after an environment" in entry["message"] for entry in document["diagnostics"]
+    )
 
 
 def test_config_validate_emits_no_diagnostics_for_a_clean_file(

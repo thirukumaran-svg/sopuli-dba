@@ -25,7 +25,6 @@ and nothing here runs until a command resolves a store to a client.
 from __future__ import annotations
 
 import importlib
-import importlib.util
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +32,8 @@ from types import ModuleType
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
+from sopuli.extras import MISSING_CLIENT, MISSING_MODULE, install_command, missing_kind
+from sopuli.extras import installed as extras_installed
 from sopuli.store.protocol import SecretStore
 
 #: ``error.code`` for a configured backend whose client is not installed
@@ -69,8 +70,12 @@ class Backend:
         the one place the difference is load-bearing rather than cosmetic,
         because it is the half the operator pastes into `pip`. The documents
         quoted the binary here until #134; they now quote the distribution.
+
+        Spelled in :mod:`sopuli.extras` since #170, so that the store and the
+        driver cannot disagree about it.
         """
-        return f'pip install "sopuli-dba[{self.extra}]"'
+        assert self.extra is not None
+        return install_command(self.extra)
 
 
 #: Every ``type:`` :data:`~sopuli.config.vaults.VAULT_TYPES` allows, and what
@@ -140,23 +145,13 @@ class BackendNotImplementedError(ConfigError):
 def installed(backend: Backend) -> bool:
     """Whether ``backend``'s client is importable, **without importing it**.
 
-    :func:`importlib.util.find_spec` looks the module up on the path and stops
-    there, so this stays true to rule 3: asking the question must not run a
-    vendor package's import side effects, which for an SDK can mean reading a
-    config file or a metadata service.
-
-    A backend with no extra is vacuously installed -- there is no client to look
-    for. That keeps ``config validate`` quiet about ``file`` and ``keyring``
-    rather than warning that something unnamed is missing, and the roadmap gap
-    surfaces at :func:`resolve` where it belongs.
+    :func:`sopuli.extras.installed` is the mechanism, shared with the driver
+    registry since #170. A backend with no extra is vacuously installed -- there
+    is no client to look for -- which keeps ``config validate`` quiet about
+    ``file`` and ``keyring`` rather than warning that something unnamed is
+    missing, and the roadmap gap surfaces at :func:`resolve` where it belongs.
     """
-    try:
-        return all(importlib.util.find_spec(name) is not None for name in backend.provides)
-    except ImportError:
-        # A namespace-package edge or a broken entry on sys.path: unanswerable
-        # rather than false. Reporting "not installed" would send somebody to
-        # `pip` for a path problem, and resolve() will produce the real error.
-        return True
+    return extras_installed(backend.provides)
 
 
 def resolve(vault: Vault) -> ModuleType:
@@ -190,7 +185,10 @@ def resolve(vault: Vault) -> ModuleType:
     try:
         return importlib.import_module(backend.module)
     except ModuleNotFoundError as exc:
-        if backend.extra is not None and exc.name in backend.provides:
+        kind = missing_kind(
+            exc, module=backend.module, provides=backend.provides, extra=backend.extra
+        )
+        if kind == MISSING_CLIENT:
             raise BackendNotInstalledError(
                 f'vault "{vault.name}" declares type "{vault.type}", '
                 f"but that backend is not installed",
@@ -200,7 +198,7 @@ def resolve(vault: Vault) -> ModuleType:
                 # sentence that opens with the same name reads as a stutter.
                 hint=f"install it with:  {backend.install_command}",
             ) from exc
-        if exc.name == backend.module:
+        if kind == MISSING_MODULE:
             raise BackendNotImplementedError(
                 f'vault "{vault.name}" declares type "{vault.type}", '
                 f"but this build has no {vault.type} backend yet",

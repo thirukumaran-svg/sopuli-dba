@@ -132,7 +132,13 @@ targets:
 
 **A driver is an install extra**, on the same rule as a store: `python-oracledb`
 exists only to reach Oracle, so it arrives with `sopuli-dba[oracle]` and PostgreSQL
-would arrive with `sopuli-dba[postgres]`. Binding stores and not drivers would read
+would arrive with `sopuli-dba[postgres]`. `sopuli/driver/registry.py` implements
+it (#170), and the two registries share a mechanism rather than a message:
+`sopuli/extras.py` holds looking a module up without importing it and the
+three-way reading of a `ModuleNotFoundError`, because that discrimination is
+subtle and a second copy of it would drift. The sentences stay apart — a store is
+named by `vaults:` and a driver by a target's `type:`, and a message serving both
+would name neither. Binding stores and not drivers would read
 as arbitrary, and D3 already makes reaching Oracle a per-site runtime condition
 — Instant Client has to be installed either way. See P2's *Backends are install
 extras* and [ADR-006](../decisions/adr-006-optional-dependencies.md); D6 is

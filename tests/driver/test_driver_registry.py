@@ -1,0 +1,233 @@
+"""ADR-006 rules 1 and 2 for drivers, and the mechanism they share with stores.
+
+The absent-driver path is what `04-testing.md` §5 asks for per backend: *resolve
+a store whose extra is uninstalled and assert the whole contract -- the message
+names the correct extra, the category, the code, and the exit code.* Without it
+the clean error rots into a traceback the first time a module is renamed, which
+no other test can see, because every other test imports the module successfully.
+
+Nothing here depends on whether ``oracledb`` is installed on the machine running
+it. That is deliberate: the developer environment is ``sopuli-dba[all]`` and CI
+runs a base cell, so a test that read the real answer would assert different
+things in the two places.
+"""
+
+from __future__ import annotations
+
+import sys
+from collections.abc import Callable
+from typing import NoReturn
+
+import pytest
+
+from sopuli.config.model import ExpandedTarget, Target
+from sopuli.config.targets import TARGET_TYPES
+from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, driver_diagnostics
+from sopuli.driver.registry import (
+    DRIVER_NOT_INSTALLED,
+    DRIVERS,
+    DatabaseDriver,
+    DriverNotImplementedError,
+    DriverNotInstalledError,
+    installed,
+    resolve,
+)
+from sopuli.exit_codes import ExitCode
+from sopuli.extras import MISSING_CLIENT, MISSING_MODULE, missing_kind
+
+ORACLE = DRIVERS["oracle"]
+
+
+def target(name: str = "cdb1-pdb-orders", type_name: str = "oracle") -> Target:
+    return Target(name=name, type=type_name, dsn="db.example.com:1521/PDB1")
+
+
+def generated(name: str, *, target_set: str = "appdb") -> ExpandedTarget:
+    """A target that exists because a ``target_sets:`` entry made it.
+
+    Which is most of them: §2's own worked example writes one set and gets
+    twenty-one PDBs. The warning is asserted against these rather than against
+    explicit entries because that is the estate an operator actually has.
+    """
+    return ExpandedTarget(target=target(name), target_set=target_set)
+
+
+# ----------------------------------------------------------- the two lists ---
+
+
+def test_every_type_the_config_accepts_has_a_driver() -> None:
+    """A type the config layer accepts and this one has never heard of would
+    fail at connect time with a ``KeyError`` -- precisely the traceback rule 2
+    exists to prevent, arriving after the plan was printed."""
+    assert set(TARGET_TYPES) == set(DRIVERS)
+
+
+def test_the_oracle_entry_names_the_module_that_pip_installs() -> None:
+    """`oracledb`, not `python-oracledb`: Oracle calls it the second everywhere
+    it is written about, and the second resolves to nothing at all."""
+    assert ORACLE.provides == frozenset({"oracledb"})
+    assert ORACLE.install_command == 'pip install "sopuli-dba[oracle]"'
+
+
+# --------------------------------------------------------- the absent driver ---
+
+
+def test_an_uninstalled_driver_is_the_whole_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The message names the extra, and the error carries the category, the code
+    and the exit code a consumer branches on."""
+    monkeypatch.setitem(sys.modules, "sopuli.driver.oracle", None)
+    monkeypatch.setattr(
+        "sopuli.driver.registry.importlib.import_module",
+        _raising(ModuleNotFoundError("No module named 'oracledb'", name="oracledb")),
+    )
+
+    with pytest.raises(DriverNotInstalledError) as refused:
+        resolve(target())
+
+    rendered = str(refused.value)
+    assert 'target "cdb1-pdb-orders"' in rendered
+    assert 'pip install "sopuli-dba[oracle]"' in rendered
+    assert refused.value.category == "config"
+    assert refused.value.code == DRIVER_NOT_INSTALLED
+    assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_a_driver_this_build_does_not_have_never_says_pip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing the operator installs fixes it, so the message must not carry an
+    install line. Unreachable today and written now, because the moment it
+    becomes reachable is the moment somebody adds a type to ``TARGET_TYPES``."""
+    monkeypatch.setitem(DRIVERS, "postgresql", DatabaseDriver(module="sopuli.driver.postgresql"))
+
+    with pytest.raises(DriverNotImplementedError) as refused:
+        resolve(target(type_name="postgresql"))
+
+    assert "pip install" not in str(refused.value)
+    assert refused.value.code is None
+
+
+def test_a_bad_import_inside_the_driver_is_ours_and_is_re_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The expensive mistake a bare ``except ImportError`` makes: it sends
+    somebody to `pip` forever over a typo of ours, and costs us the stack
+    trace."""
+    monkeypatch.setattr(
+        "sopuli.driver.registry.importlib.import_module",
+        _raising(
+            ModuleNotFoundError(
+                "No module named 'sopuli.driver.oracle.typo'", name="sopuli.driver.oracle.typo"
+            )
+        ),
+    )
+
+    with pytest.raises(ModuleNotFoundError):
+        resolve(target())
+
+
+def test_the_three_way_reading_is_the_one_the_stores_use() -> None:
+    """The mechanism is shared (`sopuli/extras.py`) precisely because it is
+    subtle: three different failures arrive as one exception and only one of
+    them is "install the extra"."""
+
+    def reading(missing: str) -> str | None:
+        return missing_kind(
+            ModuleNotFoundError(name=missing),
+            module=ORACLE.module,
+            provides=ORACLE.provides,
+            extra=ORACLE.extra,
+        )
+
+    assert reading("oracledb") == MISSING_CLIENT
+    assert reading(ORACLE.module) == MISSING_MODULE
+    assert reading("something.else") is None
+
+
+# ------------------------------------------------------------- the warning ---
+
+
+def test_config_validate_warns_once_per_type_however_many_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Where this parts company with the store version, and why.
+
+    An estate generates targets by the dozen from one ``target_sets:`` entry, so
+    twenty-one PDBs missing ``oracledb`` would be twenty-one identical lines
+    saying to run one command. A store is written out by hand and its name is
+    the thing to go and look at; a target may not appear in the file at all.
+    """
+    monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: False)
+
+    found = driver_diagnostics(
+        [generated("pdb-alpha"), generated("pdb-beta"), generated("pdb-gamma")]
+    )
+
+    assert len(found) == 1
+    assert found[0].code == MISSING_DRIVER
+    assert found[0].level == "warning"
+    assert "3 targets" in found[0].message
+    assert "pdb-alpha" in found[0].message
+    assert 'pip install "sopuli-dba[oracle]"' in found[0].message
+
+
+def test_the_verb_agrees_with_the_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A warning is read by somebody already having a bad morning; it should at
+    least be a sentence."""
+    monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: False)
+
+    one = driver_diagnostics([generated("pdb-alpha")])[0].message
+    many = driver_diagnostics([generated("pdb-alpha"), generated("pdb-beta")])[0].message
+
+    assert "declares type" in one
+    assert "declare type" in many
+    assert "declares type" not in many
+
+
+def test_one_target_is_named_rather_than_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: False)
+
+    found = driver_diagnostics([generated("cdb-root-dev")])
+
+    assert '"cdb-root-dev"' in found[0].message
+    assert "1 targets" not in found[0].message
+
+
+def test_an_installed_driver_warns_about_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: True)
+
+    assert driver_diagnostics([generated("cdb1-pdb-orders")]) == []
+
+
+def test_the_warning_is_its_own_code_and_is_registered() -> None:
+    """Not a widening of ``SOPULI-W003``, whose registered description names a
+    ``vaults:`` entry. One code meaning "some backend or other is missing" would
+    leave a consumer unable to tell a store it cannot reach from a database it
+    cannot reach, which are different outages."""
+    assert MISSING_DRIVER in WARNINGS
+    assert "SOPULI-20002" in WARNINGS[MISSING_DRIVER]
+    assert MISSING_DRIVER != "SOPULI-W003"
+
+
+def test_installed_answers_without_importing() -> None:
+    """ADR-006 rule 3: asking must not run a vendor package's import side
+    effects, which for an SDK can mean reading a config file or reaching a
+    metadata service."""
+    installed(ORACLE)
+
+    assert "oracledb" not in sys.modules
+
+
+def _raising(exc: BaseException) -> Callable[..., NoReturn]:
+    """An ``import_module`` that fails in a chosen way.
+
+    Patching the import rather than uninstalling a package is what keeps these
+    assertions the same on every machine -- the developer environment is
+    ``sopuli-dba[all]`` and CI runs a base cell, so reading the real answer
+    would assert different things in the two places.
+    """
+
+    def raise_it(*_args: object, **_kwargs: object) -> NoReturn:
+        raise exc
+
+    return raise_it
