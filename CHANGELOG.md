@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.33.0](https://github.com/futville/sopuli-dba/compare/v0.32.0...v0.33.0) (2026-08-20)
+
+
+### Features
+
+* **driver:** the client-side account guardrails, and what `--force` overrides ([#189](https://github.com/futville/sopuli-dba/issues/189)) ([1d32b41](https://github.com/futville/sopuli-dba/commit/1d32b419d2d24470ea1f137ae62e5b3548c60039))
+* **driver:** the P1 driver interface, as types and vocabulary ([#185](https://github.com/futville/sopuli-dba/issues/185)) ([87dbd3a](https://github.com/futville/sopuli-dba/commit/87dbd3a0e5b120e9bba6de5202bd657ccc94aaa8))
+* **oracle:** build ALTER USER directly, and refuse rather than escape ([#187](https://github.com/futville/sopuli-dba/issues/187)) ([8b81eb4](https://github.com/futville/sopuli-dba/commit/8b81eb42c81d8052709102c2469be902bfa4f3cb))
+* **oracle:** map ORA- codes to a category, an exit code and a hint ([#188](https://github.com/futville/sopuli-dba/issues/188)) ([022fae3](https://github.com/futville/sopuli-dba/commit/022fae33d56569cb43b5b1bdd8f9c430e04c5101))
+
 ## [0.32.0](https://github.com/futville/sopuli-dba/compare/v0.31.0...v0.32.0) (2026-08-20)
 
 
