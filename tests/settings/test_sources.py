@@ -57,6 +57,27 @@ def test_an_unknown_value_is_not_rejected_here() -> None:
     assert env_contributions({"SOPULI_OUTPUT": "jsonl"})["output"][0].value == "jsonl"
 
 
+def test_sopuli_vault_supplies_the_default_store_name() -> None:
+    """C13's row of §6's table: it names a **store**, not a setting of one, so it
+    is a run setting like `profile` and not a per-store one. The variables that
+    name a setting *of* a store are collected in `sopuli/config/vault_env.py`,
+    and `tests/config/test_vault_env.py` is where they are asserted."""
+    [contribution] = env_contributions({"SOPULI_VAULT": "vault-dev"})["vault"]
+
+    assert contribution.layer is Layer.ENV
+    assert contribution.value == "vault-dev"
+    assert contribution.detail == "SOPULI_VAULT"
+
+
+def test_no_token_variable_is_a_setting() -> None:
+    """A token is auth material, resolved by `sopuli/material.py` (ADR-007). If
+    one were ever mapped here it would be reported in `invocation.options`, which
+    is the one place a credential must never reach."""
+    for variable in ("SOPULI_VAULT_TOKEN", "VAULT_TOKEN"):
+        assert variable not in ENV_SETTINGS
+        assert env_contributions({variable: "s.a-real-token"}) == {}
+
+
 def test_every_mapped_variable_is_a_sopuli_one() -> None:
     """Layer 2 is ``SOPULI_*``. Third-party variables are layer 3 and rank below
     their equivalent, so they cannot be added to this table by mistake."""
@@ -160,6 +181,20 @@ def test_defaults_profile_is_reported_as_a_contribution_of_its_own() -> None:
     [one] = supplied["profile"]
     assert one.layer is Layer.DEFAULTS
     assert one.detail == "defaults.profile"
+
+
+def test_defaults_vault_is_reported_as_the_run_s_default_store() -> None:
+    """Layer 5 of the same setting `SOPULI_VAULT` supplies at layer 2. Which
+    store a run defaults to is a property of the run, unlike a store's own
+    settings -- which is why this one is here and `vaults.<name>.*` is not."""
+    supplied = contributions(
+        vaults={"vault-dev": {"type": "hashicorp"}}, defaults={"vault": "vault-dev"}
+    )
+
+    [one] = supplied["vault"]
+    assert one.layer is Layer.DEFAULTS
+    assert one.value == "vault-dev"
+    assert one.detail == "defaults.vault"
 
 
 def test_an_empty_confirm_environments_list_says_nothing() -> None:

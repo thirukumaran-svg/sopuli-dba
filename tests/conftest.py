@@ -57,6 +57,30 @@ def config_file(write_config: WriteConfig) -> Path:
     return write_config(MINIMAL_CONFIG)
 
 
+#: The environment variables that now reach a store's settings (#154, §6). A
+#: developer running the tier-1 suite has ``VAULT_ADDR`` exported by definition --
+#: `vault_stack` below reads it -- and from #154 onward that variable *is* a
+#: precedence layer, so without this every CLI test that loads a file with a
+#: `defaults.vault` would resolve a different address on their machine than on
+#: CI. Cleared per test rather than at import, because the module constants above
+#: are read once and the tier-1 fixtures carry their own copy.
+VAULT_ENV = ("SOPULI_VAULT", "SOPULI_VAULT_ADDR", "VAULT_ADDR", "VAULT_NAMESPACE", "VAULT_CACERT")
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_vault_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nobody's own ``VAULT_ADDR`` decides what a store resolves to here.
+
+    A test whose subject *is* one of these sets it back with ``setenv``; below the
+    CLI boundary nothing reads a real environment at all, since every layer takes
+    a mapping (``04-testing.md`` §4).
+    """
+    for variable in VAULT_ENV:
+        monkeypatch.delenv(variable, raising=False)
+    for variable in [one for one in os.environ if one.startswith("SOPULI_VAULT__")]:
+        monkeypatch.delenv(variable, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def backends_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every backend counts as installed, unless a test says otherwise.

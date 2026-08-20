@@ -300,6 +300,75 @@ def test_an_unknown_output_format_names_the_variable_it_came_from(
     assert "jsonl" in message
 
 
+VAULT_CONFIG = """
+version: 1
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: https://declared.example.com
+defaults:
+  vault: vault-dev
+"""
+
+
+@pytest.fixture
+def vault_config(write_config: WriteConfig) -> list[str]:
+    """`config show` over a file with one store, defaulted to."""
+    return ["config", "show", "--config", str(write_config(VAULT_CONFIG))]
+
+
+def test_a_named_vault_variable_reaches_the_store(
+    runner: CliRunner, vault_config: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§6's `__` addressing, end to end (#154). The merge itself is asserted in
+    `tests/config/test_vault_env.py`; what this adds is that a real command reads
+    a real environment and gets there."""
+    monkeypatch.setenv("SOPULI_VAULT__VAULT_DEV__ADDR", "https://named.example.com")
+    result = runner.invoke(cli, vault_config)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "https://named.example.com" in result.output
+    assert "https://declared.example.com" not in result.output
+
+
+def test_the_default_store_name_is_reported_with_its_layer(
+    runner: CliRunner, vault_config: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`SOPULI_VAULT` is a setting of the *run* -- which store it defaults to --
+    so unlike a store's own settings it appears in `invocation.options`."""
+    monkeypatch.setenv("SOPULI_VAULT", "vault-dev")
+    result = runner.invoke(cli, [*vault_config, "--output", "json"])
+
+    assert options(result)["vault"] == {
+        "value": "vault-dev",
+        "source": "env",
+        "source_detail": "SOPULI_VAULT",
+    }
+
+
+def test_a_third_party_variable_reaches_the_default_store(
+    runner: CliRunner, vault_config: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P3's first exception: `VAULT_ADDR` is honoured, one layer below
+    `SOPULI_VAULT_ADDR` and still above everything the file can write."""
+    monkeypatch.setenv("VAULT_ADDR", "https://third-party.example.com")
+    result = runner.invoke(cli, vault_config)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "https://third-party.example.com" in result.output
+
+
+def test_a_sopuli_variable_outranks_the_third_party_one(
+    runner: CliRunner, vault_config: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VAULT_ADDR", "https://third-party.example.com")
+    monkeypatch.setenv("SOPULI_VAULT_ADDR", "https://active.example.com")
+    result = runner.invoke(cli, vault_config)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "https://active.example.com" in result.output
+
+
 def test_a_source_cannot_wire_a_setting_by_producing_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

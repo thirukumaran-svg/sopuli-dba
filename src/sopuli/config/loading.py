@@ -28,7 +28,7 @@ the ordering is the only thing that makes the refusal mean anything.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -48,6 +48,7 @@ from sopuli.config.profiles import build_profiles, select_profile
 from sopuli.config.references import check_references
 from sopuli.config.target_sets import build_target_sets
 from sopuli.config.targets import build_targets
+from sopuli.config.vault_env import NO_ENV
 from sopuli.config.vault_layers import apply_vault_layers
 from sopuli.config.vaults import build_vaults
 from sopuli.config.yaml_loader import parse_yaml
@@ -152,7 +153,9 @@ def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def load_config(path: Path, *, profile: str | None = None) -> Config:
+def load_config(
+    path: Path, *, profile: str | None = None, env: Mapping[str, str] = NO_ENV
+) -> Config:
     """Read one config file and validate it into typed objects.
 
     The two steps stay separate because they fail for different reasons and are
@@ -163,10 +166,12 @@ def load_config(path: Path, *, profile: str | None = None) -> Config:
     ``profile`` is the name ``--profile`` or ``SOPULI_PROFILE`` supplied, or
     ``None``. See :func:`build_config`.
     """
-    return _validate(load_document(path), source=path, profile=profile)
+    return _validate(load_document(path), source=path, profile=profile, env=env)
 
 
-def load_config_from(paths: Sequence[Path], *, profile: str | None = None) -> Config:
+def load_config_from(
+    paths: Sequence[Path], *, profile: str | None = None, env: Mapping[str, str] = NO_ENV
+) -> Config:
     """Read one or more layered config files and validate the result.
 
     What :func:`~sopuli.config.discovery.discover` returns goes straight in
@@ -176,11 +181,11 @@ def load_config_from(paths: Sequence[Path], *, profile: str | None = None) -> Co
     about a *file* -- unreadable, unparseable, unversioned -- are raised before
     the merge and still say which one.
     """
-    return load_layers(paths, profile=profile)[1]
+    return load_layers(paths, profile=profile, env=env)[1]
 
 
 def load_layers(
-    paths: Sequence[Path], *, profile: str | None = None
+    paths: Sequence[Path], *, profile: str | None = None, env: Mapping[str, str] = NO_ENV
 ) -> tuple[dict[str, Any], Config]:
     """The merged document *and* the config built from it.
 
@@ -202,13 +207,19 @@ def load_layers(
     # With one file a validation error can name it. With several it cannot: the
     # offending value may have been written in one and overridden in another.
     source = paths[0] if len(paths) == 1 else None
-    return document, _validate(document, source=source, profile=profile)
+    return document, _validate(document, source=source, profile=profile, env=env)
 
 
-def _validate(document: dict[str, Any], *, source: Path | None, profile: str | None) -> Config:
+def _validate(
+    document: dict[str, Any],
+    *,
+    source: Path | None,
+    profile: str | None,
+    env: Mapping[str, str],
+) -> Config:
     try:
         reject_unknown_keys(document, allowed=TOP_LEVEL_KEYS, at=ROOT)
-        config = build_config(document, profile=profile)
+        config = build_config(document, profile=profile, env=env)
     except ConfigError as error:
         # The builders work on raw data and have never seen a filename. Filling
         # it in here means every message says which file, without threading a
@@ -219,7 +230,9 @@ def _validate(document: dict[str, Any], *, source: Path | None, profile: str | N
     return config
 
 
-def build_config(document: dict[str, Any], *, profile: str | None = None) -> Config:
+def build_config(
+    document: dict[str, Any], *, profile: str | None = None, env: Mapping[str, str] = NO_ENV
+) -> Config:
     """Validate raw data into a :class:`Config`, with no filesystem involved.
 
     Sections are built estate-first so that the first error a half-finished file
@@ -238,6 +251,12 @@ def build_config(document: dict[str, Any], *, profile: str | None = None) -> Con
     (§5, #153). ``None`` means neither said anything, which leaves
     ``defaults.profile`` to answer, and a name nothing declares is refused here
     the same way every other dangling name in the file is.
+
+    ``env`` arrives for the same reason and one layer higher: §6's
+    ``SOPULI_VAULT__VAULT_DEV__ADDR`` addresses a *store*, so it belongs to the
+    same merge rather than to the invocation (#154). Empty by default -- nothing
+    in this package reads ambient state, and a caller that wants the process's
+    own environment passes it (:func:`sopuli.invocation.load_config_layers`).
     """
     config = Config(
         version=document["version"],
@@ -265,7 +284,7 @@ def build_config(document: dict[str, Any], *, profile: str | None = None) -> Con
     # unverified-transport warning asks a store whether it verifies its
     # certificate -- and the answer has to be the effective one, or a
     # `defaults:` block could turn verification off without warning.
-    vaults, layered = apply_vault_layers(config)
+    vaults, layered = apply_vault_layers(config, env=env)
     config = replace(config, vaults=vaults)
     config = replace(config, expanded_targets=expand_targets(config))
     # References are resolved before bindings are built, not after: an

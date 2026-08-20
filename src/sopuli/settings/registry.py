@@ -262,18 +262,31 @@ def _setting(
     )
 
 
-def _vault_setting(key: str, *, type: type) -> Setting:  # noqa: A002 - see `_setting`
-    """One per-store vault key, at the three layers the file and P3 give it.
+def _vault_setting(
+    key: str,
+    *,
+    type: type,  # noqa: A002 - see `_setting`
+    env: tuple[Layer, ...] = (),
+) -> Setting:
+    """One per-store vault key, at the three layers the file gives it and any the
+    environment does.
 
     Every one of them is :attr:`MergePolicy.OVERRIDE`: an address or a mount has
     no safe direction, so the highest layer that wrote one wins. The exception --
     ``tls.verify`` -- is written out in full below rather than passed through
     here, because a ratcheted setting is worth reading beside its reason.
+
+    ``env`` is the environment layers §6 gives *this* key, and it is per key
+    rather than blanket (#154): the table names a variable for some of these and
+    not for others, and declaring a layer nothing produces would advertise a
+    variable that does not exist. :mod:`sopuli.config.vault_env` is the producer,
+    and the enforcement in :func:`~sopuli.settings.resolver._checked` is what
+    keeps the two in agreement.
     """
     return _setting(
         f"vaults.*.{key}",
         type=type,
-        layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
+        layers=(*env, Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
         policy=MergePolicy.OVERRIDE,
     )
 
@@ -324,6 +337,24 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 policy=MergePolicy.OVERRIDE,
             ),
             _setting(
+                # Which store a run defaults to (§3a, C13). A store *name*, not
+                # a setting of one -- `SOPULI_VAULT` is layer 2 of the same
+                # setting `defaults.vault` writes, which is the row of §6's table
+                # that makes the two spellings one thing.
+                #
+                # No `Layer.PROFILE`, and that is #118's decision rather than an
+                # omission: a profile's `vault:` is deliberately outside the
+                # chain that builds bindings, because which profile is active is
+                # a property of a run and bindings are built once at load. What
+                # this setting answers is narrower -- which store §6's unnamed
+                # variables address (`sopuli/config/vault_env.py`) -- and
+                # widening it to layer 3 would be answering C15 in a diff.
+                "vault",
+                type=str,
+                layers=(Layer.ENV, Layer.DEFAULTS),
+                policy=MergePolicy.OVERRIDE,
+            ),
+            _setting(
                 "safety.dry_run",
                 type=bool,
                 layers=(Layer.CLI, Layer.ENV, Layer.BUILTIN),
@@ -363,12 +394,17 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             # whole by the highest layer that wrote one, which needs no merge
             # rule; `sopuli/config/vault_layers.py` says why whole rather than
             # key by key.
-            _vault_setting("addr", type=str),
+            # The environment layers are §6's table, key by key (#154).
+            # `addr` is the only one with a `SOPULI_*` variable of its own --
+            # both the named form and the unnamed one are layer 2 -- while
+            # `namespace` and `tls.ca_file` are reachable only through Vault's
+            # own `VAULT_NAMESPACE` and `VAULT_CACERT`, which P3 ranks below it.
+            _vault_setting("addr", type=str, env=(Layer.ENV, Layer.ENV_THIRDPARTY)),
             _vault_setting("mount", type=str),
             _vault_setting("kv_version", type=int),
-            _vault_setting("namespace", type=str),
+            _vault_setting("namespace", type=str, env=(Layer.ENV_THIRDPARTY,)),
             _vault_setting("timeout_s", type=int),
-            _vault_setting("tls.ca_file", type=str),
+            _vault_setting("tls.ca_file", type=str, env=(Layer.ENV_THIRDPARTY,)),
             _vault_setting("tls.ca_path", type=str),
             _vault_setting("tls.client_cert", type=str),
             _vault_setting("tls.client_key", type=str),

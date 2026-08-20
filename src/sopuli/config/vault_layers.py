@@ -1,13 +1,25 @@
-"""Merging the layers of P3 that the config file itself can supply (C13, #136).
+"""Merging P3's layers for one store (C13, #136 and #154).
 
-`00-principles.md` P3 puts one precedence chain over everything, and three of its
-six layers are inside the file:
+`00-principles.md` P3 puts one precedence chain over everything, and five of its
+six layers reach a store:
 
 .. code-block::
 
+    2. Environment variable             SOPULI_VAULT__HCV_PROD__ADDR
     3. Profile block in config          profiles.ci.vaults.hcv-prod.addr
     4. Target/vault-level setting       vaults.hcv-prod.addr
     5. Top-level defaults in config     defaults.vaults.hcv-prod.addr
+
+with the third-party variables of layer 3 -- ``VAULT_ADDR`` and friends -- ranked
+between 2 and 3, as P3's second exception says. Layer 1 is the one that is
+missing: there is no ``--vault-addr`` flag yet, and when there is, it joins this
+merge the way the environment just did.
+
+**The environment is collected next door**, in :mod:`sopuli.config.vault_env`,
+which owns §6's spellings and the question the unnamed variables raise -- which
+store is "the active" one. What arrives here is contributions, already addressed
+to a store and a key, so this function stays what it was: the place where the
+layers meet.
 
 **The direction is the thing most likely to be got wrong.** A top-level
 ``vaults:`` entry *outranks* ``defaults.vaults:``, so the ``defaults:`` block
@@ -15,8 +27,8 @@ supplies keys the declaration did not write rather than replacing ones it did.
 The word "patch" reads the other way and is right only for a profile, which is
 layer 3 and above the declaration.
 
-**All three layers are merged in one pass**, which is why the active profile has
-to be known before this runs (#153). Resolving 4 against 5 first and folding 3 in
+**Every layer is merged in one pass**, which is why the active profile has to be
+known before this runs (#153). Resolving 4 against 5 first and folding 3 in
 afterwards would give the right *value* for an overridden key and the wrong
 *provenance* for it -- and for ``tls.verify``, whose ratchet is the reason this
 goes through the resolver at all, it would report the winner of the first pass
@@ -48,12 +60,20 @@ never spoke about, which is exactly the relaxation invariant 10 exists to stop.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
 from sopuli.config.errors import ROOT, KeyPath
 from sopuli.config.model import Config, ConfigWarning, Vault, VaultPatch, VaultTls
+from sopuli.config.vault_env import NO_ENV, default_store, vault_env_contributions
 from sopuli.settings import Contribution, Layer, Resolved, ratchet_note, resolve
+
+#: One store's environment contributions, keyed by setting key -- what
+#: :func:`~sopuli.config.vault_env.vault_env_contributions` produces for one
+#: name. Empty for a store no variable mentioned, which is almost always all of
+#: them.
+EnvKeys = Mapping[str, Sequence[Contribution]]
 
 #: The scalar keys of a vault entry, and the order the merged object takes them.
 #: ``auth`` is absent because it is not a scalar; ``tls`` because its members are
@@ -82,15 +102,26 @@ def setting_name(key: str) -> str:
     return f"vaults.*.{key}"
 
 
-def apply_vault_layers(config: Config) -> tuple[tuple[Vault, ...], tuple[ConfigWarning, ...]]:
-    """Every declared store with the file's layers merged in, and what was refused.
+def apply_vault_layers(
+    config: Config, *, env: Mapping[str, str] = NO_ENV
+) -> tuple[tuple[Vault, ...], tuple[ConfigWarning, ...]]:
+    """Every declared store with its layers merged in, and what was refused.
 
     A patch naming a store the file does not declare is **ignored here and
     refused elsewhere**: :mod:`sopuli.config.references` resolves every name in
     the file against what it declares, in one pass, with one message. Growing a
     second dangling-name error here would be a second thing to learn about the
     same mistake -- and nothing can proceed past that check either way.
+
+    ``env`` defaults to empty rather than to ``os.environ``: this layer does no
+    I/O and reads no ambient state, so a caller that wants the process's own
+    environment says so (``04-testing.md`` §4).
     """
+    active = default_store(env, config.defaults.vault)
+    from_env, env_warnings = vault_env_contributions(
+        env, stores=[vault.name for vault in config.vaults], active=active
+    )
+
     by_name: dict[str, list[tuple[Layer, KeyPath, VaultPatch]]] = {}
     # Highest authority first, because `_highest` reads `auth:` off the front of
     # this list. The resolver sorts for itself; that one key does not go through
@@ -106,19 +137,19 @@ def apply_vault_layers(config: Config) -> tuple[tuple[Vault, ...], tuple[ConfigW
         )
 
     merged = []
-    warnings: list[ConfigWarning] = []
+    warnings: list[ConfigWarning] = list(env_warnings)
     for vault in config.vaults:
-        one, found = _merge(vault, by_name.get(vault.name, []))
+        one, found = _merge(vault, by_name.get(vault.name, []), from_env.get(vault.name, {}))
         merged.append(one)
         warnings.extend(found)
     return tuple(merged), tuple(warnings)
 
 
 def _merge(
-    vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]]
+    vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], from_env: EnvKeys
 ) -> tuple[Vault, list[ConfigWarning]]:
     """One store, resolved key by key. Returns it and any defeated relaxation."""
-    if not patches:
+    if not patches and not from_env:
         # Nothing to merge, and skipping the resolver here is not an optimisation:
         # a single contribution resolves to itself, so the two paths agree. What
         # it avoids is inventing a `patched` provenance for a store nobody
@@ -130,14 +161,14 @@ def _merge(
     warnings: list[ConfigWarning] = []
 
     for key in REACH_KEYS:
-        answer = _resolve_key(key, vault, patches, at=ROOT.key("vaults").key(vault.name))
+        answer = _resolve_key(key, vault, patches, from_env, at=ROOT.key("vaults").key(vault.name))
         if answer is None:
             continue
         values[key] = answer.value
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
 
-    tls, tls_patched, tls_warnings = _merge_tls(vault, patches)
+    tls, tls_patched, tls_warnings = _merge_tls(vault, patches, from_env)
     if tls is not None:
         values["tls"] = tls
     patched.extend(tls_patched)
@@ -155,23 +186,28 @@ def _merge(
 
 
 def _merge_tls(
-    vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]]
+    vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], from_env: EnvKeys
 ) -> tuple[VaultTls | None, list[str], list[ConfigWarning]]:
     """``tls:`` one member at a time, so ``verify`` can ratchet.
 
     ``None`` when no layer wrote a ``tls:`` block at all, which keeps "no block"
     distinct from "an empty block" -- the same distinction
     :class:`~sopuli.config.model.VaultTls` keeps between a missing ``verify`` and
-    a written one.
+    a written one. ``VAULT_CACERT`` counts as a layer writing one: it supplies
+    ``tls.ca_file``, and a store whose only ``tls:`` key came from the
+    environment still has a block.
     """
-    if vault.tls is None and all(patch.tls is None for _, _, patch in patches):
+    wrote_tls = any(key.startswith("tls.") for key in from_env)
+    if vault.tls is None and not wrote_tls and all(patch.tls is None for _, _, patch in patches):
         return None, [], []
 
     values: dict[str, Any] = {}
     patched: list[str] = []
     warnings: list[ConfigWarning] = []
     for key in TLS_KEYS:
-        answer = _resolve_key(f"tls.{key}", vault, patches, at=ROOT.key("vaults").key(vault.name))
+        answer = _resolve_key(
+            f"tls.{key}", vault, patches, from_env, at=ROOT.key("vaults").key(vault.name)
+        )
         if answer is None:
             continue
         values[key] = answer.value
@@ -201,15 +237,22 @@ def _merge_tls(
 
 
 def _resolve_key(
-    key: str, vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], *, at: KeyPath
+    key: str,
+    vault: Vault,
+    patches: list[tuple[Layer, KeyPath, VaultPatch]],
+    from_env: EnvKeys,
+    *,
+    at: KeyPath,
 ) -> Resolved | None:
     """One key across the layers that spoke, through the one resolver.
 
     The declaration contributes at :attr:`~sopuli.settings.registry.Layer.OBJECT`
     -- P3's layer 4, "target/vault-level setting" -- and a ``defaults:`` patch at
-    layer 5. Which is higher is the resolver's business and not restated here.
+    layer 5. The environment contributes at layer 2 or 3, already addressed to
+    this store by :mod:`sopuli.config.vault_env`. Which is higher is the
+    resolver's business and not restated here.
     """
-    contributions = []
+    contributions = list(from_env.get(key, ()))
     declared = _read(vault, key)
     if declared is not None:
         contributions.append(

@@ -120,7 +120,7 @@ file. A layer may set every reach setting a store has, but not `type` and not th
 guardrails `non_production` and `locking`. Implemented in #136 for the layers the
 file supplies, which corrected one word: `defaults.vaults:` is layer 5 and so
 fills gaps rather than patching — only a profile, at layer 3, is above the
-declaration. A profile's block was applied in #153, in the same pass; the environment's half is #154), ~~the `@version=` and `@stage=` vocabularies in a
+declaration. A profile's block was applied in #153, in the same pass, and the environment's half in #154 — `SOPULI_VAULT__VAULT_DEV__ADDR` at layer 2 and `VAULT_ADDR` and friends at layer 3, with an ambiguous store-name-to-variable mapping refused rather than resolved, and the unnamed `SOPULI_VAULT_ADDR` bound to the store `defaults.vault` names rather than to whichever store a binding happened to reach), ~~the `@version=` and `@stage=` vocabularies in a
 SecretRef and who owns them~~ (C14 — **decided in #40: the tool owns both.**
 `stage` is `current` / `pending` / `previous`, any case in, lower case out;
 `version` is a whole number from 1; neither may hold a `{token}`. OCI's rotation

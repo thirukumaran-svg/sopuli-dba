@@ -10,13 +10,19 @@ variable to check a precedence rule is a test that cannot run beside another one
 Only the variables with a consumer are here. ``SOPULI_PROFILE`` arrived with one
 (#153): it is the usual way a CI job or a scheduler selects a profile, and it is
 layer 2, so ``--profile`` still beats it and it still beats ``defaults.profile``.
+``SOPULI_VAULT`` arrived with #154, for the same shape of reason -- it names the
+store a run defaults to, and §6's *other* vault variables need that answer before
+they know which store they are talking about.
 
-Two variables in §6 that are *not* settings, and stay where they are:
+Three variables in §6 that are *not* settings, and stay where they are:
 
 * ``SOPULI_CONFIG`` -- file discovery is a different chain
   (:mod:`sopuli.config.discovery`).
 * ``SOPULI_NO_COLOR`` / ``NO_COLOR`` -- :func:`sopuli.output.color.resolve_color`
   owns colour, TTY detection included.
+* ``SOPULI_VAULT_TOKEN`` / ``VAULT_TOKEN`` -- auth material, resolved by
+  :mod:`sopuli.material` (ADR-007). A token is not a setting, and it must never
+  reach ``invocation.options``.
 
 :func:`config_contributions` is the file's half, and it is here rather than in
 :mod:`sopuli.config` for the reason the environment's half is: collecting
@@ -38,16 +44,25 @@ from collections.abc import Mapping
 
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Config, Locking, Safety
+from sopuli.config.vault_env import DEFAULT_STORE_SETTING, DEFAULT_STORE_VARIABLE
 from sopuli.settings.registry import Layer
 from sopuli.settings.resolver import Contribution
 
-#: §6's variables, by the setting each supplies. ``SOPULI_*`` is layer 2; the
-#: third-party variables of layer 3 (``VAULT_ADDR`` and friends) arrive with the
-#: settings they feed, which do not exist yet.
+#: §6's variables that supply a setting of the *run*, by the setting each
+#: supplies. All layer 2.
+#:
+#: ``SOPULI_VAULT`` is here and its neighbours in §6's table are not, and the
+#: difference is C13: this one names a **store**, while ``SOPULI_VAULT_ADDR`` and
+#: ``SOPULI_VAULT__VAULT_DEV__ADDR`` name a *setting of* one. A store's settings
+#: are merged inside the file, for the reason :func:`config_contributions` gives
+#: about a profile's ``vaults:`` block, so §6's other vault variables are
+#: collected in :mod:`sopuli.config.vault_env` and reach the same resolver from
+#: there (#154). The third-party variables of layer 3 travel with them.
 ENV_SETTINGS = {
     "SOPULI_OUTPUT": "output",
     "SOPULI_DRY_RUN": "safety.dry_run",
     "SOPULI_PROFILE": "profile",
+    DEFAULT_STORE_VARIABLE: DEFAULT_STORE_SETTING,
 }
 
 #: Variables whose *presence* is the whole answer, whatever they are set to.
@@ -126,7 +141,9 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
     ``vaults.<name>.*`` is deliberately absent. It is the one part of a profile
     that is applied inside the file (:mod:`sopuli.config.vault_layers`), because
     a store's settings belong to the store rather than to the run and the
-    registry holds one ``vaults.*`` entry for all of them.
+    registry holds one ``vaults.*`` entry for all of them. ``defaults.vault`` is
+    here rather than there for the mirror-image reason: it is a store *name*, not
+    a setting of one, and which store a run defaults to is a property of the run.
     """
     found: list[tuple[str, object, str, Layer]] = []
 
@@ -138,6 +155,7 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
         found.extend(_locking(profile.locking, at=at, layer=Layer.PROFILE))
 
     found.append(("profile", config.defaults.profile, "defaults.profile", Layer.DEFAULTS))
+    found.append((DEFAULT_STORE_SETTING, config.defaults.vault, "defaults.vault", Layer.DEFAULTS))
     found.extend(_safety(config.defaults.safety, at="defaults", layer=Layer.DEFAULTS))
     found.extend(_locking(config.defaults.locking, at="defaults", layer=Layer.DEFAULTS))
 

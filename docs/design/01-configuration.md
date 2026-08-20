@@ -1169,10 +1169,10 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 |---|---|
 | `SOPULI_CONFIG` | config file path |
 | `SOPULI_PROFILE` | active profile (§5) — the usual way a CI job or scheduler selects one |
-| `SOPULI_VAULT` | default vault name |
-| `SOPULI_VAULT_ADDR` | address of the active vault |
+| `SOPULI_VAULT` | default vault name — layer 2 of the same setting `defaults.vault` writes |
+| `SOPULI_VAULT_ADDR` | address of the **default** store: whichever one `SOPULI_VAULT` or `defaults.vault` names. Refused when neither does — see *Which store is "the active" one* below |
 | `SOPULI_VAULT_TOKEN` | token for the active vault. Outranked by `--vault-token-file` and by a store's own `token:` (§3a); there is deliberately no flag carrying a token value, so this is the answer where writing one to disk is awkward |
-| `SOPULI_VAULT__VAULT_DEV__ADDR` | address of a *specific* named vault |
+| `SOPULI_VAULT__VAULT_DEV__ADDR` | address of a *specific* named vault. `ADDR` is the only key addressable this way today; any other spelling under `SOPULI_VAULT__` is refused, naming what is available |
 | `SOPULI_DB_ADMIN_USER` / `SOPULI_DB_ADMIN_PASSWORD` | admin credentials (password is low-assurance, flagged in output). The password pair is the default for `admin.auth: { method: env }`; a target may name its own variable with `password_env:` (§3a) |
 | `SOPULI_ORACLE_CLIENT_LIB_DIR` | Oracle client directory for thick mode |
 | `SOPULI_OUTPUT` | `text` \| `json` \| `jsonl` |
@@ -1185,13 +1185,56 @@ Honoured third-party variables, ranked *below* their `SOPULI_*` equivalent:
 `OCI_CLI_PROFILE`, `OCI_CLI_CONFIG_FILE`, `TNS_ADMIN`, `ORACLE_HOME`,
 `NLS_LANG`, `HTTPS_PROXY`, `NO_PROXY`.
 
+Of that list, `VAULT_ADDR`, `VAULT_NAMESPACE` and `VAULT_CACERT` reach a store's
+`addr`, `namespace` and `tls.ca_file`, on the default store, at P3's layer 3.
+`VAULT_TOKEN` is auth material rather than a setting and belongs to §3a's token
+chain; the rest wait for the subsystems that read them.
+
 **`VAULT_SKIP_VERIFY` is the one exception.** It is read and **refused** with a
 config error rather than honoured or silently ignored (ADR-005): it names the
 same setting as `vaults.*.tls.verify`, which is under the P3 safety ratchet, and
 honouring an unranked environment variable there would let it bypass every
 layer the ratchet is supposed to outrank. Refusing loudly means anyone who set
 it (Vault's own CLI convention) learns that it did nothing, instead of running
-unverified and believing otherwise.
+unverified and believing otherwise. No *other* variable reaches `tls.verify`
+either, under any spelling — the environment can supply a CA file and cannot
+turn verification off.
+
+### Which store is "the active" one
+
+`SOPULI_VAULT__VAULT_DEV__ADDR` says which store it means. `SOPULI_VAULT_ADDR`
+and `VAULT_ADDR` do not, and a run touching two vaults has two active stores and
+one variable. **They apply to the store `defaults.vault` names** — with
+`SOPULI_VAULT` above it, being layer 2 of the same setting — and to no other.
+
+The alternative, following whichever store the current binding resolved to, is
+the `vault_settings:` block C13 rejected, spelled as a variable: it lets a
+setting written for dev follow a changed `vault:` into prod. Decided in #154.
+
+Where nothing names a default store, the two halves answer differently:
+
+- **A `SOPULI_*` variable is refused** with a config error naming the three ways
+  to fix it. It was set for this tool, and §6's own argument about
+  `VAULT_SKIP_VERIFY` applies — silently doing nothing is worse than either
+  honouring or refusing.
+- **A third-party variable warns** and is not applied. `VAULT_ADDR` is exported
+  in every shell that has run `vault`, and it was not set for this tool at all;
+  failing a run over somebody else's variable would be taking a position on an
+  environment the tool does not own. The warning appears in `diagnostics[]`.
+
+### Naming a store in a variable
+
+A store's name becomes a variable segment by upper-casing it and writing `-` as
+`_`, since a hyphen is not legal in a variable name. That mapping is not
+injective: `vault-dev` and `vault_dev` are both `VAULT_DEV`. Where a file
+declares both and the ambiguous variable is **set**, it is refused, naming both
+stores — never resolved by picking one. Declaring both is legal on its own; the
+ambiguity is not real until something depends on it.
+
+Anything under `SOPULI_VAULT__` that addresses no declared store's setting is
+refused the same way, whether the store name is wrong, the key is, or the store
+was renamed. That prefix is this tool's namespace, and invariant 5 already says a
+variable cannot address a store the config does not declare.
 
 ### Set, unset, and empty
 
@@ -1209,6 +1252,16 @@ Implemented in `sopuli/settings/sources.py`, which converts the table into
 contributions for the resolver. `SOPULI_CONFIG` is not there — file discovery is
 a different chain (§9a) — and neither is `SOPULI_NO_COLOR`, because colour is
 settled with TTY detection rather than by precedence.
+
+The vault variables that name a setting *of* a store are the other exception:
+they live in `sopuli/config/vault_env.py` and join the merge in
+`sopuli/config/vault_layers.py`, because a store's settings belong to the store
+rather than to the run and that merge is where the file's own layers already
+meet (C13). `SOPULI_VAULT` stays in `sources.py` with the rest — it names a
+store, and which store a run defaults to *is* a setting of the run, reported in
+`invocation.options` like every other. `SOPULI_VAULT_TOKEN` and `VAULT_TOKEN`
+are in neither: a token is auth material, resolved by `sopuli/material.py`, and
+must never be reported as a setting (ADR-007).
 
 ### What is *not* overridable
 
@@ -1953,7 +2006,7 @@ notices until a rotation.
 | C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
-| C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. **Implemented in #136** for the layers the file supplies, with one correction to the sentence above: `defaults.vaults:` is layer 5 and therefore *outranked* by the declaration, so it fills gaps rather than patching — only a profile's block, at layer 3, patches in the direction the word suggests. The `addr` / `mount` / `kv_version` / `auth` restriction became the complement of the three unpatchable keys, since #135 added three more reach settings the original list could not have named. **Applying a profile's block landed in #153**, in the same pass as the other two; the environment's half of the addressing is #154 |
+| C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. **Implemented in #136** for the layers the file supplies, with one correction to the sentence above: `defaults.vaults:` is layer 5 and therefore *outranked* by the declaration, so it fills gaps rather than patching — only a profile's block, at layer 3, patches in the direction the word suggests. The `addr` / `mount` / `kv_version` / `auth` restriction became the complement of the three unpatchable keys, since #135 added three more reach settings the original list could not have named. **Applying a profile's block landed in #153**, in the same pass as the other two. **The environment's half landed in #154**: `SOPULI_VAULT__VAULT_DEV__ADDR` at layer 2, `VAULT_ADDR` / `VAULT_NAMESPACE` / `VAULT_CACERT` at layer 3, in the same single pass, with the name-to-variable mapping refusing a collision rather than picking one of two stores. It also had to answer what the *unnamed* `SOPULI_VAULT_ADDR` addresses, and the answer is C13's own: the store `defaults.vault` names, with `SOPULI_VAULT` above it — refused where nothing names one, because a variable that followed whichever store was active would be the rejected `vault_settings:` block spelled differently |
 | C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. The run schema is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
 | C15 | ~~A binding names a secret and no store, anywhere — refuse, warn, or leave it to plan time?~~ | **decided in #118: mostly plan time, refused only when nothing could ever complete it.** `_vault_for`'s chain resolving to `None` is not always a mistake — a profile's `vault:` or `SOPULI_VAULT` may still supply one, and neither is consulted while bindings are built (§5, §9), so the null can be a real, temporary state rather than an error. Left alone: `config show --resolved` renders it as `-` (§10), and the command that actually needs a store fails there, once a run's profile is known and the answer is exact. Refused at load only for the narrower, genuinely unrecoverable case — `vaults:` declaring nothing at all, so there is no name even a profile or `SOPULI_VAULT` could point at (§10). The naive rule — refuse whenever a binding's store is unnamed — was rejected first: it rejects the legitimate config where one profile sets `vault:` and a run selects a different one that inherits `defaults.vault` instead |
 | C16 | ~~What does `--vault-token` take? Every document treated it as a step in a chain and none said what an operator types after it~~ | **decided: nothing — it takes a path under a different name.** `--vault-token-file PATH` is the command line's position in `method: token`'s chain (§3a), and a bare `--vault-token` is **refused** with a message naming invariant 1 and all four working sources. A token as an option *value* is visible in `ps` and in the Windows process list, and P5's "or a vault ref" escape cannot apply to vault auth itself, since a ref is resolved *by* an authenticated store — the same bootstrap shape P2 already describes for the database admin credential, one layer earlier. `--vault-token-stdin` is deferred rather than rejected, because `--from-stdin` (UC-1 §5) already claims the pipe; the constraint it will have to satisfy is banked in P5 today. Reusing the MaterialRef grammar (`--vault-token env:NAME`) was rejected outright: `env:` / `file:` in a SecretRef means "resolve this via an already-authenticated store", so two identical-looking grammars would have opposite resolution order. Filed as #145 and recorded in [ADR-007](../decisions/adr-007-vault-token-flag.md), which also confirms `vault login` plus `~/.vault-token` as the intended bootstrap for a human at a terminal, and gives the flag's file P4's permission check |

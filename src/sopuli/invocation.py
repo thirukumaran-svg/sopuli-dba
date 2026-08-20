@@ -130,7 +130,13 @@ GLOBAL_PARAMS = (
 #: waiting for a consumer, which is the rule `sopuli/settings/registry.py` states.
 #: `vaults.*` is absent for a different reason -- it is resolved inside the file,
 #: by `sopuli/config/vault_layers.py`, because it describes a store rather than
-#: a run.
+#: a run. `vault` is the one next to it that *is* a run setting and so is here
+#: (#154): it names which store the run defaults to, which is what §6's unnamed
+#: `SOPULI_VAULT_ADDR` and `VAULT_ADDR` need before they know what they address.
+#: It is resolved twice per run for that reason -- here, so the document reports
+#: where the name came from, and again in `sopuli/config/vault_env.py`, which
+#: needs the answer while the file is still being built. Same two contributions,
+#: same resolver, so there is nothing for them to disagree about.
 RESOLVED_SETTINGS = (
     "locking.break_expired",
     "output",
@@ -139,6 +145,7 @@ RESOLVED_SETTINGS = (
     "safety.dry_run",
     "safety.max_targets",
     "safety.readonly",
+    "vault",
 )
 
 #: What an :class:`Invocation` built without a command is called. Only reachable
@@ -573,7 +580,7 @@ def load_config_layers(invocation: Invocation, *, env: Mapping[str, str]) -> Loa
     deferred to the verb -- see the module note.
     """
     paths = discover(invocation.config_paths, env=env)
-    declared, config = load_layers(paths, profile=invocation.value("profile"))
+    declared, config = load_layers(paths, profile=invocation.value("profile"), env=env)
     return LoadedConfig(paths=paths, declared=declared, config=config)
 
 

@@ -336,15 +336,22 @@ written under `vaults:` keyed by its name, which `defaults:` and a profile may
 each carry as a partial entry. C13, decided in #31; `01-configuration.md` §3a
 and §5 are the specification.
 
-Layers 3, 4 and 5 of that merge are implemented (`sopuli/config/vault_layers.py`,
-#136 and #153) and go through the one resolver in `sopuli/settings/`, which is
-what makes `vaults.*.tls.verify` ratchet rather than being overwritten by
-whichever layer is higher. All three are merged in one pass, because resolving
-two of them first and folding the third in afterwards reports the winner of the
-first pass rather than the layer somebody has to edit. Layers 1–2 wait on #154,
-so **the direction is worth reading off the table rather than off the word
-"patch"**: `defaults:` is *below* the declaration and fills gaps; only a profile
-is above it.
+Layers 2 to 5 of that merge are implemented (`sopuli/config/vault_layers.py`,
+#136, #153 and #154) and go through the one resolver in `sopuli/settings/`, which
+is what makes `vaults.*.tls.verify` ratchet rather than being overwritten by
+whichever layer is higher. All of them are merged in one pass, because resolving
+two of them first and folding the rest in afterwards reports the winner of the
+first pass rather than the layer somebody has to edit. So **the direction is
+worth reading off the table rather than off the word "patch"**: `defaults:` is
+*below* the declaration and fills gaps; only a profile and the environment are
+above it.
+
+Layer 1 is the one still missing: there is no `--vault-addr` flag, and when there
+is, it joins the same merge. Layer 2 comes in two spellings, decided in #154 —
+`SOPULI_VAULT__HCV_PROD__ADDR` names a store, and the unnamed `SOPULI_VAULT_ADDR`
+applies to whichever store `SOPULI_VAULT` or `defaults.vault` names, refusing
+rather than guessing when neither does. `01-configuration.md` §6 is the
+specification.
 
 **The config file is read at the boundary, before a verb runs** (#153). It has to
 be: a profile is layer 3 and may supply `output`, and a run whose output format
