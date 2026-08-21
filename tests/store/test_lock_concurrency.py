@@ -15,6 +15,14 @@ This does, with two real processes against a real Vault
 once is worse than a tool with no locking at all, because the second at least
 does not claim otherwise. Everything else in the vault layer was built assuming
 these two properties; until now they had only ever been observed against a fake.
+
+The split above cuts both ways, and #197 is the case that showed it. A claim
+about an *interleaving* -- two runs both reading before either writes -- cannot
+be made here, for the same reason tier 0 cannot make the claim about two runs
+starting at once: the window is inside `acquire`, no handshake reaches into it,
+and two processes released together land in it only sometimes. Asserting an
+interleaving from this side is asserting a coin flip. What belongs here is what
+holds on every run whatever the scheduler did.
 """
 
 from __future__ import annotations
@@ -26,10 +34,13 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from sopuli.lock import Holder, LockRecord
 
 DRIVER = Path(__file__).with_name("lock_race_driver.py")
 
@@ -346,15 +357,40 @@ def test_a_deleted_lock_path_can_never_be_acquired_again(vault_stack: Any, lock_
     assert result["exit_code"] == 7
 
 
-def test_advisory_only_lets_two_runs_hold_one_lock_at_once(vault_stack: Any) -> None:
-    """The weakness, asserted as a weakness.
+#: The wording `_write` uses when a compare-and-set is *lost*, as opposed to
+#: when the read found a holder. The two denials are indistinguishable by exit
+#: code -- both are 7 -- and the difference is the whole subject below, so it is
+#: matched on the message rather than inferred.
+LOST_A_RACE = "while this one was acquiring it"
 
-    On the real `kv1` mount there is no compare-and-set, so `locking:
-    advisory-only` is the operator conceding that a lock here guarantees nothing
-    (#94). Both runs take it, both report `lock.mode: none`, and that is the
-    documented behaviour rather than a bug -- which is why the test asserts it
-    rather than avoiding it. A run that reported `cas` here would be claiming a
-    guarantee it does not have, and *that* is the failure worth catching.
+
+def test_advisory_only_claims_no_fence_and_never_loses_a_race(vault_stack: Any) -> None:
+    """What a mount with no compare-and-set can be *asked*, on a real Vault.
+
+    `locking: advisory-only` is the operator conceding that a lock here
+    guarantees nothing (#94), and the concession has a shape that is observable
+    every time rather than only when the timing cooperates:
+
+    * nobody is handed a fence -- a version somebody could compare would be a
+      guarantee this store cannot give;
+    * every run reports `mode: none`, so a consumer is told which guarantee it
+      got. A run reporting `cas` here would be claiming one it does not have,
+      and *that* is the failure worth catching;
+    * a denial, where one happens, is **never a lost compare-and-set**. There is
+      none to lose: `_write` passes `cas=None` on a store that cannot fence, so
+      the only way to be refused here is the read having seen a holder. That is
+      the property that separates this mount from the `kv2` one above, and it is
+      the half only a real store can be asked.
+
+    **What is deliberately not asserted is the outcome pair** (#197). This test
+    demanded `["acquired", "acquired"]` until it lost the toss on a loaded
+    runner, and the demand was never sound: `acquire` reads the path before it
+    writes, on `advisory-only` exactly as on `required`, so a racer whose read
+    lands after the other's write is *correctly* denied. Both pairs are legal
+    here and which one appears is a fact about process scheduling, not about the
+    store. The claim that fell out --- two runs *can* hold one advisory lock at
+    once --- moved to `tests/lock/test_manager.py`, where the window between the
+    read and the write can be forced open instead of waited for.
     """
     secret_path = "apps/acme/beta"
     record = f"locks/{secret_path}"
@@ -368,9 +404,68 @@ def test_advisory_only_lets_two_runs_hold_one_lock_at_once(vault_stack: Any) -> 
     )
     vault_stack.client.delete(f"/v1/{vault_stack.kv1_mount}/{record}")
 
-    assert [result["outcome"] for result in results] == ["acquired", "acquired"]
-    assert {result["mode"] for result in results} == {"none"}
-    assert all(result["fence"] is None for result in results), (
-        "a store that cannot fence must hand back no fence, rather than a number "
-        "nothing can compare"
+    assert "acquired" in [result["outcome"] for result in results], (
+        f"neither run took a lock nobody was holding: {results}"
     )
+    assert {result["mode"] for result in results} == {"none"}
+
+    for result in results:
+        if result["outcome"] == "acquired":
+            assert result["fence"] is None, (
+                "a store that cannot fence must hand back no fence, rather than a "
+                "number nothing can compare"
+            )
+        else:
+            assert LOST_A_RACE not in result["message"], (
+                f"there is no compare-and-set on this mount to lose: {result}"
+            )
+
+
+def test_a_denial_without_compare_and_set_is_the_read_and_not_a_lost_race(
+    vault_stack: Any,
+) -> None:
+    """The denial branch above, reached on purpose instead of by luck.
+
+    Whether the race produces a denial at all depends on the machine -- on an
+    idle laptop both runs acquire every time, which is why the flake only ever
+    appeared in CI. So the shape of a denial is asserted here, where it is
+    forced: a record is planted, one run is started, and it is refused.
+
+    The distinction being drawn is invisible from the exit code, since both
+    denials are 7. `acquire` refuses in two places -- the read finding a holder,
+    and the acquiring write losing a compare-and-set -- and on a mount with no
+    `cas` the second cannot happen, because `_write` passes `cas=None` there.
+    A denial here that claimed a lost race would mean the manager had asked this
+    store for a guarantee it does not have.
+    """
+    secret_path = "apps/acme/gamma"
+    record = f"locks/{secret_path}"
+    held = LockRecord.acquired(
+        correlation_id="01JSOMEBODYELSE",
+        command="creds rotate",
+        holder=Holder(host="another-runner", pid=4242, os_user="svc_sopuli"),
+        now=datetime.now(UTC),
+    )
+    # kv1 writes the document at the path itself -- there is no `data/` prefix
+    # and no `options`, which is the whole of what "no versioning" means here.
+    vault_stack.client.post(f"/v1/{vault_stack.kv1_mount}/{record}", json=held.to_dict())
+    try:
+        result = run_driver(
+            vault_stack,
+            mount=vault_stack.kv1_mount,
+            kv_version=1,
+            locking="advisory-only",
+            path=secret_path,
+            correlation_id="run-late",
+        )
+    finally:
+        vault_stack.client.delete(f"/v1/{vault_stack.kv1_mount}/{record}")
+
+    assert result["outcome"] == "denied"
+    assert result["exit_code"] == 7
+    assert LOST_A_RACE not in result["message"], (
+        f"there is no compare-and-set on this mount to lose: {result}"
+    )
+    # It says who, which is the half that makes exit 7 actionable -- and is also
+    # the evidence that this denial came from the read.
+    assert "another-runner" in result["message"]

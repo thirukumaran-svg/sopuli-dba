@@ -12,6 +12,8 @@ Vault. What it checks is a version comparison, so it belongs here first.
 
 from __future__ import annotations
 
+import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -407,6 +409,84 @@ def advisory(store: MemoryStore, **kwargs: Any) -> LockManager:
     return manager(store, locking=LOCK_ADVISORY_ONLY, **kwargs)
 
 
+#: Long enough that a loaded machine still gets there, short enough that a
+#: mistake fails the test instead of hanging the suite. Nothing waits on real
+#: work here -- the other racer is one dictionary lookup away.
+BARRIER_TIMEOUT = 10
+
+
+@dataclass
+class ReadsBeforeWrites(MemoryStore):
+    """A store that holds every racer's first read until they have all looked.
+
+    The window that makes ``advisory-only`` unsafe: ``acquire`` reads the path
+    and then writes it, so two runs both end up holding one lock exactly when
+    both reads land before either write. Across two real processes that happens
+    when the machine feels like it -- #197 is a tier-1 test that asserted it
+    directly, which is a coin flip, and eventually lost the toss.
+
+    A barrier makes it happen every time. It is **not** a race: no outcome here
+    depends on which thread the scheduler favours, only on an ordering that is
+    imposed. Threads are the mechanism, not the subject -- and they are what
+    lets this force the interleaving *for real*, rather than by handing the
+    second reader a stale answer and hoping the difference does not matter.
+
+    Two overrides, and both are load-bearing:
+
+    * :meth:`read` waits, **once per thread**. Only the first read is part of
+      the window; ``release`` and ``check`` read too, and a barrier they also
+      hit would deadlock the moment one racer finished ahead of the other.
+    * :meth:`write` takes a lock, because :class:`MemoryStore` has never needed
+      to be thread-safe and its compare-and-set is a check followed by an
+      increment. Two threads can both pass ``cas == entry.version`` and both
+      commit, which would make the contrast below flaky -- the exact failure
+      this whole change is about. A real store serialises writes; so does this,
+      now that anything calls it from two threads.
+    """
+
+    racers: int = 2
+
+    def __post_init__(self) -> None:
+        self._barrier = threading.Barrier(self.racers, timeout=BARRIER_TIMEOUT)
+        self._writing = threading.Lock()
+        self._looked = threading.local()
+
+    def read(self, path: str) -> Stored | None:
+        answer = super().read(path)
+        if not getattr(self._looked, "yet", False):
+            self._looked.yet = True
+            self._barrier.wait()
+        return answer
+
+    def write(self, path: str, data: Any, *, cas: int | None) -> int:
+        with self._writing:
+            return super().write(path, data, cas=cas)
+
+
+def acquire_together(*managers: LockManager) -> list[BaseException]:
+    """Every manager acquires :data:`KEY` at once, and nothing is swallowed.
+
+    Returns what was raised rather than letting it escape a worker thread,
+    where `pytest` would never see it and the test would pass while doing
+    nothing.
+    """
+    raised: list[BaseException] = []
+
+    def take(run: LockManager) -> None:
+        try:
+            run.acquire([KEY])
+        except BaseException as error:  # noqa: BLE001 - reported, not handled
+            raised.append(error)
+
+    threads = [threading.Thread(target=take, args=(run,)) for run in managers]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=BARRIER_TIMEOUT * 2)
+        assert not thread.is_alive(), "a racer never finished acquiring"
+    return raised
+
+
 def test_a_store_without_compare_and_set_still_writes_a_record() -> None:
     """A courtesy that catches operators minutes apart and misses two CI jobs
     in the same second -- which is what `mode: none` tells a consumer."""
@@ -450,6 +530,60 @@ def test_an_advisory_lock_notices_it_was_overwritten() -> None:
 
     with pytest.raises(LockStolenError):
         run.check()
+
+
+def test_two_advisory_runs_can_hold_one_lock_at_once() -> None:
+    """What ``mode: none`` costs, stated as a test rather than as a warning.
+
+    Both runs look at an empty path, both are entitled to take it, and nothing
+    stops the second write. That is the concession an operator makes with
+    ``locking: advisory-only`` (#94) and it is the reason the mode is reported
+    -- a run claiming ``cas`` here would be claiming a guarantee it does not
+    have.
+
+    **Tier 0 because only tier 0 can force it** (#197). The window is between a
+    racer's read and its write, and no handshake reaches inside ``acquire`` to
+    hold it open; two processes released at one instant land in it *sometimes*.
+    In one process the store itself can hold the door, which is what this tier
+    is for and what the concurrency gate's own header says it is for.
+    """
+    store = ReadsBeforeWrites(capabilities=frozenset())
+    mine = advisory(store)
+    theirs = advisory(store, correlation_id="01JTHEIRS")
+
+    assert acquire_together(mine, theirs) == [], "neither run should have been refused"
+
+    assert mine.mode == theirs.mode == MODE_NONE
+    assert mine.held[0].fence is None
+    assert theirs.held[0].fence is None
+    # Two writes to one path, which is the damage: one record is on top and the
+    # other run has no way to notice until its next `check`. Which one landed
+    # last is the scheduler's business and is deliberately not asserted -- that
+    # both were written is the whole finding.
+    assert store.paths[lock_path(KEY)].version == 2
+
+
+def test_the_same_window_produces_one_winner_where_there_is_a_fence() -> None:
+    """The contrast that makes the test above about locking rather than about a
+    store that was told to lie.
+
+    Identical interleaving -- both racers read the empty path before either
+    writes -- against a store that *has* compare-and-set. Both then write with
+    `cas: 0`, one of them gets there first, and the other finds a path that is no
+    longer empty and is denied. So the window is real in both cases and only the
+    fence closes it, which is exactly what `advisory-only` gives up.
+
+    Which run loses is the scheduler's business and is not asserted. That
+    *exactly one* does is the property, and it is the one #197 is about: an
+    outcome worth asserting is one the ordering cannot change.
+    """
+    store = ReadsBeforeWrites()
+
+    raised = acquire_together(manager(store), manager(store, correlation_id="01JTHEIRS"))
+
+    assert len(raised) == 1, f"exactly one run must lose: {raised}"
+    assert isinstance(raised[0], LockDeniedError)
+    assert store.paths[lock_path(KEY)].version == 1, "the loser must not have written"
 
 
 def test_breaking_expired_locks_is_refused_where_there_is_no_fence() -> None:
