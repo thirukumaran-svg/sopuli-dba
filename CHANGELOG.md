@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/futville/sopuli-dba/compare/v0.34.0...v0.35.0) (2026-08-21)
+
+
+### Features
+
+* **testing:** capability probing, skip markers and the matrix report ([#192](https://github.com/futville/sopuli-dba/issues/192)) ([0f38658](https://github.com/futville/sopuli-dba/commit/0f386585e1c15d136a4712aff21209b624d4b6c9))
+
 ## [0.34.0](https://github.com/futville/sopuli-dba/compare/v0.33.0...v0.34.0) (2026-08-20)
 
 
