@@ -204,9 +204,22 @@ nothing else in the suite can see rule 3 break.
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
 | 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, `lock status` and `lock break` with the store handed in — including the live/expired/nothing matrix, which is a comparison rather than a container and a sleep — and the install-shape assertions in §3 |
-| 1 | every PR | public CI | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
+| 1 | every PR | public CI (`tier1.yml`, #184) | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
 | 2 | nightly | public CI | < 30 min | 21c XE, 18c XE, 11g XE, PostgreSQL matrix; fault injection |
 | 3 | pre-release | maintainer | manual | built 19c, real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
+
+**The tier-1 lane installs Oracle Instant Client, and has to** (#184). D3 makes
+thick mode mandatory — thin mode has no Native Network Encryption — so a runner
+without the client would skip every driver test while reporting green. Basic Lite
+is a free download needing no account, which keeps §1's rule intact: a fork can
+do exactly what the lane does.
+
+**A missing environment fails that lane rather than skipping.**
+`SOPULI_TEST_TIER1=required` turns "no environment" into a failure and leaves
+capability skips alone, which is §3's distinction made operational: a job that
+exists to run tier 1 and reports green while skipping all of it is worse than no
+job, because it gets quoted as evidence. Everywhere else — a laptop, a fork with
+no stack up — the same tests skip with a reason, which is §1 working.
 
 Tier 0 needs no containers at all and should stay that way — it is what makes the
 inner development loop tolerable. Every pure-logic concern above (precedence,

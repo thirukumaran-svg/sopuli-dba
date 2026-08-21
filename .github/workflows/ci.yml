@@ -1,9 +1,10 @@
 name: ci
 
 # Tier 0 only (docs/design/04-testing.md §4): every commit, under a minute, no
-# containers. Tier 1 needs Oracle Free and Vault from test/compose.yaml plus the
-# capability probing in test/capabilities.py, neither of which exists yet, and
-# gets its own workflow with its own budget when it does.
+# containers. Tier 1 -- Oracle Free and Vault from test/compose.yaml, with the
+# capability probing in tests/oracle_harness.py -- is `tier1.yml`, which is the
+# separate workflow this comment used to promise (#184). Keeping them apart is
+# what stops a typo waiting six minutes on an Oracle healthcheck to report.
 #
 # docs/workflow.md says "main is always green" as a binding rule. Until this
 # existed, nothing checked it.

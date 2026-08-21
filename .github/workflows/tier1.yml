@@ -1,0 +1,144 @@
+name: tier 1
+
+# Oracle Free + Vault, per `docs/design/04-testing.md` §4: every pull request,
+# under ten minutes, the UC-1 happy path and the store's real-backend tests.
+#
+# Its own workflow rather than a job in ci.yml, which is what ci.yml's header has
+# said would happen since it was written: tier 0 is under a minute with no
+# containers, and a lane that waits on an Oracle healthcheck must not be the
+# reason a typo takes six minutes to report.
+#
+# **Only freely pullable images** (§1). `gvenzl/oracle-free` and
+# `hashicorp/vault` are both pullable by anyone including a fork, and Instant
+# Client is a free download with no account. Nothing here needs a licence, a
+# build from Oracle binaries, or a tenancy -- those are tier 3, and they are the
+# maintainer's machine rather than this file.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tier1-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tier1:
+    name: tier 1 (Oracle Free + Vault)
+    # amd64, and not incidentally: the 11g XE image in tier 2 is published for
+    # linux/amd64 only, and Oracle's containers are unsupported under emulation.
+    runs-on: ubuntu-latest
+    # §4 budgets this tier at under ten minutes, and the timeout is deliberately
+    # not that number: a budget is what the lane should cost, a timeout is when
+    # to conclude it has hung. Setting them equal would make a slow image pull --
+    # which is Docker Hub's day, not ours -- indistinguishable from an Oracle
+    # that never reaches healthy, and it would fail the pull rather than report
+    # it. Oracle reaches healthy in 30-60 s and the suite is seconds; anything
+    # near 20 minutes is stuck, not slow.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # `[all]`: a lane whose subject is a vendor client has nothing to assert
+      # without one.
+      - run: pip install -e ".[dev,all]"
+
+      # D3: thick mode is mandatory, because thin mode has no Native Network
+      # Encryption and OCI-hosted databases require it. So Instant Client is a
+      # runtime prerequisite here exactly as it is for an operator, and a lane
+      # without it would skip every driver test while reporting green.
+      #
+      # Basic Lite rather than Basic: it drops the error-message files for
+      # languages nobody here reads and is a third of the size. `libaio` is the
+      # one system dependency; its package name changed on 24.04, hence the
+      # fallback.
+      - name: install Oracle Instant Client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libaio1t64 \
+            || sudo apt-get install -y --no-install-recommends libaio1
+          # Ubuntu 24.04's time_t transition renamed the library to
+          # `libaio.so.1t64`, and Instant Client is linked against `libaio.so.1`.
+          # Installing the package is therefore not enough: without this the
+          # client is present, on LD_LIBRARY_PATH, and still gives DPI-1047.
+          lib=$(find /usr/lib -name 'libaio.so.1t64' | head -1)
+          if [ -n "$lib" ] && [ ! -e "${lib%1t64}1" ]; then
+            sudo ln -s "$lib" "${lib%1t64}1"
+            echo "linked ${lib%1t64}1 -> $lib"
+          fi
+          curl -fsSLO https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip
+          sudo mkdir -p /opt/oracle
+          sudo unzip -q instantclient-basiclite-linuxx64.zip -d /opt/oracle
+          # The directory carries the version, so it is found rather than named:
+          # pinning it here would break on the next release for no benefit.
+          # Checked rather than assumed, because the failure is otherwise silent
+          # and lands somewhere else: `find` printing nothing makes `dirname`
+          # answer `.`, and the lane then reports DPI-1047 from a step that said
+          # it installed the client -- which is the wrong place to start looking.
+          libclntsh=$(find /opt/oracle -name 'libclntsh.so*' | head -1)
+          if [ -z "$libclntsh" ]; then
+            echo "::error::libclntsh.so not found under /opt/oracle -- the Instant Client archive did not unpack as expected"
+            find /opt/oracle -maxdepth 2 | head -20
+            exit 1
+          fi
+          client=$(dirname "$libclntsh")
+          echo "LD_LIBRARY_PATH=$client" >> "$GITHUB_ENV"
+          echo "installed Instant Client at $client"
+
+      # The compose file rather than `services:`, which is T2's answer applied to
+      # CI. Two concrete reasons beyond symmetry: `services:` would duplicate the
+      # image pins, and `tests/store/test_hashicorp_cas_conflict.py` asserts on
+      # Vault's own error wording, so a second pin is a second thing to forget.
+      # And Vault's KV mounts come from a one-shot init container that
+      # `services:` cannot express at all -- it would have to be scripted here,
+      # which is the compose file written twice.
+      # Two calls, because `--wait` fails on a container that has *exited* even
+      # when it exited 0, and `vault-init` is a one-shot by design: it mounts kv
+      # (v2) and kv1 (v1) and stops. Waiting on the long-running services by name
+      # and starting the one-shot afterwards says what is meant. Its own success
+      # is not asserted here -- a missing mount surfaces immediately as 404s in
+      # the store tests, which is a better message than anything this step would
+      # print.
+      - name: bring up the tier-1 stack
+        working-directory: test
+        run: |
+          docker compose --profile tier1 up -d --wait vault postgres oracle-free
+          docker compose --profile tier1 up -d vault-init
+
+      - name: pytest
+        env:
+          # Turns "no environment" from a skip into a failure. A lane that
+          # reported green while skipping everything it exists to run would be
+          # worse than no lane, because it would be quoted as evidence.
+          SOPULI_TEST_TIER1: required
+          SOPULI_TEST_ORACLE_NAME: 23ai Free
+        run: pytest
+
+      # Runs on failure too: when Oracle did not come up, its log is the whole
+      # diagnosis and the alternative is re-running the job with a debug step
+      # somebody has to write first.
+      - name: container logs
+        if: always()
+        working-directory: test
+        run: docker compose --profile tier1 logs --tail 100
+
+      - name: tear down
+        if: always()
+        working-directory: test
+        run: docker compose --profile '*' down

@@ -16,7 +16,7 @@ import urllib.parse
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -145,6 +145,25 @@ class VaultStack:
     scratch: str = "apps/acme/conformance"
 
 
+#: Set to ``required`` where a tier-1 environment is supposed to be present --
+#: which is the CI lane and nowhere else (#184).
+#:
+#: A skipped tier-1 test is the correct outcome on a laptop with nothing running
+#: and a **silent hole** in a job that exists to run it. `04-testing.md` §3 draws
+#: the same line for its two skip counts: a capability skip is correct, a missing
+#: environment is a coverage gap. So this turns the second into a failure and
+#: leaves the first alone -- a lane that reported green while skipping everything
+#: would be worse than no lane, because it would be quoted as evidence.
+TIER1 = "SOPULI_TEST_TIER1"
+
+
+def _missing_environment(reason: str) -> NoReturn:
+    """Skip, or fail if this run was supposed to have an environment."""
+    if os.environ.get(TIER1) == "required":
+        pytest.fail(f"tier 1 required, but the environment was not there: {reason}", pytrace=False)
+    pytest.skip(reason)
+
+
 def _is_loopback(addr: str) -> bool:
     hostname = urllib.parse.urlparse(addr).hostname
     if hostname is None:
@@ -167,7 +186,7 @@ def vault_stack() -> Iterator[VaultStack]:
     """
     opted_in = os.environ.get(ALLOW_REMOTE_VAULT) in ("1", "true", "yes")
     if not _is_loopback(VAULT_ADDR) and not opted_in:
-        pytest.skip(
+        _missing_environment(
             f"VAULT_ADDR={VAULT_ADDR!r} is not loopback, and these tests write to fixed "
             f"scratch paths -- set {ALLOW_REMOTE_VAULT}=1 to opt in deliberately"
         )
@@ -175,25 +194,27 @@ def vault_stack() -> Iterator[VaultStack]:
     try:
         import httpx
     except ImportError:  # pragma: no cover -- reached only in a base install
-        pytest.skip("httpx is not installed; `pip install -e '.[hashicorp]'`")
+        _missing_environment("httpx is not installed; `pip install -e '.[hashicorp]'`")
 
     client = httpx.Client(base_url=VAULT_ADDR, headers={"X-Vault-Token": VAULT_TOKEN}, timeout=5)
     try:
         health = client.get("/v1/sys/health")
     except httpx.TransportError as error:
         client.close()
-        pytest.skip(f"Vault not reachable at {VAULT_ADDR}: {error}")
+        _missing_environment(f"Vault not reachable at {VAULT_ADDR}: {error}")
 
     # sys/health's own status vocabulary: any of these means "a Vault answered".
     if health.status_code not in (200, 429, 472, 473, 501, 503):
         client.close()
-        pytest.skip(f"Vault at {VAULT_ADDR} answered unexpectedly: HTTP {health.status_code}")
+        _missing_environment(
+            f"Vault at {VAULT_ADDR} answered unexpectedly: HTTP {health.status_code}"
+        )
 
     # sys/health takes no token, so a bad one survives it undetected and would
     # fail the first real test with a 403 instead. One skip beats N failures.
     if client.get("/v1/auth/token/lookup-self").status_code != 200:
         client.close()
-        pytest.skip(f"VAULT_TOKEN does not authenticate against {VAULT_ADDR}")
+        _missing_environment(f"VAULT_TOKEN does not authenticate against {VAULT_ADDR}")
 
     yield VaultStack(addr=VAULT_ADDR, token=VAULT_TOKEN, client=client)
     client.close()
@@ -340,7 +361,12 @@ def _why(exc: BaseException) -> str:
 
     diagnosis = from_error(exc)
     if diagnosis.kind == CLIENT_LIBRARY:
-        return f"{diagnosis.code}: Oracle Instant Client is not installed (D3)"
+        # Ours *and* the driver's, not ours instead of it. DPI-1047 names the
+        # library it could not load -- and on Ubuntu 24.04 that is `libaio.so.1`,
+        # which is present under a different name, so "Instant Client is not
+        # installed" is true-sounding and useless on its own. This message is
+        # read by somebody who cannot see the machine.
+        return f"{diagnosis.code}: thick mode could not start (D3) -- {diagnosis.message}"
     return f"{diagnosis.code or type(exc).__name__}: {diagnosis.message}".strip()
 
 
@@ -363,7 +389,14 @@ def _capability_gate(request: pytest.FixtureRequest) -> None:
     if reason is None:
         return
 
-    _SKIPS["environment" if reason.startswith("environment") else "capability"] += 1
+    if reason.startswith("environment"):
+        _SKIPS["environment"] += 1
+        _missing_environment(reason)
+
+    # A capability skip stays a skip even under `required`: 18c genuinely has no
+    # rollover, and a lane that failed over that would be asserting the model is
+    # wrong (§3).
+    _SKIPS["capability"] += 1
     pytest.skip(reason)
 
 
