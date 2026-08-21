@@ -331,6 +331,12 @@ Sources, in order of preference:
 
 Storing the admin password in the config file is not supported at all.
 
+Resolution is `sopuli/admin.py` (#175), which turns one of the four into a
+`Secret` at connect time; `01-configuration.md` §3a specifies the sources and
+the four decisions that resolving them forces — the refusal when a target names
+no source, what `prompt` does with no terminal, how a prompt is shared across
+targets, and why the environment source is flagged rather than refused.
+
 **The same shape, one layer earlier: the vault's own credential.** The list above
 is about reaching the *database*; reaching the *store* has the identical problem,
 and it is worth naming as the same problem rather than discovering it twice. A

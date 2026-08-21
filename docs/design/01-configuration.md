@@ -778,6 +778,91 @@ rather than warnings:
 Both are checked against the *expanded* estate, so an `overrides:` patch that
 introduces the combination is caught too.
 
+#### What happens when one of these is resolved (#175)
+
+Parsing says where the material lives; resolution reads it, and it happens **at
+connect time rather than at load time** — `sopuli/admin.py`, beside
+`sopuli/material.py` and for its reason: prompting and reading the environment
+are I/O, and `04-testing.md` §4 keeps the config layer free of it as an
+architecture requirement. Four decisions fall out of doing it, and each is
+written here because each is silent when it goes wrong.
+
+**A target that names no source is refused, not guessed at.** `admin:` is
+optional and so is `auth:` inside it, so a target can reach a connection having
+named nothing. Picking up `SOPULI_DB_ADMIN_PASSWORD` because it happens to be
+set is the tempting reading of §6 and it is a guess: §6 calls that pair *the
+default for* `method: env`, which is a statement about a declared method and not
+about an absent one. A credential tool that authenticates from whatever variable
+it found lying in the environment, because the file said nothing, is doing the
+thing P2's bootstrap section exists to prevent. The error names the four methods
+and the variable, so the fix is the one line it quotes. Refusing is also the
+reversible half: deciding later that a bare variable implies `method: env` only
+widens what works.
+
+**`auth: prompt` with no terminal fails, and fails as exit 8** — aborted, not
+config-invalid. The file is right, the invocation is right, and the run stopped
+because it needed a human and there was not one; sending a scheduler's owner to
+a config file with nothing wrong with it is the worse message. The same
+condition is answerable *before* anything is touched — `needs_prompt()` over the
+selected estate — which is invariant 4's shape applied to a source rather than
+to a capability. Both guards exist: the plan phase does not yet, and the one that
+must not be forgotten is the one nearest the pipe.
+
+**A prompt never reads stdin**, which is how P5's *one stream, one reader*
+survives contact with this method. `--from-stdin` (UC-1 §5) claims the pipe for
+the *account's* new password, so a prompt falling back to stdin would read that
+and send it to the database as the DBA's. Refusing when there is no terminal
+makes the collision impossible rather than merely discouraged: a prompter exists
+only when stdin is a terminal, and a terminal is not carrying a piped password,
+so the two sources are mutually exclusive by construction and no ordering
+between them ever has to be defined.
+
+**One prompt covers every target that declares the same credential**, keyed on
+*what the configuration declares* rather than on the username. The key is the
+declaration site plus the **effective** username — the one `SOPULI_DB_ADMIN_USER`
+may have overridden, not the one the file wrote:
+
+- one `target_sets:` entry is one operator writing one credential down once, so
+  its thirty-four generated targets are asked once. `username: sopuli_{tenant}`
+  resolves differently per target and is therefore thirty-four credentials,
+  asked separately — which is why the username is in the key at all;
+- two explicit targets are two acts of writing it down and are asked twice even
+  where the blocks are identical, because the file gives no reason to believe
+  they are the same credential;
+- the username **alone** is the unsafe key and is not used: two PDBs can hold
+  same-named local accounts with different passwords, and a cache keyed on the
+  name sends the first PDB's password to the second, where the ORA-01017 reads
+  as a rotation problem;
+- the DSN is deliberately *not* in the key. Targets generated from one entry
+  point at different databases by design, so including it would defeat the cache
+  entirely. Where those databases really do hold different passwords the run
+  fails at the second one with an authentication error naming the target —
+  diagnosable, and the file's own claim being wrong rather than a cache guessing.
+
+Taking the username from the file alone gets two things wrong at once, which is
+why *effective* is stated rather than implied. The operator would be **asked
+about one account and connected as another**, since the variable outranks
+`username:` — the two differ exactly when it is set, and the mismatch surfaces
+as ORA-01017 long after the prompt. And the key would **separate targets the
+variable has just made identical**: `sopuli_{tenant}` under
+`SOPULI_DB_ADMIN_USER` is one account on thirty-four databases, asked about
+thirty-four times. "What the configuration declares" means the value P3's layers
+resolve to, not the lowest layer that had an opinion.
+
+The prompt is also the one place a typed password becomes a `Secret`. The asker
+the CLI supplies returns a `str`, because every terminal read does — `getpass`
+included — and it is wrapped once, at that boundary, rather than by each
+supplier. Invariant 2's argument applies to itself here: a supplier that forgot
+would put a bare `str` where `repr` prints it in full.
+
+**`SOPULI_DB_ADMIN_USER` outranks a target's `username:`** (P3: the environment
+is layer 3, the file is layer 4) and is **ignored under `external`**. The
+asymmetry with the refusal above is deliberate: a `username:` written beside a
+wallet is somebody claiming something about *this* target and is worth stopping
+for, while the variable is ambient and set once for a whole run — refusing a run
+because one target of thirty-four uses a wallet would make the variable unusable
+in a mixed estate.
+
 ### `oracle:` on a target — assertions, not settings
 
 `scope` is one of the scopes P1 names, spelled the way the run document already
