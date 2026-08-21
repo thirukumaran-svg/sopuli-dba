@@ -147,6 +147,40 @@ tier 1); anything needing more must skip, not fail, or forks cannot run it.
 Do not commit generated artefacts, `.env` files, Oracle binaries, or anything
 pulled from a real environment.
 
+**Every PR gets a Copilot review, and the review gets answered.** Opening a pull
+request is not the end of the task. Request the review, wait for it, and then
+resolve every comment it leaves — one of exactly two ways:
+
+- **change the code**, or
+- **decline the change**, having decided it is wrong or that the existing form is
+  right for a reason.
+
+Either way, **reply on the PR saying which and why**. A comment that was silently
+acted on is indistinguishable from one that was silently ignored, and neither is
+reviewable six months later. A decline needs the actual reason — "working as
+intended" is not one; the reason is whatever the reviewer would have needed to
+know in order not to raise it.
+
+Judge each comment on its merits rather than deferring to it. A review tool is
+often right and occasionally confidently wrong, and this codebase makes a lot of
+deliberate choices that look like mistakes until you know why — the DDL that
+must not be wrapped in PL/SQL (invariant 13), the password that must not be
+bound (invariant 14), the refusals that exist because guessing is worse than
+stopping. Applying a suggestion that makes the code worse because it was
+suggested is the failure mode here, and so is dismissing a real bug because
+answering it is inconvenient. Where a comment is right about the problem and
+wrong about the fix, say both.
+
+If a comment is accepted, push the fix and let CI go green again before
+reporting the PR as ready.
+
+`/request-copilot-review` does the mechanics. The request is
+`copilot-pull-request-reviewer[bot]` through the REST endpoint, which is the
+only route — GraphQL's `requestReviews` takes `userIds` and `teamIds` and will
+not resolve a bot. Confirming it landed takes GraphQL, though: the pull
+request's `requested_reviewers` omits Bot-type reviewers, so it reads empty even
+when the request succeeded.
+
 ---
 
 ## Style
