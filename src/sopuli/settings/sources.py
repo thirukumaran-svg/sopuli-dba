@@ -138,6 +138,18 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
     reads them, and a contribution for a setting nothing consults would be
     refused by :func:`sopuli.invocation._wired` anyway.
 
+    A profile's ``db:`` block is deliberately absent too, and #176's review is
+    why. Emitting it made a previously valid config die with a raw ``ValueError``
+    at exit 1, because :func:`sopuli.invocation._wired` refuses a setting no
+    command consults -- which is not a bug in the guard but the guard doing its
+    job. Nothing connects yet, so nothing reads a timeout, and a run document
+    reporting that ``profiles.ci.db.connect_timeout_s`` influenced a run it could
+    not have influenced is exactly the lie that guard exists to prevent. The two
+    names are registered in :mod:`sopuli.settings.registry` -- the vocabulary and
+    the built-ins are real, and :class:`~sopuli.driver.oracle.client.Timeouts`
+    reads them -- and they join ``RESOLVED_SETTINGS`` and this function together,
+    in the change that gives them a consumer.
+
     ``vaults.<name>.*`` is deliberately absent. It is the one part of a profile
     that is applied inside the file (:mod:`sopuli.config.vault_layers`), because
     a store's settings belong to the store rather than to the run and the

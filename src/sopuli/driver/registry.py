@@ -98,7 +98,14 @@ class DatabaseDriver:
 #: promise this dict should pre-announce.
 DRIVERS: dict[str, DatabaseDriver] = {
     "oracle": DatabaseDriver(
-        module="sopuli.driver.oracle",
+        # The module that *connects*, not the package above it (#176). The whole
+        # value of resolving through here is that a missing client arrives as
+        # `DriverNotInstalledError` rather than a traceback, and that only works
+        # if the import being caught is the one that pulls the client in. The
+        # package deliberately does not: `statements.py` and `client.py` are
+        # tier 0 and must stay importable on a machine with no Oracle client at
+        # all, which is every tier-0 CI job.
+        module="sopuli.driver.oracle.session",
         extra="oracle",
         # `oracledb`, not `python-oracledb`. Oracle calls the driver
         # python-oracledb everywhere it is written about, but the distribution
@@ -153,11 +160,10 @@ def installed(driver: DatabaseDriver) -> bool:
 def resolve(target: Target) -> ModuleType:
     """Import the module serving ``target``'s ``type:``, or say why it cannot.
 
-    Returns the module. **What a driver module must expose is not settled
-    here** -- the connecting function and its signature arrive with #176, and
-    inventing the contract before there is an implementation to hold it would
-    be a shape nothing reads. The store registry left the same question open at
-    the same point and answered it when `connect` existed.
+    Returns the module, which exposes ``connect(target, credential, *, env,
+    correlation_id, timeouts)`` -- settled in #176, once there was an
+    implementation to hold the shape, exactly as the store registry settled its
+    own when `connect` existed rather than before.
     """
     driver = DRIVERS[target.type]
     try:

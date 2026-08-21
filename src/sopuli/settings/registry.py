@@ -77,6 +77,32 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
+#: How long to wait for a listener when nothing says otherwise (#176). Thirty
+#: seconds crosses a slow WAN and still lets a scheduled run report a dead host
+#: the same night.
+#:
+#: Safe to have a default at all because **nothing has been applied yet**: a
+#: connection that times out changed nothing anywhere, which is exactly what
+#: cannot be said of the one below.
+DEFAULT_CONNECT_TIMEOUT_S = 30
+
+#: No bound on a single round trip, unless an operator asks for one (#176).
+#:
+#: A call timeout cancels the round trip; it does not undo what the server did
+#: with it. ``ALTER USER`` is not transactional, so a rotation cut off at the
+#: wrong moment leaves a run that cannot say whether the password changed --
+#: and invariant 7's ordering exists precisely so the vault is never promoted
+#: ahead of a confirmed target. Turning a slow success into an unknown state is
+#: the one failure this design has no recovery for, so the tool does not impose
+#: one by default.
+#:
+#: **Here rather than beside the driver that means it**, which is where the
+#: reasoning wants to live: this module imports nothing from ``sopuli`` on
+#: purpose -- it sits below :mod:`sopuli.config`, which imports it -- and a
+#: constant reaching up into the driver layer made a cycle out of a number. One
+#: definition, and :mod:`sopuli.driver.oracle.client` reads it from here.
+NO_QUERY_TIMEOUT = 0
+
 
 class Layer(StrEnum):
     """A precedence layer, in P3's order -- highest authority first.
@@ -429,6 +455,32 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 type=bool,
                 layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
                 policy=MergePolicy.RATCHET,
+            ),
+            _setting(
+                # How long to wait for a listener (#176). Profile-only, because
+                # §5's table puts it there and because it is a property of
+                # *where a run is invoked from*: the same estate reached from a
+                # CI runner across a WAN and from a DBA's laptop on the same
+                # subnet wants two different numbers, and neither is a fact
+                # about the target. See `DEFAULT_CONNECT_TIMEOUT_S` above.
+                "db.connect_timeout_s",
+                type=int,
+                layers=(Layer.PROFILE, Layer.BUILTIN),
+                policy=MergePolicy.OVERRIDE,
+                builtin=DEFAULT_CONNECT_TIMEOUT_S,
+            ),
+            _setting(
+                # How long to let one round trip run (#176). The built-in is
+                # "no bound", which is a decision rather than an omission --
+                # `NO_QUERY_TIMEOUT` above says why. An operator may still set
+                # one: that is their call about their database, made once and in
+                # writing, which is a different thing from a number the tool
+                # picked for them.
+                "db.query_timeout_s",
+                type=int,
+                layers=(Layer.PROFILE, Layer.BUILTIN),
+                policy=MergePolicy.OVERRIDE,
+                builtin=NO_QUERY_TIMEOUT,
             ),
             _setting(
                 # May an unattended runner take over a lock past its expiry

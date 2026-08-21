@@ -389,6 +389,42 @@ def test_a_source_cannot_wire_a_setting_by_producing_it(
         )
 
 
+def test_a_profile_block_no_command_consults_yet_still_loads(
+    runner: CliRunner, write_config: Any
+) -> None:
+    """The other direction from the test above, and the one that was missing.
+
+    `profiles.*.db` is parsed, validated and schema-checked, and no command
+    reads it yet -- so `sopuli/settings/sources.py` must not emit it. #176 made
+    it emit, and the guard above did exactly what it exists to do: a previously
+    valid config died with a raw `ValueError` and exit 1 on every command.
+
+    Nothing caught it, because every fixture config in the suite happened to
+    have no `db:` block. So this is not a test of the guard -- that one is
+    above -- but of the far more ordinary thing the guard can break: a key the
+    file is allowed to contain.
+    """
+    # `write_config` rather than a hand-written file: it sets 0600, which P4's
+    # permission check requires on POSIX. Writing it by hand passed on Windows
+    # and failed on every Linux runner -- which is what the OS matrix is for.
+    config = write_config(
+        "version: 1\n"
+        "vaults:\n"
+        "  vault-dev:\n"
+        "    type: hashicorp\n"
+        "    addr: https://vault.example.com:8200\n"
+        "profiles:\n"
+        "  ci:\n"
+        "    db:\n"
+        "      connect_timeout_s: 90\n"
+        "      query_timeout_s: 600\n"
+    )
+
+    result = runner.invoke(cli, ["--profile", "ci", "config", "validate", "--config", str(config)])
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
 # ---------------------------------------------------- invocation.options ----
 
 

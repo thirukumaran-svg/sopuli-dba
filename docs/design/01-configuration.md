@@ -1110,7 +1110,7 @@ A closed list. Anything else is a validation error.
 | `confirm` | whether interactive confirmation is possible at all |
 | `output` | `text` \| `json` \| `jsonl` |
 | `log_level`, `log_file` | |
-| `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs |
+| `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs. `connect_timeout_s` defaults to 30 s — a connection that times out has applied nothing. `query_timeout_s` defaults to **no bound**, deliberately: a call timeout cancels the round trip without undoing what the server did with it, and `ALTER USER` is not transactional, so an imposed default turns a slow success into a run that cannot say whether the password changed. Invariant 7 has no answer for that state; an operator may still set one. **Parsed and registered, and not yet consulted by any command** — the driver takes both (#176) and nothing calls the driver from a command line yet, so the keys are accepted and inert until one does |
 | `rotation.strategy` | e.g. force `staged` where no human can watch a rollover. Only `strategy` — `rollover_hours` and the rest describe the credential's lifecycle, which belongs to the estate |
 
 ### Reaching a store differently, without redeclaring it
@@ -1264,7 +1264,7 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 | `SOPULI_VAULT_TOKEN` | token for the active vault. Outranked by `--vault-token-file` and by a store's own `token:` (§3a); there is deliberately no flag carrying a token value, so this is the answer where writing one to disk is awkward |
 | `SOPULI_VAULT__VAULT_DEV__ADDR` | address of a *specific* named vault. `ADDR` is the only key addressable this way today; any other spelling under `SOPULI_VAULT__` is refused, naming what is available |
 | `SOPULI_DB_ADMIN_USER` / `SOPULI_DB_ADMIN_PASSWORD` | admin credentials (password is low-assurance, flagged in output). The password pair is the default for `admin.auth: { method: env }`; a target may name its own variable with `password_env:` (§3a) |
-| `SOPULI_ORACLE_CLIENT_LIB_DIR` | Oracle client directory for thick mode |
+| `SOPULI_ORACLE_CLIENT_LIB_DIR` | Oracle client directory for thick mode. Read at the first connect (#176) and passed to `init_oracle_client(lib_dir=…)`. Outranks `runtime.oracle.client_lib_dir` (P3: environment is layer 3, the file is layer 6); with neither set the platform's own loader decides, which is the ordinary Linux install and needs nothing |
 | `SOPULI_OUTPUT` | `text` \| `json` \| `jsonl` |
 | `SOPULI_LOG_LEVEL` | log level |
 | `SOPULI_NO_COLOR` / `NO_COLOR` | disable colour — set and not empty, whatever the value. Outranked by an explicit `--color always`; see `03-json-output.md` §1 for the full precedence |

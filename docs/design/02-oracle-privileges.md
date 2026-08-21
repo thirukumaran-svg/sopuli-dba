@@ -457,6 +457,27 @@ SELECT event_timestamp, dbusername, action_name, object_name, return_code
 On 11.2, fall back to `AUDIT ALTER USER` and `DBA_AUDIT_TRAIL`, where
 `CLIENT_ID` also exists.
 
+Implemented in #176, on **every** connection rather than only on the ones that
+mutate something: a session that shows up in the trail with no `CLIENT_ID` is
+the one somebody has to account for afterwards, and the cost of setting it is
+one round trip on a connection that has already been made. It is set before
+anything else happens on the session, so there is no window in which a statement
+could be audited without it — and a session that cannot be labelled is closed
+rather than used, because carrying on would silently give up the join this
+section exists to provide.
+
+The call **binds** the id rather than building a string, which is the exact
+inverse of invariant 14 and worth stating beside it: `V$SQL_BIND_CAPTURE` keeps
+bind values in clear, which is precisely why a password must never be bound and
+why a correlation id is a good thing to have captured. The dangerous habit is
+the other one — a `SET_IDENTIFIER` assembled by concatenation is the pattern
+that later writes a password into SQL text.
+
+Tier 1 asserts it from the database's own side, reading
+`SYS_CONTEXT('USERENV','CLIENT_IDENTIFIER')` — the value `UNIFIED_AUDIT_TRAIL.
+CLIENT_ID` is populated from — so the property is checked without requiring an
+audit policy on the test container.
+
 Worth auditing alongside it: failed logons by the service account, which is what
 credential probing looks like.
 

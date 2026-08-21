@@ -52,8 +52,47 @@ refinement of the same rule and none of them relaxes it:
   `container_clase: ALL` and silently do nothing, which is the failure
   `01-configuration.md` §10 exists to prevent.
 
-The slice implemented is `sopuli/driver/protocol.py`, and it is types and
-vocabulary only: nothing behind it connects yet. `apply_attributes` is the one
+`connect` is implemented (#176) — `OracleDriver` in
+`sopuli/driver/oracle/session.py`, which is also the module the driver registry
+imports for `type: oracle`, so that a missing client is a structured error
+rather than a traceback.
+
+**A driver is an object, and the split is load-bearing.** Everything the driver
+holds is a property of the *run* — which environment, which correlation id,
+which timeout budgets, where Instant Client lives — and everything `connect`
+takes is a property of the *target*. The first draft made `connect` a module
+function with four extra keyword arguments, which is not the interface above:
+a caller written against `Driver` would have got a `TypeError`, which is exactly
+the drift this sketch exists to prevent. `tests/driver/test_oracle_connect.py`
+asserts `isinstance(driver, Driver)` so the two cannot part company again.
+
+Three further decisions came with it, each a fork rather than a detail:
+
+- **Where Instant Client lives is resolved, not assumed.** §6's
+  `SOPULI_ORACLE_CLIENT_LIB_DIR` first, then `runtime.oracle.client_lib_dir`
+  from the file, then the platform's own loader (P4's table). The config key had
+  been documented and parsed since the config layer was written and was ignored
+  by the first draft of this — a documented key that silently does nothing is
+  worse than one that does not exist.
+- **Thick-mode initialisation is lazy, on the first connect.**
+  `init_oracle_client` is process-global and effectively one-shot, so the
+  alternative was doing it at startup, where the failure is earliest. Lazy wins
+  because ADR-006 rule 3 says a base install opens no sockets and loads no
+  vendor client: an offline `config validate` that initialised Instant Client
+  would be working for a database it will never contact, and would *fail* on a
+  machine where that command is perfectly valid.
+- **One connection per target, never a shared session with `SET CONTAINER`.** A
+  CDB root and its PDBs are separate services. The alternative needs
+  `ALTER SESSION SET CONTAINER`, which `02-oracle-privileges.md` §2 lists as
+  optional and which the document's whole position is to avoid needing — the
+  grant set stays minimal, and a run that cannot reach one PDB fails for that
+  PDB rather than poisoning a session shared with others.
+- **The correlation id goes on every session**, including ones that turn out to
+  read nothing. §5's `DBMS_SESSION.SET_IDENTIFIER` is the join between the
+  tool's JSON, the database's own trail and the vault's metadata; a session that
+  appears in the trail unlabelled is the one somebody has to explain later.
+
+The rest of `sopuli/driver/protocol.py` is still types and vocabulary only. `apply_attributes` is the one
 operation above that the code deliberately does **not** declare — the same seam
 P2 draws around `health`. A method on the protocol is a demand on every
 implementation, so declaring one nothing calls would oblige the Oracle driver to
