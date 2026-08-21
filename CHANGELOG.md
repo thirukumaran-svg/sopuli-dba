@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0](https://github.com/futville/sopuli-dba/compare/v0.35.0...v0.36.0) (2026-08-21)
+
+
+### Features
+
+* **admin:** resolve the admin credential from P2's four sources ([#196](https://github.com/futville/sopuli-dba/issues/196)) ([4cfebe1](https://github.com/futville/sopuli-dba/commit/4cfebe15253e567fb9dc1f58ffd8f1def242b6bb))
+
 ## [0.35.0](https://github.com/futville/sopuli-dba/compare/v0.34.0...v0.35.0) (2026-08-21)
 
 
