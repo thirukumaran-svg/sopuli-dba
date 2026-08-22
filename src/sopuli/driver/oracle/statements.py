@@ -322,13 +322,13 @@ def admissible(secret: Secret, limit: ByteLimit) -> None:
 
     if not limit.encodable(text):
         raise PasswordNotAdmissibleError(
-            f"the password cannot be represented in the database character set ({limit.encoding})"
+            f"the password cannot be represented in the database character set ({limit.described})"
         )
 
     width = limit.width(text)
     if width > limit.max_bytes:
         raise PasswordNotAdmissibleError(
-            f"the password is {width} bytes in {limit.encoding}, "
+            f"the password is {width} bytes in {limit.described}, "
             f"and this target's limit is {limit.max_bytes}"
         )
 

@@ -91,10 +91,23 @@ class ByteLimit:
     ``encoding`` is a Python codec name. Mapping an Oracle character set
     (``AL32UTF8``, ``WE8MSWIN1252``) onto one is the driver's knowledge, not this
     layer's.
+
+    ``charset`` is the *vendor's* name for the same thing, carried only so an
+    error can say what the operator's database calls it. A message naming
+    ``ascii`` where the database says ``JA16SJIS`` is accurate about the codec and
+    useless about the estate -- and the case where they differ is exactly the
+    case where somebody needs to act on the message.
     """
 
     max_bytes: int
     encoding: str
+    charset: str | None = None
+
+    @property
+    def described(self) -> str:
+        """What to call the character set in a message: the database's word for
+        it where there is one, and the codec otherwise."""
+        return self.charset or self.encoding
 
     def width(self, text: str) -> int:
         """How many bytes ``text`` occupies in this encoding."""

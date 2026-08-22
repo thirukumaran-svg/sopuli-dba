@@ -121,6 +121,21 @@ ROLES_QUERY = (
     "connect by nocycle prior granted_role = grantee"
 )
 
+#: Just the spelling, for the one caller that needs the name and nothing else.
+#:
+#: Separate from :data:`USER_QUERY` rather than reusing :func:`describe`, because
+#: the two questions have different costs and different failure modes: a
+#: mutation needs to know how the database spells the account, and does not need
+#: the roles read -- whose absent grant is a refusal (:class:`RolesUnreadableError`)
+#: that would then be raised by `set_password` for a reason unrelated to setting
+#: a password.
+#:
+#: It exists at all because an Oracle quoted identifier is **case-sensitive**.
+#: `"acme_orders_user"` and `"ACME_ORDERS_USER"` are different accounts to the
+#: server, so a statement built from the config's spelling would get
+#: `ORA-01918: user does not exist` against a database that plainly has it.
+NAME_QUERY = "select username from dba_users where username = :name"
+
 FAILED_LOGIN_ATTEMPTS = "FAILED_LOGIN_ATTEMPTS"
 PASSWORD_ROLLOVER_TIME = "PASSWORD_ROLLOVER_TIME"
 PASSWORD_REUSE_MAX = "PASSWORD_REUSE_MAX"
@@ -264,3 +279,13 @@ def _maintained(row: Any) -> bool | None:
     if len(row) < 5:
         return None
     return str(row[4]).upper() == "Y" if row[4] is not None else None
+
+
+def resolve_name(cursor: Cursor, account: str) -> str | None:
+    """How the database spells ``account``, or ``None`` if it has no such user.
+
+    ``02-oracle-privileges.md`` §4: the name that reaches a statement is the one
+    read back from the dictionary, never the raw string from a config file.
+    """
+    row = read(cursor, NAME_QUERY, name=account.upper())
+    return str(row[0]) if row else None

@@ -39,8 +39,8 @@ from typing import Any
 import oracledb
 
 from sopuli.config.model import ExpandedTarget
-from sopuli.driver.oracle.accounts import describe
-from sopuli.driver.oracle.capabilities import assert_scope, observe
+from sopuli.driver.oracle.accounts import describe, resolve_name
+from sopuli.driver.oracle.capabilities import assert_scope, observe, require_read_write
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
     NO_CLIENT,
@@ -49,7 +49,11 @@ from sopuli.driver.oracle.client import (
     missing_client,
 )
 from sopuli.driver.oracle.errors import from_error
-from sopuli.driver.protocol import Credential, Scope, UserState
+from sopuli.driver.oracle.limits import resolve as resolve_limit
+from sopuli.driver.oracle.statements import Identifier, alter_user_password
+from sopuli.driver.protocol import ChangeResult, Credential, DriverError, Scope, UserState
+from sopuli.passwords import ByteLimit
+from sopuli.secrets import Secret
 
 #: Guards :func:`initialise`. ``init_oracle_client`` mutates process-global
 #: state, and nothing in this codebase promises a connection is only ever opened
@@ -128,6 +132,9 @@ class OracleSession:
     #: handed in from outside would be a scope that came from somewhere other
     #: than this connection, which is the single thing the invariant forbids.
     _scope: Scope | None = field(default=None, init=False, repr=False)
+    #: Cached beside the scope and for the same reason: it is one more thing this
+    #: connection is, and asking twice is two chances to disagree.
+    _limit: ByteLimit | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this connection is, and what it can do (#177).
@@ -177,6 +184,81 @@ class OracleSession:
         """
         with self.connection.cursor() as cursor:
             return describe(cursor, account)
+
+    def byte_limit(self) -> ByteLimit:
+        """How long a password may be here, in this database's character set.
+
+        Cached per session. #171 makes this a required argument to the statement
+        builder so that nobody can build one without having found out, and this
+        is the finding out.
+        """
+        if self._limit is None:
+            with self.connection.cursor() as cursor:
+                self._limit = resolve_limit(cursor, self.scope().db_version)
+        return self._limit
+
+    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+        """Issue the ``ALTER USER`` (#179), and let a rejection be a rejection.
+
+        **The driver does not regenerate.** #179 asks where UC-1 §4's bounded
+        loop lives, and it is not here: a driver that drew another password on
+        `ORA-28003` would be putting a value into the database that the vault has
+        never seen, which is the ordering UC-1 §3 exists to prevent. So a
+        rejection is reported -- classified by #172 as ``password_rejected`` or
+        ``password_reused``, category ``policy`` -- and the command that owns
+        both the generator and the vault write owns the loop.
+
+        **``changed`` is always ``True`` when the statement succeeded**, and
+        that is not a shortcut. Invariant 9 wants ``changed: false`` on a second
+        run, and "the password is already this value" is not a question a
+        database can answer about a password -- there is nothing to compare. So
+        idempotency for this verb is defined by the *vault's* state: the command
+        does not call this when the vault says the target is already at
+        ``current``. A driver reporting ``changed: false`` here could only do it
+        by guessing.
+
+        The name in the statement is the spelling the dictionary gave back, not
+        the caller's, because an Oracle quoted identifier is case-sensitive.
+
+        **A read-only target is refused here, before anything is built.** #177
+        put :func:`~sopuli.driver.oracle.capabilities.require_read_write` in the
+        mutating callers' hands rather than in ``assert_scope``, so that `creds
+        check` keeps working against a physical standby -- and this is the
+        mutating caller. Leaving it to a command that does not exist yet would
+        have been a refusal that cannot fire, which P1 asks for *up front*
+        precisely so it does not arrive as a failed ``ALTER USER`` half way
+        through a run.
+        """
+        require_read_write(self.scope(), target=self.target.name)
+
+        with self.connection.cursor() as cursor:
+            spelling = resolve_name(cursor, account)
+            if spelling is None:
+                raise DriverError(
+                    f'account "{account}" does not exist on this target',
+                    hint=(
+                        "the tool does not create accounts (Q8); `creds check` reports this "
+                        "as ACCOUNT_MISSING rather than failing"
+                    ),
+                )
+
+            statement = alter_user_password(
+                Identifier(spelling),
+                secret,
+                scope=self.scope(),
+                limit=self.byte_limit(),
+            )
+
+            try:
+                # `reveal()` here is one of invariant 2's three permitted
+                # reveals. Nothing between this line and the wire may log it,
+                # and `Statement.__str__` is the redacted form precisely so an
+                # accidental interpolation elsewhere cannot leak it.
+                cursor.execute(statement.reveal())
+            except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+                raise from_error(error).as_error() from error
+
+        return ChangeResult(changed=True, detail="password set")
 
     def check_assertions(self) -> Scope:
         """Refuse unless the target's claims match what this connection is.
