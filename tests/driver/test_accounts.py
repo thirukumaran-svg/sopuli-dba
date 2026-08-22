@@ -9,7 +9,7 @@ reasoned out.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -132,18 +132,38 @@ def test_the_status_is_reported_verbatim_as_well_as_parsed() -> None:
     assert state.status == "LOCKED(TIMED)"
 
 
-def test_an_open_rollover_window_has_no_end_date() -> None:
+def test_an_open_rollover_window_reports_a_derived_end_date() -> None:
     """The dictionary says a window is open and never when it closes.
 
-    Deriving it from `password_change_date` plus `PASSWORD_ROLLOVER_TIME` would
-    put an inferred timestamp in a field every other value of which was read, so
-    it stays `None` — #178's rule for `password_change_date`, applied to the
-    field it also covers.
+    #178 left this `None` rather than present an inference as a reading. #181
+    reversed it, after searching `DBA_*` and the `V$` views and finding no column
+    that exposes the end: the choice is between Oracle's own documented
+    arithmetic over two values that *were* read and telling an operator nothing
+    about their deadline. It is the one computed field in `UserState`.
     """
-    state = describe(_cursor(status="OPEN & IN ROLLOVER"), "acme_orders_user")
+    state = describe(
+        _cursor(
+            status="OPEN & IN ROLLOVER",
+            limits=[("PASSWORD_ROLLOVER_TIME", "1")],
+            changed=CHANGED,
+        ),
+        "acme_orders_user",
+    )
 
     assert state is not None
     assert state.rollover_active is True
+    assert state.rollover_ends_at == CHANGED + timedelta(days=1)
+
+
+def test_a_closed_window_has_no_end_to_report() -> None:
+    """Populated only while a window is open: ending one early leaves the change
+    date untouched, so the derivation would point into a future that no longer
+    applies."""
+    state = describe(
+        _cursor(status="OPEN", limits=[("PASSWORD_ROLLOVER_TIME", "1")]), "acme_orders_user"
+    )
+
+    assert state is not None
     assert state.rollover_ends_at is None
 
 

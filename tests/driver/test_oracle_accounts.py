@@ -149,7 +149,14 @@ def test_a_rotation_opens_a_rollover_window_the_status_reports(account: Any) -> 
     assert after is not None
     assert after.rollover_active is True, f"status was {after.status!r}"
     assert "IN ROLLOVER" in after.status
-    assert after.rollover_ends_at is None, "the dictionary does not say when it closes"
+
+    # #181 reversed #178's placeholder here. The dictionary still does not say
+    # when the window closes -- that was measured, not assumed -- so the value is
+    # derived from the change date and the profile's rollover time, and it must
+    # land after the rotation that opened the window.
+    assert after.rollover_ends_at is not None
+    assert after.password_changed_at is not None
+    assert after.rollover_ends_at > after.password_changed_at
 
 
 def test_a_locked_account_is_locked_without_losing_its_status(account: Any) -> None:

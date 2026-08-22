@@ -58,6 +58,7 @@ from datetime import datetime
 from typing import Any
 
 from sopuli.driver.oracle.capabilities import Cursor, read
+from sopuli.driver.oracle.rollover import window_end
 from sopuli.driver.protocol import DriverError, UserState
 
 #: The account, as the database spells it. ``PASSWORD_CHANGE_DATE`` is selected
@@ -233,12 +234,18 @@ def login_state(cursor: Cursor, account: str) -> UserState | None:
         password_reuse_max=limits.get(PASSWORD_REUSE_MAX),
         password_reuse_time=limits.get(PASSWORD_REUSE_TIME),
         rollover_active=IN_ROLLOVER in status,
-        # Deliberately absent. The window's end is not in the dictionary -- only
-        # that it is open -- and computing it from `password_change_date` plus
-        # `PASSWORD_ROLLOVER_TIME` would be an inferred timestamp presented as a
-        # read one. #178 is explicit that a date is reported or reported as
-        # nothing, and #181 is where ending a window early is decided.
-        rollover_ends_at=None,
+        # **Derived, and only while a window is open** (#181). #178 left this
+        # null on the grounds that computing it would present an inference as a
+        # reading, which was the right instinct and the wrong call: no
+        # dictionary column exposes the end -- searched, not assumed -- so the
+        # choice is between Oracle's own documented arithmetic over two measured
+        # values and telling an operator nothing about their deadline.
+        # `rollover.window_end` carries the reasoning and the limits.
+        rollover_ends_at=(
+            window_end(_changed_at(row), limits.get(PASSWORD_ROLLOVER_TIME))
+            if IN_ROLLOVER in status
+            else None
+        ),
         vendor_maintained=_maintained(row),
     )
 

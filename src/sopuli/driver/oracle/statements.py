@@ -356,3 +356,27 @@ def alter_user_password(
         f'ALTER USER {identifier} IDENTIFIED BY "{secret.reveal()}"{clause}',
         redacted=f"ALTER USER {identifier} IDENTIFIED BY {REDACTED}{clause}",
     )
+
+
+def finish_rollover(account: Identifier, *, scope: Scope) -> Statement:
+    """``ALTER USER "…" EXPIRE PASSWORD ROLLOVER PERIOD`` -- end the window now.
+
+    Measured on 26ai: it takes ``ACCOUNT_STATUS`` from ``OPEN & IN ROLLOVER``
+    back to ``OPEN``, and the old password stops authenticating immediately
+    while the new one continues to.
+
+    No password is involved, so invariants 11 and 14 have nothing to say here --
+    but invariant 13 still does, and this is issued directly for the same reason
+    ``ALTER USER … IDENTIFIED BY`` is: a block containing DDL is an ordinary
+    block whose text is kept verbatim, and wrapping is the thing that exposes
+    rather than the thing that protects. There is nothing secret in this
+    statement, and it is written the same way anyway, because the habit is what
+    keeps the next one safe.
+
+    Nothing is redacted, so ``redacted`` is the statement itself -- which is
+    worth stating rather than leaving to be noticed, since every other
+    :class:`Statement` in this module has something to hide.
+    """
+    clause = container_clause(account, scope)
+    text = f"ALTER USER {account.quoted()} EXPIRE PASSWORD ROLLOVER PERIOD{clause}"
+    return Statement(text, redacted=text)

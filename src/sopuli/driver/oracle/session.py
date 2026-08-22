@@ -51,7 +51,12 @@ from sopuli.driver.oracle.client import (
 )
 from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.oracle.limits import resolve as resolve_limit
-from sopuli.driver.oracle.statements import Identifier, alter_user_password
+from sopuli.driver.oracle.rollover import alter_profile_ddl, is_enabled
+from sopuli.driver.oracle.statements import (
+    Identifier,
+    alter_user_password,
+    finish_rollover,
+)
 from sopuli.driver.oracle.verification import (
     DEFAULT_MARGIN,
     is_verification_outcome,
@@ -61,6 +66,7 @@ from sopuli.driver.oracle.verification import (
 )
 from sopuli.driver.protocol import (
     OFFLINE_VERIFY,
+    PASSWORD_ROLLOVER,
     SKIPPED,
     UNAVAILABLE,
     VERIFY_LOGIN,
@@ -71,6 +77,7 @@ from sopuli.driver.protocol import (
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
+    require_capability,
 )
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
@@ -432,6 +439,89 @@ class OracleSession:
             if connection is not None:
                 with suppress(Exception):
                     connection.close()
+
+    def require_rollover(self, account: str) -> None:
+        """Refuse ``--strategy rollover`` here, at **plan time**, or say nothing.
+
+        Two separate things have to be true and they fail differently, which is
+        the whole reason this is one call rather than a capability check
+        somebody remembers to pair with a profile read:
+
+        * **the release has the feature** -- absent on 18c and 11g, and that is
+          :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`, exit 5,
+          naming the capability and the target (invariant 4);
+        * **this account's profile grants a window** -- ``PASSWORD_ROLLOVER_TIME``
+          greater than zero. That is a configuration rather than a limitation,
+          so the message carries the exact ``ALTER PROFILE`` an operator would
+          run.
+
+        **The tool never issues that DDL.** Profiles are shared, so changing one
+        affects accounts nobody selected, and `02-oracle-privileges.md` §3 keeps
+        ``ALTER PROFILE`` off the service account deliberately. Q4 (#88) is open
+        with a documented leaning of no; reporting the statement is that leaning,
+        and it is the half that can be reversed if #88 ever says otherwise.
+        """
+        require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
+
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(f'account "{account}" does not exist on this target')
+        if not is_enabled(state.rollover_time):
+            if state.profile is None:
+                # No name, so no statement worth printing. A hint reading
+                # `ALTER PROFILE the account's profile LIMIT ...` is not SQL, and
+                # a hint is a thing operators paste into a terminal.
+                raise DriverError(
+                    f'account "{state.name}" grants no rollover window, and the '
+                    "database did not report which profile it uses",
+                    hint=(
+                        "check DBA_USERS.PROFILE for this account; a rollover window "
+                        "comes from the profile's PASSWORD_ROLLOVER_TIME"
+                    ),
+                )
+            raise DriverError(
+                f"profile {state.profile} grants no rollover window "
+                f"(PASSWORD_ROLLOVER_TIME is {state.rollover_time or 'unset'})",
+                hint=(
+                    "sopuli does not alter a profile, because profiles are shared and "
+                    "changing one affects accounts nobody selected. Run this yourself if "
+                    "it is what you want: " + alter_profile_ddl(state.profile)
+                ),
+            )
+
+    def finish_rollover(self, account: str) -> ChangeResult:
+        """End an open rollover window now, or report that there was none.
+
+        **The state is read first, and that is invariant 9 rather than
+        caution.** Measured on 26ai: issuing the statement when no window is
+        open is accepted silently, with no error and nothing changed -- so a
+        driver that just issued it would report ``changed: true`` for a run that
+        did nothing, every time.
+
+        **Whose window it is, is not decided here.** #181 asks the question and
+        it has `lock break`'s shape, but the shapes diverge where it matters: a
+        lock carries a record naming its holder, and a rollover window carries
+        nothing at all -- the database cannot say which run opened one. So the
+        driver is the mechanism and reports the facts a caller needs
+        (``rollover_active``, and the derived ``rollover_ends_at``), and the
+        decision belongs to the command, which has the vault's view of whether
+        the applications have moved on. Putting an ownership guard here would be
+        a guard built on a fact this layer cannot observe.
+        """
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(f'account "{account}" does not exist on this target')
+        if not state.rollover_active:
+            return ChangeResult(changed=False, detail="no rollover window is open")
+
+        statement = finish_rollover(Identifier(state.name), scope=self.scope())
+        with self.connection.cursor() as cursor:
+            try:
+                cursor.execute(statement.reveal())
+            except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+                raise from_error(error).as_error() from error
+
+        return ChangeResult(changed=True, detail="rollover window ended")
 
     def check_assertions(self) -> Scope:
         """Refuse unless the target's claims match what this connection is.
