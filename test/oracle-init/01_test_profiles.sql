@@ -1,7 +1,9 @@
 --------------------------------------------------------------------------------
 -- sopuli-dba : test profiles
 --
--- STATUS: DRAFT, never run.
+-- STATUS: runs. Confirmed against gvenzl/oracle-free on 26ai 23.26.2.0.0 --
+-- SOPULI_LOCKOUT is present in a freshly started container, so the image does
+-- execute this and the profiles below are real rather than aspirational.
 --
 -- Runs once at container init. Creates the profiles the test suite needs, so no
 -- test has to assume anything pre-exists. Test *accounts* are created and dropped
@@ -81,8 +83,51 @@ EXCEPTION
                          || SQLERRM);
 END;
 /
+--------------------------------------------------------------------------------
+-- 5. SELECT ON SYS.USER$, so the LCOUNT lockout guard can be exercised.
+--
+-- #86 made this an OPTIONAL grant, and the tool works without it -- `check`
+-- still runs and says the guard is unavailable. But release gate 4 asserts that
+-- checking a drifted account repeatedly never locks it, and the guard is the
+-- thing that makes that true. Without this grant the gate would skip, which is
+-- the one outcome a release gate must not have.
+--
+-- Granted to SYSTEM, which is SOPULI_TEST_ORACLE_USER's default. A lane
+-- pointed at a different account has to make the grant itself, and the tests
+-- skip rather than fail when it is missing. Hard-coded rather than substituted,
+-- because an undefined `&` variable makes sqlplus prompt, and a prompt during
+-- container init hangs the container.
+--
+-- Measured: SYSTEM does NOT hold this by default on 23ai -- reading SYS.USER$
+-- as SYSTEM gives ORA-41900 -- so this is a real change to what the lane can
+-- do, not a no-op.
+--
+-- Guarded, because the suite must stay green on versions where it fails.
+--------------------------------------------------------------------------------
+BEGIN
+  -- CONTAINER=ALL first, because this script runs in CDB$ROOT and the suite
+  -- connects to a PDB. Measured: the plain form lands in the root only --
+  -- DBA_TAB_PRIVS shows the grant in CDB$ROOT and not in FREEPDB1 -- so the
+  -- obvious statement grants a privilege nothing the suite does can use.
+  -- Profiles are not like this: one created in the root is visible in the PDB,
+  -- which is why sections 1 to 4 need no such clause and this does.
+  EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO SYSTEM CONTAINER=ALL';
+  DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ to SYSTEM (all containers)');
+EXCEPTION
+  WHEN OTHERS THEN
+    BEGIN
+      -- A non-CDB has no CONTAINER clause to give.
+      EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO SYSTEM';
+      DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ to SYSTEM (non-CDB)');
+    EXCEPTION
+      WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ not granted (' || SQLERRM
+                          || '): the LCOUNT guard tests will skip');
+    END;
+END;
+/
 
--- 5. Report what this container actually supports, so a test run can be read
+-- 6. Report what this container actually supports, so a test run can be read
 --    against the capability matrix without guessing.
 --
 --    This is a PL/SQL block, not a query, for the same reason steps 2 and 4 are:
@@ -124,3 +169,4 @@ EXCEPTION
     DBMS_OUTPUT.PUT_LINE('capability report incomplete: ' || SQLERRM);
 END;
 /
+

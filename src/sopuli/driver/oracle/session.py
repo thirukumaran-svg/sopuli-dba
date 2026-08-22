@@ -33,13 +33,14 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
 import oracledb
 
 from sopuli.config.model import ExpandedTarget
-from sopuli.driver.oracle.accounts import describe, resolve_name
+from sopuli.driver.oracle.accounts import describe, failed_logins, login_state, resolve_name
 from sopuli.driver.oracle.capabilities import assert_scope, observe, require_read_write
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
@@ -51,7 +52,26 @@ from sopuli.driver.oracle.client import (
 from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.oracle.limits import resolve as resolve_limit
 from sopuli.driver.oracle.statements import Identifier, alter_user_password
-from sopuli.driver.protocol import ChangeResult, Credential, DriverError, Scope, UserState
+from sopuli.driver.oracle.verification import (
+    DEFAULT_MARGIN,
+    is_verification_outcome,
+    margin_reason,
+    result_for,
+    skipped_detail,
+)
+from sopuli.driver.protocol import (
+    OFFLINE_VERIFY,
+    SKIPPED,
+    UNAVAILABLE,
+    VERIFY_LOGIN,
+    ChangeResult,
+    Credential,
+    DriverError,
+    Scope,
+    UnsupportedCapabilityError,
+    UserState,
+    VerifyResult,
+)
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
@@ -112,22 +132,26 @@ def initialise(
 
 @dataclass
 class OracleSession:
-    """One open connection, and the target it belongs to.
+    """One open connection, and everything done through it.
 
-    **Not yet a** :class:`sopuli.driver.protocol.Session`, and deliberately so.
-    ``describe_user``, ``set_password`` and ``verify_password`` arrive with
-    #178, #179 and #180; the protocol is structural, so this simply is not one
-    until they do, and ``isinstance`` says so honestly rather than a stub
-    claiming otherwise and returning nothing.
+    **Now a** :class:`sopuli.driver.protocol.Session`, which it was deliberately
+    not until #180. The protocol is structural, so this became one by acquiring
+    the last of its methods rather than by declaring anything -- ``scope`` (#177),
+    ``describe_user`` (#178), ``set_password`` (#179) and ``verify_password``
+    (#180). ``tests/driver/test_oracle_verify.py`` asserts the ``isinstance``,
+    so the claim is checked rather than asserted in prose.
 
-    What it has now is what connecting *is*: something open, something that
-    knows which target it reached, something that can say what it found, and
-    something that closes.
+    ``apply_attributes`` is still absent, and still deliberately: a method on a
+    Protocol is a demand on every implementation, and nothing calls that one yet.
     """
 
     connection: Any
     target: ExpandedTarget
     correlation_id: str
+    #: Carried so a verification can open its own connection with the run's own
+    #: budgets rather than the client's defaults. `verify_password` is the only
+    #: caller, and it is the one call that must not wait forever.
+    timeouts: Timeouts = field(default_factory=Timeouts)
     #: Invariant 3's cache. Private, and not a constructor argument: a scope
     #: handed in from outside would be a scope that came from somewhere other
     #: than this connection, which is the single thing the invariant forbids.
@@ -260,6 +284,155 @@ class OracleSession:
 
         return ChangeResult(changed=True, detail="password set")
 
+    def verify_password(
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        method: str = VERIFY_LOGIN,
+        lockout_margin: int = DEFAULT_MARGIN,
+        attempts: int = 1,
+    ) -> VerifyResult:
+        """Does this password work here (#180) -- asked at most once, or not at all.
+
+        **One attempt, and no retry** (UC-1 §7 mitigation 1). The signature takes
+        one secret and returns one result precisely so there is no shape for a
+        back-off loop to hide in, and a wrong password is
+        :data:`~sopuli.driver.protocol.FAIL` rather than an exception, because
+        drift is exit 3 and that is what makes `check` schedulable.
+
+        **The counter is read fresh, immediately before the attempt.** It is not
+        taken from a :class:`UserState` the caller happens to be holding: every
+        failed login moves it, including ones this tool did not make, so a value
+        carried from earlier in the run is a lockout guard computing on a number
+        that has since moved. That is also why the state read here is
+        :func:`~sopuli.driver.oracle.accounts.login_state` rather than
+        ``describe`` -- #86 decided `check` needs no site-specific grant, and
+        roles are a guardrail input for mutations, not for reading.
+
+        Where ``SELECT ON SYS.USER$`` was never granted the guard is
+        **unavailable**, the attempt still goes ahead (#86), and the result says
+        so in ``detail`` rather than letting an absent guard read like a
+        satisfied one.
+        """
+        if method != VERIFY_LOGIN:
+            raise UnsupportedCapabilityError(
+                f"verification method {method!r}",
+                target=self.target.name,
+                hint=(
+                    "only `login` exists in this build; whether `hash` ever ships depends "
+                    "on #90, which is open"
+                ),
+            )
+
+        with self.connection.cursor() as cursor:
+            state = login_state(cursor, account)
+            if state is None:
+                return VerifyResult(
+                    method=method,
+                    result=UNAVAILABLE,
+                    detail=f'there is no account "{account}" on this target',
+                )
+            guarded = self.scope().supports(OFFLINE_VERIFY)
+            counter = failed_logins(cursor, state.name) if guarded else None
+
+        if state.locked:
+            # **Before the margin, not after.** A lock caused by earlier failures
+            # usually leaves the counter at the threshold, so the margin check
+            # would win and report `skipped` -- and the same locked account would
+            # then describe itself differently depending on whether the counter
+            # could be read. It is locked either way, and saying so is both
+            # consistent and more useful than "we did not try".
+            return VerifyResult(
+                method=method,
+                result=UNAVAILABLE,
+                failed_logins=counter,
+                failed_login_limit=state.failed_login_limit,
+                detail=f"the account is locked ({state.status}); no login was attempted",
+            )
+
+        reason = margin_reason(
+            counter, state.failed_login_limit, margin=lockout_margin, attempts=attempts
+        )
+        if reason is not None:
+            return VerifyResult(
+                method=method,
+                result=SKIPPED,
+                failed_logins=counter,
+                failed_login_limit=state.failed_login_limit,
+                lockout_margin_hit=True,
+                detail=skipped_detail(reason),
+            )
+
+        outcome, detail = self._attempt(state.name, secret)
+        if not guarded:
+            detail = "; ".join(
+                part
+                for part in (
+                    detail,
+                    "the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted",
+                )
+                if part
+            )
+
+        return VerifyResult(
+            method=method,
+            result=outcome,
+            failed_logins=counter,
+            failed_login_limit=state.failed_login_limit,
+            detail=detail or None,
+        )
+
+    def _attempt(self, name: str, secret: Secret) -> tuple[str, str | None]:
+        """One login as ``name``, on a connection of its own.
+
+        A **fresh connection as that user** is what UC-1 §5 step 6 asks for --
+        the admin session proves nothing about this account's password. #180
+        leaves the hygiene to be decided here, and it is: the connection is
+        closed in a ``finally``, and a failure to close it is **not** allowed to
+        change the answer. The login already happened; reporting a verification
+        failure because the socket did not shut politely would turn a tidy-up
+        problem into drift, and drift starts rotations.
+        """
+        connection = None
+        try:
+            connection = oracledb.connect(
+                **connect_arguments(
+                    self.target,
+                    Credential(username=name, secret=secret),
+                    timeouts=self.timeouts,
+                )
+            )
+        except oracledb.Error as error:
+            diagnosis = from_error(error)
+            if not is_verification_outcome(diagnosis.code or None):
+                # Not an answer about the password. A DSN that does not resolve,
+                # a listener that is down, a logon protocol nobody can agree --
+                # #172 has classified each into its own category and exit path,
+                # and folding them into `unavailable` would let an unreachable
+                # target look like an account-level finding.
+                raise diagnosis.as_error() from error
+            return result_for(diagnosis.code or None, diagnosis.message)
+        else:
+            # Labelled like every other connection (§5). A failed login is the
+            # most audited thing this tool does, so a verification session that
+            # reaches UNIFIED_AUDIT_TRAIL without the run's id is the one an
+            # operator cannot account for afterwards.
+            #
+            # A labelling failure is **not** allowed to change the answer, which
+            # is the opposite of `connect`'s rule and deliberately so: there the
+            # session had done nothing yet, and here the login has already
+            # happened and answered the question. Reporting drift because a
+            # `DBMS_SESSION` call was refused would start a rotation over an
+            # audit-hygiene problem.
+            with suppress(Exception):
+                set_identifier(connection, self.correlation_id)
+            return result_for(None)
+        finally:
+            if connection is not None:
+                with suppress(Exception):
+                    connection.close()
+
     def check_assertions(self) -> Scope:
         """Refuse unless the target's claims match what this connection is.
 
@@ -352,7 +525,10 @@ class OracleDriver:
             raise from_error(error).as_error() from error
 
         return OracleSession(
-            connection=connection, target=target, correlation_id=self.correlation_id
+            connection=connection,
+            target=target,
+            correlation_id=self.correlation_id,
+            timeouts=self.timeouts,
         )
 
 

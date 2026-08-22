@@ -53,6 +53,7 @@ only that), so guessing would be all cost.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -136,6 +137,16 @@ ROLES_QUERY = (
 #: `ORA-01918: user does not exist` against a database that plainly has it.
 NAME_QUERY = "select username from dba_users where username = :name"
 
+#: Consecutive failed logins, behind the optional ``SELECT ON SYS.USER$`` grant
+#: (#86). Gated on the ``offline_verify`` capability, and the *only* thing that
+#: capability gates in this build.
+#:
+#: Read immediately before an attempt and never cached: it changes with every
+#: failed login, including ones this tool did not make, so a value carried from
+#: earlier in the run would be a lockout guard computing on a number that has
+#: since moved.
+LCOUNT_QUERY = "select lcount from sys.user$ where name = :name"
+
 FAILED_LOGIN_ATTEMPTS = "FAILED_LOGIN_ATTEMPTS"
 PASSWORD_ROLLOVER_TIME = "PASSWORD_ROLLOVER_TIME"
 PASSWORD_REUSE_MAX = "PASSWORD_REUSE_MAX"
@@ -179,6 +190,22 @@ def describe(cursor: Cursor, account: str) -> UserState | None:
     like an account holding none, and guardrail 4 would pass. A safety check must
     not depend on a caller remembering to enable its input.
     """
+    state = login_state(cursor, account)
+    if state is None:
+        return None
+    return replace(state, roles=_roles(cursor, state.name))
+
+
+def login_state(cursor: Cursor, account: str) -> UserState | None:
+    """The account without its roles, for the callers that must not need them.
+
+    `creds check` is the caller. #86 decided it needs no site-specific grant to
+    run, and reading roles is a *guardrail* input consulted before a mutation --
+    so making a read-only command depend on `DBA_ROLE_PRIVS` would widen what
+    `check` requires for a reason that has nothing to do with checking.
+
+    :func:`describe` is this plus roles, and it is what a mutation uses.
+    """
     row = _user_row(cursor, account)
     if row is None:
         return None
@@ -213,7 +240,6 @@ def describe(cursor: Cursor, account: str) -> UserState | None:
         # nothing, and #181 is where ending a window early is decided.
         rollover_ends_at=None,
         vendor_maintained=_maintained(row),
-        roles=_roles(cursor, name),
     )
 
 
@@ -289,3 +315,22 @@ def resolve_name(cursor: Cursor, account: str) -> str | None:
     """
     row = read(cursor, NAME_QUERY, name=account.upper())
     return str(row[0]) if row else None
+
+
+def failed_logins(cursor: Cursor, name: str) -> int | None:
+    """``SYS.USER$.LCOUNT``, or ``None`` where the grant was never made.
+
+    Measured on 26ai: a failed login takes it 0 -> 1 -> 2, and a **successful**
+    login puts it back to 0. That last part is UC-1 §7 mitigation 3 and it needs
+    no code -- the database does it -- which is what makes the happy path
+    self-cleaning.
+    """
+    # Bound **unchanged**. ``name`` is already the spelling `DBA_USERS` gave
+    # back, and ``SYS.USER$.NAME`` preserves it -- so upper-casing here would
+    # miss a quoted lower-case account, return no row, and be indistinguishable
+    # from "the grant was never made". That failure is silent and it is the
+    # dangerous direction: an absent counter reads as an unavailable guard, and
+    # the login goes ahead spending lockout budget the guard was there to
+    # protect.
+    row = read(cursor, LCOUNT_QUERY, name=name)
+    return int(row[0]) if row and row[0] is not None else None

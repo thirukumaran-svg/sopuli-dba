@@ -228,7 +228,13 @@ class _Session:
         return ChangeResult(changed=True)
 
     def verify_password(
-        self, account: str, secret: Secret, *, method: str = protocol.VERIFY_LOGIN
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        method: str = protocol.VERIFY_LOGIN,
+        lockout_margin: int = 2,
+        attempts: int = 1,
     ) -> VerifyResult:
         return VerifyResult(method=method, result=protocol.PASS)
 

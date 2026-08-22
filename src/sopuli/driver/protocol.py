@@ -473,9 +473,27 @@ class Session(Protocol):
         ...
 
     def verify_password(
-        self, account: str, secret: Secret, *, method: str = VERIFY_LOGIN
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        method: str = VERIFY_LOGIN,
+        lockout_margin: int = 2,
+        attempts: int = 1,
     ) -> VerifyResult:
         """Whether ``secret`` authenticates as ``account``.
+
+        ``lockout_margin`` is UC-1 §7 mitigation 2's headroom -- how many failed
+        logins the driver must leave unspent -- and it is **on the interface
+        rather than only on the driver** because `check --lockout-margin` is a
+        flag: a command calls this protocol, so a margin that lived on the Oracle
+        implementation alone would be configurable in the CLI and silently 2 by
+        the time it reached a database.
+
+        ``attempts`` is how many logins the run intends against this account, so
+        that a second value checked (`--include-previous`) is budgeted before it
+        is spent rather than doubling the spend on the counter the margin
+        protects.
 
         ``method`` is one of :data:`VERIFY_METHODS`; ``login`` is the default
         unconditionally (Q1, #86). A driver that cannot honour a method raises
