@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.38.0](https://github.com/futville/sopuli-dba/compare/v0.37.0...v0.38.0) (2026-08-22)
+
+
+### Features
+
+* **driver:** check the scope a target asserts against the one it reached ([#177](https://github.com/futville/sopuli-dba/issues/177)) ([#206](https://github.com/futville/sopuli-dba/issues/206)) ([aad7270](https://github.com/futville/sopuli-dba/commit/aad7270c27949c3c0a2ea5ac95f2e940af0dee08))
+* **driver:** issue the ALTER USER, and let a rejection be a rejection ([#179](https://github.com/futville/sopuli-dba/issues/179)) ([#208](https://github.com/futville/sopuli-dba/issues/208)) ([68b0b87](https://github.com/futville/sopuli-dba/commit/68b0b87fceffff9018766f1593eaa71c52845e74))
+* **driver:** probe capabilities and resolve scope on connect ([#177](https://github.com/futville/sopuli-dba/issues/177)) ([#203](https://github.com/futville/sopuli-dba/issues/203)) ([b8d36b5](https://github.com/futville/sopuli-dba/commit/b8d36b548f891d0fa5b9ea6cfeff6b72c9085089))
+* **driver:** read an account's state from DBA_USERS and DBA_PROFILES ([#178](https://github.com/futville/sopuli-dba/issues/178)) ([#207](https://github.com/futville/sopuli-dba/issues/207)) ([5fa0c66](https://github.com/futville/sopuli-dba/commit/5fa0c660965283f5b20c5c1281b73c7ce9def1a7))
+
 ## [0.37.0](https://github.com/futville/sopuli-dba/compare/v0.36.0...v0.37.0) (2026-08-21)
 
 
