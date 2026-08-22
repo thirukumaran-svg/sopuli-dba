@@ -39,6 +39,7 @@ from typing import Any
 import oracledb
 
 from sopuli.config.model import ExpandedTarget
+from sopuli.driver.oracle.accounts import describe
 from sopuli.driver.oracle.capabilities import assert_scope, observe
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
@@ -48,7 +49,7 @@ from sopuli.driver.oracle.client import (
     missing_client,
 )
 from sopuli.driver.oracle.errors import from_error
-from sopuli.driver.protocol import Credential, Scope
+from sopuli.driver.protocol import Credential, Scope, UserState
 
 #: Guards :func:`initialise`. ``init_oracle_client`` mutates process-global
 #: state, and nothing in this codebase promises a connection is only ever opened
@@ -166,6 +167,16 @@ class OracleSession:
             with self.connection.cursor() as cursor:
                 self._scope = observe(cursor)
         return self._scope
+
+    def describe_user(self, account: str) -> UserState | None:
+        """The account's state, or ``None`` if there is no such account (#178).
+
+        ``None`` is UC-1's ``ACCOUNT_MISSING`` and not an error -- the tool does
+        not create accounts (Q8). The reads are all on the baseline grant set,
+        so `check` needs no site-specific privilege to run (#86).
+        """
+        with self.connection.cursor() as cursor:
+            return describe(cursor, account)
 
     def check_assertions(self) -> Scope:
         """Refuse unless the target's claims match what this connection is.

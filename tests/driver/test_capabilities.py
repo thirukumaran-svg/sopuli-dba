@@ -55,10 +55,12 @@ class _Cursor:
         self.answers = answers or {}
         self.asked: list[str] = []
         self.sql = ""
+        self.parameters: Any = None
 
-    def execute(self, sql: str, /) -> _Cursor:
+    def execute(self, sql: str, parameters: Any = None, /) -> _Cursor:
         self.asked.append(sql)
         self.sql = sql
+        self.parameters = parameters
         return self
 
     def fetchone(self) -> tuple[Any, ...] | None:
@@ -66,6 +68,10 @@ class _Cursor:
         if isinstance(answer, Exception):
             raise answer
         return answer if isinstance(answer, tuple) else (answer,)
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        row = self.fetchone()
+        return [row] if row is not None else []
 
 
 def _ora(code: str, message: str = "") -> RuntimeError:

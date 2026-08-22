@@ -66,9 +66,11 @@ class Cursor(Protocol):
     ``oracledb``'s, and neither has to know about the other.
     """
 
-    def execute(self, statement: str, /) -> Any: ...
+    def execute(self, statement: str, parameters: Any = None, /) -> Any: ...
 
     def fetchone(self) -> Any: ...
+
+    def fetchall(self) -> Any: ...
 
 
 class ProbeError(DriverError):
@@ -174,13 +176,21 @@ DATABASE_FACTS = "select db_unique_name, open_mode from v$database"
 VERSION = "select version from v$instance"
 
 
-def read(cursor: Cursor, statement: str) -> Any:
+def read(cursor: Cursor, statement: str, **binds: Any) -> Any:
     """Run one question. An expected negative is ``None``; anything else raises.
 
-    The rule :data:`ABSENT_CODES` describes, in the one place that applies it.
+    The rule :data:`ABSENT_CODES` describes, in the one place that applies it --
+    which is why a caller with a bind variable comes here rather than reaching
+    for the cursor directly. #178's 11.2 fallback depends on it: ``ORA-00904``
+    *is* the answer to "does this release have ``PASSWORD_CHANGE_DATE``", and it
+    only reads as an answer where this rule is applied.
+
+    **Binds are values, never identifiers**, and never a password (invariant 14):
+    ``V$SQL_BIND_CAPTURE`` samples bind values at hard parse and keeps them in
+    clear, which is what makes an account name safe to bind and a secret not.
     """
     try:
-        cursor.execute(statement)
+        cursor.execute(statement, binds or None)
         return cursor.fetchone()
     except Exception as error:  # noqa: BLE001 -- classified on the next line
         diagnosis = from_error(error)

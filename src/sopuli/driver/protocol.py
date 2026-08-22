@@ -360,10 +360,24 @@ class UserState:
     locked: bool = False
     expired: bool = False
     profile: str | None = None
+    #: The profile's **effective** password limits, each as the database spells
+    #: the value -- a number, ``UNLIMITED``, or a vendor word. Never ``DEFAULT``:
+    #: Oracle reports that string for a resource the profile does not set, and
+    #: resolving it against the ``DEFAULT`` profile happens in the driver so a
+    #: caller cannot mistake the word for a threshold (#178).
+    #:
+    #: Separate fields rather than one bag, on ``01-configuration.md`` §10's
+    #: argument: a mapping keyed by vendor resource names would accept a
+    #: misspelled key and answer ``None`` to the caller that needed it.
+    failed_login_limit: str | None = None
+    #: ``PASSWORD_ROLLOVER_TIME``, which #181 reads at plan time to decide
+    #: whether a rollover strategy can run here at all.
+    rollover_time: str | None = None
+    password_reuse_max: str | None = None
+    password_reuse_time: str | None = None
     password_versions: tuple[str, ...] = ()
     password_changed_at: datetime | None = None
     failed_logins: int | None = None
-    failed_login_limit: str | None = None
     rollover_active: bool | None = None
     rollover_ends_at: datetime | None = None
     vendor_maintained: bool | None = None

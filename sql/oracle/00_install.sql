@@ -118,11 +118,18 @@ GRANT ALTER USER     TO &eff_user&cont_all;
 -- Explicit views rather than SELECT_CATALOG_ROLE, so a privilege review is a
 -- one-screen job. Swapping in the role is fine if your site prefers it; it does
 -- NOT include SYS.USER$.
+--
+-- DBA_ROLE_PRIVS is what the client-side guardrail reads to refuse an account
+-- holding DBA, PDB_DBA, CDB_DBA or AUDIT_ADMIN (§4 check 4). Without it the tool
+-- refuses to describe an account at all, rather than reading "cannot see any
+-- roles" as "holds no admin role" — which would turn a safety check into a
+-- silent pass.
 --------------------------------------------------------------------------------
-GRANT SELECT ON SYS.DBA_USERS    TO &eff_user&cont_all;
-GRANT SELECT ON SYS.DBA_PROFILES TO &eff_user&cont_all;
-GRANT SELECT ON SYS.V_$DATABASE  TO &eff_user&cont_all;
-GRANT SELECT ON SYS.V_$INSTANCE  TO &eff_user&cont_all;
+GRANT SELECT ON SYS.DBA_USERS      TO &eff_user&cont_all;
+GRANT SELECT ON SYS.DBA_PROFILES   TO &eff_user&cont_all;
+GRANT SELECT ON SYS.DBA_ROLE_PRIVS TO &eff_user&cont_all;
+GRANT SELECT ON SYS.V_$DATABASE    TO &eff_user&cont_all;
+GRANT SELECT ON SYS.V_$INSTANCE    TO &eff_user&cont_all;
 
 -- V$PDBS is meaningful in the root only
 BEGIN

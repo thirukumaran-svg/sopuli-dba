@@ -142,6 +142,7 @@ GRANT ALTER USER     TO sopuli_svc;
 -- dictionary reads
 GRANT SELECT ON SYS.DBA_USERS      TO sopuli_svc;
 GRANT SELECT ON SYS.DBA_PROFILES   TO sopuli_svc;
+GRANT SELECT ON SYS.DBA_ROLE_PRIVS TO sopuli_svc;
 GRANT SELECT ON SYS.V_$DATABASE    TO sopuli_svc;
 GRANT SELECT ON SYS.V_$INSTANCE    TO sopuli_svc;
 ```
@@ -158,6 +159,20 @@ privileges succeed. The result is a service account that connects, can rotate,
 and reads nothing — whose capability probes then report absent for perfectly
 correct reasons, which looks exactly like a broken probe. Worth stating because
 nothing in the statements themselves says who has to issue them.
+
+**`DBA_ROLE_PRIVS` is what guardrail 4 reads, and it was missing from this list
+until #178.** §4 check 4 refuses an account holding `DBA`, `PDB_DBA`, `CDB_DBA`
+or `AUDIT_ADMIN`, and the only place to see another account's roles is
+`DBA_ROLE_PRIVS`. Measured: a service account holding exactly the grants above
+got `ORA-00942` from it, so the guardrail's input was unobtainable by a correctly
+installed tool.
+
+The failure mode is why it is a grant rather than a graceful degradation. An
+empty role set means *this account holds none of them* and reads as a pass, so a
+missing grant would have turned a safety check into a silent success. The driver
+therefore refuses to describe an account whose roles it cannot read
+(`RolesUnreadableError`), naming this grant — the same rule as a capability probe
+that could not be answered, which raises instead of reporting absent (#195).
 
 **A role-granted `ALTER USER` reads as absent.** `common_users` is probed through
 `USER_SYS_PRIVS`, which shows **direct** grants only — so an account holding
@@ -179,8 +194,9 @@ CREATE USER c##sopuli_svc IDENTIFIED BY "…" CONTAINER=ALL;
 
 GRANT CREATE SESSION TO c##sopuli_svc CONTAINER=ALL;
 GRANT ALTER USER     TO c##sopuli_svc CONTAINER=ALL;
-GRANT SELECT ON SYS.DBA_USERS    TO c##sopuli_svc CONTAINER=ALL;
-GRANT SELECT ON SYS.DBA_PROFILES TO c##sopuli_svc CONTAINER=ALL;
+GRANT SELECT ON SYS.DBA_USERS      TO c##sopuli_svc CONTAINER=ALL;
+GRANT SELECT ON SYS.DBA_PROFILES   TO c##sopuli_svc CONTAINER=ALL;
+GRANT SELECT ON SYS.DBA_ROLE_PRIVS TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.V_$DATABASE  TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.V_$INSTANCE  TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.V_$PDBS      TO c##sopuli_svc;   -- root only
