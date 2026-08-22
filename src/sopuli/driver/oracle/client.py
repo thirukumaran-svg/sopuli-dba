@@ -184,3 +184,45 @@ def connect_arguments(
     # plaintext legitimately leaves a `Secret` is one grep away.
     arguments["password"] = credential.secret.reveal()
     return arguments
+
+
+#: The oldest server release a client of a given major can reach, per Oracle's
+#: interoperability matrix. A 23.x client reaches 19c and later; a 19.x client
+#: reaches 11.2 and later.
+#:
+#: **This is the one place a version number is read from a table**, and it is not
+#: a violation of invariant 3: the rule is that the tool never branches on a
+#: version *of the database from a config file*, and this is the version of the
+#: **client library on this machine**, asked of the library itself. There is no
+#: database to ask, which is the whole point -- `doctor` (#182) answers "is this
+#: 11.2 target out of reach" before anybody waits on a connection that cannot
+#: succeed (P4).
+CLIENT_REACH: dict[int, tuple[int, int]] = {
+    23: (19, 1),
+    21: (12, 1),
+    19: (11, 2),
+    18: (11, 2),
+    12: (10, 1),
+}
+
+#: What a client too new for a server answers with. Named because the message is
+#: the diagnosis: "connections to this server version are no longer supported".
+UNSUPPORTED_SERVER = "ORA-03134"
+
+
+def reach_floor(client: tuple[int, ...]) -> tuple[int, int] | None:
+    """The oldest server ``client`` can reach, or ``None`` for a major we have no
+    row for -- in which case `doctor` says the version and makes no claim about
+    reach, which is better than inventing one."""
+    if not client:
+        return None
+    return CLIENT_REACH.get(client[0])
+
+
+def describes_unreachable_server(code: str | None) -> bool:
+    """Whether a failed connection looks like the client being too new.
+
+    Kept as a question rather than a guess: `doctor` adds a sentence about the
+    interoperability matrix when it is true, and says nothing when it is not.
+    """
+    return code == UNSUPPORTED_SERVER

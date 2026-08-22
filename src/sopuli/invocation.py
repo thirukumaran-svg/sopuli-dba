@@ -780,6 +780,18 @@ def _pass_invocation(func: F) -> F:
             _fail(invocation, exc)
             raise
         invocation.emitter().emit(invocation.document, text)
+        if invocation.document.exit_code:
+            # The comment above says `exit_code` in the document always equals
+            # the process's, and until #182 nothing tested it: every implemented
+            # verb finished on SUCCESS, so a verb that finished otherwise would
+            # have emitted a document saying so and exited 0 anyway.
+            #
+            # `doctor` is the first verb whose failure is a *finding* rather than
+            # an exception -- an unreachable target is what the command is for --
+            # so it is the first that can finish non-zero without raising. P5
+            # exists so schedulers can branch on the number, and a survey that
+            # always exits 0 is one nothing can alert on.
+            raise SystemExit(invocation.document.exit_code)
         return text
 
     # `update_wrapper` rather than the `@functools.wraps` decorator, so that mypy

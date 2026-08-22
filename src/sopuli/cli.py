@@ -49,18 +49,23 @@ document. The verbs that mutate a database will inherit the same arrangement.
 
 from __future__ import annotations
 
+import importlib
 import os
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, TypeVar
 
 import click
 
+from sopuli.admin import resolve as admin_resolve
 from sopuli.config import (
     ROOT,
     Config,
     ConfigError,
+    ExpandedTarget,
     PasswordPolicy,
     as_dict,
     dangling,
@@ -73,6 +78,13 @@ from sopuli.diagnostics import (
     lock_broken,
     unlistable_stores,
 )
+from sopuli.driver.oracle.client import (
+    Timeouts,
+    describes_unreachable_server,
+    reach_floor,
+)
+from sopuli.driver.registry import DRIVERS
+from sopuli.driver.registry import resolve as resolve_driver
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import (
     GlobalOptions,
@@ -100,7 +112,9 @@ from sopuli.output.config_view import (
     render_text,
     render_validation,
 )
-from sopuli.output.document import Diagnostic, Summary
+from sopuli.output.doctor_view import build_target
+from sopuli.output.doctor_view import render as render_doctor
+from sopuli.output.document import Diagnostic, Error, Summary
 from sopuli.output.lock_view import (
     build_break_section,
     build_denied_section,
@@ -326,6 +340,171 @@ def target_list(
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
     return render_target_list(paths, config, match=match)
+
+
+@cli.command("doctor")
+@select_option
+@global_options
+def doctor(
+    selectors: tuple[str, ...],
+    run: Invocation,
+) -> str:
+    """Check that every target can be reached, and report what it is.
+
+    The first command that connects, and it **mutates nothing** -- everything
+    the `creds` verbs depend on either works here or is reported as the reason
+    it does not. A `status`-shaped verb (P5): it takes no lock, so an hourly one
+    never blocks a rotation.
+
+    **A target that cannot be reached is a finding, not a crash.** The whole
+    point is to survey an estate and say which parts of it are unwell, so one
+    unreachable database must not end the run before the next target is tried.
+    Each failure lands in its own ``targets[]`` entry with the vendor code and
+    the server's own message, and the exit code reflects how many.
+
+    Nothing here is a substitute for the guardrails. Reporting what a service
+    account holds is not enforcing it; #173 is the refusal.
+    """
+    document = run.document
+
+    match = parse_selector(selectors)
+    config = filter_estate(run.config, match)
+    document.selection = as_dict(match) or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    client = _client_report(config)
+    entries = [_examine(target, run, config) for target in config.expanded_targets]
+
+    document.targets = entries
+    reachable = sum(1 for entry in entries if entry["reachable"])
+    failed = len(entries) - reachable
+    document.finish(
+        ExitCode.SUCCESS if failed == 0 else ExitCode.FAILURE,
+        Summary(total=len(entries), ok=reachable, changed=0, failed=failed),
+    )
+    return render_doctor(entries, client=client)
+
+
+def _client_report(config: Config) -> dict[str, Any]:
+    """What this machine can reach, before any target is tried.
+
+    P4 wants this answered *without* a database: a 23.x client reaches 19c and
+    later, so a configured 11.2 target is out of reach and saying so beats
+    letting somebody wait for a connection that cannot succeed.
+
+    A missing Instant Client is the ordinary case on a fresh machine and is
+    reported rather than raised -- `doctor` exists to be run when things are
+    wrong, so it is the one command that must survive its own subject being
+    broken.
+    """
+    report: dict[str, Any] = {"tns_admin": os.environ.get("TNS_ADMIN") or "(unset)"}
+    lib_dir = config.runtime.oracle.client_lib_dir
+    if lib_dir:
+        report["client_lib_dir"] = lib_dir
+
+    try:
+        # Through the registry's own entry rather than a second copy of the
+        # module path: the whole value of resolving there is that one place
+        # knows which module pulls the client in (#170).
+        module = importlib.import_module(DRIVERS["oracle"].module)
+        module.initialise(env=os.environ, lib_dir=lib_dir)
+        version = module.client_version()
+    except Exception as error:  # noqa: BLE001 -- a broken client is the finding
+        report["instant_client"] = "not loaded"
+        report["detail"] = str(error).splitlines()[0]
+        return report
+
+    report["instant_client"] = ".".join(str(part) for part in version)
+    floor = reach_floor(version)
+    report["reaches"] = f"{floor[0]}.{floor[1]} and later" if floor else "(no interoperability row)"
+    return report
+
+
+def _examine(target: ExpandedTarget, run: Invocation, config: Config) -> dict[str, Any]:
+    """One target: connect, report what it is, and always close."""
+    started = time.monotonic()
+    session = None
+    try:
+        # Getting in, which is what `reachable` reports.
+        try:
+            module = resolve_driver(target.target)
+            credential = admin_resolve(target, env=os.environ)
+            driver = module.OracleDriver(
+                env=os.environ,
+                correlation_id=run.document.correlation_id,
+                timeouts=_timeouts(run),
+                client_lib_dir=config.runtime.oracle.client_lib_dir,
+            )
+            session = driver.connect(target, credential.credential)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return build_target(
+                target,
+                connected=False,
+                error=_as_error(error),
+                duration_ms=_elapsed(started),
+                warnings=_reach_warning(error),
+            )
+
+        # Finding out what it is, which can fail on a connection that is fine:
+        # a dictionary view this account cannot read, or a probe that could not
+        # be answered. Reporting that as unreachable would send somebody to the
+        # listener over a grant, so the two are separate.
+        try:
+            scope = session.scope()
+        except Exception as error:  # noqa: BLE001 -- also a per-target finding
+            return build_target(
+                target, connected=True, error=_as_error(error), duration_ms=_elapsed(started)
+            )
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+    return build_target(target, connected=True, scope=scope, duration_ms=_elapsed(started))
+
+
+def _timeouts(run: Invocation) -> Timeouts:
+    """The run's own budgets, not the driver's defaults.
+
+    `db.connect_timeout_s` is a documented setting with a whole precedence chain
+    behind it, and a command that resolved it and then connected on the built-in
+    anyway would be #176's review finding all over again: a key that looks
+    configured and does nothing. `doctor` is also the command most likely to be
+    pointed at something unreachable, which is exactly when the number matters.
+    """
+    resolved = run.resolved.get("db.connect_timeout_s")
+    if resolved is None:
+        return Timeouts()
+    return Timeouts(connect_s=int(resolved.value))
+
+
+def _elapsed(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
+def _as_error(error: Exception) -> Error:
+    """A failure as the document's ``error`` object, keeping the vendor code."""
+    # First line only. A driver error's `message` keeps the server's own wording
+    # (#172), and a client one carries whatever `oracledb` said -- which runs to
+    # several lines including a documentation link. A survey puts one line per
+    # target beside a table, so the rest belongs in the hint where it already is.
+    message = getattr(error, "message", None) or str(error)
+    return Error(
+        category=getattr(error, "category", "database"),
+        message=message.splitlines()[0],
+        hint=getattr(error, "hint", None),
+        code=getattr(error, "code", None),
+    )
+
+
+def _reach_warning(error: Exception) -> tuple[str, ...]:
+    """The interoperability sentence, only where the code says it applies."""
+    if describes_unreachable_server(getattr(error, "code", None)):
+        return (
+            "this looks like the Instant Client being newer than the server; "
+            "see the client line above for what it reaches",
+        )
+    return ()
 
 
 @cli.group("policy")

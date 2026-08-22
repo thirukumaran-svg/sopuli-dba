@@ -27,7 +27,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.10.schema.json`](../schemas/sopuli-run-1.10.schema.json),
+Schemas: [`../schemas/sopuli-run-1.11.schema.json`](../schemas/sopuli-run-1.11.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -571,6 +571,58 @@ An unexpired lock is **not** in this array — it is `denied`, on exit 7, with t
 holder named. Same object, same wording as a rotation that lost the same lock,
 because it is the same question being answered to the same person.
 
+### `targets`, emitted by `doctor`
+
+One entry per target, and deliberately **not** `results[]`.
+
+`result` is per (account, target). It requires an `account` and a `state` from a
+vocabulary that is entirely about credential sync — `IN_SYNC`, `DRIFT`,
+`ACCOUNT_MISSING`. `doctor` manages no credential and touches no account, so
+every one of those words would have meant something else: `IN_SYNC` on a healthy
+target claims a sync that never happened, and `SKIPPED` means *we chose not to
+try*.
+
+Widening `result` was the alternative — make `account` optional, add states —
+and it is a major change: a consumer reading `result.account` unconditionally
+breaks. Adding a section is the minor rule again, for the fifth time.
+
+```json
+"targets": [
+  {
+    "target": "orders-pdb",
+    "reachable": true,
+    "duration_ms": 84,
+    "scope": {
+      "type": "pdb",
+      "container": "ORDERS",
+      "db_version": "23.0.0.0.0",
+      "open_mode": "READ WRITE",
+      "read_write": true,
+      "capabilities": ["account_lock_state", "expire_password", "password_rollover"],
+      "offline_verify_available": false,
+      "labels": { "target_set": "appdb", "env": "qa" }
+    },
+    "asserted": { "scope": "pdb", "container": "ORDERS", "matches": true }
+  },
+  {
+    "target": "billing-pdb",
+    "reachable": false,
+    "error": { "category": "connectivity", "code": "ORA-12541", "message": "TNS:no listener" }
+  }
+]
+```
+
+**`reachable` is the field to branch on, and everything else is absent rather
+than empty.** A target that could not be reached has no scope, no capabilities
+and no assertion result. An empty `capabilities` array there would read as a
+database that supports nothing, which is a different and much more alarming
+claim than *nobody could get to it*.
+
+**`asserted` is absent when the target asserts nothing**, rather than present
+with `matches: true`. `01-configuration.md` §3a is explicit that an assertion
+nobody makes is not a gap, and an object claiming a match would be reporting
+agreement with a claim that was never made.
+
 ### `results[].changed` vs `results[].state`
 
 Deliberately separate:
@@ -981,6 +1033,14 @@ beside the ones that already mean something else, and nothing existing changes
 meaning. `SOPULI-W002`'s description widened in the same change and is
 deliberately *not* a schema matter: a code's meaning is contract, its wording is
 not, and this widening was neither.
+
+**1.10 became 1.11 when `doctor` had somewhere to put its findings** (#182):
+`targets[]` joined the document, and `doctor` was already in the `command` enum.
+The minor rule for the fifth time, and the first time the alternative was
+seriously weighed: `results[]` existed and looked like the obvious home, and it
+required an `account` this command does not have and a `state` vocabulary about
+a sync it does not perform. Reusing it would have cost nothing in schema version
+and lied in every document.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles

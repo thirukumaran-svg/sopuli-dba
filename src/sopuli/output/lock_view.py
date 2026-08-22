@@ -3,7 +3,7 @@
 What a run says about the locks it took, on exit 7 about the one it did not get,
 for ``lock status`` about locks that are somebody else's entirely, and for ``lock
 break`` about one it ended. The
-shape is pinned by ``sopuli-run-1.10.schema.json``; this is the only producer of
+shape is pinned by ``sopuli-run-1.11.schema.json``; this is the only producer of
 it, the same arrangement :mod:`sopuli.output.config_view` and
 :mod:`sopuli.output.policy_view` have with their sections.
 

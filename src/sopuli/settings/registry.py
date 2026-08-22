@@ -111,7 +111,7 @@ class Layer(StrEnum):
     sorts by it rather than by a separate rank table that could disagree.
 
     The values are exactly the ``source`` enum published in
-    ``docs/schemas/sopuli-run-1.10.schema.json``, so a resolved setting can be
+    ``docs/schemas/sopuli-run-1.11.schema.json``, so a resolved setting can be
     serialised into ``invocation.options`` without a translation step -- and
     ``tests/settings/test_registry.py`` reads the schema to keep it that way.
 

@@ -1,6 +1,6 @@
 """The run document (``docs/design/03-json-output.md`` §2).
 
-There is no such thing as a placeholder run document. ``sopuli-run-1.10.schema.json``
+There is no such thing as a placeholder run document. ``sopuli-run-1.11.schema.json``
 sets ``additionalProperties: false`` at the root and requires six top-level
 fields, two of which have required members of their own, so the smallest thing
 that validates is a complete document. Building it properly now is cheaper than
@@ -27,7 +27,7 @@ from typing import Any
 # format (#83), and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.10"
+SCHEMA_VERSION = "1.11"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -268,6 +268,18 @@ class RunDocument:
     #: anything", and an empty object would say that once per run in a document
     #: consumers diff.
     options: dict[str, Option] = field(default_factory=dict)
+    #: The ``targets`` section, emitted by ``doctor`` (#182). One entry per
+    #: target, and **not** ``results[]``: that array is per (account, target)
+    #: and its ``state`` vocabulary is about credential sync -- ``IN_SYNC``,
+    #: ``DRIFT``, ``ACCOUNT_MISSING`` -- while ``doctor`` manages no credential
+    #: and reports on the target itself. Added in 1.11 rather than widening
+    #: ``result``, which would have meant making ``account`` optional and
+    #: breaking every consumer that reads it unconditionally.
+    #:
+    #: Same arrangement as ``config`` and ``lock``:
+    #: :mod:`sopuli.output.doctor_view` owns the shape, and this only decides
+    #: that it is optional and omitted rather than nulled when absent.
+    targets: list[dict[str, Any]] | None = None
     #: Why the run failed as a whole. Absent on success, and absent on exit 2 --
     #: which never produces a document at all (J7, ``03-json-output.md`` §6).
     error: Error | None = None
@@ -299,7 +311,7 @@ class RunDocument:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Render to the shape ``sopuli-run-1.10.schema.json`` describes."""
+        """Render to the shape ``sopuli-run-1.11.schema.json`` describes."""
         finished_at = self.finished_at or utc_now()
         duration_ms = int((finished_at - self.started_at).total_seconds() * 1000)
         invocation: dict[str, Any] = {
@@ -334,6 +346,8 @@ class RunDocument:
             document["policy"] = self.policy
         if self.lock is not None:
             document["lock"] = self.lock
+        if self.targets is not None:
+            document["targets"] = self.targets
         if self.error is not None:
             document["error"] = self.error.to_dict()
         return document

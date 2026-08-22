@@ -877,7 +877,7 @@ spells them:
 | `app_pdb` | an application PDB |
 
 That is `scope.type` from
-[`sopuli-run-1.10.schema.json`](../schemas/sopuli-run-1.10.schema.json), minus
+[`sopuli-run-1.11.schema.json`](../schemas/sopuli-run-1.11.schema.json), minus
 `unknown`. Adopting the vocabulary the run document has typed since it was written
 means the word a file *asserts* and the word the tool *reports* are the same word,
 so a mismatch between them needs no translation to explain. `unknown` is

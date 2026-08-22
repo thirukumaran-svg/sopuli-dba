@@ -17,7 +17,7 @@ Sketch stage. Nothing here is implemented. The SQL has never been executed.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.3.schema.json](schemas/sopuli-config-1.3.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.10.schema.json](schemas/sopuli-run-1.10.schema.json) | JSON Schema (2020-12) for the `--output json` document |
+| [schemas/sopuli-run-1.11.schema.json](schemas/sopuli-run-1.11.schema.json) | JSON Schema (2020-12) for the `--output json` document |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
