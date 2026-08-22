@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from sopuli.config.model import TargetOracle
 from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
@@ -55,6 +56,7 @@ from sopuli.driver.protocol import (
     DriverError,
     Scope,
 )
+from sopuli.exit_codes import ExitCode
 
 
 class Cursor(Protocol):
@@ -272,6 +274,139 @@ def observe(cursor: Cursor) -> Scope:
     )
 
 
+# --------------------------------------------------------------- assertions ---
+
+
+class ScopeAssertionError(DriverError):
+    """A target claimed a scope or a container, and the connection is elsewhere.
+
+    ``config`` and exit 9, because whichever half is wrong the operator's next
+    action is to reconcile the file with reality -- exit 9 means *fix your config
+    file*, which is the right instruction even when what actually changed was the
+    database. Generic failure would discard the most actionable distinction the
+    tool has.
+
+    **The message names both values.** An error saying only that the scope was
+    wrong sends the reader to the file to look up what they already wrote; what
+    they need is the other half, which is the half they cannot see.
+    """
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+
+class ReadOnlyTargetError(DriverError):
+    """A mutation was planned against a target that is not open read-write.
+
+    P1 requires this **up front** rather than halfway through a statement: a
+    physical standby opens ``READ ONLY``, and finding out at the ``ALTER USER``
+    means finding out after the run already decided this target was fine.
+
+    Exit 1 with its own category, which is P5's established shape for a condition
+    that has no number of its own -- connectivity and authorization are the
+    precedent. Adding a number to P5's table is a change to a contract schedulers
+    branch on, and a standby does not warrant one.
+
+    Deliberately **not** raised by :func:`assert_scope`. `creds check` reads and
+    must keep working against a standby, so refusing one is the mutating
+    commands' call and not a property of having connected.
+    """
+
+    category = "database"
+
+
+def assert_scope(scope: Scope, declared: TargetOracle | None, *, target: str) -> None:
+    """Refuse unless what the file claims is what the connection found.
+
+    UC-1 §5's pre-flight step 2, and `01-configuration.md` §3a's whole reason for
+    calling these assertions rather than settings: the driver detects the real
+    scope and container, so what the file writes is a claim to be checked rather
+    than a value to be applied. It catches the two things no amount of load-time
+    validation can see -- a ``dsn:`` edit that silently repointed a target at a
+    different container, and a PDB whose role changed under an estate that still
+    describes the old one.
+
+    **A target that asserts nothing is not incompletely configured.** It makes no
+    claim, and the driver reports what it found; both keys are optional and
+    neither constrains the other.
+
+    Containers compare case-insensitively, which is the same rule
+    :attr:`~sopuli.driver.oracle.statements.Identifier.is_common` already applies
+    to ``C##``: Oracle upper-cases an unquoted identifier, so ``freepdb1`` in a
+    file and ``FREEPDB1`` from ``con_name`` are one container and a check that
+    said otherwise would fail on a correct estate. A PDB created with a quoted
+    lower-case name would defeat that, and is exotic enough to be worth the trade
+    in this direction -- the alternative rejects the ordinary spelling every time.
+    """
+    if declared is None:
+        return
+
+    if declared.scope is not None:
+        if scope.type == UNKNOWN:
+            raise ScopeAssertionError(
+                f'target "{target}" declares oracle.scope: {declared.scope}, '
+                "and the driver could not determine what this connection is",
+                hint=(
+                    "an unresolved scope is not a confirmed one, and a claim that cannot be "
+                    "checked is not a claim that passed; `sopuli doctor` reports what the "
+                    "connection looks like"
+                ),
+            )
+        if declared.scope != scope.type:
+            raise ScopeAssertionError(
+                f'target "{target}" declares oracle.scope: {declared.scope}, '
+                f"but this connection is {scope.type}",
+                hint=(
+                    "the dsn may have been repointed at a different container, or this "
+                    "database's role changed under an estate that still describes the old one"
+                ),
+            )
+
+    if declared.container is not None:
+        if scope.container is None:
+            raise ScopeAssertionError(
+                f'target "{target}" declares oracle.container: {declared.container}, '
+                "but this database has no containers",
+                hint=(
+                    "the connection reached a non-CDB, where there is no container to name; "
+                    "check the dsn"
+                ),
+            )
+        if declared.container.upper() != scope.container.upper():
+            raise ScopeAssertionError(
+                f'target "{target}" declares oracle.container: {declared.container}, '
+                f"but this connection is in {scope.container}",
+                hint=(
+                    "the dsn may have been repointed at a different container, or this "
+                    "database's role changed under an estate that still describes the old one"
+                ),
+            )
+
+
+def require_read_write(scope: Scope, *, target: str) -> None:
+    """Refuse a mutation against a target that is not open read-write (P1).
+
+    Called by the commands that write, at plan time, and by nothing else --
+    see :class:`ReadOnlyTargetError` for why this is not folded into
+    :func:`assert_scope`.
+
+    An **unknown** open mode is not a refusal. ``V$DATABASE`` is in the
+    documented grant set but a half-installed account cannot read it, and
+    refusing every such target would turn a missing grant into "this database is
+    a standby", which is a worse diagnosis than the one the missing grant already
+    produces. The server refuses a write to a standby on its own; this exists to
+    make the refusal early and legible, not to be the only thing standing there.
+    """
+    if scope.read_write is False:
+        raise ReadOnlyTargetError(
+            f'target "{target}" is open {scope.open_mode or "read-only"} and cannot be written to',
+            hint=(
+                "this looks like a physical standby; point the target at the primary, "
+                "or drop it from the selection"
+            ),
+        )
+
+
 #: Asserted by ``tests/driver/test_capabilities.py`` against P1's own table, so a
 #: capability added to the document and not to the code -- or the reverse -- fails
 #: rather than drifts. Every capability has to choose a side deliberately.
@@ -291,9 +426,13 @@ __all__ = [
     "VERSION",
     "Cursor",
     "ProbeError",
+    "ReadOnlyTargetError",
+    "ScopeAssertionError",
+    "assert_scope",
     "container_of",
     "observe",
     "probe",
     "read",
+    "require_read_write",
     "scope_type",
 ]

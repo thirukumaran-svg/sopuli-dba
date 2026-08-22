@@ -897,6 +897,26 @@ Being assertions, both are optional. A target that says nothing about its scope 
 not incompletely configured; it just makes no claim, and the driver reports what it
 found.
 
+**A container is compared case-insensitively.** Oracle upper-cases an unquoted
+identifier, so `container: freepdb1` in a file and `FREEPDB1` from `con_name` are
+one container, and a check that said otherwise would fail on a correct estate
+every time. A PDB created with a quoted lower-case name would defeat that; it is
+exotic enough to be worth the trade in this direction, since the alternative
+rejects the ordinary spelling on every run. The same rule already applies to
+`C##` prefixes when the driver decides whether a name is a common user.
+
+**An unresolved scope does not satisfy an assertion.** Where the driver reports
+`unknown`, a declared scope is an error rather than a pass: a claim that could not
+be checked is not a claim that held, and treating "we could not tell" as agreement
+is the mistake that made a broken capability probe look like a measurement (#195).
+
+**Open mode is checked separately, and only by the commands that write.** UC-1 §5
+step 2 asks for read-write as part of pre-flight, but `check` reads and must keep
+working against a physical standby — so refusing one belongs to `apply` rather
+than to having connected. Implemented in
+`sopuli/driver/oracle/capabilities.py` (#177) as `assert_scope` and
+`require_read_write`, which are two calls for that reason.
+
 **They do not constrain each other.** `scope: pdb` with no `container` is fine
 unless something actually needs the value, and the thing that needs it is §7's
 `{container}` token — where §4 rule 4 already makes an unresolved placeholder an

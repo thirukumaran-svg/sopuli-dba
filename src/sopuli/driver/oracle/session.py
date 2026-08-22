@@ -39,7 +39,7 @@ from typing import Any
 import oracledb
 
 from sopuli.config.model import ExpandedTarget
-from sopuli.driver.oracle.capabilities import observe
+from sopuli.driver.oracle.capabilities import assert_scope, observe
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
     NO_CLIENT,
@@ -166,6 +166,23 @@ class OracleSession:
             with self.connection.cursor() as cursor:
                 self._scope = observe(cursor)
         return self._scope
+
+    def check_assertions(self) -> Scope:
+        """Refuse unless the target's claims match what this connection is.
+
+        UC-1 §5's pre-flight step 2, wired to the target this session was opened
+        for. Returns the scope it checked against, because every caller wants it
+        next and probing is cached anyway -- a caller that had to call
+        :meth:`scope` again would look like it was asking twice.
+
+        Read-write is **not** checked here. `creds check` reads and must keep
+        working against a standby, so
+        :func:`~sopuli.driver.oracle.capabilities.require_read_write` is the
+        mutating commands' call to make.
+        """
+        scope = self.scope()
+        assert_scope(scope, self.target.target.oracle, target=self.target.name)
+        return scope
 
     def close(self) -> None:
         """Let the connection go. Safe twice, because a caller unwinding from

@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.model import TargetOracle
 from sopuli.driver.oracle.capabilities import (
     ABSENT_CODES,
     CONTAINER_NAME,
@@ -20,10 +21,14 @@ from sopuli.driver.oracle.capabilities import (
     PROBES,
     STRUCTURAL,
     ProbeError,
+    ReadOnlyTargetError,
+    ScopeAssertionError,
+    assert_scope,
     container_of,
     observe,
     probe,
     read,
+    require_read_write,
     scope_type,
 )
 from sopuli.driver.protocol import (
@@ -31,7 +36,10 @@ from sopuli.driver.protocol import (
     COMMON_USERS,
     OFFLINE_VERIFY,
     PASSWORD_ROLLOVER,
+    UNKNOWN,
+    Scope,
 )
+from sopuli.exit_codes import ExitCode
 
 
 class _Cursor:
@@ -300,3 +308,124 @@ def test_an_unreadable_v_dollar_database_leaves_the_facts_unknown() -> None:
     assert found.type == "pdb"
     assert found.db_unique_name is None
     assert found.read_write is None
+
+
+# -------------------------------------------------------------- assertions ---
+
+
+def _declared(scope: str | None = None, container: str | None = None) -> TargetOracle:
+    return TargetOracle(scope=scope, container=container)
+
+
+def test_a_target_that_asserts_nothing_is_not_incompletely_configured() -> None:
+    """`01-configuration.md` §3a: both keys are optional, because an assertion
+    nobody makes is not a gap. The driver reports what it found."""
+    found = Scope(type="pdb", container="FREEPDB1")
+
+    assert_scope(found, None, target="t")
+    assert_scope(found, _declared(), target="t")
+
+
+def test_a_matching_assertion_passes() -> None:
+    found = Scope(type="pdb", container="FREEPDB1")
+
+    assert_scope(found, _declared(scope="pdb", container="FREEPDB1"), target="t")
+
+
+def test_a_mismatched_scope_names_both_values() -> None:
+    """The whole point of the message. Naming only the declared half sends the
+    reader to the file to look up what they already wrote; the half they cannot
+    see is the one the connection found."""
+    with pytest.raises(ScopeAssertionError) as raised:
+        assert_scope(Scope(type="cdb_root"), _declared(scope="pdb"), target="orders-pdb")
+
+    message = str(raised.value)
+    assert "pdb" in message
+    assert "cdb_root" in message
+    assert "orders-pdb" in message
+
+
+def test_a_mismatched_container_names_both_values() -> None:
+    """UC-1 §5 step 2's reason for existing: a `dsn:` edit that silently
+    repointed a target at a different container."""
+    found = Scope(type="pdb", container="BILLING")
+
+    with pytest.raises(ScopeAssertionError) as raised:
+        assert_scope(found, _declared(container="ORDERS"), target="orders-pdb")
+
+    message = str(raised.value)
+    assert "ORDERS" in message
+    assert "BILLING" in message
+
+
+def test_a_container_is_compared_case_insensitively() -> None:
+    """Oracle upper-cases an unquoted identifier, so `freepdb1` in a file and
+    `FREEPDB1` from `con_name` are one container — the same rule
+    `Identifier.is_common` already applies to `C##`. A check that said otherwise
+    would fail on a correct estate every time."""
+    found = Scope(type="pdb", container="FREEPDB1")
+
+    assert_scope(found, _declared(container="freepdb1"), target="t")
+
+
+def test_a_container_declared_against_a_non_cdb_is_a_mismatch() -> None:
+    """There is no container to name, which is a claim that cannot hold rather
+    than one that happens not to match."""
+    with pytest.raises(ScopeAssertionError) as raised:
+        assert_scope(Scope(type="non_cdb"), _declared(container="ORDERS"), target="t")
+
+    assert "no containers" in str(raised.value)
+
+
+def test_an_unresolved_scope_does_not_satisfy_an_assertion() -> None:
+    """A claim that could not be checked is not a claim that passed.
+
+    `unknown` is a scope the driver may report and a file may never claim, so
+    the two can never match — and treating "we could not tell" as agreement
+    would be #195's mistake in a new place.
+    """
+    with pytest.raises(ScopeAssertionError) as raised:
+        assert_scope(Scope(type=UNKNOWN), _declared(scope="pdb"), target="t")
+
+    assert "could not determine" in str(raised.value)
+
+
+def test_the_assertion_check_carries_the_config_exit_code() -> None:
+    """Exit 9 means *fix your config file*, which is the operator's next action
+    whichever half moved."""
+    with pytest.raises(ScopeAssertionError) as raised:
+        assert_scope(Scope(type="cdb_root"), _declared(scope="pdb"), target="t")
+
+    assert raised.value.exit_code == ExitCode.CONFIG_INVALID
+    assert raised.value.category == "config"
+
+
+# ------------------------------------------------------------- read / write ---
+
+
+def test_a_standby_is_refused_before_anything_is_written() -> None:
+    """P1 wants this up front rather than halfway through a statement."""
+    with pytest.raises(ReadOnlyTargetError) as raised:
+        require_read_write(
+            Scope(type="pdb", open_mode="READ ONLY", read_write=False), target="orders-dr"
+        )
+
+    assert "orders-dr" in str(raised.value)
+    assert "READ ONLY" in str(raised.value)
+
+
+def test_a_read_write_target_is_not_refused() -> None:
+    require_read_write(Scope(type="pdb", open_mode="READ WRITE", read_write=True), target="t")
+
+
+def test_an_unknown_open_mode_is_not_treated_as_a_standby() -> None:
+    """`V$DATABASE` is in the documented grant set, but a half-installed account
+    cannot read it — and turning a missing grant into "this is a standby" is a
+    worse diagnosis than the one the missing grant already produces."""
+    require_read_write(Scope(type="pdb"), target="t")
+
+
+def test_the_standby_refusal_is_not_folded_into_the_assertion_check() -> None:
+    """`creds check` reads and must keep working against a standby, so refusing
+    one is the mutating commands' call rather than a property of connecting."""
+    assert_scope(Scope(type="pdb", read_write=False), _declared(scope="pdb"), target="t")

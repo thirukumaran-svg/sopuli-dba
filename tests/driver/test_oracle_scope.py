@@ -20,8 +20,8 @@ from typing import Any
 import pytest
 
 from oracle_harness import Environment
-from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
-from sopuli.driver.oracle.capabilities import PROBES, ProbeError, read
+from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target, TargetOracle
+from sopuli.driver.oracle.capabilities import PROBES, ProbeError, ScopeAssertionError, read
 from sopuli.driver.protocol import SCOPE_TYPES, UNKNOWN, Credential
 from sopuli.secrets import Secret
 
@@ -37,7 +37,7 @@ def session_module() -> Any:
     return pytest.importorskip("sopuli.driver.oracle.session")
 
 
-def _session(session_module: Any, dsn: str) -> Any:
+def _session(session_module: Any, dsn: str, oracle: TargetOracle | None = None) -> Any:
     driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
     return driver.connect(
         ExpandedTarget(
@@ -46,6 +46,7 @@ def _session(session_module: Any, dsn: str) -> Any:
                 type="oracle",
                 dsn=dsn,
                 admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
+                oracle=oracle or TargetOracle(),
             ),
             index=0,
         ),
@@ -118,3 +119,50 @@ def test_the_scope_is_probed_once_and_cached(live_oracle: Environment, session_m
     """
     with _session(session_module, live_oracle.dsn) as session:
         assert session.scope() is session.scope()
+
+
+# -------------------------------------------------------------- assertions ---
+
+
+def test_a_wrong_container_is_caught_against_a_real_database(
+    live_oracle: Environment, session_module: Any
+) -> None:
+    """#177's assertion check, on the estate mistake it exists for.
+
+    A `dsn:` edit that repointed a target at a different container leaves a file
+    that loads perfectly and connects perfectly, and nothing but the connection
+    itself can notice. The declared name here is deliberately one no container in
+    the lane can be called.
+    """
+    declared = TargetOracle(container="ACME_NO_SUCH_CONTAINER")
+
+    with _session(session_module, live_oracle.dsn, declared) as session:
+        with pytest.raises(ScopeAssertionError) as raised:
+            session.check_assertions()
+
+        message = str(raised.value)
+        assert "ACME_NO_SUCH_CONTAINER" in message, "the declared value has to be named"
+        found = session.scope().container
+        assert found is not None
+        assert found in message, "and so does the one the connection actually found"
+
+
+def test_the_container_the_database_reports_satisfies_its_own_assertion(
+    live_oracle: Environment, session_module: Any
+) -> None:
+    """The other direction, and the one that would catch a check that refuses
+    everything: feeding back what the driver just found must pass."""
+    with _session(session_module, live_oracle.dsn) as session:
+        found = session.scope()
+        declared = TargetOracle(scope=found.type, container=found.container)
+
+    with _session(session_module, live_oracle.dsn, declared) as session:
+        assert session.check_assertions() == found
+
+
+def test_a_target_asserting_nothing_passes_against_a_real_database(
+    live_oracle: Environment, session_module: Any
+) -> None:
+    """A target that makes no claim is not incompletely configured."""
+    with _session(session_module, live_oracle.dsn) as session:
+        assert session.check_assertions().type in SCOPE_TYPES
