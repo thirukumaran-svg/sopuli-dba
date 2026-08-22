@@ -151,6 +151,24 @@ convenience choice — it reaches the `DBA_*` and `V$` views but **not** base
 tables such as `SYS.USER$`. The explicit list is the documented default because
 it makes a privilege review trivial; the role is fine if your site prefers it.
 
+**Run these as `SYS`, not as `SYSTEM`.** Measured on 26ai 23.26.2.0.0: every
+`GRANT SELECT ON SYS.…` above fails with `ORA-01031: insufficient privileges`
+when the granting session is `SYSTEM`, while the `CREATE USER` and the two system
+privileges succeed. The result is a service account that connects, can rotate,
+and reads nothing — whose capability probes then report absent for perfectly
+correct reasons, which looks exactly like a broken probe. Worth stating because
+nothing in the statements themselves says who has to issue them.
+
+**A role-granted `ALTER USER` reads as absent.** `common_users` is probed through
+`USER_SYS_PRIVS`, which shows **direct** grants only — so an account holding
+`ALTER USER` through a role (as `SYSTEM` does) reports the capability absent and
+is refused at plan time. The grant above is direct, so a correctly installed
+service account is never that case. The alternatives were measured and are worse:
+`DBA_SYS_PRIVS` is not readable under this grant set at all, and `SESSION_PRIVS`
+sees role-derived privileges but has no `COMMON` column, so it calls a *local*
+`ALTER USER` a pass — which would over-claim, and an over-claimed capability
+fails halfway through a rotation instead of before it (#195).
+
 ### CDB with common users — one grant covers every container
 
 This is where the direct model pays off most obviously:

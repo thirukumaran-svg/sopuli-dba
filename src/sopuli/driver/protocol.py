@@ -78,10 +78,16 @@ from sopuli.secrets import Secret
 # are already strings: the run document's `scope.capabilities`, and a test that
 # declares what it needs (`04-testing.md` §3). A name is the contract.
 
-#: Target can be a CDB root / PDB / ALL containers. Oracle: 12.1+ multitenant.
-CONTAINER_SCOPE = "container_scope"
-
-#: ``C##``-prefixed users created with ``CONTAINER=ALL``. Oracle: 12.1+ CDB.
+#: The session holds ``ALTER USER`` **granted commonly**, which is what altering
+#: a ``C##`` user with ``CONTAINER=ALL`` requires.
+#:
+#: A privilege, not a place. Where the session is standing is :attr:`Scope.type`,
+#: and keeping the two apart is #195: the pair used to share one probe on the
+#: reasoning that a common user is a thing which exists only in a CDB, and the
+#: first real measurement showed the shared question was not answering either of
+#: them. Oracle distinguishes the two failures itself -- ``ORA-01031`` for a
+#: session that lacks the common grant, ``ORA-65040`` for one that holds it and
+#: is in a PDB.
 COMMON_USERS = "common_users"
 
 #: Two passwords valid during a grace window. Oracle: 19.12+ / 21c+.
@@ -113,7 +119,6 @@ ACCOUNT_LOCK_STATE = "account_lock_state"
 #: document and not to the code -- or the reverse -- fails rather than drifts.
 CAPABILITIES = frozenset(
     {
-        CONTAINER_SCOPE,
         COMMON_USERS,
         PASSWORD_ROLLOVER,
         OFFLINE_VERIFY,

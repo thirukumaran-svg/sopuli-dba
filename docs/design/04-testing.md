@@ -137,10 +137,9 @@ Report the resolved matrix at the end of a run, so "green" is never ambiguous:
 ```
 capabilities exercised
                        23ai Free  21c XE  18c XE  11g XE  OCI 19c
-container_scope            ✓         ✓       ✓       –        ✓
-common_users               ✓         ✓       ✓       –        ✓
+common_users               –         –       –       –        ✓
 password_rollover          ✓         –       –       –        ✓
-offline_verify             ✓         ✓       ✓       ✓        ✓
+offline_verify             –         ✓       ✓       ✓        ✓
 password_reuse_policy      ✓         ✓       ✓       ✓        ✓
 
 23 tests skipped (capability absent), 0 skipped (environment unavailable)
@@ -148,6 +147,16 @@ password_reuse_policy      ✓         ✓       ✓       ✓        ✓
 
 The second skip count is the one to watch: capability skips are correct, missing
 environments are a coverage gap.
+
+**Two of those dashes are the connecting account, not the release**, and they are
+worth naming because a dash that looks wrong is what #195 turned out to be.
+`common_users` asks whether the session holds `ALTER USER` *granted commonly*,
+and the lane connects as `SYSTEM`, which holds it through a role — so
+`USER_SYS_PRIVS` reads nothing and the capability is absent. `offline_verify`
+needs `SELECT ON SYS.USER$`, which #86 made an optional grant and which `SYSTEM`
+does not hold on 23ai Free either. Both were measured, both are correct, and
+neither is fixed by editing the probe: they are fixed by connecting as an account
+the install script has granted.
 
 Implemented in `tests/oracle_harness.py` and the tier-1 fixtures in
 `tests/conftest.py` (#174). Three things about it are decisions rather than

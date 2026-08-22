@@ -39,6 +39,7 @@ from typing import Any
 import oracledb
 
 from sopuli.config.model import ExpandedTarget
+from sopuli.driver.oracle.capabilities import observe
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
     NO_CLIENT,
@@ -47,7 +48,7 @@ from sopuli.driver.oracle.client import (
     missing_client,
 )
 from sopuli.driver.oracle.errors import from_error
-from sopuli.driver.protocol import Credential
+from sopuli.driver.protocol import Credential, Scope
 
 #: Guards :func:`initialise`. ``init_oracle_client`` mutates process-global
 #: state, and nothing in this codebase promises a connection is only ever opened
@@ -115,12 +116,56 @@ class OracleSession:
     claiming otherwise and returning nothing.
 
     What it has now is what connecting *is*: something open, something that
-    knows which target it reached, and something that closes.
+    knows which target it reached, something that can say what it found, and
+    something that closes.
     """
 
     connection: Any
     target: ExpandedTarget
     correlation_id: str
+    #: Invariant 3's cache. Private, and not a constructor argument: a scope
+    #: handed in from outside would be a scope that came from somewhere other
+    #: than this connection, which is the single thing the invariant forbids.
+    _scope: Scope | None = field(default=None, init=False, repr=False)
+
+    def scope(self) -> Scope:
+        """What this connection is, and what it can do (#177).
+
+        Probed on first call and **cached for the life of the session**
+        (invariant 3). Twenty-one PDBs answer differently, so the cache is per
+        session and never per driver, and the answer is never derived from a
+        version in a file.
+
+        **On first call, not during** :meth:`OracleDriver.connect`, and #177's
+        "on connect" means *from the connection rather than from a config file*
+        rather than *eagerly*. Three reasons, in ascending order of how much they
+        would cost to get wrong:
+
+        * ``connect`` promises what connecting is. Probing inside it would make
+          an ``ORA-`` from a dictionary read arrive as a connection failure,
+          which sends the reader to the listener and the credential for a
+          problem that is neither.
+        * The probe is several round trips, and not every session wants them.
+        * **It would pre-answer an open decision.** #180 has yet to decide
+          whether verification opens its own connection or reuses the admin
+          session; a session opened as the account *being verified* holds none of
+          §2's grants, so probing every connection would make one of those two
+          options quietly unworkable. Laziness leaves the choice where it belongs.
+
+        What P1 does require is that a read-only standby is refused **up front**
+        rather than mid-statement. That is a property of when the *plan* asks —
+        which it does, before anything mutates — and not of when the session
+        volunteers.
+
+        The probe raises rather than degrades. A capability that is absent is an
+        ordinary result and comes back as a smaller set; a probe that could not
+        be *answered* is :class:`~sopuli.driver.oracle.capabilities.ProbeError`,
+        because #195 is what a run looks like when those two share a word.
+        """
+        if self._scope is None:
+            with self.connection.cursor() as cursor:
+                self._scope = observe(cursor)
+        return self._scope
 
     def close(self) -> None:
         """Let the connection go. Safe twice, because a caller unwinding from

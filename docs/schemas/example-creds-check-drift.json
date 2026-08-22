@@ -75,7 +75,7 @@
         "privilege_model": "direct",
         "over_granted": [],
         "offline_verify_available": true,
-        "capabilities": ["container_scope", "password_rollover", "offline_verify", "expire_password"]
+        "capabilities": ["password_rollover", "offline_verify", "expire_password"]
       },
       "secret": { "vault": "hcv-prod", "path": "apps/orders/prod/db/ORDERS_APP", "field": "password", "version": 7, "stage": "current", "updated_at": "2026-07-23T09:12:33Z" },
       "state": "IN_SYNC",
@@ -111,7 +111,7 @@
         "privilege_model": "direct",
         "over_granted": ["SELECT ANY DICTIONARY"],
         "offline_verify_available": true,
-        "capabilities": ["container_scope", "offline_verify", "expire_password"]
+        "capabilities": ["offline_verify", "expire_password"]
       },
       "secret": { "vault": "hcv-prod", "path": "apps/orders/prod/db/ORDERS_APP", "field": "password", "version": 7, "stage": "current", "updated_at": "2026-07-23T09:12:33Z" },
       "state": "DRIFT",

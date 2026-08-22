@@ -92,8 +92,15 @@ def test_the_capability_table_was_actually_found() -> None:
 
     Without this, a reformatted document turns the test below into a comparison
     of two empty sets -- green, and checking nothing.
+
+    A named row rather than a count. The count was ``>= 8`` and had to be edited
+    the first time the vocabulary shrank (#195 removed ``container_scope``),
+    which makes the guard something a reader has to keep in step with the thing
+    it guards -- and a guard that gets adjusted to fit is not guarding. A row
+    that must be in any table worth calling P1's does the same job and needs no
+    maintenance.
     """
-    assert len(_documented_capabilities()) >= 8
+    assert "password_rollover" in _documented_capabilities()
 
 
 def test_capabilities_are_exactly_what_p1_documents() -> None:

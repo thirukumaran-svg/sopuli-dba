@@ -348,7 +348,7 @@ def oracle_target() -> Iterator[Environment]:
         cursor = connection.cursor()
         row = cursor.execute("select version_full from v$instance").fetchone()
         environment.version = row[0] if row else None
-        environment.capabilities = probe(cursor)
+        environment.capabilities = set(probe(cursor))
     except Exception as exc:  # noqa: BLE001 -- any failure means "not available"
         environment.unreachable_reason = _why(exc)
 

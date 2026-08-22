@@ -107,8 +107,7 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 
 | Capability | Meaning | Oracle |
 |---|---|---|
-| `container_scope` | Target can be a CDB root / PDB / ALL containers | 12.1+ multitenant only |
-| `common_users` | `C##`-prefixed users created with `CONTAINER=ALL` | 12.1+ CDB |
+| `common_users` | Session holds `ALTER USER` granted commonly, which is what altering a `C##` user with `CONTAINER=ALL` requires | 12.1+ CDB, and the grant made with `CONTAINER=ALL` |
 | `password_rollover` | Two passwords valid during a grace window | 19.12+ / 21c+ |
 | `offline_verify` | Password verifiable against a stored hash without a login | needs `SYS.USER$` read |
 | `profile_management` | Tool can read/alter password profile parameters | yes |
@@ -118,6 +117,24 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 
 A command that needs a capability the target lacks must fail with a distinct exit
 code and a message naming the capability and the target — never a generic error.
+
+**A capability is what the session may *do*; where it is standing is
+`scope.type`.** These were briefly one idea — `container_scope` sat in this table
+until #195 — and separating them is not tidying. A root session that lacks the
+common grant and a PDB session that holds it are different failures, Oracle
+returns different codes for them (`ORA-01031` and `ORA-65040`), and only one of
+the two is fixed by granting anything. `scope.type` already distinguishes
+`non_cdb` / `cdb_root` / `pdb`, observed on the same connection at the same
+moment, so a capability restating it would be one fact with a second place to
+disagree — the reason `offline_verify_available` is `supports(offline_verify)`
+and not a field of its own.
+
+**A capability that cannot be *determined* is not a capability that is absent.**
+A probe answers no when the view, the column or the grant is missing; anything
+else means the tool asked a question it should not have asked, and it refuses
+rather than reporting a plausible negative. #195 is the case: a probe invalid on
+every release read as a clean `--` for a full release cycle, because any failure
+counted as an answer.
 
 ### Oracle variants that must all work
 

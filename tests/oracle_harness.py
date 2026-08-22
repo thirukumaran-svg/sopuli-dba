@@ -4,26 +4,22 @@
 runs, and the difference that matters is not the code — it is which list the
 probes are keyed on.
 
-**The probes cover P1's capability vocabulary, not an ad-hoc list.** The sketch
-asked about `oracle_maintained_flag`, `unified_audit` and `schema_privileges`,
-none of which is a capability any driver reports; it had no probe for three that
-are. A harness keyed on its own list can never do the job §3 claims for it:
+**The harness no longer owns the questions; it imports them** (#177, #195). The
+sketch kept its own list and the first version of this file kept a second copy of
+the driver's, which is one probe with a spare place to disagree. It disagreed:
+`container_scope` and `common_users` shared a question that was invalid on every
+release, and because the harness answered it from its own copy there was nothing
+to compare against. §3's claim only holds while the two ask the same thing:
 
     The test suite validates the capability model itself. If a driver claims
     `password_rollover` on 18c XE, the rollover test runs and fails there —
     which is the bug. Version-keyed skips would have hidden it.
 
-That only holds if the harness and the driver are answering the same question,
-so :data:`PROBES` and :data:`STRUCTURAL` are asserted against
-:data:`~sopuli.driver.protocol.CAPABILITIES` and a new capability has to choose a
-side deliberately.
-
-**Not everything is a query, and pretending otherwise would be worse.** Two
-capabilities are properties of the product rather than of the instance: every
-supported Oracle can expire a password and can lock an account. Writing
-`select 1 from dual` for those would look like a probe and measure nothing —
-worse than saying so, because a reader would believe it. They live in
-:data:`STRUCTURAL` with the reason attached.
+So :data:`PROBES`, :data:`STRUCTURAL` and :func:`probe` now belong to
+:mod:`sopuli.driver.oracle.capabilities`, and are re-exported here because that
+is where the fixtures reach for them. P1's vocabulary is asserted against them in
+`tests/driver/test_capabilities.py`. What remains the harness's own work is which
+environment, what to skip, and how to report it.
 
 **Nothing here imports ``oracledb``.** The pure parts — what to ask, how to read
 an answer, what to skip, how to report — are testable in tier 0, and only the
@@ -32,58 +28,25 @@ fixture in `conftest.py` opens a socket.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
-from sopuli.driver.protocol import (
-    ACCOUNT_LOCK_STATE,
-    CAPABILITIES,
-    COMMON_USERS,
-    CONTAINER_SCOPE,
-    EXPIRE_PASSWORD,
-    OFFLINE_VERIFY,
-    PASSWORD_REUSE_POLICY,
-    PASSWORD_ROLLOVER,
-    PROFILE_MANAGEMENT,
-)
+from sopuli.driver.oracle.capabilities import PROBES, STRUCTURAL, probe
+from sopuli.driver.protocol import CAPABILITIES
 
-#: One question per capability, each answering with a truthy first column. A
-#: query that raises means *absent*: an unsupported feature usually shows up as a
-#: missing view or column, and that refusal is itself the answer.
-PROBES: Mapping[str, str] = {
-    # Multitenant at all. `common_users` asks the same question because the
-    # answer is the same fact -- a common user is a thing that exists only in a
-    # CDB -- and two probes agreeing by construction would be one probe with a
-    # second chance to disagree.
-    CONTAINER_SCOPE: "select case when sys_context('userenv','cdb') = 'YES' "
-    "then 1 else 0 end from dual",
-    COMMON_USERS: "select case when sys_context('userenv','cdb') = 'YES' "
-    "then 1 else 0 end from dual",
-    # Gradual password rollover: 19.12+ / 21c+. The profile resource simply does
-    # not exist below that, so its presence is the test -- and this is the
-    # capability with no middle tier, since the buildable 19.3 base lacks it
-    # (`04-testing.md` §2).
-    PASSWORD_ROLLOVER: "select count(*) from dba_profiles "
-    "where resource_name = 'PASSWORD_ROLLOVER_TIME'",
-    # The column exists on every supported version; the *grant* is what is
-    # optional (#86), so the probe is the read itself rather than the column's
-    # existence.
-    OFFLINE_VERIFY: "select count(*) from sys.user$ where rownum = 1",
-    PROFILE_MANAGEMENT: "select count(*) from dba_profiles where rownum = 1",
-    PASSWORD_REUSE_POLICY: "select count(*) from dba_profiles "
-    "where resource_name = 'PASSWORD_REUSE_MAX'",
-}
-
-#: Capabilities with nothing to ask, and why. Every supported Oracle has these:
-#: they are facts about the product, not about the instance in front of us.
-#:
-#: Kept as data rather than quietly added to whatever a probe returns, so the
-#: report can distinguish "we asked and it said yes" from "there was nothing to
-#: ask". A capability that is *assumed* is worth being able to see.
-STRUCTURAL: Mapping[str, str] = {
-    EXPIRE_PASSWORD: "ALTER USER ... PASSWORD EXPIRE exists on every supported release",
-    ACCOUNT_LOCK_STATE: "ACCOUNT_STATUS and ALTER USER ... ACCOUNT LOCK likewise",
-}
+#: Re-exported deliberately. The questions belong to the driver (#177, #195) and
+#: the fixtures reach for them here, so this names the intent rather than leaving
+#: three imports that look unused.
+__all__ = [
+    "PROBES",
+    "STRUCTURAL",
+    "Environment",
+    "below",
+    "decide_skip",
+    "dsn_host",
+    "probe",
+    "render_matrix",
+]
 
 
 @dataclass
@@ -155,26 +118,6 @@ def dsn_host(dsn: str) -> str:
     """
     remainder = dsn.split("://", 1)[-1].lstrip("/")
     return remainder.split("/")[0].rsplit(":", 1)[0]
-
-
-def read(cursor: object, sql: str) -> bool:
-    """Run one probe. Any failure means the capability is absent.
-
-    A missing view, a missing column, a privilege the service account was never
-    granted: all of them arrive as an exception and all of them mean the same
-    thing to a caller — *you cannot do this here*.
-    """
-    try:
-        row = cursor.execute(sql).fetchone()  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001 -- see the docstring: any failure is "no"
-        return False
-    return bool(row and row[0])
-
-
-def probe(cursor: object) -> set[str]:
-    """Every capability this connection reports, asked one question at a time."""
-    found = {name for name, sql in PROBES.items() if read(cursor, sql)}
-    return found | set(STRUCTURAL)
 
 
 def decide_skip(

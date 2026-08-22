@@ -1,9 +1,14 @@
 """The harness's own logic, which is tier 0 because most of it is not I/O.
 
-What to ask, how to read an answer, what to skip and how to report are decisions
-that need no database — and they are the parts that would otherwise only be
-exercised on a machine with containers running, which is the machine least
-likely to notice they were wrong.
+Which environment, what to skip and how to report are decisions that need no
+database — and they are the parts that would otherwise only be exercised on a
+machine with containers running, which is the machine least likely to notice they
+were wrong.
+
+**What to ask is no longer here.** The probe set and the reading of an answer
+belong to the driver and are tested beside it in `test_capabilities.py`; the
+harness imports them rather than keeping a copy, which is #195's finding turned
+into an arrangement where the two cannot disagree again.
 """
 
 from __future__ import annotations
@@ -13,121 +18,19 @@ from typing import Any
 import pytest
 
 from oracle_harness import (
-    PROBES,
-    STRUCTURAL,
     Environment,
     below,
     decide_skip,
     dsn_host,
-    probe,
-    read,
     render_matrix,
 )
-from sopuli.driver.protocol import (
-    CAPABILITIES,
-    OFFLINE_VERIFY,
-    PASSWORD_ROLLOVER,
-)
-
-
-class _Cursor:
-    """A cursor that answers, or refuses, per statement."""
-
-    def __init__(self, answers: dict[str, Any]) -> None:
-        self.answers = answers
-        self.asked: list[str] = []
-
-    def execute(self, sql: str) -> _Cursor:
-        self.asked.append(sql)
-        self.sql = sql
-        return self
-
-    def fetchone(self) -> tuple[Any, ...] | None:
-        answer = self.answers.get(self.sql, 0)
-        if isinstance(answer, Exception):
-            raise answer
-        return (answer,)
+from sopuli.driver.protocol import CAPABILITIES, PASSWORD_ROLLOVER
 
 
 def environment(**kwargs: Any) -> Environment:
     return Environment(
         name=kwargs.pop("name", "23ai Free"), dsn="localhost:1521/FREEPDB1", **kwargs
     )
-
-
-# ------------------------------------------------------------ the vocabulary ---
-
-
-def test_every_capability_is_either_probed_or_declared_structural() -> None:
-    """The assertion the whole harness rests on.
-
-    §3's claim is that the suite validates the capability model rather than
-    duplicating its assumptions, and that only holds if the harness asks about
-    the same list the driver reports. The sketch in `test/capabilities.py` did
-    not: it probed three things no driver reports and missed three that are
-    capabilities. A new capability now has to choose a side deliberately.
-    """
-    assert set(PROBES) | set(STRUCTURAL) == CAPABILITIES
-
-
-def test_nothing_is_both_probed_and_assumed() -> None:
-    """A capability in both lists would be asked about and then granted anyway,
-    which is a probe whose answer cannot matter."""
-    assert not set(PROBES) & set(STRUCTURAL)
-
-
-def test_every_structural_capability_says_why_it_is_not_probed() -> None:
-    """Kept as data with a reason attached, so that "we assumed this" is visible
-    rather than indistinguishable from "we measured it"."""
-    assert all(reason for reason in STRUCTURAL.values())
-
-
-# ------------------------------------------------------------- reading answers ---
-
-
-def test_a_probe_that_raises_means_absent() -> None:
-    """A missing view, a missing column, a grant that was never made: all arrive
-    as an exception and all mean the same thing to a caller."""
-    cursor = _Cursor({"select 1": RuntimeError("ORA-00942: table or view does not exist")})
-
-    assert not read(cursor, "select 1")
-
-
-def test_a_probe_answering_zero_means_absent() -> None:
-    assert not read(_Cursor({"select 1": 0}), "select 1")
-    assert read(_Cursor({"select 1": 1}), "select 1")
-
-
-def test_probing_grants_the_structural_capabilities_without_asking() -> None:
-    cursor = _Cursor(dict.fromkeys(PROBES.values(), 0))
-    found = probe(cursor)
-
-    assert found == set(STRUCTURAL)
-    assert len(cursor.asked) == len(PROBES)
-
-
-def test_two_capabilities_may_share_one_question() -> None:
-    """`container_scope` and `common_users` ask the same thing because the
-    answer is the same fact: a common user is a thing that exists only in a CDB.
-
-    Two separately-worded probes would agree by construction and give a future
-    editor two places to make them disagree. Asserted rather than left to the
-    comment, since the count above would otherwise look like an off-by-one.
-    """
-    from sopuli.driver.protocol import COMMON_USERS, CONTAINER_SCOPE
-
-    assert PROBES[CONTAINER_SCOPE] == PROBES[COMMON_USERS]
-    assert len(set(PROBES.values())) == len(PROBES) - 1
-
-
-def test_an_ungranted_sys_user_dollar_reads_as_no_offline_verify() -> None:
-    """#86 made the grant optional, so its absence is ordinary rather than an
-    error -- and the `LCOUNT` guard being unavailable is exactly what `check`
-    has to report plainly."""
-    answers: dict[str, Any] = dict.fromkeys(PROBES.values(), 1)
-    answers[PROBES[OFFLINE_VERIFY]] = RuntimeError("ORA-00942")
-
-    assert OFFLINE_VERIFY not in probe(_Cursor(answers))
 
 
 # ------------------------------------------------------------------ skipping ---

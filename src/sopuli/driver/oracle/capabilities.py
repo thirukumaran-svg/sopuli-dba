@@ -1,0 +1,299 @@
+"""What a connection turned out to be, and what it can do (#177).
+
+Invariant 3, made real: **ask the database, cache per session, branch on the
+capability.** Nothing here reads a version from a file, and nothing here is
+reachable from a command that has not connected.
+
+Two things about this module are decisions rather than mechanics, and both were
+bought with a measurement (#195).
+
+**A probe that fails is not automatically a "no".** The first version of this
+idea lived in ``tests/oracle_harness.py`` and read *any* exception as absent, on
+the reasonable-sounding grounds that a missing view, a missing column and a
+missing grant all mean the same thing to a caller. They do. What that rule also
+swallowed was ``ORA-02003: invalid USERENV attribute`` -- a probe asking a
+question Oracle does not have -- which then reported ``container_scope`` absent
+on every database the tool ever touched, including the ones where it was plainly
+present, and looked exactly like a measurement while doing it. So the negative
+answers are enumerated (:data:`ABSENT_CODES`) and everything else is
+:class:`ProbeError`. The tool refuses rather than guesses, which is CLAUDE.md's
+rule, and the failure that hid for a release cycle would now arrive on the first
+run.
+
+**One question per capability, several round trips.** #177 asks whether the probe
+set should be one statement or many. Many, and not reluctantly: each answer is
+attributable to the question that produced it, a probe that fails names itself,
+and the alternative is a single ``select`` whose seventh column silently becomes
+``null`` on the release nobody tested. A session opens once and answers eight
+short questions against ``dual`` and two dictionary views; the cost is not
+measurable next to the connection itself.
+
+**Nothing here imports ``oracledb``.** The SQL, the reading of an answer and the
+mapping onto a :class:`~sopuli.driver.protocol.Scope` are pure, so they are
+tier 0 and the tier-1 lane exercises the same code it tests. It is also what lets
+``tests/oracle_harness.py`` import :data:`PROBES` rather than keep a second copy:
+§3's claim that the suite validates the capability model only holds while the
+harness and the driver are asking the same questions, and #195 is what it looks
+like when they are not.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+from sopuli.driver.oracle.errors import from_error
+from sopuli.driver.protocol import (
+    ACCOUNT_LOCK_STATE,
+    CAPABILITIES,
+    COMMON_USERS,
+    EXPIRE_PASSWORD,
+    OFFLINE_VERIFY,
+    PASSWORD_REUSE_POLICY,
+    PASSWORD_ROLLOVER,
+    PROFILE_MANAGEMENT,
+    UNKNOWN,
+    DriverError,
+    Scope,
+)
+
+
+class Cursor(Protocol):
+    """The one shape this module needs from a database cursor.
+
+    Structural, so a tier-0 test hands it a fake and the tier-1 lane hands it
+    ``oracledb``'s, and neither has to know about the other.
+    """
+
+    def execute(self, statement: str, /) -> Any: ...
+
+    def fetchone(self) -> Any: ...
+
+
+class ProbeError(DriverError):
+    """A probe failed for a reason that is not an answer.
+
+    Distinct from a capability being absent, which is an ordinary outcome and
+    not an exception at all. This is *the tool asked something it should not
+    have asked*, or *the database broke while answering* -- and #195 is the
+    argument for the two never sharing a word again.
+    """
+
+    category = "database"
+
+
+# ------------------------------------------------------------------ probes ---
+
+#: Codes that mean **no**, and nothing else does.
+#:
+#: * ``ORA-00942`` -- the view or table is not there, or the grant is not there.
+#:   Indistinguishable from Oracle and identical in consequence.
+#: * ``ORA-00904`` -- the column is not there, which is how a feature added in a
+#:   later release announces itself to a query written for it.
+#: * ``ORA-01031`` -- the privilege is not held. `offline_verify` is the case
+#:   this exists for: #86 made ``SELECT ON SYS.USER$`` an optional grant, so its
+#:   absence is the ordinary configuration rather than a fault.
+#: * ``ORA-41900`` -- the ``READ`` privilege is not held, which is what a modern
+#:   release says instead of ``ORA-00942`` when the asker is privileged enough to
+#:   be told the object exists.
+#:
+#: **The last one was measured, not reasoned about** (26ai 23.26.2.0.0). The same
+#: ungranted ``SYS.USER$`` answers ``ORA-41900`` to ``SYSTEM`` and ``ORA-00942``
+#: to an account with no privileges at all -- Oracle declines to admit the table
+#: exists to the second one. Both mean the grant is absent, and only one of them
+#: is the code anybody would have predicted. Which is the argument for this list
+#: being a list of things somebody ran rather than a list of things that sound
+#: right: a code missing from here does not degrade, it raises.
+ABSENT_CODES = frozenset({"ORA-00942", "ORA-00904", "ORA-01031", "ORA-41900"})
+
+#: One question per capability, each answering with a truthy first column.
+#:
+#: ``common_users`` is the one worth reading twice, because it asks about a
+#: **privilege** and not about a place. Measured on 26ai (#195): an account
+#: holding ``ALTER USER`` commonly reads 1 here and successfully alters a common
+#: user from the root; an account holding the identical privilege *locally* reads
+#: 0 and gets ``ORA-01031`` for the same statement. Where the session is standing
+#: is :attr:`~sopuli.driver.protocol.Scope.type`'s answer, not this one -- a root
+#: session that lacks the grant and a PDB session that holds it are different
+#: failures, and they come back from Oracle as different codes.
+#:
+#: ``USER_SYS_PRIVS`` rather than ``DBA_SYS_PRIVS``, which the documented grant
+#: set cannot read (``ORA-00942``), and rather than ``SESSION_PRIVS``, which sees
+#: role-derived privileges but has no ``COMMON`` column and so calls a local
+#: grant a pass. Both alternatives were measured before this one was chosen.
+PROBES: dict[str, str] = {
+    COMMON_USERS: (
+        "select count(*) from user_sys_privs where privilege = 'ALTER USER' and common = 'YES'"
+    ),
+    PASSWORD_ROLLOVER: (
+        "select count(*) from dba_profiles where resource_name = 'PASSWORD_ROLLOVER_TIME'"
+    ),
+    OFFLINE_VERIFY: "select count(*) from sys.user$ where rownum = 1",
+    PROFILE_MANAGEMENT: "select count(*) from dba_profiles where rownum = 1",
+    PASSWORD_REUSE_POLICY: (
+        "select count(*) from dba_profiles where resource_name = 'PASSWORD_REUSE_MAX'"
+    ),
+}
+
+#: Capabilities with nothing to ask, and why.
+#:
+#: Kept as data rather than folded into whatever a probe returned, so a reader
+#: can tell "we asked and it said yes" from "there was nothing to ask". Writing
+#: ``select 1 from dual`` for these would look like a probe and measure nothing,
+#: which is worse than saying so.
+STRUCTURAL: dict[str, str] = {
+    EXPIRE_PASSWORD: "ALTER USER ... PASSWORD EXPIRE exists on every supported release",
+    ACCOUNT_LOCK_STATE: "ACCOUNT_STATUS and ALTER USER ... ACCOUNT LOCK likewise",
+}
+
+
+# ---------------------------------------------------------- scope questions ---
+
+#: Where this session is standing. Needs **no grant at all**, which is why the
+#: scope is resolved from it rather than from ``V$PDBS`` or ``CDB_PDBS``: a
+#: half-installed service account must still be able to find out what it is
+#: connected to, or the diagnosis of its own missing grants is unreadable.
+CONTAINER_NAME = "select sys_context('userenv','con_name') from dual"
+
+#: ``ORA-02003`` from :data:`CONTAINER_NAME` is not a failure and not an absent
+#: capability. It is 11.2 saying it has never heard of containers, which is the
+#: single question in this module where that code carries information.
+#:
+#: Enumerated here rather than caught loosely, because the whole argument of
+#: :data:`ABSENT_CODES` is that a code meaning something in one place must not be
+#: allowed to mean anything anywhere else.
+NO_CONTAINERS = "ORA-02003"
+
+#: The root's own name. A session here can alter a common user; anywhere else
+#: cannot, and Oracle says so with ``ORA-65040`` rather than a privilege error.
+ROOT_CONTAINER = "CDB$ROOT"
+
+DATABASE_FACTS = "select db_unique_name, open_mode from v$database"
+
+VERSION = "select version from v$instance"
+
+
+def read(cursor: Cursor, statement: str) -> Any:
+    """Run one question. An expected negative is ``None``; anything else raises.
+
+    The rule :data:`ABSENT_CODES` describes, in the one place that applies it.
+    """
+    try:
+        cursor.execute(statement)
+        return cursor.fetchone()
+    except Exception as error:  # noqa: BLE001 -- classified on the next line
+        diagnosis = from_error(error)
+        if diagnosis.code in ABSENT_CODES:
+            return None
+        raise ProbeError(
+            f"a capability probe failed with {diagnosis.code or 'no code'}: {diagnosis.message}",
+            code=diagnosis.code or None,
+            hint=(
+                "this is not the same as the capability being absent -- the probe itself "
+                "could not be answered. The statement was: " + statement
+            ),
+        ) from error
+
+
+def probe(cursor: Cursor) -> frozenset[str]:
+    """Every capability this connection reports, asked one question at a time."""
+    found = {name for name, sql in PROBES.items() if _truthy(read(cursor, sql))}
+    return frozenset(found | set(STRUCTURAL))
+
+
+def _truthy(row: Any) -> bool:
+    return bool(row and row[0])
+
+
+# -------------------------------------------------------------------- scope ---
+
+
+def container_of(cursor: Cursor) -> str | None:
+    """The container this session is in, or ``None`` where there are none.
+
+    ``None`` is 11.2 and a 12.1 non-CDB: no containers exist, so there is no name
+    to report, and that is a fact rather than a gap.
+    """
+    try:
+        cursor.execute(CONTAINER_NAME)
+        row = cursor.fetchone()
+    except Exception as error:  # noqa: BLE001 -- classified on the next line
+        if from_error(error).code == NO_CONTAINERS:
+            return None
+        raise
+    return str(row[0]) if row and row[0] else None
+
+
+def scope_type(container: str | None) -> str:
+    """Which of P1's scopes a container name implies.
+
+    Three of the five, and the two that are missing are missing on purpose.
+    ``app_root`` and ``app_pdb`` need ``DBA_PDBS``/``V$PDBS``, which
+    ``02-oracle-privileges.md`` §2 does not grant, and no application container
+    has ever been run against this code -- so an application PDB reads as ``pdb``
+    here. That is a known limit rather than a claim: what depends on it is
+    :func:`~sopuli.driver.oracle.statements.container_clause`, which refuses an
+    application container outright, and its refusal simply will not fire on a
+    scope this cannot yet detect. Verifying it needs a real application
+    container, which puts it in the same class as the other "verify before
+    implementing" questions rather than in this change.
+    """
+    if container is None:
+        return "non_cdb"
+    if container.upper() == ROOT_CONTAINER:
+        return "cdb_root"
+    return "pdb"
+
+
+def observe(cursor: Cursor) -> Scope:
+    """Everything the driver knows about this connection, in one object.
+
+    P1's ``capabilities()`` folded into ``scope()``, as
+    :mod:`sopuli.driver.protocol` explains: both are observed at one moment from
+    one connection, the run document prints them as one object, and two calls
+    would mean two caches and a merge at the output layer.
+
+    ``read_write`` is the one worth having before any DDL is built. A physical
+    standby opens ``READ ONLY``, and P1 requires the refusal up front rather than
+    halfway through a statement.
+    """
+    container = container_of(cursor)
+    facts = read(cursor, DATABASE_FACTS)
+    version = read(cursor, VERSION)
+    open_mode = str(facts[1]) if facts and facts[1] else None
+
+    return Scope(
+        type=scope_type(container),
+        container=container,
+        db_unique_name=str(facts[0]) if facts and facts[0] else None,
+        db_version=str(version[0]) if version and version[0] else None,
+        open_mode=open_mode,
+        read_write=None if open_mode is None else open_mode.upper().startswith("READ WRITE"),
+        capabilities=probe(cursor),
+    )
+
+
+#: Asserted by ``tests/driver/test_capabilities.py`` against P1's own table, so a
+#: capability added to the document and not to the code -- or the reverse -- fails
+#: rather than drifts. Every capability has to choose a side deliberately.
+PROBED_OR_STRUCTURAL = frozenset(PROBES) | frozenset(STRUCTURAL)
+
+__all__ = [
+    "ABSENT_CODES",
+    "CAPABILITIES",
+    "CONTAINER_NAME",
+    "DATABASE_FACTS",
+    "NO_CONTAINERS",
+    "PROBED_OR_STRUCTURAL",
+    "PROBES",
+    "ROOT_CONTAINER",
+    "STRUCTURAL",
+    "UNKNOWN",
+    "VERSION",
+    "Cursor",
+    "ProbeError",
+    "container_of",
+    "observe",
+    "probe",
+    "read",
+    "scope_type",
+]

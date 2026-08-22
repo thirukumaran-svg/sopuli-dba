@@ -80,7 +80,7 @@ For each (account, scope) pair the tool reasons about a small state:
 ```
 VaultState  = { current, pending?, previous?, version, updated_at, updated_by }
 DbState     = { exists, lock_status, profile, password_versions,
-                password_change_date, rollover_active?, container_scope }
+                password_change_date, rollover_active?, scope }
 SyncState   = IN_SYNC | DRIFT | PENDING_APPLY | ROLLOVER_ACTIVE
             | ACCOUNT_MISSING | LOCKED | UNVERIFIABLE
 ```
