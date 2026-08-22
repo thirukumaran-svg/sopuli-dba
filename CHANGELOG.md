@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/futville/sopuli-dba/compare/v0.36.0...v0.37.0) (2026-08-21)
+
+
+### Features
+
+* **driver:** connect in thick mode, with the run's id on the session ([#201](https://github.com/futville/sopuli-dba/issues/201)) ([026edb8](https://github.com/futville/sopuli-dba/commit/026edb8827c3fbe38f32dbb4921310976a387f52))
+
 ## [0.36.0](https://github.com/futville/sopuli-dba/compare/v0.35.0...v0.36.0) (2026-08-21)
 
 
