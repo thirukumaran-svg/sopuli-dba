@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.39.0](https://github.com/futville/sopuli-dba/compare/v0.38.0...v0.39.0) (2026-08-22)
+
+
+### Features
+
+* **cli:** sopuli doctor — connect to every target and mutate nothing ([#182](https://github.com/futville/sopuli-dba/issues/182)) ([#212](https://github.com/futville/sopuli-dba/issues/212)) ([68521ad](https://github.com/futville/sopuli-dba/commit/68521adfa9b76f114897a070aa2ef062bbd011e8))
+* **driver:** gradual password rollover — the check, the window, the finish ([#181](https://github.com/futville/sopuli-dba/issues/181)) ([#210](https://github.com/futville/sopuli-dba/issues/210)) ([9142e21](https://github.com/futville/sopuli-dba/commit/9142e217e28ff184ccb4e245c9688eba391face4))
+
 ## [0.38.0](https://github.com/futville/sopuli-dba/compare/v0.37.0...v0.38.0) (2026-08-22)
 
 
