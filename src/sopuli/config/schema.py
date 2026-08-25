@@ -78,7 +78,7 @@ SCHEMA_VERSION = "1.3"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
-SCHEMA_ID = f"https://github.com/futville/sopuli-dba/schemas/{SCHEMA_FILENAME}"
+SCHEMA_ID = f"https://github.com/villebase/sopuli-dba/schemas/{SCHEMA_FILENAME}"
 
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
 

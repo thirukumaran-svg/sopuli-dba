@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.11.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-run-1.11.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli \u2026 --output json`. One document per invocation, written to stdout after the run completes. Draft \u2014 not yet implemented.",
   "type": "object",

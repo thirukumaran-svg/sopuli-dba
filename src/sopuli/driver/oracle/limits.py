@@ -1,6 +1,6 @@
 """How long a password may be here, and in what character set (#179).
 
-`#171 <https://github.com/futville/sopuli-dba/issues/171>`_ made a
+`#171 <https://github.com/villebase/sopuli-dba/issues/171>`_ made a
 :class:`~sopuli.passwords.ByteLimit` a required argument to
 :func:`~sopuli.driver.oracle.statements.alter_user_password`, precisely so a
 statement cannot be built by somebody who never found out. This is where the
