@@ -5,155 +5,155 @@
 
 ### Features
 
-* **cli:** sopuli doctor — connect to every target and mutate nothing ([#182](https://github.com/futville/sopuli-dba/issues/182)) ([#212](https://github.com/futville/sopuli-dba/issues/212)) ([68521ad](https://github.com/futville/sopuli-dba/commit/68521adfa9b76f114897a070aa2ef062bbd011e8))
-* **driver:** gradual password rollover — the check, the window, the finish ([#181](https://github.com/futville/sopuli-dba/issues/181)) ([#210](https://github.com/futville/sopuli-dba/issues/210)) ([9142e21](https://github.com/futville/sopuli-dba/commit/9142e217e28ff184ccb4e245c9688eba391face4))
+* **cli:** sopuli doctor — connect to every target and mutate nothing ([#182](https://github.com/futville/sopuli-dba/issues/182)) ([#212](https://github.com/futville/sopuli-dba/issues/212)) ([8652117](https://github.com/futville/sopuli-dba/commit/86521174ac2f9d1d1f580aaa3ae39a79fc97820c))
+* **driver:** gradual password rollover — the check, the window, the finish ([#181](https://github.com/futville/sopuli-dba/issues/181)) ([#210](https://github.com/futville/sopuli-dba/issues/210)) ([1c41882](https://github.com/futville/sopuli-dba/commit/1c4188270d3b39c472920e9b030c137a3c1e9083))
 
 ## [0.38.0](https://github.com/futville/sopuli-dba/compare/v0.37.0...v0.38.0) (2026-08-22)
 
 
 ### Features
 
-* **driver:** check the scope a target asserts against the one it reached ([#177](https://github.com/futville/sopuli-dba/issues/177)) ([#206](https://github.com/futville/sopuli-dba/issues/206)) ([aad7270](https://github.com/futville/sopuli-dba/commit/aad7270c27949c3c0a2ea5ac95f2e940af0dee08))
-* **driver:** issue the ALTER USER, and let a rejection be a rejection ([#179](https://github.com/futville/sopuli-dba/issues/179)) ([#208](https://github.com/futville/sopuli-dba/issues/208)) ([68b0b87](https://github.com/futville/sopuli-dba/commit/68b0b87fceffff9018766f1593eaa71c52845e74))
-* **driver:** probe capabilities and resolve scope on connect ([#177](https://github.com/futville/sopuli-dba/issues/177)) ([#203](https://github.com/futville/sopuli-dba/issues/203)) ([b8d36b5](https://github.com/futville/sopuli-dba/commit/b8d36b548f891d0fa5b9ea6cfeff6b72c9085089))
-* **driver:** read an account's state from DBA_USERS and DBA_PROFILES ([#178](https://github.com/futville/sopuli-dba/issues/178)) ([#207](https://github.com/futville/sopuli-dba/issues/207)) ([5fa0c66](https://github.com/futville/sopuli-dba/commit/5fa0c660965283f5b20c5c1281b73c7ce9def1a7))
+* **driver:** check the scope a target asserts against the one it reached ([#177](https://github.com/futville/sopuli-dba/issues/177)) ([#206](https://github.com/futville/sopuli-dba/issues/206)) ([ca4bbdb](https://github.com/futville/sopuli-dba/commit/ca4bbdbb2ff4dc7ac011649e703a159c172c3fc0))
+* **driver:** issue the ALTER USER, and let a rejection be a rejection ([#179](https://github.com/futville/sopuli-dba/issues/179)) ([#208](https://github.com/futville/sopuli-dba/issues/208)) ([febc475](https://github.com/futville/sopuli-dba/commit/febc475b6b5f929c80ffde7610857f678afe92de))
+* **driver:** probe capabilities and resolve scope on connect ([#177](https://github.com/futville/sopuli-dba/issues/177)) ([#203](https://github.com/futville/sopuli-dba/issues/203)) ([002f946](https://github.com/futville/sopuli-dba/commit/002f94676a350f737bc3ead464107c267722f0ec))
+* **driver:** read an account's state from DBA_USERS and DBA_PROFILES ([#178](https://github.com/futville/sopuli-dba/issues/178)) ([#207](https://github.com/futville/sopuli-dba/issues/207)) ([4b21ac5](https://github.com/futville/sopuli-dba/commit/4b21ac53fe51c3ef2102ce55f301f8b7ca0c2d81))
 
 ## [0.37.0](https://github.com/futville/sopuli-dba/compare/v0.36.0...v0.37.0) (2026-08-21)
 
 
 ### Features
 
-* **driver:** connect in thick mode, with the run's id on the session ([#201](https://github.com/futville/sopuli-dba/issues/201)) ([026edb8](https://github.com/futville/sopuli-dba/commit/026edb8827c3fbe38f32dbb4921310976a387f52))
+* **driver:** connect in thick mode, with the run's id on the session ([#201](https://github.com/futville/sopuli-dba/issues/201)) ([0b4a77a](https://github.com/futville/sopuli-dba/commit/0b4a77ada439b463f29c98e59f0a70a66a6bbff2))
 
 ## [0.36.0](https://github.com/futville/sopuli-dba/compare/v0.35.0...v0.36.0) (2026-08-21)
 
 
 ### Features
 
-* **admin:** resolve the admin credential from P2's four sources ([#196](https://github.com/futville/sopuli-dba/issues/196)) ([4cfebe1](https://github.com/futville/sopuli-dba/commit/4cfebe15253e567fb9dc1f58ffd8f1def242b6bb))
+* **admin:** resolve the admin credential from P2's four sources ([#196](https://github.com/futville/sopuli-dba/issues/196)) ([1c38ea2](https://github.com/futville/sopuli-dba/commit/1c38ea2572b2aab0a9502ac09a04545cbc09452b))
 
 ## [0.35.0](https://github.com/futville/sopuli-dba/compare/v0.34.0...v0.35.0) (2026-08-21)
 
 
 ### Features
 
-* **testing:** capability probing, skip markers and the matrix report ([#192](https://github.com/futville/sopuli-dba/issues/192)) ([0f38658](https://github.com/futville/sopuli-dba/commit/0f386585e1c15d136a4712aff21209b624d4b6c9))
+* **testing:** capability probing, skip markers and the matrix report ([#192](https://github.com/futville/sopuli-dba/issues/192)) ([60ba98c](https://github.com/futville/sopuli-dba/commit/60ba98ccc2f262b8322431cc451b8cbb63057bf8))
 
 ## [0.34.0](https://github.com/futville/sopuli-dba/compare/v0.33.0...v0.34.0) (2026-08-20)
 
 
 ### Features
 
-* **driver:** a driver registry, and the mechanism it shares with stores ([#190](https://github.com/futville/sopuli-dba/issues/190)) ([72ba37d](https://github.com/futville/sopuli-dba/commit/72ba37dddbb6d96788c36ba31aff058376d9f2d3))
+* **driver:** a driver registry, and the mechanism it shares with stores ([#190](https://github.com/futville/sopuli-dba/issues/190)) ([3855543](https://github.com/futville/sopuli-dba/commit/3855543197b735203c7da61fb303961d90baf4f7))
 
 ## [0.33.0](https://github.com/futville/sopuli-dba/compare/v0.32.0...v0.33.0) (2026-08-20)
 
 
 ### Features
 
-* **driver:** the client-side account guardrails, and what `--force` overrides ([#189](https://github.com/futville/sopuli-dba/issues/189)) ([1d32b41](https://github.com/futville/sopuli-dba/commit/1d32b419d2d24470ea1f137ae62e5b3548c60039))
-* **driver:** the P1 driver interface, as types and vocabulary ([#185](https://github.com/futville/sopuli-dba/issues/185)) ([87dbd3a](https://github.com/futville/sopuli-dba/commit/87dbd3a0e5b120e9bba6de5202bd657ccc94aaa8))
-* **oracle:** build ALTER USER directly, and refuse rather than escape ([#187](https://github.com/futville/sopuli-dba/issues/187)) ([8b81eb4](https://github.com/futville/sopuli-dba/commit/8b81eb42c81d8052709102c2469be902bfa4f3cb))
-* **oracle:** map ORA- codes to a category, an exit code and a hint ([#188](https://github.com/futville/sopuli-dba/issues/188)) ([022fae3](https://github.com/futville/sopuli-dba/commit/022fae33d56569cb43b5b1bdd8f9c430e04c5101))
+* **driver:** the client-side account guardrails, and what `--force` overrides ([#189](https://github.com/futville/sopuli-dba/issues/189)) ([45b4aae](https://github.com/futville/sopuli-dba/commit/45b4aae11a8b43171aff04312bb1a99158cdd25d))
+* **driver:** the P1 driver interface, as types and vocabulary ([#185](https://github.com/futville/sopuli-dba/issues/185)) ([13743a1](https://github.com/futville/sopuli-dba/commit/13743a1f9fe1cd8df622a83cb2ce8fe0ef989d07))
+* **oracle:** build ALTER USER directly, and refuse rather than escape ([#187](https://github.com/futville/sopuli-dba/issues/187)) ([60cfc52](https://github.com/futville/sopuli-dba/commit/60cfc528d66555ca6fc55cd7521a8773f249995d))
+* **oracle:** map ORA- codes to a category, an exit code and a hint ([#188](https://github.com/futville/sopuli-dba/issues/188)) ([0e7b1ec](https://github.com/futville/sopuli-dba/commit/0e7b1ecf1f61f48ff6fde34d89d1778fce2215cf))
 
 ## [0.32.0](https://github.com/futville/sopuli-dba/compare/v0.31.0...v0.32.0) (2026-08-20)
 
 
 ### Features
 
-* **lock:** `sopuli lock break` — take a lock from its holder, and fence them ([#167](https://github.com/futville/sopuli-dba/issues/167)) ([82b41a5](https://github.com/futville/sopuli-dba/commit/82b41a5c73d0906898d092034a43731cd3c5aebc))
+* **lock:** `sopuli lock break` — take a lock from its holder, and fence them ([#167](https://github.com/futville/sopuli-dba/issues/167)) ([0e698a7](https://github.com/futville/sopuli-dba/commit/0e698a74c0566bcb980013f4053c02f970912770))
 
 ## [0.31.0](https://github.com/futville/sopuli-dba/compare/v0.30.0...v0.31.0) (2026-08-20)
 
 
 ### Features
 
-* **config:** `SOPULI_VAULT__<NAME>__*` and the layer-3 vault variables ([#165](https://github.com/futville/sopuli-dba/issues/165)) ([8ec0e44](https://github.com/futville/sopuli-dba/commit/8ec0e44c21253d4c43bfb892335afcfdacfc60af))
+* **config:** `SOPULI_VAULT__<NAME>__*` and the layer-3 vault variables ([#165](https://github.com/futville/sopuli-dba/issues/165)) ([d159d98](https://github.com/futville/sopuli-dba/commit/d159d98e40091fe46e0d4be794306a82b1f4062f))
 
 ## [0.30.0](https://github.com/futville/sopuli-dba/compare/v0.29.0...v0.30.0) (2026-08-19)
 
 
 ### Features
 
-* **config:** activate a profile, so precedence layer 3 is reachable ([#163](https://github.com/futville/sopuli-dba/issues/163)) ([88a9531](https://github.com/futville/sopuli-dba/commit/88a9531898023fb4fcc19e301de4c57e0e25414c)), closes [#153](https://github.com/futville/sopuli-dba/issues/153)
+* **config:** activate a profile, so precedence layer 3 is reachable ([#163](https://github.com/futville/sopuli-dba/issues/163)) ([654f187](https://github.com/futville/sopuli-dba/commit/654f18756227d91a07495714918972f69f39d9b5)), closes [#153](https://github.com/futville/sopuli-dba/issues/153)
 
 ## [0.29.0](https://github.com/futville/sopuli-dba/compare/v0.28.0...v0.29.0) (2026-08-19)
 
 
 ### Features
 
-* **lock:** `lock status` reports records the config does not declare ([#161](https://github.com/futville/sopuli-dba/issues/161)) ([52ff2fe](https://github.com/futville/sopuli-dba/commit/52ff2fe5a80f81cbb65572f690a35a1814f0aafa))
-* **store:** `list(prefix)` on the store protocol, and both KV mounts ([#159](https://github.com/futville/sopuli-dba/issues/159)) ([953329a](https://github.com/futville/sopuli-dba/commit/953329a616444f296e09931dc1701d6680a407b8))
+* **lock:** `lock status` reports records the config does not declare ([#161](https://github.com/futville/sopuli-dba/issues/161)) ([65ed0a4](https://github.com/futville/sopuli-dba/commit/65ed0a49b290165caa60b52d5a52948017fb1118))
+* **store:** `list(prefix)` on the store protocol, and both KV mounts ([#159](https://github.com/futville/sopuli-dba/issues/159)) ([070d4bc](https://github.com/futville/sopuli-dba/commit/070d4bc4cddf6d66c42067d7159239ad02e26714))
 
 ## [0.28.0](https://github.com/futville/sopuli-dba/compare/v0.27.0...v0.28.0) (2026-08-19)
 
 
 ### Features
 
-* **vault:** `--vault-token-file` takes a path; `--vault-token` is refused ([#157](https://github.com/futville/sopuli-dba/issues/157)) ([34476a1](https://github.com/futville/sopuli-dba/commit/34476a1bfb7dafdc10b0a51af22c9ce8be75bc55))
+* **vault:** `--vault-token-file` takes a path; `--vault-token` is refused ([#157](https://github.com/futville/sopuli-dba/issues/157)) ([2a97b1d](https://github.com/futville/sopuli-dba/commit/2a97b1d4260b44e5316fddbb89ae851fbf1e6dcc))
 
 ## [0.27.0](https://github.com/futville/sopuli-dba/compare/v0.26.0...v0.27.0) (2026-08-19)
 
 
 ### Features
 
-* **config:** partial `vaults:` blocks, and the file's layers of the merge ([#155](https://github.com/futville/sopuli-dba/issues/155)) ([a1f1f11](https://github.com/futville/sopuli-dba/commit/a1f1f11ef9636e4998e062f4e09c81adacd51bb3))
+* **config:** partial `vaults:` blocks, and the file's layers of the merge ([#155](https://github.com/futville/sopuli-dba/issues/155)) ([5ff9051](https://github.com/futville/sopuli-dba/commit/5ff90519f370285c542562cb544084cda15ba754))
 
 ## [0.26.0](https://github.com/futville/sopuli-dba/compare/v0.25.0...v0.26.0) (2026-08-19)
 
 
 ### Features
 
-* **lock:** `sopuli lock status` — what is held, by whom, and since when ([#151](https://github.com/futville/sopuli-dba/issues/151)) ([7cde306](https://github.com/futville/sopuli-dba/commit/7cde3065bfe870d20bf5b81e1692cbc8f61d9c71))
+* **lock:** `sopuli lock status` — what is held, by whom, and since when ([#151](https://github.com/futville/sopuli-dba/issues/151)) ([57b4bcf](https://github.com/futville/sopuli-dba/commit/57b4bcffa216df8e47c60ba220c8b25040a35fee))
 
 ## [0.25.0](https://github.com/futville/sopuli-dba/compare/v0.24.0...v0.25.0) (2026-08-18)
 
 
 ### Features
 
-* **config:** a vault's transport settings — namespace, timeout_s and tls: ([#141](https://github.com/futville/sopuli-dba/issues/141)) ([1fd4547](https://github.com/futville/sopuli-dba/commit/1fd454716e450f196f3bd5a89d83ab2372d09186))
-* **packaging:** extras in pyproject, and a store registry that imports lazily ([#139](https://github.com/futville/sopuli-dba/issues/139)) ([f02247e](https://github.com/futville/sopuli-dba/commit/f02247ec2c917c83f0e1501b0c4caeba8c1dbf57))
-* **vault:** HashiCorp auth methods — token, AppRole, Kubernetes, userpass ([#146](https://github.com/futville/sopuli-dba/issues/146)) ([1d3b128](https://github.com/futville/sopuli-dba/commit/1d3b128ec03ff8ed13ccb92e3003db0267df65b4))
-* **vault:** HashiCorp KV v2 store adapter, conformance-tested against the fake ([#142](https://github.com/futville/sopuli-dba/issues/142)) ([216d57b](https://github.com/futville/sopuli-dba/commit/216d57b2bc379e1d5c6a2b2815da7f0bf365c3e7))
-* **vault:** resolve a MaterialRef to a Secret — env, file, and the token chain ([#144](https://github.com/futville/sopuli-dba/issues/144)) ([766257d](https://github.com/futville/sopuli-dba/commit/766257db620dd0e04ea4c486a0e4a39736570f10))
+* **config:** a vault's transport settings — namespace, timeout_s and tls: ([#141](https://github.com/futville/sopuli-dba/issues/141)) ([10e683b](https://github.com/futville/sopuli-dba/commit/10e683b018c0a306231f631d50339f9143904822))
+* **packaging:** extras in pyproject, and a store registry that imports lazily ([#139](https://github.com/futville/sopuli-dba/issues/139)) ([7a8a14e](https://github.com/futville/sopuli-dba/commit/7a8a14efcbc42572232ff63c70b50df9bb6ff7ca))
+* **vault:** HashiCorp auth methods — token, AppRole, Kubernetes, userpass ([#146](https://github.com/futville/sopuli-dba/issues/146)) ([e16a79e](https://github.com/futville/sopuli-dba/commit/e16a79eab441bf7148e530b07e9b945013991a8f))
+* **vault:** HashiCorp KV v2 store adapter, conformance-tested against the fake ([#142](https://github.com/futville/sopuli-dba/issues/142)) ([8f3700d](https://github.com/futville/sopuli-dba/commit/8f3700d05c1f449e1ecb1ec77b33966e9f4b6330))
+* **vault:** resolve a MaterialRef to a Secret — env, file, and the token chain ([#144](https://github.com/futville/sopuli-dba/issues/144)) ([49d2b6d](https://github.com/futville/sopuli-dba/commit/49d2b6d1189f0f78105c182fb1d2c7ec89ac43ae))
 
 
 ### Bug Fixes
 
-* **test:** race the lock on a handshake, not on a guess about startup time ([#148](https://github.com/futville/sopuli-dba/issues/148)) ([cf25879](https://github.com/futville/sopuli-dba/commit/cf258796f36c61043197e997277f21a54cdec84c))
+* **test:** race the lock on a handshake, not on a guess about startup time ([#148](https://github.com/futville/sopuli-dba/issues/148)) ([04b9b84](https://github.com/futville/sopuli-dba/commit/04b9b841d6158bbe5c9f04b87f6887ebc1fa5bf9))
 
 ## [0.24.0](https://github.com/futville/sopuli-dba/compare/v0.23.0...v0.24.0) (2026-08-18)
 
 
 ### Features
 
-* **config:** decide C15 — refuse a binding with no store only when vaults: is empty ([#126](https://github.com/futville/sopuli-dba/issues/126)) ([a1322e5](https://github.com/futville/sopuli-dba/commit/a1322e5ade3218ed7d3a2f884cb7534834e36132))
+* **config:** decide C15 — refuse a binding with no store only when vaults: is empty ([#126](https://github.com/futville/sopuli-dba/issues/126)) ([d2faa81](https://github.com/futville/sopuli-dba/commit/d2faa8156f590ab3b73f77eb9df603588dac266f))
 
 ## [0.23.0](https://github.com/futville/sopuli-dba/compare/v0.22.0...v0.23.0) (2026-08-17)
 
 
 ### Features
 
-* **config:** detect shared secrets, and show them in `config show --resolved` ([#110](https://github.com/futville/sopuli-dba/issues/110)) ([#117](https://github.com/futville/sopuli-dba/issues/117)) ([0849a3a](https://github.com/futville/sopuli-dba/commit/0849a3acfcab25d27685b4391ea34e07bb550e0b))
-* **config:** refuse an unstageable secret ref while the file is read ([#111](https://github.com/futville/sopuli-dba/issues/111)) ([#113](https://github.com/futville/sopuli-dba/issues/113)) ([ef55726](https://github.com/futville/sopuli-dba/commit/ef55726ce1ace4f1114da5da81707eadc173643a))
+* **config:** detect shared secrets, and show them in `config show --resolved` ([#110](https://github.com/futville/sopuli-dba/issues/110)) ([#117](https://github.com/futville/sopuli-dba/issues/117)) ([994ce81](https://github.com/futville/sopuli-dba/commit/994ce81a770664ea4c457d863a3a16b614bb1cbe))
+* **config:** refuse an unstageable secret ref while the file is read ([#111](https://github.com/futville/sopuli-dba/issues/111)) ([#113](https://github.com/futville/sopuli-dba/issues/113)) ([355bfa4](https://github.com/futville/sopuli-dba/commit/355bfa4eb0f5508455255403f3bc95d43de81e51))
 
 ## [0.22.0](https://github.com/futville/sopuli-dba/compare/v0.21.0...v0.22.0) (2026-08-17)
 
 
 ### Features
 
-* **payload:** one secret per application by default, one rule for both layouts ([#85](https://github.com/futville/sopuli-dba/issues/85)) ([#109](https://github.com/futville/sopuli-dba/issues/109)) ([02a5871](https://github.com/futville/sopuli-dba/commit/02a5871ae9af74b0e1b5cc399f960686e7e0c1b4))
+* **payload:** one secret per application by default, one rule for both layouts ([#85](https://github.com/futville/sopuli-dba/issues/85)) ([#109](https://github.com/futville/sopuli-dba/issues/109)) ([5cd9b74](https://github.com/futville/sopuli-dba/commit/5cd9b74c4507f3bc13c98f5b27e99eb25e5e70a1))
 
 ## [0.21.0](https://github.com/futville/sopuli-dba/compare/v0.20.0...v0.21.0) (2026-08-16)
 
 
 ### Features
 
-* **config:** `vaults.*.locking` and `locking.break_expired` ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#108](https://github.com/futville/sopuli-dba/issues/108)) ([7aef5c5](https://github.com/futville/sopuli-dba/commit/7aef5c533c1afe442ceab71dd22d42d4efc5eb36))
-* **lock:** a LockManager over a narrow store protocol ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#101](https://github.com/futville/sopuli-dba/issues/101)) ([8384e57](https://github.com/futville/sopuli-dba/commit/8384e57e23df4757a95e3788e205230ac48a1f48))
-* **lock:** the lock record and its state machine, as tier-0 logic ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#100](https://github.com/futville/sopuli-dba/issues/100)) ([09320f5](https://github.com/futville/sopuli-dba/commit/09320f5b308ecfb4ca1b7c93098cde4cfcf31eac))
-* **output:** emit the lock section, exit 7, and the first warning codes ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#102](https://github.com/futville/sopuli-dba/issues/102)) ([cb2cc68](https://github.com/futville/sopuli-dba/commit/cb2cc68bd62986191f4d2f351a775efe358c176b))
-* **output:** record the Q2 advisory-lock decision, run schema 1.5 ([#98](https://github.com/futville/sopuli-dba/issues/98)) ([8d6f28b](https://github.com/futville/sopuli-dba/commit/8d6f28b5e17bc414ae1cdcdb93a76100c0c1e498))
+* **config:** `vaults.*.locking` and `locking.break_expired` ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#108](https://github.com/futville/sopuli-dba/issues/108)) ([4a220d3](https://github.com/futville/sopuli-dba/commit/4a220d335e51b9e3e90937b0bfcd62676307bd8e))
+* **lock:** a LockManager over a narrow store protocol ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#101](https://github.com/futville/sopuli-dba/issues/101)) ([4358348](https://github.com/futville/sopuli-dba/commit/435834869c25b8f67f3d1824af98f10559604b9c))
+* **lock:** the lock record and its state machine, as tier-0 logic ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#100](https://github.com/futville/sopuli-dba/issues/100)) ([476ffc4](https://github.com/futville/sopuli-dba/commit/476ffc490e923279ffdf20f65e7efbe60e9ab51e))
+* **output:** emit the lock section, exit 7, and the first warning codes ([#83](https://github.com/futville/sopuli-dba/issues/83)) ([#102](https://github.com/futville/sopuli-dba/issues/102)) ([d0f3872](https://github.com/futville/sopuli-dba/commit/d0f38725ac918a119536374244c998ab5878c95a))
+* **output:** record the Q2 advisory-lock decision, run schema 1.5 ([#98](https://github.com/futville/sopuli-dba/issues/98)) ([2056398](https://github.com/futville/sopuli-dba/commit/2056398209a8df4f0a27555f9b40b9dcd3369ed5))
 
 ## [0.20.0](https://github.com/futville/sopuli-dba/compare/v0.19.0...v0.20.0) (2026-08-16)
 
@@ -164,14 +164,14 @@
 
 ### Features
 
-* **config:** decide the SecretRef qualifier vocabularies (C14) ([#92](https://github.com/futville/sopuli-dba/issues/92)) ([59ab70b](https://github.com/futville/sopuli-dba/commit/59ab70b3e07e094c8a0404459da121ae2941a79c))
+* **config:** decide the SecretRef qualifier vocabularies (C14) ([#92](https://github.com/futville/sopuli-dba/issues/92)) ([5290d6f](https://github.com/futville/sopuli-dba/commit/5290d6ff85d9b4281db98a9165172bd43c8f9912))
 
 ## [0.19.0](https://github.com/futville/sopuli-dba/compare/v0.18.0...v0.19.0) (2026-08-13)
 
 
 ### Features
 
-* **config:** show where every effective setting came from, with --explain ([#81](https://github.com/futville/sopuli-dba/issues/81)) ([750654b](https://github.com/futville/sopuli-dba/commit/750654bb76ef015d55d3bdf5c789110644cee4b9))
+* **config:** show where every effective setting came from, with --explain ([#81](https://github.com/futville/sopuli-dba/issues/81)) ([5ea2318](https://github.com/futville/sopuli-dba/commit/5ea2318a90ebede6f1e61e1dde186232e816f85b))
 
 ## [0.18.0](https://github.com/futville/sopuli-dba/compare/v0.17.0...v0.18.0) (2026-08-13)
 
@@ -182,148 +182,148 @@
 
 ### Features
 
-* **cli:** emit a run document for every exit but 2 ([#79](https://github.com/futville/sopuli-dba/issues/79)) ([c36a723](https://github.com/futville/sopuli-dba/commit/c36a72335942afb51048b22704ce6174eda227cc))
-* **cli:** split usage from configuration errors, and state J7's rule ([#77](https://github.com/futville/sopuli-dba/issues/77)) ([38bd55f](https://github.com/futville/sopuli-dba/commit/38bd55fb319610c576dfe5b79909cfe73828936e))
+* **cli:** emit a run document for every exit but 2 ([#79](https://github.com/futville/sopuli-dba/issues/79)) ([c778eae](https://github.com/futville/sopuli-dba/commit/c778eaef99df2f575a332b1f89d7eaa9641145e2))
+* **cli:** split usage from configuration errors, and state J7's rule ([#77](https://github.com/futville/sopuli-dba/issues/77)) ([90ccf94](https://github.com/futville/sopuli-dba/commit/90ccf94e022d5b86586c8917db4cf68423a54e68))
 
 ## [0.17.0](https://github.com/futville/sopuli-dba/compare/v0.16.0...v0.17.0) (2026-08-13)
 
 
 ### Features
 
-* **cli:** resolve every global option through one precedence chain ([#75](https://github.com/futville/sopuli-dba/issues/75)) ([02531aa](https://github.com/futville/sopuli-dba/commit/02531aa791158a09da06228f57d3fe25274120dc))
-* **settings:** resolve a setting across P3's layers, with a safety ratchet ([#73](https://github.com/futville/sopuli-dba/issues/73)) ([75d4513](https://github.com/futville/sopuli-dba/commit/75d4513ac43a761412ab04d6d12b7adbe2edf83a))
+* **cli:** resolve every global option through one precedence chain ([#75](https://github.com/futville/sopuli-dba/issues/75)) ([d91742b](https://github.com/futville/sopuli-dba/commit/d91742bc34a10f46c18888c94c01565f76f2a233))
+* **settings:** resolve a setting across P3's layers, with a safety ratchet ([#73](https://github.com/futville/sopuli-dba/issues/73)) ([33a64f4](https://github.com/futville/sopuli-dba/commit/33a64f4f36d18d70a4f9c4a4f5d918257d0c3fa6))
 
 ## [0.16.0](https://github.com/futville/sopuli-dba/compare/v0.15.0...v0.16.0) (2026-08-12)
 
 
 ### Features
 
-* show what a password policy produces, with policy sample ([#69](https://github.com/futville/sopuli-dba/issues/69)) ([3e79280](https://github.com/futville/sopuli-dba/commit/3e792803cc1da441ff9968dbc893f211960f504d)), closes [#68](https://github.com/futville/sopuli-dba/issues/68)
+* show what a password policy produces, with policy sample ([#69](https://github.com/futville/sopuli-dba/issues/69)) ([e23c5e7](https://github.com/futville/sopuli-dba/commit/e23c5e7d4fd7014912adb0e0b4c89c3562183acc)), closes [#68](https://github.com/futville/sopuli-dba/issues/68)
 
 
 ### Bug Fixes
 
-* **config:** say what to write in a missing auth key, not which one ([#71](https://github.com/futville/sopuli-dba/issues/71)) ([4f4a228](https://github.com/futville/sopuli-dba/commit/4f4a2286191c112313b61d8153a083bc4a9a9973)), closes [#70](https://github.com/futville/sopuli-dba/issues/70)
+* **config:** say what to write in a missing auth key, not which one ([#71](https://github.com/futville/sopuli-dba/issues/71)) ([082cfe1](https://github.com/futville/sopuli-dba/commit/082cfe10c474c0e07efa615748ac9e9491248b5e)), closes [#70](https://github.com/futville/sopuli-dba/issues/70)
 
 ## [0.15.0](https://github.com/futville/sopuli-dba/compare/v0.14.0...v0.15.0) (2026-08-12)
 
 
 ### Features
 
-* **config:** adopt the run document's scope vocabulary, as an assertion ([#65](https://github.com/futville/sopuli-dba/issues/65)) ([96f75f3](https://github.com/futville/sopuli-dba/commit/96f75f3027e234d4eaab17ee72acc8e2b285cac9)), closes [#27](https://github.com/futville/sopuli-dba/issues/27)
-* **config:** name the database admin credential, in the vault grammar ([#64](https://github.com/futville/sopuli-dba/issues/64)) ([a7edd5b](https://github.com/futville/sopuli-dba/commit/a7edd5be9518366f57edc77e049582ff18cbbf1f)), closes [#27](https://github.com/futville/sopuli-dba/issues/27)
-* **config:** point at vault auth material with a MaterialRef ([#63](https://github.com/futville/sopuli-dba/issues/63)) ([7d0d287](https://github.com/futville/sopuli-dba/commit/7d0d287d43f4711355099d6f42df46aa4b2922fd)), closes [#27](https://github.com/futville/sopuli-dba/issues/27)
-* generate passwords from a policy, as tier 0 logic ([#67](https://github.com/futville/sopuli-dba/issues/67)) ([2008a5f](https://github.com/futville/sopuli-dba/commit/2008a5faa40b604c5f24bc54d03322b018bf8340)), closes [#58](https://github.com/futville/sopuli-dba/issues/58)
+* **config:** adopt the run document's scope vocabulary, as an assertion ([#65](https://github.com/futville/sopuli-dba/issues/65)) ([ef6c5b0](https://github.com/futville/sopuli-dba/commit/ef6c5b05d0325f2e1fa5616c0ed4a2049c5e9b9a)), closes [#27](https://github.com/futville/sopuli-dba/issues/27)
+* **config:** name the database admin credential, in the vault grammar ([#64](https://github.com/futville/sopuli-dba/issues/64)) ([e881c4c](https://github.com/futville/sopuli-dba/commit/e881c4ca9ac4ad476cf917efbe9c8dc0d57a791a)), closes [#27](https://github.com/futville/sopuli-dba/issues/27)
+* **config:** point at vault auth material with a MaterialRef ([#63](https://github.com/futville/sopuli-dba/issues/63)) ([274c730](https://github.com/futville/sopuli-dba/commit/274c73083b2816abc5b0f5236983cc12e08e1d55)), closes [#27](https://github.com/futville/sopuli-dba/issues/27)
+* generate passwords from a policy, as tier 0 logic ([#67](https://github.com/futville/sopuli-dba/issues/67)) ([c385483](https://github.com/futville/sopuli-dba/commit/c38548365f50d2e414e3975e05b1a75ed301bf6d)), closes [#58](https://github.com/futville/sopuli-dba/issues/58)
 
 ## [0.14.0](https://github.com/futville/sopuli-dba/compare/v0.13.0...v0.14.0) (2026-08-12)
 
 
 ### Features
 
-* add target list, the estate as its own command ([#61](https://github.com/futville/sopuli-dba/issues/61)) ([52f17f5](https://github.com/futville/sopuli-dba/commit/52f17f583ecde962012759820ec2ba5705bf5ec2))
+* add target list, the estate as its own command ([#61](https://github.com/futville/sopuli-dba/issues/61)) ([d925977](https://github.com/futville/sopuli-dba/commit/d925977476eee614b931a3c0b430ea17b959c6a7))
 
 ## [0.13.0](https://github.com/futville/sopuli-dba/compare/v0.12.1...v0.13.0) (2026-08-12)
 
 
 ### Features
 
-* filter the expanded estate with --select over target labels ([#59](https://github.com/futville/sopuli-dba/issues/59)) ([90e133d](https://github.com/futville/sopuli-dba/commit/90e133db03591d8c71b160b61fdb9c3de36b60fa))
+* filter the expanded estate with --select over target labels ([#59](https://github.com/futville/sopuli-dba/issues/59)) ([ee3bdf8](https://github.com/futville/sopuli-dba/commit/ee3bdf82bf7303fb349fa64f245dfd9806faf08f))
 
 ## [0.12.1](https://github.com/futville/sopuli-dba/compare/v0.12.0...v0.12.1) (2026-08-12)
 
 
 ### Bug Fixes
 
-* report config warnings as diagnostics from config show ([#54](https://github.com/futville/sopuli-dba/issues/54)) ([93f67a8](https://github.com/futville/sopuli-dba/commit/93f67a83f7562cc989b5a3dc7e6993489ddf8686))
+* report config warnings as diagnostics from config show ([#54](https://github.com/futville/sopuli-dba/issues/54)) ([9d0dc7e](https://github.com/futville/sopuli-dba/commit/9d0dc7e0841b2c462cfcf6c830b4f7faf5c1cbbe))
 
 ## [0.12.0](https://github.com/futville/sopuli-dba/compare/v0.11.0...v0.12.0) (2026-08-11)
 
 
 ### Features
 
-* **config:** publish the config JSON Schema, generated from the model ([#49](https://github.com/futville/sopuli-dba/issues/49)) ([68df689](https://github.com/futville/sopuli-dba/commit/68df689d00b3d4cce43855dcd54667c0d1732de4))
+* **config:** publish the config JSON Schema, generated from the model ([#49](https://github.com/futville/sopuli-dba/issues/49)) ([a3ee3f9](https://github.com/futville/sopuli-dba/commit/a3ee3f90f8fd70f1566415b5a5b820afbd74f3e5))
 
 ## [0.11.0](https://github.com/futville/sopuli-dba/compare/v0.10.0...v0.11.0) (2026-08-11)
 
 
 ### Features
 
-* colour the text output, semantically ([#47](https://github.com/futville/sopuli-dba/issues/47)) ([b2b08bd](https://github.com/futville/sopuli-dba/commit/b2b08bdde2cead98f6656d5f59151dadc5f92c19))
+* colour the text output, semantically ([#47](https://github.com/futville/sopuli-dba/issues/47)) ([b38e13a](https://github.com/futville/sopuli-dba/commit/b38e13ac11ccf7157fdf4ef88dc612e3ea52a878))
 
 ## [0.10.0](https://github.com/futville/sopuli-dba/compare/v0.9.0...v0.10.0) (2026-08-11)
 
 
 ### Features
 
-* bind accounts to targets, and resolve every secret ref ([#43](https://github.com/futville/sopuli-dba/issues/43)) ([7642fe2](https://github.com/futville/sopuli-dba/commit/7642fe2437fafc4f7e63271fefd52fc4cc538e3b))
-* render config show, as loaded and as resolved ([#45](https://github.com/futville/sopuli-dba/issues/45)) ([0407c7e](https://github.com/futville/sopuli-dba/commit/0407c7e946f1d7d9d27c7d6eac2256eadee1f4dd))
+* bind accounts to targets, and resolve every secret ref ([#43](https://github.com/futville/sopuli-dba/issues/43)) ([7848b54](https://github.com/futville/sopuli-dba/commit/7848b54455462c5aaf530c3fdf046ed751642177))
+* render config show, as loaded and as resolved ([#45](https://github.com/futville/sopuli-dba/issues/45)) ([83108a7](https://github.com/futville/sopuli-dba/commit/83108a779336546464de960fa194edfb8f6dac88))
 
 ## [0.9.0](https://github.com/futville/sopuli-dba/compare/v0.8.0...v0.9.0) (2026-08-11)
 
 
 ### Features
 
-* parse SecretRefs, and check every ref in the file ([#39](https://github.com/futville/sopuli-dba/issues/39)) ([d24d1c5](https://github.com/futville/sopuli-dba/commit/d24d1c59997a551a616fee392a25992aa5af00b1))
+* parse SecretRefs, and check every ref in the file ([#39](https://github.com/futville/sopuli-dba/issues/39)) ([3ee6591](https://github.com/futville/sopuli-dba/commit/3ee659179fe42603d27ab9d8db0a8abdaf672d0d))
 
 ## [0.8.0](https://github.com/futville/sopuli-dba/compare/v0.7.0...v0.8.0) (2026-08-11)
 
 
 ### Features
 
-* find and layer config files, and load them in config show ([#37](https://github.com/futville/sopuli-dba/issues/37)) ([0aae6fb](https://github.com/futville/sopuli-dba/commit/0aae6fbf2d882e7cf655e4d2bfc354e8184f737c))
+* find and layer config files, and load them in config show ([#37](https://github.com/futville/sopuli-dba/issues/37)) ([ce02d23](https://github.com/futville/sopuli-dba/commit/ce02d23400c3c0a3279684a5792ffc1cd9146572))
 
 ## [0.7.0](https://github.com/futville/sopuli-dba/compare/v0.6.0...v0.7.0) (2026-08-11)
 
 
 ### Features
 
-* expand target sets into targets, with labels and overrides ([#35](https://github.com/futville/sopuli-dba/issues/35)) ([dfbab9b](https://github.com/futville/sopuli-dba/commit/dfbab9bef1531ff4eaef7cf70c4802da228615b3))
+* expand target sets into targets, with labels and overrides ([#35](https://github.com/futville/sopuli-dba/issues/35)) ([ed80879](https://github.com/futville/sopuli-dba/commit/ed808799378faf1646bb6e594d91b31b5613d75f))
 
 ## [0.6.0](https://github.com/futville/sopuli-dba/compare/v0.5.0...v0.6.0) (2026-08-10)
 
 
 ### Features
 
-* model policies, profiles, defaults and runtime, and resolve every name ([#32](https://github.com/futville/sopuli-dba/issues/32)) ([d55ab8b](https://github.com/futville/sopuli-dba/commit/d55ab8b3b8ca3dcfe736f6e38f15c7cf5ce046b0))
+* model policies, profiles, defaults and runtime, and resolve every name ([#32](https://github.com/futville/sopuli-dba/issues/32)) ([449cd88](https://github.com/futville/sopuli-dba/commit/449cd886000892972fa44f82e9132d078ed87f73))
 
 ## [0.5.0](https://github.com/futville/sopuli-dba/compare/v0.4.0...v0.5.0) (2026-08-10)
 
 
 ### Features
 
-* model and validate the estate sections ([#28](https://github.com/futville/sopuli-dba/issues/28)) ([9c9be8a](https://github.com/futville/sopuli-dba/commit/9c9be8a8e581b8f1f38c2d6ce749fcb35c88aeff))
+* model and validate the estate sections ([#28](https://github.com/futville/sopuli-dba/issues/28)) ([75844fa](https://github.com/futville/sopuli-dba/commit/75844fa71dddaa4d0abd44e63ed2c5191ac94dce))
 
 ## [0.4.0](https://github.com/futville/sopuli-dba/compare/v0.3.0...v0.4.0) (2026-08-10)
 
 
 ### Features
 
-* model and validate the application binding ([#25](https://github.com/futville/sopuli-dba/issues/25)) ([34f6064](https://github.com/futville/sopuli-dba/commit/34f60644614dbcc5ab0edd41b120ccfc30b38c09))
+* model and validate the application binding ([#25](https://github.com/futville/sopuli-dba/issues/25)) ([63f551c](https://github.com/futville/sopuli-dba/commit/63f551c66bda2fe736dd29bb1675fd257116b1d6))
 
 ## [0.3.0](https://github.com/futville/sopuli-dba/compare/v0.2.0...v0.3.0) (2026-08-09)
 
 
 ### Features
 
-* load and validate the config file layer ([#22](https://github.com/futville/sopuli-dba/issues/22)) ([4dbae7e](https://github.com/futville/sopuli-dba/commit/4dbae7eedee1990dc8592682d81bc9781a273273))
+* load and validate the config file layer ([#22](https://github.com/futville/sopuli-dba/issues/22)) ([fc776e6](https://github.com/futville/sopuli-dba/commit/fc776e6af3dea217d1e25ca8b583dee29bab3b78))
 
 ## [0.2.0](https://github.com/futville/sopuli-dba/compare/v0.1.1...v0.2.0) (2026-08-09)
 
 
 ### Features
 
-* add --color, NO_COLOR and TTY detection to text output ([#17](https://github.com/futville/sopuli-dba/issues/17)) ([65e685d](https://github.com/futville/sopuli-dba/commit/65e685d51953858cc84b312239d2430fe1dee73c))
+* add --color, NO_COLOR and TTY detection to text output ([#17](https://github.com/futville/sopuli-dba/issues/17)) ([f3a637f](https://github.com/futville/sopuli-dba/commit/f3a637f32fc972750737075df96677729fee544e))
 
 ## [0.1.1](https://github.com/futville/sopuli-dba/compare/v0.1.0...v0.1.1) (2026-08-09)
 
 
 ### Bug Fixes
 
-* write UTF-8 to stdin, stdout and stderr regardless of redirection ([#14](https://github.com/futville/sopuli-dba/issues/14)) ([9e41cda](https://github.com/futville/sopuli-dba/commit/9e41cda86e0e57e3d2c56811fb32cab0a06c35c2))
+* write UTF-8 to stdin, stdout and stderr regardless of redirection ([#14](https://github.com/futville/sopuli-dba/issues/14)) ([de29d2b](https://github.com/futville/sopuli-dba/commit/de29d2b60a5b2953ec9450ed947c5fa6382e9807))
 
 ## 0.1.0 (2026-08-09)
 
 
 ### Features
 
-* bootstrap sopuli CLI skeleton ([#7](https://github.com/futville/sopuli-dba/issues/7)) ([db47cc2](https://github.com/futville/sopuli-dba/commit/db47cc283243d552b7aa07ed72d36116f2ae8d09))
+* bootstrap sopuli CLI skeleton ([#7](https://github.com/futville/sopuli-dba/issues/7)) ([11374ff](https://github.com/futville/sopuli-dba/commit/11374ff548f1d8603e025c34d995257221a4e7bb))
