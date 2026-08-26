@@ -18,6 +18,7 @@ for the choice written as code:
 from __future__ import annotations
 
 import ssl
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -62,8 +63,15 @@ class Transport:
         self._client = client
         self._sni_hostname = sni_hostname
 
-    def request(self, method: str, path: str, *, json: Any = None) -> Response:
+    def request(
+        self, method: str, path: str, *, json: Any = None, params: Mapping[str, str] | None = None
+    ) -> Response:
         """Call ``/v1/<path>``, and never raise for a status.
+
+        ``params`` is the query string, which KV v2 needs for exactly one thing:
+        ``?version=N`` on a read (#183). Passed to httpx rather than formatted
+        into ``path``, so the escaping is the client's problem and a value with a
+        character that needs it cannot silently change which path is called.
 
         **Non-2xx is data here, not an exception.** ``sys/health`` answers 429
         for a standby, 473 for a performance standby, 501 for uninitialised and
@@ -77,7 +85,9 @@ class Transport:
         # match its certificate -- a tunnel, or a load balancer by IP.
         extensions = {"sni_hostname": self._sni_hostname} if self._sni_hostname else {}
         try:
-            response = self._client.request(method, f"/v1/{path}", json=json, extensions=extensions)
+            response = self._client.request(
+                method, f"/v1/{path}", json=json, params=params, extensions=extensions
+            )
         except httpx.TimeoutException as error:
             raise StoreError(
                 f"the store did not answer within the timeout: {error}",

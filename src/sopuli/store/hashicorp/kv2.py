@@ -3,11 +3,11 @@
 The four methods of :mod:`sopuli.store.protocol` against Vault's KV v2 API:
 
 ======================== =====================================================
-``read(path)``           ``GET  /v1/<mount>/data/<path>``
+``read(path, version)``  ``GET  /v1/<mount>/data/<path>[?version=N]``
 ``write(path, …)``       ``POST /v1/<mount>/data/<path>`` with ``options.cas``
 ``metadata(path)``       ``GET  /v1/<mount>/metadata/<path>``
 ``list(prefix)``         ``LIST /v1/<mount>/metadata/<prefix>``, walked
-``supports()``           ``{cas, list}``
+``supports()``           ``{cas, list, versioning}``
 ======================== =====================================================
 
 Three things the advisory lock depends on, and which are the reason this module
@@ -45,7 +45,7 @@ from typing import Any
 from sopuli.store.hashicorp._errors import raise_for
 from sopuli.store.hashicorp._listing import keys_of, walk
 from sopuli.store.hashicorp._transport import Response, Transport
-from sopuli.store.protocol import CAS, LIST, PathMetadata, Stored, StoreError
+from sopuli.store.protocol import CAS, LIST, VERSIONING, PathMetadata, Stored, StoreError
 
 #: Vault's "no per-path limit" for ``max_versions``: the mount's own setting
 #: applies. Reported as ``None`` rather than 0, because ``PathMetadata`` means
@@ -61,15 +61,19 @@ class Kv2Store:
     mount: str
 
     def supports(self) -> frozenset[str]:
-        """KV v2 has compare-and-set, and it can be listed. The rest of P2's
-        table -- versioning, staging labels, soft delete -- arrives with the
-        secret side, which is the half of the interface that reads a *secret*
-        rather than a lock record."""
-        return frozenset({CAS, LIST})
+        """Compare-and-set, listing, and versions. The rest of P2's table --
+        staging labels, soft delete -- has no caller yet: ``staging_labels`` is
+        emulated in the payload on this backend (Q7), so nothing negotiates it,
+        and undelete has no command that asks for it."""
+        return frozenset({CAS, LIST, VERSIONING})
 
-    def read(self, path: str) -> Stored | None:
-        response = self.transport.request("GET", f"{self.mount}/data/{path}")
+    def read(self, path: str, *, version: int | None = None) -> Stored | None:
+        params = None if version is None else {"version": str(version)}
+        response = self.transport.request("GET", f"{self.mount}/data/{path}", params=params)
         if response.status == 404:
+            # Also the answer for a version that was pruned, destroyed or never
+            # written -- which the protocol reads as "there is nothing to read"
+            # rather than as an error, for the same reason an empty path does.
             return None
         _check(response, path=path)
 

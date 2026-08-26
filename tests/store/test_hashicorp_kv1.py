@@ -20,7 +20,7 @@ import pytest
 
 from sopuli.config.model import Vault
 from sopuli.secrets import Secret
-from sopuli.store.protocol import CAS, LIST, SecretStore, StoreError
+from sopuli.store.protocol import CAS, LIST, VERSIONING, SecretStore, StoreError
 
 PATH = "apps/acme/kv1-degradation"
 
@@ -51,6 +51,35 @@ def test_a_v1_mount_has_no_compare_and_set(store: SecretStore) -> None:
     capability in the payload -- except `cas`, which cannot be emulated, because
     "not atomic" is precisely what it is for."""
     assert CAS not in store.supports()
+
+
+def test_a_v1_mount_has_no_versioning(store: SecretStore) -> None:
+    """The other half of §5's degradation row, and the one `@version=` needs
+    (#183). Named as its own capability rather than inferred from the absent
+    `cas`, because a caller asking to read version 7 and a caller asking to write
+    against version 7 are refused for different reasons and need different
+    messages."""
+    assert VERSIONING not in store.supports()
+
+
+def test_a_pinned_version_is_refused_rather_than_answered_with_the_latest(
+    store: SecretStore,
+) -> None:
+    """The read-side counterpart of the `cas` refusal below.
+
+    Handing back the current document would be the same lie in the other
+    direction: the caller pinned a version *because* it did not want whatever is
+    current, so a silent substitution is a rotation reading the wrong generation.
+    The message names the version asked for, since that is the text to go and
+    delete from the ref.
+    """
+    store.write(PATH, {"password": "first"}, cas=None)
+
+    with pytest.raises(StoreError) as raised:
+        store.read(PATH, version=1)
+
+    assert "version 1" in str(raised.value)
+    assert "enable-versioning" in str(raised.value)
 
 
 def test_a_v1_mount_can_still_be_listed(store: SecretStore) -> None:

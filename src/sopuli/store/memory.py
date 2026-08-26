@@ -16,6 +16,10 @@ What it gets right on purpose, because the lock depends on each:
   never by deleting" load-bearing rather than stylistic, and a fake without it
   would let the wrong implementation pass.
 * **a stale CAS is refused**, which is the primitive itself.
+* **an older version is still readable by number**, and a soft delete removes
+  the latest one only (#183). ``@version=N`` is a read of a generation that is
+  no longer current, so a fake that kept only the newest document would answer
+  every pinned read with ``None`` and let an adapter that did the same pass.
 * **listing knows about paths that have nothing to read** (#150). A soft-deleted
   path and one that exists only because its metadata was configured are both
   listed here and both read as ``None``, because that is what a KV v2
@@ -33,6 +37,7 @@ from typing import Any
 from sopuli.store.protocol import (
     CAS,
     LIST,
+    VERSIONING,
     CasConflictError,
     PathMetadata,
     Stored,
@@ -43,12 +48,25 @@ from sopuli.store.protocol import (
 
 @dataclass
 class _Path:
-    """One path's history. ``versions`` is empty for a path that was deleted."""
+    """One path's history: every version ever written, by number.
+
+    Kept in full rather than as a latest-plus-counter, because ``@version=N``
+    (#183) is a read of an *older* generation and a store that had discarded it
+    could only answer by pretending. ``deleted`` covers the latest version alone,
+    which is what a KV v2 soft delete does -- the earlier versions stay readable
+    by number, and that asymmetry is exactly the kind of thing a looser fake
+    would paper over.
+    """
 
     version: int = 0
     data: Any = None
     deleted: bool = False
     metadata: PathMetadata | None = None
+    #: Every version written, by number. Never pruned: ``max_versions`` is
+    #: reported by :class:`PathMetadata` and not enforced here, since the lock's
+    #: pre-flight reads the setting and nothing in tier 0 depends on the pruning
+    #: itself happening.
+    history: dict[int, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -67,14 +85,30 @@ class MemoryStore:
     #: can be exercised against a store that genuinely has no ``cas`` rather than
     #: against one pretending not to -- and, since #150, so that a caller's
     #: handling of a store that cannot be listed is exercised the same way.
-    capabilities: frozenset[str] = frozenset({CAS, LIST})
+    capabilities: frozenset[str] = frozenset({CAS, LIST, VERSIONING})
 
     def supports(self) -> frozenset[str]:
         return self.capabilities
 
-    def read(self, path: str) -> Stored | None:
+    def read(self, path: str, *, version: int | None = None) -> Stored | None:
+        if version is not None and VERSIONING not in self.capabilities:
+            raise StoreError(
+                f"this store keeps no versions, and a read of {path!r} asked for version {version}",
+                hint="drop the `@version=` qualifier, or point the ref at a store that versions",
+            )
         entry = self.paths.get(path)
-        if entry is None or entry.deleted or entry.version == 0:
+        if entry is None:
+            return None
+        if version is not None:
+            # An older version outlives a soft delete, which removes the latest
+            # one only -- so this deliberately does not consult `deleted`. Asking
+            # for a version that was never written, or one above the latest,
+            # answers `None` rather than raising: the protocol's rule is that a
+            # version that is gone reads as nothing.
+            if version not in entry.history:
+                return None
+            return Stored(data=copy.deepcopy(entry.history[version]), version=version)
+        if entry.deleted or entry.version == 0:
             # Version 0 means the path exists only because its *metadata* was
             # configured -- `vault kv metadata put` before anything was ever
             # written. There is nothing to read, and a `cas: 0` write still
@@ -115,6 +149,7 @@ class MemoryStore:
             raise CasConflictError(f"compare-and-set failed at {path!r}: the path has a history")
         entry.version += 1
         entry.data = copy.deepcopy(data)
+        entry.history[entry.version] = entry.data
         entry.deleted = False
         return entry.version
 

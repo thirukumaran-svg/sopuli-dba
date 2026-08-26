@@ -35,7 +35,7 @@ from sopuli.store.hashicorp._auth import (  # noqa: E402
     authenticate,
 )
 from sopuli.store.hashicorp._transport import Response  # noqa: E402
-from sopuli.store.protocol import StoreError  # noqa: E402
+from sopuli.store.protocol import CAS, LIST, StoreError  # noqa: E402
 
 ADDR = "https://vault.example.com"
 
@@ -539,4 +539,8 @@ def test_connect_reaches_a_store_from_a_config_entry(
 
     # A path this token's policy cannot read is still an answer from the store,
     # so `supports()` is what proves the store is live without needing a policy.
-    assert store.supports() == frozenset({"cas", "list"})
+    # Asserted by containment rather than by equality: what this test is about is
+    # that `connect` handed back a live KV v2 store, and pinning the exact set
+    # makes it fail every time the interface grows a capability somewhere else
+    # -- which is what it did when `versioning` arrived with #183.
+    assert {CAS, LIST} <= store.supports()

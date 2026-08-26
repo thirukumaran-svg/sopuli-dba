@@ -1413,6 +1413,17 @@ rather than at the first rotation — §1 calls the account→secret binding the
 safety-critical part, and the failure at the far end of a malformed ref is a
 password written where the application does not read it.
 
+**Resolving** one — turning a parsed ref plus a stored document into a value — is
+`sopuli/store/credentials.py` (#183), and it is a separate layer on purpose: the
+address is decided when the file is read and the document is not read until
+something connects. Two things it settles that the grammar above leaves open. The
+value has to be a **string**: a ref landing on a map has addressed the wrong
+depth, typically the container rather than the account inside it, and that is
+refused rather than wrapped and passed on to `ALTER USER`. And a ref that finds
+**nothing** — no such field, no `pending` staged for this account, no document at
+all — resolves to nothing rather than failing, because UC-1 §3's state model
+reads all of those as one state.
+
 Three ambiguities have to be settled to parse the grammar at all. Each is
 settled the way that keeps a realistic ref working:
 

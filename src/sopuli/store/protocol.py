@@ -37,6 +37,19 @@ from sopuli.exit_codes import ExitCode
 #: The store capability the lock requires, spelled as P2's table spells it.
 CAS = "cas"
 
+#: Reading a *named* version rather than the latest one, spelled as P2's table
+#: spells it (#183).
+#:
+#: The capability :meth:`SecretStore.read`'s ``version`` argument needs, and the
+#: reason that argument is not simply always honoured: KV v1 has no versions at
+#: all, so ``@version=7`` there is not a read that returns nothing -- it is a
+#: question the store cannot be asked. P2's rule is that a missing capability is
+#: emulated in the payload where it can be, and this is one of the two that
+#: cannot: a version somebody wants to read back is a version the store had to
+#: have kept at the time, and nothing in a payload written afterwards can
+#: manufacture one.
+VERSIONING = "versioning"
+
 #: Enumerating the paths below a prefix (#150), spelled the same way.
 #:
 #: Its own capability rather than an assumption, for the reason every entry in
@@ -139,8 +152,25 @@ class SecretStore(Protocol):
         """Store capabilities, from P2's table. ``cas`` is the one asked about."""
         ...
 
-    def read(self, path: str) -> Stored | None:
+    def read(self, path: str, *, version: int | None = None) -> Stored | None:
         """The document at ``path``, or ``None`` if there is nothing to read.
+
+        ``version`` pins the read to one version -- C14's ``@version=N``, which
+        counts from 1 (``01-configuration.md`` §7). ``None`` is the latest, which
+        is every caller the lock has and the default for that reason.
+
+        **A pinned version is behind** :data:`VERSIONING`, and a store without it
+        raises :class:`StoreError` rather than quietly answering with the latest.
+        Substituting the latest for a version somebody asked for by number is the
+        one failure worth being loud about here: the caller asked *because* it
+        did not want whatever is current, and a rotation that read the wrong
+        generation is a password written where nobody reads it.
+
+        **A version that is gone reads as** ``None``, not as an error -- pruned
+        by ``max_versions``, deleted, or never written at all. It is the same
+        answer as an empty path for the same reason the next paragraph gives, and
+        a caller that pinned a version finds out that it is unavailable rather
+        than what became of it.
 
         **``None`` is not the same as "a ``cas: 0`` write will succeed here",**
         and conflating the two is the trap this interface exists to keep visible.

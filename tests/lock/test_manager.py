@@ -154,9 +154,9 @@ def test_losing_the_write_race_is_reported_as_a_race_rather_than_a_holder() -> N
     winner_ran = False
 
     class RacingStore(MemoryStore):
-        def read(self, path: str) -> Stored | None:
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
             nonlocal winner_ran
-            answer = super().read(path)
+            answer = super().read(path, version=version)
             if not winner_ran:
                 winner_ran = True
                 manager(self, correlation_id="01JWINNER").acquire([KEY])
@@ -451,8 +451,8 @@ class ReadsBeforeWrites(MemoryStore):
         self._writing = threading.Lock()
         self._looked = threading.local()
 
-    def read(self, path: str) -> Stored | None:
-        answer = super().read(path)
+    def read(self, path: str, *, version: int | None = None) -> Stored | None:
+        answer = super().read(path, version=version)
         if not getattr(self._looked, "yet", False):
             self._looked.yet = True
             self._barrier.wait()

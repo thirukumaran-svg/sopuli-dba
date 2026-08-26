@@ -250,9 +250,26 @@ A store without the capability **raises** rather than answering `()`: "I looked
 and found nothing" and "I cannot look" are the two answers a caller must never
 confuse, since it acts on the first by concluding there is nothing out there.
 
-The slice implemented is `sopuli/store/protocol.py`; `health`, and what a
-*secret* value looks like as opposed to a lock record, arrive with the secret
-side.
+**`read` takes a version** (#183), which is C14's `@version=N` and the first
+thing on this interface that exists for a *secret* rather than for a lock record.
+It is behind the `versioning` capability and a store without it **raises** rather
+than answering with the latest — the same rule as `list`, and for a sharper
+reason: a caller pins a version precisely because it does not want whatever is
+current, so substituting the current one is a rotation reading the wrong
+generation. KV v1 is the store that refuses.
+
+The slice implemented is `sopuli/store/protocol.py`, and the secret side of it is
+`sopuli/store/credentials.py`: a SecretRef resolved against a stored document —
+field, JSON pointer, `@stage=`, and `@version=` — producing a
+`Secret` and the version it was read at. The read half of #183; the write is the
+other half.
+
+**`health` waits for #216, and that is a decision rather than a third
+deferral.** Its only consumer is `doctor`'s vault section, and the argument is
+the one P1 makes two paragraphs above about `apply_attributes`: a method on the
+protocol is a demand on every implementation, so declaring one nothing calls
+would oblige each backend to write a body for a caller that does not exist. It
+arrives with the command that asks the question.
 
 ### Backends in scope
 
@@ -290,6 +307,17 @@ answer: a command that wanted it **reports what it could reach and says it could
 not look further**. Refusing would make `lock status` a command that works on some
 backends and not others, which is worse than a partial answer that admits to being
 one (#150).
+
+**`versioning` is the second that cannot be emulated** (#183), and for a reason
+worth stating beside `cas`'s rather than assuming it follows: a version somebody
+wants to read back is a version the store had to have kept *at the time*, and
+nothing written into a payload afterwards can manufacture one. So `@version=N`
+against KV v1 is refused with `UNSUPPORTED_CAPABILITY` and a message naming the
+ref, and never answered with the current document. Note what this does *not*
+touch — the three **stages** are emulated in the payload on every backend but
+OCI, and that emulation is unaffected: `@stage=pending` works perfectly well on a
+store with no versions, because a stage is a key beside the value rather than a
+generation of it.
 
 **`cas` is the one capability that cannot be emulated**, since "not atomic" is
 precisely what it is for. A store without it therefore gets no lock rather than a

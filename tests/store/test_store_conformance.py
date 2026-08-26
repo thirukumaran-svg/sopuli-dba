@@ -43,6 +43,7 @@ from sopuli.store import MemoryStore
 from sopuli.store.protocol import (
     CAS,
     LIST,
+    VERSIONING,
     CasConflictError,
     PathMetadata,
     SecretStore,
@@ -204,6 +205,61 @@ def test_versions_increase_and_never_repeat(harness: Harness) -> None:
     assert harness.store.write(harness.path, {"n": 1}, cas=0) == 1
     assert harness.store.write(harness.path, {"n": 2}, cas=1) == 2
     assert harness.store.write(harness.path, {"n": 3}, cas=2) == 3
+
+
+def test_a_store_that_keeps_versions_says_so(harness: Harness) -> None:
+    assert VERSIONING in harness.store.supports()
+
+
+def test_an_older_version_is_readable_by_number(harness: Harness) -> None:
+    """What ``@version=N`` is (#183), and the reason the fake had to grow a
+    history: a store that kept only the newest document would answer every
+    pinned read with `None` and let an adapter that did the same pass."""
+    harness.store.write(harness.path, {"password": "first"}, cas=0)
+    harness.store.write(harness.path, {"password": "second"}, cas=1)
+
+    pinned = harness.store.read(harness.path, version=1)
+    assert pinned is not None
+    assert pinned.data == {"password": "first"}
+    assert pinned.version == 1
+
+
+def test_a_pinned_read_reports_the_version_it_read(harness: Harness) -> None:
+    """Not the latest one. A caller records what it *found*, and a store that
+    echoed the current version would put the wrong number in the audit trail."""
+    harness.store.write(harness.path, {"n": 1}, cas=0)
+    harness.store.write(harness.path, {"n": 2}, cas=1)
+    harness.store.write(harness.path, {"n": 3}, cas=2)
+
+    pinned = harness.store.read(harness.path, version=2)
+    assert pinned is not None
+    assert pinned.version == 2
+
+
+def test_a_version_that_was_never_written_reads_as_nothing(harness: Harness) -> None:
+    """Above the latest, and so gone in the only sense that matters. `None`
+    rather than an error, which is the protocol's rule for a version that is not
+    there -- pruned, deleted, or never reached."""
+    harness.store.write(harness.path, {"n": 1}, cas=0)
+
+    assert harness.store.read(harness.path, version=9) is None
+
+
+def test_a_soft_delete_removes_the_latest_version_only(harness: Harness) -> None:
+    """The asymmetry a looser fake would paper over.
+
+    KV v2's delete acts on the latest version; the earlier ones stay readable by
+    number. So the *unqualified* read says `None` -- there is nothing current --
+    while `version=1` still answers, and the two are not in conflict.
+    """
+    harness.store.write(harness.path, {"password": "first"}, cas=0)
+    harness.store.write(harness.path, {"password": "second"}, cas=1)
+    harness.admin.soft_delete(harness.path)
+
+    assert harness.store.read(harness.path) is None
+    pinned = harness.store.read(harness.path, version=1)
+    assert pinned is not None
+    assert pinned.data == {"password": "first"}
 
 
 def test_a_stale_compare_and_set_is_refused(harness: Harness) -> None:

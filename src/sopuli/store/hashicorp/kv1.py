@@ -56,7 +56,24 @@ class Kv1Store:
         delete -- but the mount does enumerate, so say so (see the module note)."""
         return frozenset({LIST})
 
-    def read(self, path: str) -> Stored | None:
+    def read(self, path: str, *, version: int | None = None) -> Stored | None:
+        """Read the one document there is, and refuse to fake an older one.
+
+        A ``@version=N`` ref against a v1 mount is not a read that comes back
+        empty -- it is a question this store cannot be asked, and answering it
+        with the current document would be the same lie :meth:`write` refuses to
+        tell about ``cas``: the caller pinned a version *because* it did not want
+        whatever is current, and handing it the current one silently is a
+        rotation reading the wrong generation.
+        """
+        if version is not None:
+            raise StoreError(
+                f"this store keeps no versions, and a read of {path!r} asked for version {version}",
+                hint=(
+                    "KV v1 has no version history: drop the `@version=` qualifier, or "
+                    "`vault kv enable-versioning` on the mount"
+                ),
+            )
         response = self.transport.request("GET", f"{self.mount}/{path}")
         if response.status == 404:
             return None

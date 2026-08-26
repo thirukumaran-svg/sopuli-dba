@@ -77,7 +77,9 @@ class Unfenced:
     def supports(self) -> frozenset[str]:
         return frozenset()
 
-    def read(self, path: str) -> Stored | None:  # pragma: no cover - never reached
+    def read(
+        self, path: str, *, version: int | None = None
+    ) -> Stored | None:  # pragma: no cover - never reached
         raise AssertionError("a store that cannot fence must be refused before the read")
 
     def write(self, path: str, data: Any, *, cas: int | None) -> int:  # pragma: no cover
