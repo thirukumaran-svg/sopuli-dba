@@ -25,6 +25,11 @@ from click.testing import CliRunner
 
 from oracle_harness import Environment
 from sopuli.cli import cli
+from sopuli.driver.oracle.privileges import (
+    FORBIDDEN_PREFIX,
+    FORBIDDEN_PRIVILEGES,
+    FORBIDDEN_ROLES,
+)
 
 USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
 PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
@@ -209,3 +214,68 @@ def test_the_report_is_readable_without_json(
     assert result.exit_code == 0, result.output
     assert result.output.splitlines()[0] == "client"
     assert "tier1-oracle" in result.output
+
+
+def _run_with_flags(runner: CliRunner, config: Path, *flags: str) -> Any:
+    """`doctor` with options of its own, which `_run` cannot express.
+
+    `_run` puts everything before the subcommand, where click reads it as a
+    global option. `--check-privileges` belongs to the command.
+    """
+    return runner.invoke(cli, ["--config", str(config), "--output", "json", "doctor", *flags])
+
+
+def test_check_privileges_finds_an_over_granted_account(
+    runner: CliRunner, live_oracle: Environment, tmp_path: Path
+) -> None:
+    """The case the feature exists for, and the harness hands it over for free:
+    these tests connect as `system`, which holds most of §3's list.
+
+    Asserted loosely — that *something* was found and that it is a subset of the
+    list — rather than on an exact set, because which privileges `system` holds
+    is Oracle's business and varies by release. Pinning it would make this a test
+    of the container image.
+    """
+    config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
+
+    result = _run_with_flags(runner, config, "--check-privileges")
+
+    assert result.exit_code == 0, result.output
+    over_granted = _document(result)["targets"][0]["scope"]["over_granted"]
+    assert over_granted, "`system` holds a great deal the tool does not need"
+    assert set(over_granted) <= set(FORBIDDEN_PRIVILEGES) | set(FORBIDDEN_ROLES) | {
+        privilege for privilege in over_granted if privilege.startswith(FORBIDDEN_PREFIX)
+    }
+
+
+def test_an_over_granted_account_warns_and_does_not_fail(
+    runner: CliRunner, live_oracle: Environment, tmp_path: Path
+) -> None:
+    """**P5, decided in #213: warn.**
+
+    The whole of the decision, asserted where it can regress. Failing would block
+    somebody mid-incident over a condition they did not create and cannot fix
+    from this side, so an over-granted account leaves the exit code alone — while
+    still being impossible to miss in the text report.
+    """
+    config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
+
+    result = runner.invoke(cli, ["--config", str(config), "doctor", "--check-privileges"])
+
+    assert result.exit_code == 0, result.output
+    assert "over-granted" in result.output
+
+
+def test_the_audit_costs_nothing_when_it_is_not_asked_for(
+    runner: CliRunner, live_oracle: Environment, tmp_path: Path
+) -> None:
+    """Behind a flag because it is three more round trips per target. A survey of
+    twenty databases should not pay for a question nobody asked, and the field is
+    absent rather than empty so a consumer can tell "not asked" from "nothing
+    found"."""
+    config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
+
+    result = _run(runner, config, "--output", "json")
+
+    assert result.exit_code == 0, result.output
+    assert "over_granted" not in _document(result)["targets"][0]["scope"]

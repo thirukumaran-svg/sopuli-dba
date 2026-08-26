@@ -310,6 +310,43 @@ holds and flags anything on this list. Over-granting is the common failure when
 someone is debugging a permissions problem at 17:00 on a Friday; the tool should
 notice and say so rather than quietly benefit from it.
 
+**It warns and never fails** (P5, decided in #213 — see §8). Reporting is not
+enforcing: #173 is the refusal and §4 is the guardrail set, and neither is this.
+
+**The audit is self-inspection**, which is what makes it possible at all. The
+obvious implementation reads `DBA_SYS_PRIVS` for this grantee and does not work —
+an account holding exactly §2's grants gets `ORA-00942` from it, measured on 26ai
+in #178, so a *correctly installed* tool would report nothing at all. That is the
+answer that looks like good news and means "I could not look", and it is the same
+failure #178 found in `DBA_ROLE_PRIVS` and #195 in a capability probe. So the
+questions are asked of views that need no grant:
+
+| View | Answers | Grant needed |
+|---|---|---|
+| `SESSION_PRIVS` | every system privilege in force, **role-derived included** | none |
+| `USER_SYS_PRIVS` | the same account's *direct* grants, with `COMMON` — the column `SESSION_PRIVS` lacks | none |
+| `DBA_ROLE_PRIVS` | granted roles, traversed with `CONNECT BY NOCYCLE` | §2 grants it (#207) |
+
+**Roles are read granted rather than enabled**, which is why `SESSION_ROLES` —
+free of any grant — is not used: it shows what is enabled in *this* session, and
+a non-default `DBA` grant is one `SET ROLE` away. For a guardrail that would be
+splitting hairs; for an audit asking what an account could become, a privilege
+one statement away is held.
+
+**Three rows cannot be audited from here**, and the report names them on every
+run rather than omitting them — E6's argument, applied to a caveat: one that
+appears only when something is wrong cannot be quoted as evidence that nothing
+was.
+
+| Row | Why not | What it would take |
+|---|---|---|
+| `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's grant set, and an account holding them would not be exercising them on this connection anyway | a grant added only so the tool can report |
+| `EXECUTE ON DBMS_LOCK` | an **object** privilege; the three views above carry system privileges and roles | `USER_TAB_PRIVS` and `ROLE_TAB_PRIVS`, the second of which does not compose with the nested-role traversal — a design question rather than a query |
+
+A refused `DBA_ROLE_PRIVS` joins them at runtime, taking the three role rows with
+it. "I looked and found nothing" and "I could not look" are answers this report
+never merges.
+
 ---
 
 ## 4. Guardrails, now client-side
@@ -564,6 +601,6 @@ All scripts are idempotent and report what they did.
 | ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86, 2026-08-18). Optional, capability-probed grant instead — see §2. `check` defaults to `login` unconditionally either way; whether to *recommend* the grant, and whether `SELECT_CATALOG_ROLE`/`KU$_USER_VIEW` is a narrower alternative, is deferred to #124 |
 | ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag, overriding checks 2–5 of §4 and nothing else** (#89). Managing `DBSNMP`'s password is ordinary DBA work, and it is `ORACLE_MAINTAINED` — so a tool with no override does not prevent that rotation, it just makes it happen in SQL\*Plus where nothing records it. Per-check flags were rejected: a growing flag surface for a rare case, one more flag with every new guardrail. The bluntness is real and accepted — a DBA who wanted to bypass one check bypasses four — and is what §4's audit record is for. It never touches guardrail 1 (invariant 5), and it is **not a setting**: see below |
 | P4 | One service account per database, or per application? | per database; the config's declared accounts provide the finer scoping |
-| P5 | Does `doctor` fail or warn on over-granted privileges? | warn; failing would block someone mid-incident |
+| ~~P5~~ | ~~Does `doctor` fail or warn on over-granted privileges?~~ | **decided: warn** (#213). Failing would block the person who ran it, mid-incident, over a condition they did not create and cannot fix from this side — and the over-grant is somebody else's decision. So `--check-privileges` populates `scope.over_granted` and prints a line naming what to `REVOKE`, and leaves the exit code alone. A flag to gate on it (`--fail-on-over-grant`) was considered and not added: P3 already rejected a growing flag surface for rare cases, and adding one later is cheap where removing one is not |
 | P6 | 11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases? | keep for now, drop if it starts costing real complexity |
 | ~~P7~~ | ~~Do the 23-codebase schema privileges cover `ALTER USER`?~~ (§2.1) | **decided: no — tested 2026-08-17 on 26ai 23.26.2.0.0.** `GRANT ALTER USER ON SCHEMA` gives `ORA-00990: missing or invalid privilege`, while `GRANT SELECT ANY TABLE ON SCHEMA` succeeds in the same session — so the feature works and the refusal is specific to `ALTER USER`, not an artefact of the environment. Nothing lands in `DBA_SCHEMA_PRIVS`. The direct grant in §1 is the model on every supported release, the scoped-grant alternative does not exist, and ADR-001's P7 trigger is closed |

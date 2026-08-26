@@ -51,6 +51,7 @@ from sopuli.driver.oracle.client import (
 )
 from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.oracle.limits import resolve as resolve_limit
+from sopuli.driver.oracle.privileges import PrivilegeAudit, audit
 from sopuli.driver.oracle.rollover import alter_profile_ddl, is_enabled
 from sopuli.driver.oracle.statements import (
     Identifier,
@@ -205,6 +206,23 @@ class OracleSession:
             with self.connection.cursor() as cursor:
                 self._scope = observe(cursor)
         return self._scope
+
+    def privileges(self) -> PrivilegeAudit:
+        """What this session holds that §3 says it should not (#213).
+
+        **Not folded into** :meth:`scope`, unlike the capability probe, and the
+        difference is who asks. Every command calls ``scope()``; only
+        ``doctor --check-privileges`` wants this, and three more round trips on
+        every connection to answer a question nobody asked is the cost the flag
+        exists to avoid. Three and not four: the role traversal starts from
+        ``USER`` rather than from a name read back first. Uncached for the same
+        reason as the flag: it is asked once per run.
+
+        Reporting is not enforcing (#173), and this never refuses. P5 is decided
+        — over-granting **warns**.
+        """
+        with self.connection.cursor() as cursor:
+            return audit(cursor)
 
     def describe_user(self, account: str) -> UserState | None:
         """The account's state, or ``None`` if there is no such account (#178).

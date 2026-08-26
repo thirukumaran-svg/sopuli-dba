@@ -177,5 +177,16 @@ def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
             )
         for warning in entry.get("warnings", ()):
             lines.append(f"  {entry['target']}: {warning}")
+        over_granted = (entry.get("scope") or {}).get("over_granted")
+        if over_granted:
+            # A line rather than a column: it appears only under
+            # `--check-privileges`, and a column that is empty on every ordinary
+            # run is a column that teaches people to stop reading it. Named in
+            # full because the remedy is a `REVOKE` and the reader needs the
+            # spelling (P5: this warns and never fails).
+            lines.append(
+                f"  {entry['target']}: over-granted, and the tool needs none of it: "
+                + ", ".join(over_granted)
+            )
 
     return "\n".join(lines)
