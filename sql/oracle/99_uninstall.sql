@@ -82,9 +82,23 @@ BEGIN
   IF UPPER('&keep_audit') = 'Y' THEN
     DBMS_OUTPUT.PUT_LINE('leaving audit policies SOPULI_POL / SOPULI_LOGON_POL in place');
   ELSE
-    FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_enabled_policies
+    -- NOAUDIT must name the same principal the AUDIT named. An unqualified
+    -- `NOAUDIT POLICY p` does NOT lift an enablement made `BY <user>` -- it
+    -- reports success and leaves the policy enabled, and the DROP below then
+    -- fails with ORA-46361. 01_audit_policy.sql enables sopuli_logon_pol
+    -- `BY &svc_user`, so this is the ordinary case rather than a corner.
+    --
+    -- `entity_name = 'ALL USERS'` is how the view spells a global enablement;
+    -- anything else is a real account and has to be named back.
+    FOR p IN (SELECT DISTINCT policy_name, entity_name
+                FROM audit_unified_enabled_policies
                WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL')) LOOP
-      EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
+      IF p.entity_name = 'ALL USERS' THEN
+        EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
+      ELSE
+        EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name
+                       || ' BY ' || p.entity_name;
+      END IF;
     END LOOP;
     FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
                WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL')) LOOP
