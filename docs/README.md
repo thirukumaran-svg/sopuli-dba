@@ -1,6 +1,8 @@
 # sopuli-dba — design documentation
 
-Sketch stage. Nothing here is implemented. The SQL has never been executed.
+Sketch stage. Nothing here is implemented. The SQL in `sql/oracle/` has been
+executed against Oracle 26ai Free 23.26.2.0.0 only; each script's `STATUS:`
+header records which paths ran and which are still untried.
 
 | Document | Contents |
 |---|---|

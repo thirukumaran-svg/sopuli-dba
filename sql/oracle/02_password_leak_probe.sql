@@ -365,7 +365,7 @@ BEGIN
       EXECUTE IMMEDIATE 'BEGIN DBMS_AUDIT_MGMT.FLUSH_UNIFIED_AUDIT_TRAIL; END;';
       DBMS_OUTPUT.PUT_LINE('unified audit trail flushed');
     EXCEPTION WHEN OTHERS THEN
-      DBMS_OUTPUT.PUT_LINE('flush unavailable on this release -- §4a decides '
+      DBMS_OUTPUT.PUT_LINE('flush unavailable on this release -- section 4a decides '
                            || 'whether that mattered');
     END;
   END IF;

@@ -1,7 +1,11 @@
 --------------------------------------------------------------------------------
 -- sopuli-dba : auditing
 --
--- STATUS: DRAFT, never executed.
+-- STATUS: confirmed on 26ai Free 23.26.2.0.0 (2026-08-26) against a COMMON
+--         install, both the create and the already-exists paths. The section 4
+--         queries were checked against a real audited ALTER USER, including the
+--         CLIENT_IDENTIFIER correlation in section 5. Untried on 19c, 21c
+--         and 11.2.
 --
 -- The service account holds ALTER USER, which has no object scope. Unified
 -- auditing is therefore not housekeeping — it is the compensating control for
@@ -13,6 +17,7 @@
 
 SET SERVEROUTPUT ON
 SET DEFINE ON
+SET VERIFY OFF
 DEFINE svc_user = C##SOPULI_SVC     -- or SOPULI_SVC for NONCDB / PDB installs
 
 --------------------------------------------------------------------------------
@@ -79,19 +84,19 @@ AUDIT POLICY sopuli_logon_pol BY &svc_user WHENEVER NOT SUCCESSFUL;
 SET LINESIZE 220
 COLUMN dbusername  FORMAT A20
 COLUMN object_name FORMAT A22
-COLUMN client_id   FORMAT A38
+COLUMN client_identifier FORMAT A38
 COLUMN action_name FORMAT A14
 
-PROMPT --- all user-management statements, last 24h, whoever ran them ---
+PROMPT --- all user-management statements, last 24h, whoever ran them
 SELECT event_timestamp, dbusername, action_name, object_name,
-       return_code, client_id
+       return_code, client_identifier
   FROM unified_audit_trail
  WHERE action_name IN ('ALTER USER','CREATE USER','DROP USER')
    AND event_timestamp > SYSTIMESTAMP - 1
  ORDER BY event_timestamp DESC
  FETCH FIRST 50 ROWS ONLY;
 
-PROMPT --- statements NOT made by the service account (i.e. manual changes) ---
+PROMPT --- statements NOT made by the service account (i.e. manual changes)
 SELECT event_timestamp, dbusername, action_name, object_name
   FROM unified_audit_trail
  WHERE action_name = 'ALTER USER'
@@ -100,7 +105,7 @@ SELECT event_timestamp, dbusername, action_name, object_name
  ORDER BY event_timestamp DESC
  FETCH FIRST 50 ROWS ONLY;
 
-PROMPT --- failed logons by the service account ---
+PROMPT --- failed logons by the service account
 SELECT event_timestamp, dbusername, return_code, authentication_type
   FROM unified_audit_trail
  WHERE dbusername = UPPER('&svc_user')
@@ -113,15 +118,15 @@ SELECT event_timestamp, dbusername, return_code, authentication_type
 -- 5. One sopuli run, end to end
 --
 --    The tool calls DBMS_SESSION.SET_IDENTIFIER(<correlation_id>) on every
---    connection, so its UUID lands in UNIFIED_AUDIT_TRAIL.CLIENT_ID. That is the
---    join between the tool's JSON output, this trail, and the vault's secret
---    metadata. Take the id from the tool's output:
+--    connection, so its UUID lands in UNIFIED_AUDIT_TRAIL.CLIENT_IDENTIFIER.
+--    That is the join between the tool's JSON output, this trail, and the
+--    vault's secret metadata. Take the id from the tool's output:
 --
 --      jq -r .invocation.correlation_id result.json
 --------------------------------------------------------------------------------
 -- SELECT event_timestamp, dbusername, action_name, object_name, return_code
 --   FROM unified_audit_trail
---  WHERE client_id = '&correlation_id'
+--  WHERE client_identifier = '&correlation_id'
 --  ORDER BY event_timestamp;
 
 --------------------------------------------------------------------------------

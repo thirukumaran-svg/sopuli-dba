@@ -1,7 +1,13 @@
 --------------------------------------------------------------------------------
 -- sopuli-dba : create and grant the service account
 --
--- STATUS: DRAFT. Never executed. Review before running; try a throwaway DB first.
+-- STATUS: confirmed on 26ai Free 23.26.2.0.0 (2026-08-26). All three modes ran
+--         (COMMON in CDB$ROOT, PDB and NONCDB in a PDB), both the create and
+--         the already-exists paths, and both settings of grant_user_dollar and
+--         grant_set_container. The mode guards were checked too: PDB in
+--         CDB$ROOT gives ORA-20011 and an unknown mode ORA-20012, each exiting
+--         non-zero. Untried on 19c, 21c and 11.2.
+--         Review before running; try a throwaway DB first.
 --
 -- Run as SYS AS SYSDBA or an equivalent DBA.
 --
@@ -20,6 +26,7 @@
 
 SET SERVEROUTPUT ON SIZE UNLIMITED
 SET DEFINE ON
+SET VERIFY OFF
 WHENEVER SQLERROR EXIT SQL.SQLCODE
 
 DEFINE mode          = COMMON
@@ -61,6 +68,8 @@ PROMPT ============================================================
 --------------------------------------------------------------------------------
 -- Sanity: COMMON must run in CDB$ROOT; PDB/NONCDB must not
 --------------------------------------------------------------------------------
+PROMPT
+PROMPT [check] session container is valid for mode=&mode
 DECLARE
   l_con VARCHAR2(128) := SYS_CONTEXT('USERENV','CON_NAME');
 BEGIN
@@ -85,6 +94,8 @@ END;
 -- DBA sets a real one. Store that password in the vault, or use an Oracle
 -- Wallet / external authentication and never give it a usable password at all.
 --------------------------------------------------------------------------------
+PROMPT
+PROMPT [1] account &eff_user
 DECLARE
   l_cnt PLS_INTEGER;
 BEGIN
@@ -94,7 +105,7 @@ BEGIN
                    || DBMS_RANDOM.STRING('X', 28) || 'aA1" '
                    || 'DEFAULT TABLESPACE &svc_tablespace '
                    || 'PASSWORD EXPIRE' || '&cont_all';
-    DBMS_OUTPUT.PUT_LINE('created &eff_user (random password, expired — set it now)');
+    DBMS_OUTPUT.PUT_LINE('created &eff_user (random password, expired - set it now)');
   ELSE
     DBMS_OUTPUT.PUT_LINE('&eff_user already exists; its password is left alone');
   END IF;
@@ -109,7 +120,11 @@ END;
 -- accepted deliberately — see docs/design/02-oracle-privileges.md §1. Treat the
 -- credential accordingly, and enable auditing (01_audit_policy.sql).
 --------------------------------------------------------------------------------
+PROMPT
+PROMPT [2] core grants
+PROMPT   CREATE SESSION
 GRANT CREATE SESSION TO &eff_user&cont_all;
+PROMPT   ALTER USER
 GRANT ALTER USER     TO &eff_user&cont_all;
 
 --------------------------------------------------------------------------------
@@ -125,13 +140,21 @@ GRANT ALTER USER     TO &eff_user&cont_all;
 -- roles" as "holds no admin role" — which would turn a safety check into a
 -- silent pass.
 --------------------------------------------------------------------------------
+PROMPT
+PROMPT [3] dictionary reads
+PROMPT   SELECT ON DBA_USERS
 GRANT SELECT ON SYS.DBA_USERS      TO &eff_user&cont_all;
+PROMPT   SELECT ON DBA_PROFILES
 GRANT SELECT ON SYS.DBA_PROFILES   TO &eff_user&cont_all;
+PROMPT   SELECT ON DBA_ROLE_PRIVS
 GRANT SELECT ON SYS.DBA_ROLE_PRIVS TO &eff_user&cont_all;
+PROMPT   SELECT ON V$DATABASE
 GRANT SELECT ON SYS.V_$DATABASE    TO &eff_user&cont_all;
+PROMPT   SELECT ON V$INSTANCE
 GRANT SELECT ON SYS.V_$INSTANCE    TO &eff_user&cont_all;
 
 -- V$PDBS is meaningful in the root only
+PROMPT   SELECT ON V$PDBS (COMMON only)
 BEGIN
   IF UPPER('&mode') = 'COMMON' THEN
     EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.V_$PDBS TO &eff_user';
@@ -142,6 +165,8 @@ END;
 --------------------------------------------------------------------------------
 -- 4. Optional: SYS.USER$ for hash-mode verification and the LCOUNT guard
 --------------------------------------------------------------------------------
+PROMPT
+PROMPT [4] optional: SYS.USER$ (grant_user_dollar=&grant_user_dollar)
 BEGIN
   IF UPPER('&grant_user_dollar') = 'Y' THEN
     EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO &eff_user&cont_all';
@@ -157,6 +182,8 @@ END;
 --------------------------------------------------------------------------------
 -- 5. Optional: SET CONTAINER
 --------------------------------------------------------------------------------
+PROMPT
+PROMPT [5] optional: SET CONTAINER (grant_set_container=&grant_set_container)
 BEGIN
   IF UPPER('&grant_set_container') = 'Y' AND UPPER('&mode') = 'COMMON' THEN
     EXECUTE IMMEDIATE 'GRANT SET CONTAINER TO &eff_user CONTAINER=ALL';
@@ -174,17 +201,19 @@ COLUMN owner     FORMAT A10
 COLUMN table_name FORMAT A20
 
 PROMPT
-PROMPT --- system privileges ---
+PROMPT [6] report: exactly what this account now holds
+PROMPT
+PROMPT --- system privileges
 SELECT privilege, common FROM dba_sys_privs WHERE grantee = UPPER('&eff_user');
 
-PROMPT --- roles (expect none) ---
+PROMPT --- roles (expect none)
 SELECT granted_role FROM dba_role_privs WHERE grantee = UPPER('&eff_user');
 
-PROMPT --- object privileges ---
+PROMPT --- object privileges
 SELECT owner, table_name, privilege FROM dba_tab_privs
  WHERE grantee = UPPER('&eff_user') ORDER BY table_name;
 
-PROMPT --- things that should NOT appear above ---
+PROMPT --- things that should NOT appear above
 SELECT privilege AS over_granted FROM dba_sys_privs
  WHERE grantee = UPPER('&eff_user')
    AND privilege IN ('SELECT ANY DICTIONARY','ALTER PROFILE','CREATE USER',

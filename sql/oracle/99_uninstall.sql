@@ -1,7 +1,11 @@
 --------------------------------------------------------------------------------
 -- sopuli-dba : uninstall
 --
--- STATUS: DRAFT, never executed.
+-- STATUS: confirmed on 26ai Free 23.26.2.0.0 (2026-08-26) against a COMMON
+--         install, with keep_audit=Y and with keep_audit=N. The account and all
+--         8 grants were removed, and the ALTER USER audit history survived the
+--         drop. NEVER executed against NONCDB / PDB installs. Untried on 19c,
+--         21c and 11.2.
 --
 -- Removes the service account and the audit policies. Does NOT change any
 -- application account's password — whatever the tool last applied stays in
@@ -14,6 +18,7 @@
 
 SET SERVEROUTPUT ON
 SET DEFINE ON
+SET VERIFY OFF
 WHENEVER SQLERROR CONTINUE
 
 DEFINE svc_user   = C##SOPULI_SVC     -- or SOPULI_SVC
@@ -46,11 +51,11 @@ BEGIN
   IF UPPER('&keep_audit') = 'Y' THEN
     DBMS_OUTPUT.PUT_LINE('leaving audit policies SOPULI_POL / SOPULI_LOGON_POL in place');
   ELSE
-    FOR p IN (SELECT policy_name FROM audit_unified_enabled_policies
+    FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_enabled_policies
                WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL')) LOOP
       EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
     END LOOP;
-    FOR p IN (SELECT policy_name FROM audit_unified_policies
+    FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
                WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL')) LOOP
       EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
       DBMS_OUTPUT.PUT_LINE('dropped audit policy ' || p.policy_name);
@@ -62,7 +67,7 @@ END;
 --------------------------------------------------------------------------------
 -- 3. Verify nothing is left
 --------------------------------------------------------------------------------
-PROMPT --- should return no rows ---
+PROMPT --- should return no rows
 SELECT username FROM dba_users WHERE username = UPPER('&svc_user');
 
 SELECT grantee, privilege FROM dba_sys_privs WHERE grantee = UPPER('&svc_user');
@@ -70,7 +75,11 @@ SELECT grantee, privilege FROM dba_sys_privs WHERE grantee = UPPER('&svc_user');
 SELECT grantee, owner, table_name, privilege FROM dba_tab_privs
  WHERE grantee = UPPER('&svc_user');
 
-PROMPT --- audit history is retained in UNIFIED_AUDIT_TRAIL regardless ---
+PROMPT --- audit policies still present (both if keep_audit=Y, none if N)
+SELECT DISTINCT policy_name FROM audit_unified_policies
+ WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL');
+
+PROMPT --- audit history is retained in UNIFIED_AUDIT_TRAIL regardless
 SELECT COUNT(*) AS retained_alter_user_events
   FROM unified_audit_trail
  WHERE action_name = 'ALTER USER';

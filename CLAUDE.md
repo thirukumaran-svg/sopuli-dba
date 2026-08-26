@@ -4,7 +4,10 @@ A CLI for DBAs that manages database account credentials with a vault as the
 master record. Oracle first, multi-product by design.
 
 **Status: pre-implementation.** The design documents are complete and decided;
-almost no code exists yet. The SQL in `sql/` has never been executed.
+almost no code exists yet. The SQL in `sql/` has been executed only against
+Oracle 26ai Free 23.26.2.0.0. Each script carries a `STATUS:` header saying which
+paths ran and which are still untried — trust that header, not this line, and
+update it when you run one.
 
 ---
 
