@@ -16,6 +16,11 @@ What it gets right on purpose, because the lock depends on each:
   never by deleting" load-bearing rather than stylistic, and a fake without it
   would let the wrong implementation pass.
 * **a stale CAS is refused**, which is the primitive itself.
+* **a merge patch deletes a key mapped to ``None``** (#183) rather than storing
+  one, which is RFC 7386 and is how ``pending`` is cleared at promotion. Shared
+  with the read-modify-write fallback through
+  :func:`~sopuli.payload.apply_patch`, so a store with the capability and one
+  without cannot end up with two readings of the same RFC.
 * **an older version is still readable by number**, and a soft delete removes
   the latest one only (#183). ``@version=N`` is a read of a generation that is
   no longer current, so a fake that kept only the newest document would answer
@@ -34,9 +39,11 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
+from sopuli.payload import apply_patch
 from sopuli.store.protocol import (
     CAS,
     LIST,
+    MERGE_PATCH,
     VERSIONING,
     CasConflictError,
     PathMetadata,
@@ -85,7 +92,7 @@ class MemoryStore:
     #: can be exercised against a store that genuinely has no ``cas`` rather than
     #: against one pretending not to -- and, since #150, so that a caller's
     #: handling of a store that cannot be listed is exercised the same way.
-    capabilities: frozenset[str] = frozenset({CAS, LIST, VERSIONING})
+    capabilities: frozenset[str] = frozenset({CAS, LIST, MERGE_PATCH, VERSIONING})
 
     def supports(self) -> frozenset[str]:
         return self.capabilities
@@ -152,6 +159,37 @@ class MemoryStore:
         entry.history[entry.version] = entry.data
         entry.deleted = False
         return entry.version
+
+    def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
+        """Apply a merge patch, which here is a read and a write with no gap.
+
+        A dictionary makes this trivial and that is the trap worth naming: on a
+        real store the whole value of a merge patch is that the tool never sends
+        the keys it did not change, and nothing about *this* implementation can
+        demonstrate that. What it can hold is the arithmetic -- RFC 7386's
+        deletion in particular -- and it holds it by calling the same
+        :func:`~sopuli.payload.apply_patch` the read-modify-write fallback does,
+        so the two can never drift into two readings of one RFC.
+
+        **A patch will not create a document**, and that refusal is the one thing
+        here a dictionary would happily get wrong. Vault answers 404 to a patch
+        of a path with nothing at it -- never written, metadata-only, or
+        soft-deleted alike -- because a patch describes a change to something. A
+        fake that created the document instead would let a caller patch a path it
+        had never written, pass in tier 0, and fail against a real mount.
+        """
+        if MERGE_PATCH not in self.capabilities:
+            raise StoreError(
+                f"this store cannot apply a merge patch, and a write to {path!r} asked it to",
+                hint="read the document, apply the patch locally, and write it back under a `cas`",
+            )
+        existing = self.read(path)
+        if existing is None:
+            raise StoreError(
+                f"there is nothing at {path!r} to merge a patch into",
+                hint="the first write to a path creates it; a merge patch changes one that exists",
+            )
+        return self.write(path, apply_patch(existing.data, changes), cas=cas)
 
     def metadata(self, path: str) -> PathMetadata | None:
         entry = self.paths.get(path)

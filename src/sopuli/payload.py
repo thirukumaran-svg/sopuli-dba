@@ -76,6 +76,7 @@ __all__ = [
     "RESERVED",
     "STAMPS",
     "StageLayout",
+    "apply_patch",
     "merge",
     "stage_layout",
 ]
@@ -225,6 +226,50 @@ def merge(*patches: Mapping[str, Any]) -> dict[str, Any]:
     for patch in patches:
         _merge_into(merged, patch)
     return merged
+
+
+def apply_patch(document: Any, patch: Mapping[str, Any]) -> dict[str, Any]:
+    """``document`` with ``patch`` applied to it: RFC 7386, in full.
+
+    The other half of :func:`merge`, and the difference between them is one rule
+    that is easy to read past. **Combining two patches and applying a patch to a
+    document are not the same operation**, because :data:`REMOVE` means different
+    things in each: merging two patches keeps a ``None`` — the combined patch
+    still has to *say* "delete this" when it reaches the store — while applying
+    one **deletes the key**, which is what the store would have done. A single
+    recursive helper serving both would be wrong for one of them, and the way it
+    would be wrong is a ``pending`` that reads as staged-with-no-value instead of
+    cleared.
+
+    Here because the arithmetic is the arithmetic: this is what a store with
+    :data:`~sopuli.store.protocol.MERGE_PATCH` does server-side, and a store
+    without it needs the same answer computed locally. Two implementations of
+    RFC 7386 that had to agree would be a bug waiting for the first document
+    holding a ``None``.
+
+    A non-mapping ``document`` is replaced wholesale, which is the RFC's own rule
+    — a merge patch applied to a scalar produces the patch. It reaches this layer
+    for the very first write to a path, where the document is ``None``.
+    """
+    if not isinstance(document, Mapping):
+        return _applied({}, patch)
+    return _applied(dict(document), patch)
+
+
+def _applied(target: dict[str, Any], patch: Mapping[str, Any]) -> dict[str, Any]:
+    for key, value in patch.items():
+        if value is REMOVE:
+            # RFC 7386's deletion. `pop` rather than a membership test because
+            # deleting a key that is not there is not an error -- clearing a
+            # `pending` that was never staged is the ordinary idempotent case.
+            target.pop(key, None)
+        elif isinstance(value, Mapping):
+            existing = target.get(key)
+            base = dict(existing) if isinstance(existing, Mapping) else {}
+            target[key] = _applied(base, value)
+        else:
+            target[key] = value
+    return target
 
 
 def _merge_into(target: dict[str, Any], patch: Mapping[str, Any]) -> None:

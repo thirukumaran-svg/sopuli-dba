@@ -20,7 +20,8 @@ import pytest
 
 from sopuli.config.model import Vault
 from sopuli.secrets import Secret
-from sopuli.store.protocol import CAS, LIST, VERSIONING, SecretStore, StoreError
+from sopuli.store.credentials import READ_MODIFY_WRITE, apply_patch
+from sopuli.store.protocol import CAS, LIST, MERGE_PATCH, VERSIONING, SecretStore, StoreError
 
 PATH = "apps/acme/kv1-degradation"
 
@@ -80,6 +81,42 @@ def test_a_pinned_version_is_refused_rather_than_answered_with_the_latest(
 
     assert "version 1" in str(raised.value)
     assert "enable-versioning" in str(raised.value)
+
+
+def test_a_v1_mount_cannot_merge_patch(store: SecretStore) -> None:
+    """Third in the same pattern, and the one with a visible consequence for the
+    caller: without a merge-patch endpoint every write to a shared document is a
+    read-modify-write, so the run reports the wider mechanism rather than looking
+    identical to a KV v2 run."""
+    assert MERGE_PATCH not in store.supports()
+
+
+def test_a_merge_patch_is_refused_rather_than_approximated(store: SecretStore) -> None:
+    """The refusal is deliberate where a quiet read-modify-write inside the
+    adapter would have "worked". UC-1 §3 requires the run to report which
+    mechanism it used, so an approximation one layer down would make the report a
+    lie."""
+    store.write(PATH, {"password": "first"}, cas=None)
+
+    with pytest.raises(StoreError) as raised:
+        store.patch(PATH, {"password": "second"}, cas=None)
+
+    assert "merge patch" in str(raised.value)
+
+
+def test_the_fallback_writes_the_document_this_store_can_write(store: SecretStore) -> None:
+    """§5's degradation row end to end: the store refuses the patch, the caller
+    falls back, the document is correct, and the mechanism is reported as the
+    wider one. `cas=None` because a v1 mount has no compare-and-set either --
+    which is `locking: advisory-only` and what that setting costs."""
+    store.write(PATH, {"acme_web_user": "one", "acme_api_user": "two"}, cas=None)
+
+    written = apply_patch(store, PATH, {"acme_web_user": Secret("rotated")}, cas=None)
+
+    assert written.mechanism == READ_MODIFY_WRITE
+    stored = store.read(PATH)
+    assert stored is not None
+    assert stored.data == {"acme_web_user": "rotated", "acme_api_user": "two"}
 
 
 def test_a_v1_mount_can_still_be_listed(store: SecretStore) -> None:

@@ -50,6 +50,21 @@ CAS = "cas"
 #: manufacture one.
 VERSIONING = "versioning"
 
+#: Applying an RFC 7386 merge patch server-side, rather than by reading the
+#: document and writing it back (#183).
+#:
+#: The capability that makes ``01-configuration.md`` §7's "must not clobber
+#: siblings" a *structural* property instead of a careful one. Under a merge
+#: patch the tool sends only the keys it changes, so a sibling account's password
+#: is never read into this process and never written back; under the
+#: read-modify-write fallback the whole document goes out, and not rewriting a
+#: sibling wrongly is then something the code has to get right rather than
+#: something it cannot get wrong.
+#:
+#: Both are safe against a *concurrent* writer, because both carry the same
+#: compare-and-set. The difference is blast radius, not atomicity.
+MERGE_PATCH = "merge_patch"
+
 #: Enumerating the paths below a prefix (#150), spelled the same way.
 #:
 #: Its own capability rather than an assumption, for the reason every entry in
@@ -114,6 +129,33 @@ class CasConflictError(StoreError):
     computed from is gone -- retrying would recompute against a document that has
     changed for a reason this run knows nothing about.
     """
+
+
+class PatchNotPermittedError(StoreError):
+    """This store could apply a merge patch, and is not allowed to right now.
+
+    **Not "this store cannot"** — that is a missing :data:`MERGE_PATCH`
+    capability, answered by :meth:`SecretStore.supports` before anything is sent.
+    This is the narrower case where the endpoint exists and *this caller* is
+    refused it, which on Vault is a policy granting ``update`` and not ``patch``:
+    ``patch`` is a capability of its own, newer than ``update``, so a perfectly
+    ordinary policy produces it.
+
+    Here rather than in the HashiCorp adapter because it is a signal to the layer
+    above -- :func:`sopuli.store.credentials.apply_patch` catches it and falls
+    back to a read-modify-write, and that module must not import a backend
+    (ADR-006: base loads no vendor client). A backend raises it; nothing outside
+    one ever does.
+
+    ``authorization`` and exit 6, the same as any other refused token, because a
+    caller with no fallback should treat it as exactly that. Where there *is* a
+    fallback and the token was in fact bad, the fallback's own read fails with an
+    ordinary refusal and the run stops there — one wasted round trip, and never a
+    silent success.
+    """
+
+    category = "authorization"
+    exit_code = ExitCode.AUTH_FAILURE
 
 
 @dataclass(frozen=True)
@@ -199,6 +241,32 @@ class SecretStore(Protocol):
         the lock manager only does under ``locking: advisory-only``.
 
         Raises :class:`CasConflictError` when the version has moved.
+        """
+        ...
+
+    def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
+        """Apply ``changes`` as an RFC 7386 merge patch, returning the new version.
+
+        ``changes`` is a merge patch and not a document: a key it does not
+        mention is left exactly as it was, and a key mapped to ``None`` is
+        **deleted** -- which is how ``pending`` is cleared at promotion
+        (:data:`sopuli.payload.REMOVE`). That is the whole reason this is not
+        :meth:`write`: a write replaces, and replacing a shared document is how
+        an account nobody selected loses its password.
+
+        ``cas`` means what it means on :meth:`write`, and is carried for the same
+        reason. A merge patch is not a substitute for it: the patch says which
+        keys change, and the compare-and-set says which *version* they change,
+        and §7 wants a foreign writer to abort the run rather than be merged over.
+
+        Behind :data:`MERGE_PATCH`. A store without it raises
+        :class:`StoreError`, and the caller's answer is
+        :func:`sopuli.store.credentials.apply_patch`'s read-modify-write --
+        which is a fallback rather than an equivalent, for the reason
+        :data:`MERGE_PATCH` gives.
+
+        Raises :class:`CasConflictError` when the version has moved, exactly as
+        :meth:`write` does.
         """
         ...
 

@@ -258,11 +258,23 @@ reason: a caller pins a version precisely because it does not want whatever is
 current, so substituting the current one is a rotation reading the wrong
 generation. KV v1 is the store that refuses.
 
+**`patch` applies an RFC 7386 merge patch** (#183), behind `merge_patch`. What
+makes §7's "must not clobber siblings" a structural property rather than a
+careful one: the keys a run did not come for are never sent, so another account's
+password is neither read into the process nor written back. A store without the
+capability — or a Vault policy granting `update` and not `patch`, which is a
+policy and not a fault — falls back to a check-and-set read-modify-write, and the
+run **reports which of the two it used**, because they are not equally narrow.
+Both carry the same compare-and-set, so the difference is blast radius and never
+atomicity.
+
 The slice implemented is `sopuli/store/protocol.py`, and the secret side of it is
 `sopuli/store/credentials.py`: a SecretRef resolved against a stored document —
-field, JSON pointer, `@stage=`, and `@version=` — producing a
-`Secret` and the version it was read at. The read half of #183; the write is the
-other half.
+field, JSON pointer, `@stage=`, and `@version=` — producing a `Secret` and the
+version it was read at, and the merge patch that changes one stage of one
+account. That module supplies primitives and decides no sequence: the
+`pending` → `current` ordering invariant 7 turns on is UC-1 §3's and belongs to
+`creds rotate`.
 
 **`health` waits for #216, and that is a decision rather than a third
 deferral.** Its only consumer is `doctor`'s vault section, and the argument is
@@ -307,6 +319,12 @@ answer: a command that wanted it **reports what it could reach and says it could
 not look further**. Refusing would make `lock status` a command that works on some
 backends and not others, which is worse than a partial answer that admits to being
 one (#150).
+
+**`merge_patch` is emulated, and visibly** (#183) — the read-modify-write above.
+It is the one capability whose emulation the run has to *announce* rather than
+merely perform, and the reason is that the emulation is not equivalent: it is
+equally safe against a concurrent writer and strictly wider in what it sends. A
+run that used it silently would look identical to one that did not.
 
 **`versioning` is the second that cannot be emulated** (#183), and for a reason
 worth stating beside `cas`'s rather than assuming it follows: a version somebody

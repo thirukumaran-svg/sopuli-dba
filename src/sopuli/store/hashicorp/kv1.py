@@ -108,6 +108,25 @@ class Kv1Store:
         _check(response, path=path)
         return NO_VERSION
 
+    def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
+        """Always a refusal. A v1 mount has no merge-patch endpoint.
+
+        Third in the same pattern as :meth:`read`'s version and :meth:`write`'s
+        ``cas``, and the pattern is the point: this store declines what it cannot
+        do rather than approximating it. The approximation here would be a
+        read-modify-write done quietly inside the adapter, which is exactly the
+        fallback :func:`sopuli.store.credentials.apply_patch` performs *visibly*
+        -- and the run reports which mechanism it used (UC-1 §3), so hiding it
+        one layer down would make the report a lie.
+        """
+        raise StoreError(
+            f"this store cannot apply a merge patch, and a write to {path!r} asked it to",
+            hint=(
+                "KV v1 has no merge-patch endpoint: read the document, apply the patch "
+                "locally, and write it back -- which is what this run falls back to"
+            ),
+        )
+
     def metadata(self, path: str) -> PathMetadata | None:
         """Always ``None``. There is no metadata endpoint on a v1 mount.
 

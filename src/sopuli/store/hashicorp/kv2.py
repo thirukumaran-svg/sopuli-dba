@@ -45,7 +45,16 @@ from typing import Any
 from sopuli.store.hashicorp._errors import raise_for
 from sopuli.store.hashicorp._listing import keys_of, walk
 from sopuli.store.hashicorp._transport import Response, Transport
-from sopuli.store.protocol import CAS, LIST, VERSIONING, PathMetadata, Stored, StoreError
+from sopuli.store.protocol import (
+    CAS,
+    LIST,
+    MERGE_PATCH,
+    VERSIONING,
+    PatchNotPermittedError,
+    PathMetadata,
+    Stored,
+    StoreError,
+)
 
 #: Vault's "no per-path limit" for ``max_versions``: the mount's own setting
 #: applies. Reported as ``None`` rather than 0, because ``PathMetadata`` means
@@ -61,11 +70,20 @@ class Kv2Store:
     mount: str
 
     def supports(self) -> frozenset[str]:
-        """Compare-and-set, listing, and versions. The rest of P2's table --
-        staging labels, soft delete -- has no caller yet: ``staging_labels`` is
-        emulated in the payload on this backend (Q7), so nothing negotiates it,
-        and undelete has no command that asks for it."""
-        return frozenset({CAS, LIST, VERSIONING})
+        """Compare-and-set, listing, versions, and server-side merge patch.
+
+        ``merge_patch`` is a capability of the *mount* and not of the token: the
+        endpoint exists on every KV v2 mount, while whether this token may call
+        it is a policy question no capability set can answer. That is why
+        :meth:`patch` raises :class:`PatchNotPermittedError` rather than this
+        method reporting less -- a store that dropped the capability because one
+        token was unprivileged would be reporting the wrong subject.
+
+        The rest of P2's table -- staging labels, soft delete -- still has no
+        caller: ``staging_labels`` is emulated in the payload on this backend
+        (Q7), so nothing negotiates it, and undelete has no command that asks.
+        """
+        return frozenset({CAS, LIST, MERGE_PATCH, VERSIONING})
 
     def read(self, path: str, *, version: int | None = None) -> Stored | None:
         params = None if version is None else {"version": str(version)}
@@ -101,6 +119,66 @@ class Kv2Store:
         if not isinstance(version, int):
             raise StoreError(
                 f"the store accepted a write to {path!r} without returning a version",
+                hint="that version is this run's fence; there is nothing to hold without it",
+            )
+        return version
+
+    def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
+        """``PATCH /v1/<mount>/data/<path>``, as ``application/merge-patch+json``.
+
+        The content type is what selects the operation -- the URL is the same one
+        :meth:`write` posts to -- so without the header this is a request Vault
+        declines to interpret rather than a merge patch it applies wrongly.
+
+        Two answers are handled here rather than by :func:`._errors.raise_for`,
+        and both because the *verb* carries information the status does not:
+
+        **403** may mean the policy grants ``update`` and not ``patch``, which is
+        an ordinary policy and not a failure. :class:`PatchNotPermittedError`
+        says so and the caller falls back. **401 is not included**, and the
+        asymmetry is the point: Vault answers 403 both for a token it will not
+        accept and for one that may not do this, which is why the second reading
+        is available at all — while 401 says only that the token is not valid,
+        and no policy grants its way out of that. Reading it as a patch refusal
+        would replace a precise message with a wasted round trip.
+
+        **404** means there is nothing at the path to patch. Vault will not
+        create a document by merge patch, which is right -- a patch describes a
+        change to something -- so the first write to a path is a
+        :meth:`write` and never this. The caller knows which it is doing from its
+        ``cas``, so this raises rather than silently promoting itself to a write:
+        a patch that turned into a create would be a patch that ignored the
+        siblings it was written to protect, on the one path where there are none
+        yet only because nobody has looked.
+        """
+        body: dict[str, Any] = {"data": changes}
+        if cas is not None:
+            body["options"] = {"cas": cas}
+        response = self.transport.request(
+            "PATCH",
+            f"{self.mount}/data/{path}",
+            json=body,
+            headers={"Content-Type": "application/merge-patch+json"},
+        )
+        if response.status == 403:
+            raise PatchNotPermittedError(
+                f"the store refused a merge patch at {path!r}",
+                hint=(
+                    "a Vault policy grants `patch` separately from `update` -- add it, or "
+                    "let the run read the document and write it back under a `cas`"
+                ),
+            )
+        if response.status == 404:
+            raise StoreError(
+                f"there is nothing at {path!r} to merge a patch into",
+                hint="the first write to a path creates it; a merge patch changes one that exists",
+            )
+        _check(response, path=path)
+
+        version = _data(response).get("version")
+        if not isinstance(version, int):
+            raise StoreError(
+                f"the store accepted a merge patch at {path!r} without returning a version",
                 hint="that version is this run's fence; there is nothing to hold without it",
             )
         return version

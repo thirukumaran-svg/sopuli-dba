@@ -85,6 +85,9 @@ class Unfenced:
     def write(self, path: str, data: Any, *, cas: int | None) -> int:  # pragma: no cover
         raise AssertionError("a store that cannot fence must never be written to by `break`")
 
+    def patch(self, path: str, changes: Any, *, cas: int | None) -> int:  # pragma: no cover
+        raise AssertionError("a store that cannot fence must never be written to by `break`")
+
     def metadata(self, path: str) -> PathMetadata | None:  # pragma: no cover - not asked
         return None
 

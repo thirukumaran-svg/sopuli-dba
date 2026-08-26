@@ -1413,10 +1413,10 @@ rather than at the first rotation — §1 calls the account→secret binding the
 safety-critical part, and the failure at the far end of a malformed ref is a
 password written where the application does not read it.
 
-**Resolving** one — turning a parsed ref plus a stored document into a value — is
-`sopuli/store/credentials.py` (#183), and it is a separate layer on purpose: the
-address is decided when the file is read and the document is not read until
-something connects. Two things it settles that the grammar above leaves open. The
+**Resolving** one — turning a parsed ref plus a stored document into a value, and
+back — is `sopuli/store/credentials.py` (#183), and it is a separate layer on
+purpose: the address is decided when the file is read and the document is not
+touched until something connects. Two things it settles that the grammar above leaves open. The
 value has to be a **string**: a ref landing on a map has addressed the wrong
 depth, typically the container rather than the account inside it, and that is
 refused rather than wrapped and passed on to `ALTER USER`. And a ref that finds
@@ -1583,6 +1583,22 @@ must not clobber siblings. On KV v2 it uses a JSON merge patch, falling back to 
 check-and-set read-modify-write; a concurrent change aborts the write rather than
 overwriting. Sibling properties in the same secret — application settings and the
 like — are never touched.
+
+**What triggers the fallback** (#183) is either of two things, and neither is a
+failure. A store with no merge-patch endpoint — KV v1 — is answered by
+`supports()` before anything is sent. A Vault **policy** granting `update` and
+not `patch` is not: `patch` is a capability of the mount, while whether this
+token may call it is a question no capability set can answer, so it is discovered
+by asking and the 403 on that one verb is read as "use the other mechanism". A
+403 on any other verb keeps its ordinary meaning. If the token really was bad,
+the fallback's own read fails with the refusal it deserves — one wasted round
+trip, never a silent success.
+
+**The run says which mechanism it used**, per UC-1 §3, and that reporting is
+load-bearing rather than informational: under a merge patch a sibling account's
+password is never read into the process, and under the fallback the whole
+document goes out. Equally safe against a concurrent writer, and not equally
+narrow.
 
 Aborting is worth stating as a rule rather than as caution, because the reason
 changed once the lock landed. A mutating run holds the advisory lock on the

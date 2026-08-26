@@ -43,6 +43,7 @@ from sopuli.store import MemoryStore
 from sopuli.store.protocol import (
     CAS,
     LIST,
+    MERGE_PATCH,
     VERSIONING,
     CasConflictError,
     PathMetadata,
@@ -260,6 +261,87 @@ def test_a_soft_delete_removes_the_latest_version_only(harness: Harness) -> None
     pinned = harness.store.read(harness.path, version=1)
     assert pinned is not None
     assert pinned.data == {"password": "first"}
+
+
+def test_a_store_that_can_merge_patch_says_so(harness: Harness) -> None:
+    assert MERGE_PATCH in harness.store.supports()
+
+
+def test_a_merge_patch_changes_only_the_keys_it_names(harness: Harness) -> None:
+    """01-configuration.md §7's central promise, against the real endpoint.
+
+    A dictionary makes this trivial and Vault does not: the merge patch is
+    selected by a content type rather than by the URL, so an adapter that sent an
+    ordinary body would *replace* the document here and pass against the fake.
+    """
+    harness.store.write(harness.path, {"acme_web_user": "one", "acme_api_user": "two"}, cas=0)
+
+    harness.store.patch(harness.path, {"acme_web_user": "rotated"}, cas=1)
+
+    stored = harness.store.read(harness.path)
+    assert stored is not None
+    assert stored.data == {"acme_web_user": "rotated", "acme_api_user": "two"}
+
+
+def test_a_merge_patch_deletes_a_key_mapped_to_null(harness: Harness) -> None:
+    """RFC 7386's deletion, which is how `pending` is cleared at promotion. A
+    store that stored a null instead would leave a `pending` that reads as staged
+    with no value rather than as cleared."""
+    harness.store.write(harness.path, {"password": "one", "pending": "two"}, cas=0)
+
+    harness.store.patch(harness.path, {"pending": None}, cas=1)
+
+    stored = harness.store.read(harness.path)
+    assert stored is not None
+    assert stored.data == {"password": "one"}
+
+
+def test_a_merge_patch_returns_the_new_version(harness: Harness) -> None:
+    """The fence, from the write that made it -- the same rule `write` follows
+    and for the same reason: reading it back afterwards would reopen the window
+    the fence exists to close."""
+    harness.store.write(harness.path, {"password": "one"}, cas=0)
+
+    assert harness.store.patch(harness.path, {"password": "two"}, cas=1) == 2
+
+
+def test_a_merge_patch_will_not_create_a_document(harness: Harness) -> None:
+    """A patch describes a change to something, and Vault answers 404 when there
+    is nothing to change. The fake has to refuse it too: a dictionary would
+    create the document quite happily, and a caller patching a path it had never
+    written would then pass in tier 0 and fail against a real mount."""
+    with pytest.raises(StoreError) as raised:
+        harness.store.patch(harness.path, {"password": "one"}, cas=0)
+
+    assert not isinstance(raised.value, CasConflictError)
+    assert "nothing at" in str(raised.value)
+
+
+def test_a_merge_patch_will_not_undelete(harness: Harness) -> None:
+    """The same refusal for the state that reads identically but is not the same
+    -- a soft-deleted path has a history, so `cas: 0` could never take it either.
+    Both stores answer this on the read, which is why one rule covers both."""
+    harness.store.write(harness.path, {"password": "one"}, cas=0)
+    harness.admin.soft_delete(harness.path)
+
+    with pytest.raises(StoreError) as raised:
+        harness.store.patch(harness.path, {"password": "two"}, cas=1)
+
+    # Not a lost race: the version never moved. Asserted because a conflict is
+    # the other way this could fail, and it would be right for the wrong reason.
+    assert not isinstance(raised.value, CasConflictError)
+    assert "nothing at" in str(raised.value)
+
+
+def test_a_stale_merge_patch_is_refused(harness: Harness) -> None:
+    """A patch is not a substitute for a compare-and-set: it says which keys
+    change, not which version they change. §7 wants a foreign writer to abort the
+    run rather than be merged over."""
+    harness.store.write(harness.path, {"password": "one"}, cas=0)
+    harness.store.write(harness.path, {"password": "somebody-elses"}, cas=1)
+
+    with pytest.raises(CasConflictError):
+        harness.store.patch(harness.path, {"password": "mine"}, cas=1)
 
 
 def test_a_stale_compare_and_set_is_refused(harness: Harness) -> None:

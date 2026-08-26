@@ -64,7 +64,13 @@ class Transport:
         self._sni_hostname = sni_hostname
 
     def request(
-        self, method: str, path: str, *, json: Any = None, params: Mapping[str, str] | None = None
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any = None,
+        params: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Response:
         """Call ``/v1/<path>``, and never raise for a status.
 
@@ -72,6 +78,14 @@ class Transport:
         ``?version=N`` on a read (#183). Passed to httpx rather than formatted
         into ``path``, so the escaping is the client's problem and a value with a
         character that needs it cannot silently change which path is called.
+
+        ``headers`` are merged over the client's own for this one call, and exist
+        for one thing too: KV v2's merge patch is selected by
+        ``Content-Type: application/merge-patch+json`` rather than by the URL, so
+        without it a ``PATCH`` is a request Vault declines to interpret (#183).
+        Per-request rather than on the client, because every *other* call is an
+        ordinary JSON body and a default that had to be overridden each time is
+        the wrong default.
 
         **Non-2xx is data here, not an exception.** ``sys/health`` answers 429
         for a standby, 473 for a performance standby, 501 for uninitialised and
@@ -86,7 +100,12 @@ class Transport:
         extensions = {"sni_hostname": self._sni_hostname} if self._sni_hostname else {}
         try:
             response = self._client.request(
-                method, f"/v1/{path}", json=json, params=params, extensions=extensions
+                method,
+                f"/v1/{path}",
+                json=json,
+                params=params,
+                headers=headers,
+                extensions=extensions,
             )
         except httpx.TimeoutException as error:
             raise StoreError(
