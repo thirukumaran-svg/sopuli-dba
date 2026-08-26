@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.41.0](https://github.com/villebase/sopuli-dba/compare/v0.40.0...v0.41.0) (2026-08-26)
+
+
+### Features
+
+* **doctor:** the positive side of --check-privileges, and schema 1.12 ([#225](https://github.com/villebase/sopuli-dba/issues/225)) ([#227](https://github.com/villebase/sopuli-dba/issues/227)) ([b9bcab4](https://github.com/villebase/sopuli-dba/commit/b9bcab431f4816d52c8e291e4c99ccd65e093184))
+* **sql:** pass the operator scripts their parameters ([#229](https://github.com/villebase/sopuli-dba/issues/229)) ([#234](https://github.com/villebase/sopuli-dba/issues/234)) ([65fcea1](https://github.com/villebase/sopuli-dba/commit/65fcea1704380c99107d1c914db6995a59f27a8d))
+
+
+### Bug Fixes
+
+* **sql:** four bugs in the operator scripts, found by executing them ([#232](https://github.com/villebase/sopuli-dba/issues/232)) ([c3153f7](https://github.com/villebase/sopuli-dba/commit/c3153f74b079e4c9e34d19821996aa9837c16dcb))
+
 ## [0.40.0](https://github.com/villebase/sopuli-dba/compare/v0.39.0...v0.40.0) (2026-08-26)
 
 
