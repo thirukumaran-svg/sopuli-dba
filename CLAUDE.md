@@ -111,7 +111,16 @@ than reasoning:
 - the `T:` (12C) verifier layout in `SYS.USER$.SPARE4` — `--method hash` depends
   on it and it is not confirmed
 - whether `ALTER USER` text leaks the password into `V$SQL` or
-  `UNIFIED_AUDIT_TRAIL`, per version
+  `UNIFIED_AUDIT_TRAIL`, per version — **answered on 26ai 23.26.2.0.0 only, and
+  still open on every other version.** `02_password_leak_probe.sql` was run in
+  all three documented positions on 2026-08-26: unified audit masks the statement
+  at write time, no `V$SQL` cursor for the DDL exists at all, and the sole leak is
+  an anonymous PL/SQL block carrying the password as a literal — which is
+  invariant 13, now measured rather than assumed. Two of the three runs were as a
+  service account holding `ALTER USER` and nothing else (`isdba=FALSE`), so the
+  capture is attributable to the audit policy rather than to mandatory `SYSDBA`
+  auditing; the earlier SYS-only runs could not establish that
+  (`docs/design/02-oracle-privileges.md` §4)
 - ~~whether the 23-codebase schema privileges cover `ALTER USER` (P7)~~ —
   **answered: no.** `GRANT ALTER USER ON SCHEMA` gives `ORA-00990`, tested on 26ai
   23.26.2.0.0 with a succeeding `SELECT ANY TABLE ON SCHEMA` as the control. The

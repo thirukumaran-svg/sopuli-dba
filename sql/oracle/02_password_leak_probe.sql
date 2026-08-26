@@ -28,9 +28,30 @@
 --       Oracle's protection is keyed to the CREATE/ALTER USER statement; a
 --       block that merely contains one is an ordinary block.
 --     - CDB$ROOT and PDB results identical.
---   Both runs were as SYS, whose actions are captured by MANDATORY unified
---   auditing regardless of SOPULI_PROBE_POL. Neither run therefore demonstrates
---   that the policy works. §3's service-account hop is what settles that.
+--
+--   2026-08-26, 26ai Free 23.26.2.0.0, all three HOW TO RUN positions. The
+--   SYS-only caveat above is now RESOLVED: two of the three ran with
+--   isdba=FALSE, so the capture is attributable to SOPULI_PROBE_POL rather than
+--   to mandatory SYSDBA auditing.
+--
+--     position                              isdba   audited   leaked
+--     1  FREEPDB1, svc = SOPULI_SVC         FALSE   4 of 4    C3 only
+--     2  FREEPDB1, svc = SYS AS SYSDBA      TRUE    4 of 4    C3 only
+--     3  CDB$ROOT, svc = C##SOPULI_SVC      FALSE   4 of 4    C3 only
+--
+--   Identical in all three. C1 (client CREATE USER), C2 (client ALTER USER --
+--   the statement sopuli actually issues) and C4 (EXECUTE IMMEDIATE with the
+--   password assembled at runtime) are clean in every source probed. The only
+--   leak is C3, in V$SQL / V$SQLAREA / V$SQLSTATS / GV$SQL (sql_text and
+--   sql_fulltext) and V$DB_OBJECT_CACHE.name.
+--
+--   So invariant 13 is measured rather than assumed, and it is measured the
+--   right way round: wrapping the DDL is what exposes the password, and issuing
+--   it directly is what hides it. C2 and C3 differ only in the wrapper.
+--
+--   Note also what V$SQL_BIND_CAPTURE holds after a run: the probe's own canary
+--   binds, in clear, from its own sweep queries. Nothing to do with rotation --
+--   and a live demonstration of why invariant 14 exists.
 --
 --
 -- HOW TO RUN
@@ -42,7 +63,8 @@
 --
 --   Run it in three positions and compare:
 --     1. against the PDB service, svc_user = the account holding ALTER USER
---     2. against the PDB service, svc_user = sys (no privilege separation)
+--     2. against the PDB service, svc_user = sys, svc_conn_as = AS SYSDBA
+--        (no privilege separation -- exercises the audit_file_dest path)
 --     3. against the CDB service, common svc_user
 --
 --   The log file is named for the version and container automatically, so the
@@ -81,6 +103,12 @@ DEFINE sys_user = sys
 DEFINE sys_pwd  = CHANGEME_SYS_PASSWORD
 DEFINE svc_user = c##sopuli_svc
 DEFINE svc_pwd  = CHANGEME_SVC_PASSWORD
+
+-- The role for the section 3 hop. Empty for an ordinary service account, which
+-- is the interesting case. Position 2 of HOW TO RUN sets svc_user = sys, and SYS
+-- cannot connect without a role: `CONNECT sys/...@tns` is ORA-28009, which made
+-- that documented position impossible to run until this existed.
+DEFINE svc_conn_as = ""
 
 -- Canaries, one per execution path, so a hit identifies WHICH path leaked.
 --
@@ -316,7 +344,7 @@ CREATE USER sopulitest IDENTIFIED BY "&c1";
 PROMPT
 PROMPT --- switching to &svc_user for the rotations
 WHENEVER SQLERROR EXIT FAILURE
-CONNECT &svc_user/"&svc_pwd"@&tns
+CONNECT &svc_user/"&svc_pwd"@&tns &svc_conn_as
 WHENEVER SQLERROR CONTINUE NONE
 SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED
 
