@@ -4,8 +4,10 @@
 -- STATUS: confirmed on 26ai Free 23.26.2.0.0 (2026-08-26) against a COMMON
 --         install, with keep_audit=Y and with keep_audit=N. The account and all
 --         8 grants were removed, and the ALTER USER audit history survived the
---         drop. NEVER executed against NONCDB / PDB installs. Untried on 19c,
---         21c and 11.2.
+--         drop. Also run against a PDB install with both parameters passed
+--         (`ACME_SVC N` -- deliberately NOT the default name, because a run
+--         using the default cannot tell whether the parameter was honoured or
+--         simply ignored). Untried on 19c, 21c and 11.2.
 --
 -- Removes the service account and the audit policies. Does NOT change any
 -- application account's password — whatever the tool last applied stays in
@@ -19,10 +21,39 @@
 SET SERVEROUTPUT ON
 SET DEFINE ON
 SET VERIFY OFF
-WHENEVER SQLERROR CONTINUE
+--------------------------------------------------------------------------------
+-- Parameters
+--
+--   @99_uninstall.sql [svc_user] [keep_audit]
+--
+--   1 svc_user     the account to drop. Defaults to the COMMON name; pass
+--                  SOPULI_SVC for a NONCDB or PDB install.
+--   2 keep_audit   Y leaves the audit policies in place, which is the default
+--                  and usually right: auditing ALTER USER is worth having
+--                  whether or not this tool is installed.
+--
+-- The zero-row SELECT is not decoration: SQL*Plus PROMPTS for an `&1` that was
+-- never supplied, and a prompt in a piped run reads the next line of the script
+-- as its answer. `COLUMN n NEW_VALUE n` defines the missing positions as empty
+-- without asking. 00_install.sql's parameter block has the long version.
+--
+-- Read while SQLERROR still EXITs. The uninstall proper runs under CONTINUE, so
+-- it can finish past a failure -- but a parameter that failed to resolve would
+-- leave `&svc_user` undefined, and the prompt that follows would eat the script.
+--------------------------------------------------------------------------------
+WHENEVER SQLERROR EXIT SQL.SQLCODE
+SET TERMOUT OFF
+COLUMN 1 NEW_VALUE 1
+COLUMN 2 NEW_VALUE 2
+SELECT NULL AS "1", NULL AS "2" FROM dual WHERE 1 = 0;
+COLUMN p_user NEW_VALUE svc_user   NOPRINT
+COLUMN p_keep NEW_VALUE keep_audit NOPRINT
+SELECT NVL('&1', 'C##SOPULI_SVC') AS p_user,
+       NVL('&2', 'Y')             AS p_keep
+  FROM dual;
+SET TERMOUT ON
 
-DEFINE svc_user   = C##SOPULI_SVC     -- or SOPULI_SVC
-DEFINE keep_audit = Y                 -- Y = leave the audit policies in place
+WHENEVER SQLERROR CONTINUE
 
 --------------------------------------------------------------------------------
 -- 1. The account. Dropping it removes every grant with it.

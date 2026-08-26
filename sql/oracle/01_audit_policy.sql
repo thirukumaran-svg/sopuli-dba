@@ -4,8 +4,8 @@
 -- STATUS: confirmed on 26ai Free 23.26.2.0.0 (2026-08-26) against a COMMON
 --         install, both the create and the already-exists paths. The section 4
 --         queries were checked against a real audited ALTER USER, including the
---         CLIENT_IDENTIFIER correlation in section 5. Untried on 19c, 21c
---         and 11.2.
+--         CLIENT_IDENTIFIER correlation in section 5. Run with the default
+--         svc_user and with one passed. Untried on 19c, 21c and 11.2.
 --
 -- The service account holds ALTER USER, which has no object scope. Unified
 -- auditing is therefore not housekeeping — it is the compensating control for
@@ -18,7 +18,31 @@
 SET SERVEROUTPUT ON
 SET DEFINE ON
 SET VERIFY OFF
-DEFINE svc_user = C##SOPULI_SVC     -- or SOPULI_SVC for NONCDB / PDB installs
+
+-- Errors are fatal here, as in 00_install.sql. Without this SQL*Plus continues
+-- past an ORA- or SP2- error and still exits 0, so an automated run cannot tell
+-- a working install from a broken one -- and a parameter that failed to resolve
+-- would leave `&svc_user` undefined, whereupon the prompt eats the script.
+WHENEVER SQLERROR EXIT SQL.SQLCODE
+--------------------------------------------------------------------------------
+-- Parameters
+--
+--   @01_audit_policy.sql [svc_user]
+--
+--   1 svc_user   the account 00_install.sql created. Defaults to the COMMON
+--                name; pass SOPULI_SVC for a NONCDB or PDB install.
+--
+-- The zero-row SELECT is not decoration: SQL*Plus PROMPTS for an `&1` that was
+-- never supplied, and a prompt in a piped run reads the next line of the script
+-- as its answer. `COLUMN n NEW_VALUE n` defines the missing positions as empty
+-- without asking. 00_install.sql's parameter block has the long version.
+--------------------------------------------------------------------------------
+SET TERMOUT OFF
+COLUMN 1 NEW_VALUE 1
+SELECT NULL AS "1" FROM dual WHERE 1 = 0;
+COLUMN p_user NEW_VALUE svc_user NOPRINT
+SELECT NVL('&1', 'C##SOPULI_SVC') AS p_user FROM dual;
+SET TERMOUT ON
 
 --------------------------------------------------------------------------------
 -- 1. Audit every user-management statement, by anyone

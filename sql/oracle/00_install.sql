@@ -6,7 +6,8 @@
 --         the already-exists paths, and both settings of grant_user_dollar and
 --         grant_set_container. The mode guards were checked too: PDB in
 --         CDB$ROOT gives ORA-20011 and an unknown mode ORA-20012, each exiting
---         non-zero. Untried on 19c, 21c and 11.2.
+--         non-zero. Parameters were driven both ways: defaults with no
+--         arguments, and every position passed. Untried on 19c, 21c and 11.2.
 --         Review before running; try a throwaway DB first.
 --
 -- Run as SYS AS SYSDBA or an equivalent DBA.
@@ -29,20 +30,61 @@ SET DEFINE ON
 SET VERIFY OFF
 WHENEVER SQLERROR EXIT SQL.SQLCODE
 
-DEFINE mode          = COMMON
-DEFINE svc_name      = SOPULI_SVC
-DEFINE svc_tablespace = USERS
+--------------------------------------------------------------------------------
+-- Parameters
+--
+-- Either edit the defaults below and run the file, or pass them positionally and
+-- leave the file alone:
+--
+--   @00_install.sql
+--   @00_install.sql PDB
+--   @00_install.sql COMMON SOPULI_SVC USERS Y N
+--
+--   1 mode                COMMON | PDB | NONCDB
+--   2 svc_name            account name; COMMON mode prefixes it with C##
+--   3 svc_tablespace      default tablespace for the account
+--   4 grant_user_dollar   Y grants SELECT on SYS.USER$ -- see below
+--   5 grant_set_container Y grants SET CONTAINER -- see below
+--
+-- An argument wins; anything not passed falls back to the default beside it.
+--
+-- **The zero-row SELECT below is load-bearing, not decoration.** SQL*Plus PROMPTS
+-- for an `&1` that was never supplied, and a prompt in a piped or redirected run
+-- reads the NEXT LINE OF THE SCRIPT as its answer -- so the parameter silently
+-- takes a value like `EXIT` and the swallowed line never executes. Measured, not
+-- feared. `COLUMN n NEW_VALUE n` against a query returning no rows defines the
+-- missing positions as empty without asking, and leaves any that were supplied
+-- alone; only then is it safe to read them.
+--------------------------------------------------------------------------------
+SET TERMOUT OFF
+COLUMN 1 NEW_VALUE 1
+COLUMN 2 NEW_VALUE 2
+COLUMN 3 NEW_VALUE 3
+COLUMN 4 NEW_VALUE 4
+COLUMN 5 NEW_VALUE 5
+SELECT NULL AS "1", NULL AS "2", NULL AS "3", NULL AS "4", NULL AS "5"
+  FROM dual WHERE 1 = 0;
 
--- Set to Y to enable `sopuli creds check --method hash` and the failed-login
--- (LCOUNT) guard. This grants SELECT on SYS.USER$, exposing password verifiers.
--- See docs/design/02-oracle-privileges.md §2. Recommended for scheduled checks,
--- because the alternative — repeated login attempts — can lock the very
--- production accounts the check is monitoring.
-DEFINE grant_user_dollar = N
-
--- Set to Y only if the tool switches containers on an open session rather than
--- connecting to each PDB service directly.
-DEFINE grant_set_container = N
+-- Defaults live here, in the NVL. `grant_user_dollar=Y` enables
+-- `sopuli creds check --method hash` and the failed-login (LCOUNT) guard, at the
+-- cost of SELECT on SYS.USER$, which exposes password verifiers -- see
+-- docs/design/02-oracle-privileges.md §2. It is recommended for scheduled checks,
+-- because the alternative (repeated login attempts) can lock the very production
+-- accounts the check is monitoring. `grant_set_container=Y` is for a site whose
+-- tool switches containers on an open session rather than connecting to each PDB
+-- service directly.
+COLUMN p_mode NEW_VALUE mode                NOPRINT
+COLUMN p_name NEW_VALUE svc_name            NOPRINT
+COLUMN p_tbs  NEW_VALUE svc_tablespace      NOPRINT
+COLUMN p_usr  NEW_VALUE grant_user_dollar   NOPRINT
+COLUMN p_ctr  NEW_VALUE grant_set_container NOPRINT
+SELECT NVL('&1', 'COMMON')     AS p_mode,
+       NVL('&2', 'SOPULI_SVC') AS p_name,
+       NVL('&3', 'USERS')      AS p_tbs,
+       NVL('&4', 'N')          AS p_usr,
+       NVL('&5', 'N')          AS p_ctr
+  FROM dual;
+SET TERMOUT ON
 
 --------------------------------------------------------------------------------
 -- Resolve the effective account name and container clause
