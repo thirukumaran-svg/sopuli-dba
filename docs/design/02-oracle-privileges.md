@@ -313,6 +313,28 @@ notice and say so rather than quietly benefit from it.
 **It warns and never fails** (P5, decided in #213 — see §8). Reporting is not
 enforcing: #173 is the refusal and §4 is the guardrail set, and neither is this.
 
+**It reports both sides**, and they are independent questions. §3's list is what
+the account holds and should not; §2's is what it needs and may not have. An
+account can be in both states at once, which is what a half-finished
+17:00-on-a-Friday debugging session actually leaves behind. Reporting the second
+at connect time is what stops a missing `SELECT ON DBA_PROFILES` surfacing as a
+limit resolution that could not answer, three commands later, with an error about
+a view rather than about the install.
+
+**A dictionary grant is answered by reading the view, not by reading a grant
+table** (#225). `USER_TAB_PRIVS` plus `ROLE_TAB_PRIVS` was the alternative, and
+probing is better on three counts: a role-derived grant needs no special handling,
+because a view you can read is a view you can read however the grant arrived; a
+grant row is not access, since the view may have been dropped or renamed under it;
+and the mechanism already exists and is already measured — `ABSENT_CODES` treats
+`ORA-00942`, `ORA-01031` and `ORA-41900` as "no", the last of which was measured
+rather than predicted. The cost is one round trip per documented grant, which is
+why the whole thing is behind a flag.
+
+**`V_$PDBS` is required in the root only**, where §2 grants it, and is absent from
+both the held and the missing list elsewhere. "Not required here" and "required
+and missing" are the two answers this report exists to keep apart.
+
 **The audit is self-inspection**, which is what makes it possible at all. The
 obvious implementation reads `DBA_SYS_PRIVS` for this grantee and does not work —
 an account holding exactly §2's grants gets `ORA-00942` from it, measured on 26ai

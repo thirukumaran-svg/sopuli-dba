@@ -51,8 +51,16 @@ never merge.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
+
+from sopuli.driver.oracle.capabilities import read
+from sopuli.driver.protocol import PrivilegeAudit
+
+#: The one scope §2 grants ``V_$PDBS`` in, from
+#: :data:`~sopuli.driver.protocol.SCOPE_TYPES`' closed vocabulary. Named here
+#: rather than compared inline, because a string that never matches produces a
+#: report that is wrong and does not look it.
+CDB_ROOT = "cdb_root"
 
 #: §3's must-not-grant list, as **system privileges**. Spelled the way Oracle
 #: spells them in ``SESSION_PRIVS``, which is upper case and space-separated.
@@ -91,6 +99,51 @@ FORBIDDEN_ROLES = ("DBA", "PDB_DBA", "CDB_DBA")
 #: named as unaudited here rather than half-answered.
 UNAUDITABLE = ("SYSDBA", "SYSOPER", "EXECUTE ON DBMS_LOCK")
 
+#: §2's system privileges: what the tool needs to exist and to work.
+#:
+#: Read from ``SESSION_PRIVS`` like everything else, so a grant arriving through
+#: a role counts. §2 grants them directly and a site may not have.
+REQUIRED_PRIVILEGES = ("CREATE SESSION", "ALTER USER")
+
+#: §2's dictionary grants, **asked by reading the view rather than by reading a
+#: grant table** (#225).
+#:
+#: The alternative was ``USER_TAB_PRIVS`` plus ``ROLE_TAB_PRIVS``, and #225 filed
+#: the composition of those two as the design question this had to answer. It
+#: does not have to: probing dissolves it. Three reasons, in ascending order of
+#: how much they would have cost.
+#:
+#: * **A role-derived grant needs no special handling**, because a view you can
+#:   read is a view you can read however the grant arrived. That *is* the
+#:   composition question, and it stops existing.
+#: * **A grant row is not access.** ``USER_TAB_PRIVS`` can carry a row for a view
+#:   that has since been dropped, or that a later release renamed -- and the
+#:   answer a caller wants is "will my next query work", which only the query
+#:   answers.
+#: * **The mechanism is already here and already measured.**
+#:   :func:`~sopuli.driver.oracle.capabilities.read` treats ``ORA-00942``,
+#:   ``ORA-01031`` and ``ORA-41900`` as "no", each of which was measured rather
+#:   than predicted -- ``ORA-41900`` in particular, which the same ungranted
+#:   object returns to a privileged asker where an unprivileged one gets
+#:   ``ORA-00942``. A second implementation of that rule is a second thing to get
+#:   wrong.
+#:
+#: Spelled as the grant rather than as the view, because the point of a missing
+#: entry is that somebody has to go and issue it.
+REQUIRED_READS = {
+    "SELECT ON DBA_USERS": "select count(*) from dba_users where rownum = 1",
+    "SELECT ON DBA_PROFILES": "select count(*) from dba_profiles where rownum = 1",
+    "SELECT ON DBA_ROLE_PRIVS": "select count(*) from dba_role_privs where rownum = 1",
+    "SELECT ON V_$DATABASE": "select count(*) from v$database where rownum = 1",
+    "SELECT ON V_$INSTANCE": "select count(*) from v$instance where rownum = 1",
+}
+
+#: §2 grants this one **in the root only**, so its absence in a PDB is the
+#: documented install and not a finding. Kept apart from :data:`REQUIRED_READS`
+#: rather than filtered out of it at the call site, because "not required here"
+#: and "required and missing" are the two answers this report exists to separate.
+ROOT_ONLY_READS = {"SELECT ON V_$PDBS": "select count(*) from v$pdbs where rownum = 1"}
+
 #: Every system privilege in force, role-derived included. Granted to PUBLIC, so
 #: this is the one query here that cannot be refused.
 SESSION_PRIVS_QUERY = "select privilege from session_privs"
@@ -114,81 +167,38 @@ SELF_ROLES_QUERY = (
 )
 
 
-@dataclass(frozen=True)
-class PrivilegeAudit:
-    """What §3's list found, and what it could not look at.
-
-    Sorted throughout, because this reaches a report a human compares between
-    runs and dictionary order is nobody's contract.
-    """
-
-    #: §3 entries this account holds. What ``scope.over_granted`` carries.
-    over_granted: tuple[str, ...] = ()
-    #: Every role held, traversed. Reported whole rather than only where it
-    #: matched, so a reader can see *how* an over-grant arrived -- a site role
-    #: two levels up is the case #178 measured and the one nobody guesses.
-    roles: tuple[str, ...] = ()
-    #: Direct system privileges granted commonly (``USER_SYS_PRIVS.COMMON``),
-    #: which for a ``C##`` account is the difference between a grant that reaches
-    #: every PDB and one that reaches this one.
-    common: tuple[str, ...] = ()
-    #: §3 entries that were not checked, and why. :data:`UNAUDITABLE` always,
-    #: plus anything a refused view took with it.
-    unaudited: tuple[str, ...] = ()
-    #: Views that raised. Empty is the ordinary case; non-empty means the audit
-    #: is partial and the report has to say so rather than read as clean.
-    unreadable: tuple[str, ...] = ()
-
-    def caveats(self) -> tuple[str, ...]:
-        """What a reader has to know before trusting ``over_granted``.
-
-        Both lines, and the always-true one is deliberate. E6's argument for
-        `doctor`'s install shape applies here word for word: a caveat that
-        appears only when something is wrong cannot be quoted as evidence that
-        nothing was. Somebody handing this run to an auditor needs "SYSDBA was
-        not among the things checked" written down, not inferred from its
-        absence.
-        """
-        lines = []
-        if self.unreadable:
-            lines.append("this audit is partial -- could not read " + ", ".join(self.unreadable))
-        if self.unaudited:
-            lines.append("not checked, and not visible from here: " + ", ".join(self.unaudited))
-        return tuple(lines)
-
-    @property
-    def complete(self) -> bool:
-        """Whether every row of §3's list actually got looked at.
-
-        Never true today -- :data:`UNAUDITABLE` is always in ``unaudited`` -- and
-        it is a property rather than a constant because that is a fact about
-        §2's grant set rather than about this code, and the grant set can change.
-        """
-        return not self.unaudited and not self.unreadable
-
-
 def classify(
     session_privileges: frozenset[str],
     roles: frozenset[str],
     common: frozenset[str],
     *,
+    readable: frozenset[str] = frozenset(),
+    expected_reads: tuple[str, ...] = (),
     unreadable: tuple[str, ...] = (),
 ) -> PrivilegeAudit:
-    """§3's list against what was found. Pure, and the whole of the judgement.
+    """§2's and §3's lists against what was found. Pure, and the whole judgement.
 
     Separate from the queries because ``04-testing.md`` §4 wants the layer that
-    *decides* testable without a database, and which privileges are too many is a
-    decision. Everything above it is three ``SELECT``s.
+    *decides* testable without a database, and both "which privileges are too
+    many" and "which are too few" are decisions. Everything above it is three
+    ``SELECT``s and a probe per documented grant.
+
+    ``expected_reads`` is passed in rather than taken from :data:`REQUIRED_READS`
+    because §2 grants ``V_$PDBS`` **in the root only**, so what is required
+    depends on where the session is standing -- and a report that called a PDB
+    half-installed for not holding a grant §2 never gives it there would be
+    wrong in the direction that costs the most trust.
 
     ``unreadable`` is threaded through rather than raised: a view that could not
     be read makes the audit partial, and a partial audit is a finding to report
-    rather than a reason to abandon a ``doctor`` run that has twenty more targets
-    to survey.
+    rather than a reason to abandon a ``doctor`` run with twenty targets left.
     """
     found = sorted(
         {privilege for privilege in session_privileges if _forbidden(privilege)}
         | {role for role in roles if role in FORBIDDEN_ROLES}
     )
+    required = (*REQUIRED_PRIVILEGES, *expected_reads)
+    have = session_privileges | readable
     unaudited = list(UNAUDITABLE)
     if unreadable:
         # A refused `DBA_ROLE_PRIVS` takes the role rows with it. Naming them
@@ -197,6 +207,8 @@ def classify(
         unaudited.extend(FORBIDDEN_ROLES)
     return PrivilegeAudit(
         over_granted=tuple(found),
+        held=tuple(sorted(name for name in required if name in have)),
+        missing=tuple(sorted(name for name in required if name not in have)),
         roles=tuple(sorted(roles)),
         common=tuple(sorted(common)),
         unaudited=tuple(sorted(set(unaudited))),
@@ -204,15 +216,27 @@ def classify(
     )
 
 
-def audit(cursor: Any) -> PrivilegeAudit:
-    """Run the three reads and classify what comes back.
+def audit(cursor: Any, *, scope_type: str = "") -> PrivilegeAudit:
+    """Run the reads, probe each documented grant, and classify what comes back.
 
-    Only the role read can fail, and it fails *softly*: `doctor` exists to be run
-    when things are wrong, so a view this account cannot read is one more thing
-    to report rather than the end of the survey. The privilege reads are on views
-    granted to PUBLIC and are left to raise, because a session that cannot read
-    ``SESSION_PRIVS`` has something wrong with it that this module should not be
-    papering over.
+    Three ``SELECT``s plus one probe per grant §2 documents. More round trips
+    than a grant-table read would be, and the trade is stated in
+    :data:`REQUIRED_READS`: what a caller wants to know is whether its next query
+    will work, and only the query answers that.
+
+    Only the role read can fail *softly* -- `doctor` exists to be run when things
+    are wrong, so a view this account cannot read is one more thing to report
+    rather than the end of the survey. ``SESSION_PRIVS`` and ``USER_SYS_PRIVS``
+    are left to raise, because a session that cannot read views granted to PUBLIC
+    has something wrong with it this module should not be papering over. The
+    probes never raise for an absent grant at all: that is
+    :data:`~sopuli.driver.oracle.capabilities.ABSENT_CODES`, and it is the answer
+    rather than a failure.
+
+    ``scope_type`` decides whether ``V_$PDBS`` is expected, since §2 grants it in
+    the root only. Defaulted to ``""`` rather than to a scope, so a caller that
+    does not know says so instead of asserting the commonest case -- the report
+    then omits the row rather than inventing a finding about it.
     """
     session_privileges = frozenset(
         str(row[0]).upper() for row in _rows(cursor, SESSION_PRIVS_QUERY)
@@ -227,7 +251,21 @@ def audit(cursor: Any) -> PrivilegeAudit:
     except Exception:  # noqa: BLE001 -- a refused view is a finding, not a crash
         roles, unreadable = frozenset(), ("DBA_ROLE_PRIVS",)
 
-    return classify(session_privileges, roles, common, unreadable=unreadable)
+    expected = dict(REQUIRED_READS)
+    if scope_type == CDB_ROOT:
+        expected.update(ROOT_ONLY_READS)
+    readable = frozenset(
+        grant for grant, statement in expected.items() if read(cursor, statement) is not None
+    )
+
+    return classify(
+        session_privileges,
+        roles,
+        common,
+        readable=readable,
+        expected_reads=tuple(expected),
+        unreadable=unreadable,
+    )
 
 
 def _forbidden(privilege: str) -> bool:

@@ -15,7 +15,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from sopuli.config.model import ExpandedTarget, Target, TargetOracle
-from sopuli.driver.protocol import Scope
+from sopuli.driver.protocol import PrivilegeAudit, Scope
 from sopuli.output.doctor_view import build_target, render
 from sopuli.output.document import SCHEMA_VERSION, Error
 
@@ -234,3 +234,80 @@ def test_a_session_that_opened_but_could_not_be_described_stays_reachable() -> N
     assert entry["reachable"] is True, "the session opened; that is what the field means"
     assert "scope" not in entry, "but nothing could be said about what it is"
     assert entry["error"]["code"] == "ORA-00942"
+
+
+# ------------------------------------------------------- the privilege section ---
+
+
+def _audit(**kwargs: Any) -> PrivilegeAudit:
+    return PrivilegeAudit(**kwargs)
+
+
+def test_a_privilege_section_validates_against_the_schema() -> None:
+    """1.12's `privilege_report`, checked as an artefact rather than described.
+
+    Invariant 12 wants the samples validated; this validates the *producer*,
+    which is the half that can drift after the schema is written.
+    """
+    entry = build_target(
+        _target(),
+        connected=True,
+        scope=_found(over_granted=("DBA",)),
+        privileges=_audit(
+            over_granted=("DBA",),
+            held=("ALTER USER", "CREATE SESSION"),
+            missing=("SELECT ON DBA_PROFILES",),
+            roles=("DBA",),
+        ),
+    )
+
+    assert _validate(entry) == []
+
+
+def test_an_empty_privilege_section_still_validates() -> None:
+    """The E6 case: nothing found, every array present and empty. If `required`
+    and the producer ever disagree, this is where it shows."""
+    entry = build_target(_target(), connected=True, scope=_found(), privileges=_audit())
+
+    assert _validate(entry) == []
+
+
+def test_a_half_emitted_privilege_section_is_refused_by_the_schema() -> None:
+    """What `required` buys, asserted rather than assumed.
+
+    The section's own description promises it is emitted whole, empty arrays
+    included, so that an audit can be quoted as evidence of what it covered. A
+    schema that let a producer omit `unreadable` would let a partial audit
+    validate as a complete one — which is the exact confusion the field exists to
+    prevent.
+    """
+    entry = build_target(_target(), connected=True, scope=_found(), privileges=_audit())
+    del entry["privileges"]["unreadable"]
+
+    assert _validate(entry) != []
+
+
+def test_the_section_is_absent_when_the_audit_was_not_run() -> None:
+    """Absent and empty mean different things -- *not asked* and *asked, nothing
+    found* -- and a consumer needs both. A falsy check would destroy it."""
+    entry = build_target(_target(), connected=True, scope=_found())
+
+    assert "privileges" not in entry
+    assert _validate(entry) == []
+
+
+def test_a_missing_grant_reaches_the_text_report() -> None:
+    """Ahead of the over-grant line, because it is the one that stops the tool
+    working: an account short a grant fails at the verb that needs it, several
+    commands away, with an error about a view rather than about the install."""
+    entry = build_target(
+        _target(),
+        connected=True,
+        scope=_found(),
+        privileges=_audit(missing=("SELECT ON DBA_PROFILES",)),
+    )
+
+    output = render([entry], client={})
+
+    assert "SELECT ON DBA_PROFILES" in output
+    assert "the tool needs it" in output

@@ -29,6 +29,8 @@ from sopuli.driver.oracle.privileges import (
     FORBIDDEN_PREFIX,
     FORBIDDEN_PRIVILEGES,
     FORBIDDEN_ROLES,
+    REQUIRED_PRIVILEGES,
+    REQUIRED_READS,
 )
 
 USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
@@ -269,13 +271,63 @@ def test_an_over_granted_account_warns_and_does_not_fail(
 def test_the_audit_costs_nothing_when_it_is_not_asked_for(
     runner: CliRunner, live_oracle: Environment, tmp_path: Path
 ) -> None:
-    """Behind a flag because it is three more round trips per target. A survey of
-    twenty databases should not pay for a question nobody asked, and the field is
-    absent rather than empty so a consumer can tell "not asked" from "nothing
-    found"."""
+    """Behind a flag because it is not cheap. A survey of twenty databases should
+    not pay for a question nobody asked, and both fields are **absent** rather
+    than empty so a consumer can tell "not asked" from "nothing found"."""
     config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
 
     result = _run(runner, config, "--output", "json")
 
     assert result.exit_code == 0, result.output
-    assert "over_granted" not in _document(result)["targets"][0]["scope"]
+    entry = _document(result)["targets"][0]
+    assert "over_granted" not in entry["scope"]
+    assert "privileges" not in entry
+
+
+def test_the_positive_side_reports_the_grants_the_tool_needs(
+    runner: CliRunner, live_oracle: Environment, tmp_path: Path
+) -> None:
+    """#225's half. These tests connect as `system`, which holds everything §2
+    grants and a great deal more, so the useful assertion is that the required
+    set comes back **held and not missing** — the wiring, against a real
+    dictionary, with the real `ORA-` codes deciding each probe."""
+    config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
+
+    result = _run_with_flags(runner, config, "--check-privileges")
+
+    assert result.exit_code == 0, result.output
+    report = _document(result)["targets"][0]["privileges"]
+    assert set(REQUIRED_PRIVILEGES) <= set(report["held"])
+    assert set(REQUIRED_READS) <= set(report["held"])
+    assert report["missing"] == [], "`system` is short of nothing"
+
+
+def test_the_section_is_emitted_whole_even_when_it_finds_nothing(
+    runner: CliRunner, live_oracle: Environment, tmp_path: Path
+) -> None:
+    """E6's argument applied to an audit: a section that appeared only when
+    something was wrong could not be quoted as evidence that nothing was. So
+    `missing` is present and empty rather than absent."""
+    config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
+
+    result = _run_with_flags(runner, config, "--check-privileges")
+
+    report = _document(result)["targets"][0]["privileges"]
+    for key in ("held", "missing", "common", "roles", "unaudited", "unreadable"):
+        assert key in report, f"{key} is part of the section whether or not it is empty"
+
+
+def test_a_pdb_is_not_told_it_is_missing_a_root_only_grant(
+    runner: CliRunner, live_oracle: Environment, tmp_path: Path
+) -> None:
+    """§2 grants `V_$PDBS` in the CDB root only. Reporting a PDB as
+    half-installed for lacking it would be wrong in the direction that costs the
+    most trust — a readiness report nobody believes is worse than none."""
+    config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
+
+    result = _run_with_flags(runner, config, "--check-privileges")
+
+    document = _document(result)["targets"][0]
+    if document["scope"]["type"] == "cdb_root":
+        pytest.skip("this container answers as the root, where the grant is expected")
+    assert "SELECT ON V_$PDBS" not in document["privileges"]["missing"]

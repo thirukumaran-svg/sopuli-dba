@@ -375,9 +375,14 @@ def doctor(
     **``--check-privileges`` warns and never fails** (P5, decided in #213). An
     over-granted account is somebody else's decision to fix, and a ``doctor``
     that exited non-zero over it would block the person who ran it, mid-incident,
-    over a condition they did not create. It is behind a flag because it is three
-    more round trips per target, and a survey of twenty databases should not pay
-    for a question nobody asked.
+    over a condition they did not create. A **missing** grant is reported the
+    same way and for a different reason: it is a finding about readiness, and
+    reporting it here is what stops it surfacing as six unrelated failures three
+    commands later.
+
+    It is behind a flag because it is not cheap -- three reads plus one probe per
+    documented grant, per target -- and a survey of twenty databases should not
+    pay for a question nobody asked.
 
     What it *cannot* see is reported beside what it found: a refused view, and
     the rows of the must-not-grant list that no view reachable from here carries.
@@ -478,6 +483,7 @@ def _examine(
         # be answered. Reporting that as unreachable would send somebody to the
         # listener over a grant, so the two are separate.
         warnings: tuple[str, ...] = ()
+        audit = None
         try:
             scope = session.scope()
             if privileges:
@@ -507,6 +513,7 @@ def _examine(
         scope=scope,
         duration_ms=_elapsed(started),
         warnings=warnings,
+        privileges=audit,
     )
 
 

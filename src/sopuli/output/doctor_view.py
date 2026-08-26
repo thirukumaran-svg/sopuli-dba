@@ -33,7 +33,7 @@ from __future__ import annotations
 from typing import Any
 
 from sopuli.config.model import ExpandedTarget
-from sopuli.driver.protocol import Scope
+from sopuli.driver.protocol import PrivilegeAudit, Scope
 from sopuli.output.document import Error
 from sopuli.output.table import Column, render_table
 
@@ -46,6 +46,7 @@ def build_target(
     error: Error | None = None,
     duration_ms: int | None = None,
     warnings: tuple[str, ...] = (),
+    privileges: PrivilegeAudit | None = None,
 ) -> dict[str, Any]:
     """One entry in ``targets[]``.
 
@@ -64,6 +65,13 @@ def build_target(
     * **connected, not described** -- ``reachable: true``, no scope, and
       ``error`` says what failed after the session opened;
     * **connected and described** -- ``reachable: true`` and a scope.
+
+    ``privileges`` is ``None`` unless ``--check-privileges`` asked, and the
+    section is then emitted **whole**, empty arrays included. That is E6's
+    argument applied to an audit: a section that appeared only when something was
+    wrong could not be quoted as evidence that nothing was. Absent and empty
+    therefore mean different things -- *not asked* and *asked, nothing found* --
+    which is a distinction a consumer needs and a falsy check would destroy.
     """
     entry: dict[str, Any] = {"target": target.name, "reachable": connected}
 
@@ -78,7 +86,27 @@ def build_target(
         entry["error"] = error.to_dict()
     if warnings:
         entry["warnings"] = list(warnings)
+    if privileges is not None:
+        entry["privileges"] = _privileges(privileges)
     return entry
+
+
+def _privileges(audit: PrivilegeAudit) -> dict[str, Any]:
+    """The schema's ``privilege_report``, which is the audit minus one field.
+
+    ``over_granted`` is deliberately not repeated here: it lives on ``scope``,
+    where the schema has had it since 1.10, and two copies of one finding are two
+    things that can disagree. A consumer reads the findings from ``scope`` and
+    the coverage from here.
+    """
+    return {
+        "held": list(audit.held),
+        "missing": list(audit.missing),
+        "common": list(audit.common),
+        "roles": list(audit.roles),
+        "unaudited": list(audit.unaudited),
+        "unreadable": list(audit.unreadable),
+    }
 
 
 def _scope(scope: Scope, target: ExpandedTarget) -> dict[str, Any]:
@@ -177,6 +205,16 @@ def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
             )
         for warning in entry.get("warnings", ()):
             lines.append(f"  {entry['target']}: {warning}")
+        missing = (entry.get("privileges") or {}).get("missing")
+        if missing:
+            # Before the over-grant line, because it is the one that stops the
+            # tool working. An account short a grant fails at the verb that needs
+            # it, several commands from here, with an error about the view rather
+            # than about the install -- which is the whole reason this is
+            # reported at connect time.
+            lines.append(
+                f"  {entry['target']}: not granted, and the tool needs it: " + ", ".join(missing)
+            )
         over_granted = (entry.get("scope") or {}).get("over_granted")
         if over_granted:
             # A line rather than a column: it appears only under

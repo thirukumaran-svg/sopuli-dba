@@ -51,7 +51,7 @@ from sopuli.driver.oracle.client import (
 )
 from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.oracle.limits import resolve as resolve_limit
-from sopuli.driver.oracle.privileges import PrivilegeAudit, audit
+from sopuli.driver.oracle.privileges import audit
 from sopuli.driver.oracle.rollover import alter_profile_ddl, is_enabled
 from sopuli.driver.oracle.statements import (
     Identifier,
@@ -74,6 +74,7 @@ from sopuli.driver.protocol import (
     ChangeResult,
     Credential,
     DriverError,
+    PrivilegeAudit,
     Scope,
     UnsupportedCapabilityError,
     UserState,
@@ -212,17 +213,20 @@ class OracleSession:
 
         **Not folded into** :meth:`scope`, unlike the capability probe, and the
         difference is who asks. Every command calls ``scope()``; only
-        ``doctor --check-privileges`` wants this, and three more round trips on
-        every connection to answer a question nobody asked is the cost the flag
-        exists to avoid. Three and not four: the role traversal starts from
-        ``USER`` rather than from a name read back first. Uncached for the same
-        reason as the flag: it is asked once per run.
+        ``doctor --check-privileges`` wants this, and it is not cheap: three
+        reads plus one probe per grant §2 documents. Paying that on every
+        connection to answer a question nobody asked is the cost the flag exists
+        to avoid. Uncached for the same reason: it is asked once per run.
 
         Reporting is not enforcing (#173), and this never refuses. P5 is decided
         — over-granting **warns**.
         """
         with self.connection.cursor() as cursor:
-            return audit(cursor)
+            # The scope decides whether `V_$PDBS` is expected: §2 grants it in
+            # the root only, and calling a PDB half-installed for lacking a grant
+            # it was never given would be wrong in the direction that costs the
+            # most trust. Cached, so this is not another round trip.
+            return audit(cursor, scope_type=self.scope().type)
 
     def describe_user(self, account: str) -> UserState | None:
         """The account's state, or ``None`` if there is no such account (#178).

@@ -27,10 +27,13 @@ import pytest
 
 from sopuli.driver.oracle.privileges import (
     FORBIDDEN_ROLES,
+    REQUIRED_PRIVILEGES,
+    REQUIRED_READS,
+    ROOT_ONLY_READS,
     UNAUDITABLE,
-    PrivilegeAudit,
     classify,
 )
+from sopuli.driver.protocol import PrivilegeAudit
 
 #: What §2 actually grants, as `SESSION_PRIVS` reports it. The healthy case, and
 #: the one that has to stay silent.
@@ -199,3 +202,131 @@ def test_the_object_privilege_row_is_named_rather_than_dropped() -> None:
     is a design question about role-derived object grants, so the row is named as
     unchecked rather than half-answered."""
     assert "EXECUTE ON DBMS_LOCK" in audit_of().unaudited
+
+
+# ---------------------------------------------------------- the positive side ---
+#
+# §2's grants, checked as present or absent (#225). The point is that a
+# half-installed account is visible *here* rather than as unrelated failures
+# three commands later: a missing `SELECT ON DBA_PROFILES` otherwise surfaces as
+# a limit resolution that could not answer, and nobody connects the two.
+
+
+def readable_of(*grants: str) -> frozenset[str]:
+    return frozenset(grants)
+
+
+ALL_READS = tuple(REQUIRED_READS)
+
+
+def complete_of() -> PrivilegeAudit:
+    """An account holding everything §2 grants outside the root."""
+    return classify(
+        INSTALLED,
+        frozenset(),
+        frozenset(),
+        readable=readable_of(*ALL_READS),
+        expected_reads=ALL_READS,
+    )
+
+
+def test_a_complete_install_reports_everything_held_and_nothing_missing() -> None:
+    audit = complete_of()
+
+    assert audit.missing == ()
+    assert set(REQUIRED_PRIVILEGES) <= set(audit.held)
+    assert set(ALL_READS) <= set(audit.held)
+
+
+def test_a_missing_dictionary_grant_is_named_as_the_grant_to_issue() -> None:
+    """Spelled as the `GRANT`, because the point of a missing entry is that
+    somebody has to go and issue it — not that a view was unreadable."""
+    audit = classify(
+        INSTALLED,
+        frozenset(),
+        frozenset(),
+        readable=readable_of(*[g for g in ALL_READS if g != "SELECT ON DBA_PROFILES"]),
+        expected_reads=ALL_READS,
+    )
+
+    assert audit.missing == ("SELECT ON DBA_PROFILES",)
+    assert "SELECT ON DBA_PROFILES" not in audit.held
+
+
+def test_a_missing_system_privilege_is_a_finding_too() -> None:
+    """`ALTER USER` is the one the tool cannot work without, and an account that
+    connects perfectly well may not hold it."""
+    audit = classify(
+        frozenset({"CREATE SESSION"}),
+        frozenset(),
+        frozenset(),
+        readable=readable_of(*ALL_READS),
+        expected_reads=ALL_READS,
+    )
+
+    assert audit.missing == ("ALTER USER",)
+
+
+def test_a_privilege_held_through_a_role_counts_as_held() -> None:
+    """`SESSION_PRIVS` includes role-derived privileges, which is why it is what
+    this reads. §2 grants directly and a site may not have."""
+    audit = classify(
+        frozenset({"CREATE SESSION", "ALTER USER"}),
+        frozenset({"ACME_APP_ADMIN"}),
+        frozenset(),
+        readable=readable_of(*ALL_READS),
+        expected_reads=ALL_READS,
+    )
+
+    assert audit.missing == ()
+
+
+def test_v_dollar_pdbs_is_not_expected_outside_the_root() -> None:
+    """§2 grants it in the root only, so its absence in a PDB is the documented
+    install. Calling a PDB half-installed for lacking a grant it was never given
+    would be wrong in the direction that costs the most trust."""
+    audit = complete_of()
+
+    assert "SELECT ON V_$PDBS" not in audit.missing
+    assert "SELECT ON V_$PDBS" not in audit.held
+
+
+def test_v_dollar_pdbs_is_expected_in_the_root_and_missing_when_absent() -> None:
+    """The other half, and the reason the two lists are separate constants rather
+    than one filtered at the call site: "not required here" and "required and
+    missing" are the answers this report exists to keep apart."""
+    expected = (*ALL_READS, *ROOT_ONLY_READS)
+    audit = classify(
+        INSTALLED,
+        frozenset(),
+        frozenset(),
+        readable=readable_of(*ALL_READS),
+        expected_reads=expected,
+    )
+
+    assert audit.missing == ("SELECT ON V_$PDBS",)
+
+
+def test_the_two_sides_are_independent() -> None:
+    """An account can be both short of what it needs and holding what it must
+    not, which is the state a half-finished 17:00-on-a-Friday debugging session
+    actually leaves behind."""
+    audit = classify(
+        frozenset({"CREATE SESSION", "SELECT ANY DICTIONARY"}),
+        frozenset(),
+        frozenset(),
+        readable=readable_of(*ALL_READS),
+        expected_reads=ALL_READS,
+    )
+
+    assert audit.missing == ("ALTER USER",)
+    assert audit.over_granted == ("SELECT ANY DICTIONARY",)
+
+
+def test_nothing_expected_means_nothing_reported_either_way() -> None:
+    """A caller that does not know the scope passes no expectations, and the
+    report omits the rows rather than inventing findings about them."""
+    audit = classify(INSTALLED, frozenset(), frozenset())
+
+    assert audit.held == ("ALTER USER", "CREATE SESSION")
+    assert audit.missing == ()
