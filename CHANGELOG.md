@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.40.0](https://github.com/villebase/sopuli-dba/compare/v0.39.0...v0.40.0) (2026-08-26)
+
+
+### Features
+
+* **doctor:** --check-privileges — report what the account should not hold ([#213](https://github.com/villebase/sopuli-dba/issues/213)) ([#224](https://github.com/villebase/sopuli-dba/issues/224)) ([33c5853](https://github.com/villebase/sopuli-dba/commit/33c58534b0eb970daceff53cd923f2dcaf5cf64a))
+* **store:** read a credential — resolve a SecretRef against a stored document ([#183](https://github.com/villebase/sopuli-dba/issues/183)) ([#221](https://github.com/villebase/sopuli-dba/issues/221)) ([59b32f0](https://github.com/villebase/sopuli-dba/commit/59b32f0150995914c0fbda87e684998b76f759b4))
+* **store:** write a credential — a merge patch that leaves siblings alone ([#183](https://github.com/villebase/sopuli-dba/issues/183)) ([#223](https://github.com/villebase/sopuli-dba/issues/223)) ([9bd9153](https://github.com/villebase/sopuli-dba/commit/9bd91537dc7cecbdcb5d6583ef9eb1ce2213e37c))
+
 ## [0.39.0](https://github.com/futville/sopuli-dba/compare/v0.38.0...v0.39.0) (2026-08-22)
 
 
