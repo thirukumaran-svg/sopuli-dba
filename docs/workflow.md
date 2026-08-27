@@ -44,21 +44,36 @@ commits are not.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs tier 0 (`design/04-testing.md` §4) on every push
-to `main` and every pull request: `ruff check`, `ruff format --check`, `mypy`,
-`pytest`, and a smoke check that the installed `sopuli` binary runs. No
-containers, under a minute.
+`.github/workflows/ci.yml` runs tier 0 (`design/04-testing.md` §4) on every pull
+request: `ruff check`, `ruff format --check`, `mypy`, `pytest`, and a smoke check
+that the installed `sopuli` binary runs. No containers, under a minute.
+`.github/workflows/tier1.yml` is the container lane and runs on the same trigger.
 
+- **Pull requests only, not the push to `main` as well.** A `pull_request` run
+  checks out `refs/pull/N/merge` — the head *already merged into the base* — so it
+  tests the tree the squash merge is about to produce, not the branch in
+  isolation. The run on `main` afterwards re-tested an identical tree and was
+  billed again for it, which on a private repository's free minutes is the
+  single largest duplicate there is.
 - **`ruff` runs once**, on Linux. It is deterministic — same answer on every OS
   and interpreter — so six identical failures would be noise, not coverage.
 - **`mypy` runs on the whole matrix**, unlike `ruff`, because it is not
   OS-independent: it narrows `sys.platform` to the platform it runs on, so
   Windows-only branches are dead code to a Linux run and never get checked
   there.
-- **The matrix is Python 3.11/3.12/3.13 × Linux/Windows.** 3.11 because
-  `requires-python` allows it; Windows because the cp1252 stream-encoding bug
-  (#12) was invisible on Linux and P4 requires identical behaviour on both.
-  macOS is out, per D5.
+- **The matrix is Python 3.11/3.12/3.13 on Linux, and 3.13 alone on Windows.**
+  3.11 because `requires-python` allows it; Windows because the cp1252
+  stream-encoding bug (#12) was invisible on Linux and P4 requires identical
+  behaviour on both. macOS is out, per D5.
+
+  Windows bills at 2× and rounds up per job, so three Windows cells were two
+  thirds of this workflow's cost. One cell keeps every axis they were buying: the
+  platform axis is per-platform by definition, mypy's narrowing is too — and is
+  pinned to `python_version = "3.11"` in `pyproject.toml`, so it gives the same
+  answer whichever interpreter starts it — and the interpreter axis is still run
+  in full on Linux, with nothing in `src/` or `tests/` branching on
+  `sys.version_info`. Restoring the other two cells is a two-line revert if a
+  Windows-and-version-specific break ever appears.
 
 ### "main is always green" is discipline, not enforcement
 
@@ -73,6 +88,16 @@ closing the gap later is a settings change and not a project: when the repositor
 goes public (or the plan changes), add `lint` and the `test` cells as required
 status checks. Those job names are the contract — renaming a job silently
 disables the requirement that names it.
+
+**Nothing runs on `main` itself any more**, and that is not a widening of this
+gap. Because a `pull_request` run tests the merge result, the commit that lands on
+`main` has already been tested — as long as the branch was current when it merged.
+Two pull requests open at once is where that stops being true: the second one's
+last run predates the first one landing, and nothing here enforces up-to-date
+branches, precisely because of the 403 above. One PR at a time is the working
+pattern rather than an enforced rule, and `workflow_dispatch` on `ci` and `tier 1`
+is how `main` gets checked by hand when that assumption does not hold — which is
+what it was used for during the Actions incident in #233.
 
 ## Releases
 

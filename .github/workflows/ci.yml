@@ -1,17 +1,27 @@
 name: ci
 
-# Tier 0 only (docs/design/04-testing.md §4): every commit, under a minute, no
-# containers. Tier 1 -- Oracle Free and Vault from test/compose.yaml, with the
-# capability probing in tests/oracle_harness.py -- is `tier1.yml`, which is the
-# separate workflow this comment used to promise (#184). Keeping them apart is
-# what stops a typo waiting six minutes on an Oracle healthcheck to report.
+# Tier 0 only (docs/design/04-testing.md §4): every commit on a pull request,
+# under a minute, no containers. Tier 1 -- Oracle Free and Vault from
+# test/compose.yaml, with the capability probing in tests/oracle_harness.py -- is
+# `tier1.yml`, which is the separate workflow this comment used to promise (#184).
+# Keeping them apart is what stops a typo waiting six minutes on an Oracle
+# healthcheck to report.
 #
-# docs/workflow.md says "main is always green" as a binding rule. Until this
-# existed, nothing checked it.
+# docs/workflow.md says "main is always green" as a binding rule, and this is what
+# checks it -- on pull requests, which is not a weaker place to check it than
+# `main` is. A `pull_request` run checks out `refs/pull/N/merge`, the head already
+# merged into the base, so it tests the tree a squash merge is about to produce
+# rather than the branch in isolation. Re-running on the push to `main` re-tested
+# an identical tree and was billed again for it; on a private repo's free minutes
+# that duplication cost more than the guard was worth.
+#
+# What it gives up: a PR whose last run predates something else landing on `main`
+# merges on a stale answer. That needs two pull requests open at once, and nothing
+# here enforces up-to-date branches (see workflow.md -- branch protection is 403
+# on this plan). One PR at a time is the working pattern; `workflow_dispatch` is
+# the escape hatch when `main` needs checking by hand.
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -62,6 +72,23 @@ jobs:
     # already uses StrEnum and datetime.UTC, both 3.11-only. Windows is in it
     # because the cp1252 stream-encoding bug (#12, fixed in #14) was Windows-only
     # and invisible on Linux, and P4 requires identical behaviour on both.
+    #
+    # **Windows runs one interpreter, not three**, and the axis it is here for is
+    # kept whole. Windows minutes bill at 2x and round up per job, so those three
+    # cells were two thirds of this workflow's cost. What they were buying:
+    #
+    # * the platform axis -- one cell covers it, and that is the axis the
+    #   cp1252 bug, `config/permissions.py`'s DACL walk and the wallet permission
+    #   check all live on;
+    # * mypy's `sys.platform` narrowing, which is why mypy runs on the whole
+    #   matrix rather than once (workflow.md) -- also per-platform, and pinned to
+    #   `python_version = "3.11"` in pyproject.toml, so mypy gives the identical
+    #   answer whichever interpreter starts it;
+    # * the interpreter axis -- untouched, because Linux still runs all three and
+    #   nothing in `src/` or `tests/` branches on `sys.version_info`.
+    #
+    # 3.13 rather than the floor: Linux 3.11 already fails first on anything
+    # version-specific, so the Windows cell is better spent on what people install.
     name: test (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -72,6 +99,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
+        exclude:
+          - os: windows-latest
+            python-version: "3.11"
+          - os: windows-latest
+            python-version: "3.12"
 
     steps:
       - uses: actions/checkout@v4

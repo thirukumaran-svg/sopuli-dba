@@ -14,10 +14,14 @@ name: tier 1
 # build from Oracle binaries, or a tenancy -- those are tier 3, and they are the
 # maintainer's machine rather than this file.
 
+# Pull requests only, not the push to `main` as well (see ci.yml's header for the
+# whole argument): a `pull_request` run tests `refs/pull/N/merge`, so the push to
+# `main` re-ran the same tree against the same containers and was billed for it
+# twice. At four minutes of Oracle healthcheck a time, that is the most expensive
+# duplicate in the repository.
+
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

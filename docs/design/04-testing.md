@@ -197,7 +197,7 @@ the same reason: a property nobody exercises is a property nobody has.
 | one extra | `pip install ".[<name>]"`, each in turn | that backend imports on its own — no extra silently depends on a sibling |
 | `all` | `pip install ".[all]"` | the shape every other test runs under, and the only one where a full suite is meaningful |
 
-Base and `all` are cheap enough to run on every commit; both are tier 0 and
+Base and `all` are cheap enough to run on every PR commit; both are tier 0 and
 neither needs a container. The per-extra cells are one install and one import
 each, and they matter most for the extra nobody develops against — the one whose
 missing sibling import is discovered by a user rather than by CI.
@@ -212,7 +212,7 @@ nothing else in the suite can see rule 3 break.
 
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
-| 0 | every commit | public CI | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, `lock status` and `lock break` with the store handed in — including the live/expired/nothing matrix, which is a comparison rather than a container and a sleep — and the install-shape assertions in §3 |
+| 0 | every PR commit | public CI (`ci.yml`) | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, `lock status` and `lock break` with the store handed in — including the live/expired/nothing matrix, which is a comparison rather than a container and a sleep — and the install-shape assertions in §3 |
 | 1 | every PR | public CI (`tier1.yml`, #184) | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
 | 2 | nightly | public CI | < 30 min | 21c XE, 18c XE, 11g XE, PostgreSQL matrix; fault injection |
 | 3 | pre-release | maintainer | manual | built 19c, real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
