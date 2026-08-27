@@ -166,8 +166,11 @@ unchanged, which is precisely what the UTF-8 streams make safe.
   lock       { mode, held[], denied, found[] },
   results    [ { account, target, scope, secret, state, changed, actions[],
                  verification, rollover, error, warnings[] } ],
-  targets    [ { target, reachable, scope, asserted, privileges, error } ],
+  targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
+                 error, warnings[] } ],
   install    { backends[], drivers[] },
+  wallet     { required_by[], tns_admin, directory, from_sqlnet, readable,
+               files[], unreadable[], auto_login, insecure[] },
   summary    { total, ok, changed, drift, unverifiable, skipped, failed, by_state },
   diagnostics[],
   error      { category, message, hint },
@@ -682,6 +685,71 @@ names. Exit 9 rather than 1 is E5's number for the same condition when a command
 tool two answers to one question. `summary` is unaffected and still counts
 targets: an install-shape failure is not a target that failed.
 
+### `wallet`, emitted by `doctor`
+
+Whether this machine has an Oracle wallet the run can authenticate with. P4 names
+wallet readability in the same breath as client presence and `TNS_ADMIN`, and the
+gap it closes is between *the variable is set* — which `doctor` already reported
+— and *there is a wallet there this process can read*. Those are different facts
+on every machine where a service runs as one user and a DBA tests as another.
+
+```json
+"wallet": {
+  "required_by": ["cdb-root-dev"],
+  "tns_admin": "/opt/oracle/network/admin",
+  "directory": "/opt/oracle/wallet",
+  "from_sqlnet": true,
+  "readable": true,
+  "files": ["cwallet.sso"],
+  "unreadable": [],
+  "auto_login": true,
+  "insecure": []
+}
+```
+
+**Absent when nothing in the estate uses `auth: external`**, which is the
+opposite of `install`'s always-present rule and right for the opposite reason.
+Install shape is a fact about the machine that is always true of it; this is a
+fact about a configuration option most files never use, and a section warning
+about a missing wallet in every document that never needed one is noise rather
+than evidence.
+
+**`directory` is not always `tns_admin`, and `from_sqlnet` says when it is not.**
+`sqlnet.ora`'s `WALLET_LOCATION` moves the wallet, and the client follows it. A
+survey that did not would report "no wallet" for a correctly configured estate —
+sending somebody to fix a directory that was never wrong, which is worse than not
+checking at all. A reader who checks the obvious directory and finds nothing has
+to be able to see that the tool looked elsewhere.
+
+**Presence is not access, so `files` holds what could actually be opened.** A
+wallet owned by the account a service runs as is `is_file()` from every account
+on the machine and opens from exactly one — which is the case this whole section
+exists for, so it is measured by reading a byte rather than inferred from the
+file existing. One that is there and unreadable lands in `unreadable[]` and does
+not count towards `auto_login`: it is a different finding from a missing wallet,
+because the remedy is different. A missing wallet is somebody to ask for one; an
+unreadable one is already where it should be and owned by the wrong account.
+
+**`auto_login` and not just `files`.** `ewallet.p12` alone is a wallet, and it
+needs a passphrase this tool has no way to supply — so a directory holding only
+that one cannot serve an unattended run, and the naive reading of *is there a
+wallet here* says yes. That gap is the whole reason the field exists.
+
+**Nothing here moves the exit code.** An unreadable wallet is not a separate
+verdict: it rides on each target's own reachability, which the connection attempt
+settles a moment later. The section explains the failure that is about to happen
+rather than pre-empting it, and `SOPULI-W007` is the warning that carries the
+explanation into the diagnostics array. A wallet other people can read is
+`SOPULI-W008` and is likewise a warning, for the reason #213 settled for
+over-granted accounts: it is somebody else's file, and refusing to run would
+block the person who ran it over a condition they did not create.
+
+**What is deliberately not checked.** The wallet is not opened. Confirming it
+holds a credential for the alias means asking the Oracle client, and the
+connection report already does that better than any inspection could — a target
+that connects has proved its wallet works. What is left for this section is the
+diagnosis when it does not.
+
 ### `results[].changed` vs `results[].state`
 
 Deliberately separate:
@@ -753,6 +821,9 @@ is not contract and may improve.
 | `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked and anything on the path can read every secret that crosses. Under P3's safety ratchet, so no layer can weaken it further — but nothing in the run undoes it either (#135, ADR-005) |
 | `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record left at a path the file no longer names would not appear — in that store. Everything reported is accurate; the survey is narrower than it looks (#150) |
 | `SOPULI-W006` | A `targets:` entry names a driver this machine cannot serve (#170), weighed by each command exactly as its store counterpart `SOPULI-W003` is. They are deliberately two codes: one meaning "some backend or other is missing" would leave a consumer unable to tell a store it cannot reach from a database it cannot reach, which are different outages. Emitted once per driver *type* rather than once per target, since an estate generates targets by the dozen from one `target_sets:` entry |
+
+| `SOPULI-W007` | An estate uses `auth: external`, and this machine has no auto-login wallet this process can read (#215). The connection will fail as an Oracle *login* error, which is the most misleading way for a file-permission problem to appear; this says why in advance. A warning and not a verdict — the target's own reachability decides the run |
+| `SOPULI-W008` | A wallet file in this run's `TNS_ADMIN` is reachable by somebody other than its owner (#215, P4). An auto-login wallet is a credential: whoever can read it can authenticate as the account it holds. `doctor` warns and never fails, for the reason #213 settled for over-granted accounts |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
@@ -1122,6 +1193,12 @@ any target — so putting it there would have repeated one fact once per target 
 said it twenty-one times on the estate `01-configuration.md` §2 uses as its
 example. The new `status` enum arrives in the same bump, which is the minor rule
 again rather than a second thing.
+
+**1.13 became 1.14 when `doctor` looked for the wallet** (#215, P4): `wallet`
+joined the document as an optional property. The minor rule for the eighth time,
+and the first section whose *absence* carries meaning in the way `lock`'s does —
+it is omitted when nothing in the estate uses `auth: external`, which is not the
+same as omitted because the command did not look.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles

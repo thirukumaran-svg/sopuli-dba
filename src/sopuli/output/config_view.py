@@ -15,7 +15,7 @@ secret ref here is an address and never a value (invariant 2, P2).
 
 The JSON form is the ``config`` section of the run document. It carries the same
 two views, discriminated by ``resolved``, and is pinned by
-``docs/schemas/sopuli-run-1.13.schema.json``.
+``docs/schemas/sopuli-run-1.14.schema.json``.
 """
 
 from __future__ import annotations

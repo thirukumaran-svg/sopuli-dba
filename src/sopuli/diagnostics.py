@@ -33,6 +33,7 @@ from types import MappingProxyType
 from sopuli.clock import to_rfc3339
 from sopuli.config.model import ExpandedTarget, Vault
 from sopuli.config.references import UNVERIFIED_TRANSPORT
+from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import installed as driver_installed
 from sopuli.install_shape import INSTALLED, Component, InstallShape
@@ -66,6 +67,20 @@ UNLISTABLE_STORE = "SOPULI-W005"
 #: cannot reach from a database it cannot reach, which are different outages.
 #: Hand-allocated, like #130's pair, and J3 is still open.
 MISSING_DRIVER = "SOPULI-W006"
+
+#: An estate uses ``auth: external`` and this machine has no wallet it can read
+#: (#215). Its own code rather than a widening of anything above: the remedy is a
+#: file on this machine, and a consumer that alerts on "sopuli cannot reach a
+#: store" is watching a different outage from one that alerts on "the wallet the
+#: service account authenticates with has gone".
+WALLET_UNUSABLE = "SOPULI-W007"
+
+#: A wallet file somebody other than its owner can reach (#215, P4). Separate
+#: from :data:`WALLET_UNUSABLE` because the two are opposite conditions -- one
+#: says the credential is not there, the other says it is there and everyone can
+#: have it -- and because only the second is something to alert on rather than to
+#: fix while you are already looking.
+WALLET_NOT_PRIVATE = "SOPULI-W008"
 
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
@@ -107,6 +122,20 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "not checked. Anything on the path can present its own and read every secret "
             "that crosses. The key is under the safety ratchet, so no layer can weaken "
             "this further -- but nothing in the run undoes it either."
+        ),
+        WALLET_UNUSABLE: (
+            "An estate uses `auth: external`, and this machine has no auto-login wallet "
+            "that this process can read -- so the connection will fail as an Oracle "
+            "*login* error, which is the most misleading way for a file-permission "
+            "problem to appear. A warning and not a verdict: the target's own "
+            "reachability decides the run, and this says why in advance."
+        ),
+        WALLET_NOT_PRIVATE: (
+            "A wallet file in this run's `TNS_ADMIN` is reachable by somebody other than "
+            "its owner. An auto-login wallet is a credential -- whoever can read it can "
+            "authenticate as the account it holds. `doctor` warns and never fails: it is "
+            "somebody else's file, and refusing to run would block the person who ran it "
+            "over a condition they did not create."
         ),
         UNLISTABLE_STORE: (
             "A store in this survey has no `list` capability, so `lock status` reported "
@@ -419,3 +448,88 @@ def _cannot_serve(component: Component, kind: str) -> str:
     if component.install_command is not None:
         return f"but that {kind} is not installed; install it with: {component.install_command}"
     return f"but this build has no {component.name} {kind} yet -- this is not something to install"
+
+
+def wallet_diagnostics(report: WalletReport) -> list[Diagnostic]:
+    """What a run should say about the wallet it will authenticate with (#215).
+
+    **Warnings, never a verdict.** `01-configuration.md` §3a makes the config
+    rules around ``external`` load-time errors; this is a runtime report and must
+    not re-litigate them. What happens to the run is decided a moment later by
+    each target's own connection attempt, and if the wallet is the reason, this
+    is the entry that says so before the Oracle error that will not.
+
+    Two codes and not one, because they are opposite conditions with opposite
+    remedies: :data:`WALLET_UNUSABLE` says the credential is not there, and
+    :data:`WALLET_NOT_PRIVATE` says it is there and other people can have it. A
+    consumer alerting on the second is doing security monitoring; one alerting on
+    the first is watching an outage.
+
+    The unusable case is **one entry naming every target that needs it**, not one
+    per target: there is one wallet per run, and an estate with twenty external
+    targets would otherwise say the same sentence twenty times about the same
+    directory.
+    """
+    found = []
+    if not report.usable:
+        found.append(
+            Diagnostic(
+                level="warning",
+                code=WALLET_UNUSABLE,
+                message=(
+                    f"{_needs_wallet(report.required_by)} external authentication, "
+                    f"and {_why_unusable(report)}"
+                ),
+            )
+        )
+    for name, reason in report.insecure:
+        found.append(
+            Diagnostic(
+                level="warning",
+                code=WALLET_NOT_PRIVATE,
+                message=(
+                    f"{name} in {report.directory} {reason}; an auto-login wallet is a "
+                    f"credential, and whoever can read it can authenticate as the account "
+                    f"it holds"
+                ),
+            )
+        )
+    return found
+
+
+def _needs_wallet(names: Sequence[str]) -> str:
+    """The subject of the sentence, carrying its own verb.
+
+    The verb has to travel with the subject rather than sit in the f-string that
+    joins them, because the subject is singular or plural depending on the estate
+    -- and "20 targets ... uses external authentication" is the kind of seam that
+    makes a reader doubt the rest of the report.
+    """
+    if len(names) == 1:
+        return f"target {names[0]!r} uses"
+    return f"{len(names)} targets, including {names[0]!r}, use"
+
+
+def _why_unusable(report: WalletReport) -> str:
+    """The half of the message that names the remedy.
+
+    Three different problems, and telling somebody to check permissions on a
+    directory that does not exist -- or to set a variable that is already set --
+    is the failure this exists to avoid.
+    """
+    if report.directory is None:
+        return "$TNS_ADMIN is unset, so there is nowhere to read a wallet from"
+    if not report.readable:
+        return f"{report.directory} is missing or not readable by this user"
+    if AUTO_LOGIN in report.unreadable:
+        return (
+            f"{report.directory} holds {AUTO_LOGIN} and this process cannot read it -- "
+            f"check who owns it, and which account this is running as"
+        )
+    if report.files or report.unreadable:
+        present = ", ".join(sorted({*report.files, *report.unreadable}))
+        return (
+            f"{report.directory} holds {present} but no readable {AUTO_LOGIN}, "
+            f"and an encrypted wallet needs a passphrase this tool cannot supply"
+        )
+    return f"{report.directory} holds no wallet"

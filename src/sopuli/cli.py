@@ -79,12 +79,14 @@ from sopuli.diagnostics import (
     install_diagnostics,
     lock_broken,
     unlistable_stores,
+    wallet_diagnostics,
 )
 from sopuli.driver.oracle.client import (
     Timeouts,
     describes_unreachable_server,
     reach_floor,
 )
+from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import resolve as resolve_driver
 from sopuli.exit_codes import ExitCode
@@ -131,6 +133,8 @@ from sopuli.output.lock_view import (
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.stream import configure_streams
+from sopuli.output.wallet_view import build as build_wallet
+from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate
 from sopuli.safety import RefusedError, refuse_if_readonly
 from sopuli.store import SecretStore, StoreError, connect
@@ -383,6 +387,13 @@ def doctor(
     validate` warns over the same fact and exits 0, which is E4 and E6
     disagreeing on purpose.
 
+    **The wallet is checked for estates that use ``auth: external``**, and only
+    those (P4). A wallet that is missing or unreadable fails the connection as an
+    Oracle *login* error, which sends somebody to the account and the password
+    they do not have rather than to the file permissions they do. This says so
+    first. It warns and never fails: what happens to the run is decided by each
+    target's own reachability a moment later.
+
     Nothing here is a substitute for the guardrails. Reporting what a service
     account holds is not enforcing it; #173 is the refusal.
 
@@ -424,6 +435,14 @@ def doctor(
     # working it out separately is how it stops meaning the same thing.
     document.diagnostics.extend(install_diagnostics(shape))
 
+    # Before the connections, for the reason the install survey is: it is the
+    # half of the answer that needs no network, and it explains the login error
+    # the targets below are about to produce if the wallet is the reason.
+    wallet = wallet_survey(config.expanded_targets, tns_admin=os.environ.get("TNS_ADMIN"))
+    if wallet is not None:
+        document.wallet = build_wallet(wallet)
+        document.diagnostics.extend(wallet_diagnostics(wallet))
+
     client = _client_report(config)
     entries = [
         _examine(target, run, config, privileges=check_privileges)
@@ -437,7 +456,10 @@ def doctor(
         _doctor_exit(shape.missing, failed),
         Summary(total=len(entries), ok=reachable, changed=0, failed=failed),
     )
-    return "\n".join([*render_install(shape), render_doctor(entries, client=client)])
+    sections = [*render_install(shape)]
+    if wallet is not None:
+        sections.extend(render_wallet(wallet))
+    return "\n".join([*sections, render_doctor(entries, client=client)])
 
 
 def _doctor_exit(missing: Sequence[Component], failed: int) -> ExitCode:

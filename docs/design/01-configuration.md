@@ -778,6 +778,14 @@ rather than warnings:
 Both are checked against the *expanded* estate, so an `overrides:` patch that
 introduces the combination is caught too.
 
+**Whether the wallet is actually there is a runtime question, not a load-time
+one** (#215). Both rules above are about the file and are errors; whether
+`TNS_ADMIN` names a directory holding a readable `cwallet.sso` is about the
+machine, changes between one host and the next, and is reported by `sopuli
+doctor` in its `wallet` section rather than refused here. Loading a config on a
+laptop for an estate that runs elsewhere is the common case, and a loader that
+demanded a local wallet would break it.
+
 #### What happens when one of these is resolved (#175)
 
 Parsing says where the material lives; resolution reads it, and it happens **at
