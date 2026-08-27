@@ -19,7 +19,7 @@ header records which paths ran and which are still untried.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.3.schema.json](schemas/sopuli-config-1.3.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.12.schema.json](schemas/sopuli-run-1.12.schema.json) | JSON Schema (2020-12) for the `--output json` document |
+| [schemas/sopuli-run-1.13.schema.json](schemas/sopuli-run-1.13.schema.json) | JSON Schema (2020-12) for the `--output json` document |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -98,7 +98,9 @@ what a declared-but-uninstalled `type:` does and §9/§10 have the warning,
 makes install shape a dimension of the matrix, and the root `README.md` leads
 with the install matrix. `pyproject.toml` and the registry's lazy import landed
 in #134, with `SOPULI-20001` and `SOPULI-W003` as the first codes anything
-actually emits; `doctor`'s install-shape section (E6) waits on `doctor` itself.
+actually emits, and `doctor`'s install-shape section landed in #214 as
+`install` in schema 1.13 — every registry entry on every run, so *installed and
+not configured* is reportable and a clean run can be quoted as evidence.
 
 **Configuration (01):** ~~naming of the binding section~~ (C1 — **decided:
 `applications`, with an inline single-application form**), label selector syntax

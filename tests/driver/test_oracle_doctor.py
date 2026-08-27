@@ -209,12 +209,21 @@ def test_an_unreachable_target_is_a_finding_and_the_exit_code_says_so(
 def test_the_report_is_readable_without_json(
     runner: CliRunner, live_oracle: Environment, tmp_path: Path
 ) -> None:
+    """Three sections, narrowing: what this build serves, then what this machine
+    has an Oracle client for, then what each target turned out to be.
+
+    The order is the assertion rather than the first line alone. `install`
+    arrived above `client` in #214 and only the first line moved, so a test
+    pinning one heading passed the whole report through unchecked -- and the
+    section that fails the run is the one a reader must not have to scroll for.
+    """
     config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
 
     result = _run(runner, config)
 
     assert result.exit_code == 0, result.output
-    assert result.output.splitlines()[0] == "client"
+    headings = [line for line in result.output.splitlines() if line in ("install", "client")]
+    assert headings == ["install", "client"]
     assert "tier1-oracle" in result.output
 
 

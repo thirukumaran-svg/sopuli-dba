@@ -194,6 +194,17 @@ nothing yet to settle it from.
   does, and the `config validate` warning (E4).
 - `03-json-output.md`: the `error.code` for a missing backend, and the warning's
   diagnostic code (E4/E5).
+- ~~E6: `doctor` reporting install shape~~ — **done in #214.** The `install`
+  section arrived in schema 1.13 and is emitted on every `doctor` run: one row per
+  registry entry, configured or not, so *installed and not configured* is
+  reportable and a healthy run can be quoted as evidence. `sopuli/install_shape.py`
+  is the survey and asks `find_spec` throughout, which keeps rule 3 true of the
+  command that reports on rule 3. Two things worth remembering: `status` is three
+  values rather than a boolean, because a backend with an extra and no module —
+  `oci` today — would otherwise report itself installable on a developer machine
+  that has the SDK and still refuse at connect time; and E6's "a configured backend
+  that is not installed is a `doctor` failure" is exit **9**, E5's number, rather
+  than a generic 1, so the tool gives one answer to one question.
 - `04-testing.md`: install shape as a dimension of the matrix, plus the two
   tier-0 tests — the absent-backend message per backend, and the base install
   importing none of the backends' clients.

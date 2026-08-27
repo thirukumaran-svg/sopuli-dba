@@ -76,6 +76,7 @@ from sopuli.config import (
 from sopuli.diagnostics import (
     backend_diagnostics,
     driver_diagnostics,
+    install_diagnostics,
     lock_broken,
     unlistable_stores,
 )
@@ -87,6 +88,8 @@ from sopuli.driver.oracle.client import (
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import resolve as resolve_driver
 from sopuli.exit_codes import ExitCode
+from sopuli.install_shape import Component
+from sopuli.install_shape import survey as install_survey
 from sopuli.invocation import (
     GlobalOptions,
     Invocation,
@@ -116,6 +119,8 @@ from sopuli.output.config_view import (
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, Summary
+from sopuli.output.install_view import build as build_install
+from sopuli.output.install_view import render as render_install
 from sopuli.output.lock_view import (
     build_break_section,
     build_denied_section,
@@ -369,6 +374,15 @@ def doctor(
     Each failure lands in its own ``targets[]`` entry with the vendor code and
     the server's own message, and the exit code reflects how many.
 
+    **Install shape is reported on every run, not only when it is wrong**
+    (ADR-006 E6). Which backends and drivers this build can serve, which the
+    config asks for, and where the two disagree -- because this output is audit
+    evidence as often as it is a diagnostic, and a section that appeared only on
+    a mismatch could never be quoted as proof that there was none. A configured
+    component this machine cannot serve fails the run, at exit 9; `config
+    validate` warns over the same fact and exits 0, which is E4 and E6
+    disagreeing on purpose.
+
     Nothing here is a substitute for the guardrails. Reporting what a service
     account holds is not enforcing it; #173 is the refusal.
 
@@ -400,6 +414,16 @@ def doctor(
     document.selection = as_dict(match) or None
     document.diagnostics.extend(config_diagnostics(config))
 
+    # Before anything connects, because it is the half of the answer that needs
+    # no network -- and because a driver this machine does not have is the reason
+    # every target below it is about to be unreachable.
+    shape = install_survey(config)
+    document.install = build_install(shape)
+    # From the survey, never recomputed. "Missing" has to mean the same thing in
+    # the section and in the diagnostics of one document, and two functions
+    # working it out separately is how it stops meaning the same thing.
+    document.diagnostics.extend(install_diagnostics(shape))
+
     client = _client_report(config)
     entries = [
         _examine(target, run, config, privileges=check_privileges)
@@ -410,10 +434,37 @@ def doctor(
     reachable = sum(1 for entry in entries if entry["reachable"])
     failed = len(entries) - reachable
     document.finish(
-        ExitCode.SUCCESS if failed == 0 else ExitCode.FAILURE,
+        _doctor_exit(shape.missing, failed),
         Summary(total=len(entries), ok=reachable, changed=0, failed=failed),
     )
-    return render_doctor(entries, client=client)
+    return "\n".join([*render_install(shape), render_doctor(entries, client=client)])
+
+
+def _doctor_exit(missing: Sequence[Component], failed: int) -> ExitCode:
+    """Which failure this run is, when it is both.
+
+    **Install shape wins over unreachable targets**, and the order is the whole
+    of this function. A configured driver this machine does not have makes every
+    target under it unreachable, so the two findings arrive together and only one
+    of them names something the reader can go and fix. Reporting exit 1 there
+    would point at twenty databases and away from the one `pip` line.
+
+    **Exit 9 and not 1**, which is E5's number rather than a new one: a missing
+    backend is already ``config`` / exit 9 when a command resolves one, and P5's
+    exit 9 already means *fix your configuration, not your command line*. Having
+    `doctor` report the same condition with a different number would give the
+    tool two answers to one question. The estate is not at fault and the config
+    is valid -- what is incomplete is this machine, which is exactly the half of
+    exit 9 the recipe in ``03-json-output.md`` §6 already routes to a human.
+
+    ``summary`` is untouched by this and still counts targets. An install-shape
+    failure is not a target that failed, and inflating ``failed`` to make the
+    exit code look derivable would put a number in the document that no entry in
+    ``targets[]`` accounts for.
+    """
+    if missing:
+        return ExitCode.CONFIG_INVALID
+    return ExitCode.SUCCESS if failed == 0 else ExitCode.FAILURE
 
 
 def _client_report(config: Config) -> dict[str, Any]:
