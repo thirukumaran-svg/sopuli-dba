@@ -186,20 +186,41 @@ class Option:
 
 @dataclass(frozen=True)
 class Summary:
-    """``summary``. Only the four required counters are populated so far."""
+    """``summary``. The four required counters, and the optional ones a verb has.
+
+    The optional counters are ``None``-when-absent rather than zero, because the
+    schema makes them optional and zero is a claim: ``drift: 0`` from `doctor`
+    would say that command looked for drift and found none, and it never looked.
+    A verb that counts a thing reports it; one that does not, omits it.
+    """
 
     total: int = 0
     ok: int = 0
     changed: int = 0
     failed: int = 0
+    unchanged: int | None = None
+    drift: int | None = None
+    unverifiable: int | None = None
+    skipped: int | None = None
+    #: ``summary.by_state``: how many results carried each state, omitting the
+    #: states with none. An open object in the schema, so a verb with no state
+    #: vocabulary simply has nothing to put here.
+    by_state: dict[str, int] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        summary: dict[str, Any] = {
             "total": self.total,
             "ok": self.ok,
             "changed": self.changed,
             "failed": self.failed,
         }
+        for name in ("unchanged", "drift", "unverifiable", "skipped"):
+            value = getattr(self, name)
+            if value is not None:
+                summary[name] = value
+        if self.by_state is not None:
+            summary["by_state"] = dict(self.by_state)
+        return summary
 
 
 @dataclass
@@ -278,6 +299,20 @@ class RunDocument:
     #: anything", and an empty object would say that once per run in a document
     #: consumers diff.
     options: dict[str, Option] = field(default_factory=dict)
+    #: The ``results`` section: one entry per (account, target) the run acted on
+    #: or concluded something about (#248). :mod:`sopuli.output.check_view` owns
+    #: the shape.
+    #:
+    #: **Per credential, where ``targets`` is per target.** `doctor` manages no
+    #: credential and reports on the database; the `creds` verbs report on a
+    #: password in a database, and the ``state`` vocabulary here -- ``IN_SYNC``,
+    #: ``DRIFT``, ``LOCKED`` -- is about that. #182 added ``targets`` rather than
+    #: widening this for exactly that reason, and the two stay apart.
+    #:
+    #: Meant to be read beside ``plan``: same grain, same order, so a diff
+    #: between what the run said it would do and what it did is mechanical
+    #: (``03-json-output.md``).
+    results: list[dict[str, Any]] | None = None
     #: The ``targets`` section, emitted by ``doctor`` (#182). One entry per
     #: target, and **not** ``results[]``: that array is per (account, target)
     #: and its ``state`` vocabulary is about credential sync -- ``IN_SYNC``,
@@ -395,6 +430,8 @@ class RunDocument:
             document["plan"] = self.plan
         if self.lock is not None:
             document["lock"] = self.lock
+        if self.results is not None:
+            document["results"] = self.results
         if self.targets is not None:
             document["targets"] = self.targets
         if self.install is not None:

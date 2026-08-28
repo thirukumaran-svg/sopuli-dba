@@ -377,6 +377,17 @@ once a run's profile is known and the answer is exact (invariant 4). `config sho
 such a binding into an addressable one is `config/binding_stores.py` (#250),
 called by the command that needs a store rather than at load.
 
+**`results` is per credential; `targets` is per target.** `creds check` emits the
+first (#248) and `doctor` the second (#182): one reports on a password in a
+database and the other on the database. `results[]` is meant to be read beside
+`plan.units[]` — same grain, same order — so a diff between what a run said it
+would do and what it did is mechanical.
+
+**`summary`'s optional counters are populated by the verbs that count them**, and
+omitted by the ones that do not. `drift: 0` from `doctor` would say that command
+looked for drift and found none, and it never looked. `by_state` likewise carries
+only the states a run actually produced.
+
 **`plan` is absent entirely on a command that plans nothing** — `config show`,
 `doctor`, `lock status`. That is not J2 ("always emit `plan`") being answered: J2
 asks whether a *planning* command may ever omit it, and the answer here is that a

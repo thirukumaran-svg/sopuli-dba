@@ -61,14 +61,18 @@ from typing import Any, TypeVar
 
 import click
 
+from sopuli import check as check_states
+from sopuli import plan as plan_builder
 from sopuli.admin import resolve as admin_resolve
 from sopuli.config import (
     ROOT,
+    Binding,
     Config,
     ConfigError,
     ExpandedTarget,
     PasswordPolicy,
     as_dict,
+    binding_stores,
     dangling,
     filter_estate,
     parse_selector,
@@ -87,7 +91,9 @@ from sopuli.driver.oracle.client import (
     describes_unreachable_server,
     reach_floor,
 )
+from sopuli.driver.oracle.verification import DEFAULT_MARGIN
 from sopuli.driver.oracle.wallet import survey as wallet_survey
+from sopuli.driver.protocol import FAIL, PASS, VERIFY_LOGIN, UserState
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import resolve as resolve_driver
 from sopuli.exit_codes import ExitCode
@@ -113,6 +119,7 @@ from sopuli.lock.takeover import (
     check_fenceable,
     plan_break,
 )
+from sopuli.output.check_view import build_result, render_check, summarise
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -131,6 +138,7 @@ from sopuli.output.lock_view import (
     render_break,
     render_status,
 )
+from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.stream import configure_streams
@@ -139,8 +147,10 @@ from sopuli.output.vault_view import render as render_vaults
 from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate
-from sopuli.safety import RefusedError, refuse_if_readonly
+from sopuli.payload import PREVIOUS
+from sopuli.safety import RefusedError, refuse_if_over_limit, refuse_if_readonly
 from sopuli.store import SecretStore, StoreError, connect
+from sopuli.store.credentials import StoredSecret, read_secret
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.version import get_version
@@ -1261,6 +1271,379 @@ def main() -> None:
         # carrying the vendor code and a hint (see CLAUDE.md, Style).
         click.echo(f"sopuli: {type(exc).__name__}: {exc}", err=True)
         raise SystemExit(ExitCode.FAILURE) from exc
+
+
+@cli.group("creds")
+def creds_group() -> None:
+    """Manage application database account credentials."""
+
+
+@creds_group.command("check")
+@select_option
+@click.option(
+    "--include-previous",
+    is_flag=True,
+    help="Also ask whether the vault's previous password is still accepted.",
+)
+@click.option(
+    "--lockout-margin",
+    type=click.IntRange(0, 100),
+    default=DEFAULT_MARGIN,
+    show_default=True,
+    help="Refuse to attempt a login within this many tries of the lockout limit.",
+)
+@global_options
+def creds_check(
+    selectors: tuple[str, ...],
+    include_previous: bool,
+    lockout_margin: int,
+    run: Invocation,
+) -> str:
+    """Check whether the vault's password works against each database.
+
+    One question per account per target, and the command **mutates nothing**: no
+    vault write, no DDL, and no lock at all -- P5 exempts `check` precisely so an
+    hourly scheduled one never blocks a rotation.
+
+    **Exit 3 for drift** is what makes this schedulable. A monitoring system
+    alerts on 3 specifically, which is distinct from "the tool failed" -- so a
+    target that could not be reached is exit 1 and never exit 3, or a broken
+    check would page the same person as a real one.
+
+    **Login is the only method, and there is no --method flag.** Q1 was decided
+    in issue #86: `login`, unconditionally. Hash mode depends on reproducing
+    Oracle's 12C verifier client-side, which is still unverified (issue #90) and
+    may never ship, and a flag with one legal value would advertise a choice
+    that does not exist.
+
+    **Locking an account would be worse than the drift this detects**, so all of
+    UC-1's runtime mitigations are in place. One attempt per account per run and
+    no retry on a wrong password -- the driver's signature has no shape for a
+    back-off loop. Where `SELECT ON SYS.USER$` was granted, the failed-login
+    counter is read fresh immediately before the attempt and the login is
+    refused within `--lockout-margin` of the profile's limit. That grant is
+    optional and not part of the default install, so where it is absent the
+    guard is *unavailable* rather than passing: the run says so in the row and
+    goes ahead on the remaining mitigations.
+
+    **Lock, expiry and a missing account are reported as themselves.** A login
+    attempt alone conflates an expired password, an already-locked account and a
+    genuinely wrong one behind one Oracle error, so the account's status is read
+    separately -- from a view the baseline grant already covers -- and each gets
+    its own state. Two of those three are not the vault's fault, and folding
+    them into drift would send somebody to rotate a credential that is fine.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+
+    match = parse_selector(selectors)
+    config = filter_estate(run.config, match)
+    document.selection = as_dict(match) or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    # C15's plan-time half (#250), before anything is planned: a profile's
+    # `vault:` and SOPULI_VAULT are not consulted while bindings are built, so
+    # this is the first moment a binding's store can be complete. The refusal
+    # follows immediately because reading a credential is the whole command --
+    # invariant 4 wants it here and not partway through the estate.
+    config = binding_stores.complete(config, env=os.environ)
+    binding_stores.refuse_unresolved(config, action="checking credentials")
+
+    plan = plan_builder.build(config, intent=["verify"])
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action="checking credentials")
+    document.plan = plan.as_json()
+
+    stores = _stores_for(
+        {binding.vault for binding in config.bindings if binding.vault is not None},
+        config,
+        token_file=run.vault_token_file,
+    )
+    by_target = {expanded.name: expanded for expanded in config.expanded_targets}
+
+    rows: list[tuple[Binding, check_states.Outcome]] = []
+    results: list[dict[str, Any]] = []
+    for target_name, bindings in _grouped(config.bindings).items():
+        rows.extend(
+            _check_target(
+                by_target[target_name],
+                bindings,
+                run,
+                config,
+                stores=stores,
+                margin=lockout_margin,
+                previous=include_previous,
+                results=results,
+            )
+        )
+
+    document.results = results
+    states = [outcome.state for _, outcome in rows]
+    document.finish(check_states.exit_code_for(states), summarise(states))
+    return "\n".join([render_plan(plan, noun="check"), "", render_check(rows)])
+
+
+def _grouped(bindings: Sequence[Binding]) -> dict[str, list[Binding]]:
+    """Bindings by target, in estate order.
+
+    One connection per target rather than one per binding. A target with six
+    accounts in it is one login for this tool, not six -- and six would be six
+    entries in that database's audit trail for one scheduled check.
+    """
+    grouped: dict[str, list[Binding]] = {}
+    for binding in bindings:
+        grouped.setdefault(binding.target, []).append(binding)
+    return grouped
+
+
+def _check_target(
+    target: ExpandedTarget,
+    bindings: Sequence[Binding],
+    run: Invocation,
+    config: Config,
+    *,
+    stores: Mapping[str, SecretStore],
+    margin: int,
+    previous: bool,
+    results: list[dict[str, Any]],
+) -> list[tuple[Binding, check_states.Outcome]]:
+    """Every account this run checks in one target, over one connection.
+
+    **A target that cannot be reached is a finding, not a crash**, the same rule
+    `doctor` follows: the point is to survey an estate and say which parts of it
+    are unwell, so one dead listener must not end the run before the next target
+    is tried. Every account bound to it gets an `ERROR` row carrying the vendor
+    code and the server's own message, which is exit 1 rather than exit 3 --
+    a broken check must not page whoever watches for drift.
+    """
+    started = time.monotonic()
+    session = None
+    try:
+        try:
+            module = resolve_driver(target.target)
+            credential = admin_resolve(target, env=os.environ)
+            driver = module.OracleDriver(
+                env=os.environ,
+                correlation_id=run.document.correlation_id,
+                timeouts=_timeouts(run),
+                client_lib_dir=config.runtime.oracle.client_lib_dir,
+            )
+            session = driver.connect(target, credential.credential)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return _unreachable(bindings, error, results, duration=_elapsed(started))
+
+        rows = []
+        for binding in bindings:
+            rows.append(
+                _check_one(
+                    binding,
+                    session,
+                    stores=stores,
+                    margin=margin,
+                    previous=previous,
+                    out=results,
+                )
+            )
+        return rows
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+def _unreachable(
+    bindings: Sequence[Binding],
+    error: Exception,
+    results: list[dict[str, Any]],
+    *,
+    duration: int,
+) -> list[tuple[Binding, check_states.Outcome]]:
+    """One target's worth of `ERROR` rows, all carrying the same reason."""
+    reported = _as_error(error)
+    rows = []
+    for binding in bindings:
+        outcome = check_states.Outcome(check_states.ERROR, reported.message)
+        results.append(build_result(binding, outcome, duration_ms=duration, error=reported))
+        rows.append((binding, outcome))
+    return rows
+
+
+def _check_one(
+    binding: Binding,
+    session: Any,
+    *,
+    stores: Mapping[str, SecretStore],
+    margin: int,
+    previous: bool,
+    out: list[dict[str, Any]],
+) -> tuple[Binding, check_states.Outcome]:
+    """One account in one target: read the vault, read the account, ask once.
+
+    The account's state is read **before** the attempt and the attempt is made
+    at most once. Both are UC-1 §7's mitigations rather than an ordering
+    preference: the status read is what lets a locked account be reported as
+    locked instead of as drift, and the driver re-reads the failed-login counter
+    itself immediately before it tries, because a value carried from here would
+    be a lockout guard computing on a number that has since moved.
+    """
+    started = time.monotonic()
+    accepted: bool | None = None
+    try:
+        stored = _stored_credential(binding, stores)
+        user = session.describe_user(binding.account)
+        # Nothing to try, or nothing that should be tried. Written as a
+        # disjunction rather than behind one predicate so that the two `None`
+        # checks narrow for the branch below -- and read in the order they
+        # matter: no account, no stored password, or an account whose status
+        # already settles the answer.
+        if user is None or stored is None or _settled_by_status(user):
+            outcome = check_states.decide(user, None)
+            if stored is None and user is not None and not _settled_by_status(user):
+                outcome = check_states.Outcome(
+                    check_states.UNVERIFIABLE, _nothing_to_compare(binding)
+                )
+        else:
+            # `attempts` is the budget this run intends against this account, and
+            # it is declared up front rather than counted afterwards: mitigation
+            # 1 is one attempt per account per *run*, so `--include-previous`
+            # must reserve both against the lockout guard before spending the
+            # first. Asking per value checked would quietly double the spend on
+            # the counter the guard exists to protect.
+            budget = 2 if previous else 1
+            verification = session.verify_password(
+                user.name,
+                stored.value,
+                method=VERIFY_LOGIN,
+                lockout_margin=margin,
+                attempts=budget,
+            )
+            outcome = check_states.decide(user, verification, version=stored.version)
+            if previous:
+                accepted = _previous_accepted(
+                    binding, user, session, stores=stores, margin=margin, budget=budget
+                )
+    except Exception as error:  # noqa: BLE001 -- a per-account finding
+        reported = _as_error(error)
+        outcome = check_states.Outcome(check_states.ERROR, reported.message)
+        out.append(build_result(binding, outcome, duration_ms=_elapsed(started), error=reported))
+        return binding, outcome
+
+    out.append(
+        build_result(
+            binding,
+            outcome,
+            version=None if stored is None else stored.version,
+            stage=None if stored is None else stored.stage,
+            age_days=check_states.password_age_days(
+                None if user is None else user.password_changed_at
+            ),
+            duration_ms=_elapsed(started),
+            previous_accepted=accepted,
+        )
+    )
+    return binding, outcome
+
+
+def _previous_accepted(
+    binding: Binding,
+    user: UserState,
+    session: Any,
+    *,
+    stores: Mapping[str, SecretStore],
+    margin: int,
+    budget: int,
+) -> bool | None:
+    """Whether the vault's *previous* password still authenticates.
+
+    The question `--include-previous` exists for, and it is worth asking for two
+    different reasons: during a rollover window the answer is expected to be yes
+    and confirms the window is real, and outside one a yes means an old
+    credential is still live -- which is a finding, because anything still
+    holding it can still get in.
+
+    ``None`` when there is no previous password to try, which is the ordinary
+    state of a credential that has never been rotated. That is reported as null
+    rather than false: "we asked and it was refused" and "there was nothing to
+    ask about" are different answers, and the schema types the field nullable
+    for exactly that reason.
+
+    Does **not** change the state. A live previous password is information about
+    the estate, not a disagreement between the vault and the database, and
+    folding it into `DRIFT` would page somebody over a credential that is doing
+    what a rollover window is supposed to make it do.
+    """
+    ref = binding.secret
+    if ref is None or binding.vault is None:
+        return None
+    stored = read_secret(stores[binding.vault], replace(ref, stage=PREVIOUS))
+    if stored is None:
+        return None
+    result = session.verify_password(
+        user.name,
+        stored.value,
+        method=VERIFY_LOGIN,
+        lockout_margin=margin,
+        attempts=budget,
+    )
+    # A declined or unavailable attempt is not a "no": it is the absence of an
+    # answer, and the guard that declined it has already been reported on the
+    # first attempt's `lockout_margin_hit`.
+    if result.result not in (PASS, FAIL):
+        return None
+    return bool(result.result == PASS)
+
+
+def _nothing_to_compare(binding: Binding) -> str:
+    """Why this account could not be checked, when the vault side came back empty.
+
+    Three different situations reach one ``None`` from
+    :func:`_stored_credential`, and they send an operator to three different
+    places. Saying "the vault holds no password at this ref" for all of them
+    would name a ref that, in two of the three, does not exist.
+
+    A binding with no ref at all is not a fault: §3 makes ``secret`` optional,
+    and an application that declares none is the ordinary shape of a config that
+    only ever runs `doctor`.
+    """
+    if binding.secret is None:
+        return "this account is declared with no secret ref, so there is nothing to compare"
+    if binding.vault is None:
+        return "no store is named for this ref, so there is nowhere to read it from"
+    return f"the vault holds no password at {binding.secret}"
+
+
+def _settled_by_status(user: UserState) -> bool:
+    """Whether the account's own status already answers the question.
+
+    A locked account and an expired password are both answered by the status
+    rather than by the credential: a login would be refused by the lock, so it
+    could not tell a right password from a wrong one, and it would spend a
+    failed login finding that out. UC-1 §7's mitigation 6 reads status
+    separately precisely so these are *reported* rather than *probed* -- and
+    attempting anyway is the harm §7 exists to prevent, reached by a different
+    route from the one it warns about.
+
+    :func:`sopuli.check.decide` makes the same judgement about what to *report*.
+    This is the half about what to *do*, and the two are deliberately apart: one
+    is a pure decision over values, the other is the thing that stops a network
+    call happening.
+    """
+    return user.locked or user.expired
+
+
+def _stored_credential(binding: Binding, stores: Mapping[str, SecretStore]) -> StoredSecret | None:
+    """The password this binding says to check, or ``None`` where there is none.
+
+    A binding with no ref is not an error here -- §3 makes `secret` optional --
+    and neither is a ref pointing at a document that does not exist yet. Both
+    are "there is nothing to compare against", which the caller reports as
+    `UNVERIFIABLE` with the reason rather than as a failure: a credential that
+    has never been written is a real state of a new application, and it is not
+    the same thing as a database that rejected a password.
+    """
+    if binding.secret is None or binding.vault is None:
+        return None
+    return read_secret(stores[binding.vault], binding.secret)
 
 
 if __name__ == "__main__":  # pragma: no cover
