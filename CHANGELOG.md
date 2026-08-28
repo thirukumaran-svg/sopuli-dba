@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.42.0](https://github.com/villebase/sopuli-dba/compare/v0.41.0...v0.42.0) (2026-08-28)
+
+
+### Features
+
+* **doctor:** the install-shape section, present on every run ([#214](https://github.com/villebase/sopuli-dba/issues/214)) ([#237](https://github.com/villebase/sopuli-dba/issues/237)) ([c374fd4](https://github.com/villebase/sopuli-dba/commit/c374fd47bc509706cdf94badc53359840483877d))
+* **doctor:** wallet readability under `auth: external` ([#215](https://github.com/villebase/sopuli-dba/issues/215)) ([#241](https://github.com/villebase/sopuli-dba/issues/241)) ([f4706b6](https://github.com/villebase/sopuli-dba/commit/f4706b600802773b106defa75a26665b5b7475bd))
+
 ## [0.41.0](https://github.com/villebase/sopuli-dba/compare/v0.40.0...v0.41.0) (2026-08-26)
 
 
