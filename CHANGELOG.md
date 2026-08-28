@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.44.0](https://github.com/villebase/sopuli-dba/compare/v0.43.0...v0.44.0) (2026-08-28)
+
+
+### Features
+
+* **cli:** sopuli creds check, the first creds verb ([#253](https://github.com/villebase/sopuli-dba/issues/253)) ([887b061](https://github.com/villebase/sopuli-dba/commit/887b0611e5159d265fa4dad3da2a94dab61b2260))
+* **config:** complete a binding's store once the run is known ([#252](https://github.com/villebase/sopuli-dba/issues/252)) ([a196797](https://github.com/villebase/sopuli-dba/commit/a19679757deab12352e463c5409f8a7d02a4e2ab))
+* **plan:** the plan section, and the max_targets refusal that reads it ([#249](https://github.com/villebase/sopuli-dba/issues/249)) ([a710882](https://github.com/villebase/sopuli-dba/commit/a7108829b344f294169372569f4a939d2f3005c6))
+
 ## [0.43.0](https://github.com/villebase/sopuli-dba/compare/v0.42.0...v0.43.0) (2026-08-28)
 
 
