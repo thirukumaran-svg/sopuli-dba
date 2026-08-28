@@ -256,6 +256,16 @@ class RunDocument:
     #: sample no value property at all, which is what keeps ``--reveal`` a
     #: text-only affair.
     policy: dict[str, Any] | None = None
+    #: The ``plan`` section: what the run intended, before it did any of it
+    #: (#247). :mod:`sopuli.plan` owns the shape; this only decides that it is
+    #: optional and omitted rather than nulled.
+    #:
+    #: **Not dry-run-only.** ``03-json-output.md`` requires a real run to emit the
+    #: identical structure it would have emitted under ``--dry-run``, so that a
+    #: diff between the plan and ``results`` is mechanical. Absent means the
+    #: command plans nothing -- ``config show``, ``doctor``, ``lock status`` --
+    #: rather than that a planning command declined to say.
+    plan: dict[str, Any] | None = None
     #: The ``lock`` section, on a run that took locks (#83). Same arrangement as
     #: ``config`` and ``policy``: :mod:`sopuli.output.lock_view` owns the shape.
     #: Absent *means* something here rather than merely omitting something --
@@ -381,6 +391,8 @@ class RunDocument:
             document["config"] = self.config
         if self.policy is not None:
             document["policy"] = self.policy
+        if self.plan is not None:
+            document["plan"] = self.plan
         if self.lock is not None:
             document["lock"] = self.lock
         if self.targets is not None:

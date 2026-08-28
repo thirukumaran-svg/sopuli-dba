@@ -32,10 +32,14 @@ from collections.abc import Mapping
 
 from sopuli.config.errors import ConfigError
 from sopuli.exit_codes import ExitCode
+from sopuli.plan import BlastRadius
 from sopuli.settings.resolver import Resolved
 
 #: The setting that refuses every mutation, wherever it was written.
 READONLY = "safety.readonly"
+
+#: The ceiling on how many targets one run may reach (P5, #247).
+MAX_TARGETS = "safety.max_targets"
 
 
 class RefusedError(ConfigError):
@@ -78,5 +82,50 @@ def refuse_if_readonly(resolved: Mapping[str, Resolved], *, action: str) -> None
         hint=(
             f"set at {answer.location}; no layer can relax it (invariant 10) -- "
             f"`sopuli lock status` reads without writing"
+        ),
+    )
+
+
+def refuse_if_over_limit(
+    resolved: Mapping[str, Resolved], radius: BlastRadius, *, action: str
+) -> None:
+    """Stop a run that reaches more targets than any layer allowed.
+
+    P5's "`--limit`/`--max-targets` prevents a wildcard from hitting 200 PDBs by
+    accident", finally asked of something. The setting has been parsed since the
+    config model was written and ratcheted since the resolver was, and until now
+    nothing read the answer.
+
+    **Counts targets, not units.** :class:`~sopuli.plan.BlastRadius` says why: six
+    accounts in one PDB is one target's worth of reach, and refusing it under
+    `max_targets: 1` would refuse a run the setting was never aimed at. The name
+    of the setting is also the name of the thing it counts, which is worth keeping
+    true.
+
+    **An unset `max_targets` is no ceiling**, not a ceiling of one. The registry
+    gives it no built-in on purpose -- "an unset max_targets is no limit, which is
+    not the same claim as a default limit the tool chose" -- and inventing one here
+    would put that default somewhere a reviewer reading the registry would not find
+    it. P5 does say "default 1", but it says it about *confirmation*, which is a
+    different gate and is not this one; wiring that up is #247's excluded scope,
+    waiting on a profile's `confirm:` reaching the resolver.
+
+    **Refuses a `--dry-run` too**, for :func:`refuse_if_readonly`'s reason and one
+    more of its own: the plan is what the operator is being shown, and showing a
+    200-target plan under a ceiling of 20 as though it were runnable is the
+    surprise the ceiling exists to prevent.
+    """
+    answer = resolved.get(MAX_TARGETS)
+    if answer is None or answer.value is None:
+        return
+    limit = int(answer.value)
+    if radius.targets <= limit:
+        return
+    raise RefusedError(
+        f"{action} would reach {radius.targets} targets, and `{MAX_TARGETS}` is {limit}",
+        hint=(
+            f"set at {answer.location}; no layer can raise it (invariant 10) -- "
+            f"narrow the run with --select, --target or --group, or raise the "
+            f"ceiling where it is written"
         ),
     )
