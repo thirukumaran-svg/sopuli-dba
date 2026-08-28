@@ -8,15 +8,24 @@ in the config file, which is only useful if a consumer can recognise it.
 
 **J3 itself stays open**, and the way this registry has grown is the evidence.
 What is decided is the spelling ``SOPULI-Wnnn``, which `03-json-output.md`
-already used as its example, and that these five warnings have codes: the two
-the advisory lock needed (#83), a configured-but-uninstalled backend (#130), a
-store that does not verify its certificate (#135), and a store that could not be
-listed (#150). Every one was allocated by hand, at the moment something needed
-it.
+already used as its example, and that these ten warnings have codes: the two the
+advisory lock needed (#83), a configured-but-uninstalled backend (#130), a store
+that does not verify its certificate (#135), a store that could not be listed
+(#150), an uninstalled driver (#170), the wallet pair (#215), and the vault
+survey's pair (#216). Every one was allocated by hand, at the moment something
+needed it.
 
 Whether *every* warning gets one -- the config layer's §10 findings still do not
 -- and how numbers are allocated across categories is the part of J3 nobody has
-answered, and five hand-picked numbers answer it no better than two did.
+answered, and ten hand-picked numbers answer it no better than two did.
+
+What #216 did settle, narrowly and only for `doctor`, is **when a finding gets a
+diagnostic at all**: one for what the exit code cannot tell you. An unreachable
+store fails the run, so anything watching the exit code already knows and the
+entry in ``vaults[]`` names it -- exactly as an unreachable *target* has been an
+entry and never a diagnostic since #212. A store that answered and cannot serve,
+or a clock outside the lock's tolerance, leaves the run exiting 0 with something
+still wrong, and that is what a diagnostic is for.
 
 A code, once emitted, is part of the contract in the same way an enum value is
 (``03-json-output.md`` §8): adding one is a minor bump, changing what one means
@@ -28,9 +37,10 @@ does not describe.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import timedelta
 from types import MappingProxyType
 
-from sopuli.clock import to_rfc3339
+from sopuli.clock import Skew, to_rfc3339
 from sopuli.config.model import ExpandedTarget, Vault
 from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
@@ -41,7 +51,9 @@ from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager
 from sopuli.lock.record import LockRecord
 from sopuli.output.document import Diagnostic
+from sopuli.store.protocol import OK
 from sopuli.store.registry import BACKENDS, installed
+from sopuli.store.survey import VaultReport
 
 #: A store is holding locks it cannot guard (``locking: advisory-only``, #94).
 ADVISORY_LOCKING = "SOPULI-W001"
@@ -81,6 +93,22 @@ WALLET_UNUSABLE = "SOPULI-W007"
 #: have it -- and because only the second is something to alert on rather than to
 #: fix while you are already looking.
 WALLET_NOT_PRIVATE = "SOPULI-W008"
+
+#: This host's clock is further from a configured store's than the advisory lock
+#: allows (#216, #83). Its own code because it is the only finding in the vault
+#: survey that is neither visible in the exit code nor a property of the store:
+#: it is a property of the pair, and the machine to fix is usually this one.
+CLOCK_SKEW_BEYOND_TOLERANCE = "SOPULI-W009"
+
+#: A configured store answered and cannot serve this run: sealed, standing by,
+#: not initialised, or refusing the credential it was opened with (#216).
+#:
+#: Separate from an *unreachable* store, which gets no code at all -- that one
+#: fails the run, so a consumer watching the exit code already knows, and the
+#: entry in ``vaults[]`` says which store and why. This is the opposite case: the
+#: run exits 0 and something is still wrong, which is precisely what a
+#: diagnostic is for.
+STORE_DEGRADED = "SOPULI-W010"
 
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
@@ -136,6 +164,22 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "authenticate as the account it holds. `doctor` warns and never fails: it is "
             "somebody else's file, and refusing to run would block the person who ran it "
             "over a condition they did not create."
+        ),
+        CLOCK_SKEW_BEYOND_TOLERANCE: (
+            "This machine's clock is further from a configured store's than the advisory "
+            "lock tolerates. A lease's expiry is compared against the local clock, so a run "
+            "on this host will take over locks that are still live, or refuse ones that are "
+            "long dead -- and the failure looks like a locking bug rather than an NTP "
+            "problem. `doctor` warns and never fails: the condition is real, this run did "
+            "not create it, and refusing to survey an estate over it would block the person "
+            "who ran it."
+        ),
+        STORE_DEGRADED: (
+            "A configured store answered and cannot serve this run: sealed, standing by, "
+            "not yet initialised, or refusing the credential it was opened with. Distinct "
+            "from a store that could not be reached, which fails the run instead -- here "
+            "something answered, and what the reader does next is go and look at the vault "
+            "rather than at the network."
         ),
         UNLISTABLE_STORE: (
             "A store in this survey has no `list` capability, so `lock status` reported "
@@ -533,3 +577,80 @@ def _why_unusable(report: WalletReport) -> str:
             f"and an encrypted wallet needs a passphrase this tool cannot supply"
         )
     return f"{report.directory} holds no wallet"
+
+
+def vault_diagnostics(reports: Sequence[VaultReport]) -> list[Diagnostic]:
+    """What a run should say about the stores it surveyed (#216, P4).
+
+    **Only what the exit code cannot say.** An *unreachable* store deliberately
+    gets no diagnostic: it fails the run at exit 1, so anything watching the exit
+    code already knows, and the ``vaults[]`` entry names which store and carries
+    the error -- exactly the arrangement ``targets[]`` has had since #212, where
+    an unreachable database is an entry and never a diagnostic. Adding one here
+    would report a single condition twice and make the two able to disagree.
+
+    What is left is the pair of findings that leave a run exiting 0 with
+    something still wrong, and those are what :func:`Diagnostic` exists for:
+
+    * a store that answered and cannot serve -- sealed, standing by, or refusing
+      this run's credential;
+    * a clock further from a store's than the lock tolerates.
+
+    One entry per store rather than one naming all of them, unlike
+    :func:`unlistable_stores`: the operator's unit of action is a vault -- one to
+    unseal, one host's NTP to fix -- and two stores in one sentence is a line
+    somebody has to take apart before they can act on either half.
+    """
+    found = []
+    for report in reports:
+        if report.reachable and report.health.status != OK:
+            found.append(
+                Diagnostic(
+                    level="warning",
+                    code=STORE_DEGRADED,
+                    message=(
+                        f'vault "{report.name}" answered and cannot serve this run: '
+                        f"{report.health.detail or 'it did not say why'}"
+                    ),
+                )
+            )
+    for report in reports:
+        if report.skew is not None and report.skew.beyond_tolerance:
+            found.append(
+                Diagnostic(
+                    level="warning",
+                    code=CLOCK_SKEW_BEYOND_TOLERANCE,
+                    message=(
+                        f"this host's clock is {_gap(report.skew)} the clock of vault "
+                        f'"{report.name}", further than the '
+                        f"{_seconds(report.skew.tolerance)} the lock allows: a lease's "
+                        f"expiry is judged against the local clock, so leases here will be "
+                        f"taken over early or held past their end"
+                    ),
+                )
+            )
+    return found
+
+
+def _gap(skew: Skew) -> str:
+    """How far out and which way, in words rather than a sign.
+
+    A reader who has to remember whether positive means the store is ahead will
+    remember it wrongly half the time, and the two directions are different
+    failures: a host behind the store refuses leases that have really expired,
+    and one ahead takes over leases that are still live.
+    """
+    behind = skew.delta > timedelta(0)
+    return f"{_seconds(abs(skew.delta))} {'behind' if behind else 'ahead of'}"
+
+
+def _seconds(value: timedelta) -> str:
+    """A duration as an operator would say it, not as `timedelta` prints it.
+
+    `str(timedelta(seconds=90))` is ``0:01:30``, which in the middle of a
+    sentence about clocks reads as a time of day.
+    """
+    total = value.total_seconds()
+    if total < 1:
+        return f"{round(total * 1000)}ms"
+    return f"{total:.0f}s" if total == int(total) else f"{total:.1f}s"

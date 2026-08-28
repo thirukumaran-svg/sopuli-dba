@@ -42,6 +42,15 @@ PASSWORD_ENV = "SOPULI_TEST_DOCTOR_PASSWORD"
 def _config(path: Path, dsn: str, *, asserted: str = "") -> Path:
     """A config file P4's permission check will accept.
 
+    **No ``vaults:`` block**, and that is load-bearing rather than tidiness.
+    These tests are about the wiring between a config file and a *target*: they
+    bind no account and resolve no secret, so the store the entry used to declare
+    was never reached by anything. Since #216 `doctor` surveys every declared
+    store and fails on one it cannot reach, so an entry pointing at a fictional
+    `example.com` address would make every test in this file assert exit 0
+    against a run that is correctly reporting a broken estate. The fixture now
+    describes the estate it actually has.
+
     The same 0600 rule as `conftest.write_config`, applied here rather than by
     using that fixture, because it writes one fixed filename and
     `test_a_matching_assertion_is_reported_as_matching` needs two configs in one
@@ -52,17 +61,11 @@ def _config(path: Path, dsn: str, *, asserted: str = "") -> Path:
     path.write_text(
         f"""
 version: 1
-vaults:
-  main:
-    type: hashicorp
-    addr: https://vault.example.com
-    auth: {{ method: token }}
 targets:
   - name: tier1-oracle
     type: oracle
     dsn: {dsn}
     environment: dev
-    vault: main
     admin:
       username: {USER}
       auth: {{ method: env, password_env: {PASSWORD_ENV} }}

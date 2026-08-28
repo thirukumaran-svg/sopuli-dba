@@ -678,9 +678,20 @@ as an authentication failure.
 Because Instant Client is required at runtime on every platform, packaging is
 "install the client, then install sopuli" regardless of implementation language.
 `sopuli doctor` checks client presence and version, `TNS_ADMIN`, wallet
-readability, vault reachability and clock skew, reports which backends are
-installed against which the config declares (P2), and prints a per-platform
-remediation hint.
+readability (#215), vault reachability and clock skew (#216), reports which
+backends are installed against which the config declares (P2, #214), and prints a
+per-platform remediation hint.
+
+The last of those pairs two things that look unrelated and are not. A vault's
+clock is the *other* clock in the system: `sopuli/lock/decide.py` compares a
+lease's expiry against this machine's and allows `CLOCK_SKEW` for the two
+disagreeing, so a host outside that window takes over locks that are still live
+or refuses ones long dead — and it presents as a locking bug rather than as an
+NTP problem. Measuring it beside reachability is what makes the assumption
+visible before a rotation depends on it. An unreachable vault fails the run at
+exit 1, the same as an unreachable target; a degraded one and a skewed clock
+warn, because `doctor` must not refuse to survey an estate over a condition the
+person running it did not create.
 
 ### Why macOS is best-effort rather than supported or excluded (D5)
 

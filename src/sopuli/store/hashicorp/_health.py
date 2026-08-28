@@ -58,6 +58,15 @@ LOOKUP_SELF = "auth/token/lookup-self"
 #: rounding rather than measurement. Carried onto every
 #: :class:`~sopuli.store.protocol.StoreHealth` this module builds, so the skew
 #: comparison widens its band by it instead of reporting invented precision.
+#:
+#: The rounding is **towards zero and not to nearest**, which is why a perfectly
+#: synchronised pair reports a small *negative* skew rather than noise either
+#: side of zero: whole seconds cannot express the fraction this host is already
+#: into the current one. The band covers it, so no reading is ever wrong -- but a
+#: reader seeing a couple of hundred milliseconds of apparent lag against a
+#: healthy store is looking at that and not at their network. Deliberately not
+#: corrected by half a second: the correction would need Vault's truncation to
+#: be part of its contract, and it is an artefact of an implementation instead.
 RESOLUTION = timedelta(seconds=1)
 
 #: What each status code means when there is no body to read it from. Vault's

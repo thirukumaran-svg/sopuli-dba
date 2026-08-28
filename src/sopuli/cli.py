@@ -79,6 +79,7 @@ from sopuli.diagnostics import (
     install_diagnostics,
     lock_broken,
     unlistable_stores,
+    vault_diagnostics,
     wallet_diagnostics,
 )
 from sopuli.driver.oracle.client import (
@@ -133,11 +134,15 @@ from sopuli.output.lock_view import (
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.stream import configure_streams
+from sopuli.output.vault_view import build as build_vault
+from sopuli.output.vault_view import render as render_vaults
 from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate
 from sopuli.safety import RefusedError, refuse_if_readonly
 from sopuli.store import SecretStore, StoreError, connect
+from sopuli.store.survey import VaultReport
+from sopuli.store.survey import survey as vault_survey
 from sopuli.version import get_version
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -443,6 +448,16 @@ def doctor(
         document.wallet = build_wallet(wallet)
         document.diagnostics.extend(wallet_diagnostics(wallet))
 
+    # Over `config.vaults` and not the filtered estate: `--select` narrows which
+    # *targets* are surveyed, and a store serving a target this run excluded is
+    # still a store the configuration declares. `filter_estate` only ever removes
+    # expanded targets and their bindings, so there is nothing here for it to
+    # narrow anyway -- and reporting a store as absent because nobody selected a
+    # target that happened to use it would be alarming and wrong.
+    vaults = vault_survey(config.vaults, env=os.environ, token_file=run.vault_token_file)
+    document.vaults = [build_vault(report, error=_vault_error(report)) for report in vaults]
+    document.diagnostics.extend(vault_diagnostics(vaults))
+
     client = _client_report(config)
     entries = [
         _examine(target, run, config, privileges=check_privileges)
@@ -452,24 +467,62 @@ def doctor(
     document.targets = entries
     reachable = sum(1 for entry in entries if entry["reachable"])
     failed = len(entries) - reachable
+    unreachable_vaults = sum(1 for report in vaults if not report.reachable)
     document.finish(
-        _doctor_exit(shape.missing, failed),
+        _doctor_exit(shape.missing, failed, unreachable_vaults),
         Summary(total=len(entries), ok=reachable, changed=0, failed=failed),
     )
     sections = [*render_install(shape)]
     if wallet is not None:
         sections.extend(render_wallet(wallet))
+    sections.extend(render_vaults(list(vaults)))
     return "\n".join([*sections, render_doctor(entries, client=client)])
 
 
-def _doctor_exit(missing: Sequence[Component], failed: int) -> ExitCode:
-    """Which failure this run is, when it is both.
+def _vault_error(report: VaultReport) -> Error | None:
+    """A store that could not be opened, as the document's ``error`` object.
 
-    **Install shape wins over unreachable targets**, and the order is the whole
-    of this function. A configured driver this machine does not have makes every
-    target under it unreachable, so the two findings arrive together and only one
-    of them names something the reader can go and fix. Reporting exit 1 there
-    would point at twenty databases and away from the one `pip` line.
+    ``None`` for a store that answered, however it answered. ``degraded`` is a
+    status and not an error, and attaching one would make a sealed vault look
+    like a failure of this run rather than a state of that vault.
+
+    The exception's own ``category`` and ``code`` survive, which is the whole
+    reason :class:`~sopuli.store.survey.VaultReport` carries the exception rather
+    than a string: a missing backend is ``SOPULI-20001`` and a refused login is
+    exit 6, and re-deriving either from a message is how they stop agreeing with
+    the rest of the document.
+    """
+    if report.failure is None:
+        return None
+    return _as_error(report.failure)
+
+
+def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0) -> ExitCode:
+    """Which failure this run is, when it is several.
+
+    **Install shape wins over everything else**, and the order is most of this
+    function. A configured driver this machine does not have makes every target
+    under it unreachable, so the two findings arrive together and only one of
+    them names something the reader can go and fix. Reporting exit 1 there would
+    point at twenty databases and away from the one `pip` line. A missing
+    *backend* does the same to every store below it.
+
+    **An unreachable vault fails the run, at exit 1, the same as an unreachable
+    target** (#216). Not a softer verdict, and if anything it deserves a harder
+    one: the vault is master and the direction is always vault to database
+    (invariant 6), so a store nobody can reach is an estate on which no `creds`
+    verb can do anything -- a wider outage than one dead database rather than a
+    narrower one. It shares exit 1 rather than taking a number of its own
+    because P5's set has none for it, and inventing one here would be answering
+    a cross-cutting question as a side effect of a section.
+
+    **A degraded vault does not, and neither does a skewed clock.** Something
+    answered in both cases, and the run is not over: a sealed store is somebody
+    to page, and a clock outside tolerance is a hazard this run did not create
+    and cannot fix. Both are `SOPULI-W010` and `SOPULI-W009` in the diagnostics
+    array, which is #213's answer for over-granted accounts applied to the same
+    shape of question -- a `doctor` that exited non-zero over them would block
+    the person who ran it, mid-incident, over a condition they did not cause.
 
     **Exit 9 and not 1**, which is E5's number rather than a new one: a missing
     backend is already ``config`` / exit 9 when a command resolves one, and P5's
@@ -479,14 +532,16 @@ def _doctor_exit(missing: Sequence[Component], failed: int) -> ExitCode:
     is valid -- what is incomplete is this machine, which is exactly the half of
     exit 9 the recipe in ``03-json-output.md`` §6 already routes to a human.
 
-    ``summary`` is untouched by this and still counts targets. An install-shape
-    failure is not a target that failed, and inflating ``failed`` to make the
-    exit code look derivable would put a number in the document that no entry in
-    ``targets[]`` accounts for.
+    ``summary`` is untouched by all of this and still counts **targets**. Neither
+    an install-shape failure nor a dead vault is a target that failed, and
+    inflating ``failed`` to make the exit code look derivable would put a number
+    in the document that no entry in ``targets[]`` accounts for. So the exit code
+    is deliberately not a function of the summary, and a consumer that wants to
+    know why a run failed reads the sections rather than the arithmetic.
     """
     if missing:
         return ExitCode.CONFIG_INVALID
-    return ExitCode.SUCCESS if failed == 0 else ExitCode.FAILURE
+    return ExitCode.SUCCESS if failed == 0 and vaults_down == 0 else ExitCode.FAILURE
 
 
 def _client_report(config: Config) -> dict[str, Any]:
@@ -616,9 +671,15 @@ def _as_error(error: Exception) -> Error:
     # several lines including a documentation link. A survey puts one line per
     # target beside a table, so the rest belongs in the hint where it already is.
     message = getattr(error, "message", None) or str(error)
+    # `"".splitlines()` is `[]`, so indexing it raises on an exception carrying no
+    # message -- `Exception()`, or a vendor client raising a bare class. Reachable
+    # from every target and, since #216, from every store as well. The class name
+    # is the only information left, and it beats an empty string: that reads as
+    # the tool having lost the reason rather than there never having been one.
+    lines = message.splitlines()
     return Error(
         category=getattr(error, "category", "database"),
-        message=message.splitlines()[0],
+        message=lines[0] if lines else type(error).__name__,
         hint=getattr(error, "hint", None),
         code=getattr(error, "code", None),
     )

@@ -750,6 +750,104 @@ connection report already does that better than any inspection could — a targe
 that connects has proved its wallet works. What is left for this section is the
 diagnosis when it does not.
 
+### `vaults`, emitted by `doctor`
+
+Every store the configuration declares: whether it answered, whether this run's
+credential was accepted, and how far its clock is from this machine's. P4 names
+vault reachability and clock skew in the same breath as client presence and
+`TNS_ADMIN`, and the pairing is not arbitrary.
+
+```json
+"vaults": [
+  {
+    "vault": "vault-prod",
+    "type": "hashicorp",
+    "status": "ok",
+    "duration_ms": 41,
+    "version": "2.0.4",
+    "authenticated": true,
+    "server_time": "2026-08-28T11:35:29Z",
+    "skew_ms": -210,
+    "skew_uncertain_by_ms": 1003,
+    "skew_within_tolerance": true,
+    "tolerance_ms": 60000
+  },
+  {
+    "vault": "vault-dr",
+    "type": "hashicorp",
+    "status": "unreachable",
+    "duration_ms": 2334,
+    "detail": "the store did not answer within the timeout: timed out"
+  }
+]
+```
+
+**The skew is not a health nicety.** `sopuli/lock/decide.py` compares a lease's
+`expires_at` against *this* machine's clock and allows `CLOCK_SKEW` for the two
+disagreeing (#83). A host minutes out takes over locks that are still live, or
+refuses ones long dead — and the failure presents as a locking bug rather than as
+an NTP problem. `tolerance_ms` is that allowance, reported so the verdict can be
+checked rather than assumed.
+
+**Three words, not a boolean.** `ok` is answering and able to serve this run;
+`degraded` is answering and not — sealed, standing by, not initialised, or
+refusing the credential it was opened with; `unreachable` is nothing recognisable
+answering at all. The middle one earns its place because the reader's next move
+differs: `degraded` sends somebody to the vault and `unreachable` sends them to
+the network, and being sent to the wrong one costs an outage's worth of time.
+
+**An answer the tool cannot read is `unreachable`, not `degraded`.** A proxy's
+502 is not a Vault saying anything about itself, and treating it as evidence a
+store is present is precisely what makes a survey worthless. The same fail-closed
+rule `sopuli/store/hashicorp/_errors.py` applies to an unrecognised 400.
+
+**Only `unreachable` moves the exit code**, and it moves it to 1 — the same as an
+unreachable target, and if anything it deserves worse: the vault is master and
+the direction is always vault → database (invariant 6), so a store nobody can
+reach is an estate on which no `creds` verb can do anything. A degraded store and
+a skewed clock leave the run at 0 and land in `diagnostics[]` as `SOPULI-W010`
+and `SOPULI-W009`, which is #213's answer for over-granted accounts applied to
+the same shape of question: `doctor` must not refuse to survey an estate over a
+condition the person running it did not create.
+
+**`summary` still counts targets.** A vault is not one, and inflating `failed` to
+make the exit code look derivable would put a number in the document that no
+entry in `targets[]` accounts for. The exit code is deliberately not a function
+of the summary — `install` made that true first, and this makes it true a second
+way.
+
+**Absent skew and zero skew are different answers.** A backend exposing no server
+time has `server_time`, `skew_ms` and the three fields around it all absent; two
+clocks that agree have `skew_ms: 0`. Substituting this host's clock for a store
+that cannot report one would produce a confident zero, which is the single
+confusion the whole measurement exists to avoid.
+
+**The measurement says what it does not know.** The store answered somewhere
+inside the round trip, so half the trip — plus whatever the store rounds its own
+answer to — is the width of what one request cannot pin down. That is
+`skew_uncertain_by_ms`, and `skew_within_tolerance` is judged against the
+*unexplained* part of the difference. A slow link therefore cannot manufacture a
+skew finding, which matters because an operator who once chases a clock that was
+fine stops believing the next report. HashiCorp answers in whole seconds, so a
+perfectly synchronised pair reports a small negative figure rather than zero.
+
+**`authenticated` absent means not asked.** `sys/health` takes no token, so a
+store whose credential expired last night answers it perfectly — the token is
+looked up separately, and only where a sealed store would not refuse the lookup
+and have the refusal blamed on the credential. Absent, `false` and `true` are
+three findings and none collapses into another.
+
+**`detail` and `error` are not two spellings of one thing.** `detail` is always
+the one-line answer to *why*, whichever way the store failed. `error` appears
+only where something **threw** — a backend with no module, a client that is not
+installed, a refused login — because only those carry a category and a code worth
+branching on. So the reading order is `status` to branch, `detail` for the
+reason, `error` when there is a machine-classified cause to go with it.
+
+**Nothing here writes.** P5 makes `doctor` mutate nothing, and a reachability
+check that proved itself by leaving a lease behind would be a measurement that
+changes what it measures — on a lock mount, one a concurrent rotation notices.
+
 ### `results[].changed` vs `results[].state`
 
 Deliberately separate:
@@ -821,17 +919,28 @@ is not contract and may improve.
 | `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked and anything on the path can read every secret that crosses. Under P3's safety ratchet, so no layer can weaken it further — but nothing in the run undoes it either (#135, ADR-005) |
 | `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record left at a path the file no longer names would not appear — in that store. Everything reported is accurate; the survey is narrower than it looks (#150) |
 | `SOPULI-W006` | A `targets:` entry names a driver this machine cannot serve (#170), weighed by each command exactly as its store counterpart `SOPULI-W003` is. They are deliberately two codes: one meaning "some backend or other is missing" would leave a consumer unable to tell a store it cannot reach from a database it cannot reach, which are different outages. Emitted once per driver *type* rather than once per target, since an estate generates targets by the dozen from one `target_sets:` entry |
-
 | `SOPULI-W007` | An estate uses `auth: external`, and this machine has no auto-login wallet this process can read (#215). The connection will fail as an Oracle *login* error, which is the most misleading way for a file-permission problem to appear; this says why in advance. A warning and not a verdict — the target's own reachability decides the run |
 | `SOPULI-W008` | A wallet file in this run's `TNS_ADMIN` is reachable by somebody other than its owner (#215, P4). An auto-login wallet is a credential: whoever can read it can authenticate as the account it holds. `doctor` warns and never fails, for the reason #213 settled for over-granted accounts |
+| `SOPULI-W009` | This machine's clock is further from a configured store's than the advisory lock tolerates (#216, #83). A lease's expiry is compared against the local clock, so a run on this host will take over locks that are still live or refuse ones long dead — and the failure looks like a locking bug rather than an NTP problem. `doctor` warns and never fails: the condition is real, this run did not create it, and refusing to survey an estate over it would block the person who ran it |
+| `SOPULI-W010` | A configured store answered and cannot serve this run: sealed, standing by, not yet initialised, or refusing the credential it was opened with (#216). Distinct from a store that could not be *reached*, which fails the run instead and gets no code — here something answered, and what the reader does next is go and look at the vault rather than at the network |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
 answered**: what is settled is the spelling this document already used as its
-example and that these five warnings have codes. Whether *every* warning gets one
+example and that these ten warnings have codes. Whether *every* warning gets one
 — the config layer's §10 findings still do not — and how numbers are allocated
-across categories is the part still open. `SOPULI-W005` was allocated by hand
-like the four before it, which is the evidence rather than the answer.
+across categories is the part still open. Every one was allocated by hand at the
+moment something needed it, which is the evidence rather than the answer.
+
+**What #216 did settle, narrowly and only for `doctor`, is when a finding gets a
+code at all: one for what the exit code cannot tell you.** An unreachable store
+fails the run, so anything watching the exit code already knows and the entry in
+`vaults[]` names which store and why — exactly as an unreachable *target* has
+been an entry and never a diagnostic since #212. A store that answered and cannot
+serve, or a clock outside the lock's tolerance, leaves the run exiting 0 with
+something still wrong, and that is what a diagnostic is for. This is a rule for
+one command rather than an answer to J3, but it is the first time the question
+"why does this finding have a code and that one not" has had one.
 
 `SOPULI-W002` gained a second emitter in #149 and **did not gain a second
 meaning**, which is the distinction the rule above draws. It has always meant *a
@@ -1199,6 +1308,16 @@ joined the document as an optional property. The minor rule for the eighth time,
 and the first section whose *absence* carries meaning in the way `lock`'s does —
 it is omitted when nothing in the estate uses `auth: external`, which is not the
 same as omitted because the command did not look.
+
+**1.14 became 1.15 when `doctor` asked the vaults** (#216, P4): `vaults[]`
+joined the document as an optional array. The minor rule for the ninth time, and
+the same argument 1.13 made — a vault is neither a target nor an account, so
+widening `targets[]` would have meant a field that means nothing for most of its
+rows. It follows `install`'s always-present rule rather than `wallet`'s
+sometimes-absent one, and the two are not inconsistent: a wallet matters only to
+an estate using `auth: external`, while every estate that does anything has
+stores, so an empty array is a real answer here and an absent section would not
+be.
 
 **One rename has happened under 1.0, deliberately.** `actor.scheduled` became
 `actor.unattended` when run context moved into profiles

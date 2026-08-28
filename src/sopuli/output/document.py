@@ -1,6 +1,6 @@
 """The run document (``docs/design/03-json-output.md`` §2).
 
-There is no such thing as a placeholder run document. ``sopuli-run-1.14.schema.json``
+There is no such thing as a placeholder run document. ``sopuli-run-1.15.schema.json``
 sets ``additionalProperties: false`` at the root and requires six top-level
 fields, two of which have required members of their own, so the smallest thing
 that validates is a complete document. Building it properly now is cheaper than
@@ -27,7 +27,7 @@ from typing import Any
 # format (#83), and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.14"
+SCHEMA_VERSION = "1.15"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -304,6 +304,19 @@ class RunDocument:
     #: missing wallet in every document that never needed one is noise.
     #: :mod:`sopuli.output.wallet_view` owns the shape.
     wallet: dict[str, Any] | None = None
+    #: The ``vaults`` section, emitted by ``doctor`` (#216). Every store the
+    #: configuration declares: whether it answered, whether this run's
+    #: credential was accepted, and how far its clock is from this machine's.
+    #:
+    #: **Present on every ``doctor`` run**, which is ``install``'s rule rather
+    #: than ``wallet``'s. A wallet matters only to an estate using ``auth:
+    #: external``; stores matter to every estate that does anything, so an empty
+    #: array is a real answer here and absence would not be.
+    #:
+    #: Its own section because a vault is neither a target nor an account -- the
+    #: same shape #214 found for ``install``.
+    #: :mod:`sopuli.output.vault_view` owns the shape.
+    vaults: list[dict[str, Any]] | None = None
     #: Why the run failed as a whole. Absent on success, and absent on exit 2 --
     #: which never produces a document at all (J7, ``03-json-output.md`` §6).
     error: Error | None = None
@@ -335,7 +348,7 @@ class RunDocument:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Render to the shape ``sopuli-run-1.14.schema.json`` describes."""
+        """Render to the shape ``sopuli-run-1.15.schema.json`` describes."""
         finished_at = self.finished_at or utc_now()
         duration_ms = int((finished_at - self.started_at).total_seconds() * 1000)
         invocation: dict[str, Any] = {
@@ -376,6 +389,8 @@ class RunDocument:
             document["install"] = self.install
         if self.wallet is not None:
             document["wallet"] = self.wallet
+        if self.vaults is not None:
+            document["vaults"] = self.vaults
         if self.error is not None:
             document["error"] = self.error.to_dict()
         return document
