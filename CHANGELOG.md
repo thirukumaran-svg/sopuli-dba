@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.43.0](https://github.com/villebase/sopuli-dba/compare/v0.42.0...v0.43.0) (2026-08-28)
+
+
+### Features
+
+* **doctor:** vault reachability and clock skew ([#216](https://github.com/villebase/sopuli-dba/issues/216)) ([#246](https://github.com/villebase/sopuli-dba/issues/246)) ([50750af](https://github.com/villebase/sopuli-dba/commit/50750afc52ff1cfb95e5aedbe471d2149a88637e))
+* **store:** health(), and the server clock it reports ([#216](https://github.com/villebase/sopuli-dba/issues/216)) ([#244](https://github.com/villebase/sopuli-dba/issues/244)) ([903f403](https://github.com/villebase/sopuli-dba/commit/903f403d4881053d149df5de2c1bd576cbfe00ea))
+
 ## [0.42.0](https://github.com/villebase/sopuli-dba/compare/v0.41.0...v0.42.0) (2026-08-28)
 
 
