@@ -2079,7 +2079,15 @@ notices until a rotation.
   *does* declare a store, the same ungrounded binding is left alone: its
   `vault` resolves to `None`, `config show --resolved` renders it as `-`, and
   the first command that actually needs a store is where the exact answer
-  belongs (invariant 4) — see §3's binding chain and `config/bindings.py`
+  belongs (invariant 4) — see §3's binding chain and `config/bindings.py`.
+  **That answer is `config/binding_stores.py` (#250):** a command that needs a
+  store calls `complete()`, which fills the gap from `SOPULI_VAULT` (layer 2) or
+  the active profile's `vault:` (layer 3) and validates the name against
+  `vaults:`, then `refuse_unresolved()`, which is invariant 4's plan-time
+  refusal. It **fills gaps and never overrides** — a binding that resolved a
+  store at load keeps it, so an exported variable cannot repoint a rotation at a
+  different vault. `config show --resolved` deliberately does *not* call it, and
+  still renders `-`: it describes the file, not a run
 - `charset: custom` whose `allow:` contains `"` → error (invariant 11), or a
   control character, `CHR(0)` included (`02-oracle-privileges.md` §4). The
   generator applies those rules to what it produces; this applies them to the

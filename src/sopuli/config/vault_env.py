@@ -149,9 +149,11 @@ def default_store(env: Mapping[str, str], declared: str | None) -> Resolved | No
     one makes the absence matter. The same goes for a name that resolves to no
     declared store -- it is refused by whoever *depends* on the answer, below,
     rather than here. ``defaults.vault`` already has such a caller in
-    :func:`sopuli.config.references.check_references`; ``SOPULI_VAULT`` will gain
-    one when a run resolves a binding's store at plan time (C15, #118), and until
-    then it is only consulted where §6's unnamed variables need it.
+    :func:`sopuli.config.references.check_references`; ``SOPULI_VAULT`` gained
+    one in #250: :func:`sopuli.config.binding_stores.complete` reads the variable
+    directly to fill a binding's store at plan time (C15, #118). It resolves the
+    name itself rather than calling this, because the two answer different
+    questions -- this one is *which store §6's unnamed variables address*.
 
     The boundary resolves this same setting again for ``invocation.options``
     (:mod:`sopuli.settings.sources`). Both build the same two contributions and

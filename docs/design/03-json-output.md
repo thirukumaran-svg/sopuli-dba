@@ -373,8 +373,9 @@ file can reach the plan with no store resolved. The plan does not refuse it, and
 C15 (#118) is what says so: it decided "mostly plan time" — the null is a real
 temporary state, and the command that actually *needs* a store is what fails,
 once a run's profile is known and the answer is exact (invariant 4). `config show
---resolved` renders `-` for the same binding. Building that completion step is
-#250; until it lands, such a unit stays unaddressable.
+--resolved` renders `-` for the same binding. The completion step that turns
+such a binding into an addressable one is `config/binding_stores.py` (#250),
+called by the command that needs a store rather than at load.
 
 **`plan` is absent entirely on a command that plans nothing** — `config show`,
 `doctor`, `lock status`. That is not J2 ("always emit `plan`") being answered: J2

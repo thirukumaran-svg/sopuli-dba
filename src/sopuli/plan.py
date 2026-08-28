@@ -257,8 +257,14 @@ def _secret_json(binding: Binding) -> dict[str, Any] | None:
     ``_check_has_somewhere_to_resolve_from``'s docstring says it belongs. What a
     *file* can be refused for at load -- ``vaults:`` declaring nothing at all, so
     no run could ever complete the binding -- it already is. C15's other half --
-    a run completing the store from a profile or ``SOPULI_VAULT`` -- is #250, and
-    is what makes such a unit addressable rather than merely honest.
+    a run completing the store from a profile or ``SOPULI_VAULT`` -- is
+    :mod:`sopuli.config.binding_stores` (#250). **A command that needs a store is
+    required to run it before building a plan**, and to call
+    ``refuse_unresolved`` after; this function does not, and cannot, check that
+    it happened. A unit that still has no store is therefore either a binding
+    with no ref or a caller that skipped the step -- and the second is why the
+    refusal belongs to the caller rather than here, where it would fire before a
+    run's profile is even known.
 
     ``updated_at`` is absent by construction: it describes what the store holds,
     and reading the store here would make a plan a function of something other
