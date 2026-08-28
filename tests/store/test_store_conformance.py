@@ -33,17 +33,21 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Protocol
 
 import pytest
 
+from sopuli.clock import utc_now
 from sopuli.config.model import Vault
+from sopuli.lock.record import CLOCK_SKEW
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore
 from sopuli.store.protocol import (
     CAS,
     LIST,
     MERGE_PATCH,
+    OK,
     VERSIONING,
     CasConflictError,
     PathMetadata,
@@ -516,3 +520,105 @@ def test_a_read_does_not_hand_back_the_stores_own_state(harness: Harness) -> Non
     second = harness.store.read(harness.path)
     assert second is not None
     assert second.data == {"holder": "one"}
+
+
+# ----------------------------------------------------------------- health ---
+#
+# The last of P2's sketch to arrive (#216), and the one where the fake is least
+# able to stand in for the real thing: `MemoryStore` has no network and nothing
+# that can be down, so `ok` is a constant for it rather than a finding. What is
+# worth asserting jointly is the *shape* of the answer -- that both report the
+# vocabulary, and that a store claiming a server time gives one a skew can
+# actually be computed from.
+
+
+def test_a_reachable_store_reports_ok(harness: Harness) -> None:
+    assert harness.store.health().status == OK
+
+
+def test_health_never_writes(harness: Harness) -> None:
+    """P5: `doctor` mutates nothing, and `health` is the only store call it makes.
+
+    Against a real Vault this is the case that matters, because the tempting
+    implementation -- prove the store is writable by writing to it -- passes
+    every other test in this file and leaves a document behind on a mount a
+    rotation is using.
+    """
+    harness.admin.wipe(harness.path)
+
+    harness.store.health()
+
+    assert harness.store.read(harness.path) is None
+
+
+def test_a_store_that_reports_a_clock_reports_an_aware_utc_one(harness: Harness) -> None:
+    """`None` is allowed; a naive datetime is not.
+
+    A timestamp without an offset compared against an aware one raises, so a
+    backend answering with one would fail at the subtraction rather than here --
+    several layers from the module that produced it.
+    """
+    server_time = harness.store.health().server_time
+
+    if server_time is None:
+        pytest.skip(f"{harness.name} exposes no server clock")
+    assert server_time.tzinfo is not None
+    assert server_time.utcoffset() == timedelta(0)
+
+
+def test_a_store_that_reports_a_clock_can_be_asked_for_a_skew(harness: Harness) -> None:
+    """The two halves arrive together or not at all.
+
+    `server_time` without `measured_at` is a reading with nothing to compare it
+    to, and would answer `None` from `skew()` while looking as though it had
+    measured something.
+    """
+    report = harness.store.health()
+
+    if report.server_time is None:
+        pytest.skip(f"{harness.name} exposes no server clock")
+    assert report.measured_at is not None
+    assert report.skew(CLOCK_SKEW) is not None
+
+
+def test_a_clock_five_minutes_out_is_beyond_what_the_lock_tolerates(harness: Harness) -> None:
+    """The comparison, against a **real** server reading on the Vault half.
+
+    The host clock is the injected half here, and deliberately so: a container
+    shares the runner's clock, so a test taking both sides as it finds them only
+    ever measures zero -- and a comparison exercised only against zero is one
+    that passes while broken.
+    """
+    report = harness.store.health()
+
+    if report.measured_at is None:
+        pytest.skip(f"{harness.name} exposes no server clock")
+    skew = report.skew(CLOCK_SKEW, local=report.measured_at + timedelta(minutes=5))
+
+    assert skew is not None
+    assert skew.beyond_tolerance
+
+
+def test_a_reading_is_bracketed_by_this_host_s_clock(harness: Harness) -> None:
+    """`measured_at` is a midpoint inside the call, and `round_trip` is its width.
+
+    The shape `StoreHealth` promises, asserted from outside where it can be:
+    a midpoint outside the window the call occupied is not a midpoint, and a
+    round trip wider than the call is one the store invented -- and an invented
+    one widens the uncertainty band, which is how a genuinely skewed clock stops
+    being reported.
+
+    It constrains the shape rather than reproducing any particular fault: for a
+    store this fast the interval is microseconds, so a reading taken at one end
+    rather than the middle is not distinguishable from out here. The bracket in
+    each implementation is what makes it right; this is what stops it drifting.
+    """
+    before = utc_now()
+    report = harness.store.health()
+    after = utc_now()
+
+    if report.measured_at is None:
+        pytest.skip(f"{harness.name} exposes no server clock")
+    assert before <= report.measured_at <= after
+    assert report.round_trip is not None
+    assert timedelta(0) <= report.round_trip <= after - before

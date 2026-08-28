@@ -35,7 +35,7 @@ from sopuli.lock.takeover import (
 )
 from sopuli.lock.takeover import RELEASED as RELEASED_REASON
 from sopuli.store import CasConflictError, MemoryStore, SecretStore
-from sopuli.store.protocol import CAS, PathMetadata, Stored
+from sopuli.store.protocol import CAS, OK, PathMetadata, Stored, StoreHealth
 
 KEY = LockKey(store="vault-prod", path="apps/acme/appdb-beta")
 HOLDER = Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli")
@@ -93,6 +93,13 @@ class Unfenced:
 
     def list(self, prefix: str) -> tuple[str, ...]:  # pragma: no cover - not asked
         return ()
+
+    def health(self) -> StoreHealth:  # pragma: no cover - not asked
+        # `check_fenceable` never asks, and the method is here because a
+        # `Protocol` demands it of every implementation -- which is the cost P2
+        # weighs when it says a method nothing calls obliges every store to
+        # write a body for a caller that does not exist (#216).
+        return StoreHealth(status=OK)
 
 
 # ------------------------------------------------------------ the argument ---

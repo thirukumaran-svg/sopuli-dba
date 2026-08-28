@@ -94,7 +94,7 @@ Three further decisions came with it, each a fork rather than a detail:
 
 The rest of `sopuli/driver/protocol.py` is still types and vocabulary only. `apply_attributes` is the one
 operation above that the code deliberately does **not** declare — the same seam
-P2 draws around `health`. A method on the protocol is a demand on every
+P2 drew around `health` until #216 gave it a caller. A method on the protocol is a demand on every
 implementation, so declaring one nothing calls would oblige the Oracle driver to
 write a body for a caller that does not exist; it arrives with `creds apply`'s
 attributes. `Scope` is the run document's `scope` object minus `labels`, which
@@ -276,12 +276,43 @@ account. That module supplies primitives and decides no sequence: the
 `pending` → `current` ordering invariant 7 turns on is UC-1 §3's and belongs to
 `creds rotate`.
 
-**`health` waits for #216, and that is a decision rather than a third
-deferral.** Its only consumer is `doctor`'s vault section, and the argument is
-the one P1 makes two paragraphs above about `apply_attributes`: a method on the
-protocol is a demand on every implementation, so declaring one nothing calls
-would oblige each backend to write a body for a caller that does not exist. It
-arrives with the command that asks the question.
+**`health` arrived with #216**, last of the sketch and deliberately so: its only
+consumer is `doctor`'s vault section, and the argument is the one P1 makes two
+paragraphs above about `apply_attributes` — a method on the protocol is a demand
+on every implementation, so declaring one nothing calls would oblige each backend
+to write a body for a caller that does not exist. It came with the command that
+asks the question.
+
+Three things make it unlike everything else on this interface:
+
+- **it is not about a path**, so it is the one call that says something about the
+  store rather than about a document in it;
+- **it never raises for an unreachable store.** Every other method treats "could
+  not reach it" as a failure, because every other caller wanted something done;
+  this one is asked precisely in order to find out, and `doctor` surveys a whole
+  estate — one dead vault must not end the run before the next is tried. So
+  `unreachable` is a value it returns, not an exception it throws;
+- **it reports the store's clock**, and that is the part that is not a health
+  nicety. `sopuli/lock/decide.py` compares a lease's expiry against *this*
+  machine's clock and allows `CLOCK_SKEW` for the two disagreeing (#83). A host
+  minutes out takes over locks that are still live, or refuses ones long dead,
+  and the failure presents as a locking bug rather than as an NTP problem. The
+  skew is the assumption the lock rests on, measured against the only other clock
+  in the system that matters.
+
+The measurement is latency-corrected and reports what it does not know: the far
+end answered somewhere inside the round trip, so half the trip is the exact width
+of what one request cannot pin down, and a difference a slow link can account for
+is not reported as a finding. A store that exposes no clock answers `None` and
+never a substitute — this host's clock is the thing under test, and a caller
+handed it would compute a skew of zero and print it as agreement.
+
+A store that cannot report its own health has no third answer here, unlike `list`
+and `patch`: `unreachable` already covers "nothing came back", so there is
+nothing a capability flag would add. What it must not do is **write** to prove it
+is reachable — P5 makes `doctor` mutate nothing, and a check that left a lease
+behind would be a measurement that changes what it measures, on a mount a
+rotation is using.
 
 ### Backends in scope
 

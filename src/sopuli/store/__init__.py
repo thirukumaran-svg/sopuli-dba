@@ -2,7 +2,9 @@
 
 :mod:`sopuli.store.protocol` is the interface, grown a method at a time as
 something needed one: #83's lock reads and writes a record, #150 added listing,
-and #183 added a version-pinned read;
+#183 added a version-pinned read, and #216 completed P2's sketch with
+``health`` -- the one method that is not about a path and the one that reports
+an unreachable store rather than raising at it;
 :mod:`sopuli.store.memory` is a KV v2 emulation that keeps the lock's tests in
 tier 0 and doubles as the reference reading of those semantics. The real
 backends -- HashiCorp KV v2 first, per P2's priority order -- arrive with the
@@ -42,7 +44,10 @@ from sopuli.store.credentials import (
 from sopuli.store.memory import MemoryStore
 from sopuli.store.protocol import (
     CAS,
+    DEGRADED,
     MERGE_PATCH,
+    OK,
+    UNREACHABLE,
     VERSIONING,
     CasConflictError,
     PatchNotPermittedError,
@@ -50,6 +55,7 @@ from sopuli.store.protocol import (
     SecretStore,
     Stored,
     StoreError,
+    StoreHealth,
 )
 from sopuli.store.registry import (
     BACKEND_NOT_INSTALLED,
@@ -66,7 +72,10 @@ __all__ = [
     "BACKENDS",
     "BACKEND_NOT_INSTALLED",
     "CAS",
+    "DEGRADED",
     "MERGE_PATCH",
+    "OK",
+    "UNREACHABLE",
     "READ_MODIFY_WRITE",
     "VERSIONING",
     "Backend",
@@ -81,6 +90,7 @@ __all__ = [
     "SecretStore",
     "Stored",
     "StoreError",
+    "StoreHealth",
     "StoredSecret",
     "Written",
     "apply_patch",

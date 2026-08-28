@@ -41,8 +41,9 @@ misspelled ``container_clase: ALL`` and silently do nothing, which is the
 failure ``01-configuration.md`` §10 exists to prevent.
 
 ``apply_attributes`` goes with it, and is **deliberately absent from**
-:class:`Session` rather than declared and unimplemented -- the same seam P2
-draws when it says ``health`` arrives with the secret side. A method on a
+:class:`Session` rather than declared and unimplemented -- the same seam P2 drew
+around ``health``, which stayed out of the store protocol until #216 gave it a
+caller and then went in whole. A method on a
 :class:`~typing.Protocol` is a demand on every implementation that satisfies it,
 so declaring one nothing calls would oblige the Oracle driver to write a body
 for a caller that does not exist. It stays in P1's sketch, which describes the

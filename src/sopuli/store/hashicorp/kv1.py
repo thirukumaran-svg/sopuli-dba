@@ -28,9 +28,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from sopuli.store.hashicorp._errors import raise_for
+from sopuli.store.hashicorp._health import health as probe_health
 from sopuli.store.hashicorp._listing import keys_of, walk
 from sopuli.store.hashicorp._transport import Response, Transport
-from sopuli.store.protocol import LIST, PathMetadata, Stored, StoreError
+from sopuli.store.protocol import LIST, PathMetadata, Stored, StoreError, StoreHealth
 
 #: The version a store without versioning reports.
 #:
@@ -55,6 +56,16 @@ class Kv1Store:
         """``list`` and nothing else. No versioning, no compare-and-set, no soft
         delete -- but the mount does enumerate, so say so (see the module note)."""
         return frozenset({LIST})
+
+    def health(self) -> StoreHealth:
+        """Whether the Vault behind this mount is well, and what its clock says.
+
+        Delegates whole, because the question is about the **server**: a
+        ``sys/health`` answer says nothing about which mount asked, and an estate
+        pointing two ``vaults:`` entries at one Vault gets the same seal state
+        from both because it is the same seal.
+        """
+        return probe_health(self.transport)
 
     def read(self, path: str, *, version: int | None = None) -> Stored | None:
         """Read the one document there is, and refuse to fake an older one.

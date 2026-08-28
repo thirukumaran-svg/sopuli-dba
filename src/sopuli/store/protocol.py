@@ -17,8 +17,13 @@ that was renamed or removed is invisible to it -- and a lock nobody can see is a
 lock nobody can clear. Listing is how the tool finds a path its own configuration
 no longer names.
 
-The rest of P2's interface arrives with the secret side: ``health``, and what a
-*secret* value looks like as opposed to a lock record.
+``health`` completed it in #216, and is the last of P2's sketch to arrive. It
+waited deliberately rather than by oversight: a method on this protocol is a
+demand on every implementation, so declaring one nothing called would have
+obliged each backend to write a body for a caller that did not exist
+(``00-principles.md`` P2). `doctor`'s vault section is that caller, and it asks
+the one question the rest of this interface cannot answer -- not *what is at this
+path* but *is the store there at all, and does its clock agree with ours*.
 
 Deliberately a :class:`~typing.Protocol` rather than a base class. A store
 implementation should not have to import this to satisfy it: the HashiCorp
@@ -30,8 +35,10 @@ needs rather than a place to put shared code.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 
+from sopuli.clock import Skew, measure_skew
 from sopuli.exit_codes import ExitCode
 
 #: The store capability the lock requires, spelled as P2's table spells it.
@@ -186,12 +193,141 @@ class PathMetadata:
     max_versions: int | None = None
 
 
+#: The store is there, answering, and able to serve this run (#216).
+OK = "ok"
+
+#: Something answered and cannot do the whole job right now: sealed, standing
+#: by, not yet initialised, or serving a token this run cannot authenticate
+#: with. **A distinct answer from** :data:`UNREACHABLE`, and the distinction is
+#: the point of having three words rather than a boolean: one sends somebody to
+#: the network and the other sends them to the vault, and being sent to the
+#: wrong one costs an outage's worth of time.
+DEGRADED = "degraded"
+
+#: Nothing that could be recognised as this store answered -- a refused
+#: connection, a timeout, a TLS failure, or a reply this build cannot read.
+#:
+#: The last of those is deliberately in here rather than in :data:`DEGRADED`,
+#: on :mod:`._errors`' fail-closed rule: an answer the tool cannot interpret is
+#: not evidence that a store is well, and a proxy's 502 is exactly what it would
+#: be mistaken for.
+UNREACHABLE = "unreachable"
+
+
+@dataclass(frozen=True)
+class StoreHealth:
+    """Whether a store is there, and what its clock says (#216, P2).
+
+    The three-word ``status`` is P2's own sketch -- ``ok | degraded |
+    unreachable`` -- and everything else here exists to make one of those three
+    words actionable rather than to widen the vocabulary.
+
+    **The clock fields are the reason this is not a boolean.** `sopuli/lock/`
+    compares a lease's ``expires_at`` against *this* machine's clock and allows
+    :data:`~sopuli.lock.record.CLOCK_SKEW` for the two disagreeing. A host that
+    is minutes out will take over locks that are still live, or refuse ones that
+    are long dead, and the failure looks like a locking bug rather than an NTP
+    problem. So the skew is not a health nicety: it is the assumption the lock
+    rests on, measured against the only other clock in the system that matters.
+
+    **A store that cannot report its own time reports** ``server_time: None``,
+    never a substitute. There is no defensible fallback -- this host's clock is
+    the very thing under test -- and a caller that got one back would compute a
+    skew of zero and print it as a measurement.
+    """
+
+    #: :data:`OK`, :data:`DEGRADED` or :data:`UNREACHABLE`.
+    status: str
+    #: What the store says it is running, where it says so at all. Its own
+    #: field rather than part of :attr:`detail`, because a consumer reads it as
+    #: a value -- an estate audit asking which vaults are behind -- and a
+    #: version recoverable only by parsing a human sentence is one that breaks
+    #: the first time the sentence is reworded (``03-json-output.md`` §8: the
+    #: wording around a contract is not the contract).
+    version: str | None = None
+    #: What the status is, in the store's own vocabulary: ``"sealed"``,
+    #: ``"standby"``, the transport error, whatever the store can say. ``None``
+    #: when there is nothing to add to :data:`status`, which is the ordinary
+    #: :data:`OK` case.
+    detail: str | None = None
+    #: The store's own clock, when it exposes one at all. ``None`` is a real
+    #: answer and not a failure -- see the class note.
+    server_time: datetime | None = None
+    #: How precisely the store reports :attr:`server_time`. HashiCorp answers in
+    #: whole seconds, so a sub-second reading against one is noise, and a report
+    #: that presented it as a measured difference would be inventing precision.
+    time_resolution: timedelta = timedelta(0)
+    #: This host's clock at the **midpoint** of the request that produced
+    #: :attr:`server_time` -- the best single estimate of the instant the far end
+    #: read its own. See :func:`sopuli.clock.measure_skew`.
+    measured_at: datetime | None = None
+    #: What the request cost, end to end. Both a thing to report -- P4 asks how
+    #: long the store took -- and the width of what one round trip cannot pin
+    #: down about :attr:`server_time`.
+    round_trip: timedelta | None = None
+    #: Whether the credential this store was opened with was accepted.
+    #:
+    #: ``None`` means *not asked*, which is a third state and not a shrug: a
+    #: sealed store refuses every request including the one that would answer
+    #: this, so reporting ``False`` there would blame a token for a seal. Absent
+    #: and false are therefore different findings, exactly as they are on
+    #: ``doctor``'s privilege report.
+    authenticated: bool | None = None
+
+    def skew(self, tolerance: timedelta, *, local: datetime | None = None) -> Skew | None:
+        """The clock difference this reading implies, or ``None`` if it cannot say.
+
+        ``None`` when the store exposes no server time -- the one case a caller
+        must not paper over, since the alternative reading is a confident zero.
+
+        ``local`` overrides :attr:`measured_at`, and exists so the comparison can
+        be exercised against a **real** server reading with a deliberately
+        offset host clock. A test that only ever sees the runner's own clock
+        beside a container sharing it measures nothing: the difference is always
+        zero, and a broken comparison passes.
+        """
+        if self.server_time is None:
+            return None
+        moment = local if local is not None else self.measured_at
+        if moment is None:  # pragma: no cover -- set together, by every producer
+            return None
+        return measure_skew(
+            server=self.server_time,
+            local=moment,
+            round_trip=self.round_trip or timedelta(0),
+            tolerance=tolerance,
+            resolution=self.time_resolution,
+        )
+
+
 @runtime_checkable
 class SecretStore(Protocol):
     """What the lock manager needs a store to be able to do."""
 
     def supports(self) -> frozenset[str]:
         """Store capabilities, from P2's table. ``cas`` is the one asked about."""
+        ...
+
+    def health(self) -> StoreHealth:
+        """Is the store there, is it able to serve, and what does its clock say.
+
+        The only method here that is not about a path, and the only one that
+        **never raises for an unreachable store**. Every other call on this
+        interface treats "I could not reach it" as a failure, because every other
+        caller wanted something done; this one is asked precisely in order to
+        find out, so a store that is not there is the answer rather than an
+        exception. `doctor` surveys a whole estate and one dead vault must not
+        end the run before the next is tried -- the same rule its ``targets[]``
+        already follows.
+
+        It **must not write**, take a lock, or renew anything (P5: `doctor`
+        mutates nothing). Establishing that a store is reachable by leaving a
+        lease in it would be a health check that changes the thing it measures,
+        and on a lock mount it would be one that a concurrent rotation notices.
+
+        A store that cannot report its own time answers ``server_time: None``
+        rather than substituting this host's -- see :class:`StoreHealth`.
+        """
         ...
 
     def read(self, path: str, *, version: int | None = None) -> Stored | None:

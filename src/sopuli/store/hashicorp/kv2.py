@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sopuli.store.hashicorp._errors import raise_for
+from sopuli.store.hashicorp._health import health as probe_health
 from sopuli.store.hashicorp._listing import keys_of, walk
 from sopuli.store.hashicorp._transport import Response, Transport
 from sopuli.store.protocol import (
@@ -54,6 +55,7 @@ from sopuli.store.protocol import (
     PathMetadata,
     Stored,
     StoreError,
+    StoreHealth,
 )
 
 #: Vault's "no per-path limit" for ``max_versions``: the mount's own setting
@@ -84,6 +86,16 @@ class Kv2Store:
         (Q7), so nothing negotiates it, and undelete has no command that asks.
         """
         return frozenset({CAS, LIST, MERGE_PATCH, VERSIONING})
+
+    def health(self) -> StoreHealth:
+        """Whether the Vault behind this mount is well, and what its clock says.
+
+        Delegates whole, because the question is about the **server**: a
+        ``sys/health`` answer says nothing about which mount asked, and an estate
+        pointing two ``vaults:`` entries at one Vault gets the same seal state
+        from both because it is the same seal.
+        """
+        return probe_health(self.transport)
 
     def read(self, path: str, *, version: int | None = None) -> Stored | None:
         params = None if version is None else {"version": str(version)}
