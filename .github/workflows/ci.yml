@@ -23,6 +23,33 @@ name: ci
 
 on:
   pull_request:
+    # Prose only. **This list is a measured allowlist, not "docs".** The suite
+    # reads `docs/design/00-principles.md`, `docs/design/01-configuration.md`,
+    # every `docs/schemas/*.json` and `sql/oracle/00_install.sql` -- the config
+    # reference's YAML examples must parse, and the schemas are validated as
+    # artefacts (invariant 12). A blanket `docs/**` would silently stop testing
+    # all four, so only files nothing opens are listed here.
+    #
+    # To re-measure after adding a test, run pytest under an audit hook and see
+    # which paths it opens:
+    #
+    #   python -c "import sys,pytest;sys.addaudithook(lambda e,a: e=='open' and print(a[0]));pytest.main(['tests/','-q'])" | sort -u
+    #
+    # Anything under docs/ or sql/ that appears there must NOT be listed below.
+    paths-ignore:
+      - 'docs/local-testing.md'
+      - 'docs/workflow.md'
+      - 'docs/README.md'
+      - 'docs/decisions/**'
+      - 'docs/use-cases/**'
+      - 'docs/design/02-oracle-privileges.md'
+      - 'docs/design/03-json-output.md'
+      - 'docs/design/04-testing.md'
+      - 'README.md'
+      - 'CLAUDE.md'
+      - 'CHANGELOG.md'
+      - 'LICENSE'
+      - '.gitignore'
   workflow_dispatch:
 
 # Read-only. This workflow reports; it never writes to the repository.
