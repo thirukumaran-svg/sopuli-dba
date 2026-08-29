@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.45.0](https://github.com/villebase/sopuli-dba/compare/v0.44.0...v0.45.0) (2026-08-29)
+
+
+### Features
+
+* **cli:** sopuli creds apply, vault to database and the promote after it ([#261](https://github.com/villebase/sopuli-dba/issues/261)) ([00bf92e](https://github.com/villebase/sopuli-dba/commit/00bf92e2a03674269544719d91ece8b3fa5ccb87))
+* **cli:** sopuli creds generate, the first credential mutation ([#256](https://github.com/villebase/sopuli-dba/issues/256)) ([50966dd](https://github.com/villebase/sopuli-dba/commit/50966dd31c82339af53e963c9a84bcf16ce30628))
+* **config:** refuse two accounts staging into one place at load ([#260](https://github.com/villebase/sopuli-dba/issues/260)) ([ebfeaba](https://github.com/villebase/sopuli-dba/commit/ebfeaba163c8d3937c1182919f3cbeb8c4c41203))
+
 ## [0.44.0](https://github.com/villebase/sopuli-dba/compare/v0.43.0...v0.44.0) (2026-08-28)
 
 
