@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/sopuli-dba-logo.jpg" alt="sopuli-dba logo" width="200">
+</p>
+
 # sopuli-dba
 Tool for automating and simplifying database credential management and other common DBA tasks
 
