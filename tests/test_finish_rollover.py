@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from sopuli import check
 from sopuli import finish_rollover as windows
 from sopuli.apply import Source
+from sopuli.clock import until
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
@@ -246,3 +247,12 @@ def test_a_naive_timestamp_is_read_as_utc() -> None:
     naive = (NOW + timedelta(minutes=15)).replace(tzinfo=None)
 
     assert windows.remaining(user(rollover_ends_at=naive), now=NOW) == "15m"
+
+
+def test_the_countdown_is_shared_with_status() -> None:
+    """`clock.until` is the arithmetic, and both verbs print the same figure
+    about the same window -- this one to say what it closed early, `creds status`
+    (#275) to say what is still open. Two implementations would drift."""
+    account = user(rollover_ends_at=NOW + timedelta(minutes=41))
+
+    assert windows.remaining(account, now=NOW) == until(account.rollover_ends_at, now=NOW)

@@ -1,0 +1,298 @@
+"""`creds status` as a document and as a table (#275).
+
+UC-1 §9's inventory, which is the one output in this tool designed to be read
+across rather than down: an operator scans a column and finds the row that does
+not match its neighbours.
+
+**Eight columns, and each earns its place by being unobtainable elsewhere
+without a login.** `VAULT_V` and `AGE` come from the vault, `DB_PW_CHANGED`,
+`LOCK`, `PROFILE` and `ROLLOVER` from two dictionary views, and the pair of ages
+side by side is the drift smell §9 is built around — the same database history
+answering differently depending on which clock is asked.
+
+**No `secret` object in `results[]`.** This verb reads a document to age it and
+never writes one, and an address here would say it touched something. The
+version is on the row where it belongs.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any
+
+from sopuli.check import ACCOUNT_MISSING, ERROR, counts, is_failure, password_age_days
+from sopuli.driver.oracle.rollover import days as rollover_days
+from sopuli.driver.protocol import UserState
+from sopuli.output.document import Error, Summary
+from sopuli.output.palette import Role, paint
+from sopuli.output.table import Cell, Column, render_table
+from sopuli.status import PENDING_APPLY, Row
+
+__all__ = ["build_result", "render_status_table", "summarise"]
+
+_ACCOUNT = 24
+_TARGET = 28
+_STATE = 16
+
+
+def build_result(
+    row: Row, *, duration_ms: int | None = None, error: Error | None = None
+) -> dict[str, Any]:
+    """One ``results[]`` entry.
+
+    ``changed`` is always ``False`` and required by the schema anyway, which is
+    worth saying rather than leaving to be noticed: this verb cannot mutate
+    anything, so a consumer diffing the array gets a run of ``false`` by
+    construction. Invariant 9's shape for a read-only verb, as `check` has it.
+
+    The single action is ``none``. There is no ``inventory`` kind in the schema's
+    enum and this does not want one — nothing was done, and `none` is the enum's
+    own word for exactly that. Inventing a kind would put a verb in the contract
+    that describes an absence.
+    """
+    entry: dict[str, Any] = {
+        "account": row.binding.account,
+        "target": row.binding.target,
+        "state": row.outcome.state,
+        "changed": False,
+        "actions": [{"kind": "none", "applied": False, "detail": row.outcome.detail}],
+    }
+    # `password_age_days` is the schema's field and it means the *database's* age
+    # everywhere else -- `check` fills it from `PASSWORD_CHANGE_DATE`. It is
+    # filled the same way here, and the vault's age travels in `warnings` and in
+    # the text column instead: two different clocks under one field name is how
+    # the confusion §9 warns about gets into a document.
+    database_age = _database_age(row.user)
+    if database_age is not None:
+        entry["password_age_days"] = database_age
+    rollover = _rollover(row.user)
+    if rollover is not None:
+        entry["rollover"] = rollover
+    if duration_ms is not None:
+        entry["duration_ms"] = duration_ms
+    if error is not None:
+        entry["error"] = error.to_dict()
+    warnings = _warnings(row)
+    if warnings:
+        entry["warnings"] = warnings
+    return entry
+
+
+def _database_age(user: UserState | None) -> float | None:
+    """The database's own age, in the field the schema has for it.
+
+    ``None`` where the database did not say. The source is version-dependent and
+    unconfirmed on 11.2 (#87), and this verb displays it rather than acting on
+    it, so an absence costs nothing.
+    """
+    return None if user is None else password_age_days(user.password_changed_at)
+
+
+def _rollover(user: UserState | None) -> dict[str, Any] | None:
+    """The window, and the profile that decides whether there can be one.
+
+    Emitted for every account whose state was read, not only the ones with a
+    window open: "this profile grants none" and "this profile grants one and it
+    is closed" are different facts about an estate, and an inventory is where
+    somebody goes to tell them apart.
+    """
+    if user is None:
+        return None
+    return {"active": bool(user.rollover_active), "profile_rollover_time": user.rollover_time}
+
+
+def _warnings(row: Row) -> list[dict[str, Any]]:
+    """What this row wants somebody to notice.
+
+    The age is a warning rather than a column value in the document, because
+    ``password_age_days`` already means the database's age and Q9's whole point
+    is that the two must not be confused. A consumer reading the vault's age
+    reads it here, where the message says which clock it came from.
+    """
+    found: list[dict[str, Any]] = []
+    if row.over_age:
+        found.append(
+            {
+                "level": "warning",
+                "message": (
+                    f"the vault last rotated this {row.age} days ago, past the "
+                    f"--max-age-days threshold"
+                ),
+                "account": row.binding.account,
+                "target": row.binding.target,
+            }
+        )
+    return found
+
+
+def summarise(rows: Sequence[Row]) -> Summary:
+    """The counters an inventory carries.
+
+    ``ok`` is deliberately **not** a state count here. There is no state this
+    verb reports that means "healthy": its ordinary row is ``UNVERIFIABLE``,
+    because it never asked (see :mod:`sopuli.status`). So ``ok`` counts the rows
+    with nothing to say about them -- no missing account, no lock, no unfinished
+    rotation, no age past the threshold -- which is the number an operator
+    actually reads a summary for.
+
+    ``changed`` is zero and ``unchanged`` is everything, by construction.
+    """
+    states = [row.outcome.state for row in rows]
+    return Summary(
+        total=len(rows),
+        ok=sum(1 for row in rows if _quiet(row)),
+        changed=0,
+        failed=sum(1 for state in states if is_failure(state)),
+        unchanged=len(rows),
+        unverifiable=sum(1 for row in rows if not _quiet(row) and row.outcome.state != ERROR),
+        by_state=counts(states),
+    )
+
+
+def _quiet(row: Row) -> bool:
+    """Whether this row is one nobody needs to look at."""
+    return row.outcome.state not in (ACCOUNT_MISSING, PENDING_APPLY, ERROR) and not (
+        row.over_age or _unhappy(row.user)
+    )
+
+
+def _unhappy(user: UserState | None) -> bool:
+    return user is not None and (user.locked or user.expired)
+
+
+def render_status_table(rows: Sequence[Row]) -> str:
+    """§9's table, and the line under it.
+
+    The two age columns sit next to each other on purpose. §9's worked example is
+    two rows sharing a ``DB_PW_CHANGED`` and differing by 82 days of vault age --
+    the same database history, two very different answers depending on which
+    clock is asked, and only one of them acted on. Putting them apart, or showing
+    one, would hide the thing the table was drawn to show.
+    """
+    table = render_table(
+        [
+            Column("ACCOUNT", _ACCOUNT),
+            Column("TARGET", _TARGET),
+            Column("STATE", _STATE),
+            Column("VAULT_V"),
+            Column("AGE"),
+            Column("DB_PW_CHANGED"),
+            Column("PROFILE"),
+            Column("ROLLOVER"),
+        ],
+        [
+            [
+                row.binding.account,
+                row.binding.target,
+                _state(row.outcome.state),
+                _version(row.version),
+                _age(row),
+                _changed_at(row.user),
+                _profile(row.user),
+                _rollover_cell(row.user),
+            ]
+            for row in rows
+        ],
+    )
+    return "\n".join([*table, "", _verdict(rows)])
+
+
+def _state(state: str) -> Cell | str:
+    """The two states worth picking out.
+
+    ``ACCOUNT_MISSING`` is the config and the estate disagreeing, and
+    ``PENDING_APPLY`` is a rotation nobody finished -- the only two rows here
+    that name something to go and do. ``UNVERIFIABLE`` is every ordinary row and
+    painting it would make the whole column shout.
+    """
+    return Cell(state, Role.NOTABLE) if state in (ACCOUNT_MISSING, PENDING_APPLY, ERROR) else state
+
+
+def _version(version: int | None) -> Cell | str:
+    return Cell("-", Role.MUTED) if version is None else str(version)
+
+
+def _age(row: Row) -> Cell | str:
+    """The vault's age, marked where it is past the threshold.
+
+    ``-`` for a credential this tool has never rotated, which is an age of
+    *unknown* rather than of zero -- and `--max-age-days` does not select it.
+    """
+    if row.age is None:
+        return Cell("-", Role.MUTED)
+    rendered = f"{row.age:.0f}d"
+    return Cell(f"{rendered} !", Role.NOTABLE) if row.over_age else rendered
+
+
+def _changed_at(user: UserState | None) -> Cell | str:
+    """The database's own date, for display and nothing else (Q9).
+
+    ``-`` where the version does not expose it, which on 11.2 is the ordinary
+    case and behind an optional grant elsewhere (#87).
+    """
+    if user is None or user.password_changed_at is None:
+        return Cell("-", Role.MUTED)
+    return user.password_changed_at.date().isoformat()
+
+
+def _profile(user: UserState | None) -> Cell | str:
+    if user is None or user.profile is None:
+        return Cell("-", Role.MUTED)
+    return user.profile
+
+
+def _rollover_cell(user: UserState | None) -> Cell | str:
+    """Whether a window can open here, and whether one is open now.
+
+    Three answers rather than two, because "not configured" and "configured and
+    quiet" are what decide whether a zero-downtime rotation is available at all
+    -- which is the question §6.3 makes an operator ask before scheduling one.
+    """
+    if user is None:
+        return Cell("-", Role.MUTED)
+    if user.rollover_active:
+        return Cell("window open", Role.NOTABLE)
+    configured = rollover_days(user.rollover_time)
+    if not configured:
+        return Cell("not configured", Role.MUTED)
+    return f"{_hours(configured)} configured"
+
+
+def _hours(days: float) -> str:
+    """A rollover limit as an operator would say it. Oracle stores it in days."""
+    hours = days * 24
+    if hours >= 24 and hours % 24 == 0:
+        return f"{int(days)}d"
+    if hours >= 1:
+        return f"{hours:.0f}h"
+    return f"{hours * 60:.0f}m"
+
+
+def _verdict(rows: Sequence[Row]) -> str:
+    """The closing line: the size of the estate, then what to look at.
+
+    An inventory's ordinary answer is that there is nothing to do, and it must
+    read that way -- a survey that always ends in a list of counts trains people
+    to skip the last line.
+    """
+    findings = []
+    missing = sum(1 for row in rows if row.outcome.state == ACCOUNT_MISSING)
+    staged = sum(1 for row in rows if row.outcome.state == PENDING_APPLY)
+    over = sum(1 for row in rows if row.over_age)
+    unhappy = sum(1 for row in rows if _unhappy(row.user))
+    failed = sum(1 for row in rows if is_failure(row.outcome.state))
+    if missing:
+        findings.append(f"{missing} missing")
+    if staged:
+        findings.append(f"{staged} awaiting apply")
+    if over:
+        findings.append(f"{over} past max age")
+    if unhappy:
+        findings.append(f"{unhappy} locked or expired")
+    if failed:
+        findings.append(f"{failed} unreachable")
+
+    counted = f"{len(rows)} account{'' if len(rows) == 1 else 's'}"
+    if not findings:
+        return paint(f"{counted}, nothing to act on", Role.HEADING)
+    return f"{counted}: " + ", ".join(findings)

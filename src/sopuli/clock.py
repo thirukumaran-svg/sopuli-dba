@@ -63,6 +63,36 @@ def to_rfc3339(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def until(moment: datetime | None, *, now: datetime | None = None) -> str | None:
+    """How long until ``moment``, as a short phrase, or ``None``.
+
+    ``None`` for an unknown moment and for one already past. Not ``"0m"``: a
+    deadline that has gone is not a deadline about to go, and the two want
+    different words from whoever reads them.
+
+    Whole minutes, hours and days, never seconds. Every caller so far is
+    rendering an Oracle rollover window, whose end is derived from a ``DATE`` and
+    a profile limit -- so the precision does not reach a second and printing one
+    would claim accuracy the number does not have.
+
+    Here rather than beside either caller because it has no product and no verb
+    in it, and because two implementations would drift: `creds finish-rollover`
+    prints this to say what it closed early, and `creds status` prints it to say
+    what is still open, about the same window.
+    """
+    if moment is None:
+        return None
+    seconds = int((as_utc(moment) - as_utc(now or utc_now())).total_seconds())
+    if seconds <= 0:
+        return None
+    minutes, hours = seconds // 60, seconds // 3600
+    if hours >= 24:
+        return f"{hours // 24}d{hours % 24}h"
+    if hours:
+        return f"{hours}h{minutes % 60:02d}m"
+    return f"{minutes}m"
+
+
 def from_rfc3339(text: str) -> datetime:
     """Parse what :func:`to_rfc3339` writes, and anything else RFC 3339 allows.
 

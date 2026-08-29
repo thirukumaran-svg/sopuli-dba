@@ -66,6 +66,7 @@ from sopuli import check as check_states
 from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
+from sopuli import status as status_states
 from sopuli import strategy as strategies
 from sopuli.admin import resolve as admin_resolve
 from sopuli.apply import SOURCES, Source
@@ -168,6 +169,9 @@ from sopuli.output.lock_view import (
 from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
+from sopuli.output.status_view import build_result as build_status_result
+from sopuli.output.status_view import render_status_table
+from sopuli.output.status_view import summarise as summarise_status
 from sopuli.output.stream import configure_streams
 from sopuli.output.vault_view import build as build_vault
 from sopuli.output.vault_view import render as render_vaults
@@ -177,6 +181,7 @@ from sopuli.passwords import ByteLimit, generate
 from sopuli.payload import PENDING, PREVIOUS, stage_layout
 from sopuli.safety import RefusedError, refuse_if_over_limit, refuse_if_readonly
 from sopuli.secrets import Secret
+from sopuli.status import Row
 from sopuli.store import SecretStore, StoreError, connect
 from sopuli.store.credentials import StoredSecret, read_secret
 from sopuli.store.credentials import apply_patch as write_credential
@@ -3074,6 +3079,257 @@ def _finish_one(
         )
 
     return _Finished(binding, outcome, changed=True, user=user, duration_ms=_elapsed(started))
+
+
+@creds_group.command("status")
+@select_option
+@click.option(
+    "--max-age-days",
+    type=click.IntRange(1, 100000),
+    default=None,
+    help="Mark accounts the vault last rotated more than this many days ago.",
+)
+@global_options
+def creds_status(selectors: tuple[str, ...], max_age_days: int | None, run: Invocation) -> str:
+    """Inventory the estate: ages, versions, lock state, rollover.
+
+    **No login attempts, no lock, no mutation.** The safest verb in the tool --
+    `creds check` at least tries a password, and this reads two dictionary views
+    and a vault document. Safe to run anywhere, at any hour, against production.
+
+    **AGE is the vault's, and it is the one that counts.** `--max-age-days`
+    filters on the `rotated_at` stamp the vault holds (Q9, issue #87), never on
+    the database's own `PASSWORD_CHANGE_DATE` -- one value per secret path
+    however many targets share it, so there is nothing to aggregate and no
+    "oldest, newest or any" rule to invent for an account spanning a CDB's PDBs.
+
+    The database's date is displayed beside it and never acted on. The pair is
+    the point: the same database history answers differently depending on which
+    clock is asked, and a row where the two disagree wildly is a drift smell that
+    costs no login attempt to notice.
+
+    **It will not tell you whether a password works.** That is `creds check`,
+    which spends a login to find out. A row here reads `UNVERIFIABLE` because
+    nothing was asked -- reporting `IN_SYNC` from a command that never tried
+    would be agreement nobody measured.
+
+    **What it does say without asking**: an account the config declares and the
+    database has not got, one that is locked or expired, a rotation somebody
+    staged and never applied, and a rollover window standing open.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+
+    match = parse_selector(selectors)
+    config = filter_estate(run.config, match)
+    document.selection = as_dict(match) or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    config = binding_stores.complete(config, env=os.environ)
+    binding_stores.refuse_unresolved(config, action="taking an inventory")
+
+    plan = plan_builder.build(config, intent=["none"])
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action="taking an inventory")
+    document.plan = plan.as_json()
+
+    bindings = list(config.bindings)
+    if not bindings:
+        document.finish(ExitCode.SUCCESS, Summary())
+        return render_plan(plan, noun="account") + "\n\nnothing to inventory"
+
+    keys = _document_keys(bindings)
+    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
+    documents = _read_documents(keys, stores)
+
+    rows: list[_Surveyed] = []
+    for name, work in _grouped(bindings).items():
+        rows.extend(
+            _survey_target(
+                _expanded(config, name),
+                work,
+                run,
+                config,
+                documents=documents,
+                stores=stores,
+                max_age_days=max_age_days,
+            )
+        )
+
+    document.results = [
+        build_status_result(one.row, duration_ms=one.duration_ms, error=one.error) for one in rows
+    ]
+    found = [one.row for one in rows]
+    document.finish(
+        # `check`'s codes, and for its reason: exit 3 is drift, which this verb
+        # cannot observe, so it only ever exits 0 or 1. A target it could not
+        # reach is exit 1 -- an inventory with a hole in it must not look
+        # complete, which is the same argument `check` makes about a survey.
+        check_states.exit_code_for([one.outcome.state for one in found]),
+        summarise_status(found),
+    )
+    return f"{render_plan(plan, noun='account')}\n\n{render_status_table(found)}"
+
+
+@dataclass(frozen=True)
+class _Surveyed:
+    """One row, with what it cost and what went wrong."""
+
+    row: Row
+    duration_ms: int | None = None
+    error: Error | None = None
+
+
+def _expanded(config: Config, name: str) -> ExpandedTarget:
+    return next(one for one in config.expanded_targets if one.name == name)
+
+
+def _survey_target(
+    target: ExpandedTarget,
+    bindings: Sequence[Binding],
+    run: Invocation,
+    config: Config,
+    *,
+    documents: Mapping[LockKey, Any],
+    stores: Mapping[str, SecretStore],
+    max_age_days: int | None,
+) -> list[_Surveyed]:
+    """One target's worth of accounts, over one connection.
+
+    A target that cannot be reached is a row rather than a crash, which is
+    `doctor`'s rule and `check`'s. The vault half of the row is still filled in:
+    the version and the age came from a document that was read before any
+    database was dialled, and an inventory that threw them away because a
+    listener was down would be answering less than it knows.
+    """
+    started = time.monotonic()
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            elapsed = _elapsed(started)
+            return [
+                _Surveyed(
+                    _row(
+                        binding,
+                        user=None,
+                        outcome=check_states.Outcome(check_states.ERROR, reported.message),
+                        documents=documents,
+                        stores=stores,
+                        max_age_days=max_age_days,
+                    ),
+                    duration_ms=elapsed,
+                    error=reported,
+                )
+                for binding in bindings
+            ]
+
+        return [
+            _survey_one(
+                binding,
+                session,
+                documents=documents,
+                stores=stores,
+                max_age_days=max_age_days,
+            )
+            for binding in bindings
+        ]
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+def _survey_one(
+    binding: Binding,
+    session: Any,
+    *,
+    documents: Mapping[LockKey, Any],
+    stores: Mapping[str, SecretStore],
+    max_age_days: int | None,
+) -> _Surveyed:
+    """One account: read its state, read its document, conclude nothing about the
+    password.
+
+    There is no `verify_password` call in here and there is not meant to be. The
+    one assertion `tests/test_cli_creds_status.py` makes about every case is that
+    the session recorded no attempt.
+    """
+    started = time.monotonic()
+    try:
+        user = session.describe_user(binding.account)
+    except Exception as error:  # noqa: BLE001 -- a per-account finding
+        reported = _as_error(error)
+        return _Surveyed(
+            _row(
+                binding,
+                user=None,
+                outcome=check_states.Outcome(check_states.ERROR, reported.message),
+                documents=documents,
+                stores=stores,
+                max_age_days=max_age_days,
+            ),
+            duration_ms=_elapsed(started),
+            error=reported,
+        )
+    return _Surveyed(
+        _row(
+            binding,
+            user=user,
+            outcome=None,
+            documents=documents,
+            stores=stores,
+            max_age_days=max_age_days,
+        ),
+        duration_ms=_elapsed(started),
+    )
+
+
+def _row(
+    binding: Binding,
+    *,
+    user: UserState | None,
+    outcome: check_states.Outcome | None,
+    documents: Mapping[LockKey, Any],
+    stores: Mapping[str, SecretStore],
+    max_age_days: int | None,
+) -> Row:
+    """Assemble one row from the vault half and the database half.
+
+    ``outcome`` is passed in only where the database half failed and the state is
+    already decided; otherwise :func:`sopuli.status.decide` reads it off the two
+    halves. Both paths fill the vault columns, for the reason `_survey_target`
+    gives.
+    """
+    stored = _stored_document(binding, documents)
+    data = None if stored is None else stored.data
+    credential = _quietly_read(binding, stores)
+    age = status_states.age_days(status_states.rotated_at(data, binding))
+    return Row(
+        binding=binding,
+        outcome=outcome or status_states.decide(user, credential, data, binding),
+        version=None if stored is None else int(stored.version),
+        age=age,
+        user=user,
+        over_age=status_states.exceeds(age, max_age_days),
+    )
+
+
+def _quietly_read(binding: Binding, stores: Mapping[str, SecretStore]) -> StoredSecret | None:
+    """The account's credential, or ``None`` for any reason at all.
+
+    Swallowing is right here and nowhere else in this file. A malformed document
+    -- a ref landing on a map, a stage on a scalar -- is a real finding that
+    `check` and `apply` refuse over, and it is *this* verb's job to render the
+    row that shows the estate around it rather than to abort the survey. The
+    state comes back `UNVERIFIABLE` saying the vault holds nothing readable,
+    which is true and is what an inventory should say.
+    """
+    with suppress(Exception):
+        return _stored_credential(binding, stores)
+    return None
 
 
 if __name__ == "__main__":  # pragma: no cover

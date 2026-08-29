@@ -48,7 +48,7 @@ from sopuli.check import (
     UNVERIFIABLE,
     Outcome,
 )
-from sopuli.clock import as_utc, utc_now
+from sopuli.clock import until
 from sopuli.driver.protocol import EXPIRE_PASSWORD, FAIL, PASS, Scope, UserState, VerifyResult
 from sopuli.payload import PENDING
 
@@ -184,7 +184,7 @@ def closed(user: UserState, verification: VerifyResult, *, now: datetime | None 
 
 
 def remaining(user: UserState, *, now: datetime | None = None) -> str | None:
-    """How much of the window was left, as a short phrase, or ``None``.
+    """How much of the window is left, as a short phrase, or ``None``.
 
     ``None`` where the end is not known -- ``rollover_ends_at`` is derived and
     only populated while a window is open (#181), and on a release that reports
@@ -192,28 +192,11 @@ def remaining(user: UserState, *, now: datetime | None = None) -> str | None:
     nothing is the right answer there; a zero would read as "it was about to
     close anyway", which is the opposite of not knowing.
 
-    Rendered in whole minutes and hours, never seconds. The value comes from
-    Oracle's own arithmetic over a ``DATE`` and a profile limit, so its precision
-    does not reach a second, and printing one would claim accuracy the number
-    does not have.
+    The arithmetic is :func:`sopuli.clock.until`, shared with `creds status`
+    (#275) -- it prints the same figure about the same window, to say what is
+    still open rather than what was closed early.
     """
-    ends_at = user.rollover_ends_at
-    if ends_at is None:
-        return None
-    # `DATE` carries no zone and `oracledb` hands back a naive value.
-    # `clock.as_utc` is the one place that decides what to do about it, and it is
-    # one place on purpose: the same timestamp is *also* rendered into
-    # `results[].rollover.ends_at`, and a countdown computed one way beside a
-    # deadline rendered the other is one run saying two things.
-    seconds = int((as_utc(ends_at) - as_utc(now if now is not None else utc_now())).total_seconds())
-    if seconds <= 0:
-        return None
-    minutes, hours = seconds // 60, seconds // 3600
-    if hours >= 24:
-        return f"{hours // 24}d{hours % 24}h"
-    if hours:
-        return f"{hours}h{minutes % 60:02d}m"
-    return f"{minutes}m"
+    return until(user.rollover_ends_at, now=now)
 
 
 def _one_line(detail: str | None) -> str | None:

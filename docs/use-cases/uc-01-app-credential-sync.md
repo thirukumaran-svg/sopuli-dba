@@ -901,6 +901,40 @@ ORDERS_BATCH  cdb1-pdb-orders    3        94d    2026-05-02     OPEN      APP_PR
 The mismatch between vault age and `DB_PW_CHANGED` is a useful drift smell that
 costs no login attempt.
 
+### What shipped in #275
+
+The verb, the standard selectors, `--max-age-days`, and both output modes. Three
+things about it are decisions rather than transcription:
+
+**A healthy row reports `UNVERIFIABLE`, not `IN_SYNC`.** The one question an
+inventory cannot answer is the one `check` exists for — *does the vault's
+password actually work* — so this says it did not ask, in the detail column.
+`IN_SYNC` from a command that never tried would be agreement nobody measured,
+and it would be indistinguishable in a document from one `check` produced by
+spending a login.
+
+**What it *can* say without asking** is the rest of the state model: an account
+the config declares and the database has not got, one locked or expired, a
+rotation somebody staged and never applied (`PENDING_APPLY` — visible in the
+vault alone), and a rollover window standing open.
+
+**An unknown age is not an old one.** A credential this tool has never rotated
+has no `rotated_at`, and `--max-age-days` does not select it. Treating unknown as
+infinitely old would make the tool's first act against a freshly adopted estate a
+proposal to rotate all of it — which is the opposite of what somebody running an
+inventory over a new estate wants to find out.
+
+**A target it cannot reach is exit 1**, which is `check`'s rule and for `check`'s
+reason: a survey with a hole in it must not look complete. The vault half of
+those rows is still filled in — the version and the age came from a document read
+before any database was dialled, and throwing them away because a listener was
+down would answer less than the run knows.
+
+In the run document, `password_age_days` keeps the meaning it has everywhere
+else — the **database's** age, from `PASSWORD_CHANGE_DATE`. The vault's age
+travels as a `warning` naming its source, because two clocks under one field name
+is exactly the confusion this section was written to prevent.
+
 **`AGE` is `rotated_at`, from the vault, and is what `--max-age-days` filters
 on** (Q9, decided in #87). `DB_PW_CHANGED` is read from the database purely
 for display — it never gates a rotation and nothing currently reads it back —

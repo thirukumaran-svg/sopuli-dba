@@ -55,7 +55,16 @@ CURRENT, PENDING, PREVIOUS = STAGES
 #: rest. ``username`` from §3's original payload has no counterpart here -- in
 #: the shared layout the map key *is* the username, and a second copy of it is a
 #: thing that can disagree with itself.
-STAMPS = ("rotated_at", "rotated_by", "policy", "targets")
+#: The one stamp anything reads *back*. `creds status` (#275) ages a credential
+#: by it and `--max-age-days` filters on it (Q9, #87); the other three are
+#: written for an operator and for an audit, and nothing branches on them.
+#:
+#: Declared before :data:`STAMPS` and used to build it, rather than read out of
+#: it by index: a constant defined as ``STAMPS[0]`` silently changes meaning the
+#: day somebody reorders the tuple for tidiness.
+ROTATED_AT = "rotated_at"
+
+STAMPS = (ROTATED_AT, "rotated_by", "policy", "targets")
 
 #: Root keys the mirror rule generates, and therefore names a container may not
 #: take. ``current`` is absent on purpose: it is not a root key -- the container
@@ -74,6 +83,7 @@ __all__ = [
     "PREVIOUS",
     "REMOVE",
     "RESERVED",
+    "ROTATED_AT",
     "STAMPS",
     "StageLayout",
     "apply_patch",
