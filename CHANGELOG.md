@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.47.0](https://github.com/villebase/sopuli-dba/compare/v0.46.0...v0.47.0) (2026-08-29)
+
+
+### Features
+
+* **cli:** creds apply --source, and the rollback it exists for ([#273](https://github.com/villebase/sopuli-dba/issues/273)) ([231cf89](https://github.com/villebase/sopuli-dba/commit/231cf89520a9ba96b5d279cf5707d73cdcaaa6e3))
+* **cli:** sopuli creds finish-rollover, and the windows it refuses to close ([#271](https://github.com/villebase/sopuli-dba/issues/271)) ([fd0a135](https://github.com/villebase/sopuli-dba/commit/fd0a1357a846d053370f6e216f8ee35af7813943))
+
 ## [0.46.0](https://github.com/villebase/sopuli-dba/compare/v0.45.0...v0.46.0) (2026-08-29)
 
 
