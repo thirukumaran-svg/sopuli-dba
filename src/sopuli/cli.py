@@ -63,12 +63,13 @@ import click
 
 from sopuli import apply as apply_states
 from sopuli import check as check_states
+from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli import strategy as strategies
 from sopuli.admin import resolve as admin_resolve
 from sopuli.apply import Source
-from sopuli.clock import to_rfc3339, utc_now
+from sopuli.clock import as_utc, to_rfc3339, utc_now
 from sopuli.config import (
     ROOT,
     ArgumentError,
@@ -148,6 +149,9 @@ from sopuli.output.config_view import (
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, Summary
+from sopuli.output.finish_rollover_view import build_result as build_finish_result
+from sopuli.output.finish_rollover_view import render_finish, render_window_table
+from sopuli.output.finish_rollover_view import summarise as summarise_finish
 from sopuli.output.generate_view import FAILED, STAGED, render_generate, render_write_table
 from sopuli.output.generate_view import build_result as build_generate_result
 from sopuli.output.generate_view import summarise as summarise_generate
@@ -2422,7 +2426,9 @@ def _rollover_json(user: UserState) -> dict[str, Any]:
         # Omitted rather than null: the schema types `ends_at` as a timestamp and
         # not as a nullable one, and there is no deadline to report when no
         # window is open. `active: false` already says that.
-        found["ends_at"] = to_rfc3339(user.rollover_ends_at)
+        # Through `as_utc`: `to_rfc3339` reads a naive value as the machine's
+        # local time, and an Oracle `DATE` is naive.
+        found["ends_at"] = to_rfc3339(as_utc(user.rollover_ends_at))
     return found
 
 
@@ -2681,6 +2687,293 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         duration_ms=record.duration_ms,
         error=record.error,
     )
+
+
+@creds_group.command("finish-rollover")
+@select_option
+@click.option(
+    "--lockout-margin",
+    type=click.IntRange(0, 100),
+    default=DEFAULT_MARGIN,
+    show_default=True,
+    help="Refuse to attempt a login within this many tries of the lockout limit.",
+)
+@global_options
+def creds_finish_rollover(selectors: tuple[str, ...], lockout_margin: int, run: Invocation) -> str:
+    """End an open password rollover window early.
+
+    UC-1 section 6.3 step 4. While a window is open both the old and the new
+    password authenticate, which is what makes zero-downtime rotation real; this
+    ends it, so only the new one works from that moment. S2 runs it as a
+    follow-up job once applications have had their grace period.
+
+    **This is the one step whose purpose is to stop something working**, so most
+    of what it does is decide which accounts to leave alone.
+
+    **A staged `pending` is refused, without spending a login.** It means the
+    rotation is unfinished, so the vault's `current` is still the *old* password
+    and closing the window would strand every application that has not been given
+    the new one. Run `sopuli creds apply` first.
+
+    **An account whose vault password the database refuses keeps its window.**
+    That is drift, exit 3, and closing there would leave nothing that
+    authenticates -- neither the password applications fetch nor the one that is
+    about to stop working.
+
+    **What the login proves, and what it does not.** Under an open window a
+    *pass* says less than usual, because both passwords authenticate: it cannot
+    tell "the database has the vault's password" from "it has the previous one
+    and accepts both". A *fail* is conclusive, and that is the case worth
+    spending an attempt on. The gap is covered on the vault side by the `pending`
+    rule above, which costs nothing and catches the case a pass would have got
+    wrong.
+
+    **No lock, and no vault write.** Nothing in any store changes, so there is
+    nothing for the advisory lock to protect -- this is the second verb after
+    `creds check` that leaves every document alone.
+
+    **An account with no window open reports no change.** That is the ordinary
+    result for a scheduled job, and invariant 9: issuing the statement anyway is
+    accepted silently by Oracle and changes nothing, so a run that did would
+    report a change every night.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+    refuse_if_readonly(run.resolved, action="ending a rollover window")
+
+    match = parse_selector(selectors)
+    config = filter_estate(run.config, match)
+    document.selection = as_dict(match) or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    config = binding_stores.complete(config, env=os.environ)
+    binding_stores.refuse_unresolved(config, action="ending a rollover window")
+
+    plan = plan_builder.build(config, intent=["verify", "rollover_finish"])
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action="ending a rollover window")
+    document.plan = plan.as_json()
+
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
+    if not bindings:
+        document.finish(ExitCode.SUCCESS, Summary())
+        return render_plan(plan, noun="window") + "\n\nnothing to end"
+
+    keys = _document_keys(bindings)
+    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
+    # No lock: this verb writes to no store. The documents are read for one
+    # reason -- to know whether a `pending` is staged, and to have something to
+    # verify with -- and a read has never needed one.
+    sources = _sources(bindings, _read_documents(keys, stores))
+
+    finished = _finish_estate(sources, run, config, margin=lockout_margin, preview=run.dry_run)
+
+    document.results = [
+        build_finish_result(
+            record.binding,
+            record.outcome,
+            user=record.user,
+            changed=record.changed,
+            duration_ms=record.duration_ms,
+            error=record.error,
+        )
+        for record in finished
+    ]
+    states = [record.outcome.state for record in finished]
+    closed = sum(1 for record in finished if record.changed)
+    document.finish(check_states.exit_code_for(states), summarise_finish(states, changed=closed))
+
+    header = "\n".join(
+        [
+            render_plan(plan, noun="window"),
+            "",
+            *render_window_table(
+                [(record.binding, record.user) for record in finished if record.user is not None]
+            ),
+        ]
+    )
+    # The rows are printed under `--dry-run` too. They are not decoration there:
+    # a preview still reaches every database, so an unreachable target is a real
+    # finding that sets the exit code, and a run exiting 1 with only a plan and a
+    # window table on screen would be a non-zero exit nobody could explain. The
+    # rows are also the half a preview is *for* -- which accounts would be closed
+    # and which would be left open, per account and with the reason.
+    rows = [(record.binding, record.outcome, record.changed) for record in finished]
+    body = render_finish(
+        rows, would_close=sum(1 for one in finished if one.would_close) if run.dry_run else None
+    )
+    return f"{header}\n\n{body}"
+
+
+@dataclass(frozen=True)
+class _Finished:
+    """One (account, target) after `creds finish-rollover` has looked at it.
+
+    ``user`` is the state as it was **read**, before anything was issued, which
+    is what the window table prints. What the run left behind is derived from it
+    and ``changed`` in the view, so the two cannot disagree about one account.
+    """
+
+    binding: Binding
+    outcome: check_states.Outcome
+    changed: bool
+    user: UserState | None = None
+    #: Under ``--dry-run``, whether this account cleared every gate and would
+    #: have had its window closed. Always ``False`` on a real run, where
+    #: ``changed`` is the answer -- the two are never both meaningful, and one
+    #: field serving both would make "would have" and "did" indistinguishable in
+    #: the one place it matters.
+    would_close: bool = False
+    duration_ms: int | None = None
+    error: Error | None = None
+
+
+def _finish_estate(
+    sources: Sequence[tuple[Binding, Source | None]],
+    run: Invocation,
+    config: Config,
+    *,
+    margin: int,
+    preview: bool,
+) -> list[_Finished]:
+    """Every account, target by target, one connection each. `check`'s grouping."""
+    by_target = {expanded.name: expanded for expanded in config.expanded_targets}
+    grouped: dict[str, list[tuple[Binding, Source | None]]] = {}
+    for binding, source in sources:
+        grouped.setdefault(binding.target, []).append((binding, source))
+
+    found: list[_Finished] = []
+    for name, work in grouped.items():
+        found.extend(
+            _finish_target(by_target[name], work, run, config, margin=margin, preview=preview)
+        )
+    return found
+
+
+def _finish_target(
+    target: ExpandedTarget,
+    work: Sequence[tuple[Binding, Source | None]],
+    run: Invocation,
+    config: Config,
+    *,
+    margin: int,
+    preview: bool,
+) -> list[_Finished]:
+    """One target's worth of accounts, over one connection.
+
+    A target that cannot be reached is a finding rather than a crash -- and here
+    it is the harmless direction: a window nobody closed elapses on its own.
+    """
+    started = time.monotonic()
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            elapsed = _elapsed(started)
+            return [
+                _Finished(
+                    binding=binding,
+                    outcome=check_states.Outcome(check_states.ERROR, reported.message),
+                    changed=False,
+                    duration_ms=elapsed,
+                    error=reported,
+                )
+                for binding, _ in work
+            ]
+
+        return [
+            _finish_one(binding, session, source=source, margin=margin, preview=preview)
+            for binding, source in work
+        ]
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+def _finish_one(
+    binding: Binding,
+    session: Any,
+    *,
+    source: Source | None,
+    margin: int,
+    preview: bool,
+) -> _Finished:
+    """One account: read the window, decide, and close it or say why not.
+
+    ``attempts=1`` is the whole budget. This verb makes one login per account per
+    run and never a second -- UC-1 section 7 mitigation 1 -- and it is declared to
+    the guard before it is spent.
+
+    Under ``--dry-run`` the state is read and the login is **not** spent. The
+    plan a preview shows is which windows are open and how much is left on them,
+    and a login would be a real cost paid for a run that changes nothing.
+    """
+    started = time.monotonic()
+    try:
+        user = session.describe_user(binding.account)
+        settled = windows.settled_before_closing(user, source, session.scope())
+        if settled is not None:
+            return _Finished(
+                binding, settled, changed=False, user=user, duration_ms=_elapsed(started)
+            )
+        if user is None or source is None:
+            # Unreachable: `settled_before_closing` answers both. Restated so a
+            # fall-through cannot decide a mutation on a value nobody checked.
+            raise ValueError(f"no window to end for {binding.account!r} and no reason given")
+
+        if preview:
+            return _Finished(
+                binding,
+                check_states.Outcome(
+                    check_states.IN_SYNC,
+                    f"would end this window, {windows.remaining(user) or 'time unknown'} early",
+                ),
+                changed=False,
+                user=user,
+                would_close=True,
+                duration_ms=_elapsed(started),
+            )
+
+        verified = session.verify_password(
+            user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=1
+        )
+        refused = windows.decide(verified)
+        if refused is not None:
+            return _Finished(
+                binding, refused, changed=False, user=user, duration_ms=_elapsed(started)
+            )
+
+        result = session.finish_rollover(user.name)
+        if not result.changed:
+            # The window closed between the read and the statement -- it elapsed,
+            # or another run got there first. Not a failure and not a change:
+            # what this run wanted is true, and it is not what made it true.
+            return _Finished(
+                binding,
+                check_states.Outcome(
+                    check_states.IN_SYNC,
+                    result.detail or "no rollover window is open",
+                    verified,
+                ),
+                changed=False,
+                user=user,
+                duration_ms=_elapsed(started),
+            )
+        outcome = windows.closed(user, verified)
+    except Exception as error:  # noqa: BLE001 -- a per-account finding
+        reported = _as_error(error)
+        return _Finished(
+            binding,
+            check_states.Outcome(check_states.ERROR, reported.message),
+            changed=False,
+            duration_ms=_elapsed(started),
+            error=reported,
+        )
+
+    return _Finished(binding, outcome, changed=True, user=user, duration_ms=_elapsed(started))
 
 
 if __name__ == "__main__":  # pragma: no cover

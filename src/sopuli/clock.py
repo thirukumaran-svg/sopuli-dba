@@ -32,8 +32,34 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def as_utc(moment: datetime) -> datetime:
+    """``moment``, with a naive value read as UTC rather than as local time.
+
+    Oracle's ``DATE`` carries no zone, so ``oracledb`` hands back a naive
+    :class:`~datetime.datetime` in whatever zone the server keeps, and nothing
+    client-side can learn which. Two things then go wrong if it is left alone,
+    and only one of them is loud: subtracting it from an aware "now" raises, and
+    :func:`to_rfc3339` quietly converts it from the *machine's* local time --
+    which on a developer laptop three hours off UTC turns a deadline forty
+    minutes away into one three hours in the past.
+
+    Reading it as UTC is the proportionate answer rather than the correct one,
+    and it is proportionate because it is applied **consistently**: the same
+    value rendered into a document and subtracted for a countdown has to be the
+    same moment, or one run says two things. Q9 (#87) is why the residual error
+    is acceptable -- nothing gates on these timestamps, they are reported beside
+    the vault's own record of when it rotated.
+    """
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
 def to_rfc3339(moment: datetime) -> str:
-    """RFC 3339 with a trailing ``Z``, as the schema's timestamp type requires."""
+    """RFC 3339 with a trailing ``Z``, as the schema's timestamp type requires.
+
+    A naive ``moment`` is converted from the machine's **local** time, which is
+    almost never what a caller holding a database timestamp wants -- pass it
+    through :func:`as_utc` first.
+    """
     return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 

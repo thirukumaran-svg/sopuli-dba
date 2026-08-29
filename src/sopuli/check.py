@@ -36,8 +36,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 
+from sopuli.clock import as_utc, utc_now
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
@@ -252,12 +253,8 @@ def password_age_days(changed_at: datetime | None, *, now: datetime | None = Non
     """
     if changed_at is None:
         return None
-    moment = now if now is not None else datetime.now(UTC)
-    if changed_at.tzinfo is None:
-        changed_at = changed_at.replace(tzinfo=UTC)
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=UTC)
-    return round((moment - changed_at).total_seconds() / 86400, 1)
+    moment = as_utc(now if now is not None else utc_now())
+    return round((moment - as_utc(changed_at)).total_seconds() / 86400, 1)
 
 
 def exit_code_for(states: Sequence[str]) -> int:

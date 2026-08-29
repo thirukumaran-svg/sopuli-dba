@@ -409,13 +409,60 @@ Tool support:
   other accounts.
 - `check` reports `ROLLOVER_ACTIVE` with time remaining rather than calling it
   drift.
-- `sopuli creds finish-rollover` ends the window explicitly (#263, not yet built;
-  `--strategy direct` covers the same statement inside the run that opened the
-  window).
+- `sopuli creds finish-rollover` ends the window explicitly (#263). Same
+  statement as `--strategy direct`, and a different command because it has to
+  *find* windows nobody handed it — see below.
 - Fallback for databases without the capability: `--strategy staged`, meaning the
   tool applies and reports, and the operator owns the app-side restart. Documented
   as "brief authentication failures possible for connections established with the
   old password after the change".
+
+### `creds finish-rollover`, and what it refuses (#263)
+
+```
+sopuli creds finish-rollover [selectors] [--dry-run] [--lockout-margin N]
+```
+
+`--strategy direct` closes the window it just opened, inside the run that opened
+it. This verb finds windows nobody handed it, which makes it a different command
+with a different failure mode: **closing a window is the one step in UC-1 whose
+purpose is to stop something working**, so most of what it does is decide which
+accounts to leave alone.
+
+**It takes no lock and writes to no store.** Nothing in any vault changes, so
+there is nothing for the advisory lock to protect — and a nightly job that took
+one would block the rotation it exists to finish. It is the second verb after
+`check` that leaves every document alone.
+
+**Two gates, and only one of them costs a login** (decided in #263):
+
+- **a staged `pending`** — the rotation is unfinished, so the vault's `current`
+  is still the *old* password and closing the window would strand every
+  application that has not been given the new one. Reported as `PENDING_APPLY`
+  and refused **without an attempt**;
+- **a refused `current`** — the vault's password is rejected even with the window
+  open, so neither password in play is the one applications fetch. `DRIFT`, exit
+  3, window left open.
+
+**What the login proves, and what it does not**, is the reason those two are
+separate rather than one check. Under an open window both passwords authenticate,
+so a *pass* cannot tell "the database has the vault's password" from "it has the
+previous one and accepts both" — the same caveat `check` reports as
+`ROLLOVER_ACTIVE`. A *fail* is conclusive, and that is what the attempt is spent
+on. The case a pass would have got wrong is exactly the staged-`pending` one, and
+that is caught on the vault side for nothing.
+
+Everything else with an open window is closed. An account with **no** window open
+reports `changed: false` — invariant 9, and the ordinary result for the scheduled
+job S2 describes: measured on 26ai, issuing the statement with no window open is
+accepted silently and changes nothing, so a run that just issued it would report
+a change every night. A locked or expired account keeps its window, and so does
+one on a database with no `expire_password` capability — that is `SKIPPED` rather
+than an error, because a window nobody can close early simply elapses on its own.
+
+**`--dry-run` reads the state and spends no login.** What a preview is for here
+is *who am I about to cut off, and how early*, and a login is a real cost against
+a failed-login counter for a run that changes nothing.
 
 ### What `--strategy` actually decides (#262)
 
