@@ -55,16 +55,19 @@ import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TypeVar
 
 import click
 
+from sopuli import apply as apply_states
 from sopuli import check as check_states
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli.admin import resolve as admin_resolve
+from sopuli.apply import Source
+from sopuli.clock import utc_now
 from sopuli.config import (
     ROOT,
     ArgumentError,
@@ -112,8 +115,9 @@ from sopuli.invocation import (
 from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.lock.inspect import declared_locks, mode_of, survey
 from sopuli.lock.inspect import discover as discover_locks
-from sopuli.lock.keys import LockKey, acquisition_order, parse_lock_key
+from sopuli.lock.keys import LockKey, acquisition_order, normalise_path, parse_lock_key
 from sopuli.lock.manager import LockableStore, LockManager, describe_holder
+from sopuli.lock.record import current_holder
 from sopuli.lock.takeover import (
     Nothing,
     Outcome,
@@ -123,6 +127,9 @@ from sopuli.lock.takeover import (
     plan_break,
 )
 from sopuli.material import strip_one_newline
+from sopuli.output.apply_view import build_result as build_apply_result
+from sopuli.output.apply_view import render_apply, render_source_table
+from sopuli.output.apply_view import summarise as summarise_apply
 from sopuli.output.check_view import build_result, render_check, summarise
 from sopuli.output.config_view import (
     build_section,
@@ -1937,6 +1944,524 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
         if ref is not None and stage_layout(ref).read(existing.data, PENDING) is not None:
             found[candidate.binding.account] = int(existing.version)
     return found
+
+
+@creds_group.command("apply")
+@select_option
+@click.option(
+    "--lockout-margin",
+    type=click.IntRange(0, 100),
+    default=DEFAULT_MARGIN,
+    show_default=True,
+    help="Refuse to attempt a login within this many tries of the lockout limit.",
+)
+@global_options
+def creds_apply(selectors: tuple[str, ...], lockout_margin: int, run: Invocation) -> str:
+    """Make each database hold what the vault holds, then promote what it staged.
+
+    **The direction is always vault to database** (invariant 6). Nothing here
+    reads a password out of a database, and there is no flag that would make it.
+
+    **The database is asked before it is changed.** Invariant 9 names this the
+    convergent verb -- the one that must report `changed: false` on a re-run --
+    and with hash verification unavailable (issue #86, issue #90) the only way to
+    know whether a change is needed is a login. So every account is verified
+    first, under the same lockout mitigations `creds check` uses, and a password
+    that already works is left alone. Two logins per account per run, budgeted up
+    front rather than counted afterwards.
+
+    **A locked account is not changed at all.** The statement would succeed and
+    the verification could never pass, which would end the run holding a database
+    whose password is in no vault stage -- the state the `pending` ordering exists
+    to keep a run out of. An expired one *is* changed: setting a password clears
+    the expiry, which is UC-1 section 6.4's own reading of ORA-28001.
+
+    **The promotion is the commit, and it is per document.** The unit of work is
+    the target and the unit of the commit is the secret document: `previous` takes
+    what `current` held, `current` takes what `pending` held, and `pending` is
+    cleared -- in one compare-and-set write, under the lock this run already
+    holds, and only once **every** target for **every** account in that document
+    has confirmed. A run touching two documents may promote one and not the
+    other.
+
+    **Nothing is promoted that was not confirmed** (invariant 7). Where some
+    targets confirmed and others did not, the database is left changed where it
+    changed, `pending` stays, the run exits 4, and the accounts involved carry a
+    warning saying so -- because applications fetch `current`, and until the
+    promotion lands they are fetching a password part of the estate no longer
+    has. Re-running is the remedy and is safe.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+    refuse_if_readonly(run.resolved, action="applying a password")
+
+    match = parse_selector(selectors)
+    config = filter_estate(run.config, match)
+    document.selection = as_dict(match) or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    config = binding_stores.complete(config, env=os.environ)
+    binding_stores.refuse_unresolved(config, action="applying a password")
+
+    plan = plan_builder.build(config, intent=["verify", "password_set", "vault_promote"])
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
+    document.plan = plan.as_json()
+
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
+    if not bindings:
+        document.finish(ExitCode.SUCCESS, Summary())
+        return render_plan(plan, noun="apply") + "\n\nnothing to apply"
+
+    keys = _document_keys(bindings)
+    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
+
+    if run.dry_run:
+        # Invariant 8: print the plan, take no lock, write nothing. The documents
+        # are still *read*, because which stage an account would be applied from
+        # is the thing worth reviewing and a read needs no lock -- `check` runs
+        # its whole survey without one.
+        sources = _sources(bindings, _read_documents(keys, stores))
+        document.finish(ExitCode.SUCCESS, Summary(total=len(sources)))
+        return f"{_header(plan, sources)}\n\nnothing was applied (--dry-run)"
+
+    manager = LockManager(
+        stores={name: _lockable(name, config, stores) for name in {key.store for key in keys}},
+        correlation_id=document.correlation_id,
+        command="creds apply",
+        selection=", ".join(f"{key}={value}" for key, value in match) or None,
+    )
+
+    try:
+        with manager.holding(keys):
+            # Read under the lock, not before it. A document read first and locked
+            # afterwards is one a concurrent `creds generate` may have staged into
+            # in between -- and this run would then apply one password and promote
+            # a different one.
+            documents = _read_documents(keys, stores)
+            sources = _sources(bindings, documents)
+            applied = _apply_estate(sources, run, config, margin=lockout_margin)
+            promotions = _promote_documents(applied, documents, stores)
+    except LockDeniedError as denied:
+        document.lock = build_lock_section(manager, denied=denied)
+        raise
+
+    document.lock = build_lock_section(manager)
+    document.results = [_applied_json(record, promotions) for record in applied]
+    states = [record.outcome.state for record in applied]
+    changed = sum(1 for record in applied if record.changed)
+    document.finish(
+        apply_states.exit_code_for(
+            states,
+            # Both questions are asked of the documents that actually read a
+            # `pending`. A repair -- a document whose accounts were applied from
+            # `current` -- has nothing to promote, so counting it as unpromoted
+            # would make a mixed run look like UC-1 §8 case 7 and exit 4 with
+            # everything confirmed and nothing wrong.
+            promoted=all(one.version is not None for one in promotions.values() if one.staged),
+            staged=any(one.staged for one in promotions.values()),
+        ),
+        summarise_apply(states, changed=changed),
+    )
+    rows = [(record.binding, record.outcome, record.changed) for record in applied]
+    promoted = sum(1 for one in promotions.values() if one.version is not None)
+    return f"{_header(plan, sources)}\n\n{render_apply(rows, promoted=promoted)}"
+
+
+@dataclass(frozen=True)
+class _Applied:
+    """One (account, target) after `creds apply` has finished with it.
+
+    Held rather than reported immediately because a promotion is decided *after*
+    every target has been visited, and its version belongs on the row of every
+    account in the document it promoted. Building `results[]` as the run went
+    would mean either omitting that version or rewriting entries already emitted.
+    """
+
+    binding: Binding
+    source: Source | None
+    outcome: check_states.Outcome
+    changed: bool
+    verified_before: Any | None = None
+    version: int | None = None
+    duration_ms: int | None = None
+    error: Error | None = None
+
+
+@dataclass(frozen=True)
+class _Promotion:
+    """What happened to one document once its targets were all in.
+
+    ``version`` is ``None`` for a document that was not promoted, and ``reason``
+    says which of the two cases that is: nothing needed promoting, or something
+    did and the estate had not earned it.
+
+    ``staged`` is what keeps those two apart for the exit code. A document whose
+    accounts were applied from `current` is a repair: it has nothing to promote,
+    and its ``version: None`` must not read as a promotion this run owed and did
+    not make. Only the staged ones are asked about.
+    """
+
+    version: int | None
+    reason: str
+    staged: bool = False
+    mechanism: str | None = None
+    error: Error | None = None
+
+
+def _document_keys(bindings: Sequence[Binding]) -> list[LockKey]:
+    """Every secret document this run touches, in acquisition order.
+
+    The same key `creds generate` writes under and `lock status` prints, through
+    the same normaliser -- so a run that stages and a run that applies contend on
+    exactly the paths they share. Sorted by
+    :func:`~sopuli.lock.keys.acquisition_order`, where the ordering is a deadlock
+    property rather than a presentation one.
+    """
+    found = {
+        LockKey(store=binding.vault, path=normalise_path(binding.secret.path))
+        for binding in bindings
+        if binding.secret is not None and binding.vault is not None
+    }
+    return list(acquisition_order(found))
+
+
+def _read_documents(
+    keys: Sequence[LockKey], stores: Mapping[str, SecretStore]
+) -> dict[LockKey, Any]:
+    """Each document once, whole.
+
+    Whole rather than per ref, and once rather than per account, for two reasons
+    that both matter. A promotion needs what ``current`` held in order to write
+    it into ``previous``, so the read has to see more than the value being
+    applied; and a document shared by six accounts read six times could return
+    six different versions, which is a compare-and-set nobody could reason about.
+    """
+    return {key: stores[key.store].read(key.path) for key in keys}
+
+
+def _sources(
+    bindings: Sequence[Binding], documents: Mapping[LockKey, Any]
+) -> list[tuple[Binding, Source | None]]:
+    """What each account would be applied from, in binding order.
+
+    ``None`` where the vault holds neither stage. Kept in the list rather than
+    filtered out, because an account the config declares and the vault has
+    nothing for is a finding this command must report -- dropping it here would
+    make it disappear from a run that was explicitly asked about it.
+    """
+    found = []
+    for binding in bindings:
+        stored = _stored_document(binding, documents)
+        source = (
+            None
+            if binding.secret is None or stored is None
+            else apply_states.source_for(stored.data, binding.secret)
+        )
+        found.append((binding, source))
+    return found
+
+
+def _stored_document(binding: Binding, documents: Mapping[LockKey, Any]) -> Any:
+    if binding.secret is None or binding.vault is None:
+        return None
+    return documents.get(LockKey(store=binding.vault, path=normalise_path(binding.secret.path)))
+
+
+def _header(plan: Any, sources: Sequence[tuple[Binding, Source | None]]) -> str:
+    """The plan, and what would be applied from where."""
+    rows = [(binding, source) for binding, source in sources if source is not None]
+    if not rows:
+        return render_plan(plan, noun="apply")
+    return "\n".join([render_plan(plan, noun="apply"), "", *render_source_table(rows)])
+
+
+def _apply_estate(
+    sources: Sequence[tuple[Binding, Source | None]],
+    run: Invocation,
+    config: Config,
+    *,
+    margin: int,
+) -> list[_Applied]:
+    """Every account, target by target, one connection each.
+
+    Grouped the way `check` groups and for the same reason: a target with six
+    accounts in it is one login for this tool rather than six, and six would be
+    six entries in that database's audit trail for one rotation.
+    """
+    by_target = {expanded.name: expanded for expanded in config.expanded_targets}
+    grouped: dict[str, list[tuple[Binding, Source | None]]] = {}
+    for binding, source in sources:
+        grouped.setdefault(binding.target, []).append((binding, source))
+
+    applied: list[_Applied] = []
+    for name, work in grouped.items():
+        applied.extend(_apply_target(by_target[name], work, run, config, margin=margin))
+    return applied
+
+
+def _apply_target(
+    target: ExpandedTarget,
+    work: Sequence[tuple[Binding, Source | None]],
+    run: Invocation,
+    config: Config,
+    *,
+    margin: int,
+) -> list[_Applied]:
+    """One target's worth of accounts, over one connection.
+
+    A target that cannot be reached is a finding rather than a crash, which is
+    `check`'s rule and `doctor`'s -- but it means something stronger here: the
+    accounts bound to it are `ERROR`, so the documents they belong to are not
+    promoted, so a database that could not be reached cannot cause a password it
+    does not have to be advertised to applications.
+    """
+    started = time.monotonic()
+    session = None
+    try:
+        try:
+            module = resolve_driver(target.target)
+            credential = admin_resolve(target, env=os.environ)
+            driver = module.OracleDriver(
+                env=os.environ,
+                correlation_id=run.document.correlation_id,
+                timeouts=_timeouts(run),
+                client_lib_dir=config.runtime.oracle.client_lib_dir,
+            )
+            session = driver.connect(target, credential.credential)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            elapsed = _elapsed(started)
+            return [
+                _Applied(
+                    binding=binding,
+                    source=source,
+                    outcome=check_states.Outcome(check_states.ERROR, reported.message),
+                    changed=False,
+                    duration_ms=elapsed,
+                    error=reported,
+                )
+                for binding, source in work
+            ]
+
+        return [
+            _apply_one(binding, session, source=source, margin=margin) for binding, source in work
+        ]
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+def _apply_one(binding: Binding, session: Any, *, source: Source | None, margin: int) -> _Applied:
+    """One account in one target: ask, change if needed, ask again.
+
+    UC-1 §5's flow with its two verifications, and the budget declared once:
+    ``attempts=2`` says how many logins this run intends against this account, so
+    the lockout guard reserves both before spending the first. Asking for one and
+    then asking again would let a run spend two attempts on a counter the guard
+    was protecting from spending two.
+    """
+    started = time.monotonic()
+    before = None
+    try:
+        user = session.describe_user(binding.account)
+        settled = apply_states.settled_before_acting(user, source)
+        if settled is not None:
+            return _Applied(binding, source, settled, changed=False, duration_ms=_elapsed(started))
+        if user is None or source is None:
+            # Unreachable: `settled_before_acting` returns an outcome for both.
+            # Restated rather than assumed, because a fall-through here would
+            # decide a mutation on a value nobody checked.
+            raise ValueError(f"nothing to apply for {binding.account!r} and no reason given")
+
+        before = session.verify_password(
+            user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
+        )
+        done = apply_states.already_applied(user, before, source=source)
+        if done is not None:
+            return _Applied(
+                binding,
+                source,
+                done,
+                changed=False,
+                verified_before=before,
+                duration_ms=_elapsed(started),
+            )
+
+        session.set_password(user.name, source.value)
+        # Re-read the account rather than reusing what was read before the change:
+        # `EXPIRED` clears when a password is set, and a lock may have arrived in
+        # between. The state reported has to be the one that is true now.
+        after_user = session.describe_user(binding.account) or user
+        after = session.verify_password(
+            after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
+        )
+        outcome = apply_states.after_change(after_user, after)
+    except Exception as error:  # noqa: BLE001 -- a per-account finding
+        reported = _as_error(error)
+        return _Applied(
+            binding,
+            source,
+            check_states.Outcome(check_states.ERROR, reported.message),
+            changed=False,
+            verified_before=before,
+            duration_ms=_elapsed(started),
+            error=reported,
+        )
+
+    return _Applied(
+        binding,
+        source,
+        outcome,
+        changed=True,
+        verified_before=before,
+        duration_ms=_elapsed(started),
+    )
+
+
+def _promote_documents(
+    applied: Sequence[_Applied],
+    documents: Mapping[LockKey, Any],
+    stores: Mapping[str, SecretStore],
+) -> dict[LockKey, _Promotion]:
+    """Promote every document whose targets all confirmed, and only those.
+
+    Invariant 7's ordering, and the one place in this command where the two
+    groupings meet: results arrive per (account, target) and the commit is per
+    document, so the gate is *every pair belonging to the accounts in this
+    document*.
+
+    A document nobody staged into is not promoted and is not a failure -- a run
+    that read `current` is a repair, and the vault already holds what it should.
+    """
+    promotions: dict[LockKey, _Promotion] = {}
+    for key, records in _by_document(applied).items():
+        staged = [
+            record
+            for record in records
+            if record.source is not None and record.source.stage == PENDING
+        ]
+        if not staged:
+            promotions[key] = _Promotion(None, "nothing was staged for this document")
+            continue
+        if not apply_states.summarise_document(record.outcome.state for record in records):
+            promotions[key] = _Promotion(
+                None, "not every target confirmed, so `pending` was left in place", staged=True
+            )
+            continue
+        promotions[key] = _write_promotion(key, staged, documents[key], stores[key.store])
+    return promotions
+
+
+def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
+    """Results grouped by the document their account's credential lives in."""
+    grouped: dict[LockKey, list[_Applied]] = {}
+    for record in applied:
+        binding = record.binding
+        if binding.secret is None or binding.vault is None:
+            continue
+        key = LockKey(store=binding.vault, path=normalise_path(binding.secret.path))
+        grouped.setdefault(key, []).append(record)
+    return grouped
+
+
+def _write_promotion(
+    key: LockKey, staged: Sequence[_Applied], stored: Any, store: SecretStore
+) -> _Promotion:
+    """The one compare-and-set that makes a rotation visible to applications.
+
+    ``cas`` is the version read at the start of this run, under the lock this run
+    holds. A conflict therefore means a writer outside this tool, and it is never
+    retried: re-reading to merge over them would rewrite fields belonging to
+    accounts nobody selected.
+
+    One account may be bound to several targets and so appear several times; the
+    promotion is per account, so they are collapsed here rather than written
+    once per target.
+    """
+    entries = []
+    for record in _one_per_account(staged):
+        source = record.source
+        if source is None:  # pragma: no cover - `staged` is filtered on it
+            continue
+        entries.append(
+            apply_states.Promotable(
+                binding=record.binding,
+                value=source.value,
+                replaces=source.replaces,
+                policy=record.binding.policy,
+                targets=tuple(
+                    one.binding.target
+                    for one in staged
+                    if one.binding.account == record.binding.account
+                ),
+            )
+        )
+    patch = apply_states.promotion_patch(entries, at=utc_now(), by=_rotated_by())
+    try:
+        written = write_credential(store, key.path, patch, cas=_version_of(stored))
+    except Exception as error:  # noqa: BLE001 -- a per-document finding
+        reported = _as_error(error)
+        return _Promotion(None, reported.message, staged=True, error=reported)
+    return _Promotion(
+        written.version,
+        f"promoted to v{written.version}",
+        staged=True,
+        mechanism=written.mechanism,
+    )
+
+
+def _one_per_account(records: Sequence[_Applied]) -> list[_Applied]:
+    """The first record for each account, in the order they were applied."""
+    seen: dict[str, _Applied] = {}
+    for record in records:
+        seen.setdefault(record.binding.account, record)
+    return list(seen.values())
+
+
+def _version_of(stored: Any) -> int:
+    """The document's version, or ``0`` for one that does not exist yet.
+
+    Zero is not a version but an assertion that there is nothing at the path,
+    which is `creds generate`'s own reading of it -- and here it should never
+    fire, because a promotion follows something having been staged.
+    """
+    return 0 if stored is None else int(stored.version)
+
+
+def _rotated_by() -> str:
+    """UC-1 §3's `rotated_by` stamp: who ran this.
+
+    The same identity the advisory lock records about its holder
+    (:func:`sopuli.lock.record.current_holder`), rather than a second notion of
+    who is running -- a document saying one thing and the lock beside it saying
+    another would be two answers to the question an audit asks first.
+    """
+    holder = current_holder()
+    return f"{holder.os_user}@{holder.host}"
+
+
+def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) -> dict[str, Any]:
+    """One `results[]` entry, once the promotion for its document is known."""
+    binding = record.binding
+    promotion = None
+    if binding.secret is not None and binding.vault is not None:
+        promotion = promotions.get(
+            LockKey(store=binding.vault, path=normalise_path(binding.secret.path))
+        )
+    return build_apply_result(
+        binding,
+        record.outcome,
+        source=record.source,
+        version=record.version,
+        changed=record.changed,
+        verified_before=record.verified_before,
+        promoted_to=None if promotion is None else promotion.version,
+        mechanism=None if promotion is None else promotion.mechanism,
+        duration_ms=record.duration_ms,
+        error=record.error,
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

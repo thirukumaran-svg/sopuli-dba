@@ -285,6 +285,45 @@ policy, each opt-in: profile assignment, account unlock, `PASSWORD_EXPIRE`
 handling, default/temporary tablespace. Each is reported as a separate change so
 the diff stays readable.
 
+### What shipped in #259, and what the flags above still describe
+
+The spine is implemented: read the source, set the password, verify, promote per
+document. Four things in the sketch above are **not** in this build, each with an
+issue of its own — `--strategy` and `finish-rollover`, `--repair`, `--source`
+(and with it §8's rollback), and `--continue-on-error`. The build is fail-fast,
+which is §5's own default, and the strategy is reported rather than chosen: where
+`PASSWORD_ROLLOVER` exists and the profile has a non-zero window, both passwords
+authenticate and the run says so; otherwise the change is immediate and the run
+says that. The tool never issues `ALTER PROFILE` to enable a window — that is Q4
+(#88), open.
+
+Three decisions inside the spine are worth stating here, because none of them is
+readable off the flag list:
+
+- **The database is asked before it is changed.** Invariant 9 names `apply` as
+  the convergent verb, and with `--method hash` unavailable (#86, #90) a login is
+  the only way to know whether a change is needed. So each account is verified
+  first, under §7's mitigations and with both logins budgeted as one run's worth
+  of attempts, and a password that already works is left alone. A `pass` under an
+  open rollover window is still a reason not to act: re-applying would restart the
+  window and report a change nobody asked for.
+- **A locked account is not changed at all.** The statement would succeed and the
+  verification could never pass, which ends the run holding a database whose
+  password is in no vault stage — the state §3's ordering exists to prevent. An
+  *expired* one is changed, per §6.4: setting a password clears the expiry.
+- **An empty vault is a failure, not a quiet no-op.** Where neither stage holds
+  anything for a declared account, the run reports `ERROR` naming
+  `creds generate` rather than exiting 0 having converged nothing. `check` calls
+  the same situation `UNVERIFIABLE` because its survey merely has a gap in it;
+  `apply` cannot do the thing it was run to do.
+
+**A server that refuses the password is reported, never worked around.** §6.4
+says regenerate on ORA-28003 and ORA-28007, and this build does not: the value
+came from the vault's `pending`, which `generate` wrote and something may already
+be holding, so drawing a different one here would make the vault and the database
+disagree with what the operator staged. Regeneration inside `apply` is a design
+question and is filed rather than guessed at.
+
 ---
 
 ## 6. Oracle specifics

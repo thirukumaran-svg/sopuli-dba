@@ -896,6 +896,31 @@ An idempotent re-run of `apply` reports `state: IN_SYNC, changed: false`. A
 monitoring system watches `state`; a change-management system watches `changed`.
 Collapsing them into one field breaks one of the two consumers.
 
+`creds apply` is where the two visibly come apart (#259). It reaches `IN_SYNC`
+two ways — by changing the password, and by finding the database already had it
+— and the second is invariant 9's requirement on this verb. `summary.ok` and
+`summary.changed` differ for the same reason, and `summary.unchanged` is the
+complement of `changed` rather than of `ok`: it answers *how much did this run
+leave alone*.
+
+**`actions[]` carries the sequence, not just the outcome.** UC-1 §5 is a flow,
+and an `apply` entry holds up to four steps in the order they ran — the
+pre-flight `verify`, the `password_set`, the `verify` that confirmed it, and the
+`vault_promote`. `applied` on each is whether the step *ran*, never whether it
+succeeded, so a `verify` with `applied: false` is a login the lockout guard
+declined and a `password_set` with `applied: false` is a password that was
+already right. A single action per result would make "we did not need to change
+it" and "we changed it and could not confirm it" the same row.
+
+**A promotion is reported on every account in the document it promoted**, with
+the version it produced, because they shared one compare-and-set. Where the
+database was changed and the document was *not* promoted, every account involved
+carries a `warning` saying so: applications read `current`, and until the
+promotion lands they are reading a password part of the estate no longer has.
+That is UC-1 §8's highest-severity row, and it is a per-result warning rather
+than a run-level diagnostic so that it survives whatever a consumer filters
+`results[]` down to.
+
 ---
 
 ## 3. Enumerations
