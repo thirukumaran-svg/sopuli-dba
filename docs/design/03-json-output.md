@@ -912,6 +912,14 @@ declined and a `password_set` with `applied: false` is a password that was
 already right. A single action per result would make "we did not need to change
 it" and "we changed it and could not confirm it" the same row.
 
+**`results[].rollover` is emitted for every account `apply` acted on** (#262),
+not only for the ones with an open window. `active: false` beside a
+`profile_rollover_time` of `"1"` is a different fact from `active: false` beside
+a `null`: the first says a window opened and was closed inside the run
+(`--strategy direct`), the second says none was ever possible. Together with the
+`rollover_finish` action they make the regime each account ran under recoverable
+from the document, which is why `--strategy` needed no new field.
+
 **A promotion is reported on every account in the document it promoted**, with
 the version it produced, because they shared one compare-and-set. Where the
 database was changed and the document was *not* promoted, every account involved

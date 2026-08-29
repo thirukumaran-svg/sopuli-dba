@@ -58,7 +58,7 @@ from datetime import datetime
 from typing import Any
 
 from sopuli.driver.oracle.capabilities import Cursor, read
-from sopuli.driver.oracle.rollover import window_end
+from sopuli.driver.oracle.rollover import is_enabled, window_end
 from sopuli.driver.protocol import DriverError, UserState
 
 #: The account, as the database spells it. ``PASSWORD_CHANGE_DATE`` is selected
@@ -234,6 +234,10 @@ def login_state(cursor: Cursor, account: str) -> UserState | None:
         password_reuse_max=limits.get(PASSWORD_REUSE_MAX),
         password_reuse_time=limits.get(PASSWORD_REUSE_TIME),
         rollover_active=IN_ROLLOVER in status,
+        # Whether the profile grants a window at all, as opposed to whether one
+        # is open. Parsed here because `rollover_time` is Oracle's own spelling
+        # and `sopuli.strategy` (#262), which reads this, is above the driver.
+        rollover_enabled=is_enabled(limits.get(PASSWORD_ROLLOVER_TIME)),
         # **Derived, and only while a window is open** (#181). #178 left this
         # null on the grounds that computing it would present an inference as a
         # reading, which was the right instinct and the wrong call: no

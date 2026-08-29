@@ -238,6 +238,12 @@ class _Session:
     ) -> VerifyResult:
         return VerifyResult(method=method, result=protocol.PASS)
 
+    def require_rollover(self, account: str) -> None:
+        return None
+
+    def finish_rollover(self, account: str) -> ChangeResult:
+        return ChangeResult(changed=False, detail="no rollover window is open")
+
     def close(self) -> None:
         return None
 

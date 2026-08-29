@@ -65,9 +65,10 @@ from sopuli import apply as apply_states
 from sopuli import check as check_states
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
+from sopuli import strategy as strategies
 from sopuli.admin import resolve as admin_resolve
 from sopuli.apply import Source
-from sopuli.clock import utc_now
+from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config import (
     ROOT,
     ArgumentError,
@@ -98,7 +99,14 @@ from sopuli.driver.oracle.client import (
 )
 from sopuli.driver.oracle.verification import DEFAULT_MARGIN
 from sopuli.driver.oracle.wallet import survey as wallet_survey
-from sopuli.driver.protocol import FAIL, PASS, VERIFY_LOGIN, UserState
+from sopuli.driver.protocol import (
+    FAIL,
+    PASS,
+    VERIFY_LOGIN,
+    DriverError,
+    UnsupportedCapabilityError,
+    UserState,
+)
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import resolve as resolve_driver
 from sopuli.exit_codes import ExitCode
@@ -170,6 +178,7 @@ from sopuli.store.credentials import StoredSecret, read_secret
 from sopuli.store.credentials import apply_patch as write_credential
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
+from sopuli.strategy import STRATEGIES
 from sopuli.version import get_version
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -615,15 +624,7 @@ def _examine(
     try:
         # Getting in, which is what `reachable` reports.
         try:
-            module = resolve_driver(target.target)
-            credential = admin_resolve(target, env=os.environ)
-            driver = module.OracleDriver(
-                env=os.environ,
-                correlation_id=run.document.correlation_id,
-                timeouts=_timeouts(run),
-                client_lib_dir=config.runtime.oracle.client_lib_dir,
-            )
-            session = driver.connect(target, credential.credential)
+            session = _open_session(target, run, config)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return build_target(
                 target,
@@ -1283,9 +1284,22 @@ def main() -> None:
         # say, and generic failure is what that is.
         click.echo(f"sopuli: {exc}", err=True)
         raise SystemExit(ExitCode.FAILURE) from exc
+    except DriverError as exc:
+        # A driver carries its own exit code and category, the way a store does
+        # (#138) -- and here it is load-bearing rather than tidy:
+        # `UnsupportedCapabilityError` is exit 5, and invariant 4 makes that a
+        # promise. Without this arm the catch-all below would report it as
+        # generic failure, and a command refusing a capability at plan time
+        # would be indistinguishable from one that broke.
+        #
+        # `__str__` already renders the hint, so there is nothing to add here.
+        click.echo(f"sopuli: {exc}", err=True)
+        raise SystemExit(exc.exit_code) from exc
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all at the boundary
-        # TODO(#4 follow-up): map driver errors to their categories here,
-        # carrying the vendor code and a hint (see CLAUDE.md, Style).
+        # TODO(#4 follow-up): map the driver errors that arrive *inside* a
+        # per-account finding to their categories, carrying the vendor code and
+        # a hint (see CLAUDE.md, Style). Ones that escape a command whole are
+        # handled above.
         click.echo(f"sopuli: {type(exc).__name__}: {exc}", err=True)
         raise SystemExit(ExitCode.FAILURE) from exc
 
@@ -1949,6 +1963,16 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
 @creds_group.command("apply")
 @select_option
 @click.option(
+    "--strategy",
+    type=click.Choice(STRATEGIES),
+    default=None,
+    help=(
+        "Rollover regime. Default: rollover where the database and the account's "
+        "profile allow it, staged otherwise. An explicit one the estate cannot "
+        "honour is refused before anything is changed."
+    ),
+)
+@click.option(
     "--lockout-margin",
     type=click.IntRange(0, 100),
     default=DEFAULT_MARGIN,
@@ -1956,7 +1980,9 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     help="Refuse to attempt a login within this many tries of the lockout limit.",
 )
 @global_options
-def creds_apply(selectors: tuple[str, ...], lockout_margin: int, run: Invocation) -> str:
+def creds_apply(
+    selectors: tuple[str, ...], strategy: str | None, lockout_margin: int, run: Invocation
+) -> str:
     """Make each database hold what the vault holds, then promote what it staged.
 
     **The direction is always vault to database** (invariant 6). Nothing here
@@ -1983,6 +2009,15 @@ def creds_apply(selectors: tuple[str, ...], lockout_margin: int, run: Invocation
     holds, and only once **every** target for **every** account in that document
     has confirmed. A run touching two documents may promote one and not the
     other.
+
+    **The rollover regime is chosen per account, and refused as a whole.** Where
+    the database has gradual password rollover and the account's profile grants a
+    window, that is the default -- both passwords authenticate until the window
+    closes, so a partial apply causes no outage. `--strategy` names one instead,
+    and an explicit one the estate cannot honour is refused before anything is
+    changed rather than discovered halfway through. `--strategy staged` against a
+    profile that grants a window is one of those refusals: Oracle opens the window
+    because the profile says so, whatever this run asked for.
 
     **Nothing is promoted that was not confirmed** (invariant 7). Where some
     targets confirmed and others did not, the database is left changed where it
@@ -2040,7 +2075,8 @@ def creds_apply(selectors: tuple[str, ...], lockout_margin: int, run: Invocation
             # a different one.
             documents = _read_documents(keys, stores)
             sources = _sources(bindings, documents)
-            applied = _apply_estate(sources, run, config, margin=lockout_margin)
+            _refuse_unhonourable_strategy(sources, run, config, strategy=strategy)
+            applied = _apply_estate(sources, run, config, margin=lockout_margin, strategy=strategy)
             promotions = _promote_documents(applied, documents, stores)
     except LockDeniedError as denied:
         document.lock = build_lock_section(manager, denied=denied)
@@ -2084,6 +2120,7 @@ class _Applied:
     changed: bool
     verified_before: Any | None = None
     version: int | None = None
+    rollover: dict[str, Any] | None = None
     duration_ms: int | None = None
     error: Error | None = None
 
@@ -2182,6 +2219,7 @@ def _apply_estate(
     config: Config,
     *,
     margin: int,
+    strategy: str | None,
 ) -> list[_Applied]:
     """Every account, target by target, one connection each.
 
@@ -2196,7 +2234,9 @@ def _apply_estate(
 
     applied: list[_Applied] = []
     for name, work in grouped.items():
-        applied.extend(_apply_target(by_target[name], work, run, config, margin=margin))
+        applied.extend(
+            _apply_target(by_target[name], work, run, config, margin=margin, strategy=strategy)
+        )
     return applied
 
 
@@ -2207,6 +2247,7 @@ def _apply_target(
     config: Config,
     *,
     margin: int,
+    strategy: str | None,
 ) -> list[_Applied]:
     """One target's worth of accounts, over one connection.
 
@@ -2245,7 +2286,8 @@ def _apply_target(
             ]
 
         return [
-            _apply_one(binding, session, source=source, margin=margin) for binding, source in work
+            _apply_one(binding, session, source=source, margin=margin, strategy=strategy)
+            for binding, source in work
         ]
     finally:
         if session is not None:
@@ -2253,7 +2295,14 @@ def _apply_target(
                 session.close()
 
 
-def _apply_one(binding: Binding, session: Any, *, source: Source | None, margin: int) -> _Applied:
+def _apply_one(
+    binding: Binding,
+    session: Any,
+    *,
+    source: Source | None,
+    margin: int,
+    strategy: str | None,
+) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
 
     UC-1 §5's flow with its two verifications, and the budget declared once:
@@ -2261,6 +2310,12 @@ def _apply_one(binding: Binding, session: Any, *, source: Source | None, margin:
     the lockout guard reserves both before spending the first. Asking for one and
     then asking again would let a run spend two attempts on a counter the guard
     was protecting from spending two.
+
+    ``strategy`` is ``None`` for the default, which is resolved **per account**:
+    two accounts in one database can sit on different profiles, and only one of
+    them may grant a rollover window. An explicit one has already been refused
+    where it could not run (:func:`_refuse_unhonourable_strategy`), so by here it
+    is a regime this account can honour.
     """
     started = time.monotonic()
     before = None
@@ -2275,6 +2330,7 @@ def _apply_one(binding: Binding, session: Any, *, source: Source | None, margin:
             # decide a mutation on a value nobody checked.
             raise ValueError(f"nothing to apply for {binding.account!r} and no reason given")
 
+        regime = strategy or strategies.default_for(session.scope(), user)
         before = session.verify_password(
             user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
         )
@@ -2286,18 +2342,31 @@ def _apply_one(binding: Binding, session: Any, *, source: Source | None, margin:
                 done,
                 changed=False,
                 verified_before=before,
+                rollover=_rollover_json(user),
                 duration_ms=_elapsed(started),
             )
 
         session.set_password(user.name, source.value)
         # Re-read the account rather than reusing what was read before the change:
-        # `EXPIRED` clears when a password is set, and a lock may have arrived in
-        # between. The state reported has to be the one that is true now.
+        # `EXPIRED` clears when a password is set, a rollover window opens, and a
+        # lock may have arrived in between. The state reported has to be the one
+        # that is true now.
         after_user = session.describe_user(binding.account) or user
         after = session.verify_password(
             after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
         )
         outcome = apply_states.after_change(after_user, after)
+
+        if strategies.closes_window(regime, after_user) and apply_states.is_confirmed(
+            outcome.state
+        ):
+            # `--strategy direct`, and only now. Closing the window before the
+            # change was confirmed would leave an account whose old password has
+            # stopped working and whose new one is not known to work -- the one
+            # state worse than the grace period `direct` exists to avoid.
+            session.finish_rollover(after_user.name)
+            after_user = session.describe_user(binding.account) or after_user
+            outcome = apply_states.after_change(after_user, after)
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _as_error(error)
         return _Applied(
@@ -2313,11 +2382,160 @@ def _apply_one(binding: Binding, session: Any, *, source: Source | None, margin:
     return _Applied(
         binding,
         source,
-        outcome,
+        _with_regime(outcome, regime, after_user),
         changed=True,
         verified_before=before,
+        rollover=_rollover_json(after_user),
         duration_ms=_elapsed(started),
     )
+
+
+def _with_regime(
+    outcome: check_states.Outcome, regime: str, user: UserState
+) -> check_states.Outcome:
+    """The outcome, plus what the regime did that it does not already say.
+
+    Only `direct` adds anything: `rollover` reaches `ROLLOVER_ACTIVE`, whose own
+    sentence says the previous password still authenticates, and `staged` is an
+    ordinary password change. Appending a clause for all three would put the same
+    fact in the row twice for two of them.
+    """
+    extra = strategies.extra_detail(regime, user)
+    if extra is None:
+        return outcome
+    return check_states.Outcome(outcome.state, f"{outcome.detail}; {extra}", outcome.verification)
+
+
+def _rollover_json(user: UserState) -> dict[str, Any]:
+    """``results[].rollover``: the window, and the profile that decides it.
+
+    Emitted for every account this run acted on rather than only for the ones
+    with an open window, because the *absence* of one is the answer to "did the
+    old password stop working just now" -- and ``profile_rollover_time`` beside
+    it says whether that was the regime asked for or the only one available.
+    """
+    found: dict[str, Any] = {
+        "active": bool(user.rollover_active),
+        "profile_rollover_time": user.rollover_time,
+    }
+    if user.rollover_ends_at is not None:
+        # Omitted rather than null: the schema types `ends_at` as a timestamp and
+        # not as a nullable one, and there is no deadline to report when no
+        # window is open. `active: false` already says that.
+        found["ends_at"] = to_rfc3339(user.rollover_ends_at)
+    return found
+
+
+def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> Any:
+    """One connection to one target, with the admin credential P2 resolves.
+
+    Extracted because two passes need it: the pre-flight that refuses a strategy
+    the estate cannot honour, and the run that applies. Identical in both, which
+    is the point -- a pre-flight that connected differently would be clearing a
+    different thing from the one that runs.
+    """
+    module = resolve_driver(target.target)
+    credential = admin_resolve(target, env=os.environ)
+    driver = module.OracleDriver(
+        env=os.environ,
+        correlation_id=run.document.correlation_id,
+        timeouts=_timeouts(run),
+        client_lib_dir=config.runtime.oracle.client_lib_dir,
+    )
+    return driver.connect(target, credential.credential)
+
+
+def _refuse_unhonourable_strategy(
+    sources: Sequence[tuple[Binding, Source | None]],
+    run: Invocation,
+    config: Config,
+    *,
+    strategy: str | None,
+) -> None:
+    """Refuse an explicitly requested strategy the estate cannot honour (#262).
+
+    **Nothing has been mutated when this raises**, which is what invariant 4 asks
+    for and what costs a second connection per target. The cost is opt-in: with no
+    ``--strategy`` there is nothing to refuse, because the regime is then chosen
+    per account from what that account can actually do, so this returns
+    immediately and the run pays nothing.
+
+    That trade is the whole design. An operator who names a regime is asking for
+    a property of the *estate* -- "no application will see a failed login
+    tonight" -- and a run that honoured it on four PDBs and discovered on the
+    fifth that it could not would already have broken the promise. One extra
+    connection per target buys the promise being kept or refused, never
+    half-kept.
+
+    **A target that cannot be reached is skipped rather than refused.** It is a
+    finding the run itself reports, per account and with the vendor code, and
+    turning it into a plan-time refusal here would make an unreachable database
+    look like a strategy problem.
+    """
+    if strategy is None:
+        return
+
+    by_target = {expanded.name: expanded for expanded in config.expanded_targets}
+    grouped: dict[str, list[Binding]] = {}
+    for binding, source in sources:
+        if source is not None:
+            grouped.setdefault(binding.target, []).append(binding)
+
+    for name, bindings in grouped.items():
+        try:
+            session = _open_session(by_target[name], run, config)
+        except Exception:  # noqa: BLE001 -- the run reports this per account
+            continue
+        try:
+            _check_strategy(session, bindings, strategy=strategy, target=name)
+        finally:
+            with suppress(Exception):
+                session.close()
+
+
+def _check_strategy(
+    session: Any, bindings: Sequence[Binding], *, strategy: str, target: str
+) -> None:
+    """Every account in one target, against one requested regime.
+
+    Rollover goes through the driver's own ``require_rollover``, which owns both
+    of its refusals and carries the exact ``ALTER PROFILE`` for the second
+    (#181). The other two are :mod:`sopuli.strategy`'s, because they are about
+    the regime the operator asked for rather than about anything the driver
+    knows.
+
+    An account the database does not have is skipped, for **every** regime:
+    ``ACCOUNT_MISSING`` is a state the run reports per account, and refusing the
+    whole estate over one would turn a per-account finding into a plan-time
+    failure. The check is here rather than inside each branch because
+    ``require_rollover`` raises for a missing account too -- it has no way to
+    know this caller would rather skip it -- so a rollover pre-flight that asked
+    it first would refuse an estate over an account the run was going to report
+    on anyway.
+
+    That means the rollover branch reads the account twice, once here and once
+    inside ``require_rollover``. Deliberate: the driver owns that refusal
+    (#181) and reads what it needs for it, and one extra query on a pre-flight
+    that only runs under an explicit ``--strategy`` is a cheaper thing to spend
+    than a second copy of the refusal.
+    """
+    for binding in bindings:
+        user = session.describe_user(binding.account)
+        if user is None:
+            continue
+        if strategy == strategies.ROLLOVER:
+            session.require_rollover(binding.account)
+            continue
+        refusal = strategies.unhonourable(strategy, session.scope(), user)
+        if refusal is None:
+            continue
+        if refusal.capability is not None:
+            raise UnsupportedCapabilityError(refusal.capability, target=target, hint=refusal.hint)
+        raise DriverError(
+            f"--strategy {strategy} cannot run for {binding.account!r} in {target!r}: "
+            f"{refusal.message}",
+            hint=refusal.hint,
+        )
 
 
 def _promote_documents(
@@ -2457,6 +2675,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         version=record.version,
         changed=record.changed,
         verified_before=record.verified_before,
+        rollover=record.rollover,
         promoted_to=None if promotion is None else promotion.version,
         mechanism=None if promotion is None else promotion.mechanism,
         duration_ms=record.duration_ms,

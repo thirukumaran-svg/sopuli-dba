@@ -462,6 +462,15 @@ class UserState:
     failed_logins: int | None = None
     rollover_active: bool | None = None
     rollover_ends_at: datetime | None = None
+    #: Whether the account's **profile** grants a rollover window at all, which
+    #: is a different question from :attr:`rollover_active` -- that is whether one
+    #: is open *now*. Read by :mod:`sopuli.strategy` (#262) to decide which regime
+    #: a change will run under, and computed here rather than there because
+    #: ``rollover_time`` is a string in whatever the database spells and parsing
+    #: it is vendor work. ``None`` where nothing was read -- which
+    #: :func:`sopuli.strategy.opens_window` takes as *no*, the direction that
+    #: cannot surprise anybody.
+    rollover_enabled: bool | None = None
     vendor_maintained: bool | None = None
     password_file_member: bool | None = None
     #: Roles held, upper-cased. Read by guardrail 4, which refuses an account
@@ -587,6 +596,44 @@ class Session(Protocol):
         **One attempt, and no retry** (UC-1 §7 mitigation 1). This signature
         takes one secret and returns one result for that reason: there is no
         shape here for a back-off loop to hide in.
+        """
+        ...
+
+    def require_rollover(self, account: str) -> None:
+        """Refuse ``--strategy rollover`` for ``account`` here, or say nothing.
+
+        Two conditions, failing differently, which is why this is one call rather
+        than a capability check somebody has to remember to pair with a profile
+        read (#181):
+
+        * **the release has no such feature** --
+          :class:`UnsupportedCapabilityError`, exit 5, naming the capability and
+          the target (invariant 4);
+        * **the account's profile grants no window** -- a
+          :class:`DriverError` whose hint carries the exact ``ALTER PROFILE`` an
+          operator would run. The tool never issues it: profiles are shared, so
+          changing one affects accounts nobody selected, and Q4 (#88) is open with
+          a documented leaning of no.
+
+        On the protocol as of #262, which is when it acquired a caller.
+        :mod:`sopuli.strategy` deliberately does not restate either refusal -- the
+        second is that product's SQL, and a hint is a thing operators paste into a
+        terminal.
+        """
+        ...
+
+    def finish_rollover(self, account: str) -> ChangeResult:
+        """End ``account``'s open rollover window now, or report there was none.
+
+        ``changed: false`` where no window is open, which is invariant 9 and not
+        caution: measured on 26ai, issuing the statement with no window open is
+        accepted silently and changes nothing, so a driver that just issued it
+        would report a change for every run that did nothing.
+
+        Called by ``creds apply --strategy direct`` **after** the change has been
+        verified. Closing a window on a change nobody confirmed would leave an
+        account whose old password has stopped working and whose new one is not
+        known to work.
         """
         ...
 

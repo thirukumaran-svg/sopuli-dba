@@ -53,6 +53,7 @@ def build_result(
     version: int | None = None,
     changed: bool,
     verified_before: VerifyResult | None = None,
+    rollover: dict[str, Any] | None = None,
     promoted_to: int | None = None,
     mechanism: str | None = None,
     duration_ms: int | None = None,
@@ -90,7 +91,23 @@ def build_result(
     )
     if outcome.verification is not None:
         entry["verification"] = _verification(outcome.verification)
-    if outcome.state == ROLLOVER_ACTIVE:
+    if rollover is not None:
+        # Emitted for every account whose password this run *looked at* on the
+        # database -- not only the ones with an open window. The absence of a
+        # window is the answer to "did the old password stop working just now",
+        # and `profile_rollover_time` beside it says whether that was the regime
+        # asked for or the only one available (#262). A `ROLLOVER_ACTIVE` state
+        # with no object beside it would leave a consumer inferring the deadline
+        # from a word.
+        #
+        # **Omitted, never null, where the run never got that far** -- a missing
+        # account, a locked one, an empty vault, an unreachable target. There is
+        # no rollover fact to report about an account nothing was issued
+        # against, and an absent optional object is how this document says that
+        # everywhere else (`secret`, `verification`, `error`). A `null` would be
+        # a third spelling of the same thing.
+        entry["rollover"] = rollover
+    elif outcome.state == ROLLOVER_ACTIVE:
         entry["rollover"] = {"active": True}
     if duration_ms is not None:
         entry["duration_ms"] = duration_ms

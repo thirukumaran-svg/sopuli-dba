@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +31,10 @@ from sopuli import check
 from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.driver.protocol import (
+    EXPIRE_PASSWORD,
     FAIL,
     PASS,
+    PASSWORD_ROLLOVER,
     SKIPPED,
     VERIFY_LOGIN,
     ChangeResult,
@@ -127,20 +130,50 @@ class FakeSession:
         answers: Mapping[str, list[VerifyResult]],
         *,
         set_error: Exception | None = None,
+        capabilities: frozenset[str] = frozenset(),
+        rollover_refusal: Exception | None = None,
     ) -> None:
         self.users = dict(users)
         self.answers = {name: list(results) for name, results in answers.items()}
         self.set_error = set_error
+        self.capabilities = capabilities
+        self.rollover_refusal = rollover_refusal
         self.attempts: list[tuple[str, str]] = []
         self.budgets: list[int] = []
         self.changed: list[tuple[str, str]] = []
+        self.finished: list[str] = []
         self.closed = False
 
     def scope(self) -> Scope:
-        return Scope(type="pdb", container="ALPHA", read_write=True)
+        return Scope(type="pdb", container="ALPHA", read_write=True, capabilities=self.capabilities)
 
     def describe_user(self, account: str) -> UserState | None:
-        return self.users.get(account.upper())
+        found = self.users.get(account.upper())
+        if found is None:
+            return None
+        # A window opens when the password is set on a rollover-enabled profile,
+        # and closes when `finish_rollover` runs. Modelled rather than scripted,
+        # because the command reads the state back after each of those and the
+        # bug worth catching is it reading a stale one.
+        opened = (
+            bool(found.rollover_enabled)
+            and any(name == found.name for name, _ in self.changed)
+            and found.name not in self.finished
+        )
+        return replace(found, rollover_active=opened)
+
+    def require_rollover(self, account: str) -> None:
+        # The real driver raises for a missing account before it looks at
+        # anything else (#181), so this one does too -- otherwise the pre-flight
+        # could skip a case the estate would meet.
+        if account.upper() not in self.users:
+            raise RuntimeError(f'account "{account}" does not exist on this target')
+        if self.rollover_refusal is not None:
+            raise self.rollover_refusal
+
+    def finish_rollover(self, account: str) -> ChangeResult:
+        self.finished.append(account.upper())
+        return ChangeResult(changed=True, detail="rollover window ended")
 
     def verify_password(
         self,
@@ -197,6 +230,8 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         per_target: Mapping[str, Mapping[str, list[VerifyResult]]] | None = None,
         connect_error: Exception | None = None,
         set_error: Exception | None = None,
+        capabilities: frozenset[str] = frozenset(),
+        rollover_refusal: Exception | None = None,
     ) -> dict[str, Any]:
         store = MemoryStore()
         for path, body in (documents or _staged_two_targets()).items():
@@ -223,6 +258,8 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     users if users is not None else {"ACME_WEB_USER": user()},
                     scripted,
                     set_error=set_error,
+                    capabilities=capabilities,
+                    rollover_refusal=rollover_refusal,
                 )
                 sessions.append(session)
                 return session
@@ -636,3 +673,202 @@ def test_a_declined_pre_flight_still_applies(
 
     assert harness["sessions"][0].changed == [("ACME_WEB_USER", STAGED)]
     assert result.exit_code == ExitCode.SUCCESS
+
+
+# --------------------------------------------------------------- the strategy ---
+
+
+def rollover_user(name: str = "ACME_WEB_USER") -> UserState:
+    """An account whose profile grants a window."""
+    return user(name, profile="APP_PROFILE", rollover_enabled=True, rollover_time="1")
+
+
+def applying(harness: dict[str, Any]) -> Any:
+    """The session that did the work.
+
+    Not `sessions[0]`: an explicit `--strategy` surveys the estate first, so the
+    first session per target is the pre-flight and it changes nothing by
+    construction. Asserting on it would pass for the wrong reason.
+    """
+    return harness["sessions"][-1]
+
+
+def test_rollover_is_the_default_where_the_estate_allows_it(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """UC-1 §6.3, and no flag needed: both passwords authenticate afterwards, so
+    the run reports `ROLLOVER_ACTIVE` rather than `IN_SYNC`."""
+    harness = estate(
+        users={"ACME_WEB_USER": rollover_user()},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert check.ROLLOVER_ACTIVE in result.output
+    assert harness["sessions"][0].finished == []
+
+
+def test_the_window_is_reported_with_the_profile_that_grants_it(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`active` alone leaves a consumer inferring the deadline from a word, and
+    `profile_rollover_time` is what says whether this was the regime asked for or
+    the only one available."""
+    estate(
+        users={"ACME_WEB_USER": rollover_user()},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    rollover = document(result)["results"][0]["rollover"]
+    assert rollover["active"] is True
+    assert rollover["profile_rollover_time"] == "1"
+
+
+def test_direct_closes_the_window_it_opened(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The difference between "the old password stops working in an hour" and
+    "the old password stopped working just now"."""
+    harness = estate(
+        users={"ACME_WEB_USER": rollover_user()},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--strategy", "direct")
+
+    assert applying(harness).finished == ["ACME_WEB_USER"]
+    assert check.IN_SYNC in result.output
+    assert "no longer works" in result.output
+
+
+def test_direct_does_not_close_a_window_it_could_not_confirm(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Closing it on an unverified change leaves an account whose old password
+    has stopped working and whose new one is not known to work -- the one state
+    worse than the grace period `direct` exists to avoid."""
+    harness = estate(
+        users={"ACME_WEB_USER": rollover_user()},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        answers={
+            "ACME_WEB_USER": [
+                VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                VerifyResult(VERIFY_LOGIN, SKIPPED, detail="within 2 of the limit"),
+            ]
+        },
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--strategy", "direct")
+
+    assert applying(harness).changed
+    assert applying(harness).finished == []
+    assert result.exit_code != ExitCode.SUCCESS
+
+
+def test_direct_against_a_plain_profile_closes_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The change was already immediate. A statement to prove it would have no
+    work in it."""
+    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}))
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--strategy", "direct")
+
+    assert applying(harness).finished == []
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+def test_staged_against_a_rollover_profile_is_refused_before_anything_changes(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Oracle opens the window because the profile says so. Running anyway and
+    reporting `staged` would tell an application team the old password had
+    stopped working when it had not."""
+    harness = estate(
+        users={"ACME_WEB_USER": rollover_user()},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--strategy", "staged")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert all(session.changed == [] for session in harness["sessions"])
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]
+
+
+def test_an_unhonourable_strategy_stops_the_whole_estate(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Invariant 4, and the reason the pre-flight pays for a second connection:
+    naming a regime is asking for a property of the *estate*, and honouring it on
+    one PDB before discovering the second cannot would already have broken it."""
+    harness = estate(
+        users={"ACME_WEB_USER": rollover_user()},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+    )
+    run(runner, write_config(CONFIG), "--strategy", "staged")
+
+    assert all(session.changed == [] for session in harness["sessions"])
+    for target in ("appdb-alpha", "appdb-beta"):
+        assert stored(harness["store"], f"apps/acme/{target}")["pending"]
+
+
+def test_the_default_strategy_costs_no_extra_connection(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pre-flight is what `--strategy` buys and what it costs. With no flag
+    there is nothing to refuse -- the regime is chosen per account from what that
+    account can do -- so the run opens one session per target and no more."""
+    harness = estate()
+    run(runner, write_config(CONFIG))
+
+    assert len(harness["sessions"]) == 2
+
+
+def test_an_explicit_strategy_surveys_first(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Two sessions per target: one that clears the estate, one that changes it."""
+    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}))
+    run(runner, write_config(CONFIG), "--strategy", "staged")
+
+    assert len(harness["sessions"]) == 4
+
+
+def test_rollover_is_refused_through_the_driver(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`require_rollover` owns both of its refusals (#181) and carries the exact
+    `ALTER PROFILE` for the profile one. The command routes to it rather than
+    restating either."""
+    harness = estate(
+        rollover_refusal=RuntimeError("profile APP_PROFILE grants no rollover window"),
+    )
+    result = run(runner, write_config(CONFIG), "--strategy", "rollover")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert all(session.changed == [] for session in harness["sessions"])
+
+
+def test_an_unreachable_target_is_not_a_strategy_problem(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pre-flight skips it, and the run reports it per account with the
+    vendor code -- which is a different thing to go and fix."""
+    estate(connect_error=RuntimeError("ORA-12541: no listener"), capabilities=frozenset())
+    result = run(runner, write_config(CONFIG), "--strategy", "staged")
+
+    assert "ORA-12541" in result.output
+    assert result.exit_code == ExitCode.FAILURE
+
+
+def test_a_missing_account_does_not_refuse_the_estate_over_a_strategy(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`ACCOUNT_MISSING` is a state the run reports per account. The driver's
+    `require_rollover` raises for one, having no way to know this caller would
+    rather skip it, so the pre-flight has to check before asking -- otherwise an
+    account the run was going to report on anyway takes the whole estate down."""
+    harness = estate(users={})
+    result = run(runner, write_config(CONFIG), "--strategy", "rollover")
+
+    assert check.ACCOUNT_MISSING in result.output
+    assert result.exit_code == ExitCode.FAILURE
+    assert all(session.changed == [] for session in harness["sessions"])

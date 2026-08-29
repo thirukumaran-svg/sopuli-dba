@@ -288,14 +288,10 @@ the diff stays readable.
 ### What shipped in #259, and what the flags above still describe
 
 The spine is implemented: read the source, set the password, verify, promote per
-document. Four things in the sketch above are **not** in this build, each with an
-issue of its own — `--strategy` and `finish-rollover`, `--repair`, `--source`
-(and with it §8's rollback), and `--continue-on-error`. The build is fail-fast,
-which is §5's own default, and the strategy is reported rather than chosen: where
-`PASSWORD_ROLLOVER` exists and the profile has a non-zero window, both passwords
-authenticate and the run says so; otherwise the change is immediate and the run
-says that. The tool never issues `ALTER PROFILE` to enable a window — that is Q4
-(#88), open.
+document. `--strategy` arrived with #262 and is described in §6.3. Three things
+in the sketch above are still **not** in this build, each with an issue of its
+own — `--repair` (#264), `--source` and with it §8's rollback (#265), and
+`--continue-on-error` (#266). The build is fail-fast, which is §5's own default.
 
 Three decisions inside the spine are worth stating here, because none of them is
 readable off the flag list:
@@ -413,11 +409,60 @@ Tool support:
   other accounts.
 - `check` reports `ROLLOVER_ACTIVE` with time remaining rather than calling it
   drift.
-- `sopuli creds finish-rollover` ends the window explicitly.
+- `sopuli creds finish-rollover` ends the window explicitly (#263, not yet built;
+  `--strategy direct` covers the same statement inside the run that opened the
+  window).
 - Fallback for databases without the capability: `--strategy staged`, meaning the
   tool applies and reports, and the operator owns the app-side restart. Documented
   as "brief authentication failures possible for connections established with the
   old password after the change".
+
+### What `--strategy` actually decides (#262)
+
+**The statement is the same in all three regimes.** That is the fact the flag is
+built around, and it is why this is one code path with a precondition and a
+follow-up rather than three:
+
+| strategy | statement | after |
+|---|---|---|
+| `rollover` | `ALTER USER … IDENTIFIED BY …` | the window opens; both passwords work until it closes |
+| `staged` | the same | the change is immediate |
+| `direct` | the same, then `ALTER USER … EXPIRE PASSWORD ROLLOVER PERIOD` | the window is closed at once, so the old password stops working |
+
+**The default is per account, and it is never `direct`.** `rollover` where the
+capability exists *and* the account's profile grants a window, `staged`
+otherwise — two accounts in one database can sit on different profiles, so this
+is resolved per account rather than per run. `direct` is never chosen for
+somebody: ending a grace window early is destructive to whoever still holds the
+old password, and a default that did it would be making that decision for an
+operator who did not know there was one.
+
+**Oracle decides whether a window opens, not this tool.** It opens because the
+profile's `PASSWORD_ROLLOVER_TIME` is greater than zero, whatever the run asked
+for. So `--strategy staged` against a rollover-enabled profile is **refused**:
+running anyway and reporting `staged` would tell an application team that the old
+password had stopped working when it had not. The refusal names the profile and
+offers `rollover` or `direct`.
+
+**An explicit strategy is refused for the whole estate, before anything
+changes.** Naming a regime is asking for a property of the estate — *no
+application will see a failed login tonight* — and a run that honoured it on four
+PDBs and discovered on the fifth that it could not would already have broken the
+promise. So an explicit `--strategy` costs one extra connection per target, spent
+on a pre-flight that clears every account or refuses. With no flag there is
+nothing to refuse and the run pays nothing.
+
+**`direct` closes the window only after the change is verified.** Closing it on a
+change nobody confirmed leaves an account whose old password has stopped working
+and whose new one is not known to work — the one state worse than the grace
+period `direct` exists to avoid. And `direct` against a profile that grants no
+window issues no second statement at all: the change was already immediate, which
+is what was asked for.
+
+**What the run reports.** `results[].rollover` carries `active`, `ends_at` where
+there is a window, and `profile_rollover_time` — emitted for every account this
+run acted on rather than only the ones with a window open, because the *absence*
+of one is the answer to "did the old password stop working just now".
 
 ### 6.4 Errors worth handling by name
 
