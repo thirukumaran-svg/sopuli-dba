@@ -75,11 +75,19 @@ from sopuli.exit_codes import ExitCode
 from sopuli.payload import CURRENT, PENDING, PREVIOUS, REMOVE, StageLayout, merge, stage_layout
 from sopuli.secrets import Secret
 
+#: The state a rollback reports where a rotation is in flight. From the schema's
+#: own enum, and the same word `creds finish-rollover` uses for the same fact:
+#: the vault has staged a password the database has not been given.
+PENDING_APPLY = "PENDING_APPLY"
+
 #: Re-exported so a caller holding this module does not need `check` as well for
 #: the predicates a summary is built from. They are `check`'s, unchanged: the two
 #: commands describe one estate and must count it the same way.
 __all__ = [
     "CONFIRMED",
+    "PENDING_APPLY",
+    "PROMOTES",
+    "SOURCES",
     "Promotable",
     "Source",
     "after_change",
@@ -89,6 +97,7 @@ __all__ = [
     "is_confirmed",
     "is_failure",
     "is_inconclusive",
+    "promotes",
     "promotion_patch",
     "settled_before_acting",
     "source_for",
@@ -126,15 +135,50 @@ class Source:
     #: a document this run has since changed nothing in but somebody else may
     #: have.
     replaces: Secret | None = None
+    #: Whether the document has a ``pending`` staged, whichever stage was read.
+    #: Only a rollback acts on it (:func:`settled_before_acting`): rolling back
+    #: underneath a rotation in flight leaves a `pending` that the next `apply`
+    #: would move the estate *forward* with, silently undoing the undo.
+    pending_staged: bool = False
 
 
-def source_for(document: Any, ref: SecretRef) -> Source | None:
-    """What to apply for one account: ``pending`` if one is staged, else ``current``.
+#: The stages a run can be asked to apply from, in the order UC-1 §5 lists them.
+#: ``previous`` is the rollback and is the reason the flag exists (§8).
+SOURCES = (PENDING, CURRENT, PREVIOUS)
 
-    UC-1 §5's ``--source`` default, spelled as a function of the document that
-    was read. ``None`` where the vault holds neither -- which is not an oversight
-    to paper over, and :func:`settled_before_acting` turns it into a reported
-    failure rather than a silent no-op.
+#: The stages whose use owes the vault a write once every target confirms.
+#:
+#: ``pending`` promotes forward -- ``current`` takes it and ``previous`` takes
+#: what ``current`` held. ``previous`` does the same arithmetic in the other
+#: direction: ``current`` takes the rolled-back value and ``previous`` takes the
+#: one that was just removed from the database. One patch serves both, which is
+#: not a coincidence -- a rollback *is* a promotion, of the other neighbour.
+#:
+#: ``current`` owes nothing: the vault already holds what the run put on the
+#: database, which is what makes `--source current` a repair.
+PROMOTES = (PENDING, PREVIOUS)
+
+
+def promotes(stage: str) -> bool:
+    """Whether a run reading ``stage`` owes a vault write. See :data:`PROMOTES`."""
+    return stage in PROMOTES
+
+
+def source_for(document: Any, ref: SecretRef, *, stage: str | None = None) -> Source | None:
+    """What to apply for one account, from ``stage`` or from UC-1 §5's default.
+
+    ``stage`` is ``None`` for the default the flag was added to override:
+    ``pending`` if one is staged, else ``current``. Naming one instead reads
+    exactly that stage and returns ``None`` where it holds nothing -- an explicit
+    request does **not** fall back, because the fallback is the thing somebody
+    passing the flag was trying to avoid, and silently applying `current` to an
+    operator who asked for `previous` is a rollback that did not happen and said
+    it did.
+
+    ``replaces`` is what ``current`` held, for every stage that owes a write. For
+    a rollback that is the password being taken *off* the database, which is
+    exactly what ``previous`` should hold afterwards -- so the promotion patch
+    needs no rollback-shaped variant.
 
     Pure and store-free: it reads the document a caller already has, through the
     same :class:`~sopuli.payload.StageLayout` every other stage-aware operation
@@ -143,14 +187,27 @@ def source_for(document: Any, ref: SecretRef) -> Source | None:
     layout = stage_layout(ref)
     current = _string(layout.read(document, CURRENT))
     staged = _string(layout.read(document, PENDING))
-    if staged is not None:
-        return Source(stage=PENDING, value=staged, replaces=current)
-    if current is not None:
-        return Source(stage=CURRENT, value=current, replaces=None)
-    return None
+
+    if stage is None:
+        chosen, value = (PENDING, staged) if staged is not None else (CURRENT, current)
+    else:
+        chosen = stage
+        value = {PENDING: staged, CURRENT: current}.get(
+            stage, _string(layout.read(document, PREVIOUS))
+        )
+    if value is None:
+        return None
+    return Source(
+        stage=chosen,
+        value=value,
+        replaces=current if promotes(chosen) else None,
+        pending_staged=staged is not None,
+    )
 
 
-def settled_before_acting(user: UserState | None, source: Source | None) -> Outcome | None:
+def settled_before_acting(
+    user: UserState | None, source: Source | None, *, requested: str | None = None
+) -> Outcome | None:
     """The outcome for an account nothing should be issued against, or ``None``.
 
     Three cases, in this order, and the order is the same argument
@@ -158,13 +215,16 @@ def settled_before_acting(user: UserState | None, source: Source | None) -> Outc
     the database says about the account is the *cause* of whatever a login would
     have seen.
 
-    * **No source.** The vault holds no password for this account at all, at
-      either stage. Reported as :data:`~sopuli.check.ERROR` rather than as
-      `check`'s ``UNVERIFIABLE``, and the difference between the two commands is
-      real: `check` reached the estate and could not compare, which is a survey
-      with a gap in it, while `apply` cannot do the thing it was run to do. A
-      mutating verb that exits 0 having converged nothing is the silent failure
-      worth being loud about, and the message names `creds generate`.
+    * **No source.** The vault holds no password for this account at the stage
+      this run was to read. Reported as :data:`~sopuli.check.ERROR` rather than
+      as `check`'s ``UNVERIFIABLE``, and the difference between the two commands
+      is real: `check` reached the estate and could not compare, which is a
+      survey with a gap in it, while `apply` cannot do the thing it was run to
+      do. A mutating verb that exits 0 having converged nothing is the silent
+      failure worth being loud about. ``requested`` is the stage the operator
+      named, so the message can say *which* one is empty -- "no `previous` to
+      roll back to" and "nothing staged at all" send somebody to different
+      places.
     * **No account.** ``ACCOUNT_MISSING``, and it is not created: Q8 puts
       provisioning in its own use case, and invariant 5 makes the config a
       whitelist of what may be *touched* rather than a list of what should exist.
@@ -172,6 +232,11 @@ def settled_before_acting(user: UserState | None, source: Source | None) -> Outc
       change would succeed and could never be confirmed, which is the one state
       the ordering in UC-1 §3 exists to keep a run out of. Unlocking is an
       opt-in attribute (§5) and is not in this build.
+    * **A rollback with a rotation in flight.** ``PENDING_APPLY``. Rolling back
+      while a `pending` is staged leaves it staged, and the next `apply` moves
+      the estate forward with it -- undoing the undo, unattended. Last of the
+      four, because it is a reason not to do something that was going to happen
+      and the two above it are reasons it was never going to.
 
     **An expired password is deliberately not here.** ``ORA-28001`` is listed in
     §6.4 as resolvable *by* apply -- setting a password clears the expiry -- so an
@@ -179,11 +244,7 @@ def settled_before_acting(user: UserState | None, source: Source | None) -> Outc
     state is only reported when something else stops the run.
     """
     if source is None:
-        return Outcome(
-            ERROR,
-            "the vault holds no password for this account, at either stage "
-            "-- run `sopuli creds generate` first",
-        )
+        return Outcome(ERROR, _nothing_to_apply(requested))
     if user is None:
         return Outcome(
             ACCOUNT_MISSING,
@@ -194,6 +255,22 @@ def settled_before_acting(user: UserState | None, source: Source | None) -> Outc
             LOCKED,
             f"account is {user.status.lower()}; the password was not changed, because a "
             f"locked account cannot confirm one",
+        )
+    if source.stage == PREVIOUS and source.pending_staged:
+        # A rollback underneath a rotation in flight. The `pending` would survive
+        # this run, and the next `apply` would move the estate *forward* with it
+        # -- silently undoing the undo, at whatever hour that next run happens.
+        # `creds finish-rollover` refuses on the same fact for the same reason.
+        #
+        # **Last of the four**, and deliberately so: it is a reason not to do
+        # something that was going to happen, and the two above it are reasons it
+        # was never going to. Telling somebody to deal with a `pending` first,
+        # about an account the database does not have, would be answering a
+        # question they had not reached.
+        return Outcome(
+            PENDING_APPLY,
+            "a password is staged for this account, so a rollback now would be "
+            "undone by the next `sopuli creds apply` -- deal with the `pending` first",
         )
     return None
 
@@ -387,7 +464,7 @@ def summarise_document(states: Iterable[str]) -> bool:
 # ------------------------------------------------------------- the reporting ---
 
 
-def exit_code_for(states: Sequence[str], *, promoted: bool, staged: bool) -> int:
+def exit_code_for(states: Sequence[str], *, promoted: bool, promotable: bool) -> int:
     """The process exit code for a whole run of `apply` (UC-1 §5, P5).
 
     §5's three outcomes, asked in the order a scheduler cares about:
@@ -400,8 +477,9 @@ def exit_code_for(states: Sequence[str], *, promoted: bool, staged: bool) -> int
       anywhere and re-running is free;
     * **none of it worked** -- exit 1.
 
-    ``staged`` says whether this run read a ``pending`` for anything, and
-    ``promoted`` whether every such document was promoted. Together they are what
+    ``promotable`` says whether this run read a stage that owes the vault a
+    write -- a ``pending`` or, for a rollback, a ``previous`` (:data:`PROMOTES`)
+    -- and ``promoted`` whether every such document got one. Together they are what
     makes the difference between "the database is right and the vault agrees" and
     "the database is right and the vault still advertises the old password". The
     second is UC-1 §8 case 7 -- the highest-severity row in the table -- and it
@@ -412,7 +490,7 @@ def exit_code_for(states: Sequence[str], *, promoted: bool, staged: bool) -> int
     confirmed = sum(1 for state in states if state in CONFIRMED)
     if confirmed == 0:
         return int(ExitCode.FAILURE)
-    if confirmed < len(states) or (staged and not promoted):
+    if confirmed < len(states) or (promotable and not promoted):
         return int(ExitCode.PARTIAL)
     return int(ExitCode.SUCCESS)
 
@@ -438,6 +516,29 @@ def _layout(binding: Binding) -> StageLayout:
     if ref is None:
         raise ValueError(f"cannot promote {binding.account!r}: the binding names no secret ref")
     return stage_layout(ref)
+
+
+def _nothing_to_apply(requested: str | None) -> str:
+    """Why there is nothing to apply, in words that name the operator's next step.
+
+    Three different situations wear the same shape, and only one of them is
+    "run generate". A rollback with no `previous` is bounded by design (Q3, #84)
+    and there is nothing to run; an explicit `pending` that is not there means
+    the staging step has not happened.
+    """
+    if requested == PREVIOUS:
+        return (
+            "the vault holds no `previous` for this account, so there is nothing to "
+            "roll back to -- rollback is bounded to one generation (Q3)"
+        )
+    if requested == CURRENT:
+        return "the vault holds no `current` for this account"
+    if requested == PENDING:
+        return "the vault holds no `pending` for this account -- run `sopuli creds generate` first"
+    return (
+        "the vault holds no password for this account, at either stage "
+        "-- run `sopuli creds generate` first"
+    )
 
 
 def _string(value: Any) -> Secret | None:

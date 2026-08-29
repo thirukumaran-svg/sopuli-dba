@@ -872,3 +872,186 @@ def test_a_missing_account_does_not_refuse_the_estate_over_a_strategy(
     assert check.ACCOUNT_MISSING in result.output
     assert result.exit_code == ExitCode.FAILURE
     assert all(session.changed == [] for session in harness["sessions"])
+
+
+# ------------------------------------------------------------- the rollback ---
+
+
+def _rolled() -> dict[str, dict[str, Any]]:
+    """A finished rotation with a `previous` to go back to."""
+    return {
+        "apps/acme/appdb-alpha": {
+            "DB_CREDENTIALS": {"acme_web_user": LIVE},
+            "previous": {"acme_web_user": "The-One-Before-2025"},
+        }
+    }
+
+
+def test_a_rollback_puts_previous_back_and_swaps_the_vault(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """UC-1 §8's escape hatch. The estate ends consistent: `current` holds what
+    the database now has, `previous` holds what was taken off it."""
+    harness = estate(
+        documents=_rolled(),
+        answers={"ACME_WEB_USER": drifted()},
+    )
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--source",
+        "previous",
+        "--confirm",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert harness["sessions"][0].changed == [("ACME_WEB_USER", "The-One-Before-2025")]
+    body = stored(harness["store"], "apps/acme/appdb-alpha")
+    assert body["DB_CREDENTIALS"]["acme_web_user"] == "The-One-Before-2025"
+    assert body["previous"]["acme_web_user"] == LIVE
+
+
+def test_the_rollback_verdict_says_rolled_back(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The two runs are indistinguishable otherwise, and one of them moved an
+    estate backwards on purpose."""
+    estate(documents=_rolled(), answers={"ACME_WEB_USER": drifted()})
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--source",
+        "previous",
+        "--confirm",
+    )
+
+    assert "1 rolled back" in result.output
+
+
+def test_a_rollback_without_confirm_is_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The one invocation whose *success* stops an application's credential
+    working. A closed stdin is a refusal rather than a prompt that reads EOF."""
+    harness = estate(documents=_rolled())
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--source", "previous")
+
+    assert harness["sessions"] == []
+    assert result.exit_code != ExitCode.SUCCESS
+
+
+def test_a_rollback_with_no_previous_says_so(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Bounded to one generation (Q3, #84), so there is nothing to run and the
+    message must not say `creds generate`."""
+    harness = estate(
+        documents={"apps/acme/appdb-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}}
+    )
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--source",
+        "previous",
+        "--confirm",
+    )
+
+    assert harness["sessions"][0].changed == []
+    assert "nothing to roll back to" in result.output
+    assert result.exit_code == ExitCode.FAILURE
+
+
+def test_a_rollback_under_a_rotation_in_flight_is_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The `pending` would survive, and the next `apply` would move the estate
+    forward with it -- undoing the undo, unattended."""
+    harness = estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+                "previous": {"acme_web_user": "The-One-Before-2025"},
+            }
+        }
+    )
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--source",
+        "previous",
+        "--confirm",
+    )
+
+    assert harness["sessions"][0].changed == []
+    assert "PENDING_APPLY" in result.output
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]["acme_web_user"] == STAGED
+
+
+def test_a_rollback_dry_run_needs_no_confirmation(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A preview an operator has to authorise is a preview they will stop
+    taking."""
+    harness = estate(documents=_rolled())
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--source",
+        "previous",
+        "--dry-run",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "previous" in result.output
+    assert harness["sessions"] == []
+
+
+# ------------------------------------------------------ the other two stages ---
+
+
+def test_source_current_ignores_a_staged_pending(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The case for the flag: a staged password turns out to be wrong, and the
+    estate goes back on what applications are actually reading -- without
+    discarding the `pending`."""
+    harness = estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        answers={"ACME_WEB_USER": drifted()},
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--source", "current")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert harness["sessions"][0].changed == [("ACME_WEB_USER", LIVE)]
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]["acme_web_user"] == STAGED
+
+
+def test_source_pending_does_not_fall_back_to_current(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """An explicit stage that holds nothing is a run that did not do what it was
+    asked, and it must not quietly do something else."""
+    harness = estate(
+        documents={"apps/acme/appdb-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}}
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--source", "pending")
+
+    assert harness["sessions"][0].changed == []
+    assert result.exit_code == ExitCode.FAILURE
+    assert "creds generate" in result.output

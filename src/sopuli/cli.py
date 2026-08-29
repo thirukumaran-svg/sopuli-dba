@@ -68,7 +68,7 @@ from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli import strategy as strategies
 from sopuli.admin import resolve as admin_resolve
-from sopuli.apply import Source
+from sopuli.apply import SOURCES, Source
 from sopuli.clock import as_utc, to_rfc3339, utc_now
 from sopuli.config import (
     ROOT,
@@ -1967,6 +1967,22 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
 @creds_group.command("apply")
 @select_option
 @click.option(
+    "--source",
+    "source_stage",
+    type=click.Choice(SOURCES),
+    default=None,
+    help=(
+        "Which vault stage to apply. Default: pending if one is staged, else "
+        "current. `previous` is the rollback and needs --confirm."
+    ),
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Proceed without asking. Required for --source previous.",
+)
+@click.option(
     "--strategy",
     type=click.Choice(STRATEGIES),
     default=None,
@@ -1985,7 +2001,12 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
 )
 @global_options
 def creds_apply(
-    selectors: tuple[str, ...], strategy: str | None, lockout_margin: int, run: Invocation
+    selectors: tuple[str, ...],
+    source_stage: str | None,
+    confirm: bool,
+    strategy: str | None,
+    lockout_margin: int,
+    run: Invocation,
 ) -> str:
     """Make each database hold what the vault holds, then promote what it staged.
 
@@ -2014,6 +2035,20 @@ def creds_apply(
     has confirmed. A run touching two documents may promote one and not the
     other.
 
+    **`--source previous` is the rollback**, and it is the escape hatch UC-1
+    section 8 describes: an application turns out to have hard-coded the old
+    password somewhere, and the database has to go back. It puts `previous` on
+    every selected target and then **swaps the vault**, so `current` holds what
+    the database now has and `previous` holds what was just taken off it. That
+    leaves the estate consistent rather than deliberately drifted, and it is not
+    a breach of the vault-is-master rule: both values came out of the vault, and
+    no database was ever read for one.
+
+    Rollback is bounded to one generation, because that is all the stage
+    vocabulary can address (Q3, issue #84). It needs `--confirm`, and it refuses
+    where a password is staged -- rolling back under a rotation in flight leaves
+    a `pending` that the next run would move the estate forward with.
+
     **The rollover regime is chosen per account, and refused as a whole.** Where
     the database has gradual password rollover and the account's profile grants a
     window, that is the default -- both passwords authenticate until the window
@@ -2034,6 +2069,7 @@ def creds_apply(
     """
     document = run.document
     refuse_if_readonly(run.resolved, action="applying a password")
+    _confirm_rollback(source_stage, confirmed=confirm, previewing=run.dry_run)
 
     match = parse_selector(selectors)
     config = filter_estate(run.config, match)
@@ -2060,7 +2096,7 @@ def creds_apply(
         # are still *read*, because which stage an account would be applied from
         # is the thing worth reviewing and a read needs no lock -- `check` runs
         # its whole survey without one.
-        sources = _sources(bindings, _read_documents(keys, stores))
+        sources = _sources(bindings, _read_documents(keys, stores), stage=source_stage)
         document.finish(ExitCode.SUCCESS, Summary(total=len(sources)))
         return f"{_header(plan, sources)}\n\nnothing was applied (--dry-run)"
 
@@ -2078,9 +2114,16 @@ def creds_apply(
             # in between -- and this run would then apply one password and promote
             # a different one.
             documents = _read_documents(keys, stores)
-            sources = _sources(bindings, documents)
+            sources = _sources(bindings, documents, stage=source_stage)
             _refuse_unhonourable_strategy(sources, run, config, strategy=strategy)
-            applied = _apply_estate(sources, run, config, margin=lockout_margin, strategy=strategy)
+            applied = _apply_estate(
+                sources,
+                run,
+                config,
+                margin=lockout_margin,
+                strategy=strategy,
+                requested=source_stage,
+            )
             promotions = _promote_documents(applied, documents, stores)
     except LockDeniedError as denied:
         document.lock = build_lock_section(manager, denied=denied)
@@ -2098,14 +2141,16 @@ def creds_apply(
             # `current` -- has nothing to promote, so counting it as unpromoted
             # would make a mixed run look like UC-1 §8 case 7 and exit 4 with
             # everything confirmed and nothing wrong.
-            promoted=all(one.version is not None for one in promotions.values() if one.staged),
-            staged=any(one.staged for one in promotions.values()),
+            promoted=all(one.version is not None for one in promotions.values() if one.promotable),
+            promotable=any(one.promotable for one in promotions.values()),
         ),
         summarise_apply(states, changed=changed),
     )
     rows = [(record.binding, record.outcome, record.changed) for record in applied]
     promoted = sum(1 for one in promotions.values() if one.version is not None)
-    return f"{_header(plan, sources)}\n\n{render_apply(rows, promoted=promoted)}"
+    return (
+        f"{_header(plan, sources)}\n\n{render_apply(rows, promoted=promoted, source=source_stage)}"
+    )
 
 
 @dataclass(frozen=True)
@@ -2137,17 +2182,52 @@ class _Promotion:
     says which of the two cases that is: nothing needed promoting, or something
     did and the estate had not earned it.
 
-    ``staged`` is what keeps those two apart for the exit code. A document whose
-    accounts were applied from `current` is a repair: it has nothing to promote,
-    and its ``version: None`` must not read as a promotion this run owed and did
-    not make. Only the staged ones are asked about.
+    ``promotable`` is what keeps those two apart for the exit code. A document
+    whose accounts were applied from `current` is a repair: the vault already
+    holds what went on the database, so its ``version: None`` must not read as a
+    promotion this run owed and did not make. Only the ones that owed a write are
+    asked about -- a ``pending`` promoted forward, or a ``previous`` rolled back
+    (`apply.PROMOTES`).
     """
 
     version: int | None
     reason: str
-    staged: bool = False
+    promotable: bool = False
     mechanism: str | None = None
     error: Error | None = None
+
+
+def _confirm_rollback(stage: str | None, *, confirmed: bool, previewing: bool) -> None:
+    """Ask before a rollback, or refuse where nobody can be asked.
+
+    UC-1 section 8 puts `--confirm` on this operation and only this one, and the
+    reason is worth saying: `--source previous` is the one invocation whose
+    *success* makes an application's current credential stop working. Every other
+    thing `apply` does converges the estate on what the vault already says.
+
+    The shape is `lock break`'s, for its reasons (:func:`_confirm_break`): the
+    prompt goes to **stderr**, so a confirmation cannot be skipped by asking for
+    JSON, and a closed stdin is a refusal rather than a prompt that reads EOF --
+    exit 8 naming the flag is more use than click aborting on nobody's behalf.
+
+    `--dry-run` needs no confirmation. Nothing is changed, and a preview an
+    operator has to authorise is a preview they will stop taking.
+    """
+    if stage != PREVIOUS or confirmed or previewing:
+        return
+    if not _can_prompt():
+        raise RefusedError(
+            "rolling back needs confirmation, and there is nobody here to ask",
+            hint=(
+                "pass --confirm to answer in advance, or --dry-run to see the plan "
+                "without touching anything"
+            ),
+        )
+    click.confirm(
+        "put the vault's `previous` password back on every selected target?",
+        abort=True,
+        err=True,
+    )
 
 
 def _document_keys(bindings: Sequence[Binding]) -> list[LockKey]:
@@ -2182,7 +2262,7 @@ def _read_documents(
 
 
 def _sources(
-    bindings: Sequence[Binding], documents: Mapping[LockKey, Any]
+    bindings: Sequence[Binding], documents: Mapping[LockKey, Any], *, stage: str | None = None
 ) -> list[tuple[Binding, Source | None]]:
     """What each account would be applied from, in binding order.
 
@@ -2197,7 +2277,7 @@ def _sources(
         source = (
             None
             if binding.secret is None or stored is None
-            else apply_states.source_for(stored.data, binding.secret)
+            else apply_states.source_for(stored.data, binding.secret, stage=stage)
         )
         found.append((binding, source))
     return found
@@ -2224,6 +2304,7 @@ def _apply_estate(
     *,
     margin: int,
     strategy: str | None,
+    requested: str | None = None,
 ) -> list[_Applied]:
     """Every account, target by target, one connection each.
 
@@ -2239,7 +2320,15 @@ def _apply_estate(
     applied: list[_Applied] = []
     for name, work in grouped.items():
         applied.extend(
-            _apply_target(by_target[name], work, run, config, margin=margin, strategy=strategy)
+            _apply_target(
+                by_target[name],
+                work,
+                run,
+                config,
+                margin=margin,
+                strategy=strategy,
+                requested=requested,
+            )
         )
     return applied
 
@@ -2252,6 +2341,7 @@ def _apply_target(
     *,
     margin: int,
     strategy: str | None,
+    requested: str | None = None,
 ) -> list[_Applied]:
     """One target's worth of accounts, over one connection.
 
@@ -2290,7 +2380,14 @@ def _apply_target(
             ]
 
         return [
-            _apply_one(binding, session, source=source, margin=margin, strategy=strategy)
+            _apply_one(
+                binding,
+                session,
+                source=source,
+                margin=margin,
+                strategy=strategy,
+                requested=requested,
+            )
             for binding, source in work
         ]
     finally:
@@ -2306,6 +2403,7 @@ def _apply_one(
     source: Source | None,
     margin: int,
     strategy: str | None,
+    requested: str | None = None,
 ) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
 
@@ -2325,7 +2423,7 @@ def _apply_one(
     before = None
     try:
         user = session.describe_user(binding.account)
-        settled = apply_states.settled_before_acting(user, source)
+        settled = apply_states.settled_before_acting(user, source, requested=requested)
         if settled is not None:
             return _Applied(binding, source, settled, changed=False, duration_ms=_elapsed(started))
         if user is None or source is None:
@@ -2561,20 +2659,22 @@ def _promote_documents(
     """
     promotions: dict[LockKey, _Promotion] = {}
     for key, records in _by_document(applied).items():
-        staged = [
+        owing = [
             record
             for record in records
-            if record.source is not None and record.source.stage == PENDING
+            if record.source is not None and apply_states.promotes(record.source.stage)
         ]
-        if not staged:
-            promotions[key] = _Promotion(None, "nothing was staged for this document")
+        if not owing:
+            promotions[key] = _Promotion(None, "the vault already holds what was applied")
             continue
         if not apply_states.summarise_document(record.outcome.state for record in records):
             promotions[key] = _Promotion(
-                None, "not every target confirmed, so `pending` was left in place", staged=True
+                None,
+                "not every target confirmed, so the vault was left as it was",
+                promotable=True,
             )
             continue
-        promotions[key] = _write_promotion(key, staged, documents[key], stores[key.store])
+        promotions[key] = _write_promotion(key, owing, documents[key], stores[key.store])
     return promotions
 
 
@@ -2591,7 +2691,7 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
 
 
 def _write_promotion(
-    key: LockKey, staged: Sequence[_Applied], stored: Any, store: SecretStore
+    key: LockKey, owing: Sequence[_Applied], stored: Any, store: SecretStore
 ) -> _Promotion:
     """The one compare-and-set that makes a rotation visible to applications.
 
@@ -2605,9 +2705,9 @@ def _write_promotion(
     once per target.
     """
     entries = []
-    for record in _one_per_account(staged):
+    for record in _one_per_account(owing):
         source = record.source
-        if source is None:  # pragma: no cover - `staged` is filtered on it
+        if source is None:  # pragma: no cover - `owing` is filtered on it
             continue
         entries.append(
             apply_states.Promotable(
@@ -2617,7 +2717,7 @@ def _write_promotion(
                 policy=record.binding.policy,
                 targets=tuple(
                     one.binding.target
-                    for one in staged
+                    for one in owing
                     if one.binding.account == record.binding.account
                 ),
             )
@@ -2627,11 +2727,11 @@ def _write_promotion(
         written = write_credential(store, key.path, patch, cas=_version_of(stored))
     except Exception as error:  # noqa: BLE001 -- a per-document finding
         reported = _as_error(error)
-        return _Promotion(None, reported.message, staged=True, error=reported)
+        return _Promotion(None, reported.message, promotable=True, error=reported)
     return _Promotion(
         written.version,
         f"promoted to v{written.version}",
-        staged=True,
+        promotable=True,
         mechanism=written.mechanism,
     )
 

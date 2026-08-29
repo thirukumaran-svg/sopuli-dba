@@ -288,10 +288,58 @@ the diff stays readable.
 ### What shipped in #259, and what the flags above still describe
 
 The spine is implemented: read the source, set the password, verify, promote per
-document. `--strategy` arrived with #262 and is described in §6.3. Three things
-in the sketch above are still **not** in this build, each with an issue of its
-own — `--repair` (#264), `--source` and with it §8's rollback (#265), and
-`--continue-on-error` (#266). The build is fail-fast, which is §5's own default.
+document. `--strategy` arrived with #262 and is described in §6.3; `--source`
+with #265, and the rollback it exists for is §8. Two things in the sketch above
+are still **not** in this build — `--repair` (#264) and `--continue-on-error`
+(#266). The build is fail-fast, which is §5's own default.
+
+### `--source`, and the rollback (#265)
+
+```
+sopuli creds apply --source {pending,current,previous} [--confirm]
+```
+
+Omitted, the default is unchanged: `pending` if one is staged, else `current`.
+Naming a stage reads **exactly** that one and **never falls back** — the fallback
+is the thing somebody passing the flag was trying to avoid, and silently applying
+`current` to an operator who asked for `previous` is a rollback that did not
+happen and said it did. So a stage that holds nothing is a reported failure
+naming *that* stage, because "no `previous` to roll back to" and "nothing staged
+at all" send somebody to different places and only one of them is
+`creds generate`.
+
+`current` forces the repair path where a `pending` is staged: the staged password
+turns out to be wrong, and the estate goes back on what applications are actually
+reading, without discarding the `pending`. It owes the vault nothing, because the
+vault already holds what went on the database.
+
+**`previous` is the rollback**, and it is the only invocation in this use case
+whose *success* stops an application's credential working. So it needs
+`--confirm`, and where nothing can be asked it refuses (exit 8) rather than
+prompting into a closed stdin. `--dry-run` needs no confirmation: a preview an
+operator has to authorise is a preview they will stop taking.
+
+**A rollback swaps the vault** (decided in #265). Once every target confirms,
+`current` takes the rolled-back value and `previous` takes the one just removed
+from the database — in the same single compare-and-set write a forward promotion
+uses, because it is the same arithmetic on the other neighbour. The estate ends
+consistent: applications fetch `current`, and `current` is what the databases
+have.
+
+**That is not a breach of "vault is master".** Invariant 6 is about the direction
+values travel, and both of these came out of the vault — no database was read for
+either. What changed is which stage is master, and an operator said so on the
+command line.
+
+**A rollback is refused while a `pending` is staged.** Rolling back under a
+rotation in flight leaves the `pending` there, and the next `apply` moves the
+estate forward with it — undoing the undo, unattended, at whatever hour that run
+happens. Reported per account as `PENDING_APPLY`, the same word
+`creds finish-rollover` uses for the same fact.
+
+Rollback stays bounded to one generation, which is Q3 (#84) and not this
+issue's to reopen: OCI holds exactly one `PREVIOUS`, and §7's stage vocabulary
+has nothing to address an older one with.
 
 Three decisions inside the spine are worth stating here, because none of them is
 readable off the flag list:

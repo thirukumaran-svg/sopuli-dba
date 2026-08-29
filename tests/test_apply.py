@@ -29,7 +29,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.payload import CURRENT, PENDING
+from sopuli.payload import CURRENT, PENDING, PREVIOUS
 from sopuli.secrets import Secret
 
 NOW = datetime(2026, 8, 29, 9, 30, tzinfo=UTC)
@@ -135,6 +135,77 @@ def test_a_sibling_account_s_password_is_not_this_account_s() -> None:
     assert apply.source_for(document, ref) is None
 
 
+# ------------------------------------------------------ the chosen stage ---
+
+
+def test_an_explicit_stage_is_read_and_never_fallen_back_from() -> None:
+    """The fallback is the thing somebody passing the flag was trying to avoid.
+    Silently applying `current` to an operator who asked for `previous` is a
+    rollback that did not happen and said it did."""
+    document = {"DB_CREDENTIALS": {"acme_web_user": "live"}}
+    ref = parse_secret_ref("apps/acme/db#DB_CREDENTIALS/acme_web_user")
+
+    assert apply.source_for(document, ref, stage=PREVIOUS) is None
+    assert apply.source_for(document, ref, stage=PENDING) is None
+
+
+def test_the_rollback_reads_previous_and_keeps_current_to_swap_with() -> None:
+    """`replaces` is the password being taken *off* the database, which is
+    exactly what `previous` should hold afterwards -- so the promotion patch
+    needs no rollback-shaped variant."""
+    document = {
+        "DB_CREDENTIALS": {"acme_web_user": "live"},
+        "previous": {"acme_web_user": "old"},
+    }
+    ref = parse_secret_ref("apps/acme/db#DB_CREDENTIALS/acme_web_user")
+
+    found = apply.source_for(document, ref, stage=PREVIOUS)
+
+    assert found is not None
+    assert found.value.reveal() == "old"
+    assert found.replaces is not None
+    assert found.replaces.reveal() == "live"
+
+
+def test_an_explicit_current_owes_the_vault_nothing() -> None:
+    """`--source current` is a repair: the vault already holds what went on the
+    database."""
+    document = {
+        "DB_CREDENTIALS": {"acme_web_user": "live"},
+        "pending": {"acme_web_user": "new"},
+    }
+    ref = parse_secret_ref("apps/acme/db#DB_CREDENTIALS/acme_web_user")
+
+    found = apply.source_for(document, ref, stage=CURRENT)
+
+    assert found is not None
+    assert found.stage == CURRENT
+    assert found.replaces is None
+
+
+def test_a_staged_pending_is_noted_whichever_stage_was_read() -> None:
+    """Only the rollback acts on it, and it has to know."""
+    document = {
+        "DB_CREDENTIALS": {"acme_web_user": "live"},
+        "pending": {"acme_web_user": "new"},
+        "previous": {"acme_web_user": "old"},
+    }
+    ref = parse_secret_ref("apps/acme/db#DB_CREDENTIALS/acme_web_user")
+
+    for stage in (None, CURRENT, PREVIOUS):
+        found = apply.source_for(document, ref, stage=stage)
+        assert found is not None
+        assert found.pending_staged is True
+
+
+def test_only_the_two_neighbours_owe_the_vault_a_write() -> None:
+    """A rollback *is* a promotion, of the other neighbour -- which is why one
+    patch serves both."""
+    assert apply.promotes(PENDING) is True
+    assert apply.promotes(PREVIOUS) is True
+    assert apply.promotes(CURRENT) is False
+
+
 # ------------------------------------------------- what is not acted on ---
 
 
@@ -147,6 +218,68 @@ def test_an_empty_vault_is_a_failure_and_not_a_quiet_no_op() -> None:
     assert outcome is not None
     assert outcome.state == check.ERROR
     assert "creds generate" in outcome.detail
+
+
+def test_a_rollback_under_a_rotation_in_flight_is_refused() -> None:
+    """The `pending` would survive this run, and the next `apply` would move the
+    estate forward with it -- undoing the undo, unattended."""
+    outcome = apply.settled_before_acting(
+        user(), apply.Source(PREVIOUS, Secret("old"), Secret("live"), pending_staged=True)
+    )
+
+    assert outcome is not None
+    assert outcome.state == apply.PENDING_APPLY
+    assert "undone by the next" in outcome.detail
+
+
+def test_a_missing_account_outranks_the_rollback_gate() -> None:
+    """Telling somebody to deal with a `pending` first, about an account the
+    database does not have, answers a question they had not reached. What the
+    database says about the account is the cause of everything downstream of
+    it."""
+    outcome = apply.settled_before_acting(
+        None, apply.Source(PREVIOUS, Secret("old"), Secret("live"), pending_staged=True)
+    )
+
+    assert outcome is not None
+    assert outcome.state == check.ACCOUNT_MISSING
+
+
+def test_a_locked_account_outranks_the_rollback_gate() -> None:
+    """Same argument one step down: nothing was going to be rolled back onto a
+    locked account either."""
+    outcome = apply.settled_before_acting(
+        user(status="LOCKED", locked=True),
+        apply.Source(PREVIOUS, Secret("old"), Secret("live"), pending_staged=True),
+    )
+
+    assert outcome is not None
+    assert outcome.state == check.LOCKED
+
+
+def test_a_forward_apply_under_a_staged_pending_is_not_refused() -> None:
+    """That is the ordinary rotation, and the `pending` is the point of it."""
+    assert (
+        apply.settled_before_acting(
+            user(), apply.Source(PENDING, Secret("new"), Secret("live"), pending_staged=True)
+        )
+        is None
+    )
+
+
+def test_a_missing_stage_names_the_one_that_was_asked_for() -> None:
+    """ "No `previous` to roll back to" and "nothing staged at all" send somebody
+    to different places, and only one of them is `creds generate`."""
+    rollback = apply.settled_before_acting(user(), None, requested=PREVIOUS)
+    staging = apply.settled_before_acting(user(), None, requested=PENDING)
+    unasked = apply.settled_before_acting(user(), None)
+
+    assert rollback is not None
+    assert "nothing to roll back to" in rollback.detail
+    assert staging is not None
+    assert "creds generate" in staging.detail
+    assert unasked is not None
+    assert "either stage" in unasked.detail
 
 
 def test_a_missing_account_is_reported_and_not_created() -> None:
@@ -380,8 +513,25 @@ def test_a_binding_with_no_ref_cannot_be_promoted() -> None:
 # ---------------------------------------------------------- the exit code ---
 
 
+def test_a_rollback_owes_the_vault_a_write_too() -> None:
+    """`current` takes the rolled-back value and `previous` takes the one just
+    removed from the database. Same patch, other direction."""
+    entry = apply.Promotable(
+        binding=binding(),
+        value=Secret("old"),
+        replaces=Secret("live"),
+        policy="app-standard",
+        targets=("appdb-dev-alpha",),
+    )
+
+    patch = apply.promotion_patch([entry], at=NOW, by="svc@host")
+
+    assert patch["DB_CREDENTIALS"]["acme_web_user"].reveal() == "old"
+    assert patch["previous"]["acme_web_user"].reveal() == "live"
+
+
 def test_everything_confirmed_and_promoted_is_success() -> None:
-    code = apply.exit_code_for([check.IN_SYNC, check.IN_SYNC], promoted=True, staged=True)
+    code = apply.exit_code_for([check.IN_SYNC, check.IN_SYNC], promoted=True, promotable=True)
 
     assert code == ExitCode.SUCCESS
 
@@ -389,14 +539,16 @@ def test_everything_confirmed_and_promoted_is_success() -> None:
 def test_some_targets_confirmed_is_partial() -> None:
     """P5's exit 4, and the code that says `apply --repair` is the remedy: the
     estate is in a mixed state and re-running is not free."""
-    code = apply.exit_code_for([check.IN_SYNC, check.ERROR], promoted=False, staged=True)
+    code = apply.exit_code_for([check.IN_SYNC, check.ERROR], promoted=False, promotable=True)
 
     assert code == ExitCode.PARTIAL
 
 
 def test_nothing_confirmed_is_failure() -> None:
     """Exit 1 means nothing changed anywhere and re-running costs nothing."""
-    code = apply.exit_code_for([check.ERROR, check.ACCOUNT_MISSING], promoted=False, staged=True)
+    code = apply.exit_code_for(
+        [check.ERROR, check.ACCOUNT_MISSING], promoted=False, promotable=True
+    )
 
     assert code == ExitCode.FAILURE
 
@@ -405,20 +557,20 @@ def test_every_target_confirmed_and_nothing_promoted_is_still_partial() -> None:
     """UC-1 §8 case 7, the highest-severity row in its table: the database has the
     new password and the vault still advertises the old one. It must not exit 0
     just because every login passed."""
-    code = apply.exit_code_for([check.IN_SYNC], promoted=False, staged=True)
+    code = apply.exit_code_for([check.IN_SYNC], promoted=False, promotable=True)
 
     assert code == ExitCode.PARTIAL
 
 
 def test_a_repair_that_confirmed_needs_no_promotion_to_succeed() -> None:
     """Nothing was staged, so the vault already holds what it should."""
-    code = apply.exit_code_for([check.IN_SYNC], promoted=False, staged=False)
+    code = apply.exit_code_for([check.IN_SYNC], promoted=False, promotable=False)
 
     assert code == ExitCode.SUCCESS
 
 
 def test_an_empty_run_is_success() -> None:
-    assert apply.exit_code_for([], promoted=True, staged=False) == ExitCode.SUCCESS
+    assert apply.exit_code_for([], promoted=True, promotable=False) == ExitCode.SUCCESS
 
 
 def test_the_states_are_counted_the_way_check_counts_them() -> None:

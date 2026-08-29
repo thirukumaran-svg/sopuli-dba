@@ -35,7 +35,7 @@ from sopuli.driver.protocol import FAIL, PASS, VerifyResult
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
-from sopuli.payload import CURRENT
+from sopuli.payload import CURRENT, PREVIOUS
 
 __all__ = ["build_result", "render_apply", "render_source_table", "summarise"]
 
@@ -325,8 +325,19 @@ def render_source_table(rows: Sequence[tuple[Binding, Source]]) -> list[str]:
     )
 
 
-def render_apply(rows: Sequence[tuple[Binding, Outcome, bool]], *, promoted: int = 0) -> str:
-    """The result table and the closing line. ``rows`` is (binding, outcome, changed)."""
+def render_apply(
+    rows: Sequence[tuple[Binding, Outcome, bool]],
+    *,
+    promoted: int = 0,
+    source: str | None = None,
+) -> str:
+    """The result table and the closing line. ``rows`` is (binding, outcome, changed).
+
+    ``source`` is the stage the operator named, and it changes only one word:
+    a rollback says "rolled back" rather than "changed". Worth the parameter,
+    because the two runs are indistinguishable otherwise and one of them moved
+    an estate backwards on purpose.
+    """
     table = render_table(
         [
             Column("ACCOUNT", _ACCOUNT),
@@ -347,6 +358,7 @@ def render_apply(rows: Sequence[tuple[Binding, Outcome, bool]], *, promoted: int
                 [outcome.state for _, outcome, _ in rows],
                 changed=sum(1 for _, _, changed in rows if changed),
                 promoted=promoted,
+                source=source,
             ),
         ]
     )
@@ -369,7 +381,9 @@ def _state(state: str) -> Cell | str:
     return Cell(state, Role.NOTABLE) if state in (ERROR, ACCOUNT_MISSING) else state
 
 
-def _verdict(states: Sequence[str], *, changed: int, promoted: int) -> str:
+def _verdict(
+    states: Sequence[str], *, changed: int, promoted: int, source: str | None = None
+) -> str:
     """The closing line: what happened, then what still needs attention.
 
     Says the two halves separately because they fail separately. "3 changed" and
@@ -378,7 +392,8 @@ def _verdict(states: Sequence[str], *, changed: int, promoted: int) -> str:
     confirmed -- so a line reporting changes with no promotion is exactly the
     state an operator has to notice.
     """
-    parts = [f"{changed} changed"] if changed else ["nothing changed"]
+    verb = "rolled back" if source == PREVIOUS else "changed"
+    parts = [f"{changed} {verb}"] if changed else [f"nothing {verb}"]
     if promoted:
         parts.append(f"{promoted} promoted to `current`")
     unconfirmed = sum(1 for state in states if state not in CONFIRMED)
