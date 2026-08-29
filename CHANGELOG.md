@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.0](https://github.com/villebase/sopuli-dba/compare/v0.45.0...v0.46.0) (2026-08-29)
+
+
+### Features
+
+* **cli:** creds apply --strategy, and the regime that cannot be honoured ([#269](https://github.com/villebase/sopuli-dba/issues/269)) ([a775939](https://github.com/villebase/sopuli-dba/commit/a775939b398b7175cdd515edbbd4eb16bfdca437))
+
 ## [0.45.0](https://github.com/villebase/sopuli-dba/compare/v0.44.0...v0.45.0) (2026-08-29)
 
 
