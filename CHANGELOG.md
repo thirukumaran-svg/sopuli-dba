@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.0](https://github.com/villebase/sopuli-dba/compare/v0.47.0...v0.48.0) (2026-08-29)
+
+
+### Features
+
+* **cli:** sopuli creds status, the inventory that spends no logins ([#278](https://github.com/villebase/sopuli-dba/issues/278)) ([dbfdba2](https://github.com/villebase/sopuli-dba/commit/dbfdba243e153e20f82cb433fcb0ef1291f6fbde))
+
 ## [0.47.0](https://github.com/villebase/sopuli-dba/compare/v0.46.0...v0.47.0) (2026-08-29)
 
 
