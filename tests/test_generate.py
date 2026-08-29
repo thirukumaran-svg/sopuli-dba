@@ -19,6 +19,7 @@ from sopuli import generate
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Config
+from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.passwords import PasswordPolicyError
 from sopuli.payload import PENDING
 from sopuli.secrets import Secret
@@ -262,16 +263,30 @@ def test_two_accounts_staging_into_one_place_are_refused() -> None:
 
     Found by writing the first real staging run: the merge kept whichever came
     last, which would have given one account's password to both and lost the
-    other's. `_check_stageable` (#111) does not catch it because it is a property
-    of the *set* of bindings rather than of one ref; moving the refusal to load
-    time is #255.
+    other's. **#255 moved the refusal to load time**, so a file spelled this way
+    no longer reaches here -- `tests/config/test_stage_collisions.py` is where
+    that is tested now.
+
+    This guard stays, and is exercised on bindings built directly, because the
+    load-time check can only fire where the store is known: a binding whose
+    `vault` C15 (#118) completes later from a profile or `SOPULI_VAULT` has no
+    backend at load, so whether the rule applies is not knowable from the file.
+    Those arrive here unchecked.
     """
-    config = estate(
-        accounts=["acme_web_user", "acme_batch_user"], template="apps/acme/db#{account}"
-    )
+    config = estate()
+    name, policy = generate.policy_for(config, config.bindings[0])
+    ref = parse_secret_ref("apps/acme/db#DB_CREDENTIALS")
+    drawn = [
+        generate.candidate_for(
+            Binding(account=account, target="plain", secret=ref, vault="vault-dev"),
+            policy,
+            name=name,
+        )
+        for account in ("acme_web_user", "acme_batch_user")
+    ]
 
     with pytest.raises(ValueError, match="would both stage into"):
-        generate.group(candidates(config))
+        generate.group(drawn)
 
 
 def test_one_account_per_document_at_the_root_is_still_fine() -> None:

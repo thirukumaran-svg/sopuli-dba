@@ -61,8 +61,9 @@ from typing import Any
 
 from sopuli.config.model import Binding
 from sopuli.lock.keys import normalise_path
+from sopuli.payload import PENDING, stage_layout
 
-__all__ = ["SharedSecret", "shared_secrets"]
+__all__ = ["SharedSecret", "StageCollision", "colliding_stages", "shared_secrets"]
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,112 @@ def shared_secrets(bindings: Iterable[Binding]) -> tuple[SharedSecret, ...]:
         for (vault, path), group in found.items()
         if (shared := SharedSecret(vault, path, group.targets, group.accounts)).is_shared
     )
+
+
+# --------------------------------------------------- when sharing goes wrong ---
+#
+# Everything above reports sharing. This reports the one shape of it that cannot
+# work, and it is here rather than beside `stage_layout` for the reason #255
+# gives: it is a property of the *set* of bindings for one document, and nothing
+# that looks at one ref at a time can see it.
+
+#: The remedy, phrased once. Both callers -- the load-time refusal in
+#: :mod:`sopuli.config.bindings` and the write-time guard in
+#: :mod:`sopuli.generate` -- print this, because an operator who hits the second
+#: after reading the first should not have to work out that they are the same
+#: problem.
+STAGE_COLLISION_HINT = (
+    "give the ref a pointer per account, as in `path#FIELD/{account}` -- a bare "
+    "`#{account}` makes each account a root *field*, and the mirror rule then puts "
+    "every account's stage at the document root"
+)
+
+
+@dataclass(frozen=True)
+class StageCollision:
+    """Two accounts whose ``pending`` would land in the same place.
+
+    A ref like ``apps/acme/db#{account}`` renders to a field per account with no
+    pointer below it, so :func:`~sopuli.payload.stage_layout` puts the stage at
+    the document root -- correct for the one-account layout UC-1 §3 describes,
+    and a silent overwrite the moment a second account shares the document.
+    """
+
+    #: The store, or ``None`` where nothing named one.
+    vault: str | None
+    #: The document's path, normalised the way the lock key normalises it.
+    path: str
+    #: The document keys the two accounts' stage would share.
+    location: tuple[str, ...]
+    #: The account seen first, and the one that collides with it.
+    accounts: tuple[str, str]
+
+    @property
+    def document(self) -> str:
+        """``vault:path``, the spelling :class:`~sopuli.lock.keys.LockKey` prints."""
+        return self.path if self.vault is None else f"{self.vault}:{self.path}"
+
+    @property
+    def description(self) -> str:
+        """The finding, in the words both callers report it in."""
+        first, second = self.accounts
+        return (
+            f"`{first}` and `{second}` share the secret document {self.document} "
+            f"and would both stage into `{'/'.join(self.location)}`, so one "
+            f"password would overwrite the other"
+        )
+
+
+def colliding_stages(
+    bindings: Iterable[Binding], *, stage: str = PENDING
+) -> tuple[StageCollision, ...]:
+    """Documents where two accounts stage into one place, in first-seen order.
+
+    Grouped by document, exactly as :func:`shared_secrets` groups -- through the
+    same :func:`~sopuli.lock.keys.normalise_path`, so "shares a document",
+    "shares a lock" and "collides" cannot give three answers about one pair.
+
+    **De-duplicated by account, not by binding.** One account bound to eleven
+    PDBs is eleven bindings sharing one document and one stage location, and that
+    is the ordinary case rather than a collision: they are the same account's
+    credential and the same value. What makes it a finding is two *different*
+    accounts arriving at one location.
+
+    One collision is reported per document -- the first pair found. A document
+    whose template gives every account the root has as many pairs as it has
+    accounts, and listing them all would bury the one fact worth reading, which
+    is that the template is wrong.
+
+    ``stage`` is a parameter because the mirror rule makes every stage collide
+    identically: if two accounts share ``pending`` they share ``previous`` too.
+    :data:`~sopuli.payload.PENDING` is the default because it is what
+    ``creds generate`` writes and therefore where the loss would first happen.
+
+    Calls :func:`~sopuli.payload.stage_layout`, which **raises** for a ref with
+    nowhere to stage at all -- ``_check_stageable``'s refusal (#111). That is
+    propagated rather than swallowed: a ref that cannot stage anywhere is not a
+    ref this function can report a collision for, and answering "no collisions"
+    about it would be the wrong answer to a question that has none.
+
+    The load-time caller has already refused those per binding, so it never sees
+    it. A caller assembling bindings itself -- ``sopuli.generate.group`` -- can,
+    and that is deliberate rather than an ordering this function assumes: it is
+    the same refusal, arriving at the write boundary for a binding whose store
+    was not known while the file was read.
+    """
+    found: dict[tuple[str | None, str], dict[tuple[str, ...], str]] = {}
+    collisions: dict[tuple[str | None, str], StageCollision] = {}
+    for binding in bindings:
+        if binding.secret is None:
+            continue
+        key = (binding.vault, normalise_path(binding.secret.path))
+        where = stage_layout(binding.secret).location(stage)
+        first = found.setdefault(key, {}).setdefault(where, binding.account)
+        if first != binding.account and key not in collisions:
+            collisions[key] = StageCollision(
+                vault=key[0], path=key[1], location=where, accounts=(first, binding.account)
+            )
+    return tuple(collisions.values())
 
 
 @dataclass

@@ -71,7 +71,9 @@ def test_one_unit_per_binding_in_binding_order() -> None:
     account. `shared_secrets` makes the same argument: a second ordering would
     make one set of names look like two.
     """
-    plan = plan_over(accounts=ACCOUNTS, secret_template="apps/acme/{tenant}#{account}")
+    plan = plan_over(
+        accounts=ACCOUNTS, secret_template="apps/acme/{tenant}#DB_CREDENTIALS/{account}"
+    )
 
     assert len(plan.units) == 8
     assert [(unit.account, unit.target) for unit in plan.units[:4]] == [
@@ -232,7 +234,9 @@ def test_it_counts_distinct_targets_and_accounts_not_units() -> None:
     The distinction is the whole of `max_targets`: counting units would refuse a
     run under a ceiling the operator set for targets.
     """
-    plan = plan_over(accounts=ACCOUNTS, secret_template="apps/acme/{tenant}#{account}")
+    plan = plan_over(
+        accounts=ACCOUNTS, secret_template="apps/acme/{tenant}#DB_CREDENTIALS/{account}"
+    )
 
     assert len(plan.units) == 8
     assert plan.blast_radius.targets == 4
@@ -245,7 +249,7 @@ def test_several_accounts_in_one_target_is_one_target_s_worth_of_reach() -> None
         estate(
             accounts=ACCOUNTS,
             targets={"match": {"tenant": "alpha", "env": "dev"}},
-            secret_template="apps/acme/db#{account}",
+            secret_template="apps/acme/db#DB_CREDENTIALS/{account}",
         ),
         intent=["verify"],
     )
@@ -325,6 +329,8 @@ def test_confirmation_required_is_not_emitted_at_all() -> None:
 def test_two_builds_over_one_config_are_identical() -> None:
     """The property `03-json-output.md` needs to make a plan-versus-`results`
     diff mechanical: nothing here reads a store, a clock or a connection."""
-    config = estate(accounts=ACCOUNTS, secret_template="apps/acme/{tenant}#{account}")
+    config = estate(
+        accounts=ACCOUNTS, secret_template="apps/acme/{tenant}#DB_CREDENTIALS/{account}"
+    )
 
     assert build(config, intent=["verify"]).as_json() == build(config, intent=["verify"]).as_json()

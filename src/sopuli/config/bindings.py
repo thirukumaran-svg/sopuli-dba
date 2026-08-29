@@ -33,6 +33,8 @@ than warning about it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.model import (
     Application,
@@ -45,8 +47,10 @@ from sopuli.config.model import (
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
 from sopuli.config.selection import matches, select
+from sopuli.config.sharing import STAGE_COLLISION_HINT, StageCollision, colliding_stages
 from sopuli.config.templates import substitute
 from sopuli.config.vaults import STAGING_EMULATED, STAGING_LABELS
+from sopuli.lock.keys import normalise_path
 from sopuli.payload import stage_layout
 
 #: What an unresolved token in a secret ref is measured against (§7).
@@ -63,10 +67,83 @@ def build_bindings(config: Config) -> tuple[Binding, ...]:
     stable enough to diff between runs.
     """
     bindings: list[Binding] = []
+    where: dict[str | None, KeyPath] = {}
     for index, application in enumerate(config.applications):
         at = ROOT if application.is_inline else _APPLICATIONS.index(index)
+        where[application.name] = at
         bindings.extend(_bind(config, application, at=at))
+    _check_stages_do_not_collide(bindings, config, where=where)
     return tuple(bindings)
+
+
+def _check_stages_do_not_collide(
+    bindings: Sequence[Binding], config: Config, *, where: Mapping[str | None, KeyPath]
+) -> None:
+    """No two accounts may stage into the same place in one document (#255).
+
+    ``_check_stageable`` refuses a ref with *nowhere* to stage. This refuses a
+    set of refs that all have the **same** somewhere -- which is what
+    ``path#{account}`` produces, because a field per account with no pointer
+    below it leaves every account's ``pending`` at the document root. The merge
+    then keeps whichever was written last: one account's new password lost, and
+    the other's given to both.
+
+    It cannot live beside ``_check_stageable``, which is called per binding with
+    no view of its siblings. It is a property of the set, so it runs once every
+    binding exists -- which is still load time, and still before any command has
+    done anything (invariant 4). Until #255 it was caught at the write boundary
+    by ``sopuli.generate.group``, one lock and one printed plan too late, and by
+    the wrong audience: this is a defect in the *file*, so it is what
+    ``config validate`` should say.
+
+    **Only where staging is emulated**, for ``_check_stageable``'s own reason:
+    where a store stages natively the stages are versions of the secret, so there
+    is no root ``pending`` key for two accounts to contend over.
+
+    **Only where the store is known.** A binding whose ``vault`` is still ``None``
+    is one C15 (#118) completes later from a profile or ``SOPULI_VAULT``, and its
+    backend -- and therefore whether this rule applies at all -- is not knowable
+    from the file alone. Those are left to ``generate.group``'s guard, which is
+    the second reason that guard stays.
+    """
+    labels = {vault.name: STAGING_LABELS.get(vault.type) for vault in config.vaults}
+    stageable = [
+        binding
+        for binding in bindings
+        if binding.vault is not None and labels.get(binding.vault) == STAGING_EMULATED
+    ]
+    for collision in colliding_stages(stageable):
+        raise ConfigError(
+            collision.description,
+            at=where.get(_declared_by(stageable, collision), ROOT),
+            hint=STAGE_COLLISION_HINT,
+        )
+
+
+def _declared_by(bindings: Sequence[Binding], collision: StageCollision) -> str | None:
+    """Which application entry produced the second half of ``collision``.
+
+    The *second* account of the pair, because that is the one whose arrival made
+    it a collision -- and in the ordinary case both are in the same entry anyway,
+    since one ``secret_template`` is what puts two accounts in one document.
+
+    Matched on the **document as well as the account**, not on the name alone.
+    One account may be declared by more than one application entry, each with its
+    own ref, and only one of those entries is the one that collides; locating by
+    name would then point at whichever entry mentions the account first and send
+    an operator to a line that is fine.
+    """
+    return next(
+        (
+            binding.application
+            for binding in bindings
+            if binding.account == collision.accounts[1]
+            and binding.vault == collision.vault
+            and binding.secret is not None
+            and normalise_path(binding.secret.path) == collision.path
+        ),
+        None,
+    )
 
 
 def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Binding]:

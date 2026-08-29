@@ -1560,11 +1560,38 @@ binding in `sopuli/config/bindings.py`, on the *rendered* ref, which is what let
 it be exact about two things a check on the written template could not be: the
 tokens are already substituted, and the store is known.
 
+**And no two accounts may stage into the same place** (#255). The rule above is
+about a ref with *nowhere* to stage; this one is about a set of refs that all
+have the same somewhere:
+
+```yaml
+accounts: [acme_web_user, acme_batch_user]
+secret_template: "apps/acme/db#{account}"     # a FIELD per account, no pointer
+```
+
+That renders to a distinct ref per account, so it passes every check that looks
+at one ref at a time — and then the mirror rule puts *both* accounts' `pending`
+at the document root, because neither ref has a pointer for the stage to follow.
+One document, one `pending`, two passwords: the merge keeps whichever was written
+last, so one account's new password is lost and the other's is given to both.
+
+The shared layout wants a pointer per account — `#DB_CREDENTIALS/{account}`, the
+spelling §2 uses — which addresses the stage per account and merges cleanly. The
+broken form is one character away from it, which is why this is refused rather
+than reported.
+
+It is a property of the **set** of bindings for one document rather than of any
+single ref, so it runs once every binding exists; that is still load time, and
+still before a command has done anything. `sopuli/generate.py` keeps the same
+guard at the write boundary, because a binding whose store C15 completes later
+(§6) has no known backend while the file is being read, and the rule below is
+why that matters.
+
 **The store is why this is not a universal rule.** On OCI the stages are versions
 of the secret rather than fields in it (P2's `staging_labels` row), so a ref
 naming a whole secret is the natural layout there and a field called `pending`
-collides with nothing. Neither refusal fires against a store that stages
-natively. A store type P2 gives no capability row — `keyring` — is left alone
+collides with nothing. No refusal in this section fires against a store that
+stages natively. A store type P2 gives no capability row — `keyring` — is left alone
 too, rather than assumed to emulate.
 
 None of this constrains a ref that is only ever *read*. An `admin.auth.secret` is

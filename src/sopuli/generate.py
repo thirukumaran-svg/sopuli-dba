@@ -42,10 +42,11 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.model import Binding, Config, PasswordPolicy
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef
+from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
 from sopuli.lock.keys import LockKey, normalise_path
 from sopuli.passwords import ByteLimit, PasswordPolicyError, Violation, check
 from sopuli.passwords import generate as draw_password
-from sopuli.payload import PENDING, merge, stage_layout
+from sopuli.payload import PENDING, merge
 from sopuli.secrets import Secret
 from sopuli.store.credentials import staged_patch
 
@@ -175,26 +176,21 @@ def _refuse_colliding_stages(write: DocumentWrite) -> None:
     cleanly. That is the layout `01-configuration.md`'s worked example and the
     sharing fixtures use.
 
-    **This belongs at load time and is not yet there.** ``_check_stageable``
-    (#111) already refuses a ref with *nowhere* to stage; it does not refuse one
-    where two accounts stage into the *same* somewhere, because that is a
-    property of the set of bindings rather than of one ref. Refusing here is the
-    guard that stops a silent overwrite today; moving it earlier is #255, and
-    invariant 4 says that is where it should end up.
+    **The load-time refusal is #255 and is now in place**, so a file spelled this
+    way no longer reaches here. This guard stays for the case that one cannot
+    cover: it fires only where the store is known, and a binding whose ``vault``
+    C15 (#118) completes later from a profile or ``SOPULI_VAULT`` has no backend
+    while the file is being read -- so whether the rule applies is not knowable
+    there. Those arrive here unchecked.
+
+    Detection is :func:`~sopuli.config.sharing.colliding_stages`, the same
+    function the load-time refusal calls, so the two cannot come to disagree
+    about a pair. What differs is only the exception: this is a caller error at a
+    write boundary and not a statement about any file, and the ``ValueError``
+    lands as generic failure rather than as P5's exit 9.
     """
-    seen: dict[tuple[str, ...], str] = {}
-    for candidate in write.candidates:
-        ref = _ref(candidate.binding)
-        where = stage_layout(ref).location(PENDING)
-        clash = seen.get(where)
-        if clash is not None:
-            raise ValueError(
-                f"{candidate.binding.account!r} and {clash!r} share the document "
-                f"{write.key} and would both stage into {'/'.join(where)!r}, so one "
-                f"password would overwrite the other -- give the ref a pointer per "
-                f"account, as in `path#FIELD/{{account}}`"
-            )
-        seen[where] = candidate.binding.account
+    for collision in colliding_stages(candidate.binding for candidate in write.candidates):
+        raise ValueError(f"{collision.description} -- {STAGE_COLLISION_HINT}")
 
 
 def policy_for(config: Config, binding: Binding) -> tuple[str, PasswordPolicy]:

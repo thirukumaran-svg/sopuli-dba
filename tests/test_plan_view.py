@@ -148,7 +148,7 @@ def test_the_header_says_what_the_count_is_of() -> None:
     plan = build(
         estate(
             accounts=["acme_web_user", "acme_api_user"],
-            secret_template="apps/acme/{tenant}#{account}",
+            secret_template="apps/acme/{tenant}#DB_CREDENTIALS/{account}",
         ),
         intent=["verify"],
     )
