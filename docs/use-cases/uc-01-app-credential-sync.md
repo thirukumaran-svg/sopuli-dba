@@ -220,7 +220,12 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
   reads `length:` as a minimum rather than as an exact figure — a password an
   external system dictated is not weaker for being longer.
 - Generating twice without applying simply replaces `pending`. That is safe and
-  is reported as such.
+  is reported as such — including a warning naming the version whose `pending`
+  was replaced, because anything already holding that password is now stale.
+  This is the **one exemption from invariant 9** and is decided rather than
+  assumed (#254): the invariant governs commands that converge on a state, and a
+  fresh draw has none. `apply` is the convergent half and reports
+  `changed: false` on a re-run.
 
 ---
 

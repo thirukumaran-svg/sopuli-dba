@@ -216,9 +216,17 @@ class LockManager:
         having released whatever it had already taken -- so a run that loses a
         race is a run that touched nothing, rather than one holding two locks
         nobody can account for.
+
+        ``keys`` is materialised first because it is walked **twice** -- once by
+        :meth:`preflight` and once here -- and the parameter is typed
+        :class:`~collections.abc.Iterable`, which a generator satisfies. Passing
+        one used to acquire nothing at all: pre-flight drained it, the loop found
+        it empty, and the run went on to write with no lock held and no error.
+        Found by the first caller that passed a generator expression (#254).
         """
-        self.preflight(keys)
-        for key in acquisition_order(keys):
+        wanted = tuple(keys)
+        self.preflight(wanted)
+        for key in acquisition_order(wanted):
             try:
                 self.held.append(self._take(key))
             except LockDeniedError:

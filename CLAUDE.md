@@ -71,7 +71,14 @@ something specific.
    before touching rotation.
 8. **Every mutating command supports `--dry-run` and prints a plan first.**
 9. **Idempotency:** running any command twice must report `changed: false` the
-   second time and emit no mutation audit record.
+   second time and emit no mutation audit record. **`creds generate` is the one
+   exemption** (decided in #254): drawing a fresh random secret has no state to
+   converge on, so a second run replaces `pending` and reports `changed: true`,
+   warning that it did. The invariant governs the *convergent* verbs — `apply`
+   converges the database on the vault, and it is the one that must report
+   `changed: false` on a re-run. An exemption is written here rather than left to
+   be discovered in a diff, and adding a second one is a decision, not an
+   implementation detail.
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
     `max_targets` and `confirm_environments` cannot be relaxed by a
     higher-precedence source. See P3.

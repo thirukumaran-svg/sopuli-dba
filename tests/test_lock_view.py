@@ -32,7 +32,7 @@ from sopuli.lock import (
 )
 from sopuli.lock.inspect import survey
 from sopuli.output.document import SCHEMA_VERSION, RunDocument, Summary
-from sopuli.output.lock_view import build_section, build_status_section, render_status
+from sopuli.output.lock_view import build_lock_section, build_status_section, render_status
 from sopuli.store import CAS, MemoryStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -94,7 +94,7 @@ def test_a_run_that_took_no_lock_has_no_section() -> None:
     Every `check`, `status` and `--dry-run` lands here, and an empty object would
     instead describe a run that wanted locks and holds none.
     """
-    assert build_section(manager(MemoryStore())) is None
+    assert build_lock_section(manager(MemoryStore())) is None
     assert "lock" not in document_with(None)
 
 
@@ -103,7 +103,7 @@ def test_a_held_lock_reports_its_fence_and_its_window(validator: Draft202012Vali
     run = manager(store)
     run.acquire([KEY])
 
-    section = build_section(run)
+    section = build_lock_section(run)
 
     assert section == {
         "mode": "cas",
@@ -129,7 +129,7 @@ def test_a_released_lock_says_so() -> None:
     run.acquire([KEY])
     run.release()
 
-    section = build_section(run)
+    section = build_lock_section(run)
     assert section is not None
     assert section["held"][0]["released"]
 
@@ -143,7 +143,7 @@ def test_an_advisory_lock_reports_the_guarantee_it_actually_had(
     run = manager(store, locking=LOCK_ADVISORY_ONLY)
     run.acquire([KEY])
 
-    section = build_section(run)
+    section = build_lock_section(run)
 
     assert section is not None
     assert section["mode"] == "none"
@@ -161,7 +161,7 @@ def test_a_denial_by_a_live_holder_describes_them(validator: Draft202012Validato
 
     with pytest.raises(LockDeniedError) as caught:
         loser.acquire([KEY])
-    section = build_section(loser, denied=caught.value)
+    section = build_lock_section(loser, denied=caught.value)
 
     assert section is not None
     assert section["denied"] == {
@@ -208,7 +208,7 @@ def test_an_expired_holder_is_reported_as_expired(validator: Draft202012Validato
 
     with pytest.raises(LockDeniedError) as caught:
         loser.acquire([KEY])
-    section = build_section(loser, denied=caught.value)
+    section = build_lock_section(loser, denied=caught.value)
 
     assert section is not None
     assert section["denied"]["expired"]
@@ -222,7 +222,7 @@ def test_a_lost_race_reports_no_holder(validator: Draft202012Validator) -> None:
     run = manager(store)
     denied = LockDeniedError("lost the race", key=KEY)
 
-    section = build_section(run, denied=denied)
+    section = build_lock_section(run, denied=denied)
 
     assert section is not None
     assert section["denied"] == {"vault": STORE, "path": "apps/acme/db", "reason": "race"}
@@ -239,7 +239,7 @@ def test_a_denied_run_reports_what_it_had_already_taken(validator: Draft202012Va
 
     with pytest.raises(LockDeniedError) as caught:
         loser.acquire([KEY, other])
-    section = build_section(loser, denied=caught.value)
+    section = build_lock_section(loser, denied=caught.value)
 
     assert section is not None
     assert [one["path"] for one in section["held"]] == ["apps/acme/db"]
@@ -320,7 +320,7 @@ def test_a_diagnostic_reaches_the_document_with_its_code(
     run.acquire([KEY])
 
     document = RunDocument.start("creds.rotate")
-    document.lock = build_section(run)
+    document.lock = build_lock_section(run)
     document.diagnostics.extend(lock_diagnostics(run))
     rendered = document.finish(ExitCode.SUCCESS, Summary()).to_dict()
 

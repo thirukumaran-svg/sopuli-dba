@@ -286,7 +286,7 @@ def _from_file(path: Path, *, where: str, wrote: str) -> Secret:
             hint=f"looked in {resolved}; check the file's permissions and the path above it",
         ) from error
 
-    value = _strip_one_newline(text)
+    value = strip_one_newline(text)
     if not value:
         # An empty *file* is not the same as a missing one: it exists, something
         # created it, and the likely cause is a write that failed rather than a
@@ -296,18 +296,26 @@ def _from_file(path: Path, *, where: str, wrote: str) -> Secret:
     return Secret(value)
 
 
-def _strip_one_newline(text: str) -> str:
+def strip_one_newline(text: str) -> str:
     """Remove exactly one trailing newline, and nothing else.
 
-    ``~/.vault-token`` is the case that makes this load-bearing: Vault's own CLI
-    writes it without a trailing newline and every text editor adds one, and a
-    token with ``\\n`` on the end fails authentication with a 403 that says
-    nothing whatever about whitespace.
+        **Public because there is more than one caller, and a second copy drifted.**
+        `creds generate --from-stdin` reimplemented this rule, stripped only ``
+    ``,
+        and left a ``
+    `` on every password piped in on Windows -- which is exactly
+        where P4 demands identical behaviour. The rule is subtle enough to be worth
+        stating once (below) and subtle enough that restating it goes wrong.
 
-    Not ``.strip()``. Leading whitespace in a secret is somebody's real secret,
-    and a generated password may legitimately begin or end with a space in a
-    charset that allows one -- silently trimming it is a bug that surfaces once,
-    much later, as a password that works nowhere.
+        ``~/.vault-token`` is the case that makes this load-bearing: Vault's own CLI
+        writes it without a trailing newline and every text editor adds one, and a
+        token with ``\\n`` on the end fails authentication with a 403 that says
+        nothing whatever about whitespace.
+
+        Not ``.strip()``. Leading whitespace in a secret is somebody's real secret,
+        and a generated password may legitimately begin or end with a space in a
+        charset that allows one -- silently trimming it is a bug that surfaces once,
+        much later, as a password that works nowhere.
     """
     if text.endswith("\r\n"):
         return text[:-2]

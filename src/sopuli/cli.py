@@ -62,10 +62,12 @@ from typing import Any, TypeVar
 import click
 
 from sopuli import check as check_states
+from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli.admin import resolve as admin_resolve
 from sopuli.config import (
     ROOT,
+    ArgumentError,
     Binding,
     Config,
     ConfigError,
@@ -97,6 +99,7 @@ from sopuli.driver.protocol import FAIL, PASS, VERIFY_LOGIN, UserState
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import resolve as resolve_driver
 from sopuli.exit_codes import ExitCode
+from sopuli.generate import Candidate, DocumentWrite
 from sopuli.install_shape import Component
 from sopuli.install_shape import survey as install_survey
 from sopuli.invocation import (
@@ -110,7 +113,7 @@ from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.lock.inspect import declared_locks, mode_of, survey
 from sopuli.lock.inspect import discover as discover_locks
 from sopuli.lock.keys import LockKey, acquisition_order, parse_lock_key
-from sopuli.lock.manager import LockableStore, describe_holder
+from sopuli.lock.manager import LockableStore, LockManager, describe_holder
 from sopuli.lock.takeover import (
     Nothing,
     Outcome,
@@ -119,6 +122,7 @@ from sopuli.lock.takeover import (
     check_fenceable,
     plan_break,
 )
+from sopuli.material import strip_one_newline
 from sopuli.output.check_view import build_result, render_check, summarise
 from sopuli.output.config_view import (
     build_section,
@@ -129,11 +133,15 @@ from sopuli.output.config_view import (
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, Summary
+from sopuli.output.generate_view import FAILED, STAGED, render_generate, render_write_table
+from sopuli.output.generate_view import build_result as build_generate_result
+from sopuli.output.generate_view import summarise as summarise_generate
 from sopuli.output.install_view import build as build_install
 from sopuli.output.install_view import render as render_install
 from sopuli.output.lock_view import (
     build_break_section,
     build_denied_section,
+    build_lock_section,
     build_status_section,
     render_break,
     render_status,
@@ -147,10 +155,12 @@ from sopuli.output.vault_view import render as render_vaults
 from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate
-from sopuli.payload import PREVIOUS
+from sopuli.payload import PENDING, PREVIOUS, stage_layout
 from sopuli.safety import RefusedError, refuse_if_over_limit, refuse_if_readonly
+from sopuli.secrets import Secret
 from sopuli.store import SecretStore, StoreError, connect
 from sopuli.store.credentials import StoredSecret, read_secret
+from sopuli.store.credentials import apply_patch as write_credential
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.version import get_version
@@ -1644,6 +1654,289 @@ def _stored_credential(binding: Binding, stores: Mapping[str, SecretStore]) -> S
     if binding.secret is None or binding.vault is None:
         return None
     return read_secret(stores[binding.vault], binding.secret)
+
+
+@creds_group.command("generate")
+@select_option
+@click.option("--policy", "policy_name", metavar="NAME", help="Override the policy to draw from.")
+@click.option(
+    "--from-stdin",
+    is_flag=True,
+    help="Read one password from stdin instead of generating. Applies to every selected account.",
+)
+@click.option(
+    "--no-policy-check",
+    is_flag=True,
+    help="Accept a supplied password that violates the policy. Recorded in the audit event.",
+)
+@global_options
+def creds_generate(
+    selectors: tuple[str, ...],
+    policy_name: str | None,
+    from_stdin: bool,
+    no_policy_check: bool,
+    run: Invocation,
+) -> str:
+    """Draw a new password per the policy and stage it in the vault.
+
+    **The database is never touched.** That is what lets this command take the
+    advisory lock at all: the lock lives in the vault (Q2, issue #83), so a
+    database-side lock could not have protected the write this makes.
+
+    **Staging is deliberately separate from applying.** It lets an operator
+    prepare a password, get a change window approved, and apply later -- and it
+    makes each half independently retryable. Nothing is using the new password
+    until `sopuli creds apply` puts it in the database and promotes it.
+
+    **A second run replaces what was staged, and reports a change.** That is an
+    explicit exemption from the idempotency invariant, decided in issue #254: the
+    invariant governs commands that converge on a state, and drawing a fresh
+    random secret has no state to converge on. The run warns that it replaced a
+    staged password, because anything already holding the old one is now stale.
+
+    **One document is one write.** Where several accounts share a secret -- the
+    documented default since issue #85 -- their passwords go in a single
+    compare-and-set write under a single lock, not one write each. Each account
+    still gets its own password: sharing a document is a storage layout, not a
+    shared credential.
+
+    **A compare-and-set conflict is never retried.** This run holds the lock, so
+    a conflict means somebody outside this tool wrote to the document, and
+    re-reading to merge over them would rewrite fields belonging to accounts
+    nobody selected.
+
+    `--from-stdin` takes one password on stdin and applies it to every selected
+    account, for migration and for systems that dictate the value. It is
+    validated by the same predicate a generated one is drawn against, and reads
+    the policy length as a minimum rather than an exact figure.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+    refuse_if_readonly(run.resolved, action="staging a password")
+
+    match = parse_selector(selectors)
+    config = filter_estate(run.config, match)
+    document.selection = as_dict(match) or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    config = binding_stores.complete(config, env=os.environ)
+    binding_stores.refuse_unresolved(config, action="staging a password")
+
+    plan = plan_builder.build(config, intent=["generate", "vault_write_pending"])
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action="staging a password")
+    document.plan = plan.as_json()
+
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
+    if not bindings:
+        document.finish(ExitCode.SUCCESS, Summary())
+        return render_plan(plan, noun="generation") + "\n\nnothing to stage"
+
+    supplied = _password_from_stdin() if from_stdin else None
+    candidates = [
+        _candidate(
+            binding, config, name=policy_name, supplied=supplied, enforce=not no_policy_check
+        )
+        for binding in bindings
+    ]
+    writes = staging.group(candidates)
+    names = {write.key.store for write in writes}
+
+    header = "\n".join(
+        [render_plan(plan, noun="generation"), "", *render_write_table(writes, stage=PENDING)]
+    )
+    if run.dry_run:
+        # Invariant 8: print the plan, write nothing, take no lock. No `results`
+        # either -- `plan` already says what would happen, at the same grain, and
+        # a second vocabulary for "would have" would be a state nobody can act on.
+        document.finish(ExitCode.SUCCESS, Summary(total=len(candidates)))
+        return f"{header}\n\nnothing was written (--dry-run)"
+
+    stores = _stores_for(names, config, token_file=run.vault_token_file)
+    manager = LockManager(
+        stores={name: _lockable(name, config, stores) for name in names},
+        correlation_id=document.correlation_id,
+        command="creds generate",
+        selection=", ".join(f"{key}={value}" for key, value in match) or None,
+    )
+
+    results: list[dict[str, Any]] = []
+    rows: list[tuple[Candidate, str, str]] = []
+    try:
+        with manager.holding([write.key for write in writes]):
+            for write in writes:
+                rows.extend(_stage(write, stores[write.key.store], out=results))
+    except LockDeniedError as denied:
+        document.lock = build_lock_section(manager, denied=denied)
+        raise
+
+    document.lock = build_lock_section(manager)
+    document.results = results
+    states = [state for _, state, _ in rows]
+    document.finish(
+        ExitCode.FAILURE if FAILED in states else ExitCode.SUCCESS,
+        summarise_generate(states),
+    )
+    return f"{header}\n\n{render_generate(rows)}"
+
+
+def _lockable(name: str, config: Config, stores: Mapping[str, SecretStore]) -> LockableStore:
+    """One already-opened store, paired with the locking policy declared for it.
+
+    Reuses the connection `_stores_for` made rather than dialling again: a store
+    is a client, and a run that authenticated once to write should not
+    authenticate a second time to lock the thing it is writing.
+
+    `locking` travels beside the client rather than being re-read later, which is
+    :class:`~sopuli.lock.manager.LockableStore`'s own rule -- a command must not
+    be able to disagree with what `config show` displayed about the same store.
+    """
+    locking = next(vault.locking for vault in config.vaults if vault.name == name)
+    return LockableStore(store=stores[name], locking=locking)
+
+
+def _candidate(
+    binding: Binding,
+    config: Config,
+    *,
+    name: str | None,
+    supplied: Secret | None,
+    enforce: bool,
+) -> Candidate:
+    """One account's password, drawn or validated against its policy.
+
+    Resolved per binding rather than once for the run, because a selection
+    spanning two applications with different policies is the ordinary case. Only
+    `--policy` is global, and it is applied by overriding the binding's own name
+    before the file's chain is consulted -- so it wins over an application entry
+    and still goes through the same dangling-name check every policy name gets.
+
+    ``limit`` is `None`: the byte limit is a property of the *target database*
+    and reading it means connecting, which UC-1 marks optional and #254 leaves
+    out. The policy's declared length governs, which is §4's own fallback.
+    """
+    effective = binding if name is None else replace(binding, policy=name)
+    chosen, policy = staging.policy_for(config, effective)
+    return staging.candidate_for(
+        binding, policy, name=chosen, limit=None, supplied=supplied, enforce=enforce
+    )
+
+
+def _password_from_stdin() -> Secret:
+    """Read one password from stdin (invariant 1: never from an option value).
+
+    One trailing newline is stripped and nothing else is --
+    :func:`sopuli.material.strip_one_newline`, *called* rather than restated. A
+    password may legitimately end in a space, and a pipe appends a newline that
+    was never part of it; the shared function also handles ``\r\n``, which a
+    local copy of the rule did not, and Windows is precisely where P4 asks for
+    identical behaviour.
+    """
+    text = strip_one_newline(sys.stdin.read())
+    if not text:
+        raise ArgumentError(
+            "--from-stdin was given and stdin was empty",
+            hint="pipe the password in, and check nothing else has already consumed stdin",
+        )
+    return Secret(text)
+
+
+def _stage(
+    write: DocumentWrite, store: SecretStore, *, out: list[dict[str, Any]]
+) -> list[tuple[Candidate, str, str]]:
+    """Perform one document's write, and report it per account.
+
+    Every account in the document shares the outcome, because they share the
+    write: one compare-and-set either landed or it did not, and reporting one of
+    three as staged when it failed would describe a state that never existed.
+
+    ``cas`` is the version that was there, or ``0`` for a document that does not
+    exist yet -- which is not a version but an assertion that there is nothing at
+    the path, and the one case a merge patch cannot serve.
+    """
+    existing = store.read(write.key.path)
+    cas = 0 if existing is None else existing.version
+    replaced = _already_pending(existing, write)
+
+    try:
+        written = write_credential(store, write.key.path, write.patch(stage=PENDING), cas=cas)
+    except Exception as error:  # noqa: BLE001 -- a per-document finding
+        reported = _as_error(error)
+        return _reported(write, FAILED, reported.message, out=out, error=reported)
+
+    return _reported(
+        write,
+        STAGED,
+        f"staged v{written.version}",
+        out=out,
+        version=written.version,
+        replaced=replaced,
+        mechanism=written.mechanism,
+    )
+
+
+def _reported(
+    write: DocumentWrite,
+    state: str,
+    detail: str,
+    *,
+    out: list[dict[str, Any]],
+    version: int | None = None,
+    replaced: Mapping[str, int] | None = None,
+    mechanism: str | None = None,
+    error: Error | None = None,
+) -> list[tuple[Candidate, str, str]]:
+    """One document's outcome, recorded per account.
+
+    The *write* is shared, so the state and the version are; **what was replaced
+    is not**. In a shared document one account can have had a `pending` staged
+    while its neighbours did not, and telling the neighbours their password was
+    replaced sends somebody looking for a credential that never existed. So the
+    warning and the detail suffix are looked up per account.
+    """
+    replaced = replaced or {}
+    rows = []
+    for candidate in write.candidates:
+        was = replaced.get(candidate.binding.account)
+        line = detail if was is None else f"{detail}, replaced the pending in v{was}"
+        out.append(
+            build_generate_result(
+                candidate,
+                state=state,
+                stage=PENDING,
+                version=version,
+                replaced=was,
+                mechanism=mechanism,
+                changed=state == STAGED,
+                detail=line,
+                error=error,
+            )
+        )
+        rows.append((candidate, state, line))
+    return rows
+
+
+def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
+    """Which accounts had a ``pending`` this write is about to replace.
+
+    Per account rather than per document, which is the distinction that matters
+    in a shared layout: "nothing was staged" and "something was staged and is now
+    gone" are different things to tell an operator, and only the second means a
+    password somebody may be holding has just become worthless. Reporting the
+    document's answer for every account in it would attach that warning to
+    accounts it was never true of.
+
+    The version is the document's own -- there is one per document, and it is
+    what an operator would go and read the old value back from.
+    """
+    if existing is None:
+        return {}
+    found: dict[str, int] = {}
+    for candidate in write.candidates:
+        ref = candidate.binding.secret
+        if ref is not None and stage_layout(ref).read(existing.data, PENDING) is not None:
+            found[candidate.binding.account] = int(existing.version)
+    return found
 
 
 if __name__ == "__main__":  # pragma: no cover
