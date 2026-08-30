@@ -1,10 +1,10 @@
 """The run document's ``lock`` section (``03-json-output.md`` §2, #83, #105, #149).
 
 What a run says about the locks it took, on exit 7 about the one it did not get,
-for ``lock status`` about locks that are somebody else's entirely, and for ``lock
-break`` about one it ended. The
-shape is pinned by ``sopuli-run-1.15.schema.json``; this is the only producer of
-it, the same arrangement :mod:`sopuli.output.config_view` and
+for ``lock status`` about locks that are somebody else's entirely, and for
+``lock break`` about one it ended. The shape is pinned by
+``sopuli-run-1.16.schema.json``; this is the only producer of it, the same
+arrangement :mod:`sopuli.output.config_view` and
 :mod:`sopuli.output.policy_view` have with their sections.
 
 Four things here are translation rather than transcription.

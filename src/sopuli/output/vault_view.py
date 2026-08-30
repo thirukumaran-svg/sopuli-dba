@@ -43,7 +43,7 @@ from sopuli.store.survey import VaultReport
 
 
 def build(report: VaultReport, *, error: Error | None = None) -> dict[str, Any]:
-    """One entry in ``vaults[]``, as ``sopuli-run-1.15.schema.json`` describes it.
+    """One entry in ``vaults[]``, as ``sopuli-run-1.16.schema.json`` describes it.
 
     ``error`` is passed rather than derived from
     :attr:`~sopuli.store.survey.VaultReport.failure`, because building the

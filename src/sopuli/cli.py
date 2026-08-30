@@ -86,6 +86,7 @@ from sopuli.config import (
     parse_selector,
 )
 from sopuli.diagnostics import (
+    LOCK_LOST,
     backend_diagnostics,
     driver_diagnostics,
     install_diagnostics,
@@ -122,7 +123,7 @@ from sopuli.invocation import (
     global_options,
     group_options,
 )
-from sopuli.lock.errors import LockDeniedError, LockError
+from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
 from sopuli.lock.inspect import declared_locks, mode_of, survey
 from sopuli.lock.inspect import discover as discover_locks
 from sopuli.lock.keys import LockKey, acquisition_order, normalise_path, parse_lock_key
@@ -1792,9 +1793,20 @@ def creds_generate(
 
     results: list[dict[str, Any]] = []
     rows: list[tuple[Candidate, str, str]] = []
+    stolen: LockStolenError | None = None
     try:
         with manager.holding([write.key for write in writes]):
             for write in writes:
+                # The fence, before the write rather than after the lock (UC-1
+                # §8). The window it guards is small here -- acquire, read,
+                # write -- but "small" is not a property the next change to this
+                # loop preserves, and a staged password written under somebody
+                # else's lock is one the run that holds it will promote.
+                try:
+                    manager.check(write.key)
+                except LockStolenError as lost:
+                    stolen = lost
+                    break
                 rows.extend(_stage(write, stores[write.key.store], out=results))
     except LockDeniedError as denied:
         document.lock = build_lock_section(manager, denied=denied)
@@ -1803,6 +1815,17 @@ def creds_generate(
     document.lock = build_lock_section(manager)
     document.results = results
     states = [state for _, state, _ in rows]
+    if stolen is not None:
+        # The same split `creds apply` makes, for the same reason: 7 asserts
+        # nothing happened, which is a lie once a document has been staged.
+        document.diagnostics.append(
+            Diagnostic(level="error", message=stolen.message, code=LOCK_LOST)
+        )
+        document.finish(
+            ExitCode.PARTIAL if rows else ExitCode.LOCK_HELD, summarise_generate(states)
+        )
+        return f"{header}\n\n{render_generate(rows)}\n\n{stolen}"
+
     document.finish(
         ExitCode.FAILURE if FAILED in states else ExitCode.SUCCESS,
         summarise_generate(states),
@@ -2121,15 +2144,22 @@ def creds_apply(
             documents = _read_documents(keys, stores)
             sources = _sources(bindings, documents, stage=source_stage)
             _refuse_unhonourable_strategy(sources, run, config, strategy=strategy)
-            applied = _apply_estate(
+            applied, stolen = _apply_estate(
                 sources,
                 run,
                 config,
+                manager=manager,
                 margin=lockout_margin,
                 strategy=strategy,
                 requested=source_stage,
             )
-            promotions = _promote_documents(applied, documents, stores)
+            promotions: dict[LockKey, _Promotion] = {}
+            if stolen is None:
+                # Nothing is promoted after a takeover, and not because the write
+                # would fail -- the fence would catch it. It is that a promotion
+                # asserts every target holds this password, and a run stopped part
+                # way through has no standing to assert it.
+                promotions, stolen = _promote_documents(applied, documents, stores, manager=manager)
     except LockDeniedError as denied:
         document.lock = build_lock_section(manager, denied=denied)
         raise
@@ -2138,16 +2168,28 @@ def creds_apply(
     document.results = [_applied_json(record, promotions) for record in applied]
     states = [record.outcome.state for record in applied]
     changed = sum(1 for record in applied if record.changed)
-    code = apply_states.exit_code_for(
-        states,
-        # Both questions are asked of the documents that actually read a
-        # `pending`. A repair -- a document whose accounts were applied from
-        # `current` -- has nothing to promote, so counting it as unpromoted
-        # would make a mixed run look like UC-1 §8 case 7 and exit 4 with
-        # everything confirmed and nothing wrong.
-        promoted=all(one.version is not None for one in promotions.values() if one.promotable),
-        promotable=any(one.promotable for one in promotions.values()),
-    )
+    if stolen is not None:
+        # `sopuli.lock.errors` leaves this split to the command, because only the
+        # command knows what it had applied: 7 says nothing happened, which is
+        # true of a run fenced out before its first change and a lie about one
+        # fenced out after its ninth. The diagnostic is what separates this exit 4
+        # from the ordinary one -- that one is repaired by running `apply` again
+        # (#264), and this one must not be.
+        document.diagnostics.append(
+            Diagnostic(level="error", message=stolen.message, code=LOCK_LOST)
+        )
+        code = int(ExitCode.PARTIAL if changed else ExitCode.LOCK_HELD)
+    else:
+        code = apply_states.exit_code_for(
+            states,
+            # Both questions are asked of the documents that actually read a
+            # `pending`. A repair -- a document whose accounts were applied from
+            # `current` -- has nothing to promote, so counting it as unpromoted
+            # would make a mixed run look like UC-1 §8 case 7 and exit 4 with
+            # everything confirmed and nothing wrong.
+            promoted=all(one.version is not None for one in promotions.values() if one.promotable),
+            promotable=any(one.promotable for one in promotions.values()),
+        )
     document.finish(code, summarise_apply(states, changed=changed))
     rows = [(record.binding, record.outcome, record.changed) for record in applied]
     promoted = sum(1 for one in promotions.values() if one.version is not None)
@@ -2157,6 +2199,10 @@ def creds_apply(
     # run already spent. Decided here rather than in the renderer: the exit code
     # has one author, and a table offering a remedy on a run that code called
     # successful would be the two describing one run differently (#264).
+    # No remedy is offered after a takeover, and the suppression is the point:
+    # #264's line says "run this again", which is the one thing not to do while
+    # somebody else holds this estate's lock. `stopped` says what happened
+    # instead, and `render_apply` refuses to print both.
     repair = (
         repair_invocation(
             selectors=selectors,
@@ -2165,13 +2211,17 @@ def creds_apply(
             source=source_stage,
             strategy=strategy,
         )
-        if code == ExitCode.PARTIAL
+        if code == ExitCode.PARTIAL and stolen is None
         else None
     )
-    return (
-        f"{_header(plan, sources)}\n\n"
-        f"{render_apply(rows, promoted=promoted, source=source_stage, repair=repair)}"
+    table = render_apply(
+        rows,
+        promoted=promoted,
+        source=source_stage,
+        repair=repair,
+        stopped=None if stolen is None else str(stolen),
     )
+    return f"{_header(plan, sources)}\n\n{table}"
 
 
 @dataclass(frozen=True)
@@ -2268,6 +2318,24 @@ def _document_keys(bindings: Sequence[Binding]) -> list[LockKey]:
     return list(acquisition_order(found))
 
 
+def _lock_key(binding: Binding) -> LockKey:
+    """The lock guarding the document this account's credential lives in.
+
+    One spelling, used by everything that has to name a document: the keys a run
+    acquires, the fence check before an `ALTER USER`, the grouping the promotion
+    commits by. Three copies of the same two-line expression is three chances for
+    one of them to address a different document from the lock being held over it.
+
+    Raises on a binding with no ref rather than returning ``None`` for the caller
+    to skip on. Every caller is about to mutate, and "there was no lock to check,
+    so none was checked" is the failure the fence exists to prevent, reached
+    politely.
+    """
+    if binding.secret is None or binding.vault is None:
+        raise ValueError(f"{binding.account!r} names no secret ref, so it has no lock")
+    return LockKey(store=binding.vault, path=normalise_path(binding.secret.path))
+
+
 def _read_documents(
     keys: Sequence[LockKey], stores: Mapping[str, SecretStore]
 ) -> dict[LockKey, Any]:
@@ -2307,7 +2375,7 @@ def _sources(
 def _stored_document(binding: Binding, documents: Mapping[LockKey, Any]) -> Any:
     if binding.secret is None or binding.vault is None:
         return None
-    return documents.get(LockKey(store=binding.vault, path=normalise_path(binding.secret.path)))
+    return documents.get(_lock_key(binding))
 
 
 def _header(plan: Any, sources: Sequence[tuple[Binding, Source | None]]) -> str:
@@ -2323,15 +2391,32 @@ def _apply_estate(
     run: Invocation,
     config: Config,
     *,
+    manager: LockManager,
     margin: int,
     strategy: str | None,
     requested: str | None = None,
-) -> list[_Applied]:
+) -> tuple[list[_Applied], LockStolenError | None]:
     """Every account, target by target, one connection each.
 
     Grouped the way `check` groups and for the same reason: a target with six
     accounts in it is one login for this tool rather than six, and six would be
     six entries in that database's audit trail for one rotation.
+
+    **The lease is renewed at each target boundary** (UC-1 §8 step 5), which is
+    where the default 15-minute TTL would otherwise run out on an estate large
+    enough to need it. A renewal is a write and goes behind the fence like every
+    other, so the boundary is also the check that catches a takeover between one
+    target and the next -- before the next target's first `ALTER USER` rather
+    than after it.
+
+    **A stolen lock ends the run and is returned, not raised.** §8 is explicit
+    that the run aborts and mutates nothing further, and what it had already
+    applied *stands* -- so the results collected so far are the run's document
+    and must not be lost with the exception. That is why ``out`` is an
+    accumulator: a takeover found before the third account of a target leaves the
+    first two in it. The caller decides the exit code, which is the split
+    `sopuli.lock.errors` describes -- 7 when nothing had been applied, 4 when
+    something had, and only a command that knows what it applied can say.
     """
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
     grouped: dict[str, list[tuple[Binding, Source | None]]] = {}
@@ -2339,19 +2424,24 @@ def _apply_estate(
         grouped.setdefault(binding.target, []).append((binding, source))
 
     applied: list[_Applied] = []
-    for name, work in grouped.items():
-        applied.extend(
+    for position, (name, work) in enumerate(grouped.items()):
+        try:
+            if position:
+                manager.renew()
             _apply_target(
                 by_target[name],
                 work,
                 run,
                 config,
+                manager=manager,
                 margin=margin,
                 strategy=strategy,
                 requested=requested,
+                out=applied,
             )
-        )
-    return applied
+        except LockStolenError as stolen:
+            return applied, stolen
+    return applied, None
 
 
 def _apply_target(
@@ -2360,10 +2450,12 @@ def _apply_target(
     run: Invocation,
     config: Config,
     *,
+    manager: LockManager,
     margin: int,
     strategy: str | None,
     requested: str | None = None,
-) -> list[_Applied]:
+    out: list[_Applied],
+) -> None:
     """One target's worth of accounts, over one connection.
 
     A target that cannot be reached is a finding rather than a crash, which is
@@ -2388,7 +2480,7 @@ def _apply_target(
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             reported = _as_error(error)
             elapsed = _elapsed(started)
-            return [
+            out.extend(
                 _Applied(
                     binding=binding,
                     source=source,
@@ -2398,19 +2490,24 @@ def _apply_target(
                     error=reported,
                 )
                 for binding, source in work
-            ]
-
-        return [
-            _apply_one(
-                binding,
-                session,
-                source=source,
-                margin=margin,
-                strategy=strategy,
-                requested=requested,
             )
-            for binding, source in work
-        ]
+            return
+
+        # Appended one at a time rather than built as a list, so that a fence
+        # check failing on the third account leaves the first two in the run's
+        # results. `_apply_one` lets a lock error through on purpose.
+        for binding, source in work:
+            out.append(
+                _apply_one(
+                    binding,
+                    session,
+                    manager=manager,
+                    source=source,
+                    margin=margin,
+                    strategy=strategy,
+                    requested=requested,
+                )
+            )
     finally:
         if session is not None:
             with suppress(Exception):
@@ -2421,6 +2518,7 @@ def _apply_one(
     binding: Binding,
     session: Any,
     *,
+    manager: LockManager,
     source: Source | None,
     margin: int,
     strategy: str | None,
@@ -2439,6 +2537,17 @@ def _apply_one(
     them may grant a rollover window. An explicit one has already been refused
     where it could not run (:func:`_refuse_unhonourable_strategy`), so by here it
     is a regime this account can honour.
+
+    **The fence is re-read immediately before the statement** (UC-1 §8), and
+    narrowed to this account's own document: that is the lock the change is about
+    to be made under, and checking the run's other twenty would be twenty store
+    reads to establish nineteen facts nothing here is about to act on.
+
+    **A lock error is never a per-account finding.** Everything else that goes
+    wrong with one account is a row in the table and the run carries on, which is
+    exactly the wrong answer to a takeover: it would turn "somebody else owns this
+    estate now" into a footnote and apply to the next account anyway. So it is
+    re-raised ahead of the catch-all, and the run ends.
     """
     started = time.monotonic()
     before = None
@@ -2469,6 +2578,7 @@ def _apply_one(
                 duration_ms=_elapsed(started),
             )
 
+        manager.check(_lock_key(binding))
         session.set_password(user.name, source.value)
         # Re-read the account rather than reusing what was read before the change:
         # `EXPIRED` clears when a password is set, a rollover window opens, and a
@@ -2490,6 +2600,12 @@ def _apply_one(
             session.finish_rollover(after_user.name)
             after_user = session.describe_user(binding.account) or after_user
             outcome = apply_states.after_change(after_user, after)
+    except LockError:
+        # See the docstring: the run is over, and turning that into one account's
+        # ERROR row would let the loop apply the next account under a lock this
+        # run no longer holds -- the outcome the fence exists to prevent, reached
+        # through the error handler instead of past the check.
+        raise
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _as_error(error)
         return _Applied(
@@ -2667,7 +2783,9 @@ def _promote_documents(
     applied: Sequence[_Applied],
     documents: Mapping[LockKey, Any],
     stores: Mapping[str, SecretStore],
-) -> dict[LockKey, _Promotion]:
+    *,
+    manager: LockManager,
+) -> tuple[dict[LockKey, _Promotion], LockStolenError | None]:
     """Promote every document whose targets all confirmed, and only those.
 
     Invariant 7's ordering, and the one place in this command where the two
@@ -2677,6 +2795,12 @@ def _promote_documents(
 
     A document nobody staged into is not promoted and is not a failure -- a run
     that read `current` is a repair, and the vault already holds what it should.
+
+    **The fence is re-read before each promotion**, which is the vault write UC-1
+    §8 cares about most: it is the one that makes a password visible to
+    applications. A takeover found here ends the run with the documents already
+    promoted reported and the rest left alone -- the same abort
+    :func:`_apply_estate` performs, at the other end of the run.
     """
     promotions: dict[LockKey, _Promotion] = {}
     for key, records in _by_document(applied).items():
@@ -2695,8 +2819,12 @@ def _promote_documents(
                 promotable=True,
             )
             continue
+        try:
+            manager.check(key)
+        except LockStolenError as stolen:
+            return promotions, stolen
         promotions[key] = _write_promotion(key, owing, documents[key], stores[key.store])
-    return promotions
+    return promotions, None
 
 
 def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
@@ -2706,8 +2834,7 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
         binding = record.binding
         if binding.secret is None or binding.vault is None:
             continue
-        key = LockKey(store=binding.vault, path=normalise_path(binding.secret.path))
-        grouped.setdefault(key, []).append(record)
+        grouped.setdefault(_lock_key(binding), []).append(record)
     return grouped
 
 

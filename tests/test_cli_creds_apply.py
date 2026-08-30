@@ -29,6 +29,7 @@ from jsonschema import Draft202012Validator
 
 from sopuli import check
 from sopuli.cli import cli
+from sopuli.clock import utc_now
 from sopuli.config.model import Vault
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
@@ -43,6 +44,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
+from sopuli.lock import Holder, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore
@@ -132,7 +134,9 @@ class FakeSession:
         set_error: Exception | None = None,
         capabilities: frozenset[str] = frozenset(),
         rollover_refusal: Exception | None = None,
+        on_call: Callable[[str], None] | None = None,
     ) -> None:
+        self.on_call = on_call
         self.users = dict(users)
         self.answers = {name: list(results) for name, results in answers.items()}
         self.set_error = set_error
@@ -148,6 +152,7 @@ class FakeSession:
         return Scope(type="pdb", container="ALPHA", read_write=True, capabilities=self.capabilities)
 
     def describe_user(self, account: str) -> UserState | None:
+        self._called("describe_user")
         found = self.users.get(account.upper())
         if found is None:
             return None
@@ -193,7 +198,22 @@ class FakeSession:
         if self.set_error is not None:
             raise self.set_error
         self.changed.append((account.upper(), secret.reveal()))
+        self._called("set_password")
         return ChangeResult(changed=True)
+
+    def _called(self, event: str) -> None:
+        """The seam a takeover needs: something happens to the vault *while* this
+        run is mid-estate.
+
+        Two seams matter and they are one hook, because what separates the two
+        cases the exit code splits on is only *when* it fires: before this
+        session's first `describe_user`, nothing has been applied anywhere; after
+        a `set_password`, one database has been changed. Hooked here rather than
+        by patching `LockManager`, so the test exercises the real fence -- the
+        record on the path really is somebody else's by the next check.
+        """
+        if self.on_call is not None:
+            self.on_call(event)
 
     def close(self) -> None:
         self.closed = True
@@ -232,12 +252,16 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         set_error: Exception | None = None,
         capabilities: frozenset[str] = frozenset(),
         rollover_refusal: Exception | None = None,
+        on_call: Callable[[dict[str, Any], str], None] | None = None,
     ) -> dict[str, Any]:
         store = MemoryStore()
         for path, body in (documents or _staged_two_targets()).items():
             store.write(path, body, cas=0)
 
         sessions: list[FakeSession] = []
+        # Built up front so `on_change` can reach the store it is about to
+        # interfere with, and handed back unchanged at the end.
+        harness: dict[str, Any] = {"store": store, "sessions": sessions}
 
         def fake_connect(
             vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
@@ -260,6 +284,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     set_error=set_error,
                     capabilities=capabilities,
                     rollover_refusal=rollover_refusal,
+                    on_call=None if on_call is None else (lambda event: on_call(harness, event)),
                 )
                 sessions.append(session)
                 return session
@@ -270,7 +295,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         monkeypatch.setattr("sopuli.cli.connect", fake_connect)
         monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
         monkeypatch.setattr("sopuli.cli.admin_resolve", lambda target, env: _credential())
-        return {"store": store, "sessions": sessions}
+        return harness
 
     return install
 
@@ -591,6 +616,126 @@ def test_a_changed_database_with_no_promotion_carries_a_warning(
 
     warnings = document(result)["results"][0]["warnings"]
     assert any("was not promoted" in one["message"] for one in warnings)
+
+
+# ------------------------------------------------------------------ the fence ---
+
+
+def steal(path: str, *, at: str) -> Callable[[dict[str, Any], str], None]:
+    """Somebody else takes this document's lock, once, mid-run (#282).
+
+    A real record at the real path written under a different `correlation_id`, so
+    the run's next fence check fails on the version and would fail on the id too.
+    Once, because a takeover happens once and a hook firing on every call would
+    also fence the run's very first target.
+
+    ``at`` is which seam it happens on, and it is what makes the two exit codes
+    testable: ``describe_user`` fires before this run has changed anything, and
+    ``set_password`` fires once one database has been changed.
+    """
+    taken: list[str] = []
+
+    def take(harness: dict[str, Any], event: str) -> None:
+        if taken or event != at:
+            return
+        taken.append(path)
+        theirs = LockRecord.acquired(
+            correlation_id="01JSOMEBODYELSE",
+            command="creds rotate",
+            holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
+            now=utc_now(),
+        )
+        harness["store"].write(
+            lock_path(LockKey(store="vault-prod", path=path)), theirs.to_dict(), cas=None
+        )
+
+    return take
+
+
+def test_a_takeover_after_a_change_stops_the_run_and_promotes_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """UC-1 §8's fence row: abort immediately, mutate nothing further. Exit 4
+    rather than 7, because 7 asserts nothing happened and one database has just
+    been changed."""
+    harness = estate(on_call=steal("apps/acme/appdb-beta", at="set_password"))
+
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert sum(len(session.changed) for session in harness["sessions"]) == 1
+    # Neither document is promoted: not the one whose lock went, and not the one
+    # this run still holds. A promotion asserts the whole estate has the password.
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]["acme_web_user"] == STAGED
+    assert stored(harness["store"], "apps/acme/appdb-beta")["pending"]["acme_web_user"] == STAGED
+
+
+def test_a_stopped_run_says_so_instead_of_offering_the_repair(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#264's line says *run this again*, which is the one thing not to do while
+    somebody else holds this estate's lock."""
+    estate(on_call=steal("apps/acme/appdb-beta", at="set_password"))
+
+    result = run(runner, write_config(CONFIG))
+
+    assert "taken over" in result.output
+    assert "repair with:" not in result.output
+
+
+def test_a_stopped_run_carries_the_code_that_separates_it_from_a_failed_one(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, validator: Any
+) -> None:
+    """Both exit 4, and they want opposite responses -- which is exactly what
+    `03-json-output.md` §3 says a diagnostic code is for."""
+    estate(on_call=steal("apps/acme/appdb-beta", at="set_password"))
+
+    result = run(runner, write_config(CONFIG), "--output", "json")
+    found = document(result)
+
+    validator.validate(found)
+    assert found["exit_code"] == ExitCode.PARTIAL
+    assert [one["code"] for one in found["diagnostics"] if one["level"] == "error"] == [
+        "SOPULI-W011"
+    ]
+
+
+def test_a_takeover_before_any_change_is_exit_seven(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The other half of the split `sopuli/lock/errors.py` leaves to the command.
+
+    The lock went after this run acquired it and before it changed anything, so
+    nothing happened -- which is what exit 7 asserts, and what exit 4 would deny.
+    """
+    harness = estate(on_call=steal("apps/acme/appdb-alpha", at="describe_user"))
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.LOCK_HELD
+    assert harness["sessions"][0].changed == []
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]["acme_web_user"] == STAGED
+
+
+def test_the_lease_is_renewed_at_each_target_boundary(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """UC-1 §8 step 5. Visible as the lock record's version, because a renewal is
+    a write -- which is also why it carries the boundary's fence check.
+
+    Counted exactly rather than "more than before". Two targets means one
+    boundary, so this path is written three times: acquired, renewed, released.
+    Without the renewal it would be written twice, and a test asserting only that
+    the version moved would pass either way.
+    """
+    harness = estate()
+    assert harness["store"].read("locks/apps/acme/appdb-alpha") is None
+
+    result = run(runner, write_config(CONFIG))
+    after = harness["store"].read("locks/apps/acme/appdb-alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert after.version == 3
 
 
 def test_two_accounts_sharing_a_document_promote_together(

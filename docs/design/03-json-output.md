@@ -992,12 +992,13 @@ is not contract and may improve.
 | `SOPULI-W007` | An estate uses `auth: external`, and this machine has no auto-login wallet this process can read (#215). The connection will fail as an Oracle *login* error, which is the most misleading way for a file-permission problem to appear; this says why in advance. A warning and not a verdict — the target's own reachability decides the run |
 | `SOPULI-W008` | A wallet file in this run's `TNS_ADMIN` is reachable by somebody other than its owner (#215, P4). An auto-login wallet is a credential: whoever can read it can authenticate as the account it holds. `doctor` warns and never fails, for the reason #213 settled for over-granted accounts |
 | `SOPULI-W009` | This machine's clock is further from a configured store's than the advisory lock tolerates (#216, #83). A lease's expiry is compared against the local clock, so a run on this host will take over locks that are still live or refuse ones long dead — and the failure looks like a locking bug rather than an NTP problem. `doctor` warns and never fails: the condition is real, this run did not create it, and refusing to survey an estate over it would block the person who ran it |
+| `SOPULI-W011` | This run's lock was taken over by another while it was running, found at a fence check (#282). It stopped before its next mutation and promoted nothing, so the vault still advertises what it did before — but whatever it had already applied to a database stands. The code exists because the exit code cannot say it: a fenced-out run exits 4 exactly like one whose targets failed, and the second is repaired by running `apply` again while the first must not be. The other side of the same event is `SOPULI-W002`, and they are two codes because *broke somebody's lock* and *had mine broken* are opposite things to be paged about |
 | `SOPULI-W010` | A configured store answered and cannot serve this run: sealed, standing by, not yet initialised, or refusing the credential it was opened with (#216). Distinct from a store that could not be *reached*, which fails the run instead and gets no code — here something answered, and what the reader does next is go and look at the vault rather than at the network |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
 answered**: what is settled is the spelling this document already used as its
-example and that these ten warnings have codes. Whether *every* warning gets one
+example and that these eleven warnings have codes. Whether *every* warning gets one
 — the config layer's §10 findings still do not — and how numbers are allocated
 across categories is the part still open. Every one was allocated by hand at the
 moment something needed it, which is the evidence rather than the answer.
@@ -1403,6 +1404,16 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.15 became 1.16 when a run could be fenced out** (#282): `SOPULI-W011`
+joined the diagnostic registry, which §8's own list calls a minor bump — a new
+diagnostic code, and nothing existing changing meaning. The schema *file* is
+byte-identical apart from its `$id`, because `diagnostic.code` was never an
+enum: a consumer branching on codes has to cope with one it does not know
+whatever the schema says. What the bump buys is the only thing it could — a
+consumer can tell which builds are capable of emitting `SOPULI-W011`, which is
+the question `schema_version` exists to answer. Renamed rather than duplicated,
+for the reason every entry above gives.
 
 ---
 

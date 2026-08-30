@@ -110,6 +110,24 @@ CLOCK_SKEW_BEYOND_TOLERANCE = "SOPULI-W009"
 #: diagnostic is for.
 STORE_DEGRADED = "SOPULI-W010"
 
+#: This run's lock was taken over while it was running, found at a fence check
+#: (#282, UC-1 §8). The run stopped before its next mutation and promoted
+#: nothing; what it had already applied stands.
+#:
+#: Its own code because it is the one thing the exit code cannot say. A fenced-out
+#: run exits 4, and so does a run that simply failed on some targets -- and the
+#: two want opposite responses. The second is repaired by running `apply` again;
+#: the second run of the first would be denied at exit 7 if it is lucky, and the
+#: person reading the output needs to know that somebody else is mid-rotation on
+#: this estate before they decide anything. That is #216's rule exactly: a code
+#: exists for what the exit code cannot tell you.
+#:
+#: Distinct from :data:`LOCK_TAKEN_OVER`, which is the *other* side of the same
+#: event -- there, this run did the taking and says so; here, it was taken from.
+#: One code for both would leave a consumer unable to tell the run that broke a
+#: lock from the run that lost one, which are opposite things to be paged about.
+LOCK_LOST = "SOPULI-W011"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -173,6 +191,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "problem. `doctor` warns and never fails: the condition is real, this run did "
             "not create it, and refusing to survey an estate over it would block the person "
             "who ran it."
+        ),
+        LOCK_LOST: (
+            "This run's lock was taken over by another while it was running, found at a "
+            "fence check. It stopped before its next mutation and promoted nothing, so "
+            "the vault still advertises the password it did before -- but whatever it "
+            "had already applied to a database stands. Do not simply re-run it: another "
+            "run holds this estate's lock, and `creds check` is what establishes what is "
+            "true."
         ),
         STORE_DEGRADED: (
             "A configured store answered and cannot serve this run: sealed, standing by, "

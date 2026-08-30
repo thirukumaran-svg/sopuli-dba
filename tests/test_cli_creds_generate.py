@@ -22,11 +22,14 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli.cli import cli
+from sopuli.clock import utc_now
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError
+from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import lock_path
+from sopuli.lock.record import Holder, LockRecord
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.payload import PENDING
 from sopuli.store import MemoryStore, SecretStore
@@ -66,6 +69,36 @@ applications:
 """
 
 PATH = "apps/acme/dev"
+
+#: Two documents, so there is a second iteration for a fence check to stop at.
+#: One target per document is the layout `01-configuration.md` §7 calls ordinary.
+TWO_DOCUMENTS = """\
+version: 1
+defaults:
+  policy: app-standard
+policies:
+  app-standard:
+    password: { length: 24, charset: alnum, first_char: alpha }
+vaults:
+  vault-prod:
+    type: hashicorp
+    addr: https://vault-prod.example.com:8200
+targets:
+  - name: appdb-alpha
+    type: oracle
+    dsn: db.example.com:1521/alpha.pdb.example.com
+    environment: dev
+    vault: vault-prod
+  - name: appdb-beta
+    type: oracle
+    dsn: db.example.com:1521/beta.pdb.example.com
+    environment: dev
+    vault: vault-prod
+applications:
+  - name: acme
+    accounts: [acme_web_user]
+    secret_template: "apps/acme/{target}#DB_CREDENTIALS/{account}"
+"""
 
 
 @pytest.fixture
@@ -449,3 +482,60 @@ def test_only_the_accounts_that_had_a_pending_are_told_it_was_replaced(
 
     assert any("replaced a pending" in one["message"] for one in web)
     assert not any("replaced a pending" in one["message"] for one in batch)
+
+
+# ------------------------------------------------------------------ the fence ---
+
+
+def test_a_takeover_mid_run_stops_before_the_next_document_is_staged(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+) -> None:
+    """#282, UC-1 §8: the fence is re-read before *every* vault write, including
+    this one.
+
+    The window is small here -- acquire, read, write -- but small is not a
+    property the next change to this loop preserves, and a password staged under
+    somebody else's lock is one the run that holds it will promote.
+
+    Exit 4 rather than 7 for the reason `apply` splits on: one document has been
+    staged, and 7 asserts that nothing happened.
+    """
+    seen: list[str] = []
+    original = store.read
+    plant = store.write
+    alpha = LockKey(store="vault-prod", path="apps/acme/appdb-alpha")
+    beta = LockKey(store="vault-prod", path="apps/acme/appdb-beta")
+
+    def read(path: str, *args: Any, **fields: Any) -> Any:
+        # On the *second* read of alpha's record, which is its fence check --
+        # the first is the acquisition. Firing on the first would plant the
+        # record before beta had been acquired, and the run would be refused at
+        # acquisition instead: exit 7 by the other route, testing nothing new.
+        if path == lock_path(alpha):
+            seen.append(path)
+            if len(seen) == 2:
+                theirs = LockRecord.acquired(
+                    correlation_id="01JSOMEBODYELSE",
+                    command="creds rotate",
+                    holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
+                    now=utc_now(),
+                )
+                plant(lock_path(beta), theirs.to_dict(), cas=None)
+        return original(path, *args, **fields)
+
+    monkeypatch.setattr(store, "read", read)
+
+    result = run(runner, write_config(TWO_DOCUMENTS), "--output", "json")
+    found = document(result)
+
+    validator.validate(found)
+    assert found["exit_code"] == ExitCode.PARTIAL
+    assert [one["code"] for one in found["diagnostics"] if one["level"] == "error"] == [
+        "SOPULI-W011"
+    ]
+    assert store.read("apps/acme/appdb-alpha") is not None
+    assert store.read("apps/acme/appdb-beta") is None

@@ -33,7 +33,7 @@ guarantee was actually in force.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -291,8 +291,8 @@ class LockManager:
 
     # ----------------------------------------------------- holding and letting go ---
 
-    def check(self) -> None:
-        """Assert every lock is still this run's. Call before every mutation.
+    def check(self, *keys: LockKey) -> None:
+        """Assert this run still holds its locks. Call before every mutation.
 
         The fence, and the reason a vault-side lock was worth choosing over
         ``DBMS_LOCK``: a stalled run's database session is still alive and still
@@ -305,8 +305,21 @@ class LockManager:
         checked alone. That catches an operator minutes apart and misses two jobs
         in the same second, which is exactly the weaker guarantee ``mode: none``
         reports.
+
+        ``keys`` narrows it to the locks guarding what is about to be written,
+        and that is what a per-account mutation wants: before changing one
+        document, what has to still be ours is *that* document's lock. Checking
+        all of them would be a store read per held lock before every
+        ``ALTER USER`` -- on an estate of twenty documents, four hundred reads to
+        establish twenty facts, nineteen of which the caller was not about to act
+        on. Called with no keys it checks everything, which is what :meth:`renew`
+        needs, since a renewal writes to every one of them.
+
+        A key this run does not hold **raises** rather than passing quietly. A
+        check that verified nothing is worse than no check at all, because the
+        caller believes it ran and mutates on the strength of it.
         """
-        for one in self.held:
+        for one in self._checking(keys):
             entry = self._store(one.key)
             found = self._found(entry.store, one.key, now=self.now())
             if found is None:
@@ -328,6 +341,19 @@ class LockManager:
                     key=one.key,
                     hint="this run stopped before its next change; `creds check` says what is true",
                 )
+
+    def _checking(self, keys: Sequence[LockKey]) -> list[HeldLock]:
+        """The held locks ``check`` was asked about. See its docstring."""
+        if not keys:
+            return list(self.held)
+        held = {one.key: one for one in self.held}
+        missing = [key for key in keys if key not in held]
+        if missing:
+            raise KeyError(
+                f"this run does not hold {', '.join(str(key) for key in missing)}; "
+                f"held: {', '.join(str(one.key) for one in self.held) or 'nothing'}"
+            )
+        return [held[key] for key in keys]
 
     def renew(self) -> None:
         """Extend every held lock, at a target boundary.

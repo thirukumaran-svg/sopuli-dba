@@ -287,6 +287,52 @@ def test_a_record_rewritten_by_someone_else_is_caught_by_the_correlation_id() ->
     assert "now held by" in str(caught.value)
 
 
+def test_a_check_can_be_narrowed_to_the_lock_about_to_be_written_under() -> None:
+    """#282: before one `ALTER USER`, what has to still be ours is that account's
+    own document lock. Checking all of them would be a store read per held lock
+    before every statement, to establish facts nothing was about to act on."""
+    store = MemoryStore()
+    clock = Clock()
+    run = manager(store, clock=clock)
+    run.acquire([KEY, OTHER])
+
+    clock.advance(DEFAULT_TTL + CLOCK_SKEW + timedelta(seconds=1))
+    manager(store, correlation_id="01JTHEIRS", clock=clock, break_expired=True).acquire([OTHER])
+
+    run.check(KEY)
+
+    with pytest.raises(LockStolenError) as caught:
+        run.check(OTHER)
+    assert caught.value.key == OTHER
+
+
+def test_checking_everything_is_still_what_no_arguments_means() -> None:
+    """`renew` writes to every held lock, so its check has to cover every one."""
+    store = MemoryStore()
+    clock = Clock()
+    run = manager(store, clock=clock)
+    run.acquire([KEY, OTHER])
+
+    clock.advance(DEFAULT_TTL + CLOCK_SKEW + timedelta(seconds=1))
+    manager(store, correlation_id="01JTHEIRS", clock=clock, break_expired=True).acquire([OTHER])
+
+    with pytest.raises(LockStolenError):
+        run.check()
+
+
+def test_checking_a_lock_this_run_does_not_hold_raises() -> None:
+    """Rather than passing quietly, which is worse than not checking at all: the
+    caller believes a check ran and mutates on the strength of it."""
+    store = MemoryStore()
+    run = manager(store)
+    run.acquire([KEY])
+
+    with pytest.raises(KeyError) as caught:
+        run.check(OTHER)
+
+    assert str(OTHER) in str(caught.value)
+
+
 def test_a_lock_record_that_vanished_is_a_stolen_lock_too() -> None:
     """Somebody deleted it. The run has no claim any more, whoever did it."""
     store = MemoryStore()

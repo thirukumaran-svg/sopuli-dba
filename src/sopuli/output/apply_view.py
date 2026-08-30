@@ -411,6 +411,7 @@ def render_apply(
     promoted: int = 0,
     source: str | None = None,
     repair: str | None = None,
+    stopped: str | None = None,
 ) -> str:
     """The result table and the closing line. ``rows`` is (binding, outcome, changed).
 
@@ -425,6 +426,13 @@ def render_apply(
     states, and the one place it is decided is `apply.exit_code_for`: a table
     that offered a remedy on a run the exit code called successful would be the
     two disagreeing about the same run.
+
+    ``stopped`` is why the run ended early -- today, that its lock was taken over
+    (#282). It **suppresses** ``repair``, and that is not tidiness: #264's line
+    says *run this again*, and running again is the one thing not to do while
+    somebody else holds this estate's lock. Two callers passing both would print
+    contradictory advice, so the renderer settles it rather than trusting each
+    one to.
     """
     table = render_table(
         [
@@ -448,6 +456,7 @@ def render_apply(
                 promoted=promoted,
                 source=source,
                 repair=repair,
+                stopped=stopped,
             ),
         ]
     )
@@ -477,6 +486,7 @@ def _verdict(
     promoted: int,
     source: str | None = None,
     repair: str | None = None,
+    stopped: str | None = None,
 ) -> str:
     """The closing line: what happened, then what still needs attention.
 
@@ -498,6 +508,11 @@ def _verdict(
     `results[]` already carries the states a consumer would filter on
     (`03-json-output.md` §7). A code would be a second spelling of a fact the
     document has twice.
+
+    ``stopped`` is the exception that proves that rule, and it *does* carry one
+    (``SOPULI-W011``): a run fenced out mid-estate exits 4 exactly like a run
+    whose targets failed, and the two want opposite responses. Here it replaces
+    the remedy rather than joining it -- see :func:`render_apply`.
     """
     verb = "rolled back" if source == PREVIOUS else "changed"
     parts = [f"{changed} {verb}"] if changed else [f"nothing {verb}"]
@@ -508,18 +523,25 @@ def _verdict(
         line = ", ".join(parts)
         if not (changed and not promoted):
             line = paint(line, Role.HEADING)
-        return _with_remedy(line, repair)
+        return _with_remedy(line, repair, stopped)
     parts.append(f"{unconfirmed} not confirmed")
-    return _with_remedy(", ".join(parts), repair)
+    return _with_remedy(", ".join(parts), repair, stopped)
 
 
-def _with_remedy(line: str, repair: str | None) -> str:
-    """The verdict, and under it what to type next.
+def _with_remedy(line: str, repair: str | None, stopped: str | None = None) -> str:
+    """The verdict, and under it either why the run stopped or what to type next.
 
-    **The remedy line is unpainted**, unlike the verdict above it -- which the
-    caller may have painted as a heading already. Colour maps onto the JSON
-    vocabulary and nothing else (`03-json-output.md` §1), and a remedy is not a
-    field the document carries. It is also the line somebody copies, which is a
-    second reason to keep escape sequences out of it.
+    Never both, and ``stopped`` wins. A run whose lock was taken over has an
+    exit code that also means "some targets failed", and the advice for that one
+    -- run it again -- is the advice to withhold from this one.
+
+    **The lines under the verdict are unpainted**, unlike the verdict itself,
+    which the caller may have painted as a heading already. Colour maps onto the
+    JSON vocabulary and nothing else (`03-json-output.md` §1), and neither a
+    remedy nor a reason is a field the document carries. The remedy is also the
+    line somebody copies, which is a second reason to keep escape sequences out
+    of it.
     """
+    if stopped is not None:
+        return f"{line}\n{stopped}"
     return line if repair is None else f"{line}\nrepair with: {repair}"

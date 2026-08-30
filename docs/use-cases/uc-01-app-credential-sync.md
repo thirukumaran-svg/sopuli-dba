@@ -847,6 +847,48 @@ targets, rather than applying a password the vault no longer advertises. Release
 in step 9 happens in a `finally`, on every path including failure, and writes a
 `released` record rather than deleting one.
 
+### What the fence does in this build (#282)
+
+`creds apply` and `creds generate` re-read it, which is what makes the property
+above true of the tool rather than only of `sopuli/lock/`. Five things about it
+are decisions rather than transcription:
+
+**It is checked per document, not per run.** Before an `ALTER USER`, what has to
+still be this run's is *that account's* document lock — the one the change is
+about to be made under. Checking every lock the run holds would be a store read
+per held lock before every statement: on an estate of twenty documents, four
+hundred reads to establish twenty facts, nineteen of which nothing was about to
+act on. `LockManager.check()` with no arguments still checks everything, which is
+what a renewal needs, since a renewal writes to all of them.
+
+**The renewal is the boundary check.** The lease is extended between one target
+and the next, and because a renewal is itself a write it goes behind the fence
+like every other — so the boundary catches a takeover *before* the next target's
+first statement rather than after it.
+
+**A lock error is never a per-target finding.** Everything else that goes wrong
+with one account becomes a row in the table and the run carries on, which is
+exactly the wrong answer here: it would turn "somebody else owns this estate now"
+into a footnote and apply to the next account anyway. `LockError` is re-raised
+ahead of the per-account catch-all, and the run ends.
+
+**Nothing is promoted after a takeover**, including documents whose own locks are
+still held. Not because the write would fail — the fence would catch it — but
+because a promotion asserts that every target holds this password, and a run
+stopped part way through has no standing to assert it.
+
+**The exit code splits on what had been applied**, which is the split
+`sopuli/lock/errors.py` describes and deliberately leaves to the command: **7**
+where the run was fenced out before it changed anything, and **4** where it had
+already changed something. Reporting 7 after nine targets is the one answer that
+would tell a scheduler nothing happened at exactly the moment something did.
+
+Exit 4 is then ambiguous by itself — a run whose targets failed exits 4 too, and
+that one *is* repaired by running `apply` again — so a fenced-out run carries the
+diagnostic `SOPULI-W011` and its text says what stopped it **instead of** the
+repair line #264 added. Advising a re-run while somebody else holds this estate's
+lock is the one piece of advice to withhold.
+
 `check` and `status` take no lock at all, and neither does any `--dry-run`.
 An hourly scheduled check that blocked rotations would be a worse problem than
 the one the lock solves.
@@ -948,7 +990,7 @@ in a store `vaults:` declares, and never touches the secret the lock guards.
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` distinguishes "wrong password" from "account locked/expired" |
 | 7 | database has new, vault `current` still old | **highest-severity case**: `pending` still holds the right value, so `sopuli creds promote` completes it; the tool must retry the promote before giving up |
 | 8 | promoted but read-back disagreed | report; likely a vault replication lag issue |
-| any fence check, at 4–7 | this run's lock was taken over by another; whatever it had already applied stands | abort immediately, mutate nothing further, exit non-zero. `check` establishes what is true; the run that holds the lock is the one that may fix it |
+| any fence check, at 4–7 | this run's lock was taken over by another; whatever it had already applied stands | abort immediately, mutate nothing further, exit **7** if nothing had been applied and **4** if something had, carrying `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it |
 
 **Rollback.** `previous` is retained so that
 `sopuli creds apply --source previous --confirm` can put the old password back on

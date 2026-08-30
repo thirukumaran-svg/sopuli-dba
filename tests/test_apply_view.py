@@ -326,3 +326,27 @@ def test_a_run_that_did_not_exit_four_offers_no_remedy() -> None:
     rows = [(binding(), outcome(), True)]
 
     assert "repair with:" not in apply_view.render_apply(rows, promoted=1)
+
+
+def test_a_stopped_run_says_why_instead_of_offering_a_remedy() -> None:
+    """#282: a run fenced out mid-estate exits 4 exactly like one whose targets
+    failed, and #264's line -- *run this again* -- is the advice to withhold from
+    it. The renderer settles that rather than trusting each caller to."""
+    rows = [(binding(), outcome(), True)]
+
+    rendered = apply_view.render_apply(
+        rows,
+        repair="sopuli creds apply --select env=prod",
+        stopped="vault-prod:apps/acme/db was taken over: expected version 41, found 42",
+    )
+
+    assert "was taken over" in rendered
+    assert "repair with:" not in rendered
+
+
+def test_the_reason_a_run_stopped_is_printed_under_the_verdict() -> None:
+    rows = [(binding(), outcome(), True)]
+
+    rendered = apply_view.render_apply(rows, stopped="taken over")
+
+    assert rendered.splitlines()[-1] == "taken over"
