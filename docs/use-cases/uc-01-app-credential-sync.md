@@ -238,7 +238,7 @@ sopuli creds apply --application orders-app
                    [--source {pending,current}]   # default: pending if set, else current
                    [--strategy {rollover,staged,direct}]
                    [--continue-on-error]          # default: fail fast
-                   [--repair]                     # only act on targets check says DRIFT
+                   [--repair FILE]                # act only on a run's unconfirmed set
 ```
 
 **Flow, per target**
@@ -290,8 +290,9 @@ the diff stays readable.
 The spine is implemented: read the source, set the password, verify, promote per
 document. `--strategy` arrived with #262 and is described in §6.3; `--source`
 with #265, and the rollback it exists for is §8. Two things in the sketch above
-are still **not** in this build — `--repair` (#264) and `--continue-on-error`
-(#266). The build is fail-fast, which is §5's own default.
+are still **not** in this build — `--repair` (#264, whose input is settled
+below) and `--continue-on-error` (#266). The build is fail-fast, which is §5's
+own default.
 
 ### `--source`, and the rollback (#265)
 
@@ -367,6 +368,83 @@ came from the vault's `pending`, which `generate` wrote and something may alread
 be holding, so drawing a different one here would make the vault and the database
 disagree with what the operator staged. Regeneration inside `apply` is a design
 question and is filed rather than guessed at.
+
+### `--repair`, and where the DRIFT list comes from (#264)
+
+```
+sopuli creds apply --repair result.json   # act only on what that run left unconfirmed
+```
+
+**The list comes from a previous run's document.** `--repair` takes a path to
+one — an `apply` that exited 4, or a `check` that exited 3 — and narrows this run
+to the (account, target) pairs it reported as not confirmed. That is decided;
+the flag itself is not in this build, and what follows is what it will be when it
+lands.
+
+**What it buys is logins, not capability.** `apply` is already idempotent: every
+account is verified before it is touched and one that already works is left
+alone, so an unnarrowed repair converges the estate correctly and expensively.
+The cost is one login per account per target — an attempt against the
+failed-login counter §7 exists to protect, a connection, and an audit entry in a
+database that had nothing wrong with it. Repairing one PDB in an estate of
+twenty-one spends twenty-one.
+
+**Why not run `check`'s logic first, in the same process.** Because that is what
+this build already does. The pre-flight in the flow above *is* `check`'s
+comparison, and the `ALTER USER` is skipped where it passes — so a flag that ran
+it would spend exactly the logins `--repair` exists to save and change nothing
+else. It is not a narrower option; it is an empty one.
+
+**Why not take the target list from the operator.** `--repair --target x` is
+`--target x` with more letters. `--select` already narrows the estate and #229
+adds the named-entity selectors; a second spelling of them would be a flag whose
+only distinguishing feature is that it is easier to get wrong.
+
+**What the document form has to refuse, and what it does not.** A stale document
+describes a stale estate — but two properties bound that before any rule is
+written:
+
+- **it can only ever narrow.** Invariant 5 makes the config the whitelist, and
+  `--repair` feeds a filter rather than a target list. A pair the document names
+  and the config no longer declares is dropped, not acted on;
+- **a pair that has since been repaired costs one login and reports
+  `changed: false`,** because the pre-flight asks before it acts.
+
+Acting on a stale document is therefore wasteful rather than dangerous, so
+freshness is a **warning naming the document's age**, not a gate with a threshold
+in it: a threshold would have to be wrong for somebody, and the run it refused
+would have been safe. What *is* refused is a document describing a different
+estate — `--repair` reads `command` and `config.sources[]`, and one not produced
+by `creds apply` or `creds check` over this configuration is rejected before a
+target is dialled. A repair aimed at the wrong estate is the one failure the two
+properties above do not catch.
+
+**Exit 4 names the invocation that repairs it, and that part shipped.** A partial
+run's closing line says what to type, narrowed the way that run was narrowed and
+carrying `--config`, `--profile`, `--source` and `--strategy` so the repair
+resolves and acts the way the run did:
+
+```
+1 changed, 1 not confirmed
+repair with: sopuli creds apply --config estate.yaml --select env=prod
+```
+
+It names the plain re-run rather than `--repair`, because that is the invocation
+that works today — safe (invariant 9) and merely more expensive than the flag
+will be. Sending somebody holding a half-applied estate to a usage error is worse
+than sending them to a slow remedy. The flag replaces it in this message when it
+ships.
+
+Both shapes of exit 4 get the line: targets that did not confirm, and an estate
+that confirmed while its vault was not promoted. The second is §8 case 7 —
+applications are fetching a password the databases no longer have — and it is the
+row where knowing what to type next matters most.
+
+**The line is text only, and carries no diagnostic code.** `03-json-output.md`
+§3's rule is that a code exists for what the exit code cannot tell you, and here
+it tells you exactly: exit 4, with `results[]` already carrying the states a
+consumer would filter on. A code would be a third spelling of a fact the
+document holds twice.
 
 ---
 

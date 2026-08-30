@@ -15,7 +15,7 @@ from sopuli.config.model import Binding
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.driver.protocol import FAIL, PASS, SKIPPED, VERIFY_LOGIN, VerifyResult
 from sopuli.output import apply_view
-from sopuli.payload import CURRENT, PENDING
+from sopuli.payload import CURRENT, PENDING, PREVIOUS
 from sopuli.secrets import Secret
 
 
@@ -250,3 +250,79 @@ def test_the_table_is_ascii() -> None:
 
     apply_view.render_apply(rows, promoted=1).encode("ascii")
     "\n".join(apply_view.render_source_table([(binding(), source())])).encode("ascii")
+
+
+# -------------------------------------------------------------- the remedy ---
+
+
+def test_the_repair_invocation_echoes_what_narrowed_the_run() -> None:
+    """#264: exit 4 points at a remedy, and an unnarrowed one walks the estate the
+    partial run already walked -- a login per account per target, against the
+    counter UC-1 §7 exists to protect."""
+    line = apply_view.repair_invocation(selectors=("env=prod", "tenant=alpha"))
+
+    assert line == "sopuli creds apply --select env=prod --select tenant=alpha"
+
+
+def test_the_repair_invocation_carries_the_layers_the_run_resolved_under() -> None:
+    """A scheduled run repaired without its profile resolves its settings from
+    different layers and is a different run (`01-configuration.md` §5)."""
+    line = apply_view.repair_invocation(config_paths=("estate.yaml",), profile="scheduled")
+
+    assert line == "sopuli creds apply --config estate.yaml --profile scheduled"
+
+
+def test_the_repair_invocation_carries_an_explicit_regime() -> None:
+    """`--strategy` decides what is issued, so a repair without it may honour a
+    different regime from the run it is repairing (UC-1 §6.3)."""
+    assert apply_view.repair_invocation(strategy="direct").endswith("--strategy direct")
+
+
+def test_a_partial_rollback_is_repaired_by_another_authorised_rollback() -> None:
+    """UC-1 §8 puts `--confirm` on this operation and only this one, so a remedy
+    line that left it out would be a paste that stops at a refusal."""
+    assert apply_view.repair_invocation(source=PREVIOUS).endswith("--source previous --confirm")
+
+
+def test_no_other_stage_is_offered_a_confirmation() -> None:
+    assert "--confirm" not in apply_view.repair_invocation(source=CURRENT)
+
+
+def test_an_argument_with_a_space_is_quoted_for_both_shells() -> None:
+    """P4: the line is meant to be pasted, on Windows as well. `cmd` does not
+    treat a single quote as quoting at all, while a double-quoted argument works
+    in `cmd`, in PowerShell and in every POSIX shell."""
+    line = apply_view.repair_invocation(config_paths=("C:/Program Files/estate.yaml",))
+
+    assert line.endswith('--config "C:/Program Files/estate.yaml"')
+
+
+def test_the_verdict_names_the_repair_where_targets_did_not_confirm() -> None:
+    rows = [
+        (binding(), outcome(), True),
+        (binding("acme_batch_user"), outcome(check.ERROR, "ORA-01017"), True),
+    ]
+
+    rendered = apply_view.render_apply(rows, repair="sopuli creds apply --select env=prod")
+
+    assert "1 not confirmed" in rendered
+    assert "repair with: sopuli creds apply --select env=prod" in rendered
+
+
+def test_the_verdict_names_the_repair_where_the_vault_was_not_promoted() -> None:
+    """Exit 4's other shape, and UC-1 §8's highest-severity row: every target
+    confirmed, and applications are still fetching a password the estate no
+    longer has. Knowing what to type next matters most here."""
+    rows = [(binding(), outcome(), True)]
+
+    rendered = apply_view.render_apply(rows, promoted=0, repair="sopuli creds apply")
+
+    assert "repair with: sopuli creds apply" in rendered
+
+
+def test_a_run_that_did_not_exit_four_offers_no_remedy() -> None:
+    """The renderer never decides this. Offering a remedy on a run the exit code
+    called successful would be the two describing one run differently."""
+    rows = [(binding(), outcome(), True)]
+
+    assert "repair with:" not in apply_view.render_apply(rows, promoted=1)

@@ -37,7 +37,13 @@ from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.payload import CURRENT, PREVIOUS
 
-__all__ = ["build_result", "render_apply", "render_source_table", "summarise"]
+__all__ = [
+    "build_result",
+    "render_apply",
+    "render_source_table",
+    "repair_invocation",
+    "summarise",
+]
 
 _ACCOUNT = 24
 _TARGET = 28
@@ -325,11 +331,86 @@ def render_source_table(rows: Sequence[tuple[Binding, Source]]) -> list[str]:
     )
 
 
+def repair_invocation(
+    *,
+    selectors: Sequence[str] = (),
+    config_paths: Sequence[str] = (),
+    profile: str | None = None,
+    source: str | None = None,
+    strategy: str | None = None,
+) -> str:
+    """The command line that repairs a partial run, spelled exactly (#264).
+
+    Printed by :func:`render_apply` on the runs that exit 4, because that exit
+    code's whole purpose is to point at a remedy and "run it again" is not one.
+    A run narrowed to one tenant has to be narrowed the same way to repair it,
+    or the repair walks the estate the partial run already walked -- which is a
+    login per account per target, against the failed-login counter UC-1 §7
+    exists to protect.
+
+    So this echoes back the options that decide **what would be applied** -- the
+    selectors, the stage, the regime -- and the two that decide **how the file
+    resolves**, ``--config`` and ``--profile``. A scheduled run repaired without
+    its profile resolves its settings from different layers and is a different
+    run (`01-configuration.md` §5), which is the failure that looks like the
+    tool behaving inconsistently.
+
+    Options that tune a guard rather than the work are left out on purpose.
+    ``--lockout-margin`` changes how cautious the pre-flight is and nothing about
+    which accounts are acted on, and a remedy line long enough to wrap is one
+    nobody pastes.
+
+    ``--source previous`` carries ``--confirm`` with it, because the repair of a
+    partial rollback is another rollback and UC-1 §8 refuses an unauthorised one.
+    No other stage gets it: `--confirm` being on that operation alone is the
+    point of having it.
+
+    **Not a `--repair FILE` invocation yet.** #264 decided that flag reads a
+    previous run's document; until it ships, the invocation that actually repairs
+    a partial run is this one -- safe to re-run (invariant 9) and merely more
+    expensive than the flag will be. Naming a flag this build has not got would
+    send an operator holding a half-applied estate to a usage error.
+    """
+    words = ["sopuli", "creds", "apply"]
+    for path in config_paths:
+        words += ["--config", _word(path)]
+    if profile is not None:
+        words += ["--profile", _word(profile)]
+    for selector in selectors:
+        words += ["--select", _word(selector)]
+    if source is not None:
+        words += ["--source", source]
+        if source == PREVIOUS:
+            words.append("--confirm")
+    if strategy is not None:
+        words += ["--strategy", strategy]
+    return " ".join(words)
+
+
+def _word(value: str) -> str:
+    """One argument, quoted where it carries whitespace.
+
+    **Not a general shell quoter**, and it should not become one. What is
+    composed here is config paths, a profile name and `k=v` label selectors, and
+    whitespace is the character among those that arises -- ``C:/Program
+    Files/estate.yaml`` is the ordinary case on Windows. Nothing here escapes
+    ``&``, ``$`` or a glob, and a value carrying one would need a different
+    answer per shell rather than this one.
+
+    Double quotes rather than single, because the line is meant to be pasted on
+    Windows as well (P4): ``cmd`` does not treat a single quote as quoting at
+    all, while a double-quoted argument works in ``cmd``, in PowerShell and in
+    every POSIX shell.
+    """
+    return f'"{value}"' if any(char.isspace() for char in value) else value
+
+
 def render_apply(
     rows: Sequence[tuple[Binding, Outcome, bool]],
     *,
     promoted: int = 0,
     source: str | None = None,
+    repair: str | None = None,
 ) -> str:
     """The result table and the closing line. ``rows`` is (binding, outcome, changed).
 
@@ -337,6 +418,13 @@ def render_apply(
     a rollback says "rolled back" rather than "changed". Worth the parameter,
     because the two runs are indistinguishable otherwise and one of them moved
     an estate backwards on purpose.
+
+    ``repair`` is the invocation that repairs this run, from
+    :func:`repair_invocation`, and is passed **only on the runs that exit 4**
+    (#264). Deciding that here would mean re-deriving the exit code from the
+    states, and the one place it is decided is `apply.exit_code_for`: a table
+    that offered a remedy on a run the exit code called successful would be the
+    two disagreeing about the same run.
     """
     table = render_table(
         [
@@ -359,6 +447,7 @@ def render_apply(
                 changed=sum(1 for _, _, changed in rows if changed),
                 promoted=promoted,
                 source=source,
+                repair=repair,
             ),
         ]
     )
@@ -382,7 +471,12 @@ def _state(state: str) -> Cell | str:
 
 
 def _verdict(
-    states: Sequence[str], *, changed: int, promoted: int, source: str | None = None
+    states: Sequence[str],
+    *,
+    changed: int,
+    promoted: int,
+    source: str | None = None,
+    repair: str | None = None,
 ) -> str:
     """The closing line: what happened, then what still needs attention.
 
@@ -391,6 +485,19 @@ def _verdict(
     of UC-1 §3 is that the second only follows the first once every target has
     confirmed -- so a line reporting changes with no promotion is exactly the
     state an operator has to notice.
+
+    ``repair`` adds a second line naming the invocation that fixes it (#264).
+    It is printed on both shapes of exit 4 and that is deliberate: targets that
+    did not confirm, and a whole estate that confirmed while its vault was not
+    promoted. The second is UC-1 §8 case 7 -- the estate has the new password and
+    applications are still fetching the old one -- and it is the row on that
+    table where knowing what to type next matters most.
+
+    **Text only, and no diagnostic code.** #216's rule is that a code exists for
+    what the exit code cannot tell you; here exit 4 says it exactly, and
+    `results[]` already carries the states a consumer would filter on
+    (`03-json-output.md` §7). A code would be a second spelling of a fact the
+    document has twice.
     """
     verb = "rolled back" if source == PREVIOUS else "changed"
     parts = [f"{changed} {verb}"] if changed else [f"nothing {verb}"]
@@ -399,8 +506,20 @@ def _verdict(
     unconfirmed = sum(1 for state in states if state not in CONFIRMED)
     if not unconfirmed:
         line = ", ".join(parts)
-        if changed and not promoted:
-            return line
-        return paint(line, Role.HEADING)
+        if not (changed and not promoted):
+            line = paint(line, Role.HEADING)
+        return _with_remedy(line, repair)
     parts.append(f"{unconfirmed} not confirmed")
-    return ", ".join(parts)
+    return _with_remedy(", ".join(parts), repair)
+
+
+def _with_remedy(line: str, repair: str | None) -> str:
+    """The verdict, and under it what to type next.
+
+    **The remedy line is unpainted**, unlike the verdict above it -- which the
+    caller may have painted as a heading already. Colour maps onto the JSON
+    vocabulary and nothing else (`03-json-output.md` §1), and a remedy is not a
+    field the document carries. It is also the line somebody copies, which is a
+    second reason to keep escape sequences out of it.
+    """
+    return line if repair is None else f"{line}\nrepair with: {repair}"

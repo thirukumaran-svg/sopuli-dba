@@ -138,7 +138,7 @@ from sopuli.lock.takeover import (
 )
 from sopuli.material import strip_one_newline
 from sopuli.output.apply_view import build_result as build_apply_result
-from sopuli.output.apply_view import render_apply, render_source_table
+from sopuli.output.apply_view import render_apply, render_source_table, repair_invocation
 from sopuli.output.apply_view import summarise as summarise_apply
 from sopuli.output.check_view import build_result, render_check, summarise
 from sopuli.output.config_view import (
@@ -2138,23 +2138,39 @@ def creds_apply(
     document.results = [_applied_json(record, promotions) for record in applied]
     states = [record.outcome.state for record in applied]
     changed = sum(1 for record in applied if record.changed)
-    document.finish(
-        apply_states.exit_code_for(
-            states,
-            # Both questions are asked of the documents that actually read a
-            # `pending`. A repair -- a document whose accounts were applied from
-            # `current` -- has nothing to promote, so counting it as unpromoted
-            # would make a mixed run look like UC-1 §8 case 7 and exit 4 with
-            # everything confirmed and nothing wrong.
-            promoted=all(one.version is not None for one in promotions.values() if one.promotable),
-            promotable=any(one.promotable for one in promotions.values()),
-        ),
-        summarise_apply(states, changed=changed),
+    code = apply_states.exit_code_for(
+        states,
+        # Both questions are asked of the documents that actually read a
+        # `pending`. A repair -- a document whose accounts were applied from
+        # `current` -- has nothing to promote, so counting it as unpromoted
+        # would make a mixed run look like UC-1 §8 case 7 and exit 4 with
+        # everything confirmed and nothing wrong.
+        promoted=all(one.version is not None for one in promotions.values() if one.promotable),
+        promotable=any(one.promotable for one in promotions.values()),
     )
+    document.finish(code, summarise_apply(states, changed=changed))
     rows = [(record.binding, record.outcome, record.changed) for record in applied]
     promoted = sum(1 for one in promotions.values() if one.version is not None)
+    # Exit 4's whole purpose is to point at a remedy (P5, UC-1 §5), so the run
+    # that earns it says what to type -- narrowed the way this run was narrowed,
+    # because a repair that walks the whole estate spends every login the partial
+    # run already spent. Decided here rather than in the renderer: the exit code
+    # has one author, and a table offering a remedy on a run that code called
+    # successful would be the two describing one run differently (#264).
+    repair = (
+        repair_invocation(
+            selectors=selectors,
+            config_paths=[str(path) for path in run.config_paths],
+            profile=run.profile,
+            source=source_stage,
+            strategy=strategy,
+        )
+        if code == ExitCode.PARTIAL
+        else None
+    )
     return (
-        f"{_header(plan, sources)}\n\n{render_apply(rows, promoted=promoted, source=source_stage)}"
+        f"{_header(plan, sources)}\n\n"
+        f"{render_apply(rows, promoted=promoted, source=source_stage, repair=repair)}"
     )
 
 

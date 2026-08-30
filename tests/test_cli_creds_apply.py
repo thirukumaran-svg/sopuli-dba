@@ -534,6 +534,45 @@ def test_one_failed_target_stops_the_promotion_for_that_document(
     assert stored(harness["store"], "apps/acme/appdb-beta")["pending"]["acme_web_user"] == STAGED
 
 
+def test_a_partial_run_names_the_invocation_that_repairs_it(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#264, and the half of exit 4 that was missing: the code exists to point at
+    a remedy, and the remedy has to be narrowed the way this run was narrowed --
+    otherwise the repair spends a login on every target the partial run already
+    spent one on."""
+    estate(
+        per_target={
+            "appdb-alpha": {"ACME_WEB_USER": drifted()},
+            "appdb-beta": {
+                "ACME_WEB_USER": [
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                ]
+            },
+        }
+    )
+    config = write_config(CONFIG)
+
+    result = run(runner, config, "--select", "env=prod")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert f"repair with: sopuli creds apply --config {config} --select env=prod" in result.output
+
+
+def test_a_run_that_worked_offers_no_repair(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The remedy is exit 4's, and a successful run naming one would be the table
+    and the exit code describing the same run differently."""
+    estate()
+
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "repair with:" not in result.output
+
+
 def test_a_changed_database_with_no_promotion_carries_a_warning(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

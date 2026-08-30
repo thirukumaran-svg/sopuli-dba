@@ -1249,6 +1249,10 @@ useful: "the passwords disagree" and "the tool is broken" need different pagers.
 # which accounts drifted, and where
 jq -r '.results[] | select(.state=="DRIFT") | "\(.account)@\(.target)"' result.json
 
+# what a partial apply left unconfirmed: the repair set `--repair` will read (#264)
+jq -r '.results[] | select(.state != "IN_SYNC" and .state != "ROLLOVER_ACTIVE")
+       | "\(.account)@\(.target)"' result.json
+
 # anything the tool actually changed, for the change record
 jq '[.results[] | select(.changed)] | map({account,target,actions:[.actions[]|.kind]})' result.json
 
