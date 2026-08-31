@@ -31,6 +31,7 @@ from typing import Any
 from sopuli.apply import CONFIRMED, Source, counts, is_confirmed, is_failure, is_inconclusive
 from sopuli.check import ACCOUNT_MISSING, ERROR, ROLLOVER_ACTIVE, Outcome
 from sopuli.config.model import Binding
+from sopuli.driver.guardrails import Refusal
 from sopuli.driver.protocol import FAIL, PASS, VerifyResult
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint
@@ -62,6 +63,7 @@ def build_result(
     rollover: dict[str, Any] | None = None,
     promoted_to: int | None = None,
     mechanism: str | None = None,
+    overridden: Sequence[Refusal] = (),
     duration_ms: int | None = None,
     error: Error | None = None,
 ) -> dict[str, Any]:
@@ -79,6 +81,15 @@ def build_result(
     promoted, which is both a run that read ``current`` and a run whose targets
     did not all confirm; the two are distinguished by the state and the detail,
     not by this field.
+
+    ``overridden`` is what ``--force`` waived (§4, #286), and it is the reason
+    the flag returns a value rather than a boolean: §4 requires the waiver to
+    survive the waiving, so a run that rotated `DBSNMP` on purpose says which
+    checks it went past and what each observed. **Emitted only when something was
+    actually waived** -- a `--force` that met a clean account omits the key,
+    because the field records overrides and not intent, and a document carrying an
+    empty array on every forced run would make the ones that mattered harder to
+    find.
     """
     entry: dict[str, Any] = {
         "account": binding.account,
@@ -115,6 +126,10 @@ def build_result(
         entry["rollover"] = rollover
     elif outcome.state == ROLLOVER_ACTIVE:
         entry["rollover"] = {"active": True}
+    if overridden:
+        entry["overridden"] = [
+            {"check": refusal.check, "reason": refusal.reason} for refusal in overridden
+        ]
     if duration_ms is not None:
         entry["duration_ms"] = duration_ms
     if error is not None:

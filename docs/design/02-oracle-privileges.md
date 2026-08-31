@@ -421,6 +421,63 @@ decide — the same shape as the error mapping. Three things it settles:
   users. The residual risk, an estate holding both `ACME_WEB_USER` and a quoted
   `"acme_web_user"`, is named rather than solved.
 
+### What the guardrails do in this build (#286)
+
+`sopuli/driver/guardrails.py` was written in #173 and **called by nothing** until
+now: it implemented all five checks, documented `--force`, and had a full unit
+suite, while `creds apply` would happily issue `ALTER USER` against an
+`ORACLE_MAINTAINED` account provided the config declared it. `creds apply` and
+`creds rotate` now ask it. Five things about how are decisions:
+
+- **The review runs before the first login, not before the statement.** An
+  account the tool will not touch must not spend an attempt against a lockout
+  counter, which is the argument §7 of UC-1 makes for every login this tool
+  budgets. It costs no extra round trip either way: `describe_user` has already
+  read every fact the checks need.
+- **Check 1 asks the *unfiltered* config.** A selector narrows what a run
+  touches and cannot un-declare an account (invariant 5), so the whitelist is
+  the file's declared set and not this run's slice of it. In practice check 1
+  cannot fire from a mutating verb today, because the bindings come from the same
+  file — it is run anyway, because "enforced by construction" is a property of
+  today's call graph rather than of the guardrail.
+- **A refusal is `SKIPPED`, and `SKIPPED` is not counted in the exit code.** It
+  is neither a success nor a failure: it is an account that left the run's scope,
+  the same way one the config never declared never entered it. Counting it as
+  unconfirmed would exit 4 — "some of it worked, run `apply --repair`" — on a run
+  where everything the tool was willing to do succeeded, and the repair would
+  skip the same account again, every night, for ever. A run of nothing but skips
+  exits 0, which is the answer an empty selection already gives.
+- **A skipped account is dropped from its document's promotion entirely**, from
+  the gate as well as from the write. Promoting it would move its `pending` to
+  `current` while its database still holds the old password, which is what
+  invariant 7 exists to prevent; letting it *gate* the document would mean one
+  permanently guarded account — a `DBA` grant nobody is going to give up —
+  blocking promotion for every neighbour sharing the secret path, for ever.
+  Dropping it does neither: its `pending` stays staged and its neighbours
+  promote.
+- **The waiver is a structured field, not prose.** `--force` fills
+  `results[].overridden` with the check and what it observed (run schema 1.17),
+  because §4 requires the override to survive the waiving and a consumer has to
+  be able to branch on "this account was forced" rather than grep a sentence. It
+  is omitted where nothing was waived: the field records overrides, not intent.
+
+**Two of the five checks cannot fire as things stand**, and both are recorded
+rather than quietly tolerated:
+
+- **Check 3 never runs.** `UserState.password_file_member` is `None`-when-unknown
+  and **nothing populates it** — no query in the Oracle driver reads
+  `V$PWFILE_USERS`, and §2 does not grant it, which is the same reason
+  `privileges.py` reports `SYSDBA`/`SYSOPER` as `UNAUDITABLE` rather than absent.
+  So `review()` currently reads "I could not look" as "I looked and found
+  nothing", which is exactly the merge that module refuses to make. Filed as
+  #296.
+- **The "operator named the account" half of the refusal rule is unreachable.**
+  §4 distinguishes an account the operator *named* — which refuses the run — from
+  one that merely *fell inside* a selection, which is skipped. There is no flag
+  that names an account: `--select` matches labels on targets. Everything is
+  therefore the second case today, and the first is filed as #297 rather than
+  implemented against a flag that does not exist.
+
 **One more refusal joined its catalogue, and it is not an account check** (#149).
 `sopuli lock break` refuses a lock that has not expired, and `--force` is what
 takes it anyway. The generalisation that makes both cases one flag is *an audited

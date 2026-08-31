@@ -573,6 +573,46 @@ def test_an_empty_run_is_success() -> None:
     assert apply.exit_code_for([], promoted=True, promotable=False) == ExitCode.SUCCESS
 
 
+# ------------------------------------------------- guardrail skips (#286) ---
+
+
+def test_a_skipped_account_does_not_make_a_clean_run_partial() -> None:
+    """§4's guardrails leave a `SKIPPED` row, and it is neither a success nor a
+    failure -- it is an account this run was never going to act on.
+
+    Counting it as unconfirmed would exit 4, which says "some of it worked, run
+    `apply --repair`" about a run where everything the tool was willing to do
+    succeeded and the repair would skip the same account again, every night.
+    """
+    code = apply.exit_code_for([check.IN_SYNC, apply.SKIPPED], promoted=True, promotable=True)
+
+    assert code == ExitCode.SUCCESS
+
+
+def test_a_run_of_nothing_but_skips_is_success() -> None:
+    """The same answer an empty selection gives: nothing was eligible."""
+    code = apply.exit_code_for([apply.SKIPPED, apply.SKIPPED], promoted=False, promotable=False)
+
+    assert code == ExitCode.SUCCESS
+
+
+def test_a_skip_does_not_rescue_a_run_that_failed() -> None:
+    """Excluded from the denominator, not counted as a success. A run whose only
+    real target errored still exits 1 -- being allowed to skip an account it was
+    never going to touch does not make the failure partial."""
+    code = apply.exit_code_for([check.ERROR, apply.SKIPPED], promoted=False, promotable=False)
+
+    assert code == ExitCode.FAILURE
+
+
+def test_a_skip_beside_a_failure_and_a_success_is_still_partial() -> None:
+    code = apply.exit_code_for(
+        [check.IN_SYNC, check.ERROR, apply.SKIPPED], promoted=False, promotable=True
+    )
+
+    assert code == ExitCode.PARTIAL
+
+
 def test_the_states_are_counted_the_way_check_counts_them() -> None:
     """Two commands describing one estate must not count it two ways."""
     states = [check.IN_SYNC, check.IN_SYNC, check.ERROR]

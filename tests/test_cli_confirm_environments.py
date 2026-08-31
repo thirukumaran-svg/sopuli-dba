@@ -355,18 +355,19 @@ def test_force_does_not_satisfy_it(
     safety setting. It is not a setting, has no layer to arrive on, and so has
     nothing to relax (invariant 10).
 
-    Asserted through `creds apply`, which takes no `--force` at all: the argument
-    is refused by the parser and the gate is never reached. That is the
-    structural version of the guarantee and the one worth having -- there is no
-    argv that gets past this gate except `--confirm`, because there is no other
-    flag to try.
+    `creds apply` gained a real `--force` in #286 -- it waives §4's *account*
+    guardrails -- so this asserts the claim directly rather than relying on the
+    parser to reject the flag, which is what it did when there was no such flag
+    to pass. The run is accepted as valid argv and still refused by the
+    confirmation gate.
     """
     estate()
     result = run(
         runner, ["creds", "apply"], write_config(CONFIG), "--select", "tenant=alpha", "--force"
     )
 
-    assert result.exit_code == ExitCode.USAGE
+    assert isinstance(result.exception, RefusedError)
+    assert "safety.confirm_environments" in str(result.exception)
 
 
 def test_readonly_still_outranks_it(

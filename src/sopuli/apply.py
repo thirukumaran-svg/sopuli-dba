@@ -70,7 +70,8 @@ from sopuli.check import (
 )
 from sopuli.config.model import Binding
 from sopuli.config.secret_refs import SecretRef
-from sopuli.driver.protocol import FAIL, PASS, SKIPPED, UNAVAILABLE, UserState, VerifyResult
+from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE, UserState, VerifyResult
+from sopuli.driver.protocol import SKIPPED as VERIFY_SKIPPED
 from sopuli.exit_codes import ExitCode
 from sopuli.payload import CURRENT, PENDING, PREVIOUS, REMOVE, StageLayout, merge, stage_layout
 from sopuli.secrets import Secret
@@ -80,12 +81,32 @@ from sopuli.secrets import Secret
 #: the vault has staged a password the database has not been given.
 PENDING_APPLY = "PENDING_APPLY"
 
+#: ``VERIFY_SKIPPED`` above is the *verification result* of the same name, and
+#: the alias is there because the two are different vocabularies sharing a word:
+#: a verification result says an attempt was not made, and this state says an
+#: account was not acted on. One name for both would make every reader check
+#: which was meant.
+#:
+#: An account a client-side guardrail would not let this run touch
+#: (``02-oracle-privileges.md`` §4, #286). The schema's own word, and
+#: `creds finish-rollover` already uses it for the neighbouring idea: something
+#: the tool declined to do here, as opposed to something it tried and could not.
+#:
+#: **It is not counted as a failure and not counted as a success** -- see
+#: :func:`exit_code_for`. §4's rule is that a guardrail-refused account is
+#: skipped *and the run does the rest of its job*, so the account leaves the run's
+#: scope rather than failing in it. That is the same shape invariant 5 already
+#: has for an account the config never declared: not eligible, rather than
+#: attempted and lost.
+SKIPPED = "SKIPPED"
+
 #: Re-exported so a caller holding this module does not need `check` as well for
 #: the predicates a summary is built from. They are `check`'s, unchanged: the two
 #: commands describe one estate and must count it the same way.
 __all__ = [
     "CONFIRMED",
     "PENDING_APPLY",
+    "SKIPPED",
     "PROMOTES",
     "SOURCES",
     "Promotable",
@@ -361,7 +382,7 @@ def after_change(user: UserState, verification: VerifyResult) -> Outcome:
                 verification,
             )
         return Outcome(IN_SYNC, "changed and verified by login", verification)
-    if verification.result in (SKIPPED, UNAVAILABLE):
+    if verification.result in (VERIFY_SKIPPED, UNAVAILABLE):
         return Outcome(
             UNVERIFIABLE,
             _one_line(verification.detail) or "the change could not be verified",
@@ -484,13 +505,27 @@ def exit_code_for(states: Sequence[str], *, promoted: bool, promotable: bool) ->
     "the database is right and the vault still advertises the old password". The
     second is UC-1 §8 case 7 -- the highest-severity row in the table -- and it
     must not exit 0 just because every target confirmed.
+
+    **:data:`SKIPPED` is not counted at all**, in either the numerator or the
+    denominator (#286). A guardrail-refused account is not a target that failed;
+    it is one this run was never going to act on, and §4's rule is explicitly that
+    the run does the rest of its job. Counting it as unconfirmed would exit 4 --
+    "some of it worked, run `apply --repair`" -- on a run where everything the
+    tool was willing to do succeeded and re-running would skip the same account
+    again, every night, forever. `creds finish-rollover` already takes this
+    reading of the same word: its `SKIPPED` exits 0.
+
+    A run whose accounts were *all* skipped therefore exits 0, which is the same
+    answer an empty selection already gives. Nothing was eligible, and the table
+    says so per account with the reason.
     """
-    if not states:
+    counted = [state for state in states if state != SKIPPED]
+    if not counted:
         return int(ExitCode.SUCCESS)
-    confirmed = sum(1 for state in states if state in CONFIRMED)
+    confirmed = sum(1 for state in counted if state in CONFIRMED)
     if confirmed == 0:
         return int(ExitCode.FAILURE)
-    if confirmed < len(states) or (promotable and not promoted):
+    if confirmed < len(counted) or (promotable and not promoted):
         return int(ExitCode.PARTIAL)
     return int(ExitCode.SUCCESS)
 

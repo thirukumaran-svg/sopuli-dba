@@ -27,7 +27,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.11.schema.json`](../schemas/sopuli-run-1.11.schema.json),
+Schemas: [`../schemas/sopuli-run-1.17.schema.json`](../schemas/sopuli-run-1.17.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -264,6 +264,17 @@ and `--max-age-days` narrowing a run is visible in `summary.total` rather than i
 a member of its own: an account the age filter left alone is one this run did not
 act on, and inventing a fourth state for it would put "not attempted" in the same
 vocabulary as "attempted and unverifiable".
+
+**A guardrail-skipped account is `SKIPPED` with its reason** (#286). The state
+is the schema's own word and `creds finish-rollover` already uses it for the
+neighbouring idea — something the tool declined to do here, as against something
+it tried and could not. It is worth knowing what the state does *not* mean: it is
+not a failure, it does not make the run partial, and it is excluded from the
+exit code's arithmetic on both sides. §4 of `02-oracle-privileges.md` carries the
+reasoning; the short version is that an account a guardrail refused is one the
+run was never going to act on, and a nightly rotation that exited 4 for ever
+because one account holds `DBA` would be a guardrail more disruptive than the
+mistake it catches.
 
 ### `invocation.selection`
 
@@ -1441,6 +1452,23 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.16 became 1.17 when `--force` gained something to record** (#286):
+`results[].overridden` carries the §4 account guardrails a run waived — the
+check that refused and what it observed. A new optional property, which §8's own
+list calls a minor bump.
+
+**Added rather than renamed, unlike the bump below**, and the difference is the
+point: 1.16's file was byte-identical to 1.15's, so renaming lost nothing. This
+one changes the document's shape, so 1.16 and 1.17 are genuinely different
+schemas and a consumer pinned to either has to be able to fetch the one it
+validates against. A renamed-away 1.16 would leave a build emitting
+`schema_version: "1.16"` with no schema of that name.
+
+`declared` — §4 check 1 — is deliberately absent from the `check` enum. It is the
+one refusal `--force` cannot waive, so a document could never legitimately carry
+it here, and an enum admitting it would advertise an override the tool refuses to
+perform.
 
 **1.15 became 1.16 when a run could be fenced out** (#282): `SOPULI-W011`
 joined the diagnostic registry, which §8's own list calls a minor bump — a new

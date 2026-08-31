@@ -98,6 +98,7 @@ from sopuli.diagnostics import (
     vault_diagnostics,
     wallet_diagnostics,
 )
+from sopuli.driver import guardrails
 from sopuli.driver.oracle.client import (
     Timeouts,
     describes_unreachable_server,
@@ -2106,6 +2107,17 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     show_default=True,
     help="Refuse to attempt a login within this many tries of the lockout limit.",
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help=(
+        "Waive the account guardrails of 02-oracle-privileges.md section 4, "
+        "checks 2 to 5: vendor-maintained, password file, admin role, deny list. "
+        "Never check 1 -- an account the config does not declare is refused "
+        "whatever this says. Every waiver is recorded in the run document."
+    ),
+)
 @global_options
 def creds_apply(
     selectors: tuple[str, ...],
@@ -2114,6 +2126,7 @@ def creds_apply(
     strategy: str | None,
     preflight_all: bool,
     lockout_margin: int,
+    force: bool,
     run: Invocation,
 ) -> str:
     """Make each database hold what the vault holds, then promote what it staged.
@@ -2265,6 +2278,7 @@ def creds_apply(
                 manager=manager,
                 margin=lockout_margin,
                 strategy=strategy,
+                force=force,
                 requested=source_stage,
             )
             promotions: dict[LockKey, _Promotion] = {}
@@ -2355,6 +2369,11 @@ class _Applied:
     verified_before: Any | None = None
     version: int | None = None
     rollover: dict[str, Any] | None = None
+    #: §4 guardrails `--force` waived for this account (#286). Empty on every
+    #: ordinary run, which is the point: §4 requires the override to survive the
+    #: waiving, so the row carries what was gone past rather than merely that the
+    #: run was allowed to proceed.
+    overridden: tuple[guardrails.Refusal, ...] = ()
     duration_ms: int | None = None
     error: Error | None = None
 
@@ -2508,6 +2527,7 @@ def _apply_estate(
     manager: LockManager,
     margin: int,
     strategy: str | None,
+    force: bool = False,
     requested: str | None = None,
 ) -> tuple[list[_Applied], LockStolenError | None]:
     """Every account, target by target, one connection each.
@@ -2537,6 +2557,7 @@ def _apply_estate(
     for binding, source in sources:
         grouped.setdefault(binding.target, []).append((binding, source))
 
+    declared = _declared_accounts(run)
     applied: list[_Applied] = []
     for position, (name, work) in enumerate(grouped.items()):
         try:
@@ -2550,6 +2571,8 @@ def _apply_estate(
                 manager=manager,
                 margin=margin,
                 strategy=strategy,
+                declared=declared,
+                force=force,
                 requested=requested,
                 out=applied,
             )
@@ -2567,6 +2590,8 @@ def _apply_target(
     manager: LockManager,
     margin: int,
     strategy: str | None,
+    declared: frozenset[str],
+    force: bool = False,
     requested: str | None = None,
     out: list[_Applied],
 ) -> None:
@@ -2619,6 +2644,8 @@ def _apply_target(
                     source=source,
                     margin=margin,
                     strategy=strategy,
+                    declared=declared,
+                    force=force,
                     requested=requested,
                 )
             )
@@ -2636,6 +2663,8 @@ def _apply_one(
     source: Source | None,
     margin: int,
     strategy: str | None,
+    declared: frozenset[str],
+    force: bool = False,
     requested: str | None = None,
 ) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
@@ -2662,9 +2691,18 @@ def _apply_one(
     exactly the wrong answer to a takeover: it would turn "somebody else owns this
     estate now" into a footnote and apply to the next account anyway. So it is
     re-raised ahead of the catch-all, and the run ends.
+
+    **A guardrail refusal is a `SKIPPED` row and never an error** (§4, #286). It
+    is the one case where the tool declining to act is the tool working: the run
+    does the rest of its job and the account carries its reason. ``declared`` is
+    the config's whitelist for check 1, and it is the **unfiltered** set on
+    purpose -- a selector narrows what a run touches and cannot un-declare an
+    account (invariant 5), so passing the filtered estate would let `--select`
+    change the answer to "is this account allowed at all".
     """
     started = time.monotonic()
     before = None
+    overridden: tuple[guardrails.Refusal, ...] = ()
     try:
         user = session.describe_user(binding.account)
         settled = apply_states.settled_before_acting(user, source, requested=requested)
@@ -2675,6 +2713,22 @@ def _apply_one(
             # Restated rather than assumed, because a fall-through here would
             # decide a mutation on a value nobody checked.
             raise ValueError(f"nothing to apply for {binding.account!r} and no reason given")
+
+        # §4's account guardrails, before the first login rather than before the
+        # statement (#286). Two reasons for the position: a refused account must
+        # cost no login attempt, and `describe_user` above has already read every
+        # fact the checks need -- so this is free where the alternative would have
+        # been another round trip.
+        review = guardrails.review(user, declared=declared, force=force)
+        if not review.permitted:
+            return _Applied(
+                binding,
+                source,
+                check_states.Outcome(apply_states.SKIPPED, guardrails_reason(review)),
+                changed=False,
+                duration_ms=_elapsed(started),
+            )
+        overridden = review.overridden
 
         regime = strategy or strategies.default_for(session.scope(), user)
         before = session.verify_password(
@@ -2689,6 +2743,13 @@ def _apply_one(
                 changed=False,
                 verified_before=before,
                 rollover=_rollover_json(user),
+                # Reported on the no-op path too. The waiver was granted and the
+                # tool went on to touch an account §4 would have refused -- that
+                # it turned out to need no change is a fact about the estate, not
+                # about what was overridden, and an audit trail that recorded the
+                # override only when something happened would be missing exactly
+                # the runs somebody skims looking for `--force`.
+                overridden=overridden,
                 duration_ms=_elapsed(started),
             )
 
@@ -2728,6 +2789,9 @@ def _apply_one(
             check_states.Outcome(check_states.ERROR, reported.message),
             changed=False,
             verified_before=before,
+            # Empty where the failure came before the review, which is why it is
+            # initialised above rather than assigned only on the path that runs.
+            overridden=overridden,
             duration_ms=_elapsed(started),
             error=reported,
         )
@@ -2739,8 +2803,37 @@ def _apply_one(
         changed=True,
         verified_before=before,
         rollover=_rollover_json(after_user),
+        overridden=overridden,
         duration_ms=_elapsed(started),
     )
+
+
+def _declared_accounts(run: Invocation) -> frozenset[str]:
+    """Every account the configuration declares, before any selector narrowed it.
+
+    §4 check 1 asks whether the config declares this account at all, and
+    invariant 5 says selectors filter the declared set rather than extend it --
+    so the question is about the *file*, not about this run's slice of it. Taking
+    the filtered estate would make `--select` able to change the answer, which is
+    the one thing a whitelist must not have.
+
+    In practice check 1 cannot fire from a mutating verb today: the bindings a run
+    acts on are built from the same file. It is run anyway rather than assumed,
+    because "enforced by construction" is a property of today's call graph and
+    not of the guardrail.
+    """
+    return frozenset(binding.account for binding in run.config.bindings)
+
+
+def guardrails_reason(review: guardrails.Review) -> str:
+    """Why an account was skipped, in one line, naming every check that refused.
+
+    Every refusal rather than the first: an operator clearing these is going to
+    have to deal with all of them, and a message that revealed them one run at a
+    time would be three runs to learn one fact. The checks are already ordered by
+    §4's numbering, which is the order they read in.
+    """
+    return "; ".join(refusal.reason for refusal in review.refusals)
 
 
 def _with_regime(
@@ -3137,11 +3230,28 @@ def _promote_documents(
 
 
 def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
-    """Results grouped by the document their account's credential lives in."""
+    """Results grouped by the document their account's credential lives in.
+
+    **A guardrail-skipped account is dropped entirely** (#286), from the gate and
+    from the promotion alike, which is the same principle the exit code applies:
+    it left the run's scope rather than failing inside it.
+
+    Both halves matter and they pull in opposite directions, which is why this is
+    stated rather than left to fall out. Promoting a skipped account would move
+    its `pending` to `current` while its database still holds the old password --
+    advertising a credential nothing has, which is precisely what invariant 7
+    exists to prevent. But letting it *gate* the document would mean one
+    permanently guarded account -- a `DBA` grant somebody is not going to give up
+    -- blocking promotion for every neighbour sharing the path, on every run,
+    for ever. Dropping it does neither: its `pending` stays staged and its
+    neighbours promote.
+    """
     grouped: dict[LockKey, list[_Applied]] = {}
     for record in applied:
         binding = record.binding
         if binding.secret is None or binding.vault is None:
+            continue
+        if record.outcome.state == apply_states.SKIPPED:
             continue
         grouped.setdefault(_lock_key(binding), []).append(record)
     return grouped
@@ -3241,6 +3351,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         rollover=record.rollover,
         promoted_to=None if promotion is None else promotion.version,
         mechanism=None if promotion is None else promotion.mechanism,
+        overridden=record.overridden,
         duration_ms=record.duration_ms,
         error=record.error,
     )
@@ -3624,6 +3735,17 @@ def _finish_one(
     show_default=True,
     help="Refuse to attempt a login within this many tries of the lockout limit.",
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help=(
+        "Waive the account guardrails of 02-oracle-privileges.md section 4, "
+        "checks 2 to 5: vendor-maintained, password file, admin role, deny list. "
+        "Never check 1 -- an account the config does not declare is refused "
+        "whatever this says. Every waiver is recorded in the run document."
+    ),
+)
 @global_options
 def creds_rotate(
     selectors: tuple[str, ...],
@@ -3632,6 +3754,7 @@ def creds_rotate(
     finish_windows: bool,
     confirm: bool,
     lockout_margin: int,
+    force: bool,
     run: Invocation,
 ) -> str:
     """Draw a new password, put it on every target, and promote it. UC-1 section 8.
@@ -3768,6 +3891,7 @@ def creds_rotate(
                 strategy=strategy,
                 max_age_days=max_age_days,
                 finish_windows=finish_windows,
+                force=force,
                 into=sequence,
             )
             if refusal is not None:
@@ -3876,6 +4000,7 @@ def _rotate_estate(
     strategy: str | None,
     max_age_days: int | None,
     finish_windows: bool,
+    force: bool,
     into: _Rotation,
 ) -> str | None:
     """Section 8's steps 3 to 8, under a lock the caller already holds.
@@ -3950,7 +4075,7 @@ def _rotate_estate(
 
     # Steps 5 and 6.
     into.applied, into.stolen = _apply_estate(
-        sources, run, config, manager=manager, margin=margin, strategy=strategy
+        sources, run, config, manager=manager, margin=margin, strategy=strategy, force=force
     )
     if into.stolen is not None:
         return None
