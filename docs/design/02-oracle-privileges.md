@@ -471,12 +471,21 @@ rather than quietly tolerated:
   So `review()` currently reads "I could not look" as "I looked and found
   nothing", which is exactly the merge that module refuses to make. Filed as
   #296.
-- **The "operator named the account" half of the refusal rule is unreachable.**
-  §4 distinguishes an account the operator *named* — which refuses the run — from
-  one that merely *fell inside* a selection, which is skipped. There is no flag
-  that names an account: `--select` matches labels on targets. Everything is
-  therefore the second case today, and the first is filed as #297 rather than
-  implemented against a flag that does not exist.
+- ~~**The "operator named the account" half of the refusal rule is
+  unreachable.**~~ **Built in #297**, which added `--account` along with
+  `--target`, `--group` and `--application`. An account the operator named is
+  now reported as `ERROR` rather than `SKIPPED` — the estate is left in exactly
+  the same state either way, and the difference is entirely in the exit code,
+  which is the difference §4 asks for: "quietly skipping it would report success
+  for work nobody did".
+
+  Two things about it are decisions. **Naming a target, group or application is
+  not naming an account**, however few accounts it resolves to — the tempting
+  reading is "the selection came out as one account, so they must have meant
+  it", and that would make a safety rule change behaviour according to how many
+  rows an estate happens to have today. And **a named account refused by check 1
+  is not advised to use `--force`**, because check 1 is the one no flag reaches;
+  it is told to declare the account instead.
 
 **One more refusal joined its catalogue, and it is not an account check** (#149).
 `sopuli lock break` refuses a lock that has not expired, and `--force` is what

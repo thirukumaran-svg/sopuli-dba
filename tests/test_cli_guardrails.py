@@ -523,6 +523,122 @@ def test_force_never_waives_check_one(
     assert "SOMEONE_ELSE" not in changed(harness)
 
 
+# ----------------------------------------- named vs fell inside (#297) ---
+
+
+def test_a_named_account_makes_the_run_fail(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """§4's other half, unreachable until `--account` existed (#297).
+
+    "They asked for something the tool will not do, and quietly skipping it would
+    report success for work nobody did." So the same refusal that is `SKIPPED`
+    and exit 0 when the account fell inside a broad selection counts against the
+    exit code when the operator named it.
+    """
+    harness = estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--account", "acme_web_user")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "ACME_WEB_USER" not in changed(harness)
+
+
+def test_the_same_account_falling_inside_a_selection_does_not(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The control for the case above, and the whole point of the distinction:
+    one estate, one guardrail, two exit codes, decided only by how the account
+    got into the run."""
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+def test_naming_a_target_is_not_naming_an_account(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--target` names a target, so an account inside it fell in.
+
+    Asserted because the tempting implementation is "the selection resolved to
+    one account, so they must have meant it" -- which would make a safety rule
+    change behaviour according to how many rows an estate happens to have today.
+    """
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--target", "appdb-alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+def test_a_named_account_is_told_what_to_type(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """An operator who typed `--account DBSNMP` asked for this specific thing and
+    is owed the sentence that says how to get it. One that fell inside a broad
+    selection needs no advice -- the run carried on."""
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--output", "json")
+
+    reported = json.dumps(document(result))
+    assert "you named this account" in reported
+    assert "--force" in reported
+
+
+def test_a_named_account_refused_by_check_one_is_not_sent_to_force(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Check 1 is the one no flag reaches, so advising `--force` there would send
+    an operator to a flag that is going to refuse them again."""
+    estate(
+        {
+            "ACME_WEB_USER": account("SOMEONE_ELSE", vendor_maintained=False),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--output", "json")
+
+    reported = json.dumps(document(result))
+    assert "no flag extends the whitelist" in reported
+    assert "--force to override" not in reported
+
+
+def test_force_clears_a_named_account_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The two rules compose: naming it decides what a refusal costs, and
+    `--force` decides whether there is a refusal at all."""
+    harness = estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--force")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "ACME_WEB_USER" in changed(harness)
+
+
 # --------------------------------------------------------------- `rotate` ---
 
 

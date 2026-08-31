@@ -81,11 +81,12 @@ from sopuli.config import (
     ConfigError,
     ExpandedTarget,
     PasswordPolicy,
-    as_dict,
+    Selection,
     binding_stores,
     dangling,
     filter_estate,
     parse_selector,
+    refuse_unknown,
 )
 from sopuli.diagnostics import (
     LOCK_LOST,
@@ -210,20 +211,115 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 def select_option(func: F) -> F:
-    """``--select``, for the commands that act on the estate.
+    """The selectors, for the commands that act on the estate (#297).
 
     Deliberately not in :func:`~sopuli.invocation.global_options`. ``config validate`` answers
     "does this file parse", which no selector narrows, and an option that
     silently means nothing on some of the commands carrying it is the same
     defect as ignoring one that does.
+
+    That rule is also why all five are one decorator rather than a target-shaped
+    set and an account-shaped set. An account selector narrows *targets* too, by
+    dropping the ones left with no bindings
+    (:func:`~sopuli.config.selection.filter_estate`), so `--account` on
+    ``target list`` means "the targets where this account lives" rather than
+    nothing at all -- and every command carrying the flags is narrowed by every
+    one of them.
+
+    **Names are refused when they name nothing; labels are not.** `--select
+    env=nosuch` is an empty run, because labels describe an estate that changes.
+    `--target nosuch` is a typo, and the run that quietly did nothing and exited
+    0 is how a scheduled rotation stops rotating without anybody noticing. See
+    :func:`~sopuli.config.selection.refuse_unknown`.
+
+    ``--app`` is an accepted alias for ``--application``, which
+    ``01-configuration.md`` §3 has documented since before either existed.
     """
-    return click.option(
-        "--select",
-        "selectors",
-        multiple=True,
-        metavar="K=V[,K=V]",
-        help="Keep only targets carrying every label. Repeat to add more.",
-    )(func)
+    for option in (
+        click.option(
+            "--application",
+            "--app",
+            "applications",
+            multiple=True,
+            metavar="NAME",
+            help="Keep only this application entry's accounts. Repeat to add more.",
+        ),
+        click.option(
+            "--group",
+            "groups",
+            multiple=True,
+            metavar="NAME",
+            help="Keep only targets in this group. Repeat to add more.",
+        ),
+        click.option(
+            "--account",
+            "accounts",
+            multiple=True,
+            metavar="NAME",
+            help="Keep only this account, and the targets it lives on. Repeat to add more.",
+        ),
+        click.option(
+            "--target",
+            "targets",
+            multiple=True,
+            metavar="NAME",
+            help="Keep only this target. Repeat to add more.",
+        ),
+        click.option(
+            "--select",
+            "selectors",
+            multiple=True,
+            metavar="K=V[,K=V]",
+            help="Keep only targets carrying every label. Repeat to add more.",
+        ),
+    ):
+        func = option(func)
+    return func
+
+
+def selected(
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
+) -> Selection:
+    """The five flags as one value, with the labels parsed.
+
+    Every command that narrows an estate does it identically, so the assembly is
+    here rather than repeated ten times -- and the run document reports the set
+    as given, which is only true if there is one object that *is* what was given.
+    """
+    return Selection(
+        select=parse_selector(selectors),
+        targets=targets,
+        accounts=accounts,
+        groups=groups,
+        applications=applications,
+    )
+
+
+def describe_selection(selection: Selection) -> str | None:
+    """How a lock record spells what this run was narrowed to (#83).
+
+    One line, in the flags the operator typed, because the record is printed at
+    exit 7 to somebody deciding whether to wait for the holder or go and find
+    them -- and "which part of the estate" is most of that decision. ``None``
+    for an unnarrowed run, which the record then omits rather than carrying an
+    empty string.
+
+    Nothing in it is a value: label pairs and the names of things the
+    configuration already declares.
+    """
+    parts = [f"{key}={value}" for key, value in selection.select]
+    for flag, names in (
+        ("target", selection.targets),
+        ("account", selection.accounts),
+        ("group", selection.groups),
+        ("application", selection.applications),
+    ):
+        parts.extend(f"{flag}={name}" for name in names)
+    return ", ".join(parts) or None
 
 
 def config_diagnostics(config: Config) -> list[Diagnostic]:
@@ -294,6 +390,10 @@ def config_show(
     resolved: bool,
     explain: bool,
     selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
     run: Invocation,
 ) -> str:
     """Show the effective configuration.
@@ -323,12 +423,13 @@ def config_show(
     """
     document = run.document
 
-    match = parse_selector(selectors)
-    if match and not resolved:
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
+    if not selection.is_everything and not resolved:
         # Silently ignoring a filter is the failure P3 refuses for unknown keys,
         # for the same reason: the run looks like it did what was asked. There is
         # nothing to filter in the declared view -- it shows the file, and the
-        # estate `--select` narrows does not exist until `--resolved` builds it.
+        # estate a selector narrows does not exist until `--resolved` builds it.
         #
         # A UsageError rather than a ConfigError, because nothing is wrong with
         # the configuration: two options that each parsed do not form a valid
@@ -336,17 +437,17 @@ def config_show(
         # and keeps exit 9 meaning "your file is wrong" for a consumer that
         # branches on it (#8).
         raise click.UsageError(
-            "--select has nothing to filter without --resolved\n"
-            "       the declared view shows the file; the estate it selects over "
-            "is --resolved"
+            "a selector has nothing to filter without --resolved\n"
+            "       the declared view shows the file; the estate a selector "
+            "narrows is --resolved"
         )
 
     paths = run.sources
-    config = filter_estate(run.config, match)
+    config = filter_estate(run.config, selection)
 
-    targets = len(config.expanded_targets)
+    reached = len(config.expanded_targets)
     document.diagnostics.extend(config_diagnostics(config))
-    document.selection = as_dict(match) or None
+    document.selection = selection.as_json() or None
     document.config = build_section(paths, config, run.declared, resolved=resolved)
     if explain:
         # The same data the JSON document already carries, widened: `--explain`
@@ -354,10 +455,14 @@ def config_show(
         document.options = all_options(run)
     document.finish(
         ExitCode.SUCCESS,
-        Summary(total=targets, ok=targets, changed=0, failed=0),
+        Summary(total=reached, ok=reached, changed=0, failed=0),
     )
     return render_text(
-        paths, config, resolved=resolved, match=match, settings=run.resolved if explain else {}
+        paths,
+        config,
+        resolved=resolved,
+        match=selection.select,
+        settings=run.resolved if explain else {},
     )
 
 
@@ -371,6 +476,10 @@ def target_group() -> None:
 @global_options
 def target_list(
     selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
     run: Invocation,
 ) -> str:
     """List the targets the configuration expands to.
@@ -396,13 +505,14 @@ def target_list(
     """
     document = run.document
 
-    match = parse_selector(selectors)
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
     paths = run.sources
-    config = filter_estate(run.config, match)
+    config = filter_estate(run.config, selection)
 
-    targets = len(config.expanded_targets)
+    reached = len(config.expanded_targets)
     document.diagnostics.extend(config_diagnostics(config))
-    document.selection = as_dict(match) or None
+    document.selection = selection.as_json() or None
     # The same `config` section `config show --resolved` emits, deliberately.
     # It is one estate, and a second JSON shape for it would be two answers to
     # one question -- exactly what invariant 12 exists to prevent. The cost is
@@ -411,9 +521,9 @@ def target_list(
     document.config = build_section(paths, config, run.declared, resolved=True)
     document.finish(
         ExitCode.SUCCESS,
-        Summary(total=targets, ok=targets, changed=0, failed=0),
+        Summary(total=reached, ok=reached, changed=0, failed=0),
     )
-    return render_target_list(paths, config, match=match)
+    return render_target_list(paths, config, match=selection.select)
 
 
 @cli.command("doctor")
@@ -426,6 +536,10 @@ def target_list(
 @global_options
 def doctor(
     selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
     check_privileges: bool,
     run: Invocation,
 ) -> str:
@@ -484,9 +598,10 @@ def doctor(
     """
     document = run.document
 
-    match = parse_selector(selectors)
-    config = filter_estate(run.config, match)
-    document.selection = as_dict(match) or None
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
     # Before anything connects, because it is the half of the answer that needs
@@ -892,6 +1007,10 @@ def lock_group() -> None:
 @global_options
 def lock_status(
     selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
     run: Invocation,
 ) -> str:
     """Show which secret paths are locked, and by whom.
@@ -935,7 +1054,8 @@ def lock_status(
     """
     document = run.document
 
-    match = parse_selector(selectors)
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
     paths = run.sources
     config = run.config
     # Both estates: the filtered one decides what is surveyed and which stores
@@ -944,7 +1064,7 @@ def lock_status(
     # it as a leftover because this run was not looking at it would be alarming
     # and wrong.
     everything = declared_locks(config)
-    keys = declared_locks(filter_estate(config, match))
+    keys = declared_locks(filter_estate(config, selection))
 
     stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
     leftovers = discover_locks(everything, stores=stores)
@@ -953,9 +1073,9 @@ def lock_status(
     )
     mode = mode_of(stores)
 
-    document.diagnostics.extend(config_diagnostics(filter_estate(config, match)))
+    document.diagnostics.extend(config_diagnostics(filter_estate(config, selection)))
     document.diagnostics.extend(unlistable_stores(leftovers.unlistable))
-    document.selection = as_dict(match) or None
+    document.selection = selection.as_json() or None
     document.lock = build_status_section(states, mode=mode)
     document.finish(
         ExitCode.SUCCESS,
@@ -965,7 +1085,7 @@ def lock_status(
         # they were examined, and `summary.total` is what was examined.
         Summary(total=len(states), ok=len(states), changed=0, failed=0),
     )
-    return render_status(paths, states, match=match, mode=mode)
+    return render_status(paths, states, match=selection.select, mode=mode)
 
 
 @lock_group.command("break")
@@ -1395,6 +1515,10 @@ def creds_group() -> None:
 @global_options
 def creds_check(
     selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
     include_previous: bool,
     lockout_margin: int,
     run: Invocation,
@@ -1437,9 +1561,10 @@ def creds_check(
     """
     document = run.document
 
-    match = parse_selector(selectors)
-    config = filter_estate(run.config, match)
-    document.selection = as_dict(match) or None
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
     # C15's plan-time half (#250), before anything is planned: a profile's
@@ -1768,6 +1893,10 @@ def _stored_credential(binding: Binding, stores: Mapping[str, SecretStore]) -> S
 @global_options
 def creds_generate(
     selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
     policy_name: str | None,
     from_stdin: bool,
     no_policy_check: bool,
@@ -1812,9 +1941,10 @@ def creds_generate(
     document = run.document
     refuse_if_readonly(run.resolved, action="staging a password")
 
-    match = parse_selector(selectors)
-    config = filter_estate(run.config, match)
-    document.selection = as_dict(match) or None
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
     config = binding_stores.complete(config, env=os.environ)
@@ -1857,7 +1987,7 @@ def creds_generate(
         stores={name: _lockable(name, config, stores) for name in names},
         correlation_id=document.correlation_id,
         command="creds generate",
-        selection=", ".join(f"{key}={value}" for key, value in match) or None,
+        selection=describe_selection(selection),
     )
 
     results: list[dict[str, Any]] = []
@@ -2121,6 +2251,10 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
 @global_options
 def creds_apply(
     selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
     source_stage: str | None,
     confirm: bool,
     strategy: str | None,
@@ -2201,9 +2335,10 @@ def creds_apply(
     refuse_if_readonly(run.resolved, action="applying a password")
     _confirm_rollback(source_stage, confirmed=confirm, previewing=run.dry_run)
 
-    match = parse_selector(selectors)
-    config = filter_estate(run.config, match)
-    document.selection = as_dict(match) or None
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
     config = binding_stores.complete(config, env=os.environ)
@@ -2250,7 +2385,7 @@ def creds_apply(
         stores={name: _lockable(name, config, stores) for name in {key.store for key in keys}},
         correlation_id=document.correlation_id,
         command="creds apply",
-        selection=", ".join(f"{key}={value}" for key, value in match) or None,
+        selection=describe_selection(selection),
     )
 
     try:
@@ -2278,6 +2413,7 @@ def creds_apply(
                 manager=manager,
                 margin=lockout_margin,
                 strategy=strategy,
+                selection=selection,
                 force=force,
                 requested=source_stage,
             )
@@ -2527,6 +2663,7 @@ def _apply_estate(
     manager: LockManager,
     margin: int,
     strategy: str | None,
+    selection: Selection,
     force: bool = False,
     requested: str | None = None,
 ) -> tuple[list[_Applied], LockStolenError | None]:
@@ -2572,6 +2709,7 @@ def _apply_estate(
                 margin=margin,
                 strategy=strategy,
                 declared=declared,
+                selection=selection,
                 force=force,
                 requested=requested,
                 out=applied,
@@ -2591,6 +2729,7 @@ def _apply_target(
     margin: int,
     strategy: str | None,
     declared: frozenset[str],
+    selection: Selection,
     force: bool = False,
     requested: str | None = None,
     out: list[_Applied],
@@ -2645,6 +2784,7 @@ def _apply_target(
                     margin=margin,
                     strategy=strategy,
                     declared=declared,
+                    selection=selection,
                     force=force,
                     requested=requested,
                 )
@@ -2664,6 +2804,7 @@ def _apply_one(
     margin: int,
     strategy: str | None,
     declared: frozenset[str],
+    selection: Selection,
     force: bool = False,
     requested: str | None = None,
 ) -> _Applied:
@@ -2721,10 +2862,19 @@ def _apply_one(
         # been another round trip.
         review = guardrails.review(user, declared=declared, force=force)
         if not review.permitted:
+            # §4's two cases, and the only thing separating them is how the
+            # account got into this run (#297). Named: the operator asked for
+            # something the tool will not do, and a run that reported success
+            # would be reporting it for work nobody did. Fell inside a broader
+            # selection: skipped, and the run does the rest of its job.
+            named = selection.names(binding.account)
             return _Applied(
                 binding,
                 source,
-                check_states.Outcome(apply_states.SKIPPED, guardrails_reason(review)),
+                check_states.Outcome(
+                    apply_states.REFUSED if named else apply_states.SKIPPED,
+                    guardrails_reason(review, named=named),
+                ),
                 changed=False,
                 duration_ms=_elapsed(started),
             )
@@ -2825,15 +2975,31 @@ def _declared_accounts(run: Invocation) -> frozenset[str]:
     return frozenset(binding.account for binding in run.config.bindings)
 
 
-def guardrails_reason(review: guardrails.Review) -> str:
-    """Why an account was skipped, in one line, naming every check that refused.
+def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
+    """Why an account was refused, in one line, naming every check that objected.
 
     Every refusal rather than the first: an operator clearing these is going to
     have to deal with all of them, and a message that revealed them one run at a
     time would be three runs to learn one fact. The checks are already ordered by
     §4's numbering, which is the order they read in.
+
+    ``named`` adds what to do about it, and only there. An account that fell
+    inside a broad selection needs no advice -- the run carried on and the row is
+    informational -- while an operator who typed `--account DBSNMP` asked for
+    this specific thing and is owed the sentence that says how to get it.
     """
-    return "; ".join(refusal.reason for refusal in review.refusals)
+    reasons = "; ".join(refusal.reason for refusal in review.refusals)
+    if not named:
+        return reasons
+    overridable = all(refusal.overridable for refusal in review.refusals)
+    remedy = (
+        "pass --force to override, which is recorded"
+        if overridable
+        # Check 1, the one no flag reaches. Saying "--force" here would send an
+        # operator to a flag that is going to refuse them again.
+        else "declare it in `accounts:` first; no flag extends the whitelist"
+    )
+    return f"{reasons} -- you named this account, so the run stopped short: {remedy}"
 
 
 def _with_regime(
@@ -3374,7 +3540,14 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
 )
 @global_options
 def creds_finish_rollover(
-    selectors: tuple[str, ...], lockout_margin: int, confirm: bool, run: Invocation
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
+    lockout_margin: int,
+    confirm: bool,
+    run: Invocation,
 ) -> str:
     """End an open password rollover window early.
 
@@ -3418,9 +3591,10 @@ def creds_finish_rollover(
     document = run.document
     refuse_if_readonly(run.resolved, action="ending a rollover window")
 
-    match = parse_selector(selectors)
-    config = filter_estate(run.config, match)
-    document.selection = as_dict(match) or None
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
     config = binding_stores.complete(config, env=os.environ)
@@ -3749,6 +3923,10 @@ def _finish_one(
 @global_options
 def creds_rotate(
     selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
     strategy: str | None,
     max_age_days: int | None,
     finish_windows: bool,
@@ -3815,9 +3993,10 @@ def creds_rotate(
     document = run.document
     refuse_if_readonly(run.resolved, action="rotating a password")
 
-    match = parse_selector(selectors)
-    config = filter_estate(run.config, match)
-    document.selection = as_dict(match) or None
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
     config = binding_stores.complete(config, env=os.environ)
@@ -3869,7 +4048,7 @@ def creds_rotate(
         stores={name: _lockable(name, config, stores) for name in {key.store for key in keys}},
         correlation_id=document.correlation_id,
         command="creds rotate",
-        selection=", ".join(f"{key}={value}" for key, value in match) or None,
+        selection=describe_selection(selection),
     )
 
     sequence = _Rotation()
@@ -3892,6 +4071,7 @@ def creds_rotate(
                 max_age_days=max_age_days,
                 finish_windows=finish_windows,
                 force=force,
+                selection=selection,
                 into=sequence,
             )
             if refusal is not None:
@@ -4001,6 +4181,7 @@ def _rotate_estate(
     max_age_days: int | None,
     finish_windows: bool,
     force: bool,
+    selection: Selection,
     into: _Rotation,
 ) -> str | None:
     """Section 8's steps 3 to 8, under a lock the caller already holds.
@@ -4075,7 +4256,14 @@ def _rotate_estate(
 
     # Steps 5 and 6.
     into.applied, into.stolen = _apply_estate(
-        sources, run, config, manager=manager, margin=margin, strategy=strategy, force=force
+        sources,
+        run,
+        config,
+        manager=manager,
+        margin=margin,
+        strategy=strategy,
+        selection=selection,
+        force=force,
     )
     if into.stolen is not None:
         return None
@@ -4331,7 +4519,15 @@ def _nothing_due(
     help="Mark accounts the vault last rotated more than this many days ago.",
 )
 @global_options
-def creds_status(selectors: tuple[str, ...], max_age_days: int | None, run: Invocation) -> str:
+def creds_status(
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    accounts: tuple[str, ...],
+    groups: tuple[str, ...],
+    applications: tuple[str, ...],
+    max_age_days: int | None,
+    run: Invocation,
+) -> str:
     """Inventory the estate: ages, versions, lock state, rollover.
 
     **No login attempts, no lock, no mutation.** The safest verb in the tool --
@@ -4362,9 +4558,10 @@ def creds_status(selectors: tuple[str, ...], max_age_days: int | None, run: Invo
     """
     document = run.document
 
-    match = parse_selector(selectors)
-    config = filter_estate(run.config, match)
-    document.selection = as_dict(match) or None
+    selection = selected(selectors, targets, accounts, groups, applications)
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
     config = binding_stores.complete(config, env=os.environ)

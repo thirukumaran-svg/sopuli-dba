@@ -287,6 +287,46 @@ what *should* be true.
 Note also what the last line does **not** do: `--profile scheduled` changes how
 the run behaves, not which targets it touches. That distinction is §5.
 
+### The selectors, and the one rule that separates them (#297)
+
+Five flags, on every command that acts on the estate: `--select` for labels, and
+`--target`, `--account`, `--group` and `--application` for names. `--app` is an
+accepted alias for the last. All are repeatable. These examples were written
+before any but `--select` existed, and were what #297 was filed over.
+
+**They combine as *and*.** `--application acme --select env=dev` is acme's
+accounts on dev targets, not their union. An *or* would need a selector
+language, and C2 records why this file does not have one — the same reasoning
+that keeps `target_sets` to two dimensions.
+
+**An account selector narrows targets too**, by dropping the ones left with no
+bindings. That is what keeps the blast radius honest: `--account acme_web_user`
+against an estate where three of twenty targets have that account is a run
+reaching three targets, and a plan counting twenty would make `max_targets` and
+`confirm_environments` answer about work the run is not going to do. It is also
+what stops any flag silently meaning nothing on a command that lists targets:
+`target list --account acme_web_user` is "the targets where this account lives".
+
+**A name that names nothing is refused; a label that matches nothing is not.**
+That asymmetry is the one worth stating, because it looks inconsistent until you
+have met the failure it prevents. Labels describe an estate that changes
+underneath them, so `--select env=staging` matching no target is a true answer
+about today's estate. A name is a claim that a particular thing exists — so a
+scheduled `creds rotate --application acme` where somebody renamed the entry to
+`acme-web` must not select nothing, do nothing, exit 0, and go on reporting
+success for a credential that stopped being rotated. Every other guardrail here
+is about doing too much; this one is about doing nothing and saying it went fine.
+
+Names are checked against the **unfiltered** estate, so a name that exists but
+was excluded by another selector is an empty run rather than a misspelling —
+those are different mistakes with different fixes.
+
+`--account` is compared case-folded, for the reason §4 of
+`02-oracle-privileges.md` gives about check 1: the file writes `acme_web_user`
+where Oracle stores `ACME_WEB_USER`, and an operator copying a name out of a
+database is doing the obvious thing. Target, group and application names are the
+tool's own vocabulary and are compared as written.
+
 ---
 
 ## 3. Worked example: two applications

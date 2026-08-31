@@ -263,17 +263,21 @@ class RunDocument:
     #: are any: the schema types it as an array, so an empty one would be noise
     #: in every clean run and a null would fail validation.
     diagnostics: list[Diagnostic] = field(default_factory=list)
-    #: ``invocation.selection.select`` -- the label filters as given. A run over
-    #: part of the estate must say so: a consumer counting 3 targets cannot
-    #: otherwise tell a small estate from a filtered one, and "3 rotated" means
-    #: different things in each. Absent when the whole estate was in scope.
+    #: ``invocation.selection`` -- the selectors as given, before resolution. A
+    #: run over part of the estate must say so: a consumer counting 3 targets
+    #: cannot otherwise tell a small estate from a filtered one, and "3 rotated"
+    #: means different things in each. Absent when the whole estate was in scope.
     #:
-    #: The schema has carried ``selection`` since it was written, with slots for
-    #: the selectors that do not exist yet: ``applications``, ``accounts``,
-    #: ``targets``, ``groups``, ``all`` and ``limit``. Only ``select`` is
-    #: populated, and the others are omitted rather than sent empty -- an empty
-    #: array would claim the tool considered a selector it has not implemented.
-    selection: dict[str, str] | None = None
+    #: The schema has carried this object since it was written, and until #297
+    #: only ``select`` was ever populated. ``applications``, ``accounts``,
+    #: ``targets`` and ``groups`` now are; ``all`` and ``limit`` are still slots
+    #: for flags that do not exist, and stay omitted rather than sent empty -- an
+    #: empty array would claim the tool considered a selector it has not got.
+    #:
+    #: Built by :meth:`sopuli.config.Selection.as_json`, so what the document
+    #: reports and what the run filtered on are the same object rather than two
+    #: descriptions of it.
+    selection: dict[str, Any] | None = None
     #: The ``config`` section, when the command produces one. Its shape belongs
     #: to the command that builds it (:mod:`sopuli.output.config_view`) rather
     #: than here, and is pinned by the schema and by
@@ -415,8 +419,8 @@ class RunDocument:
         }
         if self.profile is not None:
             invocation["profile"] = self.profile
-        if self.selection is not None:
-            invocation["selection"] = {"select": self.selection}
+        if self.selection:
+            invocation["selection"] = self.selection
         if self.options:
             invocation["options"] = {
                 name: option.to_dict() for name, option in sorted(self.options.items())

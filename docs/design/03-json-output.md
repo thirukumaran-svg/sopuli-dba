@@ -19,6 +19,14 @@ The `lock.*` events are the other half of the same wait: they need
 `--output jsonl` (#9), which has no emitter, so their payloads are specified in
 §5 and not yet produced by anything.
 
+**`invocation.selection` is now filled in** (#297). The object has carried
+slots for `applications`, `accounts`, `targets`, `groups`, `all` and `limit`
+since the schema was written, and until the flags existed only `select` was ever
+populated. Four of the six are real; `all` and `limit` remain slots for flags
+that do not exist, and stay omitted rather than sent empty — an empty array would
+claim the tool considered a selector it has not got. **No schema change was
+needed**, which is the schema having been right about where this was going.
+
 `diagnostics` carries what §10 of `01-configuration.md` calls warnings: findings
 the loader decided not to refuse to run over. They are run-level because a config
 warning belongs to no single target, and `level` is `warning` for all of them so

@@ -21,7 +21,7 @@ import click
 import pytest
 from jsonschema import Draft202012Validator
 
-from sopuli.config import Config, build_config, filter_estate
+from sopuli.config import Config, Selection, build_config, filter_estate
 from sopuli.config.model import Pairs
 from sopuli.output.config_view import build_section, render_target_list, render_text
 from sopuli.output.document import SCHEMA_VERSION
@@ -169,7 +169,7 @@ def test_a_kind_that_contributed_nothing_is_left_out(config: Config) -> None:
     """`0 explicit` is the absence of a fact, not a fact. Every filtered estate
     and most unfiltered ones are entirely generated, and none of them should
     have to open with a zero."""
-    generated_only = filter_estate(config, (("target_set", "appdb"),))
+    generated_only = filter_estate(config, Selection(select=(("target_set", "appdb"),)))
 
     summary = render_text(PATHS, generated_only, resolved=True, match=(("target_set", "appdb"),))
 
@@ -180,7 +180,7 @@ def test_a_kind_that_contributed_nothing_is_left_out(config: Config) -> None:
 def test_the_breakdown_survives_when_one_kind_is_all_of_it(config: Config) -> None:
     """Not collapsed to a bare count: §4 keeps provenance visible because
     generation is invisible until it goes wrong."""
-    generated_only = filter_estate(config, (("target_set", "appdb"),))
+    generated_only = filter_estate(config, Selection(select=(("target_set", "appdb"),)))
 
     assert "(2 generated" in render_text(PATHS, generated_only, resolved=True)
 
@@ -188,7 +188,7 @@ def test_the_breakdown_survives_when_one_kind_is_all_of_it(config: Config) -> No
 def test_an_estate_with_nothing_in_it_says_so_without_a_breakdown(config: Config) -> None:
     """`0 targets ()` and `0 targets (0 explicit)` are both worse than the
     plain count, which is already the whole story."""
-    empty = filter_estate(config, (("env", "staging"),))
+    empty = filter_estate(config, Selection(select=(("env", "staging"),)))
 
     assert "0 targets" in render_text(PATHS, empty, resolved=True)
     assert "0 targets (" not in render_text(PATHS, empty, resolved=True)
@@ -494,7 +494,7 @@ def test_the_target_list_counts_the_estate_the_same_way(config: Config) -> None:
 
 
 def test_the_target_list_says_what_it_filtered_by(config: Config) -> None:
-    filtered = filter_estate(config, (("env", "dev"),))
+    filtered = filter_estate(config, Selection(select=(("env", "dev"),)))
 
     assert "select: env=dev" in render_target_list(PATHS, filtered, match=(("env", "dev"),))
 
@@ -502,7 +502,7 @@ def test_the_target_list_says_what_it_filtered_by(config: Config) -> None:
 def test_a_filter_matching_nothing_says_so_rather_than_printing_a_header(
     config: Config,
 ) -> None:
-    empty = filter_estate(config, (("env", "staging"),))
+    empty = filter_estate(config, Selection(select=(("env", "staging"),)))
 
     text = render_target_list(PATHS, empty, match=(("env", "staging"),))
 
@@ -521,7 +521,7 @@ def test_the_target_list_shows_warnings_in_full(match: Pairs) -> None:
     is exactly when a warning about the file is worth reading."""
     config = build_config({**DOCUMENT, "profiles": {"dev": {"output": "json"}}})
 
-    text = render_target_list(PATHS, filter_estate(config, match), match=match)
+    text = render_target_list(PATHS, filter_estate(config, Selection(select=match)), match=match)
 
     assert "1 warning:" in text
     assert "named after an environment" in text

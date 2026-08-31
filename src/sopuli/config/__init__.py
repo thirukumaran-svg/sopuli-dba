@@ -80,7 +80,15 @@ from sopuli.config.model import (
 from sopuli.config.permissions import check_permissions
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
-from sopuli.config.selection import AT_SELECT, filter_estate, matches, parse_selector, select
+from sopuli.config.selection import (
+    AT_SELECT,
+    Selection,
+    filter_estate,
+    matches,
+    parse_selector,
+    refuse_unknown,
+    select,
+)
 
 __all__ = [
     "AT_SELECT",
@@ -130,6 +138,7 @@ __all__ = [
     "declared_at",
     "discover",
     "expand_targets",
+    "Selection",
     "filter_estate",
     "load_config",
     "load_config_from",
@@ -141,6 +150,7 @@ __all__ = [
     "merge_documents",
     "parse_secret_ref",
     "parse_selector",
+    "refuse_unknown",
     "search_path",
     "select",
 ]

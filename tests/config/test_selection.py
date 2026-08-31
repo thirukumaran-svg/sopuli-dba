@@ -15,7 +15,14 @@ import pytest
 from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, TargetSelector
-from sopuli.config.selection import filter_estate, matches, parse_selector, select
+from sopuli.config.selection import (
+    Selection,
+    filter_estate,
+    matches,
+    parse_selector,
+    refuse_unknown,
+    select,
+)
 from sopuli.exit_codes import ExitCode
 
 ESTATE: dict[str, Any] = {
@@ -249,7 +256,7 @@ def test_a_selector_error_exits_as_a_usage_error() -> None:
 
 
 def test_filtering_keeps_the_targets_that_carry_every_label() -> None:
-    config = filter_estate(estate(), (("env", "dev"), ("tenant", "alpha")))
+    config = filter_estate(estate(), Selection(select=(("env", "dev"), ("tenant", "alpha"))))
 
     assert [expanded.name for expanded in config.expanded_targets] == ["appdb-dev-alpha"]
 
@@ -257,7 +264,7 @@ def test_filtering_keeps_the_targets_that_carry_every_label() -> None:
 def test_filtering_keeps_estate_order() -> None:
     """Not the order the selector wrote, for the reason `select` gives: two
     routes to the same set must produce the same list."""
-    config = filter_estate(estate(), (("target_set", "appdb"),))
+    config = filter_estate(estate(), Selection(select=(("target_set", "appdb"),)))
     everything = [expanded.name for expanded in estate().expanded_targets]
 
     assert [expanded.name for expanded in config.expanded_targets] == [
@@ -270,11 +277,11 @@ def test_an_empty_match_changes_nothing() -> None:
     the same path, so there is no filtered/unfiltered branch to get wrong."""
     config = estate()
 
-    assert filter_estate(config, ()) is config
+    assert filter_estate(config, Selection()) is config
 
 
 def test_a_match_selecting_nothing_leaves_an_empty_estate() -> None:
-    config = filter_estate(estate(), (("env", "staging"),))
+    config = filter_estate(estate(), Selection(select=(("env", "staging"),)))
 
     assert config.expanded_targets == ()
     assert config.bindings == ()
@@ -285,7 +292,7 @@ def test_filtering_cannot_introduce_a_target(  # invariant 5
     """`--force` cannot widen the whitelist and neither can a selector: every
     survivor is an object that was already in the estate."""
     config = estate()
-    filtered = filter_estate(config, (("target_set", "appdb"),))
+    filtered = filter_estate(config, Selection(select=(("target_set", "appdb"),)))
 
     assert all(expanded in config.expanded_targets for expanded in filtered.expanded_targets)
 
@@ -295,8 +302,88 @@ def test_the_rest_of_the_config_is_untouched() -> None:
     and `target_sets:` still describe the whole estate, which is what the
     declared view renders."""
     config = estate()
-    filtered = filter_estate(config, (("env", "qa"),))
+    filtered = filter_estate(config, Selection(select=(("env", "qa"),)))
 
     assert filtered.targets == config.targets
     assert filtered.target_sets == config.target_sets
     assert filtered.groups == config.groups
+
+
+# ------------------------------------------ what "named" means (#297) ---
+
+
+class TestNames:
+    """`Selection.names` carries §4's guardrail rule, so it is worth its own set.
+
+    An account the operator **named** refuses the run; one that merely fell
+    inside a broader selection is skipped. Everything about that rule turns on
+    this predicate.
+    """
+
+    def test_an_account_selector_names_it(self) -> None:
+        assert Selection(accounts=("acme_web_user",)).names("acme_web_user")
+
+    def test_matching_is_case_folded(self) -> None:
+        """The file writes `acme_web_user` and Oracle hands back
+        `ACME_WEB_USER`; the rule must not turn on which spelling arrived."""
+        assert Selection(accounts=("acme_web_user",)).names("ACME_WEB_USER")
+        assert Selection(accounts=("ACME_WEB_USER",)).names("acme_web_user")
+
+    def test_another_account_is_not_named(self) -> None:
+        assert not Selection(accounts=("acme_web_user",)).names("acme_batch_user")
+
+    def test_naming_a_target_does_not_name_its_accounts(self) -> None:
+        """The branch the whole rule depends on.
+
+        The tempting implementation is "the selection resolved to one account, so
+        they must have meant it" -- which would make a safety rule change
+        behaviour according to how many rows an estate happens to have today.
+        """
+        assert not Selection(targets=("appdb-alpha",)).names("acme_web_user")
+
+    def test_naming_a_group_or_application_does_not_either(self) -> None:
+        assert not Selection(groups=("prod-pdbs",)).names("acme_web_user")
+        assert not Selection(applications=("acme",)).names("acme_web_user")
+
+    def test_a_label_selector_does_not_either(self) -> None:
+        assert not Selection(select=(("env", "prod"),)).names("acme_web_user")
+
+    def test_an_empty_selection_names_nothing(self) -> None:
+        assert not Selection().names("acme_web_user")
+
+
+# --------------------------------------------- unknown names (#297) ---
+
+
+class TestRefuseUnknown:
+    """A name that names nothing is a typo; a label that matches nothing is not."""
+
+    def test_a_declared_target_passes(self) -> None:
+        refuse_unknown(estate(), Selection(targets=("appdb-dev-alpha",)))
+
+    def test_an_undeclared_target_is_refused(self) -> None:
+        with pytest.raises(ArgumentError) as raised:
+            refuse_unknown(estate(), Selection(targets=("appdb-nowhere",)))
+
+        assert "appdb-nowhere" in str(raised.value)
+
+    def test_a_label_matching_nothing_is_not_refused(self) -> None:
+        """Labels describe an estate that changes underneath them, so an empty
+        result is a true answer about today rather than a mistake."""
+        refuse_unknown(estate(), Selection(select=(("env", "nowhere"),)))
+
+    def test_the_hint_names_what_is_declared(self) -> None:
+        """A typo is cleared by seeing the right spelling."""
+        with pytest.raises(ArgumentError) as raised:
+            refuse_unknown(estate(), Selection(targets=("appdb-nowhere",)))
+
+        assert "appdb-" in str(raised.value.hint)
+
+    def test_it_reports_every_missing_name_at_once(self) -> None:
+        """Three runs to learn one fact is the failure mode of reporting the
+        first only -- the same argument the guardrail reasons make."""
+        with pytest.raises(ArgumentError) as raised:
+            refuse_unknown(estate(), Selection(targets=("nope-one", "nope-two")))
+
+        assert "nope-one" in str(raised.value)
+        assert "nope-two" in str(raised.value)

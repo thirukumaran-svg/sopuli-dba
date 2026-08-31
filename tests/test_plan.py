@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.loading import build_config
-from sopuli.config.selection import filter_estate
+from sopuli.config.selection import Selection, filter_estate
 from sopuli.plan import ACTION_KINDS, BlastRadius, Plan, PlanUnit, build
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp"}}
@@ -293,7 +293,7 @@ def test_sharing_is_narrowed_to_what_this_run_touches() -> None:
     reads". Selecting one PDB drops the other three from the entry."""
     config = filter_estate(
         estate(accounts=["acme_web_user"], secret_template="apps/acme/db#{account}"),
-        (("tenant", "alpha"),),
+        Selection(select=(("tenant", "alpha"),)),
     )
 
     (entry,) = build(config, intent=["verify"]).shared

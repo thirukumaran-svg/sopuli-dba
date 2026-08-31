@@ -100,6 +100,22 @@ PENDING_APPLY = "PENDING_APPLY"
 #: attempted and lost.
 SKIPPED = "SKIPPED"
 
+#: The same guardrail refusal, on an account the operator **named**
+#: (``02-oracle-privileges.md`` §4, #297). ``ERROR``'s spelling because it is
+#: `check`'s word for "this did not happen and you need to know", and because
+#: §4's whole argument for splitting the two cases is that one of them must not
+#: report success:
+#:
+#: > An account the operator **named** -- `--account DBSNMP` -- refuses the run:
+#: > they asked for something the tool will not do, and quietly skipping it would
+#: > report success for work nobody did.
+#:
+#: So the difference between this and :data:`SKIPPED` is entirely in the exit
+#: code, and that is the difference §4 asks for. Sharing `ERROR`'s spelling keeps
+#: it out of the schema's state enum as a new value, and a consumer reading
+#: `results[]` still sees the detail saying which guardrail refused.
+REFUSED = ERROR
+
 #: Re-exported so a caller holding this module does not need `check` as well for
 #: the predicates a summary is built from. They are `check`'s, unchanged: the two
 #: commands describe one estate and must count it the same way.

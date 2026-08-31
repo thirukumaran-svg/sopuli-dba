@@ -23,7 +23,7 @@ which is what makes plan output comparable between them.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from sopuli.config.errors import ROOT, ArgumentError
 from sopuli.config.model import Config, ExpandedTarget, Pairs, Target, TargetSelector, as_dict
@@ -41,6 +41,90 @@ KEY_SEPARATOR = "="
 #: `ConfigError`: nothing is wrong with any file, so the exit code is 2 and there
 #: is no run document (J7, issue #8). The message shape is identical.
 AT_SELECT = ROOT.key("--select")
+
+
+@dataclass(frozen=True)
+class Selection:
+    """Everything the command line said about *which* of the estate to act on.
+
+    `01-configuration.md` §2 and §3 have shown these flags in their examples
+    since they were written, and `--select` was the only one that existed (#297).
+    They are one object rather than five arguments because every command that
+    narrows an estate narrows it the same way, and because the run document
+    reports the set as given -- ``invocation.selection`` has carried slots for
+    all of them since the schema was written.
+
+    **Every member narrows; none extends** (invariant 5). They combine as *and*,
+    which is the same rule `--select`'s own pairs already follow: `--application
+    acme --select env=dev` is acme's accounts on dev targets, not their union. An
+    *or* would need a language, and C2 records why this file does not have one.
+
+    **Names are looked up, labels are filtered.** A `--select` pair that matches
+    no target is an empty run and not an error -- labels describe an estate that
+    changes. A `--target` that names nothing is a typo, and reporting it as "0
+    targets, nothing to do" is how a scheduled rotation silently stops rotating.
+    :meth:`refuse_unknown` is where that distinction is enforced.
+    """
+
+    #: Label pairs, from ``--select``. Every pair must hold.
+    select: Pairs = ()
+    #: Target names, from ``--target``.
+    targets: tuple[str, ...] = ()
+    #: Account names, from ``--account``. Matched case-folded, for the reason
+    #: :func:`sopuli.driver.guardrails.is_declared` gives: the file writes
+    #: ``acme_web_user`` and Oracle stores ``ACME_WEB_USER``, and neither is
+    #: wrong.
+    accounts: tuple[str, ...] = ()
+    #: Group names, from ``--group``. A group is a named label match (§4), so
+    #: this resolves to labels and then filters like ``select`` does.
+    groups: tuple[str, ...] = ()
+    #: Application entry names, from ``--application`` / ``--app``.
+    applications: tuple[str, ...] = ()
+
+    @property
+    def is_everything(self) -> bool:
+        """Whether this run was given no narrowing at all.
+
+        The case worth keeping distinct: a command given nothing and one given a
+        selector that happens to match the whole estate take the same path, and
+        only the first omits ``selection`` from the run document.
+        """
+        return not (
+            self.select or self.targets or self.accounts or self.groups or self.applications
+        )
+
+    def names(self, account: str) -> bool:
+        """Whether ``--account`` named this account specifically.
+
+        §4's guardrail rule turns on this: an account the operator **named**
+        refuses the run, and one that merely fell inside a broader selection is
+        skipped. Naming a *target*, a *group* or an application is the second
+        case however few accounts it resolves to -- otherwise the rule would
+        change behaviour according to how many rows an estate happens to have
+        today, which is the one thing a safety rule must not do.
+        """
+        folded = {name.casefold() for name in self.accounts}
+        return account.casefold() in folded
+
+    def as_json(self) -> dict[str, object]:
+        """``invocation.selection``, omitting the members nobody used.
+
+        Omitted rather than sent empty, which is the rule the document already
+        applies to this object: an empty array would claim the run considered a
+        selector it was never given.
+        """
+        found: dict[str, object] = {}
+        if self.select:
+            found["select"] = as_dict(self.select)
+        for name, values in (
+            ("targets", self.targets),
+            ("accounts", self.accounts),
+            ("groups", self.groups),
+            ("applications", self.applications),
+        ):
+            if values:
+                found[name] = list(values)
+        return found
 
 
 def matches(target: Target, match: Pairs) -> bool:
@@ -121,27 +205,157 @@ def _split_pair(pair: str) -> tuple[str, str]:
     return key.strip(), label.strip()
 
 
-def filter_estate(config: Config, match: Pairs) -> Config:
-    """The estate reduced to the targets ``match`` selects, bindings with them.
+def filter_estate(config: Config, selection: Selection) -> Config:
+    """The estate reduced to what ``selection`` names, bindings with it.
 
     Invariant 5 holds structurally rather than by inspection: this only ever
-    removes from ``expanded_targets``, so no selector can introduce a target the
-    file does not declare. Bindings follow their target -- a binding whose
-    target was filtered out describes work on something this run cannot see.
+    *removes* from ``expanded_targets`` and ``bindings``, so no selector can
+    introduce a target or an account the file does not declare. `--force` does
+    not reach here either; there is nothing here for it to relax.
 
-    An empty ``match`` returns the config unchanged rather than everything or
-    nothing, so a command that was given no ``--select`` and one given a
-    selector matching the whole estate take the same path.
+    An empty selection returns the config unchanged rather than everything or
+    nothing, so a command given no selector and one given a selector matching the
+    whole estate take the same path.
+
+    **Targets are narrowed first, then bindings.** A binding whose target was
+    filtered out describes work on something this run cannot see, so it goes
+    whatever else selected it -- which is why ``--account`` cannot resurrect an
+    account on a target ``--select`` removed.
+
+    **An account selector narrows targets too**, by dropping the ones left with
+    no bindings. That is what keeps the blast radius honest: `--account
+    acme_web_user` against an estate where three of twenty targets have that
+    account is a run reaching *three* targets, and a plan counting twenty would
+    make `max_targets` and `confirm_environments` answer about work this run is
+    not going to do.
+
+    It is also what stops any of these flags silently meaning nothing on a
+    command that lists targets rather than accounts -- which
+    :func:`sopuli.cli.select_option` calls the same defect as ignoring one that
+    does. `target list --account acme_web_user` is "the targets where this
+    account lives", and every flag narrows every command that carries it.
+
+    **Each flag is a union within itself and an intersection with the others.**
+    `--target a --target b` is both targets; `--group x --group y` is the targets
+    in either group; and `--select env=dev --group prod-pdbs` is targets that
+    satisfy *both*, which for a `prod-pdbs` matching `env=prod` is correctly
+    nothing. Groups are therefore evaluated as their own predicate rather than
+    merged into the label match: merging would let a group's labels silently
+    overwrite the ones the operator typed, and would turn two groups into one
+    conjunction that can match nothing an operator asked for (found in review on
+    #299).
     """
-    if not match:
+    if selection.is_everything:
         return config
 
+    wanted = set(selection.targets)
+    accounts = {name.casefold() for name in selection.accounts}
+    applications = set(selection.applications)
+    groups = tuple(_group_match(config, name) for name in selection.groups)
+
     targets = tuple(
-        expanded for expanded in config.expanded_targets if matches(expanded.target, match)
+        expanded
+        for expanded in config.expanded_targets
+        if matches(expanded.target, selection.select)
+        and (not wanted or expanded.name in wanted)
+        and (not groups or any(matches(expanded.target, match) for match in groups))
     )
     selected = {expanded.name for expanded in targets}
-    bindings = tuple(binding for binding in config.bindings if binding.target in selected)
+    bindings = tuple(
+        binding
+        for binding in config.bindings
+        if binding.target in selected
+        and (not accounts or binding.account.casefold() in accounts)
+        and (not applications or binding.application in applications)
+    )
+
+    if accounts or applications:
+        # Only where a binding-level selector was given. Without one, a target
+        # with no bindings is an ordinary part of the estate -- a database
+        # nothing is declared against yet -- and dropping it would make
+        # `target list` and `doctor` stop reporting the targets most worth
+        # noticing.
+        kept = {binding.target for binding in bindings}
+        targets = tuple(expanded for expanded in targets if expanded.name in kept)
+
     return replace(config, expanded_targets=targets, bindings=bindings)
+
+
+def refuse_unknown(config: Config, selection: Selection) -> None:
+    """Refuse a selector that names something the configuration does not have.
+
+    **A name that names nothing is a typo; a label that matches nothing is an
+    empty run.** That asymmetry is the whole function, and it is the same one
+    :func:`select` already applies inside the file: labels describe an estate
+    that changes underneath them, and a name is a claim that a particular thing
+    exists.
+
+    The failure this prevents is specific and quiet. A scheduled
+    ``creds rotate --application acme`` where somebody renamed the entry to
+    ``acme-web`` would otherwise select nothing, do nothing, exit 0, and go on
+    reporting success for a credential that has stopped being rotated. Every
+    other guardrail in this tool is about doing too much; this one is about
+    doing nothing and saying it went fine.
+
+    Checked against the **unfiltered** estate, so the message can tell an
+    operator that the name exists but their other selectors excluded it -- which
+    is a different mistake from a misspelling and has a different fix.
+    """
+    _refuse_missing(
+        "--target",
+        selection.targets,
+        {expanded.name for expanded in config.expanded_targets},
+    )
+    _refuse_missing("--group", selection.groups, {group.name for group in config.groups})
+    # From `applications:` and not from the bindings they produced. An entry
+    # whose `targets:` selector matches nothing is validly declared and yields no
+    # binding, and refusing its name as undeclared would report a typo the
+    # operator did not make -- while the thing they actually want to know, that
+    # the entry currently reaches no target, is what the empty run tells them
+    # (found in review on #299).
+    _refuse_missing(
+        "--application",
+        selection.applications,
+        {entry.name for entry in config.applications if entry.name},
+    )
+    _refuse_missing(
+        "--account",
+        selection.accounts,
+        {name for entry in config.applications for name in entry.accounts},
+        folded=True,
+    )
+
+
+def _refuse_missing(
+    flag: str, given: Sequence[str], declared: set[str], *, folded: bool = False
+) -> None:
+    """One flag's names against what the file declares.
+
+    ``folded`` for accounts, and only accounts: the file writes
+    ``acme_web_user`` where Oracle stores ``ACME_WEB_USER``, and an operator
+    copying a name out of a database into ``--account`` is doing the obvious
+    thing. Target, group and application names are the tool's own vocabulary and
+    are compared as written.
+    """
+    known = {name.casefold() for name in declared} if folded else set(declared)
+    missing = [name for name in given if (name.casefold() if folded else name) not in known]
+    if not missing:
+        return
+    named = ", ".join(f"`{name}`" for name in missing)
+    plural = "" if len(missing) == 1 else "s"
+    listed = ", ".join(sorted(declared)[:8]) or "nothing"
+    raise ArgumentError(
+        # The flag is not repeated in the message: `at` renders as the option the
+        # operator typed, and "--target: --target name not declared" reads as a
+        # bug in the tool rather than a typo in the command.
+        f"name{plural} not declared in the configuration: {named}",
+        at=ROOT.key(flag),
+        hint=(
+            f"the configuration declares {listed}"
+            f"{', ...' if len(declared) > 8 else ''} -- a selector filters the "
+            f"declared set and cannot extend it (invariant 5)"
+        ),
+    )
 
 
 def _group_match(config: Config, name: str) -> Pairs:
