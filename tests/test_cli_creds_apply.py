@@ -1016,6 +1016,70 @@ def test_an_explicit_strategy_surveys_first(
     assert len(harness["sessions"]) == 4
 
 
+def test_a_capability_refusal_carries_invariant_4s_own_exit_code(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, validator: Any
+) -> None:
+    """Invariant 4: a distinct exit code, and a message naming the capability and
+    the target.
+
+    It was neither until #287. Every `DriverError` fell into the boundary's
+    catch-all and came out as `internal` on exit 1, with the hint folded into a
+    message prefixed by the exception's class name -- so the one refusal in this
+    tool that has its own exit code did not use it, and `target_capability` had
+    never been emitted at all.
+    """
+    estate(users={"ACME_WEB_USER": rollover_user()}, capabilities=frozenset({PASSWORD_ROLLOVER}))
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--strategy",
+        "direct",
+        "--output",
+        "json",
+    )
+    found = document(result)
+
+    validator.validate(found)
+    assert found["exit_code"] == ExitCode.UNSUPPORTED_CAPABILITY
+    assert found["error"]["category"] == "capability"
+    assert found["error"]["target_capability"] == EXPIRE_PASSWORD
+    # The hint is its own field, and the message is the driver's own wording --
+    # not `str(exc)` with the two run together, and not the class name in front.
+    assert found["error"]["hint"]
+    assert not found["error"]["message"].startswith("DriverError")
+
+
+def test_a_configuration_refusal_is_a_database_error_and_not_internal(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The other half of #287: a refusal with no capability behind it is still the
+    driver's, and `internal` means *this is a bug in sopuli* to whoever reads it.
+    """
+    estate(
+        users={"ACME_WEB_USER": rollover_user()},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+    )
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--strategy",
+        "staged",
+        "--output",
+        "json",
+    )
+    found = document(result)
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    assert found["error"]["category"] == "database"
+    assert "target_capability" not in found["error"]
+
+
 def test_rollover_is_refused_through_the_driver(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

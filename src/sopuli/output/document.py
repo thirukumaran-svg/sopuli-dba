@@ -127,10 +127,16 @@ class Error:
     whose client is not installed is ``SOPULI-20001`` (ADR-006, E5). It stays
     optional and omitted-when-absent, because most failures have no code and a
     ``null`` would invite a consumer to branch on a field that is empty almost
-    always. ``retryable`` and ``target_capability`` are still absent for the
-    original reason -- a vendor code needs a driver, and ``target_capability``
-    belongs to the capability category -- and arrive with the errors that have
-    them.
+    always.
+
+    ``target_capability`` arrived when the error that has one first reached this
+    object (#287): a driver refusal used to fall into the boundary's catch-all
+    and be reported as ``internal``, so
+    :class:`~sopuli.driver.protocol.UnsupportedCapabilityError` never got here to
+    fill it in. It is set only for ``category: "capability"``, which is the
+    schema's own rule for it, and is what a consumer branches on instead of
+    parsing the capability's name back out of the message. ``retryable`` is still
+    absent for the original reason: nothing yet knows whether it is true.
 
     ``message`` is documented as redacted (``03-json-output.md`` §4). What makes
     that true here is the same thing that makes it true everywhere: a
@@ -142,6 +148,7 @@ class Error:
     message: str
     hint: str | None = None
     code: str | None = None
+    target_capability: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"category": self.category, "message": self.message}
@@ -149,6 +156,8 @@ class Error:
             data["code"] = self.code
         if self.hint is not None:
             data["hint"] = self.hint
+        if self.target_capability is not None:
+            data["target_capability"] = self.target_capability
         return data
 
 

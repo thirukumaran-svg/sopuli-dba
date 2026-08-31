@@ -79,6 +79,7 @@ from sopuli.config.discovery import discover
 from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.config.loading import load_layers
 from sopuli.config.model import Config
+from sopuli.driver.protocol import DriverError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.material import TOKEN_FLAG, TOKEN_SOURCES
@@ -881,10 +882,18 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
       finishes its own document on exit 4 and never reaches here; reaching here
       means nobody could say, so it is generic failure.
 
-    Anything else is ``internal`` on exit 1. When driver and vault errors arrive
-    they bring their own categories and vendor codes, and they pass through a
-    scrubber first (``03-json-output.md`` §4) -- until then this catch-all repeats
-    what the text boundary already prints to stderr, and no more.
+    A driver error carries its own too, and #287 is when that stopped being
+    anticipated and started happening. Until then every one of them fell into the
+    catch-all below and was reported as ``internal`` on exit 1 -- including
+    :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`, which meant
+    invariant 4's *distinct exit code* was 1 like everything else, the hint was
+    folded into the message rather than into the field it has, and the message a
+    consumer read was prefixed with the exception's class name.
+
+    Anything else is ``internal`` on exit 1. When vault errors arrive they bring
+    their own categories and vendor codes, and they pass through a scrubber first
+    (``03-json-output.md`` §4) -- until then this catch-all repeats what the text
+    boundary already prints to stderr, and no more.
     """
     if isinstance(exc, ConfigError):
         return (
@@ -904,6 +913,17 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
     if isinstance(exc, LockError):
         code = ExitCode.LOCK_HELD if isinstance(exc, LockDeniedError) else ExitCode.FAILURE
         return code, Error(category=exc.category, message=exc.message, hint=exc.hint)
+    if isinstance(exc, DriverError):
+        return ExitCode(exc.exit_code), Error(
+            category=exc.category,
+            message=exc.message,
+            hint=exc.hint,
+            code=exc.code,
+            # Only the capability category has one, which is the schema's rule
+            # for the field rather than this function's -- so it is read off the
+            # exception that defines it rather than switched on `category`.
+            target_capability=getattr(exc, "capability", None),
+        )
     if isinstance(exc, click.ClickException):
         # click's own errors carry their exit code, and every one of them today
         # is a usage error -- which the caller then declines to emit. Reading the

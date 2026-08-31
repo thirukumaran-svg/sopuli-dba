@@ -229,6 +229,17 @@ It has **no location field**, so a config error's file and key path travel insid
 comes from the exception rather than from the boundary inferring one from a
 Python type, which is the mapping that goes wrong first when a subclass is added.
 
+**A driver error reached this object for the first time in #287**, and the gap it
+closed is the one that mapping was written to prevent. Every `DriverError` had
+been falling into the boundary's catch-all: `internal` on exit 1, the hint folded
+into `message` rather than into the field it has, and the message prefixed with
+the exception's class name. That included `UnsupportedCapabilityError`, so
+invariant 4's *distinct exit code* was 1 like everything else and
+`target_capability` — in this schema since it was written — had never been
+emitted by anything. A capability refusal now carries `category: "capability"`,
+exit 5, and the capability's name in its own field, which is what a consumer
+branches on instead of parsing it back out of prose.
+
 ### `invocation.selection`
 
 What the run was narrowed to, as the selectors were given rather than as they
