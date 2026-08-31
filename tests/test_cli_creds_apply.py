@@ -31,6 +31,7 @@ from sopuli import check
 from sopuli.cli import cli
 from sopuli.clock import utc_now
 from sopuli.config.model import Vault
+from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
@@ -39,6 +40,7 @@ from sopuli.driver.protocol import (
     SKIPPED,
     VERIFY_LOGIN,
     ChangeResult,
+    PrivilegeAudit,
     Scope,
     UserState,
     VerifyResult,
@@ -103,6 +105,17 @@ applications:
     secret_template: "apps/acme/db#DB_CREDENTIALS/{account}"
 """
 
+#: The same estate, with each target asserting the container it should be in.
+#: §3a's assertion is opt-in, so it takes its own config: the one above asserts
+#: nothing, which is the case that must keep passing.
+ASSERTING_CONFIG = CONFIG.replace(
+    "    labels: { env: prod, tenant: alpha }",
+    "    labels: { env: prod, tenant: alpha }\n    oracle: { scope: pdb, container: ALPHA }",
+).replace(
+    "    labels: { env: prod, tenant: beta }",
+    "    labels: { env: prod, tenant: beta }\n    oracle: { scope: pdb, container: BETA }",
+)
+
 LIVE = "Correct-Horse-Battery-9"
 STAGED = "Vertical-Anchor-Marble-4"
 
@@ -135,8 +148,14 @@ class FakeSession:
         capabilities: frozenset[str] = frozenset(),
         rollover_refusal: Exception | None = None,
         on_call: Callable[[str], None] | None = None,
+        scope: Scope | None = None,
+        audit: PrivilegeAudit | Exception | None = None,
+        describe_error: Exception | None = None,
     ) -> None:
+        self.describe_error = describe_error
         self.on_call = on_call
+        self.given_scope = scope
+        self.audit = audit
         self.users = dict(users)
         self.answers = {name: list(results) for name, results in answers.items()}
         self.set_error = set_error
@@ -149,10 +168,25 @@ class FakeSession:
         self.closed = False
 
     def scope(self) -> Scope:
+        if self.given_scope is not None:
+            return replace(self.given_scope, capabilities=self.capabilities)
         return Scope(type="pdb", container="ALPHA", read_write=True, capabilities=self.capabilities)
+
+    def privileges(self) -> PrivilegeAudit:
+        """What `--preflight` reads, and what `doctor --check-privileges` does.
+
+        An `Exception` in `audit` stands for the view a service account is not
+        granted, which is a caveat rather than a refusal -- so the two have to be
+        distinguishable here or the test cannot tell them apart either.
+        """
+        if isinstance(self.audit, Exception):
+            raise self.audit
+        return self.audit if self.audit is not None else PrivilegeAudit()
 
     def describe_user(self, account: str) -> UserState | None:
         self._called("describe_user")
+        if self.describe_error is not None:
+            raise self.describe_error
         found = self.users.get(account.upper())
         if found is None:
             return None
@@ -253,6 +287,9 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         capabilities: frozenset[str] = frozenset(),
         rollover_refusal: Exception | None = None,
         on_call: Callable[[dict[str, Any], str], None] | None = None,
+        scopes: Mapping[str, Scope] | None = None,
+        audits: Mapping[str, PrivilegeAudit | Exception] | None = None,
+        describe_error: Exception | None = None,
     ) -> dict[str, Any]:
         store = MemoryStore()
         for path, body in (documents or _staged_two_targets()).items():
@@ -285,6 +322,9 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     capabilities=capabilities,
                     rollover_refusal=rollover_refusal,
                     on_call=None if on_call is None else (lambda event: on_call(harness, event)),
+                    scope=None if scopes is None else scopes.get(target.name),
+                    audit=None if audits is None else audits.get(target.name),
+                    describe_error=describe_error,
                 )
                 sessions.append(session)
                 return session
@@ -736,6 +776,241 @@ def test_the_lease_is_renewed_at_each_target_boundary(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert after.version == 3
+
+
+# --------------------------------------------------------------- the pre-flight ---
+
+
+def test_without_the_flag_nothing_is_surveyed(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The cost is opt-in. A repair of one target should not pay for a survey of
+    twenty, so with no `--preflight` and no `--strategy` the estate is connected
+    to once per target and that once is the apply itself."""
+    harness = estate()
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert len(harness["sessions"]) == 1
+
+
+def test_a_target_in_the_wrong_container_refuses_before_anything_is_written(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The edit this check exists for: a `dsn:` repointed at a different
+    container, where everything keeps working against the wrong database."""
+    harness = estate(scopes={"appdb-alpha": Scope(type="pdb", container="GAMMA", read_write=True)})
+
+    result = run(runner, write_config(ASSERTING_CONFIG), "--select", "tenant=alpha", "--preflight")
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert all(session.changed == [] for session in harness["sessions"])
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]["acme_web_user"] == STAGED
+    assert "GAMMA" in result.output
+
+
+def test_a_read_only_database_refuses_before_the_statement(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """P1 requires the refusal up front rather than a statement failing half way
+    through it."""
+    harness = estate(
+        scopes={
+            "appdb-alpha": Scope(
+                type="pdb", container="ALPHA", read_write=False, open_mode="READ ONLY"
+            )
+        }
+    )
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--preflight")
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert all(session.changed == [] for session in harness["sessions"])
+
+
+def test_a_missing_privilege_refuses_the_run_and_says_which(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, validator: Any
+) -> None:
+    """Without this, the run fails at the verb that needs the grant, several
+    commands from here, with an error about a dictionary view rather than about
+    the install."""
+    estate(audits={"appdb-alpha": PrivilegeAudit(missing=("GRANT ALTER USER",))})
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--preflight",
+        "--output",
+        "json",
+    )
+    found = document(result)
+
+    validator.validate(found)
+    assert found["exit_code"] == ExitCode.FAILURE
+    assert found["error"]["category"] == "authorization"
+    assert "GRANT ALTER USER" in str(found["diagnostics"])
+
+
+def test_an_unreadable_audit_is_a_caveat_and_not_a_refusal(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """An estate that will not grant the audit view must still be able to run a
+    pre-flight -- and the guard that is not running has to say so, which is the
+    rule UC-1 §7 writes for `check`'s LCOUNT guard."""
+    estate(audits={"appdb-alpha": RuntimeError("ORA-00942: table or view does not exist")})
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--preflight",
+        "--output",
+        "json",
+    )
+    found = document(result)
+
+    assert found["exit_code"] == ExitCode.SUCCESS
+    assert [one["level"] for one in found["diagnostics"]] == ["warning"]
+    assert "could not be read" in found["diagnostics"][0]["message"]
+
+
+def test_a_missing_account_refuses_a_preflighted_run(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`apply` alone reports this per account and carries on, which is right when
+    nobody asked. Somebody who asked for a pre-flight asked to be told before it
+    started, and a run that started anyway would have answered a different
+    question.
+
+    Asserted on the run-level `error` rather than on the exit code, because an
+    ordinary run over a missing account exits 1 as well -- what separates the two
+    is that this one never reached a target, so it has a reason for the run
+    rather than a row per account.
+    """
+    estate(users={})
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--preflight",
+        "--output",
+        "json",
+    )
+    found = document(result)
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    assert found["error"]["category"] == "database"
+    assert "acme_web_user" in str(found["diagnostics"])
+    assert not found.get("results")
+
+
+def test_an_unreachable_target_refuses_a_preflighted_run(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Without the flag this is a per-account finding and the run carries on;
+    with it, being unable to reach a target is exactly what was asked about."""
+    estate(connect_error=RuntimeError("ORA-12541: no listener"))
+
+    result = run(runner, write_config(CONFIG), "--preflight", "--output", "json")
+    found = document(result)
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    assert found["error"]["category"] == "connectivity"
+
+
+def test_a_clean_estate_preflights_and_then_applies(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The survey costs one connection per target and then the run proceeds
+    normally -- two sessions per target, one that asked and one that changed."""
+    harness = estate()
+
+    result = run(runner, write_config(ASSERTING_CONFIG), "--select", "tenant=alpha", "--preflight")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert len(harness["sessions"]) == 2
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"] == {}
+
+
+def test_a_dry_run_still_preflights(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--dry-run --preflight` is "show me the plan, and tell me whether it would
+    work". Skipping the survey there would make the flag silently mean nothing on
+    the invocation somebody reaches for first."""
+    harness = estate(audits={"appdb-alpha": PrivilegeAudit(missing=("GRANT ALTER USER",))})
+
+    result = run(
+        runner, write_config(CONFIG), "--select", "tenant=alpha", "--preflight", "--dry-run"
+    )
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert "GRANT ALTER USER" in result.output
+    assert all(session.changed == [] for session in harness["sessions"])
+
+
+def test_an_account_whose_state_cannot_be_read_is_a_finding_and_not_a_crash(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`describe_user` raises where the account's *state* cannot be read rather
+    than where the account is absent -- `RolesUnreadableError`, for a
+    `DBA_ROLE_PRIVS` this service account is not granted.
+
+    Letting it escape would abort the survey and take every finding gathered so
+    far with it, which is the opposite of what a run asking "tell me everything
+    first" wants. It blocks, unlike the unreadable privilege audit, because it is
+    the input guardrail 4 refuses on: treating an unreadable answer as "holds no
+    admin role" is the silent success that error exists to prevent.
+    """
+    estate(
+        describe_error=RolesUnreadableError(
+            'could not read the roles held by "acme_web_user"',
+            hint="GRANT SELECT ON SYS.DBA_ROLE_PRIVS to the service account",
+        ),
+        audits={"appdb-alpha": PrivilegeAudit(missing=("GRANT ALTER USER",))},
+    )
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--preflight",
+        "--output",
+        "json",
+    )
+    found = document(result)
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    # Both findings survive: the survey did not stop at the one that raised.
+    messages = str(found["diagnostics"])
+    assert "could not read the roles" in messages
+    assert "GRANT ALTER USER" in messages
+
+
+def test_every_problem_is_reported_rather_than_the_first(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A pre-flight exists so an estate can be fixed in one pass; reporting only
+    the one that refused would turn a survey into a round trip per problem."""
+    estate(
+        audits={
+            "appdb-alpha": PrivilegeAudit(missing=("GRANT ALTER USER",)),
+            "appdb-beta": PrivilegeAudit(missing=("GRANT CREATE SESSION",)),
+        }
+    )
+
+    result = run(runner, write_config(CONFIG), "--preflight")
+
+    assert "GRANT ALTER USER" in result.output
+    assert "GRANT CREATE SESSION" in result.output
+    assert "2 problems over 2 targets" in result.output
 
 
 def test_two_accounts_sharing_a_document_promote_together(

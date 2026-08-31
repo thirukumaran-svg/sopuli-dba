@@ -66,6 +66,7 @@ from sopuli import check as check_states
 from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
+from sopuli import preflight
 from sopuli import status as status_states
 from sopuli import strategy as strategies
 from sopuli.admin import resolve as admin_resolve
@@ -170,6 +171,7 @@ from sopuli.output.lock_view import (
 from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
+from sopuli.output.preflight_view import render_preflight
 from sopuli.output.status_view import build_result as build_status_result
 from sopuli.output.status_view import render_status_table
 from sopuli.output.status_view import summarise as summarise_status
@@ -180,6 +182,7 @@ from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate
 from sopuli.payload import PENDING, PREVIOUS, stage_layout
+from sopuli.preflight import Finding
 from sopuli.safety import RefusedError, refuse_if_over_limit, refuse_if_readonly
 from sopuli.secrets import Secret
 from sopuli.status import Row
@@ -2021,6 +2024,17 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     ),
 )
 @click.option(
+    "--preflight",
+    "preflight_all",
+    is_flag=True,
+    default=False,
+    help=(
+        "Survey every target before writing anything: reachable, the scope it "
+        "claims, the accounts declared, the privileges needed. Refuses the run "
+        "rather than discovering it half way through."
+    ),
+)
+@click.option(
     "--lockout-margin",
     type=click.IntRange(0, 100),
     default=DEFAULT_MARGIN,
@@ -2033,6 +2047,7 @@ def creds_apply(
     source_stage: str | None,
     confirm: bool,
     strategy: str | None,
+    preflight_all: bool,
     lockout_margin: int,
     run: Invocation,
 ) -> str:
@@ -2086,6 +2101,15 @@ def creds_apply(
     profile that grants a window is one of those refusals: Oracle opens the window
     because the profile says so, whatever this run asked for.
 
+    **`--preflight` asks the whole estate first** (UC-1 section 8 step 3). One
+    connection per target, before anything is written: is it reachable, is it the
+    container the config claims, is it open read-write, does it have the accounts
+    declared, does the service account hold the privileges. Every problem found
+    is reported and the run refuses, because the alternative is discovering on
+    target nine that target ten was never going to work -- by which point nine
+    databases hold a password the vault has not promoted. Off by default, since a
+    repair of one target should not pay for a survey of twenty.
+
     **Nothing is promoted that was not confirmed** (invariant 7). Where some
     targets confirmed and others did not, the database is left changed where it
     changed, `pending` stays, the run exits 4, and the accounts involved carry a
@@ -2125,6 +2149,15 @@ def creds_apply(
         # is the thing worth reviewing and a read needs no lock -- `check` runs
         # its whole survey without one.
         sources = _sources(bindings, _read_documents(keys, stores), stage=source_stage)
+        # The pre-flight runs here too, and it is the combination worth having:
+        # `--dry-run --preflight` is "show me the plan, and tell me whether it
+        # would work". Skipping it under a dry run would make the flag silently
+        # mean nothing on the invocation somebody would reach for first. It
+        # writes nothing and needs no lock, which is why it can.
+        findings = _preflight(sources, run, config, strategy=strategy, full=preflight_all)
+        document.diagnostics.extend(_preflight_diagnostics(findings))
+        if preflight.refusal(findings) is not None:
+            return _refuse_preflight(findings, document, header=_header(plan, sources))
         document.finish(ExitCode.SUCCESS, Summary(total=len(sources)))
         return f"{_header(plan, sources)}\n\nnothing was applied (--dry-run)"
 
@@ -2143,7 +2176,14 @@ def creds_apply(
             # a different one.
             documents = _read_documents(keys, stores)
             sources = _sources(bindings, documents, stage=source_stage)
-            _refuse_unhonourable_strategy(sources, run, config, strategy=strategy)
+            findings = _preflight(sources, run, config, strategy=strategy, full=preflight_all)
+            document.diagnostics.extend(_preflight_diagnostics(findings))
+            if preflight.refusal(findings) is not None:
+                # Before the first mutation and inside the lock, so the estate
+                # cannot change between the survey and the run it was surveying
+                # for. Releasing happens on the way out of `holding`, as it does
+                # on every other path.
+                return _refuse_preflight(findings, document, header=_header(plan, sources))
             applied, stolen = _apply_estate(
                 sources,
                 run,
@@ -2686,35 +2726,49 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
     return driver.connect(target, credential.credential)
 
 
-def _refuse_unhonourable_strategy(
+def _preflight(
     sources: Sequence[tuple[Binding, Source | None]],
     run: Invocation,
     config: Config,
     *,
     strategy: str | None,
-) -> None:
-    """Refuse an explicitly requested strategy the estate cannot honour (#262).
+    full: bool,
+) -> list[Finding]:
+    """UC-1 §8 step 3: ask the estate before anything is written (#262, #283).
 
-    **Nothing has been mutated when this raises**, which is what invariant 4 asks
-    for and what costs a second connection per target. The cost is opt-in: with no
-    ``--strategy`` there is nothing to refuse, because the regime is then chosen
-    per account from what that account can actually do, so this returns
-    immediately and the run pays nothing.
+    One connection per target, and it does both jobs on the one connection: the
+    strategy refusal #262 added, and -- under ``--preflight`` -- the rest of §8's
+    list. The two arrived separately and are one pass, because they want the same
+    thing at the same moment and a second pass would double a cost that is
+    already the interesting part of this function.
 
-    That trade is the whole design. An operator who names a regime is asking for
-    a property of the *estate* -- "no application will see a failed login
-    tonight" -- and a run that honoured it on four PDBs and discovered on the
-    fifth that it could not would already have broken the promise. One extra
-    connection per target buys the promise being kept or refused, never
-    half-kept.
+    **It costs nothing unless it was asked for.** With no ``--strategy`` and no
+    ``--preflight`` there is nothing to survey and this returns immediately: the
+    regime is then chosen per account from what that account can actually do, and
+    an ordinary repair of one target should not pay for a survey of twenty.
 
-    **A target that cannot be reached is skipped rather than refused.** It is a
-    finding the run itself reports, per account and with the vendor code, and
-    turning it into a plan-time refusal here would make an unreachable database
-    look like a strategy problem.
+    That trade is the whole design of both flags. An operator who names a regime,
+    or asks for a pre-flight, is asking for a property of the *estate* -- "no
+    application will see a failed login tonight", "this will not stop half way"
+    -- and a run that honoured it on four PDBs and discovered on the fifth that
+    it could not would already have broken the promise.
+
+    **An unhonourable strategy raises where it is found**, before the survey has
+    visited the rest of the estate, and that is deliberate. Invariant 4's
+    capability refusal carries its own exit code and names the capability and the
+    target; it is not a finding to be collected among others, and an operator who
+    named a regime this estate cannot honour has one thing to fix before anything
+    else is worth reporting.
+
+    **An unreachable target is a finding only under ``--preflight``.** Without
+    it, the run reports one per account with the vendor code and carries on, and
+    turning that into a plan-time refusal here would make an unreachable database
+    look like a strategy problem -- which is the rule #262 wrote and this keeps.
+    With the flag, being unable to reach a target is exactly what was asked
+    about.
     """
-    if strategy is None:
-        return
+    if strategy is None and not full:
+        return []
 
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
     grouped: dict[str, list[Binding]] = {}
@@ -2722,16 +2776,178 @@ def _refuse_unhonourable_strategy(
         if source is not None:
             grouped.setdefault(binding.target, []).append(binding)
 
+    findings: list[Finding] = []
     for name, bindings in grouped.items():
         try:
             session = _open_session(by_target[name], run, config)
-        except Exception:  # noqa: BLE001 -- the run reports this per account
+        except Exception as error:  # noqa: BLE001 -- the run reports this per account
+            if full:
+                reported = _as_error(error)
+                findings.append(
+                    preflight.unreachable(name, message=reported.message, hint=reported.hint)
+                )
             continue
         try:
-            _check_strategy(session, bindings, strategy=strategy, target=name)
+            if strategy is not None:
+                _check_strategy(session, bindings, strategy=strategy, target=name)
+            if full:
+                findings.extend(_preflight_target(session, by_target[name], bindings))
         finally:
             with suppress(Exception):
                 session.close()
+    return findings
+
+
+def _preflight_target(
+    session: Any, target: ExpandedTarget, bindings: Sequence[Binding]
+) -> tuple[Finding, ...]:
+    """One reachable target, against §8's remaining checks.
+
+    Reading is here and deciding is in :mod:`sopuli.preflight`, which is the
+    arrangement every other verb in this file has with its own decision module.
+
+    **Every probe that fails is a finding rather than an exception**, and each is
+    reported as the check it was answering rather than as unreachability --
+    `doctor` draws the same line and for the same reason: a dictionary view this
+    account cannot read would otherwise send somebody to the listener over a
+    grant. The probes are separate for that reason too, since a service account
+    can be perfectly able to describe its scope, unable to audit its own
+    privileges, and unable to read the roles an account holds -- three grants,
+    three answers.
+
+    Letting any of them escape would abort the survey and take every finding
+    gathered so far with it, which is precisely what a run asking "tell me
+    everything before you start" did not ask for.
+    """
+    try:
+        scope = session.scope()
+    except Exception as error:  # noqa: BLE001 -- a finding, not a crash
+        return (
+            Finding(
+                target=target.name,
+                check=preflight.SCOPE,
+                message=_as_error(error).message,
+                hint="the connection worked; this is what it could not read",
+            ),
+        )
+
+    try:
+        missing_privileges = tuple(session.privileges().missing)
+    except Exception as error:  # noqa: BLE001 -- likewise
+        # Reported and **not** blocking. The audit establishes nothing either
+        # way when it cannot be read, and refusing over it would mean an estate
+        # that will not grant the view can never run a pre-flight -- while
+        # staying silent would be the guard that is not running and does not say
+        # so, which UC-1 §7 rules out for `check`'s LCOUNT guard by name.
+        missing_privileges = ()
+        privilege_finding: tuple[Finding, ...] = (
+            Finding(
+                target=target.name,
+                check=preflight.PRIVILEGES,
+                message=f"the privilege audit could not be read: {_as_error(error).message}",
+                hint="nothing about this target's grants was established, either way",
+                category="authorization",
+                blocking=False,
+            ),
+        )
+    else:
+        privilege_finding = ()
+
+    missing_accounts: list[str] = []
+    unreadable: list[Finding] = []
+    for binding in bindings:
+        try:
+            state = session.describe_user(binding.account)
+        except Exception as error:  # noqa: BLE001 -- a finding about this account
+            # `describe_user` raises where the account's *state* cannot be read
+            # rather than where the account is absent -- `RolesUnreadableError`
+            # is the one that exists, for a `DBA_ROLE_PRIVS` this service
+            # account is not granted. Letting it escape would abort the survey
+            # and take every finding gathered so far with it, which is the
+            # opposite of what a run asking "tell me everything first" wants.
+            #
+            # Blocking, unlike the privilege audit above, and the asymmetry is
+            # the point: that one establishes nothing either way, while this one
+            # is the input guardrail 4 refuses on, and treating an unreadable
+            # answer as "holds no admin role" is the silent success
+            # `RolesUnreadableError` was raised to prevent.
+            reported = _as_error(error)
+            unreadable.append(
+                Finding(
+                    target=target.name,
+                    check=preflight.ACCOUNT,
+                    message=reported.message,
+                    hint=reported.hint,
+                    account=binding.account,
+                    category=reported.category,
+                )
+            )
+            continue
+        if state is None:
+            missing_accounts.append(binding.account)
+
+    declared = target.target.oracle
+    return (
+        preflight.survey(
+            target.name,
+            scope=scope,
+            declared_scope=declared.scope,
+            declared_container=declared.container,
+            missing_accounts=missing_accounts,
+            missing_privileges=missing_privileges,
+        )
+        + tuple(unreadable)
+        + privilege_finding
+    )
+
+
+def _preflight_diagnostics(findings: Sequence[Finding]) -> list[Diagnostic]:
+    """Every finding as a run-level diagnostic, blocking or not.
+
+    Emitted whether or not the run goes ahead, which is the half worth stating: a
+    survey that found only caveats lets the run proceed, and those caveats are
+    exactly what a document read afterwards needs in order to know how much the
+    pre-flight actually established.
+
+    ``level`` carries the distinction -- ``error`` for a finding that refused the
+    run, ``warning`` for one that could not establish anything. No diagnostic
+    *code* is allocated: #216's rule is that a code exists for what the exit code
+    cannot tell you, and on a refusal the run-level `error.category` already says
+    which kind of problem stopped it -- ``connectivity``, ``authorization`` or
+    ``database``, which is the branch a consumer needs. A code would be a fourth
+    spelling of `check`.
+    """
+    return [
+        Diagnostic(
+            level="error" if one.blocking else "warning",
+            message=f"{one.check}: {one.message}",
+            target=one.target,
+            account=one.account,
+        )
+        for one in findings
+    ]
+
+
+def _refuse_preflight(findings: Sequence[Finding], document: Any, *, header: str) -> str:
+    """Report the refusal, and change nothing.
+
+    Exit 1, which is what "nothing changed anywhere" already means for this verb
+    (UC-1 §5). Not exit 9: the estate disagreeing with the file is not the same
+    as a file that could not be read, and `config validate` would pass on every
+    one of these. Not exit 5 either -- that is invariant 4's capability code, and
+    the capability refusal never reaches here because it raises.
+    """
+    first = preflight.refusal(findings)
+    if first is None:  # pragma: no cover - the caller asks before calling
+        raise ValueError("nothing in this pre-flight refuses the run")
+    document.error = Error(
+        category=first.category,
+        message=preflight.summarise(findings),
+        hint=first.hint,
+    )
+    blocking = sum(1 for one in findings if one.blocking)
+    document.finish(ExitCode.FAILURE, Summary(total=len(findings), failed=blocking))
+    return f"{header}\n\n{render_preflight(findings)}"
 
 
 def _check_strategy(

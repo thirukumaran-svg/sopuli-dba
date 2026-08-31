@@ -237,6 +237,7 @@ Take what the vault holds and make the database match it.
 sopuli creds apply --application orders-app
                    [--source {pending,current}]   # default: pending if set, else current
                    [--strategy {rollover,staged,direct}]
+                   [--preflight]                  # survey every target before writing anything
                    [--continue-on-error]          # default: fail fast
                    [--repair FILE]                # act only on a run's unconfirmed set
 ```
@@ -368,6 +369,46 @@ came from the vault's `pending`, which `generate` wrote and something may alread
 be holding, so drawing a different one here would make the vault and the database
 disagree with what the operator staged. Regeneration inside `apply` is a design
 question and is filed rather than guessed at.
+
+### `--preflight`, and what it asks before anything is written (#283)
+
+§8 step 3 belongs to `rotate`, and it is available here because the same
+question is worth asking before a large `apply`: *would this work?* One
+connection per target, before the first `ALTER USER`, checking §8's own list —
+reachable, the scope the file claims, the accounts declared, the privileges
+needed.
+
+**Off by default**, which is the trade. A repair of one target should not pay for
+a survey of twenty, and without the flag `apply` discovers each of these per
+target as it goes and reports them per account — which is the right answer when
+nobody asked. `--strategy` already opened one connection per target for its own
+refusal (#262); the two are now **one pass on one connection** rather than two.
+
+**Every finding is reported and one of them refuses.** A pre-flight exists so an
+estate can be fixed in one pass, so the table lists all of them; but a run has
+one exit code and one `error`, and that one is the finding earliest in §8's
+order — the one closest to the cause. A target that could not be reached explains
+its own missing scope, and a container that turned out to be the wrong one
+explains every account that was not found in it.
+
+**Exit 1, because nothing changed anywhere**, which is what exit 1 already means
+for this verb. Not 9: the estate disagreeing with the file is not a file that
+could not be read, and `config validate` passes on every one of these. Not 5
+either — that is invariant 4's, and a capability the estate cannot honour is
+still `--strategy`'s own refusal, raised where it is found rather than collected
+among findings.
+
+**Not knowing is not a finding.** An open mode the driver could not read is not a
+read-only database, and a privilege audit the service account is not granted has
+established nothing either way — so it is reported as a warning and the run goes
+ahead. That is §7's rule for the `LCOUNT` guard applied here: a check that is not
+running says so rather than being silently skipped, and refusing over it would
+mean an estate that will not grant the audit view could never run a pre-flight at
+all.
+
+**`--dry-run --preflight` surveys too.** It writes nothing and needs no lock, and
+"show me the plan, and tell me whether it would work" is the invocation somebody
+reaches for first — a flag that silently meant nothing there would be a trap.
 
 ### `--repair`, and where the DRIFT list comes from (#264)
 
@@ -829,7 +870,9 @@ sopuli creds rotate --application orders-app
 ```
 
 Step 3 exists so that the common failures (wrong privileges, closed PDB,
-unreachable host) happen *before* anything is written anywhere.
+unreachable host) happen *before* anything is written anywhere. It is
+implemented and available on `creds apply` as `--preflight` (#283) — see §5,
+which also records why it is opt-in there and unconditional here.
 
 **Step 2 and the fence** (Q2, decided in #83). Locks live in the vault, one per
 **secret path** — not per account and not per target, because every target in a

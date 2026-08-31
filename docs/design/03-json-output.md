@@ -240,6 +240,16 @@ emitted by anything. A capability refusal now carries `category: "capability"`,
 exit 5, and the capability's name in its own field, which is what a consumer
 branches on instead of parsing it back out of prose.
 
+**A pre-flight refusal is the other new producer** (#283): `category` is the kind
+of problem that stopped it — `connectivity`, `authorization` or `database` —
+`message` says how many were found over how many targets and names the first, and
+each finding is a `diagnostics[]` entry with its `target` and, where the check is
+about one, its `account`. The findings get no diagnostic *code*: §3's rule is
+that a code exists for what the exit code cannot tell you, and here `category`
+already carries the branch. A `warning`-level finding is one the survey could not
+establish rather than one that refused — an unreadable privilege audit — and it
+appears on runs that went ahead.
+
 ### `invocation.selection`
 
 What the run was narrowed to, as the selectors were given rather than as they

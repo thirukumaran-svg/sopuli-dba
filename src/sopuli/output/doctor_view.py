@@ -36,6 +36,7 @@ from sopuli.config.model import ExpandedTarget
 from sopuli.driver.protocol import PrivilegeAudit, Scope
 from sopuli.output.document import Error
 from sopuli.output.table import Column, render_table
+from sopuli.preflight import assertion_holds
 
 
 def build_target(
@@ -147,14 +148,19 @@ def _asserted(target: ExpandedTarget, scope: Scope) -> dict[str, Any] | None:
     if declared.scope is None and declared.container is None:
         return None
 
-    matches = True
-    if declared.scope is not None and declared.scope != scope.type:
-        matches = False
-    if declared.container is not None:
-        found = (scope.container or "").upper()
-        matches = matches and declared.container.upper() == found
-
-    return {"scope": declared.scope, "container": declared.container, "matches": matches}
+    # The comparison itself lives in `sopuli.preflight`, because #283 needs the
+    # same answer as a *decision* and not only as a field to render. Two copies
+    # of it would be two readings of what a `dsn:` edit did, and the one that
+    # refuses a run is not the one anybody would notice going stale.
+    return {
+        "scope": declared.scope,
+        "container": declared.container,
+        "matches": assertion_holds(
+            declared_scope=declared.scope,
+            declared_container=declared.container,
+            scope=scope,
+        ),
+    }
 
 
 def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
