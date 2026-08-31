@@ -29,6 +29,7 @@ what differs is exactly those two class attributes.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from sopuli.config.errors import ConfigError
 from sopuli.exit_codes import ExitCode
@@ -40,6 +41,9 @@ READONLY = "safety.readonly"
 
 #: The ceiling on how many targets one run may reach (P5, #247).
 MAX_TARGETS = "safety.max_targets"
+
+#: The environments a mutation may not enter without an explicit yes (P5, #292).
+CONFIRM_ENVIRONMENTS = "safety.confirm_environments"
 
 
 class RefusedError(ConfigError):
@@ -108,7 +112,9 @@ def refuse_if_over_limit(
     would put that default somewhere a reviewer reading the registry would not find
     it. P5 does say "default 1", but it says it about *confirmation*, which is a
     different gate and is not this one; wiring that up is #247's excluded scope,
-    waiting on a profile's `confirm:` reaching the resolver.
+    waiting on a profile's `confirm:` reaching the resolver. #292 built the
+    *environment* half of that gate and left this one alone; whether P5's
+    "default 1" should ever fire is #294.
 
     **Refuses a `--dry-run` too**, for :func:`refuse_if_readonly`'s reason and one
     more of its own: the plan is what the operator is being shown, and showing a
@@ -127,5 +133,99 @@ def refuse_if_over_limit(
             f"set at {answer.location}; no layer can raise it (invariant 10) -- "
             f"narrow the run with --select, --target or --group, or raise the "
             f"ceiling where it is written"
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class Confirmation:
+    """Why this run needs an explicit yes before it may mutate anything.
+
+    Returned rather than acted on, because the acting is I/O: a prompt is a
+    terminal, and this module is the one place a safety answer can be decided
+    without one. :mod:`sopuli.cli` turns this into a question, a refusal, or
+    nothing at all.
+    """
+
+    #: The listed environments this run actually reaches, in estate order. The
+    #: intersection and not the setting: an operator who wrote ``[prod, staging]``
+    #: and is touching only staging should be asked about staging, and a message
+    #: naming both would be telling them their run reaches prod.
+    environments: tuple[str, ...]
+    #: Where the setting was written, for the same reason every other refusal
+    #: here carries it.
+    location: str
+
+    @property
+    def named(self) -> str:
+        """The environments as a phrase, for a prompt or a refusal."""
+        return ", ".join(self.environments)
+
+
+def confirmation_demanded(
+    resolved: Mapping[str, Resolved], radius: BlastRadius
+) -> Confirmation | None:
+    """Whether ``safety.confirm_environments`` covers anything this run reaches.
+
+    P5 says every mutating command supports ``--confirm``/``--yes`` and that
+    confirmation is required by default in some circumstances; this is the
+    configurable half of that, and it had been parsed, ratcheted as a union and
+    read by nothing since the config model was written (#292).
+
+    **Matched against the environments the run reaches, not the estate's.**
+    :class:`~sopuli.plan.BlastRadius` already carries them for this purpose --
+    its own docstring names this setting -- so a run narrowed to dev by a
+    selector is not asked about prod merely because prod is declared elsewhere in
+    the file. That is what makes the setting usable: one that asked on every run
+    would be turned off within a week.
+
+    **A target with no ``environment:`` matches nothing.** ``environment`` is
+    optional, and a `confirm_environments` entry matching the empty string would
+    be a rule nobody wrote -- which is the reading `BlastRadius` already takes by
+    contributing nothing for such a target rather than an empty string.
+
+    **Comparison is exact**, not case-folded. ``environment`` is a declared label
+    the file controls and §6 already refuses to let the environment be relabelled
+    from an override, so two spellings of prod in one estate is a config problem
+    to see rather than one to paper over here.
+
+    ``None`` where the setting is unset, where it is empty, or where nothing this
+    run reaches is listed -- the three of which are one answer: nobody asked to be
+    asked.
+    """
+    answer = resolved.get(CONFIRM_ENVIRONMENTS)
+    if answer is None or not answer.value:
+        return None
+    listed = frozenset(answer.value)
+    matched = tuple(name for name in radius.environments if name in listed)
+    if not matched:
+        return None
+    return Confirmation(environments=matched, location=answer.location)
+
+
+def refuse_unconfirmed(demand: Confirmation, *, action: str, targets: int) -> None:
+    """Stop a run that needs an explicit yes and has nobody to give one.
+
+    The unattended half of the gate, and it is a refusal rather than a prompt
+    that reads EOF for the reason :func:`sopuli.cli._confirm_break` gives: click
+    would abort on the closed stdin and the operator would learn that it stopped
+    without learning what to type instead.
+
+    **Exit 8, like every other refusal here.** The file is not wrong and the run
+    is not broken -- somebody wrote down that this environment is not entered
+    without an explicit yes, and there was no yes. That is P5's reading of exit 8
+    exactly, and it is the same code an operator declining the prompt produces,
+    which is the point: a scheduler cannot tell whether a human said no or was
+    never there, and does not need to.
+    """
+    reach = "1 target" if targets == 1 else f"{targets} targets"
+    raise RefusedError(
+        f"{action} reaches {reach} in `{demand.named}`, and "
+        f"`{CONFIRM_ENVIRONMENTS}` covers "
+        + ("that environment" if len(demand.environments) == 1 else "those environments"),
+        hint=(
+            f"set at {demand.location}; no layer can relax it (invariant 10) -- "
+            f"pass --confirm to answer in advance, or --dry-run to see the plan "
+            f"without touching anything"
         ),
     )

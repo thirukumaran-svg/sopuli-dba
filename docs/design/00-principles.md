@@ -737,6 +737,14 @@ question is where their test database lives.
 - Every mutating command supports `--confirm`/`--yes`; interactive confirmation is
   required by default when blast radius exceeds `max_targets` (default 1) or the
   target is marked `environment: prod`.
+  **One of those three triggers is built** (#292): `safety.confirm_environments`
+  is enforced by `creds generate`, `creds apply` and `creds finish-rollover` —
+  `creds rotate` confirms unconditionally under UC-1 §8 step 1 and `lock break`
+  always has. The other two are **open, and not merely unimplemented**: a built-in
+  `[prod]` would be an unremovable floor under §9's union ratchet, which §9
+  explicitly forbids, and "blast radius over `max_targets`, default 1" would make
+  every multi-target mutation prompt on an estate that configured nothing. The
+  contradiction is filed as #294 rather than settled in a diff.
 - `--limit`/`--max-targets` prevents a wildcard from hitting 200 PDBs by accident.
 - Mutating operations take an advisory **lock** keyed on the secret path being
   mutated, so two operators or two CI jobs cannot rotate the same credential

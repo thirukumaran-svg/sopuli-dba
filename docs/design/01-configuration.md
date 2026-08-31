@@ -946,13 +946,63 @@ keeps its own guardrail (UC-1 §6.2) and belongs to an application, not here.
 | Key | Meaning |
 |---|---|
 | `max_targets` | at least 1. Use `readonly: true` to block changes entirely — `max_targets: 0` is far more likely to be a slip that then blocks every run |
-| `confirm_environments` | environments that always require confirmation |
+| `confirm_environments` | environments a mutation may not enter without an explicit yes |
 | `readonly` | refuse every mutation |
 
 Every field is optional, and an unset one stays unset rather than taking the
 built-in default. §9 resolves safety by taking the *safest* of all layers rather
 than the last one, and "safest of all layers" needs to know which layers said
 nothing.
+
+#### What `confirm_environments` does when it fires (#292)
+
+Parsed since this document was written and **enforced since #292**, which is
+longer than it should have been: the key validated cleanly, merged under the
+ratchet, appeared in `config show`, and was read by nothing — a config that read
+like protection and was not, which is worse than the setting not existing.
+
+`creds generate`, `creds apply` and `creds finish-rollover` consult it. `creds
+rotate` does not, and that is not an omission: UC-1 §8 step 1 makes its
+confirmation unconditional, so the setting could only ever make that gate weaker.
+`lock break` does not either, for the same reason one step further along — it
+always confirms and takes `--force` on top.
+
+Four things about it are decisions:
+
+- **It matches the environments the *run* reaches**, not the ones the file
+  declares. `plan.blast_radius.environments` is the list, which is what that
+  field was added for. A run narrowed to dev by a selector is not asked about
+  prod merely because prod exists elsewhere in the estate — a gate that asked
+  every time is one that gets switched off within a week.
+- **`--confirm` satisfies it.** P5 says every mutating command supports
+  `--confirm`/`--yes`, and this setting says these environments are not entered
+  without an explicit yes; the flag is that yes, given in advance. So the setting
+  configures *where a yes is required*, not a second gate that a yes cannot
+  answer. A scheduler adds one flag rather than keeping an environment list in
+  step with its config.
+- **Unattended is a refusal, not a prompt.** With no terminal there is nobody to
+  ask, and click's EOF abort would tell an operator that the run stopped without
+  telling them what to type. Exit 8, `category: policy`, naming the setting, where
+  it was written, and both `--confirm` and `--dry-run`.
+- **`--dry-run` is never gated**, which is the opposite of `readonly` and right
+  for the opposite reason. `readonly` decides whether a verb is available at all;
+  this decides assent, and a preview is how somebody works out what they are
+  assenting to. Prompting before printing the plan would ask for a yes to the
+  question the operator ran the command to see.
+
+`--force` does not satisfy it and is not consulted: P3 (#89) puts `--force` on
+the *account* guardrails of `02-oracle-privileges.md` §4 and never on a safety
+setting. It is not a setting, has no layer to arrive on, and so has nothing to
+relax (invariant 10).
+
+**There is no built-in list, and that is load-bearing.** P5 says confirmation is
+required by default when "the target is marked `environment: prod`", which reads
+like a built-in `confirm_environments: [prod]` — and §9 forbids exactly that: a
+built-in taking part in a union ratchet is an unremovable floor, so no layer
+could ever remove `prod` again. §9's own worked example of the trap is `confirm`.
+The two documents disagree, and the disagreement is filed rather than settled
+here (#294): what shipped is the configurable half, which no reading of either
+document objects to.
 
 ---
 

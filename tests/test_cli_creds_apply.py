@@ -48,6 +48,7 @@ from sopuli.driver.protocol import (
 from sopuli.exit_codes import ExitCode
 from sopuli.lock import Holder, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore
 
@@ -1091,12 +1092,24 @@ def test_a_refused_statement_is_reported_per_account(
 def test_readonly_refuses_before_anything_connects(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Invariant 10's ratchet, and invariant 4's timing."""
-    harness = estate()
-    result = run(runner, write_config(CONFIG), "--readonly")
+    """Invariant 10's ratchet, and invariant 4's timing.
 
+    **`readonly` is set in the file**, which is the only place it can be set.
+    This passed `--readonly` until #292, and there is no such option -- so click
+    refused the argv, the command never ran, and the two assertions below were
+    satisfied by a usage error. It would have passed with `refuse_if_readonly`
+    deleted. Caught while wiring up `confirm_environments`, which is the same
+    defect one layer along: a guard that looks enforced and is not.
+    """
+    harness = estate()
+    result = run(
+        runner,
+        write_config(CONFIG + "defaults:\n  safety:\n    readonly: true\n"),
+    )
+
+    assert isinstance(result.exception, RefusedError)
+    assert "safety.readonly" in str(result.exception)
     assert harness["sessions"] == []
-    assert result.exit_code != ExitCode.SUCCESS
 
 
 # ------------------------------------------------------- the lockout budget ---

@@ -186,7 +186,13 @@ from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate
 from sopuli.payload import PENDING, PREVIOUS, stage_layout
 from sopuli.preflight import Finding
-from sopuli.safety import RefusedError, refuse_if_over_limit, refuse_if_readonly
+from sopuli.safety import (
+    RefusedError,
+    confirmation_demanded,
+    refuse_if_over_limit,
+    refuse_if_readonly,
+    refuse_unconfirmed,
+)
 from sopuli.secrets import Secret
 from sopuli.status import Row
 from sopuli.store import SecretStore, StoreError, connect
@@ -1131,6 +1137,52 @@ def _confirm_break(outcome: Take, *, paths: Sequence[Path], mode: str, confirmed
     )
 
 
+def _confirm_environments(
+    plan: Any, run: Invocation, *, action: str, confirmed: bool, noun: str
+) -> None:
+    """P5's environment gate: ask before mutating anything in a listed environment.
+
+    ``safety.confirm_environments`` had been parsed, ratcheted as a union across
+    layers, and read by nothing (#292) -- a config that looked like protection and
+    was not, which is worse than the setting not existing. This is the consumer.
+
+    **The flag satisfies the setting**, rather than being a separate gate that
+    also has to pass. P5 says every mutating command supports ``--confirm``, and
+    the setting says these environments are not entered *without an explicit yes*;
+    ``--confirm`` is that yes given in advance. So what the setting configures is
+    "make this verb need a yes here", which is coherent, cheap, and leaves a
+    scheduler one flag to add rather than an environment list to keep in step with
+    its config.
+
+    **A `--dry-run` is never gated**, which is the opposite of what
+    :func:`~sopuli.safety.refuse_if_readonly` does and is right for the opposite
+    reason. `readonly` is about whether the verb is available at all; this is
+    about assent, and a preview is how somebody decides what to assent *to*.
+    Prompting before showing the plan would be asking for a yes to a question the
+    operator is running the command to see.
+
+    **`--force` does not satisfy it, and is not consulted here.**
+    `00-principles.md` P3 settles that `--force` overrides the *account*
+    guardrails of `02-oracle-privileges.md` §4 and never a safety setting -- it is
+    not a setting, has no layer to arrive on, and so has nothing to relax
+    (invariant 10).
+
+    The plan goes to **stderr**, as `lock break`'s does: under ``--output json``
+    stdout carries the run document and nothing else may touch it, and a prompt
+    that appeared only in text mode would be a confirmation somebody could skip by
+    asking for JSON.
+    """
+    if run.dry_run:
+        return
+    demand = confirmation_demanded(run.resolved, plan.blast_radius)
+    if demand is None or confirmed:
+        return
+    if not _can_prompt():
+        refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
+    click.echo(render_plan(plan, noun=noun), err=True)
+    click.confirm(f"{action} in `{demand.named}`?", abort=True, err=True)
+
+
 def _can_prompt() -> bool:
     """Whether there is somebody at a terminal to answer.
 
@@ -1706,12 +1758,19 @@ def _stored_credential(binding: Binding, stores: Mapping[str, SecretStore]) -> S
     is_flag=True,
     help="Accept a supplied password that violates the policy. Recorded in the audit event.",
 )
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Proceed without asking. Required where `safety.confirm_environments` applies.",
+)
 @global_options
 def creds_generate(
     selectors: tuple[str, ...],
     policy_name: str | None,
     from_stdin: bool,
     no_policy_check: bool,
+    confirm: bool,
     run: Invocation,
 ) -> str:
     """Draw a new password per the policy and stage it in the vault.
@@ -1763,6 +1822,9 @@ def creds_generate(
     plan = plan_builder.build(config, intent=["generate", "vault_write_pending"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="staging a password")
     document.plan = plan.as_json()
+    _confirm_environments(
+        plan, run, action="staging a password", confirmed=confirm, noun="generation"
+    )
 
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
@@ -2137,6 +2199,11 @@ def creds_apply(
     plan = plan_builder.build(config, intent=["verify", "password_set", "vault_promote"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
     document.plan = plan.as_json()
+    # `--confirm` already means "proceed without asking" here -- it is what
+    # `--source previous` requires -- so the flag answers both gates. Two flags
+    # for one word would be the sort of distinction only the implementation cares
+    # about.
+    _confirm_environments(plan, run, action="applying a password", confirmed=confirm, noun="apply")
 
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
@@ -3188,8 +3255,16 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
     show_default=True,
     help="Refuse to attempt a login within this many tries of the lockout limit.",
 )
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Proceed without asking. Required where `safety.confirm_environments` applies.",
+)
 @global_options
-def creds_finish_rollover(selectors: tuple[str, ...], lockout_margin: int, run: Invocation) -> str:
+def creds_finish_rollover(
+    selectors: tuple[str, ...], lockout_margin: int, confirm: bool, run: Invocation
+) -> str:
     """End an open password rollover window early.
 
     UC-1 section 6.3 step 4. While a window is open both the old and the new
@@ -3243,6 +3318,12 @@ def creds_finish_rollover(selectors: tuple[str, ...], lockout_margin: int, run: 
     plan = plan_builder.build(config, intent=["verify", "rollover_finish"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="ending a rollover window")
     document.plan = plan.as_json()
+    # The one verb here whose purpose is to stop something working, so the gate
+    # is if anything more apt: closing a window early is what takes the old
+    # password away from whatever has not been given the new one.
+    _confirm_environments(
+        plan, run, action="ending a rollover window", confirmed=confirm, noun="window"
+    )
 
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
@@ -3654,6 +3735,11 @@ def creds_rotate(
     # scheduled runs nobody asked it about. What is confirmed is the plan -- the
     # blast radius somebody is authorising -- and `--max-age-days` can only
     # narrow that afterwards, which is the safe direction to be surprised in.
+    #
+    # `safety.confirm_environments` is deliberately *not* also asked here (#292).
+    # This gate is unconditional, so the setting could only ever make it weaker,
+    # and a second prompt on the runs the setting covers would ask the same
+    # question twice for the same answer.
     _confirm_rotation(plan, confirmed=confirm)
 
     manager = LockManager(
