@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.49.0](https://github.com/villebase/sopuli-dba/compare/v0.48.0...v0.49.0) (2026-08-31)
+
+
+### Features
+
+* **cli:** creds apply --preflight, and the estate it asks before writing ([#289](https://github.com/villebase/sopuli-dba/issues/289)) ([43589c2](https://github.com/villebase/sopuli-dba/commit/43589c2f048dea0c2adf550b0d07b01faba1eb0b))
+* **cli:** exit 4 names the repair, and where --repair's list will come from ([#280](https://github.com/villebase/sopuli-dba/issues/280)) ([a27dc90](https://github.com/villebase/sopuli-dba/commit/a27dc9093c40f7662fc8405a31c882767a20067f))
+* **lock:** re-read the fence before every mutation, and stop when it fails ([#285](https://github.com/villebase/sopuli-dba/issues/285)) ([5f031f2](https://github.com/villebase/sopuli-dba/commit/5f031f271352bd58a65ee6332a629a95d56aac1c))
+
+
+### Bug Fixes
+
+* **output:** driver errors carry their own category, exit code and capability ([#288](https://github.com/villebase/sopuli-dba/issues/288)) ([1073096](https://github.com/villebase/sopuli-dba/commit/1073096f9a2fb9bfcea55d75ee1f5f910a515067))
+
 ## [0.48.0](https://github.com/villebase/sopuli-dba/compare/v0.47.0...v0.48.0) (2026-08-29)
 
 
