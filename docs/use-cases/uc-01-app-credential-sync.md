@@ -38,9 +38,20 @@ sopuli creds check      # do vault and database agree?
 sopuli creds rotate     # generate + apply + check, as one guarded operation
 sopuli creds status     # inventory: accounts, ages, versions, last rotation
 
-sopuli creds promote          # finish an interrupted rotation (pending → current)
 sopuli creds finish-rollover  # end an Oracle password rollover window early
 ```
+
+**There is no `creds promote`, and there is not going to be** (decided in #276,
+built out in #284). Earlier drafts of this document listed one for the case where
+a rotation is interrupted between applying and promoting. `apply` re-run already
+completes that: it reads the `pending`, the pre-flight login finds the database
+already accepts it, every account reports `IN_SYNC`, and the document is
+promoted — invariant 9's `changed: false` and the recovery path turn out to be
+the same code path. A cheap standalone `promote` that wrote the promotion
+*without* re-verifying was weighed and rejected: as a separate verb invoked later
+it would advertise a password to applications on the strength of a previous run's
+document, and re-verification is exactly what makes `apply` safe to point §8's
+worst row at.
 
 Separating `generate` from `apply` is deliberate: it lets an operator stage a new
 password, get a change window approved, and apply later — and it makes each half
@@ -1031,9 +1042,89 @@ in a store `vaults:` declares, and never touches the secret the lock guards.
 | 4 | nothing changed in the database; `pending` may exist | re-run `rotate`, or `generate` then `apply` |
 | 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair`; with rollover strategy there is no outage meanwhile |
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` distinguishes "wrong password" from "account locked/expired" |
-| 7 | database has new, vault `current` still old | **highest-severity case**: `pending` still holds the right value, so `sopuli creds promote` completes it; the tool must retry the promote before giving up |
-| 8 | promoted but read-back disagreed | report; likely a vault replication lag issue |
+| 7 | database has new, vault `current` still old | **highest-severity case**: `pending` still holds the right value, so `sopuli creds apply` completes it — it re-verifies every target and promotes; `rotate` retries the promote internally before giving up |
+| 8 | promoted, and the read-back disagreed | the databases are converged and the vault is not serving what it accepted. Exit 4 carrying `SOPULI-W012`, which names the accounts; nothing needs undoing, and the place to look is the vault (a replica behind its primary) rather than any database |
 | any fence check, at 4–7 | this run's lock was taken over by another; whatever it had already applied stands | abort immediately, mutate nothing further, exit **7** if nothing had been applied and **4** if something had, carrying `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it |
+
+### What the verb does in this build (#284)
+
+The sequence above is implemented, over parts that all existed by the time it was
+written — `generate`'s staging write, `apply`'s convergence and promotion,
+`finish-rollover`'s window, the lock's fence (#282) and the pre-flight (#283).
+Eight things about it are decisions rather than transcription.
+
+**It is not a wrapper, and the lock is why.** Each of the three verbs takes and
+releases its own, so between a `generate` that released and an `apply` that has
+not yet acquired, another run can stage a different `pending` — and this run
+would then apply and promote a password it never generated. One acquisition spans
+steps 2 to 9.
+
+**The pre-flight is unconditional here and opt-in on `apply`.** §5 explains why it
+is off by default there: a repair of one target should not pay for a survey of
+twenty. A rotation is the opposite case, and it also asks about a *larger* set —
+`apply` surveys the accounts it has something to apply, while `rotate` surveys
+everything it is about to rotate, because at step 3 there is no `pending`
+anywhere and a first rotation has no `current` either. Filtering on what the
+vault already holds would skip the whole estate on exactly the run whose
+pre-flight matters most.
+
+**A staging failure stops the run before any database is touched.** Row 4 says
+nothing changed in the database, and a rotation that staged two documents, failed
+on a third and applied the two anyway would make that row untrue for the estate
+somebody has to reason about afterwards. Exit 1 rather than 4: 4 means some
+targets succeeded and some failed, and here no target was attempted.
+
+**Step 8 is a second read, not a comparison against what was written.** Reading
+back the object the run just wrote is the only way the check can find anything —
+what it is looking for is a store that acknowledged a write and then served
+something else, which is what a read replica behind its primary looks like. Only
+documents this run actually promoted are read back; one nobody staged into was
+never written, and one whose targets did not all confirm was deliberately left
+alone. A document that no longer holds the stage counts as a disagreement, on the
+grounds that "the vault has not got it" and "the vault has the wrong one" are the
+same operational fact to the application about to fetch it.
+
+**`--max-age-days` selects nothing whose age is unknown.** That is
+`creds status`'s rule (Q9, #87) reused rather than restated, and it is the branch
+that decides what this tool does the first night it is pointed at somebody else's
+estate: a freshly adopted vault has no `rotated_at` anywhere in it, and treating
+unknown as infinitely old would make the first scheduled run a rotation of every
+credential. An operator who wants that asks by leaving the flag off.
+
+**The takeover split has one more case than `apply`'s.** §5's rule is 7 where the
+run was fenced out before it changed anything and 4 where it had already changed
+something. `rotate` reaches a database later than it reaches the vault, so a
+staged `pending` is a mutation that exists before any DDL does — and a run fenced
+out between two step-4 writes exits **4**, not 7, because 7 asserts nothing
+happened and a `pending` somebody has to clean up is something happening.
+
+**The fence reaches `--finish-rollover` too**, which is worth stating because the
+first version of this did not (found in review). Window-closing is the run's last
+mutation and the furthest from the acquisition at step 2, so it is the one most
+likely to be issued after a lease has already gone — and it is the one whose
+direction cannot be undone: a window nobody closed elapses on its own, and one
+closed by a run that had lost the estate cannot be reopened. So the closing path
+re-reads the fence before each statement where a caller holds a lock, and lets a
+`LockError` past its per-account catch-all rather than filing a takeover as one
+account's bad luck. **The standalone `creds finish-rollover` still takes no lock
+at all** — it writes to no store, and an hourly job that blocked rotations would
+be a worse problem than the one the lock solves — so the manager is an argument a
+caller supplies rather than something the verb acquires.
+
+**Step 9's audit record is the run document.** `--output json` is the record a
+scheduler keeps, and `creds.rotate` was already in the run schema's command enum;
+the `sopuli-event-1.0` event stream is `--output jsonl` (#9), which has no emitter
+for any verb yet and gains one for all of them at once.
+
+**Confirmation, and what it is not.** §8 step 1 is "plan + confirm", so `rotate`
+prints the plan to stderr and asks; `--confirm` answers in advance and an
+unattended run without it is refused on exit 8 rather than left to an EOF abort.
+`apply` does not ask, and the difference is real: it converges an estate on a
+value somebody already staged and reviewed, while `rotate` invents the value and
+replaces what every application is using, across the whole selection, in one
+pass. The estate-wide `safety.confirm_environments` setting is a *different* gate
+which nothing enforces yet (#292) — this flag is not it, and neither substitutes
+for the other.
 
 **Rollback.** `previous` is retained so that
 `sopuli creds apply --source previous --confirm` can put the old password back on

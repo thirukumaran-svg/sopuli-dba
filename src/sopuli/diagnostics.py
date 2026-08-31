@@ -128,6 +128,23 @@ STORE_DEGRADED = "SOPULI-W010"
 #: lock from the run that lost one, which are opposite things to be paged about.
 LOCK_LOST = "SOPULI-W011"
 
+#: A rotation promoted a document and then read a different password back out of
+#: it (#284, UC-1 §8 step 8).
+#:
+#: Its own code for #216's reason: the exit code cannot say this. The run exits 4,
+#: which it would also do with half its targets failed -- and those two are
+#: opposite situations. Here *every* database took the new password and the
+#: promotion was acknowledged; the estate is converged and it is the vault that
+#: is not serving what it accepted. Replication lag on a store with read
+#: replicas is the ordinary cause, and the next action is to look at the vault
+#: rather than at any database.
+#:
+#: Not to be read as "the rotation failed". Nothing needs undoing, `creds apply`
+#: converges what is left, and an application that fetched `current` in the
+#: window may have got the old password -- which is the fact worth paging about
+#: and the one nothing else in the document says.
+ROTATION_UNCONFIRMED = "SOPULI-W012"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -199,6 +216,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "had already applied to a database stands. Do not simply re-run it: another "
             "run holds this estate's lock, and `creds check` is what establishes what is "
             "true."
+        ),
+        ROTATION_UNCONFIRMED: (
+            "A rotation promoted a secret document and then read a different password "
+            "back out of it. Every database took the new password and the promotion was "
+            "acknowledged, so nothing needs undoing and `creds apply` converges what is "
+            "left -- but until the vault serves what it accepted, an application fetching "
+            "`current` may get the old password. Look at the vault, not at the databases; "
+            "replication lag on a store with read replicas is the ordinary cause."
         ),
         STORE_DEGRADED: (
             "A configured store answered and cannot serve this run: sealed, standing by, "

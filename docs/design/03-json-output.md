@@ -250,6 +250,21 @@ already carries the branch. A `warning`-level finding is one the survey could no
 establish rather than one that refused — an unreadable privilege audit — and it
 appears on runs that went ahead.
 
+**A rotation reports both halves in one `results[]`** (#284). `creds rotate`
+sequences verbs that already have entries here and reuses theirs rather than
+inventing a third shape: the staging write at §8 step 4 produces `generate`'s
+entry with its `vault_write_pending` action, and steps 5 to 7 produce `apply`'s,
+with `password_set`, the two `verify`s and `vault_promote`. So an account this
+run rotated appears twice, once per phase, which is what the two writes actually
+were — and `creds.rotate` needed no schema bump, having been in the `command`
+enum since before the command existed.
+
+What the verb adds is one diagnostic and no fields. `SOPULI-W012` is §8 step 8,
+and `--max-age-days` narrowing a run is visible in `summary.total` rather than in
+a member of its own: an account the age filter left alone is one this run did not
+act on, and inventing a fourth state for it would put "not attempted" in the same
+vocabulary as "attempted and unverifiable".
+
 ### `invocation.selection`
 
 What the run was narrowed to, as the selectors were given rather than as they
@@ -1015,11 +1030,12 @@ is not contract and may improve.
 | `SOPULI-W009` | This machine's clock is further from a configured store's than the advisory lock tolerates (#216, #83). A lease's expiry is compared against the local clock, so a run on this host will take over locks that are still live or refuse ones long dead — and the failure looks like a locking bug rather than an NTP problem. `doctor` warns and never fails: the condition is real, this run did not create it, and refusing to survey an estate over it would block the person who ran it |
 | `SOPULI-W011` | This run's lock was taken over by another while it was running, found at a fence check (#282). It stopped before its next mutation and promoted nothing, so the vault still advertises what it did before — but whatever it had already applied to a database stands. The code exists because the exit code cannot say it: a fenced-out run exits 4 exactly like one whose targets failed, and the second is repaired by running `apply` again while the first must not be. The other side of the same event is `SOPULI-W002`, and they are two codes because *broke somebody's lock* and *had mine broken* are opposite things to be paged about |
 | `SOPULI-W010` | A configured store answered and cannot serve this run: sealed, standing by, not yet initialised, or refusing the credential it was opened with (#216). Distinct from a store that could not be *reached*, which fails the run instead and gets no code — here something answered, and what the reader does next is go and look at the vault rather than at the network |
+| `SOPULI-W012` | A rotation promoted a secret document and then read a different password back out of it (#284, UC-1 §8 step 8). Every database took the new password and the promotion was acknowledged, so nothing needs undoing and `apply` converges what is left — but until the vault serves what it accepted, an application fetching `current` may get the old password. Its own code for the reason `SOPULI-W011` has one: the run exits 4, and so does a run with half its targets failed, and those two want opposite responses. Here the *databases* are the converged half and the vault is not, so the reader goes and looks at the store — replication lag on a mount with read replicas is the ordinary cause |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
 answered**: what is settled is the spelling this document already used as its
-example and that these eleven warnings have codes. Whether *every* warning gets one
+example and that these twelve warnings have codes. Whether *every* warning gets one
 — the config layer's §10 findings still do not — and how numbers are allocated
 across categories is the part still open. Every one was allocated by hand at the
 moment something needed it, which is the evidence rather than the answer.

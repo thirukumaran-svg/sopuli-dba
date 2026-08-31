@@ -55,7 +55,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -67,6 +67,7 @@ from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli import preflight
+from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
 from sopuli.admin import resolve as admin_resolve
@@ -88,6 +89,7 @@ from sopuli.config import (
 )
 from sopuli.diagnostics import (
     LOCK_LOST,
+    ROTATION_UNCONFIRMED,
     backend_diagnostics,
     driver_diagnostics,
     install_diagnostics,
@@ -172,6 +174,7 @@ from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.preflight_view import render_preflight
+from sopuli.output.rotate_view import render_rotate, render_selection_table
 from sopuli.output.status_view import build_result as build_status_result
 from sopuli.output.status_view import render_status_table
 from sopuli.output.status_view import summarise as summarise_status
@@ -2154,7 +2157,9 @@ def creds_apply(
         # would work". Skipping it under a dry run would make the flag silently
         # mean nothing on the invocation somebody would reach for first. It
         # writes nothing and needs no lock, which is why it can.
-        findings = _preflight(sources, run, config, strategy=strategy, full=preflight_all)
+        findings = _preflight(
+            _surveyable(sources), run, config, strategy=strategy, full=preflight_all
+        )
         document.diagnostics.extend(_preflight_diagnostics(findings))
         if preflight.refusal(findings) is not None:
             return _refuse_preflight(findings, document, header=_header(plan, sources))
@@ -2176,7 +2181,9 @@ def creds_apply(
             # a different one.
             documents = _read_documents(keys, stores)
             sources = _sources(bindings, documents, stage=source_stage)
-            findings = _preflight(sources, run, config, strategy=strategy, full=preflight_all)
+            findings = _preflight(
+                _surveyable(sources), run, config, strategy=strategy, full=preflight_all
+            )
             document.diagnostics.extend(_preflight_diagnostics(findings))
             if preflight.refusal(findings) is not None:
                 # Before the first mutation and inside the lock, so the estate
@@ -2726,8 +2733,19 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
     return driver.connect(target, credential.credential)
 
 
+def _surveyable(sources: Sequence[tuple[Binding, Source | None]]) -> list[Binding]:
+    """The accounts `apply` asks a pre-flight about: the ones it has work for.
+
+    An account whose vault stage is empty is one this run will not touch, so
+    surveying the target on its behalf spends a connection to learn something
+    about work that is not going to happen. `rotate` passes its own list instead
+    -- see :func:`_preflight` for why the two differ.
+    """
+    return [binding for binding, source in sources if source is not None]
+
+
 def _preflight(
-    sources: Sequence[tuple[Binding, Source | None]],
+    surveyed: Sequence[Binding],
     run: Invocation,
     config: Config,
     *,
@@ -2766,15 +2784,23 @@ def _preflight(
     look like a strategy problem -- which is the rule #262 wrote and this keeps.
     With the flag, being unable to reach a target is exactly what was asked
     about.
+
+    **The caller decides which accounts are surveyed**, and the two callers
+    decide differently for a reason worth stating. `apply` passes the accounts
+    that have something to apply -- an empty vault stage means the run will not
+    touch that account, so surveying its target buys nothing. `rotate` passes
+    everything it is about to rotate, because it has not staged yet: at step 3
+    there is no `pending` anywhere, and a first-ever rotation has no `current`
+    either, so filtering on what the vault already holds would skip the whole
+    estate on exactly the run whose pre-flight matters most.
     """
     if strategy is None and not full:
         return []
 
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
     grouped: dict[str, list[Binding]] = {}
-    for binding, source in sources:
-        if source is not None:
-            grouped.setdefault(binding.target, []).append(binding)
+    for binding in surveyed:
+        grouped.setdefault(binding.target, []).append(binding)
 
     findings: list[Finding] = []
     for name, bindings in grouped.items():
@@ -3299,8 +3325,20 @@ def _finish_estate(
     *,
     margin: int,
     preview: bool,
+    manager: LockManager | None = None,
 ) -> list[_Finished]:
-    """Every account, target by target, one connection each. `check`'s grouping."""
+    """Every account, target by target, one connection each. `check`'s grouping.
+
+    ``manager`` is ``None`` for `creds finish-rollover`, which takes no lock at
+    all -- it writes to no store, so there is nothing for the advisory lock to
+    protect and an hourly job that blocked rotations would be the worse problem.
+
+    `rotate` passes the one it is holding, because there the DDL below is a
+    mutation inside a sequence somebody else can take over mid-run, and UC-1 §8
+    is explicit that the fence is re-read before *every* mutating call. Optional
+    rather than required so the standalone verb keeps behaving exactly as it did:
+    the argument is the lock a caller holds, and a caller that holds none says so.
+    """
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
     grouped: dict[str, list[tuple[Binding, Source | None]]] = {}
     for binding, source in sources:
@@ -3309,7 +3347,9 @@ def _finish_estate(
     found: list[_Finished] = []
     for name, work in grouped.items():
         found.extend(
-            _finish_target(by_target[name], work, run, config, margin=margin, preview=preview)
+            _finish_target(
+                by_target[name], work, run, config, margin=margin, preview=preview, manager=manager
+            )
         )
     return found
 
@@ -3322,6 +3362,7 @@ def _finish_target(
     *,
     margin: int,
     preview: bool,
+    manager: LockManager | None = None,
 ) -> list[_Finished]:
     """One target's worth of accounts, over one connection.
 
@@ -3348,7 +3389,9 @@ def _finish_target(
             ]
 
         return [
-            _finish_one(binding, session, source=source, margin=margin, preview=preview)
+            _finish_one(
+                binding, session, source=source, margin=margin, preview=preview, manager=manager
+            )
             for binding, source in work
         ]
     finally:
@@ -3364,6 +3407,7 @@ def _finish_one(
     source: Source | None,
     margin: int,
     preview: bool,
+    manager: LockManager | None = None,
 ) -> _Finished:
     """One account: read the window, decide, and close it or say why not.
 
@@ -3374,6 +3418,18 @@ def _finish_one(
     Under ``--dry-run`` the state is read and the login is **not** spent. The
     plan a preview shows is which windows are open and how much is left on them,
     and a login would be a real cost paid for a run that changes nothing.
+
+    **The fence is re-read immediately before the statement**, where a caller
+    holds a lock at all (UC-1 §8, #282, found in review on #284). Closing a window
+    is a mutation, and it is the one whose direction cannot be undone: a window
+    nobody closed elapses on its own, and one closed by a run that had already
+    lost the estate cannot be reopened. Narrowed to this account's own document,
+    which is §8's per-document rule and the same check :func:`_apply_one` makes.
+
+    **A lock error is never a per-account finding**, for the reason it is not one
+    in :func:`_apply_one`: the catch-all below would turn "somebody else owns this
+    estate now" into a row in the table and carry on closing the next account's
+    window. It is re-raised ahead of it, and the run ends.
     """
     started = time.monotonic()
     try:
@@ -3410,6 +3466,8 @@ def _finish_one(
                 binding, refused, changed=False, user=user, duration_ms=_elapsed(started)
             )
 
+        if manager is not None:
+            manager.check(_lock_key(binding))
         result = session.finish_rollover(user.name)
         if not result.changed:
             # The window closed between the read and the statement -- it elapsed,
@@ -3427,6 +3485,10 @@ def _finish_one(
                 duration_ms=_elapsed(started),
             )
         outcome = windows.closed(user, verified)
+    except LockError:
+        # Ahead of the catch-all on purpose -- see the docstring. The run ends;
+        # it does not report a takeover as one account's bad luck.
+        raise
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _as_error(error)
         return _Finished(
@@ -3438,6 +3500,615 @@ def _finish_one(
         )
 
     return _Finished(binding, outcome, changed=True, user=user, duration_ms=_elapsed(started))
+
+
+@creds_group.command("rotate")
+@select_option
+@click.option(
+    "--strategy",
+    type=click.Choice(STRATEGIES),
+    default=None,
+    help=(
+        "Rollover regime. Default: rollover where the database and the account's "
+        "profile allow it, staged otherwise. An explicit one the estate cannot "
+        "honour is refused before anything is changed."
+    ),
+)
+@click.option(
+    "--max-age-days",
+    type=click.IntRange(1, 100000),
+    default=None,
+    help="Rotate only what the vault last rotated more than this many days ago.",
+)
+@click.option(
+    "--finish-rollover",
+    "finish_windows",
+    is_flag=True,
+    default=False,
+    help=(
+        "End every rollover window at the end of the run, once every target has "
+        "been applied and verified. Not the same as --strategy direct."
+    ),
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Proceed without asking. Required where there is nobody to ask.",
+)
+@click.option(
+    "--lockout-margin",
+    type=click.IntRange(0, 100),
+    default=DEFAULT_MARGIN,
+    show_default=True,
+    help="Refuse to attempt a login within this many tries of the lockout limit.",
+)
+@global_options
+def creds_rotate(
+    selectors: tuple[str, ...],
+    strategy: str | None,
+    max_age_days: int | None,
+    finish_windows: bool,
+    confirm: bool,
+    lockout_margin: int,
+    run: Invocation,
+) -> str:
+    """Draw a new password, put it on every target, and promote it. UC-1 section 8.
+
+    **This is not a wrapper around three verbs, and that is the whole point.**
+    Calling `generate`, `apply` and `check` in sequence gives up the two
+    properties the sequence is built on. Each of those verbs takes and releases
+    its own lock, so between a `generate` that released and an `apply` that has
+    not yet acquired, another run can stage a different `pending` -- and this run
+    would then apply and promote a password it never generated. Here one
+    acquisition spans the whole sequence, and the fence is re-read before every
+    mutating call, so a run whose lease is taken over stops rather than applying
+    a password the vault no longer advertises.
+
+    **The pre-flight is unconditional here**, which is the one place it differs
+    from `creds apply`. There it is `--preflight` and off by default, because a
+    repair of one target should not pay for a survey of twenty. A rotation is the
+    opposite case: it is about to change every target it was given, and
+    discovering on target nine that target ten was never going to work leaves
+    nine databases holding a password no application has been told about.
+
+    **`--max-age-days` reads the vault and never the database** (Q9, issue #87).
+    `rotated_at` lives on the secret path, one value however many targets share
+    it, so there is nothing to aggregate across the PDBs of a CDB and no "oldest,
+    newest or any" rule to invent. An account the vault has no stamp for is
+    **not** selected: a freshly adopted estate has no stamps anywhere in it, and
+    treating unknown as infinitely old would make this tool's first scheduled act
+    against that estate a rotation of every credential it has.
+
+    **The order is generate, apply, verify, promote, and it is a safety design**
+    (invariant 7). Nothing is promoted until every target has confirmed, so the
+    `current` that applications fetch is only ever a password the whole estate
+    has already accepted. A run that gets part way leaves `pending` staged and
+    the databases it reached changed -- which is recoverable, `creds apply` is
+    the recovery, and under the rollover strategy there is no outage meanwhile.
+
+    **A staging failure stops the run before any database is touched.** Section
+    8's table says row 4 leaves nothing changed in the database, and a rotation
+    that staged two documents, failed on a third and applied the two anyway would
+    make that row untrue for the estate somebody has to reason about afterwards.
+
+    **Step 8 reads the promotion back**, which is the one step no other verb has.
+    A store that acknowledges a write and then serves something else is not a
+    theoretical failure -- it is what a read replica behind its primary looks
+    like -- and an application fetching `current` in that window gets the old
+    password. The run says which accounts, carries `SOPULI-W012` and exits 4:
+    nothing needs undoing, and the place to look is the vault, not a database.
+
+    **`--finish-rollover` runs at the end of the run, not per target.** That is
+    what makes it different from `--strategy direct`, which closes each window as
+    it opens it. Here every window stays open until every target has been applied
+    and verified, so an application that has not yet picked up the new password
+    keeps authenticating with the old one for the whole run rather than losing it
+    the moment its own database was reached.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+    refuse_if_readonly(run.resolved, action="rotating a password")
+
+    match = parse_selector(selectors)
+    config = filter_estate(run.config, match)
+    document.selection = as_dict(match) or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    config = binding_stores.complete(config, env=os.environ)
+    binding_stores.refuse_unresolved(config, action="rotating a password")
+
+    plan = plan_builder.build(
+        config,
+        intent=["generate", "vault_write_pending", "verify", "password_set", "vault_promote"],
+    )
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action="rotating a password")
+    document.plan = plan.as_json()
+
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
+    if not bindings:
+        document.finish(ExitCode.SUCCESS, Summary())
+        return render_plan(plan, noun="rotation") + "\n\nnothing to rotate"
+
+    keys = _document_keys(bindings)
+    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
+
+    if run.dry_run:
+        # Invariant 8: the plan, the survey, and nothing written anywhere. The
+        # documents are read because `--max-age-days` is answered out of them and
+        # a read has never needed a lock, and the pre-flight runs because "would
+        # this work" is most of what somebody previewing a rotation is asking.
+        return _preview_rotation(
+            bindings,
+            run,
+            config,
+            plan=plan,
+            documents=_read_documents(keys, stores),
+            strategy=strategy,
+            max_age_days=max_age_days,
+        )
+
+    # Step 1, and it happens before the lock rather than under it: a prompt
+    # waiting on a human while holding every lock in the estate would block the
+    # scheduled runs nobody asked it about. What is confirmed is the plan -- the
+    # blast radius somebody is authorising -- and `--max-age-days` can only
+    # narrow that afterwards, which is the safe direction to be surprised in.
+    _confirm_rotation(plan, confirmed=confirm)
+
+    manager = LockManager(
+        stores={name: _lockable(name, config, stores) for name in {key.store for key in keys}},
+        correlation_id=document.correlation_id,
+        command="creds rotate",
+        selection=", ".join(f"{key}={value}" for key, value in match) or None,
+    )
+
+    sequence = _Rotation()
+    try:
+        # Step 2. One acquisition, held to the end of the sequence, released in
+        # the `finally` inside `holding` on every path including this one's
+        # early returns -- which is the property that makes this a command
+        # rather than three in a row.
+        with manager.holding(keys):
+            refusal = _rotate_estate(
+                bindings,
+                run,
+                config,
+                plan=plan,
+                stores=stores,
+                keys=keys,
+                manager=manager,
+                margin=lockout_margin,
+                strategy=strategy,
+                max_age_days=max_age_days,
+                finish_windows=finish_windows,
+                into=sequence,
+            )
+            if refusal is not None:
+                return refusal
+    except LockDeniedError as denied:
+        document.lock = build_lock_section(manager, denied=denied)
+        raise
+
+    document.lock = build_lock_section(manager)
+    document.results = sequence.staged_json + [
+        _applied_json(record, sequence.promotions) for record in sequence.applied
+    ]
+    states = [record.outcome.state for record in sequence.applied]
+    changed = sum(1 for record in sequence.applied if record.changed)
+
+    if sequence.stolen is not None:
+        # The split `sopuli.lock.errors` leaves to the command, and `rotate` has
+        # one more way to have changed something than `apply` does: a staged
+        # document is a mutation too, so a takeover found between two writes at
+        # step 4 is exit 4 even though no database was reached. Exit 7 asserts
+        # nothing happened, and a `pending` somebody has to clean up is
+        # something happening.
+        document.diagnostics.append(
+            Diagnostic(level="error", message=sequence.stolen.message, code=LOCK_LOST)
+        )
+        code = int(ExitCode.PARTIAL if changed or sequence.documents else ExitCode.LOCK_HELD)
+    else:
+        if sequence.disagreed:
+            document.diagnostics.append(_unconfirmed(sequence.disagreed))
+        code = rotation.exit_code_for(
+            staged_failures=sequence.failures,
+            applied=states,
+            promoted=all(
+                one.version is not None for one in sequence.promotions.values() if one.promotable
+            ),
+            promotable=any(one.promotable for one in sequence.promotions.values()),
+            disagreed=len(sequence.disagreed),
+        )
+
+    document.finish(code, summarise_apply(states, changed=changed))
+    # #264's remedy, on the runs it is a remedy for. Withheld after a takeover
+    # for the reason `render_apply` documents, and withheld after a read-back
+    # disagreement for a different one: re-running `apply` there would converge
+    # a database estate that is already converged, and the thing to go and look
+    # at is the vault.
+    repair = (
+        repair_invocation(
+            selectors=selectors,
+            config_paths=[str(path) for path in run.config_paths],
+            profile=run.profile,
+            strategy=strategy,
+        )
+        if code == ExitCode.PARTIAL and sequence.stolen is None and not sequence.disagreed
+        else None
+    )
+    table = render_rotate(
+        [(record.binding, record.outcome, record.changed) for record in sequence.applied],
+        staged=sequence.documents,
+        promoted=sum(1 for one in sequence.promotions.values() if one.version is not None),
+        disagreed=sequence.disagreed,
+        closed=sequence.closed,
+        stopped=None if sequence.stolen is None else str(sequence.stolen),
+        repair=repair,
+    )
+    header = _rotation_header(plan, sequence.selections, max_age_days)
+    return f"{header}\n\n{table}"
+
+
+@dataclass
+class _Rotation:
+    """What the sequence accumulated, so the caller can report a run that stopped.
+
+    Mutable and passed in, which is the same arrangement ``out`` has in
+    :func:`_apply_estate` and for the same reason: a rotation can end at any of
+    section 8's steps, and what it had done by then is the run's document. Losing
+    it with the exception would leave an operator with an exit code and no record
+    of which databases were changed.
+    """
+
+    selections: tuple[rotation.Selection, ...] = ()
+    #: Documents written at step 4, counted the way the vault counted them -- one
+    #: compare-and-set per secret path, not one per account sharing it.
+    documents: int = 0
+    failures: int = 0
+    staged_json: list[dict[str, Any]] = field(default_factory=list)
+    staged_rows: list[tuple[Candidate, str, str]] = field(default_factory=list)
+    applied: list[_Applied] = field(default_factory=list)
+    promotions: dict[LockKey, _Promotion] = field(default_factory=dict)
+    disagreed: tuple[str, ...] = ()
+    #: Windows closed by ``--finish-rollover``. ``None`` where it was not asked
+    #: for, which is not the same fact as zero.
+    closed: int | None = None
+    stolen: LockStolenError | None = None
+
+
+def _rotate_estate(
+    bindings: Sequence[Binding],
+    run: Invocation,
+    config: Config,
+    *,
+    plan: Any,
+    stores: Mapping[str, SecretStore],
+    keys: Sequence[LockKey],
+    manager: LockManager,
+    margin: int,
+    strategy: str | None,
+    max_age_days: int | None,
+    finish_windows: bool,
+    into: _Rotation,
+) -> str | None:
+    """Section 8's steps 3 to 8, under a lock the caller already holds.
+
+    Returns rendered text where the run is over before it began -- nothing due,
+    a pre-flight refusal, a staging failure -- and ``None`` where the caller
+    should report what ``into`` accumulated. The split is what keeps the two
+    kinds of ending apart: one has no table to print because no database was
+    touched, and the other has a table that *is* the report.
+
+    Separate from :func:`creds_rotate` so the `with manager.holding(...)` block
+    stays short enough to read. Everything here happens under that lock and none
+    of it acquires one.
+    """
+    document = run.document
+    documents = _read_documents(keys, stores)
+    into.selections = rotation.select(
+        [(binding, _document_data(binding, documents)) for binding in bindings],
+        max_age_days=max_age_days,
+    )
+    rotating = rotation.due(into.selections)
+    if not rotating:
+        document.lock = build_lock_section(manager)
+        document.finish(ExitCode.SUCCESS, Summary(total=len(into.selections)))
+        return _nothing_due(plan, into.selections, max_age_days)
+
+    # Step 3, and unconditional. Every account about to be rotated, rather than
+    # only those the vault already holds something for: there is no `pending`
+    # yet, and a first rotation has no `current` either.
+    findings = _preflight(rotating, run, config, strategy=strategy, full=True)
+    document.diagnostics.extend(_preflight_diagnostics(findings))
+    if preflight.refusal(findings) is not None:
+        document.lock = build_lock_section(manager)
+        return _refuse_preflight(
+            findings, document, header=_rotation_header(plan, into.selections, max_age_days)
+        )
+
+    # Step 4 -- `creds generate`'s write, behind the fence it uses.
+    writes = staging.group(
+        [
+            _candidate(binding, config, name=None, supplied=None, enforce=True)
+            for binding in rotating
+        ]
+    )
+    for write in writes:
+        try:
+            manager.check(write.key)
+        except LockStolenError as lost:
+            into.stolen = lost
+            return None
+        rows = _stage(write, stores[write.key.store], out=into.staged_json)
+        into.staged_rows.extend(rows)
+        if any(state == FAILED for _, state, _ in rows):
+            into.failures += 1
+        else:
+            into.documents += 1
+
+    if into.failures:
+        document.lock = build_lock_section(manager)
+        document.results = into.staged_json
+        document.finish(
+            ExitCode.FAILURE, summarise_generate([state for _, state, _ in into.staged_rows])
+        )
+        header = _rotation_header(plan, into.selections, max_age_days)
+        body = render_generate(into.staged_rows)
+        return f"{header}\n\n{body}\n\nnothing was applied to any database"
+
+    # Re-read: staging bumped every version this run wrote, and the promotion at
+    # step 7 compare-and-sets against the version it is promoting from.
+    documents = _read_documents(keys, stores)
+    sources = _sources(rotating, documents, stage=None)
+
+    # Steps 5 and 6.
+    into.applied, into.stolen = _apply_estate(
+        sources, run, config, manager=manager, margin=margin, strategy=strategy
+    )
+    if into.stolen is not None:
+        return None
+
+    # Step 7. Nothing is promoted that was not confirmed (invariant 7).
+    into.promotions, into.stolen = _promote_documents(
+        into.applied, documents, stores, manager=manager
+    )
+    if into.stolen is not None:
+        return None
+
+    # Step 8, on the documents this run actually promoted.
+    promoted = _read_documents(keys, stores)
+    into.disagreed = _read_back(into.applied, into.promotions, promoted)
+
+    if finish_windows:
+        try:
+            into.closed = _close_windows(
+                into.applied, run, config, documents=promoted, margin=margin, manager=manager
+            )
+        except LockStolenError as lost:
+            # Every window this run had already closed stays closed, which is why
+            # the count is not discarded -- `_close_windows` returns only on the
+            # path that finished. What the run must not do is close another.
+            into.stolen = lost
+    return None
+
+
+def _document_data(binding: Binding, documents: Mapping[LockKey, Any]) -> Any:
+    """The raw body of this account's document, or ``None`` if there is none.
+
+    :func:`rotation.select` reads a ``rotated_at`` out of it and nothing else, so
+    a path that does not exist yet is an age of unknown rather than an error --
+    which is the ordinary state of an estate before its first rotation.
+    """
+    stored = _stored_document(binding, documents)
+    return None if stored is None else stored.data
+
+
+def _read_back(
+    applied: Sequence[_Applied],
+    promotions: Mapping[LockKey, _Promotion],
+    documents: Mapping[LockKey, Any],
+) -> tuple[str, ...]:
+    """Section 8 step 8: does the vault serve what this run just promoted?
+
+    **Only the documents this run promoted are read back.** A document nobody
+    staged into was not written, and one whose targets did not all confirm was
+    deliberately left alone -- checking either would report a disagreement
+    against a value the run never claimed to have put there.
+
+    The comparison itself is in :func:`sopuli.rotate.disagreements`, which does
+    it without revealing either value.
+    """
+    entries: list[tuple[Binding, Secret, Any]] = []
+    for record in applied:
+        if record.binding.secret is None or record.binding.vault is None:
+            continue
+        key = _lock_key(record.binding)
+        promotion = promotions.get(key)
+        if promotion is None or promotion.version is None or record.source is None:
+            continue
+        entries.append((record.binding, record.source.value, _data_at(key, documents)))
+    return rotation.disagreements(entries)
+
+
+def _data_at(key: LockKey, documents: Mapping[LockKey, Any]) -> Any:
+    stored = documents.get(key)
+    return None if stored is None else stored.data
+
+
+def _close_windows(
+    applied: Sequence[_Applied],
+    run: Invocation,
+    config: Config,
+    *,
+    documents: Mapping[LockKey, Any],
+    margin: int,
+    manager: LockManager,
+) -> int:
+    """`--finish-rollover`: end every window this run opened, once it is over.
+
+    **At the end of the run rather than per target**, which is the difference
+    between this and `--strategy direct`. Direct closes each window as it opens
+    it, so an application whose database is reached first loses the old password
+    while nine more targets are still being changed; this leaves every window
+    open until the whole estate has been applied, verified and promoted.
+
+    **Only accounts this run actually confirmed**, and the filter is why the
+    sequencing is safe: an account whose apply failed still has applications
+    authenticating with a password that only its open window is keeping alive,
+    and closing it because its neighbours succeeded would turn a partial
+    rotation into an outage.
+
+    **The fence still applies here**, which is why the manager is handed down.
+    This is the last mutation of the run and the furthest from step 2, so it is
+    the one most likely to be issued after a lease has gone -- and a window closed
+    by a run that no longer owns the estate cannot be reopened. A takeover found
+    here raises, the same as one found at step 5.
+    """
+    confirmed = [
+        record.binding
+        for record in applied
+        if apply_states.is_confirmed(record.outcome.state) and record.binding.secret is not None
+    ]
+    if not confirmed:
+        return 0
+    finished = _finish_estate(
+        _sources(confirmed, documents),
+        run,
+        config,
+        margin=margin,
+        preview=False,
+        manager=manager,
+    )
+    return sum(1 for record in finished if record.changed)
+
+
+def _unconfirmed(accounts: Sequence[str]) -> Diagnostic:
+    """Section 8 step 8's finding, as the diagnostic a scheduler reads.
+
+    Named accounts rather than a count, for the reason the closing line gives:
+    the exit code says 4 and so does a run with half its targets failed, and what
+    separates them is which accounts and what to go and look at.
+    """
+    return Diagnostic(
+        level="error",
+        message=(
+            "the vault read back a different password than this run applied, for: "
+            + ", ".join(sorted(accounts))
+        ),
+        code=ROTATION_UNCONFIRMED,
+    )
+
+
+def _confirm_rotation(plan: Any, *, confirmed: bool) -> None:
+    """Section 8 step 1: print the plan and ask, unless somebody already answered.
+
+    The same shape `lock break` has, and for the reasons :func:`_confirm_break`
+    gives: the plan goes to **stderr** so that `--output json` cannot be used to
+    skip a confirmation, and a run with nobody to ask is refused rather than left
+    to click's EOF abort -- which tells an operator that it stopped and not what
+    to type instead.
+
+    **`rotate` asks and `apply` does not**, which is a difference worth stating
+    rather than leaving to be noticed. `apply` converges an estate on what the
+    vault already holds; the value it puts on a database is one somebody has
+    already staged and reviewed. `rotate` *invents* the value, replaces what
+    every application is using, and does it across the whole selection in one
+    pass -- so section 8 puts a confirmation in front of it and section 5 does
+    not.
+
+    The estate-wide `safety.confirm_environments` setting is a separate gate that
+    nothing enforces yet (#292); this flag is not it, and neither one is a
+    substitute for the other.
+    """
+    if confirmed:
+        return
+    if not _can_prompt():
+        raise RefusedError(
+            "rotating a password needs confirmation, and there is nobody here to ask",
+            hint=(
+                "pass --confirm to answer in advance, or --dry-run to see the plan "
+                "without touching anything"
+            ),
+        )
+    click.echo(render_plan(plan, noun="rotation"), err=True)
+    click.confirm(
+        f"draw a new password for {plan.blast_radius} account(s) and promote it?",
+        abort=True,
+        err=True,
+    )
+
+
+def _preview_rotation(
+    bindings: Sequence[Binding],
+    run: Invocation,
+    config: Config,
+    *,
+    plan: Any,
+    documents: Mapping[LockKey, Any],
+    strategy: str | None,
+    max_age_days: int | None,
+) -> str:
+    """`--dry-run`: the plan, what is due, and whether the estate would take it.
+
+    **The pre-flight runs**, which is what makes `--dry-run` worth typing here
+    rather than only reading the plan. It writes nothing and takes no lock, and
+    "show me what this would do, and tell me whether it would work" is the
+    question somebody previewing a rotation is actually asking. A refusal under
+    `--dry-run` is still a refusal: the estate would not have taken this.
+
+    **No `results`.** The plan and the selection table already say what would
+    happen, at the grain it would happen at, and a second vocabulary for "would
+    have" is a state nobody can act on -- which is `creds generate`'s rule and
+    the same one.
+    """
+    document = run.document
+    selections = rotation.select(
+        [(binding, _document_data(binding, documents)) for binding in bindings],
+        max_age_days=max_age_days,
+    )
+    header = _rotation_header(plan, selections, max_age_days)
+    rotating = rotation.due(selections)
+    if not rotating:
+        document.finish(ExitCode.SUCCESS, Summary(total=len(selections)))
+        return _nothing_due(plan, selections, max_age_days)
+
+    findings = _preflight(rotating, run, config, strategy=strategy, full=True)
+    document.diagnostics.extend(_preflight_diagnostics(findings))
+    if preflight.refusal(findings) is not None:
+        return _refuse_preflight(findings, document, header=header)
+
+    document.finish(ExitCode.SUCCESS, Summary(total=len(rotating)))
+    return f"{header}\n\nnothing was rotated (--dry-run)"
+
+
+def _rotation_header(
+    plan: Any, selections: Sequence[rotation.Selection], max_age_days: int | None
+) -> str:
+    """The plan, and -- where `--max-age-days` narrowed it -- what it selected.
+
+    The age table is printed only when the flag was given, for the reason
+    :func:`~sopuli.output.rotate_view.render_selection_table` gives: without it
+    every account is due and the table carries no information the plan above it
+    does not already have.
+    """
+    if max_age_days is None or not selections:
+        return render_plan(plan, noun="rotation")
+    return "\n".join([render_plan(plan, noun="rotation"), "", *render_selection_table(selections)])
+
+
+def _nothing_due(
+    plan: Any, selections: Sequence[rotation.Selection], max_age_days: int | None
+) -> str:
+    """Exit 0, and why -- which is not the same message as an empty selection.
+
+    "Nothing is old enough" is the ordinary, healthy result of a scheduled
+    rotation and must not read like "your selector matched nothing". The table
+    above it has already shown every account's age, so the line only has to name
+    the threshold that filtered them.
+    """
+    header = _rotation_header(plan, selections, max_age_days)
+    return f"{header}\n\nnothing is older than --max-age-days {max_age_days}; nothing was rotated"
 
 
 @creds_group.command("status")
