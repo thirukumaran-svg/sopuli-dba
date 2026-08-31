@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.50.0](https://github.com/villebase/sopuli-dba/compare/v0.49.0...v0.50.0) (2026-08-31)
+
+
+### Features
+
+* **cli:** --target, --account, --group and --application ([#299](https://github.com/villebase/sopuli-dba/issues/299)) ([ee95f07](https://github.com/villebase/sopuli-dba/commit/ee95f0757501b02a041362819098d2caf9d3580d))
+* **cli:** creds rotate, the sequence under one lock ([#293](https://github.com/villebase/sopuli-dba/issues/293)) ([f564554](https://github.com/villebase/sopuli-dba/commit/f5645548be7d2bccac83bcf326969368f9b41018))
+* **safety:** call the section 4 account guardrails ([#298](https://github.com/villebase/sopuli-dba/issues/298)) ([5cebebb](https://github.com/villebase/sopuli-dba/commit/5cebebb54d271615f9ce5ccd3f8bd97c742a3f5c))
+* **safety:** enforce `safety.confirm_environments` ([#295](https://github.com/villebase/sopuli-dba/issues/295)) ([da38969](https://github.com/villebase/sopuli-dba/commit/da38969cad01cb25c79be9515ee11918ffb80b3f))
+
 ## [0.49.0](https://github.com/villebase/sopuli-dba/compare/v0.48.0...v0.49.0) (2026-08-31)
 
 
