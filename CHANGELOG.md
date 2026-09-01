@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.0](https://github.com/villebase/sopuli-dba/compare/v0.51.0...v0.52.0) (2026-09-01)
+
+
+### Features
+
+* **apply:** profile assignment, the second of UC-1 §5's attributes ([#306](https://github.com/villebase/sopuli-dba/issues/306)) ([dbc52b9](https://github.com/villebase/sopuli-dba/commit/dbc52b97bbe83b797c0db66297a37e6977bb36b5))
+
 ## [0.51.0](https://github.com/villebase/sopuli-dba/compare/v0.50.0...v0.51.0) (2026-09-01)
 
 
