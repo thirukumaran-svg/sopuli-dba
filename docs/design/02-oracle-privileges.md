@@ -545,6 +545,12 @@ ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
   issued directly rather than wrapped, even though it carries nothing secret. The
   habit is what keeps the next statement safe, and the next one carries a
   password. It needs no grant beyond §2's `ALTER USER`.
+- **`ALTER USER "ORDERS_APP" PROFILE "ORDERS_PROF"` likewise** (#301, §5's second
+  attribute). The profile name goes through the same identifier rules and is the
+  spelling read back from `DBA_PROFILES`, for the reason the username is. There is
+  no function in the statement layer that builds an `ALTER PROFILE`: the tool
+  assigns a profile and never edits one, because a profile is shared and editing
+  one reaches accounts nobody selected (§3, Q4).
 - **The built statement redacts itself.** It carries a password, so it is as
   sensitive as one: every stringification is `ALTER USER "X" IDENTIFIED BY ***`,
   which is also the form `--dry-run` prints, and the plaintext is reachable only

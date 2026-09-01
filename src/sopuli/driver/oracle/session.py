@@ -40,7 +40,13 @@ from typing import Any
 import oracledb
 
 from sopuli.config.model import ExpandedTarget
-from sopuli.driver.oracle.accounts import describe, failed_logins, login_state, resolve_name
+from sopuli.driver.oracle.accounts import (
+    describe,
+    failed_logins,
+    login_state,
+    resolve_name,
+    resolve_profile,
+)
 from sopuli.driver.oracle.capabilities import assert_scope, observe, require_read_write
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
@@ -56,6 +62,7 @@ from sopuli.driver.oracle.rollover import alter_profile_ddl, is_enabled
 from sopuli.driver.oracle.statements import (
     Identifier,
     alter_user_password,
+    alter_user_profile,
     finish_rollover,
     unlock_account,
 )
@@ -69,8 +76,10 @@ from sopuli.driver.oracle.verification import (
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
     ACCOUNT_UNLOCK,
+    ATTRIBUTE_SET,
     OFFLINE_VERIFY,
     PASSWORD_ROLLOVER,
+    PROFILE_MANAGEMENT,
     SKIPPED,
     UNAVAILABLE,
     VERIFY_LOGIN,
@@ -342,7 +351,81 @@ class OracleSession:
         changes: list[AttributeChange] = []
         if attributes.unlock:
             changes.append(self._unlock(account))
+        if attributes.profile is not None:
+            changes.append(self._assign_profile(account, attributes.profile))
         return tuple(changes)
+
+    def resolve_profile(self, profile: str) -> str | None:
+        """How this database spells ``profile``, or ``None`` if it has no such one.
+
+        The capability is checked because reading ``DBA_PROFILES`` is what
+        :data:`~sopuli.driver.protocol.PROFILE_MANAGEMENT` means -- *read*, and
+        only read: altering a profile is Q4 (#88) and this driver builds no
+        statement that would.
+        """
+        require_capability(self.scope(), PROFILE_MANAGEMENT, target=self.target.name)
+
+        with self.connection.cursor() as cursor:
+            return resolve_profile(cursor, profile)
+
+    def _assign_profile(self, account: str, profile: str) -> AttributeChange:
+        """``ALTER USER … PROFILE …``, or report that the account is already on it.
+
+        **Never ``ALTER PROFILE``** (Q4, #88). What moves is one account the
+        config whitelists; the profile itself is left exactly as its owner wrote
+        it, which is the half of #181's position this shares -- that one reports
+        the ``ALTER PROFILE`` an operator would run and never issues it, and this
+        one never has cause to.
+
+        **The state is read first**, which is invariant 9 here as everywhere in
+        this method's neighbours: an account already on the profile is a
+        ``changed: False`` row, so the second run of an estate that declares the
+        attribute issues nothing.
+
+        A profile the database does not have is a :class:`DriverError` naming it
+        and the target, rather than the ``ORA-02380`` the server would give.
+        Which profiles exist varies per database, so this is the ordinary shape
+        of a misconfigured estate rather than an exotic one -- and UC-1 §8's
+        pre-flight asks the same question through :meth:`resolve_profile` before
+        anything at all is written.
+        """
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'account "{account}" does not exist on this target',
+                hint=(
+                    "the tool does not create accounts (Q8); `creds check` reports this "
+                    "as ACCOUNT_MISSING rather than failing"
+                ),
+            )
+
+        spelling = self.resolve_profile(profile)
+        if spelling is None:
+            raise DriverError(
+                f'profile "{profile}" does not exist on this target',
+                hint=(
+                    "create it on this database, or name one that exists -- sopuli does not "
+                    "create or alter a profile, because a profile is shared and changing one "
+                    "affects accounts nobody selected (Q4)"
+                ),
+            )
+
+        if state.profile is not None and state.profile.upper() == spelling.upper():
+            return AttributeChange(
+                ATTRIBUTE_SET, changed=False, detail=f"profile is already {spelling}"
+            )
+
+        was = state.profile or "unknown"
+        statement = alter_user_profile(
+            Identifier(state.name), Identifier(spelling), scope=self.scope()
+        )
+        with self.connection.cursor() as cursor:
+            try:
+                cursor.execute(statement.reveal())
+            except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+                raise from_error(error).as_error() from error
+
+        return AttributeChange(ATTRIBUTE_SET, changed=True, detail=f"profile {was} -> {spelling}")
 
     def _unlock(self, account: str) -> AttributeChange:
         """``ALTER USER … ACCOUNT UNLOCK``, or report that there was no lock.

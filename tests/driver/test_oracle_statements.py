@@ -26,6 +26,7 @@ from sopuli.driver.oracle.statements import (
     Statement,
     admissible,
     alter_user_password,
+    alter_user_profile,
     container_clause,
     unlock_account,
 )
@@ -388,3 +389,47 @@ def test_the_unlock_takes_the_same_container_clause_as_the_password() -> None:
 
     with pytest.raises(ContainerScopeError):
         unlock_account(COMMON, scope=PDB)
+
+
+# --------------------------------------------------------------- the profile ---
+
+PROFILE = Identifier("ACME_APP_PROF")
+
+
+def test_the_profile_assignment_is_the_ddl_and_nothing_else() -> None:
+    """UC-1 §5's second attribute (#301)."""
+    statement = alter_user_profile(ACCOUNT, PROFILE, scope=PDB)
+
+    assert statement.reveal() == 'ALTER USER "ACME_WEB_USER" PROFILE "ACME_APP_PROF"'
+
+
+def test_the_profile_assignment_is_never_a_plsql_block() -> None:
+    sql = alter_user_profile(ACCOUNT, PROFILE, scope=PDB).reveal()
+
+    assert sql.startswith("ALTER USER ")
+    assert not WRAPPERS.search(structure(sql))
+    assert not BINDS.search(structure(sql))
+
+
+def test_the_profile_name_goes_through_the_identifier_rules() -> None:
+    """The same type as the account name, because the rule is the same one: a
+    quoted identifier is case-sensitive and has no escape for a `"`."""
+    with pytest.raises(IdentifierError):
+        alter_user_profile(ACCOUNT, Identifier('we"ird'), scope=PDB)
+
+
+def test_the_profile_assignment_takes_the_container_clause() -> None:
+    assert alter_user_profile(COMMON, PROFILE, scope=ROOT).reveal().endswith(CONTAINER_ALL)
+
+    with pytest.raises(ContainerScopeError):
+        alter_user_profile(COMMON, PROFILE, scope=PDB)
+
+
+def test_the_assignment_alters_the_user_and_never_the_profile() -> None:
+    """Q4 (#88) in the one line that can be asserted: the statement's object is
+    the account, not the shared profile. `ALTER PROFILE` would reach accounts
+    nobody selected, and there is no function in this module that builds one."""
+    sql = alter_user_profile(ACCOUNT, PROFILE, scope=PDB).reveal()
+
+    assert sql.startswith('ALTER USER "ACME_WEB_USER" ')
+    assert "ALTER PROFILE" not in sql

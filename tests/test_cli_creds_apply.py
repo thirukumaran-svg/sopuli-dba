@@ -34,6 +34,7 @@ from sopuli.config.model import Vault
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
+    ATTRIBUTE_SET,
     EXPIRE_PASSWORD,
     FAIL,
     PASS,
@@ -45,6 +46,7 @@ from sopuli.driver.protocol import (
     ChangeResult,
     PrivilegeAudit,
     Scope,
+    UnsupportedCapabilityError,
     UserState,
     VerifyResult,
 )
@@ -135,6 +137,21 @@ defaults:
 """
 )
 
+#: The same estate again, opted in to §5's profile assignment (#301). The profile
+#: is one `FakeSession` knows about; `MOVING_TO_NOTHING` names one no database has.
+ASSIGNING_CONFIG = (
+    CONFIG
+    + """policies:
+  app-standard:
+    account:
+      profile: acme_app_prof
+defaults:
+  policy: app-standard
+"""
+)
+
+MISSING_PROFILE_CONFIG = ASSIGNING_CONFIG.replace("acme_app_prof", "acme_no_such_prof")
+
 LIVE = "Correct-Horse-Battery-9"
 STAGED = "Vertical-Anchor-Marble-4"
 
@@ -170,7 +187,9 @@ class FakeSession:
         scope: Scope | None = None,
         audit: PrivilegeAudit | Exception | None = None,
         describe_error: Exception | None = None,
+        profile_error: Exception | None = None,
     ) -> None:
+        self.profile_error = profile_error
         self.describe_error = describe_error
         self.on_call = on_call
         self.given_scope = scope
@@ -185,6 +204,10 @@ class FakeSession:
         #: not the same list as the ones it was asked about -- invariant 9 for the
         #: attributes is that an account already open is not touched.
         self.unlocked: list[str] = []
+        #: Accounts this session actually moved, as (account, profile). Not the
+        #: ones it was asked about: an account already on the profile is not
+        #: touched.
+        self.assigned: list[tuple[str, str]] = []
         self.budgets: list[int] = []
         self.changed: list[tuple[str, str]] = []
         self.finished: list[str] = []
@@ -224,29 +247,65 @@ class FakeSession:
         )
         return replace(found, rollover_active=opened)
 
+    #: What this database has in `DBA_PROFILES`, upper-cased as Oracle stores it.
+    profiles = ("DEFAULT", "ACME_APP_PROF", "ACME_ROLLOVER_PROF")
+
+    def resolve_profile(self, profile: str) -> str | None:
+        """The dictionary's spelling, or `None`. The real driver's contract.
+
+        `profile_error` stands for the read that could not be made at all --
+        `DBA_PROFILES` refused, or the capability absent -- which is a different
+        answer from "no such profile" and has to be distinguishable here or the
+        test cannot tell them apart either.
+        """
+        if self.profile_error is not None:
+            raise self.profile_error
+        found = profile.upper()
+        return found if found in self.profiles else None
+
     def apply_attributes(
         self, account: str, attributes: AccountAttributes
     ) -> tuple[AttributeChange, ...]:
         """The real driver's shape: read the state, act only where it differs.
 
-        The lock is *modelled* rather than scripted, the way the rollover window
+        The state is *modelled* rather than scripted, the way the rollover window
         above is, because the command reads the account back afterwards and the
         bug worth catching is it acting on the state from before.
         """
-        if not attributes.unlock:
-            return ()
+        changes: list[AttributeChange] = []
+        if attributes.unlock:
+            changes.append(self._unlock(account))
+        if attributes.profile is not None:
+            changes.append(self._assign(account, attributes.profile))
+        return tuple(changes)
+
+    def _unlock(self, account: str) -> AttributeChange:
         found = self.users.get(account.upper())
         if found is None or not found.locked:
-            return (
-                AttributeChange(ACCOUNT_UNLOCK, changed=False, detail="the account is not locked"),
+            return AttributeChange(
+                ACCOUNT_UNLOCK, changed=False, detail="the account is not locked"
             )
         self.unlocked.append(account.upper())
         self.users[account.upper()] = replace(found, locked=False, status="OPEN")
-        return (
-            AttributeChange(
-                ACCOUNT_UNLOCK, changed=True, detail=f"account was {found.status.lower()}; unlocked"
-            ),
+        return AttributeChange(
+            ACCOUNT_UNLOCK, changed=True, detail=f"account was {found.status.lower()}; unlocked"
         )
+
+    def _assign(self, account: str, profile: str) -> AttributeChange:
+        found = self.users.get(account.upper())
+        if found is None:
+            raise RuntimeError(f'account "{account}" does not exist on this target')
+        spelling = self.resolve_profile(profile)
+        if spelling is None:
+            raise RuntimeError(f'profile "{profile}" does not exist on this target')
+        if found.profile is not None and found.profile.upper() == spelling:
+            return AttributeChange(
+                ATTRIBUTE_SET, changed=False, detail=f"profile is already {spelling}"
+            )
+        was = found.profile or "unknown"
+        self.assigned.append((account.upper(), spelling))
+        self.users[account.upper()] = replace(found, profile=spelling)
+        return AttributeChange(ATTRIBUTE_SET, changed=True, detail=f"profile {was} -> {spelling}")
 
     def require_rollover(self, account: str) -> None:
         # The real driver raises for a missing account before it looks at
@@ -337,6 +396,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         scopes: Mapping[str, Scope] | None = None,
         audits: Mapping[str, PrivilegeAudit | Exception] | None = None,
         describe_error: Exception | None = None,
+        profile_error: Exception | None = None,
     ) -> dict[str, Any]:
         store = MemoryStore()
         for path, body in (documents or _staged_two_targets()).items():
@@ -372,6 +432,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     scope=None if scopes is None else scopes.get(target.name),
                     audit=None if audits is None else audits.get(target.name),
                     describe_error=describe_error,
+                    profile_error=profile_error,
                 )
                 sessions.append(session)
                 return session
@@ -685,6 +746,154 @@ def test_the_dry_run_unlocks_nothing(
     run(runner, write_config(UNLOCKING_CONFIG), "--dry-run")
 
     assert harness["sessions"] == []
+
+
+def test_an_account_is_moved_to_the_profile_the_policy_names(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """§5's second attribute (#301): `ALTER USER … PROFILE …`, and then the
+    rotation, in one run."""
+    harness = estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
+    result = run(runner, write_config(ASSIGNING_CONFIG), "--select", "tenant=alpha")
+
+    session = harness["sessions"][0]
+    assert session.assigned == [("ACME_WEB_USER", "ACME_APP_PROF")]
+    assert session.changed == [("ACME_WEB_USER", STAGED)]
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+def test_an_account_already_on_the_profile_is_not_moved(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Invariant 9. The row is still reported, saying the step did not run."""
+    harness = estate(users={"ACME_WEB_USER": user(profile="ACME_APP_PROF")})
+    result = run(
+        runner, write_config(ASSIGNING_CONFIG), "--select", "tenant=alpha", "--output", "json"
+    )
+
+    assert harness["sessions"][0].assigned == []
+    entry = document(result)["results"][0]
+    assignment = next(action for action in entry["actions"] if action["kind"] == ATTRIBUTE_SET)
+    assert assignment["applied"] is False
+    assert "already" in assignment["detail"]
+
+
+def test_the_move_is_reported_as_its_own_action_naming_both_profiles(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """`attribute_set` is the schema's own kind for this and was unused until now,
+    so the detail is what says which attribute moved and where from."""
+    estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
+    result = run(
+        runner, write_config(ASSIGNING_CONFIG), "--select", "tenant=alpha", "--output", "json"
+    )
+
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    assignment = next(
+        action for action in body["results"][0]["actions"] if action["kind"] == ATTRIBUTE_SET
+    )
+    assert assignment["detail"] == "profile ACME_LEGACY_PROF -> ACME_APP_PROF"
+
+
+def test_a_profile_this_database_has_not_got_is_refused_before_anything_is_written(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """UC-1 §8 step 3 (#301): the survey asks, and the run refuses rather than
+    discovering it on target nine with eight accounts already moved."""
+    harness = estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
+    result = run(runner, write_config(MISSING_PROFILE_CONFIG), "--preflight")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "acme_no_such_prof" in result.output
+    assert all(session.assigned == [] for session in harness["sessions"])
+    assert all(session.changed == [] for session in harness["sessions"])
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]
+
+
+def test_a_profile_read_that_failed_is_reported_and_does_not_stop_the_survey(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`_preflight_target`'s own rule: every probe that fails is a finding rather
+    than an exception, because letting one escape takes every finding gathered so
+    far with it. A read that failed has established nothing either way, so it does
+    not block -- the driver asks again before its own statement."""
+    estate(
+        users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")},
+        profile_error=RuntimeError("ORA-00942: table or view does not exist"),
+    )
+    result = run(runner, write_config(ASSIGNING_CONFIG), "--preflight", "--output", "json")
+
+    # Reported for **both** targets: an escaping exception would have taken the
+    # first target's findings with it and never reached the second.
+    diagnostics = [one["message"] for one in document(result)["diagnostics"]]
+    assert sum("could not establish" in one for one in diagnostics) == 2
+    # Not blocking, so the run went on to try -- and the account is an ERROR
+    # because the driver asks the same question again before its own statement.
+    assert [one["state"] for one in document(result)["results"]] == [check.ERROR, check.ERROR]
+
+
+def test_a_target_that_cannot_read_profiles_at_all_refuses_the_run(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Invariant 4, and the one exception the survey lets past: an assignment this
+    run intends can never run against a target without the capability, and that is
+    a plan-time refusal naming it rather than a finding among others."""
+    harness = estate(
+        users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")},
+        profile_error=UnsupportedCapabilityError("profile_management", target="appdb-alpha"),
+    )
+    result = run(runner, write_config(ASSIGNING_CONFIG), "--preflight")
+
+    assert isinstance(result.exception, UnsupportedCapabilityError)
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert all(session.assigned == [] for session in harness["sessions"])
+    assert all(session.changed == [] for session in harness["sessions"])
+
+
+def test_naming_a_regime_over_a_profile_move_is_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The interaction #301 designs against: a profile decides whether a rollover
+    window opens, so a regime judged against the profile an account is *leaving*
+    could be cleared and then run under one that opens a window."""
+    harness = estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
+    result = run(runner, write_config(ASSIGNING_CONFIG), "--strategy", "staged")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    # Nothing was moved and nothing was rotated: the refusal is a pre-flight one,
+    # so it lands before the first mutation on the first target rather than after
+    # the estate had been half walked.
+    assert all(session.assigned == [] for session in harness["sessions"])
+    assert all(session.changed == [] for session in harness["sessions"])
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]
+
+
+def test_a_regime_is_fine_where_nothing_would_move(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The refusal is about the *move*, not about declaring a profile: an estate
+    whose accounts already sit on the declared one rotates under a named regime
+    exactly as it did before."""
+    harness = estate(users={"ACME_WEB_USER": user(profile="ACME_APP_PROF")})
+    result = run(runner, write_config(ASSIGNING_CONFIG), "--strategy", "staged")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert applying(harness).changed == [("ACME_WEB_USER", STAGED)]
+
+
+def test_the_plan_says_the_run_may_set_an_attribute(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate()
+    opted = run(runner, write_config(ASSIGNING_CONFIG), "--dry-run", "--output", "json")
+    plain = run(runner, write_config(CONFIG), "--dry-run", "--output", "json")
+
+    assert ATTRIBUTE_SET in document(opted)["plan"]["units"][0]["intent"]
+    assert ATTRIBUTE_SET not in document(plain)["plan"]["units"][0]["intent"]
 
 
 def test_a_missing_account_is_reported_and_not_created(

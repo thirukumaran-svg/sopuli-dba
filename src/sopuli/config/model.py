@@ -646,9 +646,21 @@ class VerifyPolicy:
 
 @dataclass(frozen=True)
 class AccountPolicy:
-    """``policies.*.account`` -- what the tool may do to the account itself."""
+    """``policies.*.account`` -- what the tool may do to the account itself.
+
+    Every field is ``None`` when the file said nothing, which for these means the
+    same as saying no: UC-1 §5's attributes are opt-in, and the tool enforces
+    only what was declared. The distinction is kept rather than collapsed for
+    :class:`Safety`'s reason -- a layer that said nothing has to stay
+    distinguishable from one that said no, or a later precedence question cannot
+    be asked at all.
+    """
 
     unlock_if_locked: bool | None = None
+    #: The profile this account is to sit on (#301). A *name*, resolved against
+    #: the database rather than against anything in the file: which profiles
+    #: exist is a property of each target.
+    profile: str | None = None
 
 
 @dataclass(frozen=True)

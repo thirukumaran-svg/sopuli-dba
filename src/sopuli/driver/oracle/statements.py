@@ -123,7 +123,14 @@ class IdentifierError(DriverError):
 
 
 class Identifier:
-    """A username, in the spelling the database itself gave back.
+    """A name, in the spelling the database itself gave back.
+
+    A username in almost every use, and since #301 a **profile name** as well.
+    One type rather than two, because the rule it exists to enforce is the same
+    for both -- an Oracle quoted identifier is case-sensitive and has no escape
+    for a ``"`` -- and the only part that is username-specific,
+    :attr:`is_common`, is asked only where a username is meant.
+
 
     ``02-oracle-privileges.md`` §4: *the username in the statement is the
     spelling read back from* ``DBA_USERS`` *after validation, never the raw
@@ -356,6 +363,31 @@ def alter_user_password(
         f'ALTER USER {identifier} IDENTIFIED BY "{secret.reveal()}"{clause}',
         redacted=f"ALTER USER {identifier} IDENTIFIED BY {REDACTED}{clause}",
     )
+
+
+def alter_user_profile(account: Identifier, profile: Identifier, *, scope: Scope) -> Statement:
+    """``ALTER USER "…" PROFILE "…"`` -- UC-1 §5's profile assignment (#301).
+
+    **`ALTER USER`, never `ALTER PROFILE`.** The two differ by one word and by
+    everything else: this moves one account the config already whitelists onto a
+    profile that exists, while ``ALTER PROFILE`` edits a shared object and so
+    reaches accounts nobody selected. `02-oracle-privileges.md` §3 keeps that
+    privilege off the service account deliberately and Q4 (#88) is open with a
+    documented leaning of no -- so there is no function in this module that
+    builds one, which is the form that refusal takes here.
+
+    ``profile`` is an :class:`Identifier` for the same reason ``account`` is: the
+    spelling has to be one the dictionary gave back
+    (:func:`sopuli.driver.oracle.accounts.resolve_profile`), because a quoted
+    identifier is case-sensitive and a config file saying ``acme_app_prof``
+    would otherwise address a profile no database has.
+
+    Nothing secret, and issued directly all the same -- see
+    :func:`unlock_account` for why the habit is the point.
+    """
+    clause = container_clause(account, scope)
+    text = f"ALTER USER {account.quoted()} PROFILE {profile.quoted()}{clause}"
+    return Statement(text, redacted=text)
 
 
 def unlock_account(account: Identifier, *, scope: Scope) -> Statement:

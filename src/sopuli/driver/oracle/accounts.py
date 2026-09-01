@@ -138,6 +138,19 @@ ROLES_QUERY = (
 #: `ORA-01918: user does not exist` against a database that plainly has it.
 NAME_QUERY = "select username from dba_users where username = :name"
 
+#: A profile's own spelling, and by the same token whether it exists at all
+#: (#301).
+#:
+#: :data:`NAME_QUERY`'s argument, one object along: an Oracle quoted identifier is
+#: case-sensitive, so ``PROFILE "acme_app_prof"`` and ``PROFILE
+#: "ACME_APP_PROF"`` are different requests and only one of them names a profile
+#: the database has. A config file writes whichever it likes, so the spelling
+#: that reaches the statement is read back out of the dictionary first.
+#:
+#: ``DISTINCT`` because ``DBA_PROFILES`` holds one row per resource, so a profile
+#: is a dozen rows and the question here is about the name.
+PROFILE_NAME_QUERY = "select distinct profile from dba_profiles where profile = :profile"
+
 #: Consecutive failed logins, behind the optional ``SELECT ON SYS.USER$`` grant
 #: (#86). Gated on the ``offline_verify`` capability, and the *only* thing that
 #: capability gates in this build.
@@ -252,6 +265,24 @@ def login_state(cursor: Cursor, account: str) -> UserState | None:
         ),
         vendor_maintained=_maintained(row),
     )
+
+
+def resolve_profile(cursor: Cursor, profile: str) -> str | None:
+    """The profile as the dictionary spells it, or ``None`` if there is no such one.
+
+    Two questions with one query, which is deliberate rather than thrifty: *does
+    this profile exist here* and *how is it spelled* have the same answer, and a
+    caller that asked them separately could act on a name between the two reads.
+
+    Upper-cased on the way in for :func:`_user_row`'s reason -- Oracle stores an
+    unquoted identifier upper-cased, and a config file writing ``acme_app_prof``
+    means the profile the database calls ``ACME_APP_PROF``. A site that created a
+    genuinely lower-case profile with quotes gets ``None`` here and a refusal
+    naming what it looked for, which is the honest outcome: guessing at a second
+    spelling would be the tool deciding which of two profiles the file meant.
+    """
+    row = read(cursor, PROFILE_NAME_QUERY, profile=profile.upper())
+    return None if row is None else str(row[0])
 
 
 def _user_row(cursor: Cursor, account: str) -> Any:

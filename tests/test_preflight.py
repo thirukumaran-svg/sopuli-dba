@@ -112,6 +112,48 @@ def test_missing_privileges_are_one_finding_and_are_authorization() -> None:
     assert "GRANT ALTER USER, GRANT CREATE SESSION" in found.message
 
 
+def test_a_missing_profile_names_the_account_that_wanted_it() -> None:
+    """#301. Per account, because two accounts on one target can sit under
+    different policies -- and a message naming only the profile would leave the
+    reader hunting for which account asked for it."""
+    (found,) = preflight.survey(
+        "appdb-alpha",
+        scope=scope(),
+        missing_profiles=[("acme_web_user", "ACME_APP_PROF")],
+    )
+
+    assert found.check == preflight.PROFILE
+    assert found.account == "acme_web_user"
+    assert "ACME_APP_PROF" in found.message
+    assert found.category == "config"
+    assert found.blocking
+
+
+def test_a_missing_profile_says_the_tool_will_not_create_one() -> None:
+    """Q4's position, in the place an operator meets it: sopuli assigns a profile
+    and never creates or alters one."""
+    (found,) = preflight.survey(
+        "appdb-alpha", scope=scope(), missing_profiles=[("acme_web_user", "ACME_APP_PROF")]
+    )
+
+    assert found.hint is not None
+    assert "never creates or alters" in found.hint
+
+
+def test_a_missing_account_outranks_the_profile_it_wanted() -> None:
+    """An account the database has not got explains everything else about it, so
+    the profile question is not the one to send somebody to first."""
+    findings = (
+        preflight.Finding("appdb-alpha", preflight.PROFILE, "no such profile"),
+        preflight.Finding("appdb-alpha", preflight.ACCOUNT, "no such user"),
+    )
+
+    found = preflight.refusal(findings)
+
+    assert found is not None
+    assert found.check == preflight.ACCOUNT
+
+
 # ------------------------------------------------------------- the refusal ---
 
 

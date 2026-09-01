@@ -184,10 +184,24 @@ VERIFY_RESULTS = (PASS, FAIL, SKIPPED, UNAVAILABLE)
 #: teach a renderer about it. `03-json-output.md` §9 has the enum.
 ACCOUNT_UNLOCK = "account_unlock"
 
-#: Every attribute :class:`AccountAttributes` can carry, in the order
-#: :meth:`Session.apply_attributes` enforces them. One entry today; #301, #302
-#: and #303 are the other three UC-1 §5 names.
-ATTRIBUTES = (ACCOUNT_UNLOCK,)
+#: Assign the account to the profile the policy names (UC-1 §5, #301).
+#:
+#: **The generic kind, and deliberately so.** ``account_unlock`` earned one of its
+#: own because unlocking is a distinct *operation* a reader looks for; assigning a
+#: profile is literally *an attribute was set*, which is what this enum value has
+#: meant since the schema was written and what it was reserved for. The detail
+#: names the attribute and both profiles, so two attributes sharing this kind stay
+#: as readable as §5 asks -- and the alternative was spending a minor schema bump
+#: per attribute on a contract consumers branch on, three more still to come.
+ATTRIBUTE_SET = "attribute_set"
+
+#: The kinds an :class:`AttributeChange` reports as, in the order
+#: :meth:`Session.apply_attributes` enforces them.
+#:
+#: Kinds rather than attributes, and the two are not one-to-one: #302 and #303
+#: will report as :data:`ATTRIBUTE_SET` beside the profile. What distinguishes
+#: them on the row is the detail, which is why every implementation writes one.
+ATTRIBUTE_KINDS = (ACCOUNT_UNLOCK, ATTRIBUTE_SET)
 
 
 # ------------------------------------------------------------------ errors ---
@@ -559,6 +573,16 @@ class AccountAttributes:
     #: Unlock a locked account before the password is set. Declared by
     #: ``policies.<name>.account.unlock_if_locked``.
     unlock: bool = False
+    #: The profile the account is to sit on, or ``None`` where none was declared
+    #: (#301). ``policies.<name>.account.profile``.
+    #:
+    #: **A name out of a file, so it is not the spelling that reaches a
+    #: statement.** Which profiles exist is a property of each target, and
+    #: ``02-oracle-privileges.md`` §4's rule about account names applies here
+    #: unchanged: the driver resolves it against the dictionary and uses what came
+    #: back. :meth:`Session.resolve_profile` is that resolution, exposed because
+    #: the pre-flight wants the same answer before anything is written.
+    profile: str | None = None
 
     def requested(self) -> bool:
         """Whether anything at all was declared.
@@ -567,7 +591,7 @@ class AccountAttributes:
         an estate that declares no attributes pays no round trip for the ones it
         did not ask for.
         """
-        return self.unlock
+        return self.unlock or self.profile is not None
 
 
 @dataclass(frozen=True)
@@ -585,7 +609,9 @@ class AttributeChange:
     caller remembering to ask first.
     """
 
-    #: One of :data:`ATTRIBUTES`, which is the document's ``action_kind`` word.
+    #: One of :data:`ATTRIBUTE_KINDS`, which is the document's ``action_kind``
+    #: word. Where a kind serves more than one attribute -- :data:`ATTRIBUTE_SET`
+    #: does -- the detail is what says which.
     attribute: str
     changed: bool
     detail: str | None = None
@@ -662,6 +688,25 @@ class Session(Protocol):
 
         Raises :class:`UnsupportedCapabilityError` where the target cannot do
         what was asked, naming the capability (invariant 4).
+        """
+        ...
+
+    def resolve_profile(self, profile: str) -> str | None:
+        """The profile as this database spells it, or ``None`` if it has none (#301).
+
+        ``None`` is the same kind of answer :meth:`describe_user` gives for a
+        missing account: a fact about this target, not a failure. Which profiles
+        exist varies from database to database, and an estate that names one that
+        exists on nineteen PDBs and not the twentieth is the ordinary case rather
+        than a broken config -- so the caller decides what it means. UC-1 §8's
+        pre-flight makes it a finding and refuses before anything is written;
+        :meth:`apply_attributes` makes it an error for that one account.
+
+        The **spelling** is the return value rather than a boolean for
+        ``02-oracle-privileges.md`` §4's reason about account names: a quoted
+        identifier is case-sensitive, so the only spelling that may reach a
+        statement is the one the dictionary gave back. A caller that only wanted
+        to know whether it exists gets that from ``is not None``.
         """
         ...
 

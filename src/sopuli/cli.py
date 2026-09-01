@@ -109,6 +109,7 @@ from sopuli.driver.oracle.verification import DEFAULT_MARGIN
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
+    ATTRIBUTE_SET,
     FAIL,
     PASS,
     VERIFY_LOGIN,
@@ -3043,7 +3044,17 @@ def _attribute_intent(config: Config) -> list[str]:
     say so, and one that would not must not imply it might.
     """
     attributes = [apply_states.attributes_for(config, binding) for binding in config.bindings]
-    return [ACCOUNT_UNLOCK] if any(one.unlock for one in attributes) else []
+    intent = []
+    if any(one.unlock for one in attributes):
+        intent.append(ACCOUNT_UNLOCK)
+    if any(one.profile is not None for one in attributes):
+        # Whether it would *move* an account needs the database and this is built
+        # before anything connects, so what the plan says is that the run may set
+        # a profile -- which is what an intent is. `password_set` is listed by
+        # every apply and issued only where the database does not already hold the
+        # password, on the same reading.
+        intent.append(ATTRIBUTE_SET)
+    return intent
 
 
 def _declared_accounts(run: Invocation) -> frozenset[str]:
@@ -3229,9 +3240,9 @@ def _preflight(
             continue
         try:
             if strategy is not None:
-                _check_strategy(session, bindings, strategy=strategy, target=name)
+                _check_strategy(session, bindings, strategy=strategy, target=name, config=config)
             if full:
-                findings.extend(_preflight_target(session, by_target[name], bindings))
+                findings.extend(_preflight_target(session, by_target[name], bindings, config))
         finally:
             with suppress(Exception):
                 session.close()
@@ -3239,7 +3250,7 @@ def _preflight(
 
 
 def _preflight_target(
-    session: Any, target: ExpandedTarget, bindings: Sequence[Binding]
+    session: Any, target: ExpandedTarget, bindings: Sequence[Binding], config: Config
 ) -> tuple[Finding, ...]:
     """One reachable target, against §8's remaining checks.
 
@@ -3294,6 +3305,7 @@ def _preflight_target(
         privilege_finding = ()
 
     missing_accounts: list[str] = []
+    missing_profiles: list[tuple[str, str]] = []
     unreadable: list[Finding] = []
     for binding in bindings:
         try:
@@ -3325,6 +3337,52 @@ def _preflight_target(
             continue
         if state is None:
             missing_accounts.append(binding.account)
+            continue
+
+        # §5's profile assignment, asked before anything is written (#301). Only
+        # where the policy declares one and the account is not already on it: the
+        # question is whether this run's *move* can land, and an account already
+        # there is not moving.
+        moving = strategies.moves_profile(state, apply_states.attributes_for(config, binding))
+        if moving is None:
+            continue
+        try:
+            found = session.resolve_profile(moving)
+        except UnsupportedCapabilityError:
+            # Invariant 4, and the one exception this survey lets past: the
+            # target cannot read profiles at all, so the assignment this run
+            # intends can never run here. That is a plan-time refusal with its
+            # own exit code naming the capability, not a finding among others --
+            # the same escape `_check_strategy` gives it.
+            raise
+        except Exception as error:  # noqa: BLE001 -- a finding about this account
+            # Reported and **not** blocking, on the rule this function states and
+            # the privilege audit above already follows: a dictionary read that
+            # failed has established nothing either way, and refusing over it
+            # would mean an estate that will not grant `DBA_PROFILES` can never
+            # run a pre-flight. The run still cannot move an account onto a
+            # profile that is not there -- the driver asks the same question
+            # again before its own statement and refuses that account -- so what
+            # is lost is the early warning, which is exactly what the finding
+            # says.
+            reported = _as_error(error)
+            unreadable.append(
+                Finding(
+                    target=target.name,
+                    check=preflight.PROFILE,
+                    message=(
+                        f"could not establish whether profile {moving!r} exists here: "
+                        f"{reported.message}"
+                    ),
+                    hint="nothing about this account's profile was established, either way",
+                    account=binding.account,
+                    category=reported.category,
+                    blocking=False,
+                )
+            )
+            continue
+        if found is None:
+            missing_profiles.append((binding.account, moving))
 
     declared = target.target.oracle
     return (
@@ -3334,6 +3392,7 @@ def _preflight_target(
             declared_scope=declared.scope,
             declared_container=declared.container,
             missing_accounts=missing_accounts,
+            missing_profiles=missing_profiles,
             missing_privileges=missing_privileges,
         )
         + tuple(unreadable)
@@ -3391,7 +3450,7 @@ def _refuse_preflight(findings: Sequence[Finding], document: Any, *, header: str
 
 
 def _check_strategy(
-    session: Any, bindings: Sequence[Binding], *, strategy: str, target: str
+    session: Any, bindings: Sequence[Binding], *, strategy: str, target: str, config: Config
 ) -> None:
     """Every account in one target, against one requested regime.
 
@@ -3420,6 +3479,24 @@ def _check_strategy(
         user = session.describe_user(binding.account)
         if user is None:
             continue
+
+        # #301, and it comes first because it says the question below cannot be
+        # answered rather than answering it. A profile decides whether a rollover
+        # window opens, so judging a named regime against the profile an account
+        # is about to *leave* would clear `--strategy staged` on one profile and
+        # then run it under another that opens a window.
+        moving = strategies.moving_profile(
+            strategy,
+            user,
+            strategies.moves_profile(user, apply_states.attributes_for(config, binding)),
+        )
+        if moving is not None:
+            raise DriverError(
+                f"--strategy {strategy} cannot be honoured for {binding.account!r} "
+                f"in {target!r}: {moving.message}",
+                hint=moving.hint,
+            )
+
         if strategy == strategies.ROLLOVER:
             session.require_rollover(binding.account)
             continue

@@ -18,6 +18,7 @@ from sopuli import strategy
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     PASSWORD_ROLLOVER,
+    AccountAttributes,
     Scope,
     UserState,
 )
@@ -179,3 +180,66 @@ def test_every_strategy_is_answerable_for_every_account(name: str) -> None:
         for scoped in (ALL, scope()):
             answer = strategy.unhonourable(name, scoped, state)
             assert answer is None or isinstance(answer, strategy.Unhonourable)
+
+
+# --------------------------------------------------------------- the profile ---
+
+
+def test_a_declared_profile_the_account_is_not_on_is_a_move() -> None:
+    """#301. The profile decides the regime, so whether one is about to change is
+    a question the strategy check has to ask first."""
+    moving = strategy.moves_profile(user(), AccountAttributes(profile="acme_app_prof"))
+
+    assert moving == "acme_app_prof"
+
+
+def test_an_account_already_on_the_profile_is_not_moving() -> None:
+    """Case-folded, because Oracle upper-cases an unquoted identifier and a file
+    writing `app_profile` means the profile the dictionary calls `APP_PROFILE`."""
+    assert strategy.moves_profile(user(), AccountAttributes(profile="app_profile")) is None
+    assert strategy.moves_profile(user(), AccountAttributes(profile="APP_PROFILE")) is None
+
+
+def test_declaring_no_profile_is_not_a_move() -> None:
+    assert strategy.moves_profile(user(), AccountAttributes()) is None
+    assert strategy.moves_profile(user(), AccountAttributes(unlock=True)) is None
+
+
+def test_an_unreported_profile_reads_as_a_move() -> None:
+    """The direction that cannot mislead: the run says it will set something, and
+    the driver then finds it already set."""
+    assert (
+        strategy.moves_profile(user(profile=None), AccountAttributes(profile="acme_app_prof"))
+        == "acme_app_prof"
+    )
+
+
+def test_a_named_regime_and_a_profile_move_are_refused_together() -> None:
+    """The interaction #301 exists to design against: `unhonourable` answers about
+    the profile the account holds *now*, so judging a named regime for an account
+    this run is about to move would clear `staged` against the profile it is
+    leaving and then run it under one that opens a window."""
+    refusal = strategy.moving_profile(strategy.STAGED, user(), "ACME_APP_PROF")
+
+    assert refusal is not None
+    assert "APP_PROFILE" in refusal.message
+    assert "ACME_APP_PROF" in refusal.message
+    assert refusal.capability is None
+
+
+@pytest.mark.parametrize("name", strategy.STRATEGIES)
+def test_no_regime_can_be_named_over_a_move(name: str) -> None:
+    """Rollover included. It is the one `unhonourable` leaves to the driver, and
+    the driver would answer it against the old profile too."""
+    assert strategy.moving_profile(name, user(), "ACME_APP_PROF") is not None
+
+
+def test_the_default_regime_is_left_alone_by_a_move() -> None:
+    """The ordinary case, and the reason this is a refusal rather than a
+    restriction: with no `--strategy` the regime is resolved per account *after*
+    the attribute pass, from the profile the account ends on."""
+    assert strategy.moving_profile(None, user(), "ACME_APP_PROF") is None
+
+
+def test_an_account_that_is_not_moving_refuses_nothing() -> None:
+    assert strategy.moving_profile(strategy.STAGED, user(), None) is None

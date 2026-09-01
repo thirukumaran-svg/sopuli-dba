@@ -1794,10 +1794,29 @@ attributes this run may enforce.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `unlock_if_locked` | bool | `false` | `apply` issues `ALTER USER … ACCOUNT UNLOCK` for a locked account before setting its password (#300) |
+| `profile` | string | — | the profile this account is to sit on. `apply` issues `ALTER USER … PROFILE …` where the account is on a different one (#301) |
 
-Profile assignment, `PASSWORD_EXPIRE` handling and tablespaces are the other three
-UC-1 §5 names, each with its own issue (#301, #302, #303) and each arriving here
-as a key of its own rather than as a flag on a command line.
+`PASSWORD_EXPIRE` handling and tablespaces are the other two UC-1 §5 names, each
+with its own issue (#302, #303) and each arriving here as a key of its own rather
+than as a flag on a command line.
+
+**`profile:` is a name, and which profiles exist is a property of each target.**
+It is resolved against `DBA_PROFILES` and used in the spelling the dictionary
+gives back, for the reason `02-oracle-privileges.md` §4 gives about account names:
+an Oracle quoted identifier is case-sensitive, so a file writing `acme_app_prof`
+would otherwise address a profile no database has. A target that has no such
+profile is a pre-flight finding and, failing that, a refusal for that account —
+never an `ORA-02380` part way through an estate.
+
+**The tool assigns a profile and never creates or alters one.** `ALTER PROFILE`
+edits a shared object, so it reaches accounts nobody selected; §3 of
+`02-oracle-privileges.md` keeps the privilege off the service account, and Q4
+(#88) is open with a documented leaning of no.
+
+**Naming a profile and naming a `--strategy` in one run is refused** where the
+assignment would actually move the account. A profile decides whether a rotation
+opens a rollover window, so a regime judged against the profile an account is
+leaving is a regime judged against the wrong thing — see UC-1 §5.
 
 **Every one of them is opt-in and off by default, and that is the rule rather
 than a default.** A tool that unlocked an account because it found one locked, or

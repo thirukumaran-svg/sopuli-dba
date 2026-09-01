@@ -42,10 +42,15 @@ from sopuli.driver.protocol import Scope
 REACHABLE = "reachable"
 SCOPE = "scope"
 ACCOUNT = "account"
+#: A profile UC-1 §5's assignment attribute names and this target has not got
+#: (#301). After :data:`ACCOUNT` in the order because it is a fact about an
+#: account that exists: told about both at once, an operator fixes the missing
+#: account first and the profile question may not survive that.
+PROFILE = "profile"
 PRIVILEGES = "privileges"
 
 #: The order above, as data, so :func:`refusal` cannot drift from it.
-ORDER = (REACHABLE, SCOPE, ACCOUNT, PRIVILEGES)
+ORDER = (REACHABLE, SCOPE, ACCOUNT, PROFILE, PRIVILEGES)
 
 
 @dataclass(frozen=True)
@@ -137,6 +142,7 @@ def survey(
     declared_scope: str | None = None,
     declared_container: str | None = None,
     missing_accounts: Sequence[str] = (),
+    missing_profiles: Sequence[tuple[str, str]] = (),
     missing_privileges: Sequence[str] = (),
 ) -> tuple[Finding, ...]:
     """Everything wrong with one reachable target, in §8's order.
@@ -156,6 +162,13 @@ def survey(
       step 3 already reports this per account and does not create it (Q8), and
       finding it here is the difference between reporting it and reporting it
       *before* a password was staged for it;
+    * **a profile the policy assigns and this database has not got** (#301).
+      ``missing_profiles`` is (account, profile) pairs, because the answer is per
+      account -- two accounts on one target can sit under different policies --
+      and because a message that named only the profile would leave the reader
+      hunting for which account wanted it. ``config`` rather than ``database``:
+      what is wrong is a name in a file or a profile nobody created, and both are
+      fixed away from the run;
     * **a privilege the tool needs and the service account has not got.** The
       one worth the round trip: without it the run fails at the verb that needs
       it, several commands from here, with an error about a dictionary view
@@ -201,6 +214,25 @@ def survey(
                     "create it, or remove it from `accounts:` -- this tool does not create accounts"
                 ),
                 account=account,
+            )
+        )
+
+    for account, profile in missing_profiles:
+        found.append(
+            Finding(
+                target=target,
+                check=PROFILE,
+                message=(
+                    f"the policy assigns this account to profile {profile!r}; "
+                    f"this database has no such profile"
+                ),
+                hint=(
+                    "create it on this database, or name one that exists -- sopuli assigns a "
+                    "profile and never creates or alters one, because a profile is shared "
+                    "and changing one affects accounts nobody selected (Q4)"
+                ),
+                account=account,
+                category="config",
             )
         )
 

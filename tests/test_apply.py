@@ -127,6 +127,25 @@ def test_a_policy_that_says_nothing_about_unlocking_does_not_unlock() -> None:
     assert not apply.attributes_for(silent, silent.bindings[0]).unlock
 
 
+def test_the_profile_attribute_is_read_off_the_policy() -> None:
+    """§5's second attribute (#301). A name out of the file, not a spelling: which
+    profiles exist is a property of each target, so the driver resolves it."""
+    config = estate(
+        {"app-standard": {"account": {"profile": "acme_app_prof"}}}, policy="app-standard"
+    )
+
+    attributes = apply.attributes_for(config, config.bindings[0])
+
+    assert attributes.profile == "acme_app_prof"
+    assert attributes.requested()
+
+
+def test_a_policy_naming_no_profile_declares_none() -> None:
+    config = estate({"app-standard": {"password": {"length": 24}}}, policy="app-standard")
+
+    assert apply.attributes_for(config, config.bindings[0]).profile is None
+
+
 # -------------------------------------------------------------- the source ---
 
 

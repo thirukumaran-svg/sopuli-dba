@@ -227,6 +227,13 @@ class _Session:
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         return ChangeResult(changed=True)
 
+    #: The one profile this stub knows about, so `resolve_profile` has both
+    #: answers to give.
+    profile = "ACME_APP_PROF"
+
+    def resolve_profile(self, profile: str) -> str | None:
+        return self.profile if profile.upper() == self.profile else None
+
     def apply_attributes(
         self, account: str, attributes: protocol.AccountAttributes
     ) -> tuple[protocol.AttributeChange, ...]:

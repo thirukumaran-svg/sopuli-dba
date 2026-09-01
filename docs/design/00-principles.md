@@ -25,6 +25,7 @@ Driver
 Session
   scope() -> Scope                          # what this connection is, and can do
   describe_user(account) -> UserState | none
+  resolve_profile(name) -> string | none     # how this database spells it, if it has it
   set_password(account, secret) -> ChangeResult
   verify_password(account, secret, method) -> VerifyResult
   apply_attributes(account, attrs) -> AttributeChange[]
@@ -109,6 +110,13 @@ attributes, and it took two refinements of the sketch with it:
   could not say which of them moved. `set_password` keeps its own `ChangeResult`
   and grew no `opts`: a password set that also unlocked would be exactly the one
   result describing two mutations that §5 rules out.
+
+`resolve_profile` arrived the same way, with #301's profile assignment: UC-1 §8's
+pre-flight has to know whether a profile a policy names exists on a target
+*before* anything is written, and the driver is the only thing that can answer it.
+It returns the **spelling** rather than a boolean, because a quoted identifier is
+case-sensitive and the dictionary's spelling is the only one that may reach a
+statement (`02-oracle-privileges.md` §4).
 
 `Scope` is the run document's `scope` object minus `labels`, which belong to the
 config rather than to anything a driver can observe.

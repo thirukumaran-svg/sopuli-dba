@@ -758,7 +758,16 @@ def _account_policy() -> Schema:
                     "(UC-1 §5). Opt-in: without this, a locked account is reported LOCKED "
                     "and its password is left alone."
                 ),
-            }
+            },
+            "profile": {
+                **STRING,
+                "description": (
+                    "The profile this account is to sit on. `creds apply` assigns it where "
+                    "the account is on a different one (UC-1 §5). The tool never issues "
+                    "ALTER PROFILE -- profiles are shared, so changing one reaches accounts "
+                    "nobody selected (Q4)."
+                ),
+            },
         },
         description=(
             "What the tool may do to the account itself, beyond its password. Every "

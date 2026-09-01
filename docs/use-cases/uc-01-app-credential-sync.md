@@ -348,10 +348,65 @@ change" means concretely:
 an account whose password has drifted is actually found in — is cleared by the
 same statement as a deliberate lock. The capability is `account_lock_state`.
 
-The other three attributes are #301 (profile assignment, which must not answer
-Q4), #302 (`PASSWORD_EXPIRE`, whose meaning has to be settled first, since setting
-a password already clears an expiry) and #303 (tablespaces, which may belong to
-Q8's provisioning use case instead).
+### Profile assignment, the second attribute (#301)
+
+```yaml
+policies:
+  app-standard:
+    account:
+      profile: acme_app_prof
+```
+
+`apply` moves the account onto the named profile — `ALTER USER … PROFILE …` —
+where it is on a different one. The same four rules the unlock follows apply
+unchanged: opt-in, before the first login, idempotent, and no effect on the
+promotion. Three things are its own.
+
+**The tool assigns a profile and never creates or alters one.** `ALTER PROFILE`
+edits a shared object and so reaches accounts nobody selected; §3 of
+`02-oracle-privileges.md` keeps the privilege off the service account and Q4 (#88)
+is open with a documented leaning of no. `creds finish-rollover` already takes the
+other half of that position — it *reports* the `ALTER PROFILE` an operator would
+run, and never issues it.
+
+**A profile the target has not got is a pre-flight finding, not an `ORA-02380`
+half way through.** Which profiles exist is a property of each database, so an
+estate naming one that exists on nineteen PDBs and not the twentieth is an
+ordinary misconfiguration rather than an exotic one — and discovering it on the
+twentieth would leave nineteen accounts moved. `--preflight` asks for every
+account it is about to touch and the run refuses before anything is written;
+without the flag it is a refusal for that one account, before its own statement.
+
+**Naming a `--strategy` across a move is refused.** This is the interaction that
+makes assignment more than a statement:
+
+> a profile decides whether `ALTER USER … IDENTIFIED BY` opens a rollover window,
+> so it decides the regime a rotation runs under.
+
+`--strategy staged` is refused today against a profile that grants a window,
+because Oracle opens one regardless and reporting `staged` would tell an
+application team the old password had stopped working when it had not (§6.3). That
+check reads the profile the account holds **now** — which, for an account this run
+is about to move, is the profile it is leaving. So the pair is refused:
+
+```
+--strategy staged cannot be honoured for 'acme_web_user' in 'appdb-prod-alpha':
+this run would move it from ACME_LEGACY_PROF to acme_app_prof, and the regime a
+rotation runs under is a property of the profile it ends on
+
+hint: rotate under the profile it has, or let this run do the move and rotate
+afterwards -- naming a regime and changing the profile that decides one are two
+intentions for one run
+```
+
+**With no `--strategy` there is nothing to refuse**, which is the ordinary case:
+the default regime is resolved per account *after* the attribute pass, from the
+profile the account ends on. So an estate that declares a profile and does not name
+a regime rotates correctly under the new one, first run.
+
+The remaining two attributes are #302 (`PASSWORD_EXPIRE`, whose meaning has to be
+settled first, since setting a password already clears an expiry) and #303
+(tablespaces, which may belong to Q8's provisioning use case instead).
 
 ### What shipped in #259, and what the flags above still describe
 

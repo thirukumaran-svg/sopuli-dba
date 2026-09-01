@@ -295,7 +295,10 @@ def _attributes(policy: AccountPolicy) -> AccountAttributes:
     keeping them distinguishable in the config layer is what lets a later
     precedence question be asked at all.
     """
-    return AccountAttributes(unlock=policy.unlock_if_locked is True)
+    return AccountAttributes(
+        unlock=policy.unlock_if_locked is True,
+        profile=policy.profile,
+    )
 
 
 def settled_before_acting(

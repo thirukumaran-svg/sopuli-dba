@@ -71,7 +71,7 @@ VERIFY_KEYS = ("method", "lockout_margin")
 
 VERIFY_METHODS = ("login", "hash", "both", "none")
 
-ACCOUNT_KEYS = ("unlock_if_locked",)
+ACCOUNT_KEYS = ("unlock_if_locked", "profile")
 
 
 def build_policies(document: dict[str, Any]) -> tuple[Policy, ...]:
@@ -314,7 +314,10 @@ def _build_account(raw: Any, *, at: KeyPath) -> AccountPolicy:
         return AccountPolicy()
     block = mapping(raw, at=at)
     reject_unknown_keys(block, allowed=ACCOUNT_KEYS, at=at)
-    return AccountPolicy(unlock_if_locked=optional_bool(block, "unlock_if_locked", at=at))
+    return AccountPolicy(
+        unlock_if_locked=optional_bool(block, "unlock_if_locked", at=at),
+        profile=optional_string(block, "profile", at=at),
+    )
 
 
 def _positive(block: dict[str, Any], key: str, *, at: KeyPath) -> int | None:

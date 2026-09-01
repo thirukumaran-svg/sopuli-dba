@@ -43,7 +43,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sopuli.driver.protocol import EXPIRE_PASSWORD, PASSWORD_ROLLOVER, Scope, UserState
+from sopuli.driver.protocol import (
+    EXPIRE_PASSWORD,
+    PASSWORD_ROLLOVER,
+    AccountAttributes,
+    Scope,
+    UserState,
+)
 
 __all__ = [
     "DIRECT",
@@ -54,6 +60,8 @@ __all__ = [
     "closes_window",
     "default_for",
     "extra_detail",
+    "moves_profile",
+    "moving_profile",
     "opens_window",
     "unhonourable",
 ]
@@ -127,6 +135,66 @@ def closes_window(strategy: str, user: UserState) -> bool:
     work in it.
     """
     return strategy == DIRECT and opens_window(user)
+
+
+def moves_profile(user: UserState, attributes: AccountAttributes) -> str | None:
+    """The profile this run would move ``user`` onto, or ``None`` (#301).
+
+    ``None`` covers the two cases that are not a move and are not the same thing:
+    nothing was declared, and the account is already there. Only the first is
+    about the config; the second is what makes the attribute idempotent, and it is
+    answered here as well as in the driver because the pre-flight has to know
+    *before* it connects to the next target whether this run is going to move
+    anything.
+
+    Case-folded, because Oracle stores an unquoted identifier upper-cased and a
+    file writing ``acme_app_prof`` means the profile the dictionary calls
+    ``ACME_APP_PROF``. An account whose profile the database did not report --
+    ``None`` -- reads as a move, which is the direction that cannot mislead: the
+    run says it will set something and the driver then finds it already set.
+    """
+    declared = attributes.profile
+    if declared is None:
+        return None
+    if user.profile is not None and user.profile.upper() == declared.upper():
+        return None
+    return declared
+
+
+def moving_profile(strategy: str | None, user: UserState, to: str | None) -> Unhonourable | None:
+    """Why a named regime cannot be judged for an account this run will move (#301).
+
+    The interaction that makes profile assignment more than a statement: **a
+    profile decides whether a rollover window opens**, so it decides the regime a
+    rotation runs under. :func:`unhonourable` answers about the profile the
+    account holds *now*, and for an account this run is about to move that is the
+    profile it is leaving -- so ``--strategy staged`` could be cleared against an
+    old profile and then run under a new one that opens a window, which is exactly
+    the silent mislabelling §6.3 exists to prevent.
+
+    Rather than judge against a profile the account does not hold yet, the pair is
+    **refused**: name a regime or move the account, not both in one run. The two
+    are separate intentions and the second is a change to this account's password
+    *policy* -- a thing worth its own run and its own review.
+
+    ``None`` where there is nothing to refuse, and the first of those is the
+    ordinary case: **no ``--strategy``**. The default regime is resolved per
+    account *after* the attribute pass, from the profile the account ends on, so
+    it is already right and there is nothing here to protect it from.
+    """
+    if strategy is None or to is None:
+        return None
+    return Unhonourable(
+        message=(
+            f"this run would move it from {user.profile or 'an unreported profile'} to {to}, "
+            f"and the regime a rotation runs under is a property of the profile it ends on"
+        ),
+        hint=(
+            "rotate under the profile it has, or let this run do the move and rotate "
+            "afterwards -- naming a regime and changing the profile that decides one are "
+            "two intentions for one run"
+        ),
+    )
 
 
 def unhonourable(strategy: str, scope: Scope, user: UserState) -> Unhonourable | None:

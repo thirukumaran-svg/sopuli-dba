@@ -1014,6 +1014,13 @@ of one account against one target reads:
 An interrupted one stops partway, and where it stopped tells you exactly which
 recovery from the UC-1 §8 table applies.
 
+`attribute_set` is what UC-1 §5's remaining attributes report as, starting with
+profile assignment (#301). One kind for several attributes is deliberate: it is
+what the value has meant since the schema was written, and the alternative was a
+minor bump and a new enum value per attribute on a contract consumers branch on.
+**The detail is what distinguishes them** — `"profile ACME_LEGACY_PROF ->
+ACME_APP_PROF"` — so every implementation writes one.
+
 `account_unlock` is UC-1 §5's first opt-in attribute (#300) and reads at the head
 of the list, because that is where it happens: an unlock is what makes the
 pre-flight login worth attempting. It is emitted whenever the policy declared the
