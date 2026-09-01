@@ -293,9 +293,12 @@ that support it**: during the rollover window both passwords work, so a partial
 apply causes no outage at all.
 
 **Attributes.** `apply` may also enforce non-password attributes declared in the
-policy, each opt-in: profile assignment, account unlock, `PASSWORD_EXPIRE`
-handling, default/temporary tablespace. Each is reported as a separate change so
-the diff stays readable.
+policy, each opt-in: account unlock, profile assignment, default/temporary
+tablespace. Each is reported as a separate change so the diff stays readable.
+
+This sentence used to name a fourth, `PASSWORD_EXPIRE` handling. It no longer
+does, and the reason is below rather than in a commit message, because the phrase
+looked like a missing feature for as long as it stood here.
 
 ### Account unlock, the first attribute (#300)
 
@@ -404,9 +407,52 @@ the default regime is resolved per account *after* the attribute pass, from the
 profile the account ends on. So an estate that declares a profile and does not name
 a regime rotates correctly under the new one, first run.
 
-The remaining two attributes are #302 (`PASSWORD_EXPIRE`, whose meaning has to be
-settled first, since setting a password already clears an expiry) and #303
-(tablespaces, which may belong to Q8's provisioning use case instead).
+The remaining attribute is #303 (tablespaces, which may belong to Q8's
+provisioning use case instead). For the one that was dropped, see below.
+
+### `PASSWORD_EXPIRE`: why there is no such attribute (#302, closed)
+
+§5 listed "`PASSWORD_EXPIRE` handling" among the four opt-in attributes for as
+long as this document has existed. There is no operation left in it for UC-1, and
+saying so is worth more than an attribute nobody could have used correctly.
+
+**Clearing an expiry is already what `apply` does, and it is not opt-in.** Setting
+a password clears `EXPIRED` — that is Oracle's behaviour, not a choice this tool
+makes — which is why §6.4 lists `ORA-28001` as *resolvable by apply* and why
+`apply` deliberately does not treat an expired account as a reason to stop. An
+attribute for it would be a switch for something that is already true and cannot
+be turned off.
+
+**Which leaves expiring deliberately, and that breaks the accounts this use case
+is about.** `ALTER USER … PASSWORD EXPIRE` after a rotation forces the next login
+to set a new password. An application account cannot answer that prompt: the run
+would write a password to the vault, put it on the database, and leave an account
+that authenticates once into a session demanding a replacement no connection pool
+will supply. The tool would rotate the credential and break the application in one
+run — and it would *notice*, since an account that reads `EXPIRED` afterwards is
+never promoted (§5's confirmation gate) and the run exits 4. A feature whose
+successful use is a partial failure is not a feature.
+
+**It is a real operation for a different use case.** A DBA rotating a *human*
+account wants exactly this: hand over a password that must be changed on first
+use. That belongs to a human-account use case, which is not written yet, and it
+brings its own vocabulary with it — a credential nobody stores in a vault, a
+handover rather than a sync, and no application to keep serving. Nothing about it
+fits UC-1's first sentence.
+
+**Two neighbours it would have collided with**, and both are why the phrase read
+as ambiguous rather than absent:
+
+- **"make the old password stop working now" already shipped**, as `--strategy
+  direct` (§6.3) and `creds finish-rollover` (§6.3). That is
+  `ALTER USER … EXPIRE PASSWORD ROLLOVER PERIOD`, a different statement, and it is
+  the only consumer of the `expire_password` capability today. An attribute
+  spelled `PASSWORD_EXPIRE` would have been a second way to ask for it.
+- **`ORA-28002`, the grace period**, which §6.4 files as informational and
+  surfaced in `status`. That is a reporting question rather than an attribute —
+  and looking for it turned up a real one: `EXPIRED(GRACE)` is currently read as a
+  hard expiry, so `check` reports `EXPIRED` for an account whose password works
+  and never attempts the login that would prove it. #309.
 
 ### What shipped in #259, and what the flags above still describe
 
@@ -808,7 +854,7 @@ of one is the answer to "did the old password stop working just now".
 | ORA-28007 | password cannot be reused | regenerate; never retry the same value |
 | ORA-01017 | invalid credentials | verification failure → drift, not a crash |
 | ORA-28000 | account locked | report `LOCKED`; unlock only where the policy declared it (#300) |
-| ORA-28001 | password expired | distinguish from drift; can be resolved by apply |
+| ORA-28001 | password expired | distinguish from drift; resolved by apply, since setting a password clears the expiry. The tool never expires one deliberately — see §5 (#302) |
 | ORA-28002 | password in grace period | informational, surfaced in `status` |
 | ORA-01031 | insufficient privileges | fail early in pre-flight, name the missing grant |
 | ORA-65040 / ORA-65048 | container-clause misuse, error while applying to a PDB | scope guardrail message |

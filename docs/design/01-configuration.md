@@ -1796,9 +1796,11 @@ attributes this run may enforce.
 | `unlock_if_locked` | bool | `false` | `apply` issues `ALTER USER … ACCOUNT UNLOCK` for a locked account before setting its password (#300) |
 | `profile` | string | — | the profile this account is to sit on. `apply` issues `ALTER USER … PROFILE …` where the account is on a different one (#301) |
 
-`PASSWORD_EXPIRE` handling and tablespaces are the other two UC-1 §5 names, each
-with its own issue (#302, #303) and each arriving here as a key of its own rather
-than as a flag on a command line.
+Tablespaces are the one UC-1 §5 name still to come (#303), arriving here as a key
+of its own rather than as a flag on a command line. §5 named a fourth attribute,
+`PASSWORD_EXPIRE` handling, and no key was ever added for it: UC-1 §5 says why
+(#302), and the short version is that clearing an expiry is what `apply` already
+does and expiring one deliberately breaks an application account.
 
 **`profile:` is a name, and which profiles exist is a property of each target.**
 It is resolved against `DBA_PROFILES` and used in the spelling the dictionary

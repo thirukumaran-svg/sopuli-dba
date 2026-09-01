@@ -49,9 +49,11 @@ of #267's four attributes), which is the seam this file described until then and
 the same one P2 drew around ``health``: a method on a
 :class:`~typing.Protocol` is a demand on every implementation that satisfies it,
 so one that nothing calls would oblige the Oracle driver to write a body for a
-caller that does not exist. Three attributes are still to come -- profile
-assignment (#301), expiry (#302), tablespaces (#303) -- and each is a field on
-:class:`AccountAttributes` rather than a method here.
+caller that does not exist. One attribute is still to come -- tablespaces (#303)
+-- and it is a field on :class:`AccountAttributes` rather than a method here.
+UC-1 §5 named a fourth, ``PASSWORD_EXPIRE`` handling, and #302 closed it without
+one: clearing an expiry is what `apply` already does, and expiring an application
+account deliberately is a rotation that breaks the application.
 
 What is **not** deferred, and is worth saying because it looks like an omission:
 there is no ``offline_verify`` path in :meth:`Session.verify_password` beyond a
@@ -198,9 +200,9 @@ ATTRIBUTE_SET = "attribute_set"
 #: The kinds an :class:`AttributeChange` reports as, in the order
 #: :meth:`Session.apply_attributes` enforces them.
 #:
-#: Kinds rather than attributes, and the two are not one-to-one: #302 and #303
-#: will report as :data:`ATTRIBUTE_SET` beside the profile. What distinguishes
-#: them on the row is the detail, which is why every implementation writes one.
+#: Kinds rather than attributes, and the two are not one-to-one: #303 will report
+#: as :data:`ATTRIBUTE_SET` beside the profile. What distinguishes them on the row
+#: is the detail, which is why every implementation writes one.
 ATTRIBUTE_KINDS = (ACCOUNT_UNLOCK, ATTRIBUTE_SET)
 
 
@@ -559,9 +561,10 @@ class AccountAttributes:
     P1's ``opts``, typed. **One field per attribute and never a mapping**, which
     is ``01-configuration.md`` §10's rule and the reason this type exists at all:
     a bag would accept a misspelled key, do nothing, and report that it had done
-    nothing wrong. Three more fields are coming -- profile assignment (#301),
-    expiry (#302), tablespaces (#303) -- and each arrives with the config field
-    that declares it.
+    nothing wrong. One more field is coming -- tablespaces (#303) -- and it
+    arrives with the config field that declares it. UC-1 §5's fourth name,
+    ``PASSWORD_EXPIRE`` handling, never became one and never will: #302 closed it
+    where it belongs, in §5, rather than leaving a field here for it.
 
     **Every attribute is opt-in and defaults to off.** UC-1 §5's rule, and the
     reason it is not merely a default: a tool that unlocked an account because it
