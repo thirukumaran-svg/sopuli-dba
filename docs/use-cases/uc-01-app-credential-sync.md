@@ -293,12 +293,13 @@ that support it**: during the rollover window both passwords work, so a partial
 apply causes no outage at all.
 
 **Attributes.** `apply` may also enforce non-password attributes declared in the
-policy, each opt-in: account unlock, profile assignment, default/temporary
-tablespace. Each is reported as a separate change so the diff stays readable.
+policy, each opt-in: account unlock and profile assignment. Each is reported as a
+separate change so the diff stays readable.
 
-This sentence used to name a fourth, `PASSWORD_EXPIRE` handling. It no longer
-does, and the reason is below rather than in a commit message, because the phrase
-looked like a missing feature for as long as it stood here.
+This sentence used to name four. Two of them are built (#300, #301) and two turned
+out not to belong to this use case at all — `PASSWORD_EXPIRE` handling and
+default/temporary tablespaces. The reasons are below rather than in a commit
+message, because both read as missing features for as long as they stood here.
 
 ### Account unlock, the first attribute (#300)
 
@@ -407,8 +408,7 @@ the default regime is resolved per account *after* the attribute pass, from the
 profile the account ends on. So an estate that declares a profile and does not name
 a regime rotates correctly under the new one, first run.
 
-The remaining attribute is #303 (tablespaces, which may belong to Q8's
-provisioning use case instead). For the one that was dropped, see below.
+For the two that were dropped, see below.
 
 ### `PASSWORD_EXPIRE`: why there is no such attribute (#302, closed)
 
@@ -453,6 +453,26 @@ as ambiguous rather than absent:
   and looking for it turned up a real one: `EXPIRED(GRACE)` is currently read as a
   hard expiry, so `check` reports `EXPIRED` for an account whose password works
   and never attempts the login that would prove it. #309.
+
+### Tablespaces: provisioning, not rotation (#303, closed)
+
+§5's fourth attribute was default and temporary tablespace. It goes to UC-4
+(provisioning), for a reason that is about *when* rather than about *whether*:
+
+**`ALTER USER … DEFAULT TABLESPACE` moves no existing segment.** The account's
+objects stay exactly where they were; what changes is where the *next* one is
+created without an explicit `TABLESPACE` clause. During a credential rotation that
+is the worst kind of change — it reads as done, it is half done, and nobody
+looking at a rotation's output would think to check. During provisioning, where
+the account has no objects yet, it is simply part of creating one correctly.
+
+The same is true of the other things an account needs in order to exist — quotas,
+grants, roles. None of them is a *credential* and none of them belongs to a verb
+whose job is to make a database hold what a vault holds. Q8 already puts account
+creation in that use case; this is the same boundary one field along.
+
+So UC-1's attribute list is two, and it is closed rather than merely unfinished.
+A third would be a decision, not an implementation detail.
 
 ### What shipped in #259, and what the flags above still describe
 
@@ -1437,7 +1457,7 @@ is the UC-1 specific list.
 | Q3 | ~~How many generations of `previous` to keep?~~ | **decided: exactly one**, plus whatever the store's native versioning gives for free (#84). C14 (#40) settled it: OCI holds exactly one `PREVIOUS`, and the closed `current` / `pending` / `previous` vocabulary has nothing to address an older generation with. Keeps the emulated payload the same shape as the native one, and `check --include-previous` need not say *which* previous it accepted. |
 | Q4 | Does the tool ever alter a *profile* to enable rollover? | leaning no by default — profiles are shared; report the needed DDL instead |
 | Q5 | Notification on drift | out of scope for the tool; exit code 3 + JSON output is the integration point |
-| Q6 | Self-rotation mode (tool connects as the account itself, `REPLACE old`) | useful where no admin credential exists; defer to UC-1b |
+| Q6 | Self-rotation mode (tool connects as the account itself, `REPLACE old`) | useful where no admin credential exists; defer to UC-1b (see the roadmap in `docs/README.md`) |
 | ~~Q7~~ | ~~One secret per account vs one secret with many fields for an app~~ | **decided: one secret per application, a field per account** (#85) — the layout §2 of `../design/01-configuration.md` already used in its worked example, now the documented default. An application's accounts are rotated together far more often than separately, and across a dozen tenants and environments the per-account layout is the difference between eight vault paths and forty-eight — which on a store that bills per secret is a line item, and on any store is a policy surface. One secret per account stays fully supported, and is the right answer where an account's lifecycle is genuinely its own. Neither the lock nor the write path changes shape: Q2 (#83) already keyed the lock on the **path** for exactly this case, and §7 already writes one field without touching its siblings — so the **account remains the unit of work** even where the document is shared. What the default settles is the payload, in §3 below. |
-| Q8 | Should `apply` be able to create a missing account? | no in UC-1; belongs to a provisioning use case |
+| Q8 | Should `apply` be able to create a missing account? | no in UC-1; belongs to UC-4, provisioning (see the roadmap in `docs/README.md`) |
 | ~~Q9~~ | ~~Time source for `max_age_days`~~ | **decided: vault `rotated_at`, unconditionally** (#87). `rotate --max-age-days N` reads only the vault — one age per secret path regardless of how many targets share it, so there is no "oldest, newest, or any" rule to write for a multi-target account, which option 2 (database-authoritative) would have needed. `status` shows the database's own timestamp beside it (§9) as a drift smell, not folded into one number and not read by anything yet. The rejected alternative, option 3, made the database age a `diagnostics[]` warning past a threshold instead of an always-shown column; deferred partly because it needs a warning code and J3's registry is itself still open |

@@ -29,6 +29,7 @@ so — that is a design decision, not an implementation detail.
 | `docs/decisions/adr-005-vault-client.md` | before proposing `hvac` or another Vault client library for the HashiCorp backend (it was considered and rejected — the HTTP API over `httpx` is the answer) |
 | `docs/decisions/adr-006-optional-dependencies.md` | before adding a dependency, or before assuming a vendor client is present — vendor clients are install extras and base opens no sockets |
 | `docs/decisions/adr-007-vault-token-flag.md` | before giving any flag a secret *value*, or before adding `--vault-token-stdin` — `--vault-token` was considered and is refused; the flag takes a path |
+| `docs/README.md` | before deferring work to "another use case" — the roadmap names UC-2…UC-5 and UC-1b, and says what already defers to each |
 | `docs/workflow.md` | branching, commit format, and release process |
 
 ---

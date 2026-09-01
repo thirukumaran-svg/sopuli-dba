@@ -334,11 +334,93 @@ below.)*
   "base can import none of the backends' clients" a testable rule (ADR-006,
   E2).
 
-## Likely next use cases
+## Next use cases
 
-- UC-2 — personal developer/tester account passwords (different lifecycle,
-  different lockout tolerance, self-service angle)
-- UC-3 — account provisioning: create/drop users, grants, roles, profiles
-- UC-4 — drift and compliance reporting across a fleet
-- UC-1b — self-rotation mode (`IDENTIFIED BY … REPLACE`) where no admin
-  credential is available
+**None of these is specified, and each is a number you may cite today.** That is
+the point of the section: UC-1 keeps meeting work that is plainly this tool's job
+and plainly not *this* use case's, and "belongs to another use case" is only a
+real answer if the other use case has a name. Where something is deferred here,
+the deferral says which one and why.
+
+The numbers are stable once written down. Renumbering would break references from
+documents, issues and pull requests that have already used them, so a new use case
+takes the next free number rather than the position it feels like it deserves.
+
+### UC-2 — personal account passwords
+
+Developer, tester and DBA accounts: a human's own credential rather than an
+application's. Different in almost every dimension that matters, which is why it
+cannot be a mode of UC-1:
+
+- **there is no vault as master.** A password is handed over, not synced. Nothing
+  fetches it at runtime, so invariant 6's direction has nothing to be a direction
+  *of*;
+- **expiring deliberately is the point.** `ALTER USER … PASSWORD EXPIRE` forces a
+  change on first use, which is correct for a person and breaks an application —
+  that is why UC-1 §5 has no `PASSWORD_EXPIRE` attribute (#302), and this is where
+  the operation lands;
+- **lockout tolerance is different.** UC-1 §7's whole apparatus exists because
+  locking a production application account is an outage. Locking a developer out
+  of their own account is a Tuesday;
+- a self-service angle is possible here and is not possible in UC-1, where the
+  point is that no human is in the loop at 03:00.
+
+*Defers to it today:* UC-1 §5 (deliberate expiry, #302).
+
+### UC-3 — run a statement across many targets
+
+The verb a DBA reaches for constantly and this tool has no answer to: *run this
+against all twenty-one PDBs and tell me what each one said*. Fanning one
+statement across a selected estate, with the run document's per-target results,
+the same selectors, the same lock and safety ratchets.
+
+**The hard part is not the fan-out, it is the privilege model.** ADR-001 buys its
+whole argument from the service account holding `ALTER USER` and nothing else —
+`02-oracle-privileges.md` §3 lists what must never be granted, and the guardrails
+in §4 exist because even `ALTER USER` reaches `SYS`. A verb that runs arbitrary
+SQL needs whatever privilege that SQL needs, so it either connects as a different
+principal or it dissolves the model. That is the first thing this use case has to
+answer, and it is a genuine question rather than a reason to refuse: a DBA
+pasting the same statement into twenty-one sessions by hand has strictly more
+power than the tool would be given, which is §1's argument for the whole project.
+
+Also unresolved before it could be written: whether a statement is allowed to
+mutate at all or only to read; whether `--dry-run` can mean anything for SQL the
+tool does not understand; and what a *result* is when twenty targets each return
+a different row set.
+
+### UC-4 — user provisioning
+
+Creating and dropping accounts, and everything an account needs in order to
+exist: grants, roles, quotas, profiles, default and temporary tablespaces.
+
+UC-1 deliberately does none of it. A missing account is `ACCOUNT_MISSING`, a state
+to report rather than a failure to recover from, and invariant 5 makes the config
+a whitelist of what may be *touched* rather than a list of what should exist.
+
+*Defers to it today:* Q8 (may `apply` create a missing account — no, it belongs
+here), and UC-1 §5's default/temporary tablespace attribute (#303). The tablespace
+one is worth stating plainly: `ALTER USER … DEFAULT TABLESPACE` moves no existing
+segment, so an account's objects stay exactly where they were. During a credential
+rotation that is a half-change that reads as done and is not — while during
+provisioning, where the account has no objects yet, it is simply part of creating
+one correctly.
+
+### UC-5 — drift and compliance reporting across a fleet
+
+`creds check` answers "does the vault agree with this database" for the accounts
+one config declares. The reporting use case asks the estate-wide version: which
+accounts exist that nobody declared, which profiles are in use, where password
+versions or verifiers are older than policy allows, what the fleet looks like to
+an auditor.
+
+Distinguished from UC-1 by what it is allowed to touch, which is nothing.
+
+### UC-1b — self-rotation, where there is no admin credential
+
+`ALTER USER … IDENTIFIED BY new REPLACE old`, connecting **as the account being
+rotated**, for estates that will not issue a service account holding `ALTER USER`.
+A variant of UC-1 rather than a use case of its own — same vault, same direction,
+same promotion ordering — which is why it keeps the `b`.
+
+*Defers to it today:* Q6 (UC-1 §12).

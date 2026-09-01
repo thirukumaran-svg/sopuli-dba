@@ -49,11 +49,13 @@ of #267's four attributes), which is the seam this file described until then and
 the same one P2 drew around ``health``: a method on a
 :class:`~typing.Protocol` is a demand on every implementation that satisfies it,
 so one that nothing calls would oblige the Oracle driver to write a body for a
-caller that does not exist. One attribute is still to come -- tablespaces (#303)
--- and it is a field on :class:`AccountAttributes` rather than a method here.
-UC-1 §5 named a fourth, ``PASSWORD_EXPIRE`` handling, and #302 closed it without
-one: clearing an expiry is what `apply` already does, and expiring an application
-account deliberately is a rotation that breaks the application.
+caller that does not exist. **UC-1 §5's attribute list is now two and is closed**:
+unlock (#300) and profile assignment (#301) are built, while ``PASSWORD_EXPIRE``
+handling (#302) and tablespaces (#303) turned out to belong to other use cases --
+the first is not an operation this one has, and the second is provisioning's,
+since assigning a tablespace moves no existing segment. A third field on
+:class:`AccountAttributes` would be a decision rather than an implementation
+detail.
 
 What is **not** deferred, and is worth saying because it looks like an omission:
 there is no ``offline_verify`` path in :meth:`Session.verify_password` beyond a
@@ -200,9 +202,10 @@ ATTRIBUTE_SET = "attribute_set"
 #: The kinds an :class:`AttributeChange` reports as, in the order
 #: :meth:`Session.apply_attributes` enforces them.
 #:
-#: Kinds rather than attributes, and the two are not one-to-one: #303 will report
-#: as :data:`ATTRIBUTE_SET` beside the profile. What distinguishes them on the row
-#: is the detail, which is why every implementation writes one.
+#: Kinds rather than attributes, and the two are not one-to-one: a kind may serve
+#: several attributes, which is what :data:`ATTRIBUTE_SET` is for. What
+#: distinguishes them on the row is the detail, which is why every implementation
+#: writes one.
 ATTRIBUTE_KINDS = (ACCOUNT_UNLOCK, ATTRIBUTE_SET)
 
 
@@ -561,10 +564,9 @@ class AccountAttributes:
     P1's ``opts``, typed. **One field per attribute and never a mapping**, which
     is ``01-configuration.md`` §10's rule and the reason this type exists at all:
     a bag would accept a misspelled key, do nothing, and report that it had done
-    nothing wrong. One more field is coming -- tablespaces (#303) -- and it
-    arrives with the config field that declares it. UC-1 §5's fourth name,
-    ``PASSWORD_EXPIRE`` handling, never became one and never will: #302 closed it
-    where it belongs, in §5, rather than leaving a field here for it.
+    nothing wrong. **Two fields, and UC-1 §5's list is closed** -- its other two
+    names went to other use cases (#302, #303) rather than leaving fields here for
+    them, so a third is a decision rather than an implementation detail.
 
     **Every attribute is opt-in and defaults to off.** UC-1 §5's rule, and the
     reason it is not merely a default: a tool that unlocked an account because it

@@ -1796,11 +1796,16 @@ attributes this run may enforce.
 | `unlock_if_locked` | bool | `false` | `apply` issues `ALTER USER … ACCOUNT UNLOCK` for a locked account before setting its password (#300) |
 | `profile` | string | — | the profile this account is to sit on. `apply` issues `ALTER USER … PROFILE …` where the account is on a different one (#301) |
 
-Tablespaces are the one UC-1 §5 name still to come (#303), arriving here as a key
-of its own rather than as a flag on a command line. §5 named a fourth attribute,
-`PASSWORD_EXPIRE` handling, and no key was ever added for it: UC-1 §5 says why
-(#302), and the short version is that clearing an expiry is what `apply` already
-does and expiring one deliberately breaks an application account.
+**These two are the whole list, and it is closed.** §5 named four attributes; the
+other two never became keys here and never will. `PASSWORD_EXPIRE` handling
+(#302) is not an operation this use case has — clearing an expiry is what `apply`
+already does, and expiring one deliberately breaks an application account — and
+default/temporary tablespaces (#303) belong to UC-4, provisioning, because
+assigning one moves no existing segment and so is a half-change during a rotation
+and the right thing during a create. UC-1 §5 has the argument for both; the
+roadmap in `docs/README.md` has the use cases they went to.
+
+A third key here would be a decision rather than an implementation detail.
 
 **`profile:` is a name, and which profiles exist is a property of each target.**
 It is resolved against `DBA_PROFILES` and used in the spelling the dictionary
