@@ -20,11 +20,14 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.payload import (
     CURRENT,
+    GENERATED,
+    ORIGIN,
     PENDING,
     PREVIOUS,
     REMOVE,
     RESERVED,
     StageLayout,
+    apply_patch,
     merge,
     stage_layout,
 )
@@ -92,6 +95,46 @@ class TestReading:
         rather than as an `or {}` somebody wrote at a call site.
         """
         assert layout(SHARED).read(document, PENDING) is None
+
+    def test_an_emptied_container_reads_as_nothing_staged(self) -> None:
+        """What a promotion actually leaves behind, asserted end to end.
+
+        RFC 7396 deletes the *key named in the patch*, and a patch built by the
+        mirror rule names an account inside a container -- so promoting the last
+        staged account empties `pending` and `origin` rather than removing them,
+        and promoting an account whose document predates #311 creates an empty
+        `origin` on the way past. Raised by Copilot on #313 against the `origin`
+        clear, and true of `pending` since the promotion patch was first written.
+
+        It stays that way. The alternatives are both worse: pruning empty maps
+        locally would make this module's RFC 7396 disagree with the one Vault
+        runs server-side -- `store/credentials.py` picks between them per store
+        and says in its own docstring that two implementations which had to agree
+        would be a bug waiting -- and deleting at the root instead would clobber a
+        concurrent writer's account, which is the one thing the mirror rule's
+        "siblings absent" property exists to prevent.
+
+        So the empty container is pinned here rather than tidied: `read` gives
+        UC-1 §3's "there is nothing staged here", which is the answer every caller
+        acts on, and no caller distinguishes an absent key from an emptied one.
+        """
+        promoted = apply_patch(
+            {
+                "DB_CREDENTIALS": {"acme_web_user": "old"},
+                "pending": {"acme_web_user": "new"},
+                "origin": {"acme_web_user": GENERATED},
+            },
+            merge(
+                layout(SHARED).patch(CURRENT, "new"),
+                layout(SHARED).patch(PENDING, REMOVE),
+                layout(SHARED).patch(ORIGIN, REMOVE),
+            ),
+        )
+
+        assert promoted["pending"] == {}
+        assert promoted["origin"] == {}
+        assert layout(SHARED).read(promoted, PENDING) is None
+        assert layout(SHARED).read(promoted, ORIGIN) is None
 
     def test_a_scalar_where_a_container_was_expected_reads_as_absent(self) -> None:
         """A malformed document is not a crash: `check` has to be able to report it."""

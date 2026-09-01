@@ -279,7 +279,7 @@ reason: a caller pins a version precisely because it does not want whatever is
 current, so substituting the current one is a rotation reading the wrong
 generation. KV v1 is the store that refuses.
 
-**`patch` applies an RFC 7386 merge patch** (#183), behind `merge_patch`. What
+**`patch` applies an RFC 7396 merge patch** (#183), behind `merge_patch`. What
 makes §7's "must not clobber siblings" a structural property rather than a
 careful one: the keys a run did not come for are never sent, so another account's
 password is neither read into the process nor written back. A store without the

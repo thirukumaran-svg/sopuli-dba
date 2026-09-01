@@ -13,7 +13,7 @@ mechanisms `01-configuration.md` §7 names:
 The second is where the interesting assertions live, for exactly that reason.
 
 The other two properties with their own sections below are the ones a rotation
-depends on and a fake would flatter: that RFC 7386's deletion **removes** a key
+depends on and a fake would flatter: that RFC 7396's deletion **removes** a key
 rather than storing a null — a `pending` of `null` reads as staged-with-no-value,
 not as cleared — and that a foreign writer **aborts** the run instead of being
 merged over.
@@ -221,7 +221,7 @@ def test_a_promotion_reaches_the_store_as_one_write() -> None:
 
 
 def test_removing_a_stage_deletes_the_key_rather_than_storing_a_null() -> None:
-    """RFC 7386's deletion, which is the whole difference between `merge` and
+    """RFC 7396's deletion, which is the whole difference between `merge` and
     `apply_patch` and the one a single shared helper would have got wrong for one
     of them. A `pending` of `null` reads as staged-with-no-value, not cleared."""
     store = store_with(PER_ACCOUNT)

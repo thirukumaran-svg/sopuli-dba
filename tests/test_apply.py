@@ -32,7 +32,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.payload import CURRENT, PENDING, PREVIOUS
+from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, REMOVE
 from sopuli.secrets import Secret
 
 NOW = datetime(2026, 8, 29, 9, 30, tzinfo=UTC)
@@ -559,8 +559,8 @@ def test_nothing_attempted_is_not_a_promotion() -> None:
     assert apply.summarise_document([]) is False
 
 
-def test_the_promotion_is_one_patch_doing_four_things() -> None:
-    """Four writes would be four versions, three of which describe a state that
+def test_the_promotion_is_one_patch_doing_five_things() -> None:
+    """Five writes would be five versions, four of which describe a state that
     was never true."""
     entry = apply.Promotable(
         binding=binding(),
@@ -577,6 +577,18 @@ def test_the_promotion_is_one_patch_doing_four_things() -> None:
     assert patch["pending"]["acme_web_user"] is None
     assert patch["rotated_at"]["acme_web_user"] == "2026-08-29T09:30:00Z"
     assert patch["rotated_by"]["acme_web_user"] == "svc@host"
+
+
+def test_the_origin_is_cleared_with_the_pending_it_described() -> None:
+    """#311's key is a property of `pending`, not of the credential. Left behind,
+    it would assert the provenance of a stage with no value in it -- and the next
+    reader is #312 deciding whether it may redraw."""
+    entry = apply.Promotable(binding(), Secret("new"), None, "app-standard", ("t",))
+
+    patch = apply.promotion_patch([entry], at=NOW, by="svc@host")
+
+    assert patch[ORIGIN]["acme_web_user"] is REMOVE
+    assert patch[PENDING]["acme_web_user"] is REMOVE
 
 
 def test_the_patch_never_reveals_a_password() -> None:

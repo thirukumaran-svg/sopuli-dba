@@ -105,6 +105,7 @@ the vault payload are the whole rotation mechanism:
   "password": "<current>",
   "pending":  "<generated, not yet applied>",
   "previous": "<the one before current>",
+  "origin":   "generated",
   "rotated_at": "2026-08-04T09:12:33Z",
   "rotated_by": "approle:sopuli-ci",
   "policy": "app-standard",
@@ -138,6 +139,7 @@ keyed by account, they are maps keyed the same way:
 { "DB_CREDENTIALS": { "acme_web_user": "<current>", "acme_api_user": "<current>" },
   "pending":        { "acme_web_user": "<generated, not yet applied>" },
   "previous":       { "acme_web_user": "<the one before current>" },
+  "origin":         { "acme_web_user": "generated" },
   "rotated_at":     { "acme_web_user": "2026-08-04T09:12:33Z", "acme_api_user": "…" },
   "rotated_by":     { "acme_web_user": "approle:sopuli-ci", "acme_api_user": "…" },
   "policy":         { "acme_web_user": "app-standard", "acme_api_user": "app-standard" },
@@ -187,6 +189,46 @@ the database is touched, but `current` — the field applications read — is on
 promoted after the database confirms. A crash at any point leaves a state the
 tool can resume, and `check` can explain.
 
+### `origin`: where a staged password came from (#311)
+
+`generate` writes one more key beside `pending`, saying which of two things the
+staged value is:
+
+| `origin` | means |
+|---|---|
+| `generated` | the tool drew it from the policy |
+| `supplied` | `--from-stdin` accepted it, and an external system dictated it |
+
+**It exists so that `apply` can tell them apart.** #268 decided that `apply`
+redraws on `ORA-28003`/`ORA-28007` rather than reporting and stopping, and a
+redraw is right for a password the tool drew and wrong for one an external system
+owns — replacing that silently makes the tool disagree with whoever dictated it.
+Nothing in the document recorded the difference, so `apply` had no way to ask.
+
+Three rules, and each is a decision rather than a detail:
+
+- **It describes `pending`, not the credential.** So it is written when a value
+  is staged and removed when `pending` is — it is not one of the rotation stamps,
+  which describe what is *current* and are refreshed at promotion. A key that
+  described `pending` on some documents and `current` on others would be a key
+  that can lie, and the thing reading it is deciding whether to replace somebody's
+  change ticket.
+- **Absent means unknown, and unknown means "do not redraw."** A document staged
+  before this key existed is exactly the case where guessing wrong overwrites a
+  dictated password. It self-heals on the next `generate`.
+- **A value going straight into `current` carries none.** There is nothing staged
+  for it to describe, and what applications are already holding is not something a
+  redraw may touch. Falling through to the rule above is the correct answer and
+  needs no special case.
+
+It follows the mirror rule like every other root-level key: a scalar beside a
+scalar container, a map keyed by account beside a map. `origin` therefore joins
+the reserved root names, so a `secret:` ref may not name a field called `origin`.
+
+Named `origin` rather than `source` because `apply --source` already names a
+*stage*, and two meanings of one word one flag apart is a collision somebody
+eventually reads the wrong way round.
+
 ---
 
 ## 4. `sopuli creds generate`
@@ -214,8 +256,10 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
 4. Acquire the lock for the secret path (Q2, #83) — which `generate` can do
    precisely because the lock lives in the vault: this step never connects to a
    database, so a database-side lock could not have protected the write below.
-5. Write to the vault: `pending = candidate`, leave `current` untouched. Use CAS
-   where supported so a concurrent writer cannot be overwritten silently.
+5. Write to the vault: `pending = candidate` and `origin` beside it (§3), leave
+   `current` untouched. One write, both keys — a write that landed the password
+   and not its provenance would stage a password no later `apply` may redraw. Use
+   CAS where supported so a concurrent writer cannot be overwritten silently.
 6. Report new version, and the fact that the database has not changed.
 
 **Notes**

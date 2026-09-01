@@ -288,7 +288,7 @@ def test_a_merge_patch_changes_only_the_keys_it_names(harness: Harness) -> None:
 
 
 def test_a_merge_patch_deletes_a_key_mapped_to_null(harness: Harness) -> None:
-    """RFC 7386's deletion, which is how `pending` is cleared at promotion. A
+    """RFC 7396's deletion, which is how `pending` is cleared at promotion. A
     store that stored a null instead would leave a `pending` that reads as staged
     with no value rather than as cleared."""
     harness.store.write(harness.path, {"password": "one", "pending": "two"}, cas=0)

@@ -17,7 +17,7 @@ What it gets right on purpose, because the lock depends on each:
   would let the wrong implementation pass.
 * **a stale CAS is refused**, which is the primitive itself.
 * **a merge patch deletes a key mapped to ``None``** (#183) rather than storing
-  one, which is RFC 7386 and is how ``pending`` is cleared at promotion. Shared
+  one, which is RFC 7396 and is how ``pending`` is cleared at promotion. Shared
   with the read-modify-write fallback through
   :func:`~sopuli.payload.apply_patch`, so a store with the capability and one
   without cannot end up with two readings of the same RFC.
@@ -224,7 +224,7 @@ class MemoryStore:
         A dictionary makes this trivial and that is the trap worth naming: on a
         real store the whole value of a merge patch is that the tool never sends
         the keys it did not change, and nothing about *this* implementation can
-        demonstrate that. What it can hold is the arithmetic -- RFC 7386's
+        demonstrate that. What it can hold is the arithmetic -- RFC 7396's
         deletion in particular -- and it holds it by calling the same
         :func:`~sopuli.payload.apply_patch` the read-modify-write fallback does,
         so the two can never drift into two readings of one RFC.

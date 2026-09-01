@@ -46,7 +46,7 @@ from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
 from sopuli.lock.keys import LockKey, normalise_path
 from sopuli.passwords import ByteLimit, PasswordPolicyError, Violation, check
 from sopuli.passwords import generate as draw_password
-from sopuli.payload import PENDING, merge
+from sopuli.payload import GENERATED, ORIGIN, PENDING, SUPPLIED, merge
 from sopuli.secrets import Secret
 from sopuli.store.credentials import staged_patch
 
@@ -107,13 +107,29 @@ class DocumentWrite:
         survives the combination. That is the assertion ``04-testing.md`` §4 calls
         the interesting one, and it is asserted on what the patch does not
         contain.
+
+        **Two keys per account when staging** (#311): the value, and
+        :data:`~sopuli.payload.ORIGIN` beside it saying whether the tool drew it
+        or an operator supplied it. They go in one patch because they describe
+        one value -- a write that landed the password and not its origin would
+        leave a staged password whose provenance is unknown, which is the state
+        the key exists to remove.
+
+        **Only when staging.** ``origin`` is a property of ``pending``, not of the
+        credential, so a write that puts a value straight into ``current`` writes
+        none: there is nothing staged for it to describe, and what applications
+        are already holding is not a thing #312 may redraw. Absent then reads as
+        unknown, which is the same refusal by the same rule.
         """
-        return merge(
-            *(
-                staged_patch(_ref(candidate.binding), candidate.value, stage=stage)
-                for candidate in self.candidates
-            )
-        )
+        patches: list[dict[str, Any]] = []
+        for candidate in self.candidates:
+            ref = _ref(candidate.binding)
+            patches.append(staged_patch(ref, candidate.value, stage=stage))
+            if stage == PENDING:
+                patches.append(
+                    staged_patch(ref, SUPPLIED if candidate.supplied else GENERATED, stage=ORIGIN)
+                )
+        return merge(*patches)
 
     @property
     def accounts(self) -> tuple[str, ...]:

@@ -21,7 +21,7 @@ from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Config
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.passwords import PasswordPolicyError
-from sopuli.payload import PENDING
+from sopuli.payload import CURRENT, GENERATED, ORIGIN, PENDING, SUPPLIED
 from sopuli.secrets import Secret
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp"}}
@@ -215,13 +215,101 @@ def test_the_write_key_is_the_lock_key() -> None:
 
 def test_one_patch_carries_every_account_and_nothing_else() -> None:
     """The merge has to preserve what `staged_patch` guarantees per account:
-    every sibling absent rather than rewritten with what was last read."""
+    every sibling absent rather than rewritten with what was last read.
+
+    Two root keys since #311, not one: the staged value and the `origin`
+    describing it. Both are keyed by account under the same mirror rule, and the
+    assertion that matters is unchanged -- nothing here names an account this run
+    did not come for.
+    """
     writes = generate.group(candidates(estate(accounts=["acme_web_user", "acme_batch_user"])))
 
     patch = writes[0].patch(stage=PENDING)
 
-    assert set(patch) == {PENDING}
+    assert set(patch) == {PENDING, ORIGIN}
     assert set(patch[PENDING]) == {"acme_web_user", "acme_batch_user"}
+    assert set(patch[ORIGIN]) == {"acme_web_user", "acme_batch_user"}
+
+
+# ------------------------------------------------------------- the origin ---
+
+
+def test_a_drawn_password_is_staged_as_generated() -> None:
+    """#311's default case, and the one #312 is allowed to redraw."""
+    writes = generate.group(candidates(estate()))
+
+    assert writes[0].patch(stage=PENDING)[ORIGIN] == {"acme_web_user": GENERATED}
+
+
+def test_a_supplied_password_is_staged_as_supplied() -> None:
+    """`--from-stdin`, and the reason the key exists at all. An external system
+    dictated this value, so #312 redrawing it would make the tool disagree with
+    whoever owns it -- and `Candidate.supplied` dies at the process boundary, so
+    the document is the only place a later `apply` can learn this."""
+    config = estate()
+    binding = config.bindings[0]
+    name, policy = generate.policy_for(config, binding)
+    supplied = generate.candidate_for(
+        binding, policy, name=name, supplied=Secret("Dictated1234567890abcdef")
+    )
+
+    writes = generate.group([supplied])
+
+    assert writes[0].patch(stage=PENDING)[ORIGIN] == {"acme_web_user": SUPPLIED}
+
+
+def test_the_origin_is_keyed_the_way_the_value_is() -> None:
+    """The mirror rule, applied to a key that is not a stage and not a stamp: in
+    the one-account layout it is a scalar at the root, and in the shared layout a
+    map keyed by account. If those ever needed separate code the rule would have
+    stopped covering it."""
+    own = generate.group(candidates(estate(template="apps/acme/{account}#password")))
+    shared = generate.group(candidates(estate()))
+
+    assert own[0].patch(stage=PENDING)[ORIGIN] == GENERATED
+    assert shared[0].patch(stage=PENDING)[ORIGIN] == {"acme_web_user": GENERATED}
+
+
+def test_each_account_carries_its_own_origin_in_a_shared_document() -> None:
+    """One drawn, one supplied, one document, one write. A single root-level
+    `origin` would describe some of the document and not the rest -- the same
+    reason UC-1 §3's stamps are per account."""
+    config = estate(accounts=["acme_web_user", "acme_batch_user"])
+    drawn, dictated = config.bindings
+    name, policy = generate.policy_for(config, drawn)
+
+    writes = generate.group(
+        [
+            generate.candidate_for(drawn, policy, name=name),
+            generate.candidate_for(
+                dictated, policy, name=name, supplied=Secret("Dictated1234567890abcdef")
+            ),
+        ]
+    )
+
+    assert writes[0].patch(stage=PENDING)[ORIGIN] == {
+        "acme_web_user": GENERATED,
+        "acme_batch_user": SUPPLIED,
+    }
+
+
+def test_nothing_written_straight_to_current_carries_an_origin() -> None:
+    """`origin` describes what `pending` holds. A value going into `current` has
+    nothing staged for it to describe, and what applications are already holding
+    is not a thing #312 may redraw -- so the key is absent, and absent already
+    reads as *not safe to redraw*."""
+    writes = generate.group(candidates(estate()))
+
+    assert ORIGIN not in writes[0].patch(stage=CURRENT)
+
+
+def test_the_origin_is_not_a_secret_and_is_not_wrapped() -> None:
+    """It is a two-word vocabulary, not a value: it must survive
+    `_plaintext` unchanged and be readable in a plan without a reveal."""
+    patch = generate.group(candidates(estate()))[0].patch(stage=PENDING)
+
+    assert patch[ORIGIN]["acme_web_user"] in (GENERATED, SUPPLIED)
+    assert GENERATED in repr(patch)
 
 
 def test_the_patch_stages_into_pending_not_current() -> None:
@@ -295,4 +383,7 @@ def test_one_account_per_document_at_the_root_is_still_fine() -> None:
     writes = generate.group(candidates(estate(template="apps/acme/{account}#password")))
 
     assert len(writes) == 1
-    assert writes[0].patch(stage=PENDING) == {PENDING: writes[0].candidates[0].value}
+    assert writes[0].patch(stage=PENDING) == {
+        PENDING: writes[0].candidates[0].value,
+        ORIGIN: GENERATED,
+    }

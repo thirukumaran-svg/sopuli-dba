@@ -8,9 +8,9 @@ rule, so nothing above it has two code paths to keep in step.
     Every root-level key mirrors the shape of the current-stage container.
 
 The *container* is whatever the configured ref addresses -- its field, and any
-JSON pointer below it. Where that is a scalar, ``pending``, ``previous`` and the
-rotation stamps are scalars beside it, which is UC-1 §3's original payload
-unchanged. Where it is a map keyed by account, they are maps keyed the same way::
+JSON pointer below it. Where that is a scalar, ``pending``, ``previous``,
+``origin`` and the rotation stamps are scalars beside it, which is UC-1 §3's
+original payload unchanged. Where it is a map keyed by account, they are maps keyed the same way::
 
     apps/orders/db/creds#password           ->  container "password",       within ()
     tenants/beta#DB_CREDENTIALS/{account}   ->  container "DB_CREDENTIALS",
@@ -66,25 +66,49 @@ ROTATED_AT = "rotated_at"
 
 STAMPS = (ROTATED_AT, "rotated_by", "policy", "targets")
 
+#: Where the staged password came from (#311): the tool drew it, or an operator
+#: supplied it on stdin and an external system dictated it.
+#:
+#: **Not a stamp, and deliberately not in** :data:`STAMPS`. The stamps describe
+#: the credential that is *current* and are refreshed at promotion; this
+#: describes what ``pending`` holds and is written and cleared with it. A key
+#: that described ``pending`` on some documents and ``current`` on others would
+#: be a key that can lie, and #312 gates a redraw on it -- the wrong answer there
+#: replaces a value somebody's change ticket dictated.
+#:
+#: Named ``origin`` rather than ``source`` because `creds apply --source` already
+#: names a *stage*. Two meanings of one word, one flag apart, is a collision
+#: somebody reads the wrong way round eventually.
+ORIGIN = "origin"
+
+#: :data:`ORIGIN`'s two values. Anything else -- including the key being absent --
+#: is unknown, and unknown reads as *not safe to redraw*: a document written
+#: before this key existed is exactly the case where guessing wrong replaces a
+#: password an external system owns. It self-heals on the next `creds generate`.
+GENERATED, SUPPLIED = "generated", "supplied"
+
 #: Root keys the mirror rule generates, and therefore names a container may not
 #: take. ``current`` is absent on purpose: it is not a root key -- the container
 #: *is* the current stage -- so a field genuinely called ``current`` collides
 #: with nothing.
-RESERVED = (PENDING, PREVIOUS, *STAMPS)
+RESERVED = (PENDING, PREVIOUS, ORIGIN, *STAMPS)
 
-#: What a JSON merge patch (RFC 7386) uses to remove a key, which is how
+#: What a JSON merge patch (RFC 7396) uses to remove a key, which is how
 #: ``pending`` is cleared at promotion. Named because ``None`` in a patch means
 #: "delete this" and not "no value", and those read identically at a call site.
 REMOVE = None
 
 __all__ = [
     "CURRENT",
+    "GENERATED",
+    "ORIGIN",
     "PENDING",
     "PREVIOUS",
     "REMOVE",
     "RESERVED",
     "ROTATED_AT",
     "STAMPS",
+    "SUPPLIED",
     "StageLayout",
     "apply_patch",
     "merge",
@@ -239,7 +263,13 @@ def merge(*patches: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def apply_patch(document: Any, patch: Mapping[str, Any]) -> dict[str, Any]:
-    """``document`` with ``patch`` applied to it: RFC 7386, in full.
+    """``document`` with ``patch`` applied to it: RFC 7396, in full.
+
+    **7396 and not 7386**, which this file and its neighbours used to cite. The
+    two are the same specification a month apart -- 7386 (October 2014) was
+    replaced by 7396 (November 2014) to correct its pseudocode and examples -- so
+    nothing about the semantics moved, but the obsolete number is the one a
+    reader would have gone looking up.
 
     The other half of :func:`merge`, and the difference between them is one rule
     that is easy to read past. **Combining two patches and applying a patch to a
@@ -254,7 +284,7 @@ def apply_patch(document: Any, patch: Mapping[str, Any]) -> dict[str, Any]:
     Here because the arithmetic is the arithmetic: this is what a store with
     :data:`~sopuli.store.protocol.MERGE_PATCH` does server-side, and a store
     without it needs the same answer computed locally. Two implementations of
-    RFC 7386 that had to agree would be a bug waiting for the first document
+    RFC 7396 that had to agree would be a bug waiting for the first document
     holding a ``None``.
 
     A non-mapping ``document`` is replaced wholesale, which is the RFC's own rule
@@ -269,7 +299,7 @@ def apply_patch(document: Any, patch: Mapping[str, Any]) -> dict[str, Any]:
 def _applied(target: dict[str, Any], patch: Mapping[str, Any]) -> dict[str, Any]:
     for key, value in patch.items():
         if value is REMOVE:
-            # RFC 7386's deletion. `pop` rather than a membership test because
+            # RFC 7396's deletion. `pop` rather than a membership test because
             # deleting a key that is not there is not an error -- clearing a
             # `pending` that was never staged is the ordinary idempotent case.
             target.pop(key, None)

@@ -57,7 +57,7 @@ CAS = "cas"
 #: manufacture one.
 VERSIONING = "versioning"
 
-#: Applying an RFC 7386 merge patch server-side, rather than by reading the
+#: Applying an RFC 7396 merge patch server-side, rather than by reading the
 #: document and writing it back (#183).
 #:
 #: The capability that makes ``01-configuration.md`` §7's "must not clobber
@@ -381,7 +381,7 @@ class SecretStore(Protocol):
         ...
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
-        """Apply ``changes`` as an RFC 7386 merge patch, returning the new version.
+        """Apply ``changes`` as an RFC 7396 merge patch, returning the new version.
 
         ``changes`` is a merge patch and not a document: a key it does not
         mention is left exactly as it was, and a key mapped to ``None`` is

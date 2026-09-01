@@ -1641,7 +1641,7 @@ that parse perfectly well still cannot be rotated:
 | Refused | Why |
 |---|---|
 | `apps/orders/prod/db/creds` | no field: nowhere to put `pending` and `previous`. The "single-field" reading in the table above only holds until the first rotation, which makes the document three-field |
-| `tenants/beta#pending/{account}` | the container is a key the rotation mechanism owns. `pending`, `previous`, `rotated_at`, `rotated_by`, `policy` and `targets` are all reserved; `current` is not, because the ref already points at it |
+| `tenants/beta#pending/{account}` | the container is a key the rotation mechanism owns. `pending`, `previous`, `origin`, `rotated_at`, `rotated_by`, `policy` and `targets` are all reserved; `current` is not, because the ref already points at it |
 
 Both are refused **while the file is read** rather than at the first rotation —
 §1 calls this binding the safety-critical part, and invariant 4 wants a command

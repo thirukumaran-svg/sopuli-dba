@@ -87,7 +87,16 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.protocol import SKIPPED as VERIFY_SKIPPED
 from sopuli.exit_codes import ExitCode
-from sopuli.payload import CURRENT, PENDING, PREVIOUS, REMOVE, StageLayout, merge, stage_layout
+from sopuli.payload import (
+    CURRENT,
+    ORIGIN,
+    PENDING,
+    PREVIOUS,
+    REMOVE,
+    StageLayout,
+    merge,
+    stage_layout,
+)
 from sopuli.secrets import Secret
 
 #: The state a rollback reports where a rotation is in flight. From the schema's
@@ -515,12 +524,12 @@ class Promotable:
 def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> dict[str, Any]:
     """One merge patch promoting every account in ``entries`` (UC-1 §5, invariant 7).
 
-    Four changes per account, and **one write**: ``current`` takes what
-    ``pending`` held, ``previous`` takes what ``current`` held, ``pending`` is
-    removed, and the stamps are refreshed. :func:`sopuli.payload.merge` exists
-    for exactly this -- four writes would be four versions, three of which
-    describe a state that was never true, and any of which can be the one that
-    fails.
+    Five changes per account, and **one write**: ``current`` takes what
+    ``pending`` held, ``previous`` takes what ``current`` held, ``pending`` and
+    the ``origin`` describing it are removed, and the stamps are refreshed.
+    :func:`sopuli.payload.merge` exists for exactly this -- five writes would be
+    five versions, four of which describe a state that was never true, and any of
+    which can be the one that fails.
 
     Every key is written through the account's own
     :class:`~sopuli.payload.StageLayout`, so siblings in a shared document are
@@ -541,6 +550,14 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
         if entry.replaces is not None:
             patches.append(layout.patch(PREVIOUS, entry.replaces))
         patches.append(layout.patch(PENDING, REMOVE))
+        # `origin` describes what `pending` held, so it is cleared with it (#311).
+        # Leaving it behind would leave a document asserting the provenance of a
+        # stage that no longer has a value, and the next reader of it would be
+        # #312 deciding whether it may redraw. "Cleared" is RFC 7396's clearing
+        # and not a root delete: promoting the last staged account empties the
+        # container rather than removing the key, exactly as `pending` above has
+        # always done. `tests/test_payload.py` pins that and says why it stays.
+        patches.append(layout.patch(ORIGIN, REMOVE))
         patches.append(layout.patch("rotated_at", stamp))
         patches.append(layout.patch("rotated_by", by))
         if entry.policy is not None:
