@@ -27,11 +27,12 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
-from sopuli import check
+from sopuli import apply, check
 from sopuli.cli import cli
 from sopuli.clock import utc_now
 from sopuli.config.model import Vault
 from sopuli.driver.oracle.accounts import RolesUnreadableError
+from sopuli.driver.oracle.errors import classify
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     ATTRIBUTE_SET,
@@ -156,6 +157,68 @@ LIVE = "Correct-Horse-Battery-9"
 STAGED = "Vertical-Anchor-Marble-4"
 
 
+#: One account over two targets sharing **one** document, with a policy to draw
+#: from. That combination is what makes #312 visible: a refusal on the second
+#: target has to restage the account and re-apply the first as well, or the
+#: promotion advertises a password half the estate does not hold.
+REDRAW_CONFIG = """\
+version: 1
+vaults:
+  vault-prod:
+    type: hashicorp
+    addr: https://vault-prod.example.com:8200
+policies:
+  app-standard:
+    password:
+      length: 24
+      charset: alnum
+      first_char: alpha
+defaults:
+  policy: app-standard
+targets:
+  - name: appdb-alpha
+    type: oracle
+    dsn: db-prod.example.com:1521/alpha.pdb.example.com
+    environment: prod
+    vault: vault-prod
+  - name: appdb-beta
+    type: oracle
+    dsn: db-prod.example.com:1521/beta.pdb.example.com
+    environment: prod
+    vault: vault-prod
+applications:
+  - name: acme
+    accounts: [acme_web_user]
+    secret_template: "apps/acme/db#DB_CREDENTIALS/{account}"
+"""
+
+#: The document `REDRAW_CONFIG` writes, staged the way #311's `generate` leaves it.
+REDRAW_DOCUMENT = "apps/acme/db"
+
+
+def staged(origin: str | None = "generated") -> dict[str, dict[str, Any]]:
+    """One shared document, optionally carrying #311's provenance key."""
+    body: dict[str, Any] = {
+        "DB_CREDENTIALS": {"acme_web_user": LIVE},
+        "pending": {"acme_web_user": STAGED},
+    }
+    if origin is not None:
+        body["origin"] = {"acme_web_user": origin}
+    return {REDRAW_DOCUMENT: body}
+
+
+#: What the driver raises when the server refuses the *value* -- built through
+#: the real classification rather than as a bare exception, because
+#: `DriverError.regenerate` is what decides whether a redraw happens at all
+#: (#312). A `RuntimeError` carrying the same text answers `False` and would make
+#: every assertion below pass by never reaching the code under test.
+def refusal(code: str = "ORA-28003") -> Exception:
+    return classify(code, f"{code}: ORA-20001: password must contain a punctuation").as_error()
+
+
+REFUSED = "ORA-28003"
+
+
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
@@ -181,6 +244,7 @@ class FakeSession:
         answers: Mapping[str, list[VerifyResult]],
         *,
         set_error: Exception | None = None,
+        refusals: Any = None,
         capabilities: frozenset[str] = frozenset(),
         rollover_refusal: Exception | None = None,
         on_call: Callable[[str], None] | None = None,
@@ -197,9 +261,17 @@ class FakeSession:
         self.users = dict(users)
         self.answers = {name: list(results) for name, results in answers.items()}
         self.set_error = set_error
+        # How many `set_password` calls `set_error` still applies to, shared
+        # across every session the run opens -- a redraw reconnects, and a
+        # counter per session would refuse the new password as often as the old.
+        # `True` forever is the permanent refusal every existing test wants.
+        self.refusals = refusals if refusals is not None else iter(lambda: True, object())
         self.capabilities = capabilities
         self.rollover_refusal = rollover_refusal
         self.attempts: list[tuple[str, str]] = []
+        #: Every ``set_password`` this session was asked for, refused ones
+        #: included. ``changed`` is the subset that landed.
+        self.attempted: list[tuple[str, str]] = []
         #: Accounts this session actually issued ``ACCOUNT UNLOCK`` for, which is
         #: not the same list as the ones it was asked about -- invariant 9 for the
         #: attributes is that an account already open is not touched.
@@ -335,7 +407,12 @@ class FakeSession:
         return queued.pop(0) if queued else VerifyResult(VERIFY_LOGIN, PASS, latency_ms=9)
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
-        if self.set_error is not None:
+        # Recorded before the refusal, unlike `changed` below, which only sees the
+        # calls that succeeded. A bounded redraw has to be asserted on the
+        # statements the server was *asked* for (#312): an unbounded loop issues
+        # them for ever and appends nothing to a list of successes.
+        self.attempted.append((account.upper(), secret.reveal()))
+        if self.set_error is not None and next(self.refusals, False):
             raise self.set_error
         self.changed.append((account.upper(), secret.reveal()))
         self._called("set_password")
@@ -390,6 +467,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         per_target: Mapping[str, Mapping[str, list[VerifyResult]]] | None = None,
         connect_error: Exception | None = None,
         set_error: Exception | None = None,
+        refusals: int | None = None,
         capabilities: frozenset[str] = frozenset(),
         rollover_refusal: Exception | None = None,
         on_call: Callable[[dict[str, Any], str], None] | None = None,
@@ -406,6 +484,10 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         # Built up front so `on_change` can reach the store it is about to
         # interfere with, and handed back unchanged at the end.
         harness: dict[str, Any] = {"store": store, "sessions": sessions}
+        # One budget for the whole run: `refusals=2` is a server that rejects the
+        # next two passwords whichever session presents them, which is what a
+        # redraw meets once it reconnects (#312).
+        budget = None if refusals is None else iter([True] * refusals)
 
         def fake_connect(
             vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
@@ -426,6 +508,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     users if users is not None else {"ACME_WEB_USER": user()},
                     scripted,
                     set_error=set_error,
+                    refusals=budget,
                     capabilities=capabilities,
                     rollover_refusal=rollover_refusal,
                     on_call=None if on_call is None else (lambda event: on_call(harness, event)),
@@ -829,7 +912,7 @@ def test_a_profile_read_that_failed_is_reported_and_does_not_stop_the_survey(
 
     # Reported for **both** targets: an escaping exception would have taken the
     # first target's findings with it and never reached the second.
-    diagnostics = [one["message"] for one in document(result)["diagnostics"]]
+    diagnostics = [one["message"] for one in document(result).get("diagnostics", [])]
     assert sum("could not establish" in one for one in diagnostics) == 2
     # Not blocking, so the run went on to try -- and the account is an ERROR
     # because the driver asks the same question again before its own statement.
@@ -1439,16 +1522,27 @@ def test_an_unreachable_target_is_a_finding_and_not_a_crash(
 def test_a_refused_statement_is_reported_per_account(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """ORA-28003 and friends: the server refused the password. It is reported and
-    never regenerated here -- the value came from the vault, and drawing a
-    different one would make the vault and the database disagree with what the
-    operator staged."""
-    harness = estate(set_error=RuntimeError("ORA-28003: password verify function rejected it"))
+    """ORA-28003 and friends: the server refused the password, and this estate is
+    one where it cannot be replaced.
+
+    **This test used to assert that `apply` never redraws**, which #268 reversed
+    and #312 built. It still asserts a refusal that stands, and now for the reason
+    that survives that decision rather than the one that did not: `CONFIG`
+    declares no policy and its documents carry no `origin`, so there is nothing to
+    draw from and no evidence the tool drew what is staged. Both are refusals
+    `may_redraw` makes, and either alone is enough.
+
+    The error is built through the real classification, because
+    `DriverError.regenerate` is what a redraw turns on -- a bare exception
+    carrying the same text answers `False`, and this would pass without ever
+    reaching the decision.
+    """
+    harness = estate(set_error=refusal())
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
 
     assert result.exit_code == ExitCode.FAILURE
     assert "ORA-28003" in result.output
-    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]["acme_web_user"] == STAGED
 
 
 def test_readonly_refuses_before_anything_connects(
@@ -1953,3 +2047,194 @@ def test_source_pending_does_not_fall_back_to_current(
     assert harness["sessions"][0].changed == []
     assert result.exit_code == ExitCode.FAILURE
     assert "creds generate" in result.output
+
+
+# ------------------------------------------------ the redraw (#312, #268) ---
+
+
+def test_a_refused_password_is_replaced_and_the_run_succeeds(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#268's decision, end to end. The server refuses the staged value once;
+    the run draws another, stages it, applies it, and promotes that.
+
+    This is the case UC-1 §6.4 was written for and the one `apply` used to answer
+    with "go and run `creds generate` again, and hope".
+    """
+    harness = estate(documents=staged(), set_error=refusal(), refusals=1)
+
+    result = run(runner, write_config(REDRAW_CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    document = stored(harness["store"], REDRAW_DOCUMENT)
+    # Promoted, so `pending` is cleared -- and what `current` holds is neither
+    # the refused value nor the one the run started with.
+    assert document["DB_CREDENTIALS"]["acme_web_user"] not in (LIVE, STAGED)
+    assert document["pending"] == {}
+
+
+def test_every_target_of_a_redrawn_account_gets_the_new_password(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The reason a redraw is not a retry of the target that refused.
+
+    One account, two targets, one document, one password. The first target took
+    the staged value and the second refused it -- so both are applied again with
+    the replacement, and the estate ends holding one password rather than two.
+    """
+    harness = estate(documents=staged(), set_error=refusal(), refusals=1)
+
+    run(runner, write_config(REDRAW_CONFIG))
+
+    promoted = stored(harness["store"], REDRAW_DOCUMENT)["DB_CREDENTIALS"]["acme_web_user"]
+    issued = [secret for session in harness["sessions"] for _, secret in session.changed]
+    # The last statement each target received carried the promoted value.
+    assert issued[-2:] == [promoted, promoted]
+
+
+def test_the_redraw_is_reported_on_the_row_and_in_the_diagnostics(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Never quietly. A redraw changes what the vault holds, so a run that did it
+    silently would leave anything holding the old `pending` stale with no record
+    of when it stopped being current."""
+    estate(documents=staged(), set_error=refusal(), refusals=1)
+
+    result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
+    emitted = document(result)
+
+    assert all(entry["redraws"] == 1 for entry in emitted["results"])
+    warned = [one for one in emitted.get("diagnostics", []) if one["code"] == "password_redrawn"]
+    assert len(warned) == 1
+    assert "ORA-28003" in warned[0]["message"]
+
+
+def test_an_ordinary_run_carries_no_redraws_field(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The field records redraws, not the budget for them: a `0` on every row of
+    every ordinary run would bury the rows that carry one."""
+    estate(documents=staged())
+
+    emitted = document(run(runner, write_config(REDRAW_CONFIG), "--output", "json"))
+
+    assert all("redraws" not in entry for entry in emitted["results"])
+
+
+def test_a_supplied_password_is_reported_and_never_replaced(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#311's whole purpose. An external system dictated this value, so the run
+    reports the refusal and leaves `pending` exactly as it found it."""
+    harness = estate(documents=staged(origin="supplied"), set_error=refusal(), refusals=1)
+
+    result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
+    declined = [
+        one
+        for one in document(result).get("diagnostics", [])
+        if one["code"] == "password_not_redrawn"
+    ]
+    assert len(declined) == 1
+    assert "did not draw" in declined[0]["message"]
+
+
+def test_a_document_with_no_origin_is_not_redrawn(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Staged before #311 existed, which is the supplied case without the
+    evidence. Guessing wrong here overwrites a dictated password, and the next
+    `creds generate` heals it."""
+    harness = estate(documents=staged(origin=None), set_error=refusal(), refusals=1)
+
+    result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
+
+    assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
+    declined = [
+        one
+        for one in document(result).get("diagnostics", [])
+        if one["code"] == "password_not_redrawn"
+    ]
+    assert "no record" in declined[0]["message"]
+
+
+def test_a_server_that_refuses_everything_stops_at_the_budget(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A verify function this policy cannot satisfy. Three draws describe the
+    target's rules rather than the draw, and the fourth learns nothing -- so the
+    run stops and hands back the server's own message.
+
+    The count is on `set_password` calls across every target, which is what a
+    bounded loop has to be asserted on: an unbounded one passes every assertion
+    about the exit code and hangs.
+    """
+    harness = estate(documents=staged(), set_error=refusal())
+
+    result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    asked = [one for session in harness["sessions"] for one in session.attempted]
+    # Two targets, three draws, and nothing beyond that. Asserted on the
+    # statements the server was asked for rather than on the ones that landed:
+    # none of these landed, and an unbounded loop would have issued them for ever.
+    assert len(asked) == 2 * apply.DRAW_LIMIT
+    assert len({secret for _, secret in asked}) == apply.DRAW_LIMIT
+    assert "ORA-28003" in result.output
+    assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] != STAGED
+
+
+def test_each_draw_is_a_different_password(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#172's rule that the same value is never sent again: `ORA-28007` means
+    this exact password is refused, so retrying it is the one thing certain not
+    to work."""
+    harness = estate(documents=staged(), set_error=refusal())
+
+    run(runner, write_config(REDRAW_CONFIG))
+
+    presented = [secret for session in harness["sessions"] for _, secret in session.attempted]
+    assert len(set(presented)) == apply.DRAW_LIMIT
+    # The value the run arrived with is drawn once and never sent again.
+    assert presented.count(STAGED) == 2
+
+
+def test_an_error_that_is_not_a_refusal_never_redraws(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """§6.4's rule for an unmapped code, reached through the whole command: the
+    password was not the problem, so drawing another would change the vault on
+    the strength of a guess."""
+    harness = estate(documents=staged(), set_error=refusal("ORA-00600"))
+
+    result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
+
+    assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
+    assert not [
+        one for one in document(result).get("diagnostics", []) if one["code"] == "password_redrawn"
+    ]
+
+
+def test_an_account_with_no_policy_reports_rather_than_raising(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Drawing needs a policy and §8 refuses to invent one -- but this run was
+    applying happily until the server refused a value, and turning that into a
+    configuration error would replace a report of what the estate did with a
+    complaint about a file nothing had changed."""
+    harness = estate(documents=staged(), set_error=refusal(), refusals=1)
+    without = REDRAW_CONFIG.replace("defaults:\n  policy: app-standard\n", "")
+
+    result = run(runner, write_config(without), "--output", "json")
+
+    assert result.exit_code != ExitCode.CONFIG_INVALID
+    assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
+    declined = [
+        one
+        for one in document(result).get("diagnostics", [])
+        if one["code"] == "password_not_redrawn"
+    ]
+    assert "no password policy" in declined[0]["message"]

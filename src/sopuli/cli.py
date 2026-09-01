@@ -190,7 +190,7 @@ from sopuli.output.vault_view import render as render_vaults
 from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate
-from sopuli.payload import PENDING, PREVIOUS, stage_layout
+from sopuli.payload import ORIGIN, PENDING, PREVIOUS, stage_layout
 from sopuli.preflight import Finding
 from sopuli.safety import (
     RefusedError,
@@ -2423,6 +2423,25 @@ def creds_apply(
                 force=force,
                 requested=source_stage,
             )
+            if stolen is None:
+                # §6.4's redraw, between the estate pass and the promotion (#312).
+                # After, because a refusal is only discoverable by issuing the
+                # statement; before, because nothing may be promoted until the
+                # password every target holds is the one `pending` carries.
+                applied, stolen = _redraw_estate(
+                    applied,
+                    documents,
+                    stores,
+                    run,
+                    config,
+                    manager=manager,
+                    margin=lockout_margin,
+                    strategy=strategy,
+                    selection=selection,
+                    force=force,
+                    requested=source_stage,
+                    diagnostics=document.diagnostics,
+                )
             promotions: dict[LockKey, _Promotion] = {}
             if stolen is None:
                 # Nothing is promoted after a takeover, and not because the write
@@ -2529,6 +2548,16 @@ class _Applied:
     overridden: tuple[guardrails.Refusal, ...] = ()
     duration_ms: int | None = None
     error: Error | None = None
+    #: Whether the server refused the *password itself* -- the vendor-neutral
+    #: :attr:`~sopuli.driver.protocol.DriverError.regenerate` (#312). Kept on the
+    #: record rather than read back off :attr:`error`, which is the run
+    #: document's ``Error`` and carries only what the contract emits: adding a
+    #: field there to satisfy an internal question would put a decision this tool
+    #: makes into a schema other people parse.
+    refused: bool = False
+    #: How many *extra* passwords this account was given, over the one the run
+    #: arrived with (#312). Zero on every ordinary run.
+    redraws: int = 0
 
     @property
     def mutated(self) -> bool:
@@ -3014,6 +3043,10 @@ def _apply_one(
             attributes=enforced,
             duration_ms=_elapsed(started),
             error=reported,
+            # Asked of the exception, which is the only place the answer exists:
+            # `_as_error` builds the run document's `Error` and keeps what the
+            # contract emits, and this is a question the tool asks itself (#312).
+            refused=getattr(error, "regenerate", False),
         )
 
     return _Applied(
@@ -3512,6 +3545,332 @@ def _check_strategy(
         )
 
 
+#: The diagnostic code for a password the server refused and this run replaced.
+REDRAWN = "password_redrawn"
+
+#: And for one it refused that this run was not allowed to replace.
+NOT_REDRAWN = "password_not_redrawn"
+
+
+def _redraw_estate(
+    applied: list[_Applied],
+    documents: dict[LockKey, Any],
+    stores: Mapping[str, SecretStore],
+    run: Invocation,
+    config: Config,
+    *,
+    manager: LockManager,
+    margin: int,
+    strategy: str | None,
+    selection: Selection,
+    force: bool,
+    requested: str | None,
+    diagnostics: list[Diagnostic],
+) -> tuple[list[_Applied], LockStolenError | None]:
+    """Draw again for the accounts whose password the server itself refused (#312).
+
+    UC-1 §6.4, deciding #268. ``ORA-28003`` and ``ORA-28007`` say the *value* was
+    unacceptable, and neither can be known before the statement is issued -- a
+    verify function is arbitrary PL/SQL that cannot be consulted (invariants 13
+    and 14), and a reuse history is hashed. So this is the only place the answer
+    can be found, and telling an operator to re-run `creds generate` and hope was
+    the loop §6.4 was written about.
+
+    **The unit is an account, not a document and not the estate.** Passwords are
+    drawn per account even where accounts share a document (§4), so a refusal
+    implicates exactly the account that met it. What is re-applied is that
+    account's own bindings -- every target it is bound to, including ones this
+    run has already visited -- because they share one password and have to end
+    the run holding the same one.
+
+    **Re-applying is** :func:`_apply_estate` **again, on a narrowed source
+    list**, rather than a second loop that would have to re-derive the lease
+    renewal, the fence and the per-target connection, and could come to disagree
+    with the first about any of them.
+
+    **The restage happens under the lock this run already holds**, before the
+    re-apply. A crash between the two leaves a ``pending`` that some target may
+    hold, which is the state UC-1 §3 designed ``pending`` to be recoverable from;
+    the opposite ordering leaves a password that exists nowhere.
+
+    **Nothing here is quiet.** Every draw is a warning naming the account and the
+    server's own message, and so is every refusal to draw: three of
+    :func:`sopuli.apply.may_redraw`'s four answers are the tool declining to act,
+    and a run that silently declined is the behaviour this replaces.
+    """
+    reported: set[tuple[str, LockKey]] = set()
+    # Bounded by the budget, which is what ends this loop in practice: every
+    # round raises each account's `redraws` by one, so after `DRAW_LIMIT` of them
+    # `may_redraw` refuses everything and the return below fires. The `range` is
+    # the structural backstop -- an unbounded loop that mutates databases and
+    # writes secrets should not depend for its termination on arithmetic done
+    # three functions away.
+    for _ in range(apply_states.DRAW_LIMIT):
+        wanted, declined = _wants_redraw(applied, documents, config, reported=reported)
+        diagnostics.extend(declined)
+        if not wanted:
+            return applied, None
+
+        try:
+            restaged = _restage(wanted, documents, stores, config, manager=manager)
+        except LockStolenError as taken:
+            # Named apart from `stolen` below: `except ... as` unbinds its target
+            # at the end of the block, so reusing the name would leave the
+            # assignment further down writing to a variable Python had deleted.
+            return applied, taken
+        diagnostics.extend(restaged.diagnostics)
+
+        again, stolen = _apply_estate(
+            _sources(_every_target_of(restaged.accounts, applied), documents, stage=requested),
+            run,
+            config,
+            manager=manager,
+            margin=margin,
+            strategy=strategy,
+            selection=selection,
+            force=force,
+            requested=requested,
+        )
+        applied = _splice(applied, again)
+        if stolen is not None:
+            return applied, stolen
+    return applied, None
+
+
+def _wants_redraw(
+    applied: Sequence[_Applied],
+    documents: Mapping[LockKey, Any],
+    config: Config,
+    *,
+    reported: set[tuple[str, LockKey]],
+) -> tuple[list[_Applied], list[Diagnostic]]:
+    """The records to draw again for, and the diagnostics for those refused.
+
+    The decision is :func:`sopuli.apply.may_redraw`, which owns it and knows
+    nothing about Oracle. What this adds is the facts it needs and only the run
+    has: the ``origin`` #311 staged beside the value, read out of the document
+    this run holds the lock on, and how many draws this account has had.
+
+    **One record per account, not per target.** An account refused on three
+    targets is one redraw and three re-applications; treating it as three would
+    draw three passwords for one account and leave two of them nowhere.
+
+    **A refusal is reported once**, not once per round: ``reported`` carries the
+    accounts already explained across the loop's iterations, because the same
+    account declines again every time round and a run that said so three times
+    would read as three separate refusals.
+
+    **An account with no password policy declines here rather than raising.**
+    Drawing needs a policy and §8 refuses to invent one, but this run was applying
+    happily until the server refused a value -- turning that into a configuration
+    error would replace a report of what the estate did with a complaint about
+    the file, on a run where nothing about the file had changed.
+    """
+    wanted: list[_Applied] = []
+    declined: list[Diagnostic] = []
+    seen: set[tuple[str, LockKey]] = set()
+    for record in applied:
+        if not record.refused or record.binding.secret is None or record.binding.vault is None:
+            continue
+        key = _lock_key(record.binding)
+        identity = (record.binding.account, key)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        decision = apply_states.may_redraw(
+            _RefusedPassword(record.refused),
+            _origin_of(record.binding, documents.get(key)),
+            drawn=record.redraws + 1,
+        )
+        reason = decision.reason if not decision.allowed else _no_policy_for(config, record.binding)
+        if reason is None:
+            wanted.append(record)
+            continue
+        if identity not in reported:
+            reported.add(identity)
+            declined.append(
+                Diagnostic(
+                    level="warning",
+                    message=(f"the server refused this password and it was not replaced: {reason}"),
+                    code=NOT_REDRAWN,
+                    account=record.binding.account,
+                )
+            )
+    return wanted, declined
+
+
+def _no_policy_for(config: Config, binding: Binding) -> str | None:
+    """Why this account cannot be drawn for, or ``None`` when it can.
+
+    :func:`sopuli.generate.policy_for` is the same chain `creds generate` walks
+    and it *raises* where there is nothing to draw against -- which is right for
+    a command whose whole job is drawing, and wrong here, where the run is
+    already part way through an estate. So the refusal is caught and becomes one
+    more reason a password was not replaced.
+    """
+    try:
+        staging.policy_for(config, binding)
+    except ConfigError:
+        return "this account has no password policy to draw from"
+    return None
+
+
+def _origin_of(binding: Binding, stored: Any) -> Any:
+    """What the document says about where this account's ``pending`` came from.
+
+    ``None`` for every way of not knowing -- no document, no ref, no key -- which
+    is the answer :func:`sopuli.apply.may_redraw` treats as "do not redraw". A
+    document staged before #311 and a document nobody has staged into are the
+    same fact here, and both self-heal on the next `creds generate`.
+    """
+    if binding.secret is None or stored is None:
+        return None
+    return stage_layout(binding.secret).read(stored.data, ORIGIN)
+
+
+@dataclass(frozen=True)
+class _RefusedPassword:
+    """:func:`sopuli.apply.may_redraw`'s input, rebuilt from the record.
+
+    The decision asks an *error* whether the password was refused, because that
+    is where the answer is when it is first asked. By here the exception is gone
+    and its answer is on the record, so this carries it back in the shape the
+    decision reads -- rather than the decision growing a second entry point that
+    could come to disagree with the first.
+    """
+
+    regenerate: bool
+
+
+@dataclass(frozen=True)
+class _Restaged:
+    """Which accounts one round of drawing staged a new password for."""
+
+    accounts: tuple[tuple[str, LockKey], ...]
+    diagnostics: tuple[Diagnostic, ...]
+
+
+def _every_target_of(
+    accounts: Sequence[tuple[str, LockKey]], applied: Sequence[_Applied]
+) -> list[Binding]:
+    """Every binding belonging to the accounts that were just redrawn.
+
+    **This is the whole reason a redraw is not just a retry of the target that
+    refused.** An account bound to three targets has one password, and staging a
+    new one leaves the two that succeeded holding a value the vault no longer
+    carries -- so a promotion would then advertise a password most of the estate
+    does not have, which is the first of the two orderings UC-1 §3 rules out.
+
+    Re-applying a target that already succeeded is another ``ALTER USER`` and
+    nothing worse: `apply` is the convergent verb, and the account it meets on
+    the second pass is one whose password it set itself.
+
+    Taken from this run's own results rather than from the config, so the set is
+    exactly what was applied -- an account a selector excluded was never in
+    ``applied`` and must not be dragged in by a redraw of its neighbour
+    (invariant 5).
+    """
+    wanted = set(accounts)
+    return [
+        record.binding
+        for record in applied
+        if record.binding.secret is not None
+        and record.binding.vault is not None
+        and (record.binding.account, _lock_key(record.binding)) in wanted
+    ]
+
+
+def _restage(
+    wanted: Sequence[_Applied],
+    documents: dict[LockKey, Any],
+    stores: Mapping[str, SecretStore],
+    config: Config,
+    *,
+    manager: LockManager,
+) -> _Restaged:
+    """Draw a password for each refused account and stage it, one write per document.
+
+    :class:`sopuli.generate.DocumentWrite` builds the patch, which is what puts
+    the ``origin`` beside the value without this function having to know that it
+    must: a drawn candidate is ``generated``, and #311's rule that the two go in
+    one write stays one implementation rather than two that can drift.
+
+    ``documents`` is **updated in place** with what came back. A promotion writes
+    against the version read at the start of the run and staging has moved it, so
+    a stale entry would turn every redrawn document's promotion into a
+    compare-and-set conflict with this run's own write.
+    """
+    drawn: list[tuple[str, LockKey]] = []
+    notes: list[Diagnostic] = []
+    for key, records in _redraws_by_document(wanted).items():
+        candidates = tuple(
+            _candidate(record.binding, config, name=None, supplied=None, enforce=True)
+            for record in records
+        )
+        stored = documents.get(key)
+        manager.check(key)
+        written = write_credential(
+            stores[key.store],
+            key.path,
+            staging.DocumentWrite(key=key, candidates=candidates).patch(stage=PENDING),
+            cas=0 if stored is None else stored.version,
+        )
+        documents[key] = stores[key.store].read(key.path)
+        for record in records:
+            drawn.append((record.binding.account, key))
+            notes.append(
+                Diagnostic(
+                    level="warning",
+                    message=(
+                        "the server refused this password, so another was drawn and staged as "
+                        f"v{written.version}: {record.outcome.detail or 'no message was given'}"
+                    ),
+                    code=REDRAWN,
+                    account=record.binding.account,
+                )
+            )
+    return _Restaged(accounts=tuple(drawn), diagnostics=tuple(notes))
+
+
+def _redraws_by_document(wanted: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
+    """Accounts to redraw, grouped into the write that will stage them.
+
+    Two accounts of one application refused on the same run share a document, and
+    #254's rule is that one document is one write however many accounts land in
+    it -- three writes would be three versions, two of which describe a state
+    nobody intended.
+    """
+    grouped: dict[LockKey, list[_Applied]] = {}
+    for record in wanted:
+        grouped.setdefault(_lock_key(record.binding), []).append(record)
+    return grouped
+
+
+def _splice(applied: Sequence[_Applied], again: Sequence[_Applied]) -> list[_Applied]:
+    """This run's results with the re-applied accounts' rows replaced.
+
+    Replaced rather than appended: a redrawn account was applied twice, and the
+    row belonging in ``results[]`` is the second -- it carries the outcome of the
+    password the estate ended up with. Appending would report one account on one
+    target twice, the first row describing a password no longer staged anywhere.
+
+    ``redraws`` accumulates across rounds, because :func:`_apply_estate` builds
+    fresh records that have never heard of it. That is what stops the budget
+    resetting every time round the loop.
+    """
+    replacements = {(record.binding.account, record.binding.target): record for record in again}
+    spliced: list[_Applied] = []
+    for record in applied:
+        fresh = replacements.pop((record.binding.account, record.binding.target), None)
+        spliced.append(record if fresh is None else replace(fresh, redraws=record.redraws + 1))
+    # Anything left is an account that was not in the original pass, which cannot
+    # happen -- a redraw narrows the estate rather than widening it -- and is
+    # appended rather than dropped, because losing a row this run applied would
+    # leave a mutation in no document at all.
+    spliced.extend(replacements.values())
+    return spliced
+
+
 def _promote_documents(
     applied: Sequence[_Applied],
     documents: Mapping[LockKey, Any],
@@ -3686,6 +4045,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         attributes=record.attributes,
         duration_ms=record.duration_ms,
         error=record.error,
+        redraws=record.redraws,
     )
 
 

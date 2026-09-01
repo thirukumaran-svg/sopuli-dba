@@ -69,6 +69,7 @@ def build_result(
     attributes: Sequence[AttributeChange] = (),
     duration_ms: int | None = None,
     error: Error | None = None,
+    redraws: int = 0,
 ) -> dict[str, Any]:
     """One ``results[]`` entry for an account this run acted on.
 
@@ -92,6 +93,14 @@ def build_result(
     did not all confirm; the two are distinguished by the state and the detail,
     not by this field.
 
+    ``redraws`` is how many *extra* passwords this account was given because the
+    server refused the value itself (§6.4, #312) -- over the one the run arrived
+    with, so a row that carries it was applied more than once and reports the last
+    attempt. **Emitted only when at least one was drawn**, on the same reasoning
+    as ``overridden`` below: the field records redraws, not the budget for them,
+    and a ``0`` on every ordinary row would make the ones that mattered harder to
+    find.
+
     ``overridden`` is what ``--force`` waived (§4, #286), and it is the reason
     the flag returns a value rather than a boolean: §4 requires the waiver to
     survive the waiving, so a run that rotated `DBSNMP` on purpose says which
@@ -107,6 +116,8 @@ def build_result(
         "state": outcome.state,
         "changed": changed or any(change.changed for change in attributes),
     }
+    if redraws:
+        entry["redraws"] = redraws
     secret = _secret(binding, source=source, version=version, promoted_to=promoted_to)
     if secret is not None:
         entry["secret"] = secret

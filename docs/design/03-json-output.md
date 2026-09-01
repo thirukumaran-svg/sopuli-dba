@@ -35,7 +35,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.17.schema.json`](../schemas/sopuli-run-1.17.schema.json),
+Schemas: [`../schemas/sopuli-run-1.18.schema.json`](../schemas/sopuli-run-1.18.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -1476,6 +1476,22 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.17 became 1.18 when a run could draw a second password** (#312):
+`results[].redraws` says how many *extra* passwords an account was given because
+the server refused the value itself — `ORA-28003` or `ORA-28007`, UC-1 §6.4. A
+new optional property, which §8's own list calls a minor bump.
+
+**Emitted only when it happened**, like `overridden` below and for the same
+reason: the field records redraws rather than the budget for them, and a `0` on
+every row of every ordinary run would bury the rows that carry one. A consumer
+counting rotations should read it as "this row was applied more than once and
+reports the last attempt", not as a failure — a redrawn account that ends
+`IN_SYNC` succeeded.
+
+The two diagnostic codes that come with it, `password_redrawn` and
+`password_not_redrawn`, are a registry addition of the kind 1.15 → 1.16 was:
+`diagnostic.code` is an open string, so neither changes the schema file.
 
 **1.16 became 1.17 when `--force` gained something to record** (#286):
 `results[].overridden` carries the §4 account guardrails a run waived — the

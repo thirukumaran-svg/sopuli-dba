@@ -528,10 +528,8 @@ are still **not** in this build — `--repair` (#264, whose input is settled
 below) and `--continue-on-error` (#266). The build is fail-fast, which is §5's
 own default.
 
-Step 4's redraw is decided (#268) and **not yet wired** (#312). The decision
-itself is built and tested — which error may be redrawn, whose password, and how
-many times — and this build still reports the refusal and stops. §6.4 carries the
-reasoning and the four rules.
+Step 4's redraw is decided (#268) and built (#312). §6.4 carries the reasoning
+and the four rules.
 
 ### `--source`, and the rollback (#265)
 
@@ -934,12 +932,6 @@ of one is the answer to "did the old password stop working just now".
 
 ### Which verb redraws, and why it is `apply` (#268, decided)
 
-**Decided, and not yet wired** (#312). The decision is built and tested — which
-error may be redrawn, whose password, and how many times — and this build still
-reports the refusal and stops, as §5's "What shipped" says. The two rows above
-describe what the verb does once #312 lands; nothing else in this section is
-waiting on it.
-
 "Regenerate" without a subject is what made the two rows above ambiguous for as
 long as they stood there. The subject is **`apply`**, and `generate` is not where
 this is fixed.
@@ -984,6 +976,24 @@ target bound to it ends the run holding the same password.
 `apply` does not become a generator by doing this. §4 step 3 is already a bounded
 rejection-sampling loop against the policy predicate; this adds one more rejector,
 and it is the only one that cannot be consulted offline.
+
+**What a run says it did.** Every draw is a `password_redrawn` warning naming the
+account, the version it staged, and the server's own message; every refusal to
+draw is a `password_not_redrawn` warning naming the account and which of the
+rules above stopped it. On the row itself, `results[].redraws` counts the extra
+passwords that account was given — present only when there was one, and read as
+"this row was applied more than once and reports the last attempt" rather than as
+a failure. A redrawn account that ends `IN_SYNC` succeeded. Run schema 1.18.
+
+**Two more refusals fall out of the rules rather than being added to them.** An
+account whose policy the file does not declare cannot be drawn for, so it reports
+instead of failing the run — the estate was being applied happily, and a
+configuration error there would be a complaint about a file nothing had changed.
+And a run applying from `current` rather than `pending` never redraws, because
+`origin` describes a staged value and `current` is what applications are already
+holding: replacing that mid-apply is a different and much worse operation, and
+§3's rule that an absent `origin` blocks a redraw already says so without a case
+of its own.
 
 Implemented in `sopuli/driver/oracle/errors.py` (#172), on three rules worth
 stating because each one is a decision the table above does not make:
