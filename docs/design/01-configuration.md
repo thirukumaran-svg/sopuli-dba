@@ -1785,6 +1785,31 @@ Independent of charset:
   fail with the server's message intact
 - `PASSWORD_REUSE_TIME` / `PASSWORD_REUSE_MAX` — never retry blindly on ORA-28007
 
+### `account:` — what the tool may do to the account itself
+
+Separate from `password:` because it is a different question. `password:` says
+what a credential must look like; `account:` says which of UC-1 §5's non-password
+attributes this run may enforce.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `unlock_if_locked` | bool | `false` | `apply` issues `ALTER USER … ACCOUNT UNLOCK` for a locked account before setting its password (#300) |
+
+Profile assignment, `PASSWORD_EXPIRE` handling and tablespaces are the other three
+UC-1 §5 names, each with its own issue (#301, #302, #303) and each arriving here
+as a key of its own rather than as a flag on a command line.
+
+**Every one of them is opt-in and off by default, and that is the rule rather
+than a default.** A tool that unlocked an account because it found one locked, or
+moved it to a profile because a policy named one, would be making a change nobody
+asked for during a credential rotation — which is the worst moment in an estate
+for a surprise. Omitting the key and writing `false` therefore mean the same
+thing, and a policy that declares no `account:` block at all means it too.
+
+An estate that declares no policy is unaffected: applying a password has never
+needed one, and reading these attributes does not make a policy a precondition —
+which is the one way this section could have broken a working config.
+
 ### `length` has no default
 
 There is no built-in password length. A policy that does not declare one is legal

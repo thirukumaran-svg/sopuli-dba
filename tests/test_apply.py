@@ -13,11 +13,13 @@ states this module produced, so the ordering can be argued about without a vault
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from sopuli import apply, check
-from sopuli.config.model import Binding
+from sopuli.config.loading import build_config
+from sopuli.config.model import Binding, Config
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.driver.protocol import (
     FAIL,
@@ -25,6 +27,7 @@ from sopuli.driver.protocol import (
     SKIPPED,
     UNAVAILABLE,
     VERIFY_LOGIN,
+    AccountAttributes,
     UserState,
     VerifyResult,
 )
@@ -63,6 +66,65 @@ def source(
         value=Secret(value),
         replaces=None if replaces is None else Secret(replaces),
     )
+
+
+def estate(policies: dict[str, Any] | None = None, **defaults: Any) -> Config:
+    """The smallest file that produces one binding, with the policies given."""
+    document: dict[str, Any] = {
+        "version": 1,
+        "vaults": {"vault-dev": {"type": "hashicorp"}},
+        "targets": [
+            {"name": "appdb-dev-alpha", "type": "oracle", "dsn": "h:1521/x", "vault": "vault-dev"}
+        ],
+        "applications": [
+            {
+                "name": "acme",
+                "targets": ["appdb-dev-alpha"],
+                "accounts": ["acme_web_user"],
+                "secret_template": SHARED,
+            }
+        ],
+        "defaults": defaults,
+    }
+    if policies is not None:
+        document["policies"] = policies
+    return build_config(document)
+
+
+# ---------------------------------------------------------- the attributes ---
+
+
+def test_an_estate_declaring_no_policy_declares_no_attributes() -> None:
+    """Lenient where `generate.policy_for` refuses: a policy is needed to *draw* a
+    password and not to *apply* one, so an estate that has never declared one goes
+    on applying passwords exactly as it did (#300)."""
+    config = estate()
+
+    attributes = apply.attributes_for(config, config.bindings[0])
+
+    assert attributes == AccountAttributes()
+    assert not attributes.requested()
+
+
+def test_the_unlock_attribute_is_read_off_the_policy() -> None:
+    """§5's opt-in, spelled `account: { unlock_if_locked: true }`."""
+    config = estate(
+        {"app-standard": {"account": {"unlock_if_locked": True}}}, policy="app-standard"
+    )
+
+    assert apply.attributes_for(config, config.bindings[0]).unlock
+
+
+def test_a_policy_that_says_nothing_about_unlocking_does_not_unlock() -> None:
+    """Opt-in, never inferred: the attribute is off unless the file turned it on,
+    and `false` and *unsaid* mean the same thing here."""
+    declined = estate(
+        {"app-standard": {"account": {"unlock_if_locked": False}}}, policy="app-standard"
+    )
+    silent = estate({"app-standard": {"password": {"length": 24}}}, policy="app-standard")
+
+    assert not apply.attributes_for(declined, declined.bindings[0]).unlock
+    assert not apply.attributes_for(silent, silent.bindings[0]).unlock
 
 
 # -------------------------------------------------------------- the source ---
@@ -298,6 +360,35 @@ def test_a_locked_account_is_not_changed() -> None:
     assert outcome is not None
     assert outcome.state == check.LOCKED
     assert "not changed" in outcome.detail
+
+
+def test_a_locked_account_is_told_how_to_have_the_tool_unlock_it() -> None:
+    """The refusal names the opt-in that removes it (#300), because an operator
+    reading it is one config key away from the run they wanted."""
+    outcome = apply.settled_before_acting(user(status="LOCKED", locked=True), source())
+
+    assert outcome is not None
+    assert "unlock_if_locked" in outcome.detail
+
+
+def test_a_locked_account_is_not_settled_where_the_policy_may_unlock_it() -> None:
+    """`unlock` is the *permission*, not the act: the caller unlocks and asks
+    again, so this call has to let the run reach the attribute pass (#300)."""
+    locked = user(status="LOCKED", locked=True)
+
+    assert apply.settled_before_acting(locked, source(), unlock=True) is None
+
+
+def test_an_account_still_locked_after_the_unlock_settles() -> None:
+    """The second ask, with no permission: whatever the attribute pass did, a
+    password must not be set on an account that is still locked. The default is
+    off precisely so this question cannot loop."""
+    locked = user(status="LOCKED", locked=True)
+
+    outcome = apply.settled_before_acting(locked, source())
+
+    assert outcome is not None
+    assert outcome.state == check.LOCKED
 
 
 def test_an_expired_password_is_applied_rather_than_refused() -> None:

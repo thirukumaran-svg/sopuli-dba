@@ -27,6 +27,7 @@ from sopuli.driver.oracle.statements import (
     admissible,
     alter_user_password,
     container_clause,
+    unlock_account,
 )
 from sopuli.driver.protocol import Scope
 from sopuli.exit_codes import ExitCode
@@ -347,3 +348,43 @@ def test_an_identifier_is_quoted_and_printable() -> None:
     which is exactly why it must be safe to put in quotes."""
     assert ACCOUNT.quoted() == '"ACME_WEB_USER"'
     assert str(ACCOUNT) == "ACME_WEB_USER"
+
+
+# ----------------------------------------------------------------- unlocking ---
+
+
+def test_the_unlock_is_the_ddl_and_nothing_else() -> None:
+    """UC-1 §5's first attribute (#300). One statement, both kinds of lock."""
+    assert (
+        unlock_account(ACCOUNT, scope=PDB).reveal() == 'ALTER USER "ACME_WEB_USER" ACCOUNT UNLOCK'
+    )
+
+
+def test_the_unlock_is_never_a_plsql_block() -> None:
+    """Invariant 13 applies to a statement with nothing to hide, and that is the
+    point of asserting it: the habit is what keeps the next one safe, and the
+    next one carries a password."""
+    sql = unlock_account(ACCOUNT, scope=PDB).reveal()
+
+    assert sql.startswith("ALTER USER ")
+    assert not WRAPPERS.search(structure(sql))
+    assert not BINDS.search(structure(sql))
+
+
+def test_the_unlock_has_nothing_to_redact() -> None:
+    """Every other statement in this module hides something; this one does not,
+    and says so by being its own redacted form rather than by omission."""
+    statement = unlock_account(ACCOUNT, scope=PDB)
+
+    assert statement.redacted == statement.reveal()
+    assert REDACTED not in str(statement)
+
+
+def test_the_unlock_takes_the_same_container_clause_as_the_password() -> None:
+    """A common user is one account across the CDB. Unlocking it from the root
+    without the clause -- or from a PDB at all -- would be unlocking something
+    other than what the estate meant."""
+    assert unlock_account(COMMON, scope=ROOT).reveal().endswith(CONTAINER_ALL)
+
+    with pytest.raises(ContainerScopeError):
+        unlock_account(COMMON, scope=PDB)

@@ -14,6 +14,8 @@ until it lands, this package is the interface and its types alone.
 
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
+    ACCOUNT_UNLOCK,
+    ATTRIBUTES,
     CAPABILITIES,
     COMMON_USERS,
     EXPIRE_PASSWORD,
@@ -25,6 +27,8 @@ from sopuli.driver.protocol import (
     UNKNOWN,
     VERIFY_METHODS,
     VERIFY_RESULTS,
+    AccountAttributes,
+    AttributeChange,
     AuthenticationError,
     ChangeResult,
     Credential,
@@ -40,6 +44,8 @@ from sopuli.driver.protocol import (
 
 __all__ = [
     "ACCOUNT_LOCK_STATE",
+    "ACCOUNT_UNLOCK",
+    "ATTRIBUTES",
     "CAPABILITIES",
     "COMMON_USERS",
     "EXPIRE_PASSWORD",
@@ -51,6 +57,8 @@ __all__ = [
     "UNKNOWN",
     "VERIFY_METHODS",
     "VERIFY_RESULTS",
+    "AccountAttributes",
+    "AttributeChange",
     "AuthenticationError",
     "ChangeResult",
     "Credential",

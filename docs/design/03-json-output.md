@@ -1014,6 +1014,15 @@ of one account against one target reads:
 An interrupted one stops partway, and where it stopped tells you exactly which
 recovery from the UC-1 §8 table applies.
 
+`account_unlock` is UC-1 §5's first opt-in attribute (#300) and reads at the head
+of the list, because that is where it happens: an unlock is what makes the
+pre-flight login worth attempting. It is emitted whenever the policy declared the
+attribute, `applied: false` where the account was not locked — a consumer
+inferring "not declared" from "not present" would be reading the policy out of the
+results. `results[].changed` is the union of every mutation on the row, so an
+account that was unlocked and needed no new password is `changed: true` with a
+`password_set` that did not apply.
+
 **`error.category`** — `config`, `selection`, `connectivity`, `authentication`,
 `authorization`, `capability`, `policy`, `vault`, `database`, `lock`, `internal`.
 Categories are stable; `error.code` carries the vendor detail (`ORA-01017`) or

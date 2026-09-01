@@ -297,6 +297,62 @@ policy, each opt-in: profile assignment, account unlock, `PASSWORD_EXPIRE`
 handling, default/temporary tablespace. Each is reported as a separate change so
 the diff stays readable.
 
+### Account unlock, the first attribute (#300)
+
+```yaml
+policies:
+  app-standard:
+    account:
+      unlock_if_locked: true      # default: false
+```
+
+`apply` refuses to change a locked account's password — the statement would
+succeed, the verification could never pass, and the run would end holding a
+database whose password is in no vault stage. That refusal is right and it leaves
+a gap: a locked application account could not be rotated **at all**, and the
+operator unlocked it by hand, outside the tool. With the attribute declared, the
+run issues `ALTER USER … ACCOUNT UNLOCK` first and then does the work.
+
+Four rules, and the first is the one the other three exist to protect:
+
+- **opt-in, declared, never inferred.** Where the policy says nothing — which
+  includes an estate that declares no `policies:` at all — a locked account is
+  reported `LOCKED` exactly as before, and the message names the key that would
+  change that. A tool that unlocked an account because it found one locked would
+  be making a change nobody asked for during a credential rotation.
+- **before the first login, after the guardrails.** A locked account refuses every
+  login, so a pre-flight verification made before the unlock would spend an
+  attempt against the counter §7's margin protects and learn nothing. §4's
+  guardrails run first, because they decide whether this account may be touched at
+  all and an unlock is touching it.
+- **idempotent** (invariant 9). The driver reads the lock state and issues nothing
+  where there is no lock; the action is still reported, with `applied: false`. A
+  consumer inferring "not declared" from "not present" would be reading the policy
+  out of the results.
+- **it changes nothing about the promotion.** The unlock is a change to the
+  database like the password is, and `pending` still waits for every target to
+  confirm (invariant 7).
+
+It reads as its own `actions[]` entry, which is what "reported as a separate
+change" means concretely:
+
+```json
+"actions": [
+  { "kind": "account_unlock", "applied": true,  "detail": "account was locked(timed); unlocked" },
+  { "kind": "verify",         "applied": true,  "detail": "checked whether the database already has this password" },
+  { "kind": "password_set",   "applied": true,  "detail": "changed and verified by login" }
+]
+```
+
+`LOCKED(TIMED)` — what a profile's `FAILED_LOGIN_ATTEMPTS` produces, and the state
+an account whose password has drifted is actually found in — is cleared by the
+same statement as a deliberate lock. The capability is `account_lock_state`.
+
+The other three attributes are #301 (profile assignment, which must not answer
+Q4), #302 (`PASSWORD_EXPIRE`, whose meaning has to be settled first, since setting
+a password already clears an expiry) and #303 (tablespaces, which may belong to
+Q8's provisioning use case instead).
+
 ### What shipped in #259, and what the flags above still describe
 
 The spine is implemented: read the source, set the password, verify, promote per
@@ -696,7 +752,7 @@ of one is the answer to "did the old password stop working just now".
 | ORA-28003 | password verify function rejected it | regenerate (bounded), preserve the server message |
 | ORA-28007 | password cannot be reused | regenerate; never retry the same value |
 | ORA-01017 | invalid credentials | verification failure → drift, not a crash |
-| ORA-28000 | account locked | report `LOCKED`; do not unlock unless policy says so |
+| ORA-28000 | account locked | report `LOCKED`; unlock only where the policy declared it (#300) |
 | ORA-28001 | password expired | distinguish from drift; can be resolved by apply |
 | ORA-28002 | password in grace period | informational, surfaced in `status` |
 | ORA-01031 | insufficient privileges | fail early in pre-flight, name the missing grant |

@@ -13,7 +13,15 @@ from typing import Any
 from sopuli import apply, check
 from sopuli.config.model import Binding
 from sopuli.config.secret_refs import parse_secret_ref
-from sopuli.driver.protocol import FAIL, PASS, SKIPPED, VERIFY_LOGIN, VerifyResult
+from sopuli.driver.protocol import (
+    ACCOUNT_UNLOCK,
+    FAIL,
+    PASS,
+    SKIPPED,
+    VERIFY_LOGIN,
+    AttributeChange,
+    VerifyResult,
+)
 from sopuli.output import apply_view
 from sopuli.payload import CURRENT, PENDING, PREVIOUS
 from sopuli.secrets import Secret
@@ -108,6 +116,64 @@ def test_an_account_nothing_ran_against_reports_no_action() -> None:
             "detail": "account is locked; the password was not changed",
         }
     ]
+
+
+def test_an_attribute_is_a_change_of_its_own_and_comes_first() -> None:
+    """UC-1 §5: *reported as a separate change so the diff stays readable*. First
+    in the list because that is when it happened -- an unlock is what makes the
+    pre-flight login worth attempting (#300)."""
+    entry = apply_view.build_result(
+        binding(),
+        outcome(),
+        source=source(),
+        changed=True,
+        verified_before=attempt(FAIL),
+        attributes=(AttributeChange(ACCOUNT_UNLOCK, changed=True, detail="account was locked"),),
+    )
+
+    assert [action["kind"] for action in entry["actions"]] == [
+        ACCOUNT_UNLOCK,
+        "verify",
+        "password_set",
+        "verify",
+    ]
+
+
+def test_an_attribute_that_needed_nothing_is_still_a_row() -> None:
+    """Invariant 9 for the attributes: a declared one that had nothing to do is
+    `applied: false`, not an absent row. A consumer inferring "not declared" from
+    "not present" would be reading the policy out of the results."""
+    entry = apply_view.build_result(
+        binding(),
+        outcome(),
+        source=source(CURRENT),
+        changed=False,
+        verified_before=attempt(),
+        attributes=(
+            AttributeChange(ACCOUNT_UNLOCK, changed=False, detail="the account is not locked"),
+        ),
+    )
+
+    unlock = next(action for action in entry["actions"] if action["kind"] == ACCOUNT_UNLOCK)
+    assert unlock["applied"] is False
+    assert entry["changed"] is False
+
+
+def test_an_unlocked_account_that_needed_no_password_still_changed() -> None:
+    """`changed` is about the run and the argument is about the DDL: an account
+    this run unlocked changed, and no `password_set` was issued to say so."""
+    entry = apply_view.build_result(
+        binding(),
+        outcome(check.IN_SYNC, "the vault's password is already accepted"),
+        source=source(CURRENT),
+        changed=False,
+        verified_before=attempt(),
+        attributes=(AttributeChange(ACCOUNT_UNLOCK, changed=True, detail="account was locked"),),
+    )
+
+    assert entry["changed"] is True
+    steps = {action["kind"]: action["applied"] for action in entry["actions"]}
+    assert steps["password_set"] is False
 
 
 # -------------------------------------------------------------- the secret ---

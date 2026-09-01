@@ -26,6 +26,13 @@ the run would end holding a database whose password is in no vault stage. That
 is the state invariant 7's ordering exists to prevent, and it is cheaper not to
 enter it than to report it.
 
+Since #300 there is one way past that, and it is not an exception to it: where
+the policy declares §5's ``unlock_if_locked``, the run *removes* the reason the
+change could not be confirmed and then asks the same question again. What may
+never happen is the change going ahead with the lock still there --
+:func:`settled_before_acting` is asked twice for that reason, and its default is
+still to settle.
+
 **The database is asked before it is changed.** Invariant 9 names `apply` as the
 convergent verb -- the one that must report ``changed: false`` on a re-run -- and
 with `--method hash` unavailable (#86, #90) the only way to know whether a change
@@ -68,9 +75,16 @@ from sopuli.check import (
     is_failure,
     is_inconclusive,
 )
-from sopuli.config.model import Binding
+from sopuli.config.model import AccountPolicy, Binding, Config
 from sopuli.config.secret_refs import SecretRef
-from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE, UserState, VerifyResult
+from sopuli.driver.protocol import (
+    FAIL,
+    PASS,
+    UNAVAILABLE,
+    AccountAttributes,
+    UserState,
+    VerifyResult,
+)
 from sopuli.driver.protocol import SKIPPED as VERIFY_SKIPPED
 from sopuli.exit_codes import ExitCode
 from sopuli.payload import CURRENT, PENDING, PREVIOUS, REMOVE, StageLayout, merge, stage_layout
@@ -129,6 +143,7 @@ __all__ = [
     "Source",
     "after_change",
     "already_applied",
+    "attributes_for",
     "counts",
     "exit_code_for",
     "is_confirmed",
@@ -242,12 +257,57 @@ def source_for(document: Any, ref: SecretRef, *, stage: str | None = None) -> So
     )
 
 
+def attributes_for(config: Config, binding: Binding) -> AccountAttributes:
+    """The non-password attributes declared for this account (UC-1 §5, #300).
+
+    The same chain :func:`sopuli.generate.policy_for` reads -- the binding's own
+    ``policy:``, then ``defaults.policy`` -- and **lenient where that one
+    refuses**. A policy is required in order to *draw* a password, because §8 has
+    no default length and inventing one is the thing it exists not to do; it is
+    not required in order to *apply* one, and an estate that has never declared a
+    policy applies passwords today. Refusing here would make an unrelated feature
+    a new precondition on a command that already works.
+
+    So an account with no policy, or one whose policy declares no ``account:``
+    block, gets :class:`~sopuli.driver.protocol.AccountAttributes` with nothing
+    set -- which is the same answer as declaring every attribute ``false``, and
+    the same behaviour this command had before attributes existed.
+
+    A name that names nothing is not handled here either, and does not need to be:
+    :mod:`sopuli.config.references` refuses a dangling ``policy:`` when the file
+    is read, which is the earlier and better moment.
+    """
+    name = binding.policy if binding.policy is not None else config.defaults.policy
+    if name is None:
+        return AccountAttributes()
+    found = next((policy for policy in config.policies if policy.name == name), None)
+    if found is None:
+        return AccountAttributes()
+    return _attributes(found.account)
+
+
+def _attributes(policy: AccountPolicy) -> AccountAttributes:
+    """One ``account:`` block as what the driver is asked to enforce.
+
+    ``is True`` rather than a truth test, and the difference is the whole shape of
+    :class:`~sopuli.config.model.AccountPolicy`: its fields are ``None`` when the
+    file said nothing and ``False`` when the file said no. Both mean *do not*, and
+    keeping them distinguishable in the config layer is what lets a later
+    precedence question be asked at all.
+    """
+    return AccountAttributes(unlock=policy.unlock_if_locked is True)
+
+
 def settled_before_acting(
-    user: UserState | None, source: Source | None, *, requested: str | None = None
+    user: UserState | None,
+    source: Source | None,
+    *,
+    requested: str | None = None,
+    unlock: bool = False,
 ) -> Outcome | None:
     """The outcome for an account nothing should be issued against, or ``None``.
 
-    Three cases, in this order, and the order is the same argument
+    Four cases, in this order, and the order is the same argument
     :func:`sopuli.check.decide` makes about status outranking the attempt: what
     the database says about the account is the *cause* of whatever a login would
     have seen.
@@ -265,10 +325,15 @@ def settled_before_acting(
     * **No account.** ``ACCOUNT_MISSING``, and it is not created: Q8 puts
       provisioning in its own use case, and invariant 5 makes the config a
       whitelist of what may be *touched* rather than a list of what should exist.
-    * **A locked account.** ``LOCKED``, and no DDL. See the module docstring: the
-      change would succeed and could never be confirmed, which is the one state
-      the ordering in UC-1 §3 exists to keep a run out of. Unlocking is an
-      opt-in attribute (§5) and is not in this build.
+    * **A locked account, where nothing may unlock it.** ``LOCKED``, and no DDL.
+      See the module docstring: the change would succeed and could never be
+      confirmed, which is the one state the ordering in UC-1 §3 exists to keep a
+      run out of. ``unlock`` is §5's opt-in attribute having been declared for
+      this account (#300), and it is the *permission* rather than the act: the
+      caller unlocks and asks again, so this function is what decides both
+      whether the estate may be acted on and whether the unlock got it there. The
+      default is off, because an account that was locked and is still locked when
+      the question is asked again must settle rather than loop.
     * **A rollback with a rotation in flight.** ``PENDING_APPLY``. Rolling back
       while a `pending` is staged leaves it staged, and the next `apply` moves
       the estate forward with it -- undoing the undo, unattended. Last of the
@@ -287,11 +352,12 @@ def settled_before_acting(
             ACCOUNT_MISSING,
             "the config declares this account; the database has no such user",
         )
-    if user.locked:
+    if user.locked and not unlock:
         return Outcome(
             LOCKED,
             f"account is {user.status.lower()}; the password was not changed, because a "
-            f"locked account cannot confirm one",
+            f"locked account cannot confirm one -- declare `account: {{ unlock_if_locked: "
+            f"true }}` on this account's policy to have `apply` unlock it first",
         )
     if source.stage == PREVIOUS and source.pending_staged:
         # A rollback underneath a rotation in flight. The `pending` would survive

@@ -792,11 +792,12 @@
     },
     "account_policy": {
       "type": "object",
-      "description": "What the tool may do to the account itself.",
+      "description": "What the tool may do to the account itself, beyond its password. Every attribute here is opt-in and off by default (§8).",
       "additionalProperties": false,
       "properties": {
         "unlock_if_locked": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "`creds apply` unlocks a locked account before setting its password (UC-1 §5). Opt-in: without this, a locked account is reported LOCKED and its password is left alone."
         }
       }
     },

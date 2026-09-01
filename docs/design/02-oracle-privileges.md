@@ -540,6 +540,11 @@ ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
   account is a `C##` common user; otherwise the tool refuses rather than letting
   Oracle produce a confusing error. An **application** root or PDB is refused
   either way, pending a real one to verify against — see UC-1 §6.2.
+- **`ALTER USER "ORDERS_APP" ACCOUNT UNLOCK` is built the same way** (#300, UC-1
+  §5's first attribute): the same identifier rules, the same container clause, and
+  issued directly rather than wrapped, even though it carries nothing secret. The
+  habit is what keeps the next statement safe, and the next one carries a
+  password. It needs no grant beyond §2's `ALTER USER`.
 - **The built statement redacts itself.** It carries a password, so it is as
   sensitive as one: every stringification is `ALTER USER "X" IDENTIFIED BY ***`,
   which is also the form `--dry-run` prints, and the plaintext is reachable only

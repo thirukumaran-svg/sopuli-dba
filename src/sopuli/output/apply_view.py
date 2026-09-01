@@ -7,11 +7,13 @@ Same arrangement as :mod:`sopuli.output.check_view` and
 **Two things are reported that `check` has no counterpart for**, and both are
 consequences of `apply` being the verb that commits:
 
-* ``actions[]`` carries up to three entries per account -- the verification
-  before, the ``password_set``, and the verification after -- because UC-1 §5's
-  flow is a sequence and an operator diagnosing a partial rotation needs to know
-  which step of it stopped. A single entry would make "we did not need to change
-  it" and "we changed it and could not confirm it" the same row.
+* ``actions[]`` carries one entry per step that ran -- any §5 attribute the
+  policy declared, the verification before, the ``password_set``, and the
+  verification after -- because UC-1 §5's flow is a sequence and an operator
+  diagnosing a partial rotation needs to know which step of it stopped. A single
+  entry would make "we did not need to change it" and "we changed it and could
+  not confirm it" the same row, and §5 asks for each attribute to be *reported as
+  a separate change so the diff stays readable* (#300).
 * a promotion is reported on **every account in the document it promoted**, with
   the version it produced. That version is what a later `check` or a resumed
   rotation is diagnosed from, and one account's row is not the place to hide it.
@@ -32,7 +34,7 @@ from sopuli.apply import CONFIRMED, Source, counts, is_confirmed, is_failure, is
 from sopuli.check import ACCOUNT_MISSING, ERROR, ROLLOVER_ACTIVE, Outcome
 from sopuli.config.model import Binding
 from sopuli.driver.guardrails import Refusal
-from sopuli.driver.protocol import FAIL, PASS, VerifyResult
+from sopuli.driver.protocol import FAIL, PASS, AttributeChange, VerifyResult
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
@@ -64,6 +66,7 @@ def build_result(
     promoted_to: int | None = None,
     mechanism: str | None = None,
     overridden: Sequence[Refusal] = (),
+    attributes: Sequence[AttributeChange] = (),
     duration_ms: int | None = None,
     error: Error | None = None,
 ) -> dict[str, Any]:
@@ -74,6 +77,13 @@ def build_result(
     and by finding it already correct, and those are the two answers invariant 9
     exists to keep apart. `apply` is the convergent verb, so the second run of a
     successful rotation reports ``IN_SYNC`` with ``changed: false``.
+
+    ``attributes`` is what UC-1 §5's opt-in attributes did (#300), one entry each,
+    and the emitted ``changed`` is **the union of it and the DDL**: the argument
+    is about the password and the field is about the run, so an account that was
+    unlocked and needed no new password reports ``changed: true`` with no
+    ``password_set`` that applied. Keeping the argument narrow is what stops the
+    action list from claiming a statement that was never issued.
 
     ``promoted_to`` is the document version the promotion produced, and it is
     written on **every** account in that document -- they shared one
@@ -95,7 +105,7 @@ def build_result(
         "account": binding.account,
         "target": binding.target,
         "state": outcome.state,
-        "changed": changed,
+        "changed": changed or any(change.changed for change in attributes),
     }
     secret = _secret(binding, source=source, version=version, promoted_to=promoted_to)
     if secret is not None:
@@ -105,6 +115,7 @@ def build_result(
         changed=changed,
         verified_before=verified_before,
         promoted_to=promoted_to,
+        attributes=attributes,
     )
     if outcome.verification is not None:
         entry["verification"] = _verification(outcome.verification)
@@ -146,6 +157,7 @@ def _actions(
     changed: bool,
     verified_before: VerifyResult | None,
     promoted_to: int | None,
+    attributes: Sequence[AttributeChange] = (),
 ) -> list[dict[str, Any]]:
     """UC-1 §5's flow, as the steps that actually ran.
 
@@ -154,15 +166,29 @@ def _actions(
     whether it succeeded -- the same rule `check` states about a login the
     lockout guard declined, and the reason a `verify` with ``applied: false`` is
     a meaningful row rather than a contradiction.
+
+    **Attributes come first**, because that is when they happen: an unlock is
+    what makes the pre-flight login worth attempting. Each carries the driver's
+    own word for it, which is the document's ``action_kind`` -- the protocol
+    spells them that way so that adding one cannot mean teaching this function
+    about it.
     """
-    actions: list[dict[str, Any]] = []
+    actions: list[dict[str, Any]] = [
+        {"kind": change.attribute, "applied": change.changed, "detail": change.detail}
+        for change in attributes
+    ]
     if verified_before is None and not changed:
-        # Nothing ran: a locked account, a missing one, an empty vault, a target
-        # that could not be reached. `none` is in the schema's `action_kind` enum
-        # for exactly this, and it is the honest entry -- a `password_set` with
-        # `applied: false` would say the run got as far as considering the
-        # statement, and it did not.
-        return [{"kind": "none", "applied": False, "detail": outcome.detail}]
+        # Nothing further ran: a locked account, a missing one, an empty vault, a
+        # target that could not be reached. `none` is in the schema's
+        # `action_kind` enum for exactly this, and it is the honest entry -- a
+        # `password_set` with `applied: false` would say the run got as far as
+        # considering the statement, and it did not.
+        #
+        # Appended rather than returned alone, because an attribute above it did
+        # run: the row says why nothing *else* did, which is what the reader of a
+        # `LOCKED` row that also unlocked something needs.
+        actions.append({"kind": "none", "applied": False, "detail": outcome.detail})
+        return actions
     if verified_before is not None:
         actions.append(
             {

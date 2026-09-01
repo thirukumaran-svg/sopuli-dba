@@ -750,8 +750,20 @@ def _verify_policy() -> Schema:
 def _account_policy() -> Schema:
     return _object(
         keys=policies.ACCOUNT_KEYS,
-        types={"unlock_if_locked": BOOLEAN},
-        description="What the tool may do to the account itself.",
+        types={
+            "unlock_if_locked": {
+                **BOOLEAN,
+                "description": (
+                    "`creds apply` unlocks a locked account before setting its password "
+                    "(UC-1 §5). Opt-in: without this, a locked account is reported LOCKED "
+                    "and its password is left alone."
+                ),
+            }
+        },
+        description=(
+            "What the tool may do to the account itself, beyond its password. Every "
+            "attribute here is opt-in and off by default (§8)."
+        ),
     )
 
 

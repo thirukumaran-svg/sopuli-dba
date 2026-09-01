@@ -227,6 +227,17 @@ class _Session:
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         return ChangeResult(changed=True)
 
+    def apply_attributes(
+        self, account: str, attributes: protocol.AccountAttributes
+    ) -> tuple[protocol.AttributeChange, ...]:
+        if not attributes.unlock:
+            return ()
+        return (
+            protocol.AttributeChange(
+                protocol.ACCOUNT_UNLOCK, changed=False, detail="the account is not locked"
+            ),
+        )
+
     def verify_password(
         self,
         account: str,

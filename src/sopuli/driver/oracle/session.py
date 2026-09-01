@@ -57,6 +57,7 @@ from sopuli.driver.oracle.statements import (
     Identifier,
     alter_user_password,
     finish_rollover,
+    unlock_account,
 )
 from sopuli.driver.oracle.verification import (
     DEFAULT_MARGIN,
@@ -66,11 +67,15 @@ from sopuli.driver.oracle.verification import (
     skipped_detail,
 )
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK_STATE,
+    ACCOUNT_UNLOCK,
     OFFLINE_VERIFY,
     PASSWORD_ROLLOVER,
     SKIPPED,
     UNAVAILABLE,
     VERIFY_LOGIN,
+    AccountAttributes,
+    AttributeChange,
     ChangeResult,
     Credential,
     DriverError,
@@ -150,8 +155,9 @@ class OracleSession:
     (#180). ``tests/driver/test_oracle_verify.py`` asserts the ``isinstance``,
     so the claim is checked rather than asserted in prose.
 
-    ``apply_attributes`` is still absent, and still deliberately: a method on a
-    Protocol is a demand on every implementation, and nothing calls that one yet.
+    ``apply_attributes`` arrived with #300, which gave it its first caller --
+    `creds apply` enforcing UC-1 §5's account unlock. It was absent until then on
+    the rule that a method on a Protocol is a demand on every implementation.
     """
 
     connection: Any
@@ -312,6 +318,75 @@ class OracleSession:
                 raise from_error(error).as_error() from error
 
         return ChangeResult(changed=True, detail="password set")
+
+    def apply_attributes(
+        self, account: str, attributes: AccountAttributes
+    ) -> tuple[AttributeChange, ...]:
+        """Enforce UC-1 §5's opt-in account attributes (#300).
+
+        One entry per attribute the caller declared, whether or not it needed
+        doing. Nothing is inferred: an ``AccountAttributes`` with nothing set
+        returns an empty tuple and reads nothing, so an estate that declares no
+        attributes pays no round trip for them.
+
+        **Read-write is refused here as it is in** :meth:`set_password`, and for
+        the same reason: this is a mutating caller, and #177 put the check in the
+        mutating callers' hands so that `creds check` keeps working against a
+        physical standby.
+        """
+        if not attributes.requested():
+            return ()
+
+        require_read_write(self.scope(), target=self.target.name)
+
+        changes: list[AttributeChange] = []
+        if attributes.unlock:
+            changes.append(self._unlock(account))
+        return tuple(changes)
+
+    def _unlock(self, account: str) -> AttributeChange:
+        """``ALTER USER … ACCOUNT UNLOCK``, or report that there was no lock.
+
+        **The state is read first, and that is invariant 9** -- the same argument
+        :meth:`finish_rollover` makes: Oracle accepts the statement against an
+        already-open account silently, so a driver that just issued it would
+        report a change on every run of an estate that declares the attribute.
+
+        The capability is checked even though it is structural on Oracle
+        (``ACCOUNT_STATUS`` and ``ALTER USER … ACCOUNT LOCK`` exist on every
+        supported release), because what makes it structural is a fact about this
+        product recorded in one place, and a caller reading this method should
+        not have to know which of the two kinds of capability it is.
+        """
+        require_capability(self.scope(), ACCOUNT_LOCK_STATE, target=self.target.name)
+
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'account "{account}" does not exist on this target',
+                hint=(
+                    "the tool does not create accounts (Q8); `creds check` reports this "
+                    "as ACCOUNT_MISSING rather than failing"
+                ),
+            )
+        if not state.locked:
+            return AttributeChange(
+                ACCOUNT_UNLOCK, changed=False, detail="the account is not locked"
+            )
+
+        # `status` is carried into the detail because the two locks an operator
+        # cares about are different events: `LOCKED` is somebody's decision and
+        # `LOCKED(TIMED)` is the failed-login limit, which says the password in
+        # the vault had already stopped working somewhere.
+        was = state.status.lower()
+        statement = unlock_account(Identifier(state.name), scope=self.scope())
+        with self.connection.cursor() as cursor:
+            try:
+                cursor.execute(statement.reveal())
+            except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+                raise from_error(error).as_error() from error
+
+        return AttributeChange(ACCOUNT_UNLOCK, changed=True, detail=f"account was {was}; unlocked")
 
     def verify_password(
         self,

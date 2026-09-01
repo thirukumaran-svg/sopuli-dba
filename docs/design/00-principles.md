@@ -27,7 +27,7 @@ Session
   describe_user(account) -> UserState | none
   set_password(account, secret) -> ChangeResult
   verify_password(account, secret, method) -> VerifyResult
-  apply_attributes(account, attrs) -> ChangeResult
+  apply_attributes(account, attrs) -> AttributeChange[]
   close()
 ```
 
@@ -47,10 +47,11 @@ refinement of the same rule and none of them relaxes it:
 - **`user_exists` is `describe_user(...) is not none`.** A caller asking whether
   an account exists asks what it is in the next breath; UC-1 §5 step 3 is one
   step, not two.
-- **`opts` has no members yet, so it has no type yet.** It is where UC-1 §5's
-  opt-in attributes will go. An untyped bag now would accept a misspelled
-  `container_clase: ALL` and silently do nothing, which is the failure
-  `01-configuration.md` §10 exists to prevent.
+- **`opts` became `apply_attributes`' own `attrs`** (#300). It is where UC-1 §5's
+  opt-in attributes go, and it is typed — one field per attribute. An untyped bag
+  would accept a misspelled `container_clase: ALL` and silently do nothing, which
+  is the failure `01-configuration.md` §10 exists to prevent. `set_password` grew
+  no second argument: see below.
 
 `connect` is implemented (#176) — `OracleDriver` in
 `sopuli/driver/oracle/session.py`, which is also the module the driver registry
@@ -92,13 +93,25 @@ Three further decisions came with it, each a fork rather than a detail:
   tool's JSON, the database's own trail and the vault's metadata; a session that
   appears in the trail unlabelled is the one somebody has to explain later.
 
-The rest of `sopuli/driver/protocol.py` is still types and vocabulary only. `apply_attributes` is the one
-operation above that the code deliberately does **not** declare — the same seam
-P2 drew around `health` until #216 gave it a caller. A method on the protocol is a demand on every
-implementation, so declaring one nothing calls would oblige the Oracle driver to
-write a body for a caller that does not exist; it arrives with `creds apply`'s
-attributes. `Scope` is the run document's `scope` object minus `labels`, which
-belong to the config rather than to anything a driver can observe.
+`apply_attributes` was the one operation above that the code deliberately did
+**not** declare — the same seam P2 drew around `health` until #216 gave it a
+caller. A method on the protocol is a demand on every implementation, so
+declaring one nothing calls would oblige the Oracle driver to write a body for a
+caller that does not exist. **It arrived with #300**, the first of UC-1 §5's
+attributes, and it took two refinements of the sketch with it:
+
+- **`attrs` is a typed `AccountAttributes`, one field per attribute** — never a
+  mapping. `01-configuration.md` §10's rule: a bag would accept a misspelled key,
+  do nothing, and report that it had done nothing wrong.
+- **it returns one `AttributeChange` per attribute**, not the single
+  `ChangeResult` the sketch shows. §5 requires each attribute to be *reported as a
+  separate change so the diff stays readable*, and one result for four attributes
+  could not say which of them moved. `set_password` keeps its own `ChangeResult`
+  and grew no `opts`: a password set that also unlocked would be exactly the one
+  result describing two mutations that §5 rules out.
+
+`Scope` is the run document's `scope` object minus `labels`, which belong to the
+config rather than to anything a driver can observe.
 
 ### Capability negotiation
 

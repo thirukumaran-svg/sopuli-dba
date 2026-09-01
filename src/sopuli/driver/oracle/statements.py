@@ -358,6 +358,30 @@ def alter_user_password(
     )
 
 
+def unlock_account(account: Identifier, *, scope: Scope) -> Statement:
+    """``ALTER USER "…" ACCOUNT UNLOCK`` -- the first of UC-1 §5's attributes (#300).
+
+    Clears ``LOCKED`` and ``LOCKED(TIMED)`` alike: Oracle has one statement for
+    both, and the timed lock a failed-login limit produced is exactly the one an
+    application account is most often found in.
+
+    Nothing secret is in it, so invariants 11 and 14 have nothing to say -- and
+    invariant 13 still does. It is issued directly, for
+    :func:`finish_rollover`'s reason: a block containing DDL is an ordinary block
+    whose own text is retained verbatim, so wrapping is the thing that exposes.
+    There is nothing here to expose, and it is written the same way anyway,
+    because the habit is what keeps the next one safe.
+
+    The container clause is the same one the password statement gets, and that is
+    not a convenience: a ``C##`` account is one account across the CDB, so
+    unlocking it from a PDB would either fail or unlock something other than what
+    the estate meant. :func:`container_clause` already refuses both.
+    """
+    clause = container_clause(account, scope)
+    text = f"ALTER USER {account.quoted()} ACCOUNT UNLOCK{clause}"
+    return Statement(text, redacted=text)
+
+
 def finish_rollover(account: Identifier, *, scope: Scope) -> Statement:
     """``ALTER USER "…" EXPIRE PASSWORD ROLLOVER PERIOD`` -- end the window now.
 

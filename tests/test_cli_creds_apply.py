@@ -33,12 +33,15 @@ from sopuli.clock import utc_now
 from sopuli.config.model import Vault
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.protocol import (
+    ACCOUNT_UNLOCK,
     EXPIRE_PASSWORD,
     FAIL,
     PASS,
     PASSWORD_ROLLOVER,
     SKIPPED,
     VERIFY_LOGIN,
+    AccountAttributes,
+    AttributeChange,
     ChangeResult,
     PrivilegeAudit,
     Scope,
@@ -117,6 +120,21 @@ ASSERTING_CONFIG = CONFIG.replace(
     "    labels: { env: prod, tenant: beta }\n    oracle: { scope: pdb, container: BETA }",
 )
 
+#: The same estate, opted in to UC-1 §5's account unlock (#300). Opt-in is the
+#: whole rule, so the config that declares it has to be a separate one: `CONFIG`
+#: above declares no policy at all, which is the case that must go on refusing to
+#: touch a locked account.
+UNLOCKING_CONFIG = (
+    CONFIG
+    + """policies:
+  app-standard:
+    account:
+      unlock_if_locked: true
+defaults:
+  policy: app-standard
+"""
+)
+
 LIVE = "Correct-Horse-Battery-9"
 STAGED = "Vertical-Anchor-Marble-4"
 
@@ -163,6 +181,10 @@ class FakeSession:
         self.capabilities = capabilities
         self.rollover_refusal = rollover_refusal
         self.attempts: list[tuple[str, str]] = []
+        #: Accounts this session actually issued ``ACCOUNT UNLOCK`` for, which is
+        #: not the same list as the ones it was asked about -- invariant 9 for the
+        #: attributes is that an account already open is not touched.
+        self.unlocked: list[str] = []
         self.budgets: list[int] = []
         self.changed: list[tuple[str, str]] = []
         self.finished: list[str] = []
@@ -201,6 +223,30 @@ class FakeSession:
             and found.name not in self.finished
         )
         return replace(found, rollover_active=opened)
+
+    def apply_attributes(
+        self, account: str, attributes: AccountAttributes
+    ) -> tuple[AttributeChange, ...]:
+        """The real driver's shape: read the state, act only where it differs.
+
+        The lock is *modelled* rather than scripted, the way the rollover window
+        above is, because the command reads the account back afterwards and the
+        bug worth catching is it acting on the state from before.
+        """
+        if not attributes.unlock:
+            return ()
+        found = self.users.get(account.upper())
+        if found is None or not found.locked:
+            return (
+                AttributeChange(ACCOUNT_UNLOCK, changed=False, detail="the account is not locked"),
+            )
+        self.unlocked.append(account.upper())
+        self.users[account.upper()] = replace(found, locked=False, status="OPEN")
+        return (
+            AttributeChange(
+                ACCOUNT_UNLOCK, changed=True, detail=f"account was {found.status.lower()}; unlocked"
+            ),
+        )
 
     def require_rollover(self, account: str) -> None:
         # The real driver raises for a missing account before it looks at
@@ -532,6 +578,113 @@ def test_a_locked_account_is_not_changed(
     assert harness["sessions"][0].changed == []
     assert harness["sessions"][0].attempts == []
     assert check.LOCKED in result.output
+
+
+def test_a_locked_account_is_left_locked_where_nothing_declared_otherwise(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Opt-in, never inferred (#300). An estate that has not asked for the unlock
+    gets the refusal it had before, and the message names the key that changes
+    it."""
+    harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert harness["sessions"][0].unlocked == []
+    assert "unlock_if_locked" in result.output
+
+
+# ------------------------------------------------------------ the attributes ---
+
+
+def test_a_locked_account_is_unlocked_and_then_rotated(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The case the tool could not serve at all (#267): `apply` refuses to change
+    a locked account's password, so a locked application account had to be
+    unlocked by hand. With §5's attribute declared, the run removes the reason and
+    goes on to do the work."""
+    harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
+    result = run(runner, write_config(UNLOCKING_CONFIG), "--select", "tenant=alpha")
+
+    session = harness["sessions"][0]
+    assert session.unlocked == ["ACME_WEB_USER"]
+    assert session.changed == [("ACME_WEB_USER", STAGED)]
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+def test_the_unlock_happens_before_the_first_login(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A locked account refuses every login, so a pre-flight verification made
+    before the unlock would spend an attempt to learn nothing -- against the
+    counter UC-1 §7's margin exists to protect."""
+    harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
+    run(runner, write_config(UNLOCKING_CONFIG), "--select", "tenant=alpha")
+
+    session = harness["sessions"][0]
+    assert session.unlocked == ["ACME_WEB_USER"]
+    assert session.attempts, "the run should still have verified after unlocking"
+
+
+def test_the_unlock_is_promoted_only_once_every_target_confirmed(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Nothing about the attribute weakens invariant 7: the unlock is a change to
+    the database, and the vault still waits for the verification."""
+    harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
+    run(runner, write_config(UNLOCKING_CONFIG), "--select", "tenant=alpha")
+
+    body = stored(harness["store"], "apps/acme/appdb-alpha")
+    assert body["DB_CREDENTIALS"]["acme_web_user"] == STAGED
+
+
+def test_an_account_that_is_not_locked_is_not_unlocked(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """Invariant 9 for the attributes. The row is still emitted -- a consumer
+    inferring "not declared" from "not present" would be reading the policy out of
+    the results -- and it says the step did not run.
+
+    Validated as well as read, because `account_unlock` is a value in the schema's
+    `action_kind` enum that nothing emitted until now."""
+    harness = estate()
+    result = run(
+        runner, write_config(UNLOCKING_CONFIG), "--select", "tenant=alpha", "--output", "json"
+    )
+
+    assert harness["sessions"][0].unlocked == []
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    entry = body["results"][0]
+    unlock = next(action for action in entry["actions"] if action["kind"] == ACCOUNT_UNLOCK)
+    assert unlock["applied"] is False
+
+
+def test_the_plan_says_the_run_may_unlock(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Invariant 8: the plan comes first, and a mutation the run may make has to
+    be in it. An estate that declared nothing must not imply it might."""
+    estate()
+    opted = run(runner, write_config(UNLOCKING_CONFIG), "--dry-run", "--output", "json")
+    plain = run(runner, write_config(CONFIG), "--dry-run", "--output", "json")
+
+    assert ACCOUNT_UNLOCK in document(opted)["plan"]["units"][0]["intent"]
+    assert ACCOUNT_UNLOCK not in document(plain)["plan"]["units"][0]["intent"]
+
+
+def test_the_dry_run_unlocks_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Invariant 8's other half: print the plan, take no lock, write nothing --
+    and an attribute is a write like any other."""
+    harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
+    run(runner, write_config(UNLOCKING_CONFIG), "--dry-run")
+
+    assert harness["sessions"] == []
 
 
 def test_a_missing_account_is_reported_and_not_created(

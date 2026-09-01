@@ -108,9 +108,12 @@ from sopuli.driver.oracle.client import (
 from sopuli.driver.oracle.verification import DEFAULT_MARGIN
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
+    ACCOUNT_UNLOCK,
     FAIL,
     PASS,
     VERIFY_LOGIN,
+    AccountAttributes,
+    AttributeChange,
     DriverError,
     UnsupportedCapabilityError,
     UserState,
@@ -2344,7 +2347,9 @@ def creds_apply(
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="applying a password")
 
-    plan = plan_builder.build(config, intent=["verify", "password_set", "vault_promote"])
+    plan = plan_builder.build(
+        config, intent=[*_attribute_intent(config), "verify", "password_set", "vault_promote"]
+    )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
     document.plan = plan.as_json()
     # `--confirm` already means "proceed without asking" here -- it is what
@@ -2431,7 +2436,10 @@ def creds_apply(
     document.lock = build_lock_section(manager)
     document.results = [_applied_json(record, promotions) for record in applied]
     states = [record.outcome.state for record in applied]
-    changed = sum(1 for record in applied if record.changed)
+    # `mutated`, not `changed`: an account this run unlocked and did not need to
+    # re-password changed, and a summary counting only the DDL would call a run
+    # that touched the estate an unchanged one (#300).
+    changed = sum(1 for record in applied if record.mutated)
     if stolen is not None:
         # `sopuli.lock.errors` leaves this split to the command, because only the
         # command knows what it had applied: 7 says nothing happened, which is
@@ -2455,7 +2463,7 @@ def creds_apply(
             promotable=any(one.promotable for one in promotions.values()),
         )
     document.finish(code, summarise_apply(states, changed=changed))
-    rows = [(record.binding, record.outcome, record.changed) for record in applied]
+    rows = [(record.binding, record.outcome, record.mutated) for record in applied]
     promoted = sum(1 for one in promotions.values() if one.version is not None)
     # Exit 4's whole purpose is to point at a remedy (P5, UC-1 §5), so the run
     # that earns it says what to type -- narrowed the way this run was narrowed,
@@ -2501,10 +2509,18 @@ class _Applied:
     binding: Binding
     source: Source | None
     outcome: check_states.Outcome
+    #: Whether this run issued the ``ALTER USER … IDENTIFIED BY``. Narrower than
+    #: the document's ``results[].changed``, which is any mutation at all -- see
+    #: :attr:`mutated`, and :func:`sopuli.output.apply_view.build_result`, which
+    #: is where the two are reconciled.
     changed: bool
     verified_before: Any | None = None
     version: int | None = None
     rollover: dict[str, Any] | None = None
+    #: UC-1 §5's opt-in attributes, one entry per attribute the policy declared
+    #: (#300). Empty on every estate that declares none, which is every estate
+    #: that has not opted in.
+    attributes: tuple[AttributeChange, ...] = ()
     #: §4 guardrails `--force` waived for this account (#286). Empty on every
     #: ordinary run, which is the point: §4 requires the override to survive the
     #: waiving, so the row carries what was gone past rather than merely that the
@@ -2512,6 +2528,17 @@ class _Applied:
     overridden: tuple[guardrails.Refusal, ...] = ()
     duration_ms: int | None = None
     error: Error | None = None
+
+    @property
+    def mutated(self) -> bool:
+        """Whether this run changed anything about this account at all.
+
+        The run-level count's question, and not :attr:`changed`'s: an account
+        that was unlocked and whose password was already correct changed, and a
+        summary that counted only the DDL would report a run that mutated the
+        estate as having done nothing.
+        """
+        return self.changed or any(change.changed for change in self.attributes)
 
 
 @dataclass(frozen=True)
@@ -2787,6 +2814,10 @@ def _apply_target(
                     selection=selection,
                     force=force,
                     requested=requested,
+                    # Resolved per binding rather than per run: two accounts on
+                    # one target can sit on different policies, and only one of
+                    # them may have opted into an attribute (#300).
+                    attributes=apply_states.attributes_for(config, binding),
                 )
             )
     finally:
@@ -2805,6 +2836,7 @@ def _apply_one(
     strategy: str | None,
     declared: frozenset[str],
     selection: Selection,
+    attributes: AccountAttributes,
     force: bool = False,
     requested: str | None = None,
 ) -> _Applied:
@@ -2833,6 +2865,12 @@ def _apply_one(
     estate now" into a footnote and apply to the next account anyway. So it is
     re-raised ahead of the catch-all, and the run ends.
 
+    **UC-1 §5's attributes are enforced before the first login** (#300), and only
+    where the policy declared one. Before, because an unlock is what makes the
+    login worth attempting at all -- a locked account refuses every one of them --
+    and after the guardrail review, because §4 decides whether this account may be
+    touched and an unlock is touching it.
+
     **A guardrail refusal is a `SKIPPED` row and never an error** (§4, #286). It
     is the one case where the tool declining to act is the tool working: the run
     does the rest of its job and the account carries its reason. ``declared`` is
@@ -2844,9 +2882,12 @@ def _apply_one(
     started = time.monotonic()
     before = None
     overridden: tuple[guardrails.Refusal, ...] = ()
+    enforced: tuple[AttributeChange, ...] = ()
     try:
         user = session.describe_user(binding.account)
-        settled = apply_states.settled_before_acting(user, source, requested=requested)
+        settled = apply_states.settled_before_acting(
+            user, source, requested=requested, unlock=attributes.unlock
+        )
         if settled is not None:
             return _Applied(binding, source, settled, changed=False, duration_ms=_elapsed(started))
         if user is None or source is None:
@@ -2880,6 +2921,29 @@ def _apply_one(
             )
         overridden = review.overridden
 
+        if attributes.requested():
+            # The driver decides what still needs doing and reports a row either
+            # way, which is where invariant 9 lives for these: an account that is
+            # already unlocked is `changed: false` rather than an absent action.
+            enforced = session.apply_attributes(user.name, attributes)
+            if any(change.changed for change in enforced):
+                user = session.describe_user(binding.account) or user
+            # Asked again, and this time with no permission to unlock. The first
+            # call let the run *reach* the attribute pass; this one is about the
+            # state that pass left behind, and an account still locked here is one
+            # whose password must not be changed after all.
+            blocked = apply_states.settled_before_acting(user, source, requested=requested)
+            if blocked is not None:
+                return _Applied(
+                    binding,
+                    source,
+                    blocked,
+                    changed=False,
+                    attributes=enforced,
+                    overridden=overridden,
+                    duration_ms=_elapsed(started),
+                )
+
         regime = strategy or strategies.default_for(session.scope(), user)
         before = session.verify_password(
             user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
@@ -2893,6 +2957,7 @@ def _apply_one(
                 changed=False,
                 verified_before=before,
                 rollover=_rollover_json(user),
+                attributes=enforced,
                 # Reported on the no-op path too. The waiver was granted and the
                 # tool went on to touch an account §4 would have refused -- that
                 # it turned out to need no change is a fact about the estate, not
@@ -2939,9 +3004,13 @@ def _apply_one(
             check_states.Outcome(check_states.ERROR, reported.message),
             changed=False,
             verified_before=before,
-            # Empty where the failure came before the review, which is why it is
-            # initialised above rather than assigned only on the path that runs.
+            # Empty where the failure came before the review, which is why both
+            # are initialised above rather than assigned only on the path that
+            # runs. An attribute that was enforced before the failure stays on the
+            # row: it happened, and a row that dropped it would leave a mutation
+            # this run made in no document at all.
             overridden=overridden,
+            attributes=enforced,
             duration_ms=_elapsed(started),
             error=reported,
         )
@@ -2954,8 +3023,27 @@ def _apply_one(
         verified_before=before,
         rollover=_rollover_json(after_user),
         overridden=overridden,
+        attributes=enforced,
         duration_ms=_elapsed(started),
     )
+
+
+def _attribute_intent(config: Config) -> list[str]:
+    """UC-1 §5's attributes this run may enforce, for the plan (#300).
+
+    ``intent`` applies to every unit -- :func:`sopuli.plan.build` is explicit
+    about that -- and an attribute is declared per policy, so what this adds is
+    what the *run* may do rather than what it will do to each account. That is
+    already what an intent is: `password_set` is listed by every apply and issued
+    only where the database does not already hold the password.
+
+    Emitted only where something declared it, so an estate that has opted into
+    nothing produces exactly the plan it produced before. That is the half worth
+    getting right: `--dry-run` on an estate that would unlock an account has to
+    say so, and one that would not must not imply it might.
+    """
+    attributes = [apply_states.attributes_for(config, binding) for binding in config.bindings]
+    return [ACCOUNT_UNLOCK] if any(one.unlock for one in attributes) else []
 
 
 def _declared_accounts(run: Invocation) -> frozenset[str]:
@@ -3518,6 +3606,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         promoted_to=None if promotion is None else promotion.version,
         mechanism=None if promotion is None else promotion.mechanism,
         overridden=record.overridden,
+        attributes=record.attributes,
         duration_ms=record.duration_ms,
         error=record.error,
     )
@@ -4004,7 +4093,14 @@ def creds_rotate(
 
     plan = plan_builder.build(
         config,
-        intent=["generate", "vault_write_pending", "verify", "password_set", "vault_promote"],
+        intent=[
+            "generate",
+            "vault_write_pending",
+            *_attribute_intent(config),
+            "verify",
+            "password_set",
+            "vault_promote",
+        ],
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="rotating a password")
     document.plan = plan.as_json()
@@ -4085,7 +4181,7 @@ def creds_rotate(
         _applied_json(record, sequence.promotions) for record in sequence.applied
     ]
     states = [record.outcome.state for record in sequence.applied]
-    changed = sum(1 for record in sequence.applied if record.changed)
+    changed = sum(1 for record in sequence.applied if record.mutated)
 
     if sequence.stolen is not None:
         # The split `sopuli.lock.errors` leaves to the command, and `rotate` has
@@ -4128,7 +4224,7 @@ def creds_rotate(
         else None
     )
     table = render_rotate(
-        [(record.binding, record.outcome, record.changed) for record in sequence.applied],
+        [(record.binding, record.outcome, record.mutated) for record in sequence.applied],
         staged=sequence.documents,
         promoted=sum(1 for one in sequence.promotions.values() if one.version is not None),
         disagreed=sequence.disagreed,

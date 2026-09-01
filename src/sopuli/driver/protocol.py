@@ -34,20 +34,24 @@ whether an account exists asks what it is in the next breath, and UC-1 §5 step 
 is one step, not two. Keeping both would be one round trip spent on a question
 the second call answers anyway.
 
-*``opts`` has no members yet, so it has no type yet.* The sketch's
-``set_password(..., opts)`` is where UC-1 §5's opt-in attributes will go --
-profile assignment, unlock, expiry handling. An untyped bag now would accept a
-misspelled ``container_clase: ALL`` and silently do nothing, which is the
-failure ``01-configuration.md`` §10 exists to prevent.
+*``opts`` is* :class:`AccountAttributes`, *and it is an argument of its own.*
+The sketch's ``set_password(..., opts)`` is where UC-1 §5's opt-in attributes
+were to go, and they arrived beside it rather than inside it (#300): §5 requires
+each attribute to be *reported as a separate change*, and a password set that
+also unlocked would be one ``ChangeResult`` describing two mutations. What the
+sketch's warning was really about is the shape, and that is kept whole -- one
+typed field per attribute, never a bag, because an untyped one would accept a
+misspelled ``container_clase: ALL`` and silently do nothing, which is the failure
+``01-configuration.md`` §10 exists to prevent.
 
-``apply_attributes`` goes with it, and is **deliberately absent from**
-:class:`Session` rather than declared and unimplemented -- the same seam P2 drew
-around ``health``, which stayed out of the store protocol until #216 gave it a
-caller and then went in whole. A method on a
+``apply_attributes`` **arrived with the caller that needed it** (#300, the first
+of #267's four attributes), which is the seam this file described until then and
+the same one P2 drew around ``health``: a method on a
 :class:`~typing.Protocol` is a demand on every implementation that satisfies it,
-so declaring one nothing calls would oblige the Oracle driver to write a body
-for a caller that does not exist. It stays in P1's sketch, which describes the
-interface, and arrives here when `creds apply` grows attributes.
+so one that nothing calls would oblige the Oracle driver to write a body for a
+caller that does not exist. Three attributes are still to come -- profile
+assignment (#301), expiry (#302), tablespaces (#303) -- and each is a field on
+:class:`AccountAttributes` rather than a method here.
 
 What is **not** deferred, and is worth saying because it looks like an omission:
 there is no ``offline_verify`` path in :meth:`Session.verify_password` beyond a
@@ -167,6 +171,23 @@ UNAVAILABLE = "unavailable"
 #: are not the same answer and the difference matters at 03:00: *we chose not to
 #: try* (the lockout margin, UC-1 §7 mitigation 2) versus *we could not*.
 VERIFY_RESULTS = (PASS, FAIL, SKIPPED, UNAVAILABLE)
+
+
+# -------------------------------------------------------------- attributes ---
+
+#: Unlock an account that is locked (UC-1 §5, #300).
+#:
+#: **The run document's own ``action_kind`` word**, and deliberately not a second
+#: vocabulary translated into it at the output layer. The verification results
+#: above set the precedent: what a driver reports about a step is what the
+#: document calls that step, so a driver adding an attribute cannot forget to
+#: teach a renderer about it. `03-json-output.md` §9 has the enum.
+ACCOUNT_UNLOCK = "account_unlock"
+
+#: Every attribute :class:`AccountAttributes` can carry, in the order
+#: :meth:`Session.apply_attributes` enforces them. One entry today; #301, #302
+#: and #303 are the other three UC-1 §5 names.
+ATTRIBUTES = (ACCOUNT_UNLOCK,)
 
 
 # ------------------------------------------------------------------ errors ---
@@ -517,6 +538,59 @@ class VerifyResult:
     detail: str | None = None
 
 
+@dataclass(frozen=True)
+class AccountAttributes:
+    """The non-password attributes a run may enforce on an account (UC-1 §5).
+
+    P1's ``opts``, typed. **One field per attribute and never a mapping**, which
+    is ``01-configuration.md`` §10's rule and the reason this type exists at all:
+    a bag would accept a misspelled key, do nothing, and report that it had done
+    nothing wrong. Three more fields are coming -- profile assignment (#301),
+    expiry (#302), tablespaces (#303) -- and each arrives with the config field
+    that declares it.
+
+    **Every attribute is opt-in and defaults to off.** UC-1 §5's rule, and the
+    reason it is not merely a default: a tool that unlocked an account because it
+    found one locked, or moved it to a profile because a policy named one, would
+    be making a change nobody asked for during a credential rotation -- which is
+    the worst moment in the estate for a surprise.
+    """
+
+    #: Unlock a locked account before the password is set. Declared by
+    #: ``policies.<name>.account.unlock_if_locked``.
+    unlock: bool = False
+
+    def requested(self) -> bool:
+        """Whether anything at all was declared.
+
+        The caller's reason to skip :meth:`Session.apply_attributes` entirely:
+        an estate that declares no attributes pays no round trip for the ones it
+        did not ask for.
+        """
+        return self.unlock
+
+
+@dataclass(frozen=True)
+class AttributeChange:
+    """What enforcing **one** attribute did.
+
+    A :class:`ChangeResult` with the attribute's name on it, rather than the one
+    result P1's sketch returned for the whole call. UC-1 §5 asks for each
+    attribute to be *reported as a separate change so the diff stays readable*,
+    and a single result for four attributes could not say which of them moved.
+
+    ``changed`` is the same question it is everywhere else -- *did this run do
+    it* -- so an account that was already unlocked comes back ``False`` with a
+    detail saying so, and invariant 9 is satisfied by the driver rather than by a
+    caller remembering to ask first.
+    """
+
+    #: One of :data:`ATTRIBUTES`, which is the document's ``action_kind`` word.
+    attribute: str
+    changed: bool
+    detail: str | None = None
+
+
 # --------------------------------------------------------------- interface ---
 
 
@@ -560,6 +634,34 @@ class Session(Protocol):
         wrapped in a PL/SQL block, and the password is never bound. #171 is the
         statement builder those apply to; this is the call that issues what it
         built.
+        """
+        ...
+
+    def apply_attributes(
+        self, account: str, attributes: AccountAttributes
+    ) -> tuple[AttributeChange, ...]:
+        """Enforce the non-password attributes ``attributes`` declares (UC-1 §5).
+
+        **One entry per attribute that was declared**, in :data:`ATTRIBUTES`
+        order, whether or not it turned out to need doing -- an account that is
+        already unlocked is ``changed: False`` and a row saying so, not an absent
+        row. §5 wants each attribute reported as its own change, and a consumer
+        that had to infer "not declared" from "not present" would be reading the
+        policy out of the results.
+
+        **Nothing is inferred.** An attribute the caller did not set is not
+        enforced, so a run against an estate declaring none of them returns an
+        empty tuple and issues nothing.
+
+        **Idempotent, and the driver is what makes it so** (invariant 9): the
+        implementation reads the account's state and issues nothing where the
+        attribute already holds. That is the opposite of :meth:`set_password`,
+        which cannot ask a database whether a password is already a given value
+        -- here the state is readable, so a second run reports ``changed: False``
+        without the command having to remember to check.
+
+        Raises :class:`UnsupportedCapabilityError` where the target cannot do
+        what was asked, naming the capability (invariant 4).
         """
         ...
 
