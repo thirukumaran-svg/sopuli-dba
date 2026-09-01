@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.0](https://github.com/villebase/sopuli-dba/compare/v0.50.0...v0.51.0) (2026-09-01)
+
+
+### Features
+
+* **apply:** account unlock, the first of UC-1 §5's attributes ([#304](https://github.com/villebase/sopuli-dba/issues/304)) ([70c05b7](https://github.com/villebase/sopuli-dba/commit/70c05b72349d34d067ea8acd8ac00099b65ab4f4))
+
 ## [0.50.0](https://github.com/villebase/sopuli-dba/compare/v0.49.0...v0.50.0) (2026-08-31)
 
 
