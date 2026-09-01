@@ -231,6 +231,25 @@ class DriverError(Exception):
     category = "database"
     exit_code = ExitCode.FAILURE
 
+    #: Whether the *password* was refused, and another should be drawn (#312).
+    #:
+    #: On the class, and ``False``, for the same reason ``category`` and
+    #: ``exit_code`` are: the boundary reports what an error says about itself
+    #: rather than inferring it from an exception type. A driver that classifies
+    #: its vendor codes sets it on the instance -- Oracle's does, from the
+    #: ``regenerate`` that its own ``Diagnosis`` already computed -- and one that
+    #: does not gets the safe answer without having to know the question.
+    #:
+    #: **``False`` is the answer that cannot loop**, which is why it is the
+    #: default rather than something a driver must remember to deny. An unmapped
+    #: code might be transient and might be a value the server will refuse
+    #: forever; of the two ways to be wrong, drawing again is the one that burns
+    #: rotations and locks accounts.
+    #:
+    #: Vendor-neutral on purpose. `sopuli.apply` is above the driver and must not
+    #: import an Oracle module to find out that Oracle refused a password.
+    regenerate = False
+
     def __init__(self, message: str, *, hint: str | None = None, code: str | None = None) -> None:
         super().__init__(message)
         self.message = message

@@ -89,10 +89,12 @@ from sopuli.driver.protocol import SKIPPED as VERIFY_SKIPPED
 from sopuli.exit_codes import ExitCode
 from sopuli.payload import (
     CURRENT,
+    GENERATED,
     ORIGIN,
     PENDING,
     PREVIOUS,
     REMOVE,
+    SUPPLIED,
     StageLayout,
     merge,
     stage_layout,
@@ -146,9 +148,11 @@ __all__ = [
     "CONFIRMED",
     "PENDING_APPLY",
     "SKIPPED",
+    "DRAW_LIMIT",
     "PROMOTES",
     "SOURCES",
     "Promotable",
+    "Redraw",
     "Source",
     "after_change",
     "already_applied",
@@ -158,6 +162,7 @@ __all__ = [
     "is_confirmed",
     "is_failure",
     "is_inconclusive",
+    "may_redraw",
     "promotes",
     "promotion_patch",
     "settled_before_acting",
@@ -493,6 +498,99 @@ def after_change(user: UserState, verification: VerifyResult) -> Outcome:
     # the same reason, and here it is worse: guessing which state an unknown
     # result means is how an unconfirmed change becomes a promotion.
     raise ValueError(f"not a verification result: {verification.result!r}")
+
+
+# -------------------------------------------------------------- the redraw ---
+
+#: How many passwords one account may be given in a single run (#312, #268).
+#:
+#: Three, and the number is a judgement about what a refusal *means* rather than
+#: about cost. A server that has refused three independent draws from the same
+#: policy is describing its own rules -- a verify function this policy cannot
+#: satisfy, or a reuse history this account cannot get past -- and a fourth draw
+#: does not learn anything the third did not. At that point the server's own
+#: message is the useful output, which is what exhausting the budget produces.
+#:
+#: It counts **draws, not failures**: the value the run arrived with is the first
+#: one, so three is the original plus two more.
+DRAW_LIMIT = 3
+
+
+@dataclass(frozen=True)
+class Redraw:
+    """Whether a refused password may be drawn again, and why not when it may not.
+
+    A value rather than a bool, because every refusal here has to be *reported*.
+    UC-1 §6.4's whole complaint about the old behaviour was a run that said
+    "``ORA-28003``" and left the operator to work out what the tool had decided
+    not to do about it -- and three of the four answers below are the tool
+    declining to act, which is exactly the thing that has to be visible.
+    """
+
+    allowed: bool
+    #: Why not, in the operator's terms. ``None`` when :attr:`allowed`.
+    reason: str | None = None
+
+
+def may_redraw(error: Any, origin: Any, *, drawn: int, limit: int = DRAW_LIMIT) -> Redraw:
+    """Whether this account's password may be drawn again (#312, deciding #268).
+
+    Pure, and deliberately knows nothing about Oracle. ``error`` is asked one
+    vendor-neutral question -- :attr:`~sopuli.driver.protocol.DriverError.regenerate`,
+    which the driver set from its own classification -- so a second backend
+    answering the same question gets this logic unchanged.
+
+    Four answers, in this order, because when more than one applies the first is
+    the one closest to the cause:
+
+    **The server did not refuse the password.** Anything else that went wrong --
+    a lost connection, a privilege that was missing, a code nobody has
+    classified -- is not evidence about the value, and drawing another one would
+    change the vault's state on the strength of a guess. This is also where an
+    unmapped code lands, by ``regenerate`` defaulting to ``False`` rather than by
+    a rule of its own: of the two ways to be wrong about an unknown code, looping
+    is the one that locks accounts.
+
+    **The tool did not draw this password.** ``origin`` is what #311 staged
+    beside the value. Only :data:`~sopuli.payload.GENERATED` may be replaced:
+    ``supplied`` means an external system dictated it, and absent means a document
+    written before the key existed, which is the same case without the evidence.
+    Redrawing either would make the tool disagree with whoever owns the value,
+    silently, at the moment they were least expecting it.
+
+    **The budget is spent.** :data:`DRAW_LIMIT`, and what the caller reports is
+    the server's own message rather than this one.
+
+    Otherwise it may be redrawn.
+    """
+    if not getattr(error, "regenerate", False):
+        return Redraw(False, "the server did not refuse the password")
+    if origin != GENERATED:
+        return Redraw(False, _unredrawable(origin))
+    if drawn >= limit:
+        return Redraw(False, f"{limit} passwords were refused")
+    return Redraw(True)
+
+
+def _unredrawable(origin: Any) -> str:
+    """Why an ``origin`` that is not :data:`~sopuli.payload.GENERATED` blocks a redraw.
+
+    Three cases and not two, because the operator's next move differs. *Supplied*
+    sends them to whoever dictated the value; *absent* sends them to a document
+    staged before #311 existed, which the next `creds generate` heals on its own;
+    and a value this tool does not recognise sends them to the document itself,
+    which something other than `generate` has written to.
+
+    The unrecognised value is described and **never quoted**. It is a document
+    field, and `store/credentials.py` holds the same line for the same reason --
+    every message built from keys and never from values, because the obvious way
+    to say "that is not one of mine" is to show what it was instead.
+    """
+    if origin == SUPPLIED:
+        return "this run did not draw that password"
+    if origin is None:
+        return "there is no record of where that password came from"
+    return "the record of where that password came from is not one this tool wrote"
 
 
 # ------------------------------------------------------------- the promote ---

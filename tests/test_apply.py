@@ -32,7 +32,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, REMOVE
+from sopuli.payload import CURRENT, GENERATED, ORIGIN, PENDING, PREVIOUS, REMOVE, SUPPLIED
 from sopuli.secrets import Secret
 
 NOW = datetime(2026, 8, 29, 9, 30, tzinfo=UTC)
@@ -544,6 +544,124 @@ def test_a_document_promotes_only_when_every_pair_confirmed() -> None:
     assert apply.summarise_document([check.IN_SYNC, check.IN_SYNC]) is True
     assert apply.summarise_document([check.IN_SYNC, check.ERROR]) is False
     assert apply.summarise_document([check.IN_SYNC, check.UNVERIFIABLE]) is False
+
+
+# -------------------------------------------------------------- the redraw ---
+
+
+class Refused:
+    """A driver error that says the *password* was refused.
+
+    Built here rather than imported from the Oracle driver, which is the point of
+    the seam: `may_redraw` asks one vendor-neutral question, so anything
+    answering it is a valid input and no Oracle module is imported above the
+    driver to find out that Oracle refused a password.
+    """
+
+    regenerate = True
+
+
+class Broke:
+    """Anything else: a lost connection, a missing privilege, an unmapped code.
+
+    `DriverError.regenerate` defaults to `False`, so this is also what an
+    unclassified code looks like -- the safe answer without a rule of its own.
+    """
+
+    regenerate = False
+
+
+def test_a_refused_password_this_run_drew_may_be_drawn_again() -> None:
+    """#268's decision, in one line: the only case that redraws."""
+    assert apply.may_redraw(Refused(), GENERATED, drawn=1).allowed is True
+
+
+def test_nothing_but_a_refused_password_redraws() -> None:
+    """§6.4's rule that an unmapped code is terminal, reached through the
+    default rather than through a branch. Of the two ways to be wrong about a
+    code nobody classified, looping is the one that locks accounts."""
+    decision = apply.may_redraw(Broke(), GENERATED, drawn=0)
+
+    assert decision.allowed is False
+    assert decision.reason is not None
+    assert "did not refuse" in decision.reason
+
+
+def test_an_error_that_answers_nothing_does_not_redraw() -> None:
+    """A store error, a `ValueError`, anything raised by something that never
+    heard of this attribute. `getattr` with a default rather than an isinstance
+    check, so the safe answer does not depend on the exception's ancestry."""
+    assert apply.may_redraw(ValueError("something else"), GENERATED, drawn=0).allowed is False
+
+
+def test_a_supplied_password_is_never_redrawn() -> None:
+    """#311's whole reason for existing. An external system dictated this value,
+    so replacing it makes the tool disagree with whoever owns it."""
+    decision = apply.may_redraw(Refused(), SUPPLIED, drawn=0)
+
+    assert decision.allowed is False
+    assert decision.reason is not None
+    assert "did not draw" in decision.reason
+
+
+def test_an_unknown_origin_is_not_redrawn_either() -> None:
+    """A document staged before #311 existed, which is the supplied case without
+    the evidence. It self-heals on the next `generate`; guessing wrong here
+    overwrites a password somebody's change ticket dictated."""
+    decision = apply.may_redraw(Refused(), None, drawn=0)
+
+    assert decision.allowed is False
+    assert decision.reason is not None
+    assert "no record" in decision.reason
+
+
+def test_an_origin_this_tool_did_not_write_is_its_own_answer() -> None:
+    """Three cases, not two, because the operator's next move differs: a supplied
+    value sends them to whoever dictated it, an absent one to a document staged
+    before #311 that the next `generate` heals, and an unrecognised one to the
+    document itself, which something other than `generate` has written to.
+
+    The value is described and never quoted -- it is a document field, and the
+    obvious way to say "that is not one of mine" is to show what it was instead.
+    """
+    decision = apply.may_redraw(Refused(), "rotated-by-hand", drawn=0)
+
+    assert decision.allowed is False
+    assert decision.reason is not None
+    assert "not one this tool wrote" in decision.reason
+    assert "rotated-by-hand" not in decision.reason
+
+
+def test_the_budget_is_counted_in_draws_not_failures() -> None:
+    """The value the run arrived with is the first draw, so `DRAW_LIMIT` of three
+    is the original plus two more."""
+    assert apply.may_redraw(Refused(), GENERATED, drawn=apply.DRAW_LIMIT - 1).allowed is True
+    assert apply.may_redraw(Refused(), GENERATED, drawn=apply.DRAW_LIMIT).allowed is False
+
+
+def test_an_exhausted_budget_says_so() -> None:
+    """The caller reports the server's own message; this reason says what the
+    tool stopped doing, which is the half `apply` used to leave out."""
+    decision = apply.may_redraw(Refused(), GENERATED, drawn=apply.DRAW_LIMIT)
+
+    assert decision.reason is not None
+    assert str(apply.DRAW_LIMIT) in decision.reason
+
+
+def test_the_first_reason_that_applies_is_the_one_reported() -> None:
+    """Three refusals at once -- not a password refusal, a supplied value, and a
+    spent budget. The one closest to the cause is the answer: nothing about this
+    error was evidence about the password in the first place."""
+    decision = apply.may_redraw(Broke(), SUPPLIED, drawn=apply.DRAW_LIMIT)
+
+    assert decision.reason is not None
+    assert "did not refuse" in decision.reason
+
+
+def test_a_decision_to_redraw_carries_no_reason() -> None:
+    """`reason` is why *not*. A permitted redraw explaining itself would read as
+    a refusal in the run's output."""
+    assert apply.may_redraw(Refused(), GENERATED, drawn=0).reason is None
 
 
 def test_an_open_rollover_window_does_not_block_a_promotion() -> None:

@@ -304,10 +304,11 @@ sopuli creds apply --application orders-app
    the database is open read-write; version and capabilities as expected.
 3. Verify the account exists and read its state (locked? profile? verifiers?).
    Missing account → `ACCOUNT_MISSING`, do not create it (out of scope for UC-1).
-4. Pre-flight the password against the target's verify function where possible.
-5. Change the password (see § 6 for the Oracle statement details).
-6. Verify immediately with a fresh connection as that user (§ 7).
-7. Record a per-target result.
+4. Change the password (see § 6 for the Oracle statement details). Where the
+   server refuses the *value* — a verify function, a reuse rule — draw another
+   and try again, bounded (§6.4).
+5. Verify immediately with a fresh connection as that user (§ 7).
+6. Record a per-target result.
 
 **After all targets**
 
@@ -526,6 +527,11 @@ with #265, and the rollback it exists for is §8. Two things in the sketch above
 are still **not** in this build — `--repair` (#264, whose input is settled
 below) and `--continue-on-error` (#266). The build is fail-fast, which is §5's
 own default.
+
+Step 4's redraw is decided (#268) and **not yet wired** (#312). The decision
+itself is built and tested — which error may be redrawn, whose password, and how
+many times — and this build still reports the refusal and stops. §6.4 carries the
+reasoning and the four rules.
 
 ### `--source`, and the rollback (#265)
 
@@ -914,8 +920,8 @@ of one is the answer to "did the old password stop working just now".
 
 | Error | Meaning | Tool behaviour |
 |---|---|---|
-| ORA-28003 | password verify function rejected it | regenerate (bounded), preserve the server message |
-| ORA-28007 | password cannot be reused | regenerate; never retry the same value |
+| ORA-28003 | password verify function rejected it | `apply` redraws (bounded), preserves the server message |
+| ORA-28007 | password cannot be reused | `apply` redraws; never retry the same value |
 | ORA-01017 | invalid credentials | verification failure → drift, not a crash |
 | ORA-28000 | account locked | report `LOCKED`; unlock only where the policy declared it (#300) |
 | ORA-28001 | password expired | distinguish from drift; resolved by apply, since setting a password clears the expiry. The tool never expires one deliberately — see §5 (#302) |
@@ -925,6 +931,59 @@ of one is the answer to "did the old password stop working just now".
 | ORA-12154 / ORA-12541 | naming/listener | connectivity, distinct exit path |
 | ORA-28040 / ORA-01017 with version mismatch | verifier / `ALLOWED_LOGON_VERSION` mismatch | explain password-version implications |
 | DPI-1047 / DPY-3001 | the *client* library, not the server: Instant Client missing, or thin mode reached because thick-mode initialisation did not happen | `config` and exit 9 — the same landing ADR-006 gives a backend that is configured and not installed, because it is fixed on this machine by the person reading the message |
+
+### Which verb redraws, and why it is `apply` (#268, decided)
+
+**Decided, and not yet wired** (#312). The decision is built and tested — which
+error may be redrawn, whose password, and how many times — and this build still
+reports the refusal and stops, as §5's "What shipped" says. The two rows above
+describe what the verb does once #312 lands; nothing else in this section is
+waiting on it.
+
+"Regenerate" without a subject is what made the two rows above ambiguous for as
+long as they stood there. The subject is **`apply`**, and `generate` is not where
+this is fixed.
+
+Neither refusal can be predicted before the `ALTER USER` is issued, so there is
+no earlier verb that could have avoided it:
+
+- `ORA-28003`'s verdict comes from arbitrary PL/SQL, and the function cannot be
+  consulted. Calling it needs the password inside a PL/SQL block (invariant 13)
+  or in a bind (invariant 14), and there is no third way to invoke one. That is
+  also why §5's flow no longer claims to pre-flight a password against the verify
+  function "where possible": there is no possible.
+- From inside a PDB, `PASSWORD_VERIFY_FUNCTION` reads as the literal `FROM ROOT`,
+  so a service account without a root connection cannot even *name* the function
+  it has to satisfy (`02-oracle-privileges.md`).
+- `ORA-28007` is hashed per-account history. `apply` already reads
+  `PASSWORD_REUSE_MAX`/`TIME`; they state the rule, never whether this draw
+  collides with it.
+
+§4 step 2's constraint read — connect to a representative target and draw against
+the strictest one — remains worth building and removes a different set of
+refusals: byte length and character set. Those are the *deterministic* failure,
+where one policy fix ends it for every account in the selection. It is not a
+prerequisite for the above, and it would not remove either row.
+
+**Four rules govern the redraw**, and each exists because the alternative is
+worse:
+
+| | |
+|---|---|
+| **Bounded** | three draws, the value the run arrived with included. A server that has refused three independent draws is describing its own rules, and the fourth learns nothing the third did not |
+| **Only what the tool drew** | gated on the `origin` beside `pending` (§3). A `supplied` password was dictated by an external system, and an absent `origin` is the same case without the evidence |
+| **Only a refused password** | an unmapped code never redraws. It might be transient and it might be a value the server will refuse forever; of the two ways to be wrong, looping is the one that locks accounts |
+| **Never quietly** | each redraw is reported as its own change, naming the version whose `pending` it replaced — §4's warning, reused |
+
+**The scope of a redraw is one account, not the document and not the estate.**
+Passwords are drawn per account even where accounts share a document (§4), so a
+refusal implicates exactly the account that met it — and the re-apply covers that
+account's own targets, including ones already visited in this pass, so that every
+target bound to it ends the run holding the same password.
+
+`apply` does not become a generator by doing this. §4 step 3 is already a bounded
+rejection-sampling loop against the policy predicate; this adds one more rejector,
+and it is the only one that cannot be consulted offline.
 
 Implemented in `sopuli/driver/oracle/errors.py` (#172), on three rules worth
 stating because each one is a decision the table above does not make:

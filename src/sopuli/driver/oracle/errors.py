@@ -281,6 +281,11 @@ class MappedError(DriverError):
         super().__init__(diagnosis.message, hint=diagnosis.hint, code=diagnosis.code)
         self.category = diagnosis.category
         self.exit_code = diagnosis.exit_code
+        # The one thing above the driver that needs this answer cannot ask a
+        # `Diagnosis` for it: `sopuli.apply` is vendor-neutral and does not import
+        # this module (#312). Carried onto the instance, where `DriverError`
+        # declares it, so the boundary reads one attribute whoever raised it.
+        self.regenerate = diagnosis.regenerate
         self.diagnosis = diagnosis
 
 

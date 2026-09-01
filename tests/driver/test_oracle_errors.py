@@ -283,6 +283,23 @@ def test_a_mapped_error_carries_the_rows_own_category_and_exit() -> None:
     assert raised.code == "ORA-65040"
 
 
+def test_a_mapped_error_carries_regenerate_where_the_row_sets_it() -> None:
+    """#312's seam. `sopuli.apply` is vendor-neutral and must not import this
+    module to learn that Oracle refused a password, so the answer this row
+    already computes travels on the exception `DriverError` declares it on."""
+    assert classify("ORA-28003", "…").as_error().regenerate is True
+    assert classify("ORA-28007", "…").as_error().regenerate is True
+
+
+def test_every_other_mapped_error_denies_it_without_being_asked() -> None:
+    """The default on the class, not a rule each row restates. A connectivity
+    failure is not evidence about the password, and neither is a code nobody has
+    classified."""
+    assert classify("ORA-01031", "…").as_error().regenerate is False
+    assert classify("ORA-99999", "…").as_error().regenerate is False
+    assert DriverError("something went wrong").regenerate is False
+
+
 # ------------------------------------------------------------- the extraction ---
 
 
