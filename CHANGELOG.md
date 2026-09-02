@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.53.0](https://github.com/villebase/sopuli-dba/compare/v0.52.0...v0.53.0) (2026-09-01)
+
+
+### Features
+
+* **apply:** decide when a refused password may be redrawn ([#315](https://github.com/villebase/sopuli-dba/issues/315)) ([cf3f7c9](https://github.com/villebase/sopuli-dba/commit/cf3f7c92d780ac888e694913a2634aedb015a6ac))
+* **apply:** draw again when the server refuses the password ([#316](https://github.com/villebase/sopuli-dba/issues/316)) ([aebc69e](https://github.com/villebase/sopuli-dba/commit/aebc69e357840c2d81641a2c18f4d5b29dbbcc0c))
+* **vault:** record where a staged password came from ([#313](https://github.com/villebase/sopuli-dba/issues/313)) ([edc9549](https://github.com/villebase/sopuli-dba/commit/edc954949eecef617b8d6a49e88c5ba280408765))
+
 ## [0.52.0](https://github.com/villebase/sopuli-dba/compare/v0.51.0...v0.52.0) (2026-09-01)
 
 
