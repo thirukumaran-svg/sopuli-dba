@@ -20,10 +20,19 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sopuli.check import ACCOUNT_MISSING, ERROR, counts, is_failure, password_age_days
+from sopuli.check import (
+    ACCOUNT_MISSING,
+    ERROR,
+    counts,
+    grace_warning,
+    is_failure,
+    password_age_days,
+)
+from sopuli.diagnostics import PASSWORD_GRACE_PERIOD
 from sopuli.driver.oracle.rollover import days as rollover_days
 from sopuli.driver.protocol import UserState
-from sopuli.output.document import Error, Summary
+from sopuli.output.document import Diagnostic, Error, Summary
+from sopuli.output.notices import render_notices
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.status import PENDING_APPLY, Row
@@ -49,6 +58,12 @@ def build_result(
     enum and this does not want one — nothing was done, and `none` is the enum's
     own word for exactly that. Inventing a kind would put a verb in the contract
     that describes an absence.
+
+    Warnings are **derived from the row** rather than passed in, unlike `check`'s,
+    and that is the difference between the two verbs rather than an inconsistency:
+    everything this command reports it read for itself, so :func:`_warnings` has
+    the whole :class:`~sopuli.status.Row` and needs nothing from its caller. The
+    grace period joins the age warning there (#309, UC-1 §6.4).
     """
     entry: dict[str, Any] = {
         "account": row.binding.account,
@@ -108,21 +123,43 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
     ``password_age_days`` already means the database's age and Q9's whole point
     is that the two must not be confused. A consumer reading the vault's age
     reads it here, where the message says which clock it came from.
+
+    The grace period is the second, and it is what UC-1 §6.4 means by *surfaced
+    in `status`* (#309). It comes from :func:`~sopuli.check.grace_warning`, the
+    same function `check` uses, so the two commands cannot describe one window
+    differently.
+
+    Built through :class:`~sopuli.output.document.Diagnostic` since #309 added the
+    second entry: two hand-rolled dicts in one array is two chances to disagree
+    about a shape the schema states once. The age warning carries no ``code`` and
+    still does not -- allocating one is J3's question, not this list's -- and
+    ``to_dict`` omits it rather than nulling it, so that entry is unchanged.
     """
-    found: list[dict[str, Any]] = []
+    found = []
     if row.over_age:
         found.append(
-            {
-                "level": "warning",
-                "message": (
+            Diagnostic(
+                level="warning",
+                message=(
                     f"the vault last rotated this {row.age} days ago, past the "
                     f"--max-age-days threshold"
                 ),
-                "account": row.binding.account,
-                "target": row.binding.target,
-            }
+                account=row.binding.account,
+                target=row.binding.target,
+            )
         )
-    return found
+    grace = grace_warning(row.user)
+    if grace is not None:
+        found.append(
+            Diagnostic(
+                level="warning",
+                code=PASSWORD_GRACE_PERIOD,
+                message=grace,
+                account=row.binding.account,
+                target=row.binding.target,
+            )
+        )
+    return [entry.to_dict() for entry in found]
 
 
 def summarise(rows: Sequence[Row]) -> Summary:
@@ -150,14 +187,32 @@ def summarise(rows: Sequence[Row]) -> Summary:
 
 
 def _quiet(row: Row) -> bool:
-    """Whether this row is one nobody needs to look at."""
+    """Whether this row is one nobody needs to look at.
+
+    A grace period counts against quiet, and that is not a free choice: before
+    #309 such a row was `expired` and counted as *locked or expired*, which was
+    the wrong words for it but at least visible. Reading the two apart without
+    this would have made a row with a closing window the same as a healthy one,
+    turning a mislabelled finding into no finding at all.
+    """
     return row.outcome.state not in (ACCOUNT_MISSING, PENDING_APPLY, ERROR) and not (
-        row.over_age or _unhappy(row.user)
+        row.over_age or _unhappy(row.user) or _expiring(row.user)
     )
 
 
 def _unhappy(user: UserState | None) -> bool:
     return user is not None and (user.locked or user.expired)
+
+
+def _expiring(user: UserState | None) -> bool:
+    """In a grace period: the password works, and the window is closing.
+
+    Its own predicate rather than a third arm of :func:`_unhappy`, because the
+    verdict names them separately and they want different words. *Locked or
+    expired* is a credential that has stopped working; this one has not, and
+    conflating them is what #309 was.
+    """
+    return user is not None and user.in_grace
 
 
 def render_status_table(rows: Sequence[Row]) -> str:
@@ -168,6 +223,11 @@ def render_status_table(rows: Sequence[Row]) -> str:
     the same database history, two very different answers depending on which
     clock is asked, and only one of them acted on. Putting them apart, or showing
     one, would hide the thing the table was drawn to show.
+
+    The notice block under it is the same one `check` prints, and it is what UC-1
+    §6.4 means by the grace period being *surfaced in status* (#309): before it,
+    an account in its grace period was an ordinary row in every column, and the
+    only place the window appeared was ``--output json``.
     """
     table = render_table(
         [
@@ -194,7 +254,23 @@ def render_status_table(rows: Sequence[Row]) -> str:
             for row in rows
         ],
     )
-    return "\n".join([*table, "", _verdict(rows)])
+    return "\n".join([*table, "", _verdict(rows), *render_notices(_notices(rows))])
+
+
+def _notices(rows: Sequence[Row]) -> list[str]:
+    """The grace period, named by the row it belongs to.
+
+    Only the grace period, and not the age warning beside it in
+    :func:`_warnings`: the age is already a column in this table, and printing
+    ``AGE`` twice would be noise rather than emphasis. What has no column is the
+    window and when it closes.
+    """
+    found = []
+    for row in rows:
+        grace = grace_warning(row.user)
+        if grace is not None:
+            found.append(f"{row.binding.account} on {row.binding.target}: {grace}")
+    return found
 
 
 def _state(state: str) -> Cell | str:
@@ -279,6 +355,7 @@ def _verdict(rows: Sequence[Row]) -> str:
     missing = sum(1 for row in rows if row.outcome.state == ACCOUNT_MISSING)
     staged = sum(1 for row in rows if row.outcome.state == PENDING_APPLY)
     over = sum(1 for row in rows if row.over_age)
+    expiring = sum(1 for row in rows if _expiring(row.user))
     unhappy = sum(1 for row in rows if _unhappy(row.user))
     failed = sum(1 for row in rows if is_failure(row.outcome.state))
     if missing:
@@ -287,6 +364,11 @@ def _verdict(rows: Sequence[Row]) -> str:
         findings.append(f"{staged} awaiting apply")
     if over:
         findings.append(f"{over} past max age")
+    # Between the two clocks and the two breakages: a window that is closing is
+    # more urgent than an age threshold somebody chose and less urgent than a
+    # credential that has already stopped working.
+    if expiring:
+        findings.append(f"{expiring} in a grace period")
     if unhappy:
         findings.append(f"{unhappy} locked or expired")
     if failed:

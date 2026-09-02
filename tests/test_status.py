@@ -17,7 +17,10 @@ from datetime import UTC, datetime, timedelta
 from sopuli import check, status
 from sopuli.config.model import Binding
 from sopuli.config.secret_refs import parse_secret_ref
+from sopuli.diagnostics import PASSWORD_GRACE_PERIOD
 from sopuli.driver.protocol import UserState
+from sopuli.output.status_view import build_result as build_status_result
+from sopuli.output.status_view import render_status_table
 from sopuli.secrets import Secret
 from sopuli.store.credentials import StoredSecret
 
@@ -227,3 +230,70 @@ def test_a_staged_rotation_outranks_an_open_window() -> None:
     outcome = status.decide(user(rollover_active=True), stored(), doc, binding())
 
     assert outcome.state == status.PENDING_APPLY
+
+
+# ------------------------------------------------------------ the grace period ---
+#
+# #309. `creds status` is where UC-1 §6.4 says the grace period belongs, and it
+# was the command that misreported it hardest: `EXPIRED(GRACE)` read as a hard
+# expiry, so the row said `EXPIRED` and never reached `PENDING_APPLY`.
+
+
+def grace_row(**fields: object) -> status.Row:
+    base = user(
+        status="EXPIRED(GRACE)",
+        in_grace=True,
+        password_expires_at=datetime(2026, 9, 6, 12, 0, tzinfo=UTC),
+    )
+    return status.Row(
+        binding=binding(),
+        outcome=check.Outcome(check.UNVERIFIABLE, "not attempted"),
+        user=base,
+        **fields,  # type: ignore[arg-type]
+    )
+
+
+def test_a_grace_period_is_not_a_row_nobody_needs_to_look_at() -> None:
+    """Before #309 such a row was `expired` and counted as *locked or expired* --
+    the wrong words, but visible. Reading the two apart without counting this
+    would have turned a mislabelled finding into no finding at all."""
+    text = render_status_table([grace_row()])
+
+    assert "nothing to act on" not in text
+    assert "1 in a grace period" in text
+
+
+def test_a_grace_period_is_not_reported_as_locked_or_expired() -> None:
+    """The two want different words: one credential has stopped working and the
+    other has not."""
+    assert "locked or expired" not in render_status_table([grace_row()])
+
+
+def test_the_window_is_named_under_the_table() -> None:
+    """No column holds it -- `STATE` says what the row is and the deadline is a
+    sentence with a date in it. The note is where it goes (UC-1 §6.4)."""
+    text = render_status_table([grace_row()])
+
+    assert "1 note:" in text
+    assert "acme_web_user on appdb-dev-alpha" in text
+    assert "2026-09-06T12:00:00Z" in text
+
+
+def test_the_grace_warning_reaches_the_document_with_its_code() -> None:
+    """A consumer branches on the code; the prose carries the date."""
+    entry = build_status_result(grace_row())
+
+    (warning,) = entry["warnings"]
+    assert warning["code"] == PASSWORD_GRACE_PERIOD
+    assert warning["account"] == "acme_web_user"
+    assert "grace period" in warning["message"]
+
+
+def test_a_healthy_row_notes_nothing() -> None:
+    """The ordinary account, and the reason the block is conditional."""
+    row = status.Row(
+        binding=binding(), outcome=check.Outcome(check.UNVERIFIABLE, "not attempted"), user=user()
+    )
+
+    assert "note" not in render_status_table([row])
+    assert "warnings" not in build_status_result(row)

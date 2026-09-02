@@ -25,6 +25,11 @@ from sopuli.driver.oracle.accounts import (
 
 CHANGED = datetime(2026, 8, 22, 10, 41, 36)
 
+#: `EXPIRY_DATE`, which both queries select last (#309). Naive, as `oracledb`
+#: hands back an Oracle `DATE` -- the point of the fixture is that the driver
+#: meets one, not that a test can build an aware datetime.
+EXPIRES = datetime(2026, 9, 21, 10, 41, 36)
+
 
 class _Cursor:
     """A cursor answering per statement, with `fetchall` for the multi-row reads."""
@@ -65,12 +70,21 @@ def _cursor(
     versions: str | None = "11G 12C",
     maintained: str | None = "N",
     changed: datetime | None = CHANGED,
+    expires: datetime | None = EXPIRES,
     limits: list[tuple[str, str]] | None = None,
     roles: list[tuple[str]] | None = None,
 ) -> _Cursor:
     return _Cursor(
         {
-            USER_QUERY: ("ACME_ORDERS_USER", status, profile, versions, maintained, changed),
+            USER_QUERY: (
+                "ACME_ORDERS_USER",
+                status,
+                profile,
+                versions,
+                maintained,
+                changed,
+                expires,
+            ),
             PROFILE_QUERY: limits if limits is not None else [("FAILED_LOGIN_ATTEMPTS", "5")],
             ROLES_QUERY: roles if roles is not None else [],
         }
@@ -91,35 +105,69 @@ def test_a_healthy_account_is_neither_locked_nor_expired() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "locked", "expired", "rollover"),
+    ("status", "locked", "expired", "in_grace", "rollover"),
     [
-        ("OPEN", False, False, False),
-        ("OPEN & IN ROLLOVER", False, False, True),
-        ("LOCKED", True, False, False),
-        ("LOCKED(TIMED)", True, False, False),
-        ("LOCKED & IN ROLLOVER", True, False, True),
-        ("EXPIRED", False, True, False),
-        ("EXPIRED & IN ROLLOVER", False, True, True),
-        ("EXPIRED & LOCKED & IN ROLLOVER", True, True, True),
-        ("EXPIRED(GRACE)", False, True, False),
+        ("OPEN", False, False, False, False),
+        ("OPEN & IN ROLLOVER", False, False, False, True),
+        ("LOCKED", True, False, False, False),
+        ("LOCKED(TIMED)", True, False, False, False),
+        ("LOCKED & IN ROLLOVER", True, False, False, True),
+        ("EXPIRED", False, True, False, False),
+        ("EXPIRED & IN ROLLOVER", False, True, False, True),
+        ("EXPIRED & LOCKED & IN ROLLOVER", True, True, False, True),
+        # The three grace forms, all measured 2026-09-02 (#309). `expired` is
+        # False in every one of them: the password still authenticates.
+        ("EXPIRED(GRACE)", False, False, True, False),
+        ("EXPIRED(GRACE) & LOCKED", True, False, True, False),
+        ("EXPIRED(GRACE) & LOCKED(TIMED)", True, False, True, False),
     ],
 )
 def test_the_status_is_read_as_tokens_not_as_a_value(
-    status: str, locked: bool, expired: bool, rollover: bool
+    status: str, locked: bool, expired: bool, in_grace: bool, rollover: bool
 ) -> None:
     """`ACCOUNT_STATUS` is compound and `&`-joined.
 
-    Every combination above except the two `(GRACE)`/`(TIMED)` spellings was
-    produced on 26ai by locking, expiring and rotating one account in turn.
-    Comparing the column to a value rather than reading tokens out of it would
-    report `EXPIRED & LOCKED & IN ROLLOVER` as none of the three.
+    Every combination above was produced on 26ai -- the first eight by locking,
+    expiring and rotating one account in turn, the three grace forms by a profile
+    with a one-minute `PASSWORD_LIFE_TIME` (#309). Comparing the column to a value
+    rather than reading tokens out of it would report
+    `EXPIRED & LOCKED & IN ROLLOVER` as none of the three.
+
+    **`EXPIRED(GRACE)` is the case the tokens are not enough for**, and it is why
+    `expired` is not a bare substring test: the grace spelling *contains*
+    `EXPIRED`, and an account in it still works. Reading the two as one made
+    `check` report a healthy account as expired and skip the login that would
+    have proved otherwise.
     """
     state = describe(_cursor(status=status), "acme_orders_user")
 
     assert state is not None
     assert state.locked is locked
     assert state.expired is expired
+    assert state.in_grace is in_grace
     assert state.rollover_active is rollover
+
+
+def test_expired_and_in_grace_are_never_both_true() -> None:
+    """They are opposite claims about one password -- it has stopped working, or
+    it has not -- and a caller reading either alone must not be able to see both.
+
+    Asserted over every status this driver can meet rather than over the grace
+    forms alone, because the trap is a *substring*: any future spelling carrying
+    both tokens would satisfy two mutually exclusive fields at once.
+    """
+    for status in (
+        "OPEN",
+        "EXPIRED",
+        "EXPIRED(GRACE)",
+        "EXPIRED(GRACE) & LOCKED",
+        "EXPIRED(GRACE) & LOCKED(TIMED)",
+        "EXPIRED & LOCKED & IN ROLLOVER",
+    ):
+        state = describe(_cursor(status=status), "acme_orders_user")
+
+        assert state is not None
+        assert not (state.expired and state.in_grace), status
 
 
 def test_the_status_is_reported_verbatim_as_well_as_parsed() -> None:
@@ -240,7 +288,13 @@ def test_a_release_without_password_change_date_falls_back(  # noqa: D401
     cursor = _Cursor(
         {
             USER_QUERY: _ora("ORA-00904", '"PASSWORD_CHANGE_DATE": invalid identifier'),
-            USER_QUERY_NO_CHANGE_DATE: ("ACME_ORDERS_USER", "OPEN", "DEFAULT", "10G 11G"),
+            USER_QUERY_NO_CHANGE_DATE: (
+                "ACME_ORDERS_USER",
+                "OPEN",
+                "DEFAULT",
+                "10G 11G",
+                EXPIRES,
+            ),
             PROFILE_QUERY: [("FAILED_LOGIN_ATTEMPTS", "10")],
             ROLES_QUERY: [],
         }
@@ -260,7 +314,7 @@ def test_a_missing_oracle_maintained_column_is_none_and_not_false() -> None:
     cursor = _Cursor(
         {
             USER_QUERY: _ora("ORA-00904"),
-            USER_QUERY_NO_CHANGE_DATE: ("SYS", "OPEN", "DEFAULT", "11G"),
+            USER_QUERY_NO_CHANGE_DATE: ("SYS", "OPEN", "DEFAULT", "11G", EXPIRES),
             PROFILE_QUERY: [],
             ROLES_QUERY: [],
         }

@@ -9,6 +9,7 @@ rather than in a consumer.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from jsonschema import Draft202012Validator
 from sopuli import check
 from sopuli.config.model import Binding
 from sopuli.config.secret_refs import parse_secret_ref
+from sopuli.diagnostics import PASSWORD_GRACE_PERIOD
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
@@ -216,3 +218,96 @@ def test_a_clean_run_says_so_in_one_line() -> None:
 def test_the_rendered_table_is_ascii() -> None:
     """P4: redirected stdout on Windows is cp1252 (#12)."""
     render_check([(binding(), check.Outcome(check.DRIFT, "vault v7 rejected"))]).encode("ascii")
+
+
+# ------------------------------------------------------- warnings beside a state ---
+
+
+def test_a_grace_period_rides_beside_the_state_and_validates(
+    validator: Draft202012Validator,
+) -> None:
+    """#309's shape, end to end through the serialiser.
+
+    The state is the answer about the password and the warning is the caveat on
+    it, which is the arrangement a `state` of its own could not have produced:
+    here `IN_SYNC` and *expiring* are both true and both said.
+    """
+    user = UserState(
+        name="ACME_WEB_USER",
+        status="EXPIRED(GRACE)",
+        in_grace=True,
+        password_expires_at=datetime(2026, 9, 6, 12, 0, tzinfo=UTC),
+    )
+    outcome = check.decide(user, VerifyResult(method=VERIFY_LOGIN, result=PASS), version=7)
+    grace = check.grace_warning(user, now=datetime(2026, 9, 2, 9, 0, tzinfo=UTC))
+    assert grace is not None
+
+    entry = build_result(binding(), outcome, version=7, warnings=((PASSWORD_GRACE_PERIOD, grace),))
+
+    assert entry["state"] == check.IN_SYNC
+    (warning,) = entry["warnings"]
+    assert warning == {
+        "level": "warning",
+        "code": PASSWORD_GRACE_PERIOD,
+        "message": grace,
+        "target": "cdb1-pdb-orders",
+    }
+    validator.validate(document_with([entry], [entry["state"]]))
+
+
+def test_drift_carries_the_same_warning(validator: Draft202012Validator) -> None:
+    """The case that decided against a state of its own: an account can be in
+    its grace period *and* out of sync, and a reader needs both. `IN_GRACE`
+    would have had to displace `DRIFT`."""
+    user = UserState(name="ACME_WEB_USER", status="EXPIRED(GRACE)", in_grace=True)
+    outcome = check.decide(user, VerifyResult(method=VERIFY_LOGIN, result=FAIL), version=7)
+    grace = check.grace_warning(user)
+    assert grace is not None
+
+    entry = build_result(binding(), outcome, warnings=((PASSWORD_GRACE_PERIOD, grace),))
+
+    assert entry["state"] == check.DRIFT
+    assert entry["warnings"][0]["code"] == PASSWORD_GRACE_PERIOD
+    validator.validate(document_with([entry], [entry["state"]]))
+
+
+def test_a_result_with_nothing_to_warn_about_omits_the_array() -> None:
+    """Omitted rather than empty, like every other optional array in the
+    document -- and the ordinary case, since most accounts are not expiring."""
+    outcome = check.decide(
+        UserState(name="ACME_WEB_USER", status="OPEN"),
+        VerifyResult(method=VERIFY_LOGIN, result=PASS),
+    )
+
+    assert "warnings" not in build_result(binding(), outcome)
+
+
+def test_the_notice_appears_under_the_verdict_in_text() -> None:
+    """A warning only a JSON consumer can see is not surfaced (UC-1 §6.4).
+
+    Under the verdict rather than in `DETAIL`, because the sentence carries a
+    timestamp and a column would push the table past a terminal.
+    """
+    user = UserState(name="ACME_WEB_USER", status="EXPIRED(GRACE)", in_grace=True)
+    outcome = check.decide(user, VerifyResult(method=VERIFY_LOGIN, result=PASS))
+
+    text = render_check(
+        [(binding(), outcome)],
+        notices=["acme_web_user on cdb1-pdb-orders: the password is in its grace period"],
+    )
+
+    assert "all 1 in sync" in text, "the state is still the answer"
+    assert "1 note:" in text
+    assert text.index("in sync") < text.index("1 note:"), "the verdict is read first"
+    assert "grace period" in text
+
+
+def test_a_run_with_nothing_to_note_prints_no_block() -> None:
+    """The ordinary run. A heading with nothing under it trains people to skip
+    the end of the output, which is where the verdict is."""
+    outcome = check.decide(
+        UserState(name="ACME_WEB_USER", status="OPEN"),
+        VerifyResult(method=VERIFY_LOGIN, result=PASS),
+    )
+
+    assert "note" not in render_check([(binding(), outcome)])

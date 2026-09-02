@@ -81,6 +81,16 @@ UNLISTABLE_STORE = "SOPULI-W005"
 #: Hand-allocated, like #130's pair, and J3 is still open.
 MISSING_DRIVER = "SOPULI-W006"
 
+#: An account's password is in its grace period: past ``PASSWORD_LIFE_TIME`` and
+#: inside the window ``PASSWORD_GRACE_TIME`` grants (#309, UC-1 §6.4).
+#:
+#: **A warning beside a state, never a state.** The account may be `IN_SYNC` or
+#: it may have drifted, and ``state`` is one field -- a value of its own here
+#: would have to displace one of those answers, and either choice hides the thing
+#: the reader came for. Riding alongside is what lets a run say *drifted, and
+#: expiring on Friday*, which is the report worth paging on.
+PASSWORD_GRACE_PERIOD = "SOPULI-W013"
+
 #: An estate uses ``auth: external`` and this machine has no wallet it can read
 #: (#215). Its own code rather than a widening of anything above: the remedy is a
 #: file on this machine, and a consumer that alerts on "sopuli cannot reach a
@@ -180,6 +190,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "the config is valid and the install is incomplete, and what that is worth "
             "depends on the question asked: `config validate` warns and exits 0, `doctor` "
             "fails, and any command that connects to that target fails with SOPULI-20002."
+        ),
+        PASSWORD_GRACE_PERIOD: (
+            "An account's password is in its grace period: it still authenticates, and it "
+            "stops on the date in the message. Informational rather than a failure -- the "
+            "credential works and the vault may well hold it -- but the window closes, and "
+            "`creds apply` clears the expiry by setting a password, so this is the notice "
+            "that there is time to do it in."
         ),
         UNVERIFIED_TRANSPORT: (
             "A store in this run is configured `tls.verify: false`, so its certificate is "

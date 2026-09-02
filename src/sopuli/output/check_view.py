@@ -25,7 +25,8 @@ from typing import Any
 from sopuli.check import DRIFT, IN_SYNC, Outcome, counts, is_failure, is_inconclusive
 from sopuli.config.model import Binding
 from sopuli.driver.protocol import FAIL, PASS, VerifyResult
-from sopuli.output.document import Error, Summary
+from sopuli.output.document import Diagnostic, Error, Summary
+from sopuli.output.notices import render_notices
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
 
@@ -47,7 +48,7 @@ def build_result(
     duration_ms: int | None = None,
     previous_accepted: bool | None = None,
     error: Error | None = None,
-    warnings: Sequence[str] = (),
+    warnings: Sequence[tuple[str, str]] = (),
 ) -> dict[str, Any]:
     """One ``results[]`` entry.
 
@@ -57,6 +58,12 @@ def build_result(
     wrong*. A consumer diffing the two arrays gets a run of ``false`` from this
     command by construction, and that is invariant 9's shape rather than an
     omission.
+
+    ``warnings`` is ``(code, message)`` pairs rather than bare strings, because a
+    warning without a code is one a consumer has to grep for (``03-json-output.md``
+    §3). It carries findings that sit *beside* the state rather than replacing it
+    -- the grace period is the first (#309), and the shape is deliberately general
+    because it will not be the last.
     """
     entry: dict[str, Any] = {
         "account": binding.account,
@@ -91,8 +98,13 @@ def build_result(
     if error is not None:
         entry["error"] = error.to_dict()
     if warnings:
+        # Built through `Diagnostic` rather than by hand, so a `results[].warnings[]`
+        # entry and a top-level `diagnostics[]` one cannot drift into two shapes of
+        # the same object -- and so the code travels with the message. A consumer
+        # branches on `SOPULI-W013`; the prose carries a date and is not a key.
         entry["warnings"] = [
-            {"level": "warning", "message": text, "target": binding.target} for text in warnings
+            Diagnostic(level="warning", code=code, message=text, target=binding.target).to_dict()
+            for code, text in warnings
         ]
     return entry
 
@@ -194,13 +206,19 @@ def summarise(states: Sequence[str]) -> Summary:
     )
 
 
-def render_check(rows: Sequence[tuple[Binding, Outcome]]) -> str:
+def render_check(rows: Sequence[tuple[Binding, Outcome]], *, notices: Sequence[str] = ()) -> str:
     """The table, and the one-line verdict UC-1 §7 ends with.
 
     The verdict counts only what is worth acting on. A run where everything is
     in sync says so in one line rather than repeating the table's own arithmetic
     -- and a run with findings names them in the order somebody would deal with
     them: drift first, because it is the thing that is actually wrong.
+
+    ``notices`` are the row-level findings that do not fit in a column -- a grace
+    period and the date it ends (#309). They go **under the verdict** rather than
+    into ``DETAIL``, because a sentence carrying a timestamp would push the
+    column past a terminal and because the verdict is the line somebody reads
+    first. Below it, they are what they read next.
     """
     table = render_table(
         [
@@ -214,7 +232,14 @@ def render_check(rows: Sequence[tuple[Binding, Outcome]]) -> str:
             for binding, outcome in rows
         ],
     )
-    return "\n".join([*table, "", _verdict([outcome.state for _, outcome in rows])])
+    return "\n".join(
+        [
+            *table,
+            "",
+            _verdict([outcome.state for _, outcome in rows]),
+            *render_notices(notices),
+        ]
+    )
 
 
 def _state(state: str) -> Cell | str:

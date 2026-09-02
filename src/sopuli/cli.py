@@ -90,6 +90,7 @@ from sopuli.config import (
 )
 from sopuli.diagnostics import (
     LOCK_LOST,
+    PASSWORD_GRACE_PERIOD,
     ROTATION_UNCONFIRMED,
     install_diagnostics,
     lock_broken,
@@ -1596,6 +1597,10 @@ def creds_check(
 
     rows: list[tuple[Binding, check_states.Outcome]] = []
     results: list[dict[str, Any]] = []
+    # Collected beside `results` and by the same out-parameter idiom: one is what
+    # a consumer reads and the other is what a person does, and both are filled
+    # from one `grace_warning` call so they cannot disagree (#309).
+    notices: list[str] = []
     for target_name, bindings in _grouped(config.bindings).items():
         rows.extend(
             _check_target(
@@ -1607,13 +1612,14 @@ def creds_check(
                 margin=lockout_margin,
                 previous=include_previous,
                 results=results,
+                notices=notices,
             )
         )
 
     document.results = results
     states = [outcome.state for _, outcome in rows]
     document.finish(check_states.exit_code_for(states), summarise(states))
-    return "\n".join([render_plan(plan, noun="check"), "", render_check(rows)])
+    return "\n".join([render_plan(plan, noun="check"), "", render_check(rows, notices=notices)])
 
 
 def _grouped(bindings: Sequence[Binding]) -> dict[str, list[Binding]]:
@@ -1639,6 +1645,7 @@ def _check_target(
     margin: int,
     previous: bool,
     results: list[dict[str, Any]],
+    notices: list[str],
 ) -> list[tuple[Binding, check_states.Outcome]]:
     """Every account this run checks in one target, over one connection.
 
@@ -1675,6 +1682,7 @@ def _check_target(
                     margin=margin,
                     previous=previous,
                     out=results,
+                    notices=notices,
                 )
             )
         return rows
@@ -1709,6 +1717,7 @@ def _check_one(
     margin: int,
     previous: bool,
     out: list[dict[str, Any]],
+    notices: list[str],
 ) -> tuple[Binding, check_states.Outcome]:
     """One account in one target: read the vault, read the account, ask once.
 
@@ -1761,6 +1770,13 @@ def _check_one(
         out.append(build_result(binding, outcome, duration_ms=_elapsed(started), error=reported))
         return binding, outcome
 
+    # One call, two channels: `results[].warnings[]` for a consumer and a line
+    # under the table for a person. Computing it twice is how they would come to
+    # disagree about one window (#309).
+    grace = check_states.grace_warning(user)
+    if grace is not None:
+        notices.append(_grace_notice(binding, grace))
+
     out.append(
         build_result(
             binding,
@@ -1772,9 +1788,20 @@ def _check_one(
             ),
             duration_ms=_elapsed(started),
             previous_accepted=accepted,
+            warnings=() if grace is None else ((PASSWORD_GRACE_PERIOD, grace),),
         )
     )
     return binding, outcome
+
+
+def _grace_notice(binding: Binding, message: str) -> str:
+    """The same finding, addressed to a person rather than to a consumer.
+
+    The document keeps the account and target in fields of their own; a line
+    under a table has to carry them itself, because it is read next to other
+    accounts' lines and not next to its own row.
+    """
+    return f"{binding.account} on {binding.target}: {message}"
 
 
 def _previous_accepted(

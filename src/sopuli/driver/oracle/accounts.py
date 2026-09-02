@@ -87,9 +87,15 @@ from sopuli.driver.protocol import DriverError, UserState
 #: **Bound, never interpolated.** The account name is not a secret, so invariant
 #: 14 does not forbid binding it — and it is exactly the kind of value that must
 #: not be pasted into SQL text.
+#: ``EXPIRY_DATE`` is **appended** rather than slotted in beside
+#: ``ACCOUNT_STATUS`` where it reads most naturally, and that is deliberate:
+#: :func:`_maintained` and :func:`_changed_at` read fixed positions, so a column
+#: inserted in the middle would move two fields that nothing would fail loudly
+#: about -- ``ORACLE_MAINTAINED`` would come back as a date and read as *not
+#: vendor-maintained*, which is guardrail check 5's input (#309).
 USER_QUERY = (
     "select username, account_status, profile, password_versions, "
-    "oracle_maintained, password_change_date "
+    "oracle_maintained, password_change_date, expiry_date "
     "from dba_users where username = :name"
 )
 
@@ -99,7 +105,7 @@ USER_QUERY = (
 #: to their literal deny list (``02-oracle-privileges.md`` §4 check 5) rather than
 #: reading a missing column as "no".
 USER_QUERY_NO_CHANGE_DATE = (
-    "select username, account_status, profile, password_versions "
+    "select username, account_status, profile, password_versions, expiry_date "
     "from dba_users where username = :name"
 )
 
@@ -188,6 +194,14 @@ IN_ROLLOVER = "IN ROLLOVER"
 LOCKED = "LOCKED"
 EXPIRED = "EXPIRED"
 
+#: What a password in its grace period reads as -- and the reason :data:`EXPIRED`
+#: is not enough on its own. The whole string is matched rather than the bare word
+#: ``GRACE``, because the point is that this **contains** :data:`EXPIRED`: an
+#: account here still authenticates, and a substring test for the shorter token
+#: reported it as a hard expiry (#309). Measured, with every compound form, in the
+#: module docstring above.
+EXPIRED_GRACE = "EXPIRED(GRACE)"
+
 
 class RolesUnreadableError(DriverError):
     """``DBA_ROLE_PRIVS`` could not be read, so guardrail 4 has no input.
@@ -250,10 +264,16 @@ def login_state(cursor: Cursor, account: str) -> UserState | None:
         name=name,
         status=status,
         locked=LOCKED in status,
-        expired=EXPIRED in status,
+        # `EXPIRED(GRACE)` carries the token `EXPIRED`, so the two are read
+        # together or the grace period comes out as a hard expiry. Every caller
+        # tests `locked` before either, and every locked form carries `LOCKED`,
+        # so an account that is both stays locked to all of them (#309).
+        expired=EXPIRED in status and EXPIRED_GRACE not in status,
+        in_grace=EXPIRED_GRACE in status,
         profile=profile,
         password_versions=_versions(row[3]),
         password_changed_at=_changed_at(row),
+        password_expires_at=_expires_at(row),
         failed_login_limit=limits.get(FAILED_LOGIN_ATTEMPTS),
         # Carried rather than discarded, because one query already resolved
         # them: #181 reads the rollover time at plan time, and UC-1 §4's bounded
@@ -346,11 +366,28 @@ def _changed_at(row: Any) -> datetime | None:
 
     The 11.2 row is shorter, so its absence is a length rather than a null, and
     both mean the same thing to a caller: no date, and nothing substituted for
-    one (#87).
+    one (#87). The two lengths are **7 and 5** since #309 added ``EXPIRY_DATE`` to
+    the end of both queries, which is why the threshold is not simply "one less
+    than the full row".
     """
     if len(row) < 6:
         return None
     return row[5] if isinstance(row[5], datetime) else None
+
+
+def _expires_at(row: Any) -> datetime | None:
+    """``EXPIRY_DATE``, which both queries select and both select **last**.
+
+    ``row[-1]`` rather than a number, because the two rows are different lengths
+    and this is the one column whose position is the same in each. That is the
+    property the queries are written to have, and reading it this way is what
+    keeps the two facts in one place instead of two.
+
+    ``None`` where the profile expires nothing. A caller must not read that as
+    *not expiring soon* and then as *expiring never*: it is the same answer either
+    way here, and #309's warning simply has nothing to say about such an account.
+    """
+    return row[-1] if isinstance(row[-1], datetime) else None
 
 
 def _maintained(row: Any) -> bool | None:
@@ -360,8 +397,15 @@ def _maintained(row: Any) -> bool | None:
     consulted **only** where check 2 could not answer, so a missing column
     reading as "not vendor-maintained" would quietly switch off the fallback that
     exists for exactly that release.
+
+    The threshold moved from 5 to 6 when #309 appended ``EXPIRY_DATE`` to both
+    queries: the 11.2 row is now five columns, and the old test would have read
+    its last one -- a date -- as ``ORACLE_MAINTAINED``, come back *not
+    vendor-maintained*, and switch off that fallback silently. Which is the whole
+    argument for why the column was appended rather than inserted, one length
+    test over.
     """
-    if len(row) < 5:
+    if len(row) < 6:
         return None
     return str(row[4]).upper() == "Y" if row[4] is not None else None
 

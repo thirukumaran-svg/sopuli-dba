@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import pytest
 
 from sopuli import check
+from sopuli.diagnostics import PASSWORD_GRACE_PERIOD, WARNINGS
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
@@ -243,3 +244,124 @@ def test_a_multi_line_driver_message_is_trimmed_to_one_line() -> None:
 
     assert "\n" not in outcome.detail
     assert "ORA-01017" in outcome.detail
+
+
+# ------------------------------------------------------------ the grace period ---
+#
+# #309. `EXPIRED(GRACE)` carries the token `EXPIRED`, so an account whose password
+# still works came back `expired=True`, `check` reported `EXPIRED`, and the login
+# that would have proved otherwise was never attempted. The decision inside that
+# issue was whether the grace period gets a `state` of its own: it does not, it
+# rides as a warning, because `state` is one field and an account in grace may be
+# `IN_SYNC` or may have drifted.
+
+
+def in_grace(**fields: object) -> UserState:
+    return user(status="EXPIRED(GRACE)", in_grace=True, **fields)
+
+
+def test_a_password_in_its_grace_period_is_verified_like_any_other() -> None:
+    """The bug, at the level it was reported. Before #309 this was `EXPIRED` and
+    no login happened -- which made a scheduled check blind to drift for exactly
+    the window before a forced expiry."""
+    outcome = check.decide(in_grace(), attempt(PASS), version=7)
+
+    assert outcome.state == check.IN_SYNC
+
+
+def test_drift_during_a_grace_period_is_still_drift() -> None:
+    """The case a `state` of its own could not have expressed. `IN_GRACE` would
+    have had to displace `DRIFT` or be displaced by it, and either way the run
+    stops saying something true."""
+    outcome = check.decide(in_grace(), attempt(FAIL, detail="ORA-01017"))
+
+    assert outcome.state == check.DRIFT
+    assert "ORA-01017" in outcome.detail
+
+
+def test_a_grace_period_on_a_locked_account_is_still_locked() -> None:
+    """Measured: `EXPIRED(GRACE) & LOCKED` and `EXPIRED(GRACE) & LOCKED(TIMED)`
+    both parse `locked=True`, and `decide` tests `locked` first. So the fix
+    cannot turn a locked account into one this tool will try to log in as."""
+    state = user(status="EXPIRED(GRACE) & LOCKED", locked=True, in_grace=True)
+
+    assert check.decide(state, attempt(PASS)).state == check.LOCKED
+
+
+def test_a_hard_expiry_is_untouched_by_the_grace_fix() -> None:
+    """The control. `EXPIRED` alone still settles the answer without a login --
+    the password has genuinely stopped working, and mitigation 6 says report the
+    cause rather than spend an attempt on the symptom."""
+    outcome = check.decide(user(status="EXPIRED", expired=True), attempt(PASS))
+
+    assert outcome.state == check.EXPIRED
+    assert "not tried" in outcome.detail
+
+
+# -------------------------------------------------------------- the warning ---
+
+
+def test_an_account_not_in_a_grace_period_has_no_warning() -> None:
+    """Called for every account, so the ordinary answer has to be nothing."""
+    assert check.grace_warning(user()) is None
+    assert check.grace_warning(user(status="EXPIRED", expired=True)) is None
+    assert check.grace_warning(None) is None
+
+
+def test_the_warning_carries_the_deadline_and_the_time_left() -> None:
+    """*When* is most of the value: "in sync" is the answer, and "expiring on
+    Friday" is what makes somebody act on it before the window closes."""
+    found = check.grace_warning(
+        in_grace(password_expires_at=datetime(2026, 9, 6, 12, 0, tzinfo=UTC)),
+        now=datetime(2026, 9, 2, 9, 0, tzinfo=UTC),
+    )
+
+    assert found is not None
+    assert "still works" in found
+    assert "2026-09-06T12:00:00Z" in found
+    assert "4d3h" in found
+
+
+def test_a_naive_expiry_date_is_read_as_utc() -> None:
+    """Oracle's `DATE` carries no zone and `oracledb` hands back a naive value.
+    Subtracting it from an aware "now" raises, which is how the same bug was
+    found in `password_age_days` against a real container -- a test building its
+    own aware fixture could not reproduce it."""
+    found = check.grace_warning(
+        in_grace(password_expires_at=datetime(2026, 9, 6, 12, 0)),
+        now=datetime(2026, 9, 2, 9, 0, tzinfo=UTC),
+    )
+
+    assert found is not None
+    assert "2026-09-06T12:00:00Z" in found
+
+
+def test_a_window_already_past_is_said_plainly_rather_than_counted_down() -> None:
+    """`EXPIRY_DATE` is the end of the window, and a status still reading
+    `EXPIRED(GRACE)` after it means the database has not noticed yet -- it does
+    at the next login. "Expires in -2 days" would be worse than saying so."""
+    found = check.grace_warning(
+        in_grace(password_expires_at=datetime(2026, 9, 1, 12, 0, tzinfo=UTC)),
+        now=datetime(2026, 9, 2, 9, 0, tzinfo=UTC),
+    )
+
+    assert found is not None
+    assert "closed at" in found
+    assert "(in " not in found
+
+
+def test_a_grace_period_with_no_date_still_warns() -> None:
+    """The grace period is true whether or not the release gave a date, and only
+    *when* is missing. Inventing one is what `UserState` refuses to do for every
+    other unknown."""
+    found = check.grace_warning(in_grace(password_expires_at=None))
+
+    assert found is not None
+    assert "did not say when" in found
+
+
+def test_the_warning_code_is_in_the_registry() -> None:
+    """`03-json-output.md` §3: a code is contract, and the registry is what says
+    what it means. Asserted here because this is where the message is made."""
+    assert PASSWORD_GRACE_PERIOD in WARNINGS
+    assert "grace period" in WARNINGS[PASSWORD_GRACE_PERIOD]

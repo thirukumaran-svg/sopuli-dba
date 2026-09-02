@@ -926,7 +926,7 @@ of one is the answer to "did the old password stop working just now".
 | ORA-01017 | invalid credentials | verification failure → drift, not a crash |
 | ORA-28000 | account locked | report `LOCKED`; unlock only where the policy declared it (#300) |
 | ORA-28001 | password expired | distinguish from drift; resolved by apply, since setting a password clears the expiry. The tool never expires one deliberately — see §5 (#302) |
-| ORA-28002 | password in grace period | informational, surfaced in `status`. **Not the code 26ai sends** — see the note below |
+| ORA-28002 | password in grace period | informational, surfaced in `check` and `status` as `SOPULI-W013` — **not** as a state (#309). **Not the code 26ai sends** — see the note below |
 | ORA-01031 | insufficient privileges | fail early in pre-flight, name the missing grant |
 | ORA-65040 / ORA-65048 | container-clause misuse, error while applying to a PDB | scope guardrail message |
 | ORA-12154 / ORA-12541 | naming/listener | connectivity, distinct exit path |
@@ -956,6 +956,50 @@ may rely on:
 Whether older lines send `ORA-28002` is **unmeasured** — tier 2, and deliberately
 not on #309's critical path for exactly that reason. The row stays because the
 code is real; what is now known is that it is not what 26ai sends.
+
+#### What the grace period is reported as (#309, decided)
+
+**A warning beside the state, never a state of its own.** An account in its grace
+period authenticates, so `check` verifies it like any other and reports what the
+login found:
+
+```console
+$ sopuli creds check --application acme
+ACCOUNT        TARGET       STATE    DETAIL
+acme_web_user  appdb-alpha  IN_SYNC  vault v1 verified by login
+
+all 1 in sync
+
+1 note:
+  acme_web_user on appdb-alpha: the password is in its grace period: it still
+  works, and expires 2026-09-03T14:26:11Z (in 23h56m)
+```
+
+The verdict still says **in sync**, because it is. `creds status` counts it
+instead — *1 account: 1 in a grace period* — since that command's closing line
+answers *is there anything to do*, and there is: rotate before the window
+closes.
+
+The alternative — a `state` of its own — was considered and refused. `state` is
+one field, and an account in grace may equally well have **drifted**: a value
+there would have to displace `IN_SYNC` or `DRIFT`, and either choice hides the
+answer the reader came for. As a warning, *drifted, and expiring on Friday* is
+sayable. It is also a smaller contract change: `results[].warnings[]` already
+exists, so nothing in `03-json-output.md` §2's state enum moves.
+
+**Read from the dictionary, not from the login.** `ACCOUNT_STATUS` says
+`EXPIRED(GRACE)` in every profile shape, so the warning is produced on runs where
+no login happened at all — which is exactly when the lockout guard declined to
+try and an operator most wants the rest of what is known.
+
+**The remedy the warning implies is `creds apply`**, and it needs no new
+machinery: setting a password clears the expiry, so a rotation closes the window
+as a side effect of what it already does (§5).
+
+Before this, `EXPIRED(GRACE)` was read as a hard expiry — `check` reported
+`EXPIRED` and skipped the login, which left a scheduled check blind to drift for
+the whole grace window, the one period before a forced expiry when somebody most
+wants to hear *still in sync*.
 
 ### Which verb redraws, and why it is `apply` (#268, decided)
 

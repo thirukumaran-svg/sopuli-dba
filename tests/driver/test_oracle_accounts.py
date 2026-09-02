@@ -24,8 +24,9 @@ from typing import Any
 import pytest
 
 from oracle_harness import Environment
+from sopuli.check import grace_warning
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
-from sopuli.driver.protocol import Credential
+from sopuli.driver.protocol import PASS, Credential
 from sopuli.secrets import Secret
 
 USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
@@ -267,3 +268,156 @@ def test_the_effective_rollover_time_is_carried(account: Any) -> None:
     assert state is not None
     assert state.rollover_time == "1", "set on the profile"
     assert state.password_reuse_max == "UNLIMITED", "unset, so resolved from DEFAULT"
+
+
+# --------------------------------------------------------- the grace period ---
+
+
+GRACE_ACCOUNT = "acme_grace_user"
+GRACE_PROFILE = "acme_grace_prof"
+GRACE_PASSWORD = "Grace-Pass-3x"
+
+#: One minute, as a fraction of a day. Short enough that a test can outlive it,
+#: long enough that the account is not already expired when it is created --
+#: Oracle sets `EXPIRY_DATE` at creation, so a zero life time would race the
+#: fixture rather than the assertion.
+ONE_MINUTE = "1/1440"
+
+
+@pytest.fixture
+def grace_account(session: Any) -> Iterator[Any]:
+    """An account whose password is past its life time and inside its grace window.
+
+    **The wait is real and there is no way around it.** `PASSWORD_LIFE_TIME` is
+    the only thing that puts an account into `EXPIRED(GRACE)`, its resolution is
+    the minute, and no `ALTER` reaches the state directly -- `PASSWORD EXPIRE`
+    produces a *hard* `EXPIRED`, which is the state this one has to be
+    distinguished from. So the test costs a minute, which is why there is one
+    fixture and several assertions over it rather than one each.
+
+    The move into grace happens **at a login**, not at the deadline: the status
+    stays `OPEN` until something authenticates and Oracle notices. That login is
+    part of the setup rather than the subject.
+    """
+    _drop_grace(session)
+    _run(
+        session,
+        f"create profile {GRACE_PROFILE} limit "
+        f"password_life_time {ONE_MINUTE} password_grace_time 1 "
+        f"failed_login_attempts unlimited password_reuse_max unlimited "
+        f"password_reuse_time unlimited password_verify_function null",
+        f'create user {GRACE_ACCOUNT} identified by "{GRACE_PASSWORD}" profile {GRACE_PROFILE}',
+        f"grant create session to {GRACE_ACCOUNT}",
+    )
+    try:
+        _wait_past_expiry(session)
+        _touch(session)
+        yield session
+    finally:
+        _drop_grace(session)
+
+
+def _drop_grace(session: Any) -> None:
+    for statement in (
+        f"drop user {GRACE_ACCOUNT} cascade",
+        f"drop profile {GRACE_PROFILE} cascade",
+    ):
+        with contextlib.suppress(Exception):
+            _run(session, statement)
+
+
+def _wait_past_expiry(session: Any, *, limit: float = 180.0) -> None:
+    """Until the database says the life time has elapsed, asked of the database.
+
+    `sysdate > expiry_date` rather than a client-side sleep of the same length:
+    the container's clock is the one the profile is measured against, and a test
+    that slept locally would be asserting on this machine's.
+    """
+    deadline = time.monotonic() + limit
+    while time.monotonic() < deadline:
+        state = session.describe_user(GRACE_ACCOUNT)
+        assert state is not None
+        if state.password_expires_at is not None and _elapsed(session):
+            return
+        time.sleep(5)
+    pytest.fail(f"{GRACE_ACCOUNT} did not pass its password life time within {limit}s")
+
+
+def _elapsed(session: Any) -> bool:
+    with session.connection.cursor() as cursor:
+        cursor.execute(
+            "select case when sysdate > expiry_date then 1 else 0 end "
+            "from dba_users where username = :name",
+            {"name": GRACE_ACCOUNT.upper()},
+        )
+        row = cursor.fetchone()
+    return bool(row and row[0])
+
+
+def _touch(session: Any) -> None:
+    """One login as the account, which is what moves the status into grace."""
+    session.verify_password(GRACE_ACCOUNT.upper(), Secret(GRACE_PASSWORD))
+
+
+def test_a_password_in_its_grace_period_is_not_read_as_expired(grace_account: Any) -> None:
+    """#309, against the database rather than against a string a test wrote.
+
+    `EXPIRED(GRACE)` carries the token `EXPIRED`, and reading the two as one
+    made `check` report a working account as expired and skip the login that
+    would have proved otherwise.
+    """
+    state = grace_account.describe_user(GRACE_ACCOUNT)
+
+    assert state is not None
+    assert state.status == "EXPIRED(GRACE)", "the spelling this whole fix turns on"
+    assert state.in_grace is True
+    assert state.expired is False, "the password still works; it is on notice"
+    assert state.locked is False
+
+
+def test_the_grace_window_has_an_end_the_dictionary_reports(grace_account: Any) -> None:
+    """`EXPIRY_DATE` during a grace period is the end of the *window*, which is
+    the deadline the warning quotes. Without it the warning can say that a
+    password is expiring but not when, which is most of its value gone."""
+    state = grace_account.describe_user(GRACE_ACCOUNT)
+
+    assert state is not None
+    assert state.password_expires_at is not None
+    assert grace_warning(state) is not None
+
+
+def test_the_password_still_authenticates_during_the_grace_period(grace_account: Any) -> None:
+    """The fact the whole decision rests on, and the one a status column cannot
+    prove on its own. If this ever came back `fail`, reporting `IN_SYNC` for an
+    account in grace would be wrong and #309 would need reopening."""
+    result = grace_account.verify_password(GRACE_ACCOUNT.upper(), Secret(GRACE_PASSWORD))
+
+    assert result.result == PASS
+
+
+def test_a_locked_account_in_its_grace_period_is_still_locked(grace_account: Any) -> None:
+    """The compound form, and the reason the fix is safe: every locked spelling
+    carries `LOCKED`, and every caller tests `locked` before `expired`."""
+    _run(grace_account, f"alter user {GRACE_ACCOUNT} account lock")
+
+    state = grace_account.describe_user(GRACE_ACCOUNT)
+
+    assert state is not None
+    assert state.status == "EXPIRED(GRACE) & LOCKED"
+    assert state.locked is True
+    assert state.in_grace is True
+    assert state.expired is False
+
+
+def test_setting_a_password_clears_the_grace_period(grace_account: Any) -> None:
+    """Why `apply` is the remedy the warning implies. Oracle clears the expiry
+    when a password is set -- that is its behaviour and not a choice this tool
+    makes (UC-1 §5) -- so the window closes without any statement aimed at it."""
+    grace_account.set_password(GRACE_ACCOUNT.upper(), Secret(SECOND))
+
+    state = grace_account.describe_user(GRACE_ACCOUNT)
+
+    assert state is not None
+    assert state.in_grace is False
+    assert state.expired is False
+    assert "EXPIRED" not in state.status

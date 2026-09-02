@@ -467,6 +467,7 @@ class UserState:
     field                             Oracle
     ================================  ==========================================
     ``status``                        ``DBA_USERS.ACCOUNT_STATUS``
+    ``password_expires_at``           ``DBA_USERS.EXPIRY_DATE``
     ``vendor_maintained``             ``DBA_USERS.ORACLE_MAINTAINED``
     ``password_file_member``          ``V$PWFILE_USERS``
     ``failed_logins``                 ``SYS.USER$.LCOUNT``
@@ -499,7 +500,18 @@ class UserState:
     name: str
     status: str
     locked: bool = False
+    #: The password has **stopped working**. Deliberately not true of an account
+    #: in its grace period, which is :attr:`in_grace` -- Oracle spells that
+    #: ``EXPIRED(GRACE)``, the token ``EXPIRED`` is inside it, and reading the two
+    #: as one made `check` report a working account as expired and skip the login
+    #: that would have proved it (#309).
     expired: bool = False
+    #: The password still works and is on notice: past its ``PASSWORD_LIFE_TIME``
+    #: and inside the window ``PASSWORD_GRACE_TIME`` grants. Mutually exclusive
+    #: with :attr:`expired` -- one is a credential that has stopped working and
+    #: the other is one that has not, and the whole of #309 is that they are not
+    #: the same fact.
+    in_grace: bool = False
     profile: str | None = None
     #: The profile's **effective** password limits, each as the database spells
     #: the value -- a number, ``UNLIMITED``, or a vendor word. Never ``DEFAULT``:
@@ -518,6 +530,16 @@ class UserState:
     password_reuse_time: str | None = None
     password_versions: tuple[str, ...] = ()
     password_changed_at: datetime | None = None
+    #: When the password stops working, from ``DBA_USERS.EXPIRY_DATE``. During a
+    #: grace period this is the **end of the grace window**, which is what makes
+    #: it the deadline worth reporting: "in sync, and expiring on Friday" is the
+    #: sentence #309 exists to produce, and *when* is most of it.
+    #:
+    #: ``None`` where the profile expires nothing, which is the ordinary state of
+    #: an account on a profile with ``PASSWORD_LIFE_TIME UNLIMITED``. Never
+    #: substituted for: no date and a date in the far future are different
+    #: answers, and only one of them is true.
+    password_expires_at: datetime | None = None
     failed_logins: int | None = None
     rollover_active: bool | None = None
     rollover_ends_at: datetime | None = None

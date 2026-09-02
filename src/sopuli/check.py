@@ -38,7 +38,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from sopuli.clock import as_utc, utc_now
+from sopuli.clock import as_utc, to_rfc3339, until, utc_now
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
@@ -63,6 +63,7 @@ __all__ = [
     "counts",
     "decide",
     "exit_code_for",
+    "grace_warning",
     "is_failure",
     "is_inconclusive",
     "password_age_days",
@@ -255,6 +256,54 @@ def password_age_days(changed_at: datetime | None, *, now: datetime | None = Non
         return None
     moment = as_utc(now if now is not None else utc_now())
     return round((moment - as_utc(changed_at)).total_seconds() / 86400, 1)
+
+
+def grace_warning(user: UserState | None, *, now: datetime | None = None) -> str | None:
+    """What to say beside the state when a password is in its grace period.
+
+    UC-1 §6.4 files the grace period as *informational, surfaced in status*, and
+    #309 decided it rides as a warning rather than as a state of its own. The
+    argument is that ``state`` is one field: an account in grace may be `IN_SYNC`
+    or it may have drifted, and a value that displaced either would hide the
+    answer the reader came for. Alongside, both are sayable.
+
+    **Not derived from the login.** The obvious source is `ORA-28002`, which
+    ``verification.py`` still names -- and which 26ai does not send: a grace login
+    *succeeds*, and the notice arrives as a connection warning carrying
+    `ORA-28098` or `ORA-28011` depending on the profile, which nothing reads
+    (#322). ``ACCOUNT_STATUS`` says ``EXPIRED(GRACE)`` in every shape and needs no
+    login at all, so that is what this asks. It also means the sentence is the
+    same on a run where the lockout guard declined to try.
+
+    Three sentences rather than one, because the deadline is most of the value
+    and it is not always there:
+
+    * a date, and a countdown to it -- the ordinary case;
+    * a date already past. `EXPIRY_DATE` is the end of the window, and a status
+      still reading ``EXPIRED(GRACE)`` after it means the database has not yet
+      noticed, which it does at the next login. Saying *expires in -2 days* would
+      be worse than saying it plainly;
+    * no date at all, which is a release that did not give one. The grace period
+      is still true and still worth saying; only *when* is missing, and inventing
+      it is exactly what :class:`~sopuli.driver.protocol.UserState` refuses to do
+      for every other unknown.
+
+    ``None`` for every account not in grace, so a caller can pass any state and
+    append what comes back.
+    """
+    if user is None or not user.in_grace:
+        return None
+
+    preamble = "the password is in its grace period: it still works"
+    deadline = user.password_expires_at
+    if deadline is None:
+        return f"{preamble}, and the database did not say when the window closes"
+
+    when = to_rfc3339(as_utc(deadline))
+    remaining = until(deadline, now=now)
+    if remaining is None:
+        return f"{preamble}, and the window closed at {when}"
+    return f"{preamble}, and expires {when} (in {remaining})"
 
 
 def exit_code_for(states: Sequence[str]) -> int:
