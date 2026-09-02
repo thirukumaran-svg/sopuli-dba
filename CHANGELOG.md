@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.54.0](https://github.com/villebase/sopuli-dba/compare/v0.53.0...v0.54.0) (2026-09-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** widen `config validate` to every backend it cannot serve ([#321](https://github.com/villebase/sopuli-dba/issues/321))
+
+### Bug Fixes
+
+* **config:** stop sending `config validate` to `pip` for an unwritten backend ([#319](https://github.com/villebase/sopuli-dba/issues/319)) ([11dc2d1](https://github.com/villebase/sopuli-dba/commit/11dc2d16cac922f7a4af1d96027aba38d96d4df7))
+* **config:** widen `config validate` to every backend it cannot serve ([#321](https://github.com/villebase/sopuli-dba/issues/321)) ([0475794](https://github.com/villebase/sopuli-dba/commit/04757946e2814cfd20b5fc9f9134c4d446505cdb))
+
 ## [0.53.0](https://github.com/villebase/sopuli-dba/compare/v0.52.0...v0.53.0) (2026-09-01)
 
 
