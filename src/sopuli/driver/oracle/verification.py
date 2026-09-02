@@ -41,6 +41,28 @@ verdict, which is the honest answer and not a failure.
 
 That is UC-1 §7's trade taken at face value: an account nobody can verify is a
 worse report and a better outcome than an account nobody can log into.
+
+**A further behaviour was measured later, on 2026-09-02 and the same release,
+and it contradicts one of the constants below.** A password in its grace period does
+*not* answer with an error at all: the login **succeeds**, and the notice arrives
+as ``connection.warning`` -- ``ORA-28098`` where the profile limits
+``PASSWORD_GRACE_TIME``, ``ORA-28011`` where it does not. ``ORA-28002`` was not
+produced in either shape.
+
+Two things follow, and neither is fixed here:
+
+* :data:`PASSWORD_IN_GRACE` and its arm of :func:`result_for` are **unreachable
+  on this release**. They are kept rather than deleted because the code is real
+  and older lines are unmeasured (tier 2), and because #309 decides what replaces
+  them;
+* :meth:`~sopuli.driver.oracle.session.Session._attempt` reads its answer out of
+  the exception and never looks at ``connection.warning``, so the notice is
+  discarded wherever it appears. That is #322, and it is wider than the grace
+  period.
+
+The dependable signal for the grace period is ``DBA_USERS.ACCOUNT_STATUS``, which
+says ``EXPIRED(GRACE)`` in both shapes and needs no login
+(:mod:`sopuli.driver.oracle.accounts`).
 """
 
 from __future__ import annotations
@@ -60,6 +82,10 @@ UNLIMITED = "UNLIMITED"
 
 ACCOUNT_LOCKED = "ORA-28000"
 PASSWORD_EXPIRED = "ORA-28001"
+#: **Unreachable on 26ai 23.26.2.0.0** -- a grace-period login succeeds and the
+#: notice arrives as ``connection.warning`` carrying ``ORA-28098`` or
+#: ``ORA-28011``, neither of which is this. Kept because the code exists and the
+#: older lines are unmeasured; see the module docstring, #309 and #322.
 PASSWORD_IN_GRACE = "ORA-28002"
 INVALID_CREDENTIALS = "ORA-01017"
 

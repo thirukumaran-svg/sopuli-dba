@@ -5,8 +5,9 @@ which #86 made an optional grant and which nothing here touches. Three consumers
 want this object: UC-1 §5's pre-flight step 3, the client-side guardrails (#173),
 and `creds status`'s inventory.
 
-Four things here were measured on 26ai Free 23.26.2.0.0 rather than reasoned
-about, and each would have been got wrong by reasoning.
+Five things here were measured on 26ai Free 23.26.2.0.0 rather than reasoned
+about, and each would have been got wrong by reasoning. The fifth arrived later
+than the others, with #309.
 
 **Rollover state is in ``ACCOUNT_STATUS``, and nowhere else.** No column in any
 `DBA_*` view mentions rollover — the dictionary was searched, not assumed. What
@@ -49,6 +50,22 @@ about *where the value comes from on 11.2*, not about whether it means anything
 here. Where the column is absent the answer is ``None`` and never a substitute:
 nothing gates on it (Q9 put `--max-age-days` on the vault's ``rotated_at`` and
 only that), so guessing would be all cost.
+
+**``EXPIRED(GRACE)`` is a value of ``ACCOUNT_STATUS``, and it contains the token
+``EXPIRED``.** Measured 2026-09-02, later than the four above, because #309 turned
+on it. The grace state compounds like the rest, and the hard expiry was measured
+alongside it as a control — it is the fourth value below:
+
+    EXPIRED(GRACE)                    EXPIRED(GRACE) & LOCKED
+    EXPIRED(GRACE) & LOCKED(TIMED)    EXPIRED
+
+So the token reading below makes :attr:`~sopuli.driver.protocol.UserState.expired`
+``True`` for an account whose password still works — which is #309 and is **not
+fixed here**, because what `check` should report instead is an open decision.
+What the measurement settles is that the fix is safe to make: every locked form
+carries ``LOCKED`` and therefore parses ``locked=True``, and every caller tests
+``locked`` before ``expired``. Excluding ``(GRACE)`` from ``expired`` cannot make
+a locked account read as open.
 """
 
 from __future__ import annotations

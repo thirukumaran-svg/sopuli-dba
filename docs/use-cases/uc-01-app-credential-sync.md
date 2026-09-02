@@ -493,11 +493,14 @@ as ambiguous rather than absent:
   `ALTER USER … EXPIRE PASSWORD ROLLOVER PERIOD`, a different statement, and it is
   the only consumer of the `expire_password` capability today. An attribute
   spelled `PASSWORD_EXPIRE` would have been a second way to ask for it.
-- **`ORA-28002`, the grace period**, which §6.4 files as informational and
-  surfaced in `status`. That is a reporting question rather than an attribute —
-  and looking for it turned up a real one: `EXPIRED(GRACE)` is currently read as a
-  hard expiry, so `check` reports `EXPIRED` for an account whose password works
-  and never attempts the login that would prove it. #309.
+- **The grace period**, which §6.4 files as informational and surfaced in
+  `status`. That is a reporting question rather than an attribute — and looking
+  for it turned up a real one: `EXPIRED(GRACE)` is currently read as a hard
+  expiry, so `check` reports `EXPIRED` for an account whose password works and
+  never attempts the login that would prove it. #309, where the states have since
+  been measured: the status string is confirmed, the grace notice arrives as a
+  connection *warning* rather than an error, and `ORA-28002` — the code §6.4
+  names — is not what 26ai sends.
 
 ### Tablespaces: provisioning, not rotation (#303, closed)
 
@@ -923,12 +926,36 @@ of one is the answer to "did the old password stop working just now".
 | ORA-01017 | invalid credentials | verification failure → drift, not a crash |
 | ORA-28000 | account locked | report `LOCKED`; unlock only where the policy declared it (#300) |
 | ORA-28001 | password expired | distinguish from drift; resolved by apply, since setting a password clears the expiry. The tool never expires one deliberately — see §5 (#302) |
-| ORA-28002 | password in grace period | informational, surfaced in `status` |
+| ORA-28002 | password in grace period | informational, surfaced in `status`. **Not the code 26ai sends** — see the note below |
 | ORA-01031 | insufficient privileges | fail early in pre-flight, name the missing grant |
 | ORA-65040 / ORA-65048 | container-clause misuse, error while applying to a PDB | scope guardrail message |
 | ORA-12154 / ORA-12541 | naming/listener | connectivity, distinct exit path |
 | ORA-28040 / ORA-01017 with version mismatch | verifier / `ALLOWED_LOGON_VERSION` mismatch | explain password-version implications |
 | DPI-1047 / DPY-3001 | the *client* library, not the server: Instant Client missing, or thin mode reached because thick-mode initialisation did not happen | `config` and exit 9 — the same landing ADR-006 gives a backend that is configured and not installed, because it is fixed on this machine by the person reading the message |
+
+**The grace-period row is the one measurement in this table that came back
+differently from the book** (2026-09-02, 26ai Free 23.26.2.0.0, `python-oracledb`
+in thick mode — full method in #309). Three things, and each changes what a fix
+may rely on:
+
+| Attempt | What actually happens |
+|---|---|
+| in grace, `PASSWORD_GRACE_TIME` limited | the login **succeeds**; `connection.warning` carries `ORA-28098` |
+| in grace, `PASSWORD_GRACE_TIME UNLIMITED` | the login **succeeds**; `connection.warning` carries `ORA-28011` |
+| hard expired | raises `ORA-28001`, as the row above says |
+
+- **It is not an error.** A grace login connects, so nothing is raised and the
+  notice arrives on the connection. `ORA-28002` sits in the table above as the
+  code to expect and was not produced in either shape on this release.
+- **The code depends on the profile, not just the version** — two codes for one
+  condition, decided by whether the grace time is limited.
+- **`DBA_USERS.ACCOUNT_STATUS` says `EXPIRED(GRACE)` in both cases**, and does not
+  vary. So the dictionary is the dependable signal for the grace period and the
+  login warning is not, which is what keeps a fix off a per-release code table.
+
+Whether older lines send `ORA-28002` is **unmeasured** — tier 2, and deliberately
+not on #309's critical path for exactly that reason. The row stays because the
+code is real; what is now known is that it is not what 26ai sends.
 
 ### Which verb redraws, and why it is `apply` (#268, decided)
 
