@@ -91,6 +91,18 @@ MISSING_DRIVER = "SOPULI-W006"
 #: expiring on Friday*, which is the report worth paging on.
 PASSWORD_GRACE_PERIOD = "SOPULI-W013"
 
+#: A login **succeeded** and the server attached a diagnostic to it (#322).
+#:
+#: Its own code rather than a widening of :data:`PASSWORD_GRACE_PERIOD`, and the
+#: two do co-occur: a grace-period account produces both, because they are
+#: different sources saying the same thing -- one is what ``ACCOUNT_STATUS`` says
+#: about the account, the other is what the server said on this login, in its own
+#: words. Reported side by side rather than deduplicated, because the tool cannot
+#: know they are the same fact without matching on a vendor code list, and that
+#: list is version- and profile-dependent (``ORA-28098`` and ``ORA-28011`` are one
+#: condition). Corroboration reads better than a guess.
+LOGIN_WARNING = "SOPULI-W014"
+
 #: An estate uses ``auth: external`` and this machine has no wallet it can read
 #: (#215). Its own code rather than a widening of anything above: the remedy is a
 #: file on this machine, and a consumer that alerts on "sopuli cannot reach a
@@ -197,6 +209,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "credential works and the vault may well hold it -- but the window closes, and "
             "`creds apply` clears the expiry by setting a password, so this is the notice "
             "that there is time to do it in."
+        ),
+        LOGIN_WARNING: (
+            "A login succeeded and the server attached a diagnostic to the connection "
+            "rather than raising -- a password in its grace period is the ordinary cause. "
+            "The verification passed and the message is carried verbatim with its vendor "
+            "code, because a server that had something to say about a credential is worth "
+            "hearing whether or not it refused one."
         ),
         UNVERIFIED_TRANSPORT: (
             "A store in this run is configured `tls.verify: false`, so its certificate is "

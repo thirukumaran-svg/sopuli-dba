@@ -204,6 +204,62 @@ def _detail(summary: str, code: str, message: str | None) -> str:
     return f"{text}: {message}" if message else text
 
 
+def warning_detail(code: str | None, message: str | None) -> str:
+    """What the server said on a login that **succeeded** (#322).
+
+    A connection can carry a diagnostic without failing: a password in its grace
+    period connects and Oracle attaches the notice to the connection rather than
+    raising. Nothing read it, so it was discarded on every path -- which is the
+    rule CLAUDE.md states as *never swallow an ORA- code*, broken in the one place
+    where no exception makes it obvious.
+
+    **The code is data, not a branch.** :func:`result_for` above matches specific
+    codes because each means a different verdict; there is no verdict to reach
+    here -- the login worked -- so this formats whatever arrived and matches
+    nothing. That is not laziness: the same condition is ``ORA-28098`` where a
+    profile limits ``PASSWORD_GRACE_TIME`` and ``ORA-28011`` where it does not,
+    both measured on 26ai, and a fixed list would have been wrong on the second
+    the day it was written.
+
+    **One line, and the code said once.** ``oracledb`` hands back a message that
+    repeats its own code and appends a documentation URL on a second line, so the
+    verbatim text through :func:`_detail` reads *the server warned on this login
+    (ORA-28098): ORA-28098: ...* over two lines. That is tolerable in the
+    ``detail`` of a failure, which is where :func:`result_for` puts it and where
+    it has stayed since #172; it is not tolerable in a warning, which is rendered
+    as a line under a table beside other accounts' lines. So the server's own
+    sentence is kept and the two pieces of packaging around it are not -- the same
+    trade :func:`sopuli.store.survey._first_line` makes, for the same reason.
+
+    ``code`` is optional because a client can grow the attribute without putting
+    a code on it, and the server's sentence is worth carrying either way. That
+    case formats **here** rather than at the call site: a second spelling of this
+    sentence is a second place for the one-line rule to be forgotten, which is
+    exactly what happened to the first draft of it.
+    """
+    sentence = _sentence(code, message)
+    summary = "the server warned on this login"
+    if code is None:
+        return f"{summary}: {sentence}" if sentence else summary
+    return _detail(summary, code, sentence)
+
+
+def _sentence(code: str | None, message: str | None) -> str | None:
+    """The server's own sentence, without the code it already carries or the URL
+    the client appended after it.
+
+    First line only, unconditionally -- including when there is no ``code`` to
+    strip, which is the arm that made this worth extracting.
+    """
+    if not message:
+        return None
+    first = message.splitlines()[0].strip()
+    prefix = f"{code}:"
+    if code is not None and first.startswith(prefix):
+        return first[len(prefix) :].strip()
+    return first
+
+
 def skipped_detail(reason: str) -> str:
     """What a skipped verification says about itself."""
     return f"no login attempted: {reason}"
@@ -217,6 +273,7 @@ __all__ = [
     "PASSWORD_EXPIRED",
     "PASSWORD_IN_GRACE",
     "SKIPPED",
+    "warning_detail",
     "UNLIMITED",
     "is_verification_outcome",
     "margin_reason",

@@ -23,6 +23,7 @@ from sopuli.driver.oracle.verification import (
     is_verification_outcome,
     margin_reason,
     result_for,
+    warning_detail,
 )
 from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
 
@@ -220,3 +221,81 @@ def test_a_detail_survives_a_server_that_said_nothing() -> None:
     assert outcome == FAIL
     assert detail is not None
     assert INVALID_CREDENTIALS in detail
+
+
+# ------------------------------------------- a warning on a login that worked ---
+#
+# #322. A connection can carry a diagnostic without failing -- a grace-period
+# login is the ordinary case -- and nothing read it, so it was discarded on every
+# path. Measured on 26ai: `ORA-28098` where the profile limits
+# PASSWORD_GRACE_TIME and `ORA-28011` where it does not, both on connections that
+# succeeded.
+
+
+def test_a_login_warning_keeps_the_servers_words_and_its_code() -> None:
+    """CLAUDE.md's rule, in the one place no exception makes it obvious."""
+    found = warning_detail(
+        "ORA-28098",
+        "ORA-28098: Profile limits PASSWORD_LIFE_TIME and PASSWORD_GRACE_TIME are not "
+        "unlimited, password will expire within 1 days.",
+    )
+
+    assert "(ORA-28098)" in found
+    assert "password will expire within 1 days" in found
+
+
+def test_the_code_is_said_once() -> None:
+    """`oracledb` returns a message that repeats its own code, so the verbatim
+    text reads *(ORA-28098): ORA-28098: ...*. Tolerable in the `detail` of a
+    failure; not in a line rendered under a table."""
+    found = warning_detail("ORA-28098", "ORA-28098: password will expire within 1 days.")
+
+    assert found.count("ORA-28098") == 1
+
+
+def test_the_documentation_url_is_not_carried() -> None:
+    """The client appends it on a second line. A notice is one line, beside other
+    accounts' lines."""
+    found = warning_detail(
+        "ORA-28011",
+        "ORA-28011: The password has expired.\nHelp: https://docs.oracle.com/x",
+    )
+
+    assert "\n" not in found
+    assert "Help:" not in found
+    assert "The password has expired." in found
+
+
+def test_a_warning_with_no_message_still_names_the_code() -> None:
+    """A code and nothing else is still worth reporting -- and `_detail` must not
+    append a bare colon to it."""
+    found = warning_detail("ORA-28011", None)
+
+    assert found.endswith("(ORA-28011)")
+
+
+def test_a_warning_with_no_code_is_trimmed_the_same_way() -> None:
+    """A client can grow `Connection.warning` without putting a code on it, and
+    the server's sentence is worth carrying either way.
+
+    The first draft of this returned the message verbatim on that arm, so the
+    documentation URL and its newline came back -- the very packaging the coded
+    arm strips. One formatter, one rule.
+    """
+    found = warning_detail(None, "The password has expired.\nHelp: https://docs.oracle.com/x")
+
+    assert found == "the server warned on this login: The password has expired."
+
+
+def test_a_warning_with_neither_code_nor_message_still_says_something() -> None:
+    """Reaching this means the client had a warning object and nothing readable
+    on it. Saying so beats an empty string, which reads as no warning at all."""
+    assert warning_detail(None, None) == "the server warned on this login"
+
+
+@pytest.mark.parametrize("code", ["ORA-28098", "ORA-28011", "ORA-99999"])
+def test_no_code_is_matched_against_a_list(code: str) -> None:
+    """The same condition is two codes on one release depending on the profile, so
+    a fixed list would have been wrong the day it was written. Every code formats;
+    none is special."""
+    assert code in warning_detail(code, "something the server said")

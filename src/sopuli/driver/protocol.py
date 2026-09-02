@@ -596,6 +596,18 @@ class VerifyResult:
     failed_login_limit: str | None = None
     lockout_margin_hit: bool = False
     detail: str | None = None
+    #: What the server said on a login that **succeeded**, in its own words and
+    #: carrying its vendor code (#322).
+    #:
+    #: Separate from :attr:`detail` rather than folded into it, and the separation
+    #: is the point: ``detail`` explains the ``result`` -- why this is a pass, a
+    #: fail or an unavailable -- while this is a diagnostic that came *with* a
+    #: pass and explains nothing about it. A consumer alerting on "the server had
+    #: something to say" would otherwise have to parse the sentence that says why
+    #: verification succeeded.
+    #:
+    #: ``None`` on every ordinary login, which is almost all of them.
+    warning: str | None = None
 
 
 @dataclass(frozen=True)

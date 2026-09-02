@@ -90,6 +90,7 @@ from sopuli.config import (
 )
 from sopuli.diagnostics import (
     LOCK_LOST,
+    LOGIN_WARNING,
     PASSWORD_GRACE_PERIOD,
     ROTATION_UNCONFIRMED,
     install_diagnostics,
@@ -117,6 +118,7 @@ from sopuli.driver.protocol import (
     DriverError,
     UnsupportedCapabilityError,
     UserState,
+    VerifyResult,
 )
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import resolve as resolve_driver
@@ -1730,6 +1732,11 @@ def _check_one(
     """
     started = time.monotonic()
     accepted: bool | None = None
+    # Bound up front because the branch below may never reach a login at all -- a
+    # missing account, no stored password, or a status that already settles the
+    # answer. `None` there is the same "nothing was attempted" the rest of this
+    # function already means by it.
+    verification: VerifyResult | None = None
     try:
         stored = _stored_credential(binding, stores)
         user = session.describe_user(binding.account)
@@ -1775,7 +1782,15 @@ def _check_one(
     # disagree about one window (#309).
     grace = check_states.grace_warning(user)
     if grace is not None:
-        notices.append(_grace_notice(binding, grace))
+        notices.append(_account_notice(binding, grace))
+
+    # What the *server* said on a login that worked, which is a different source
+    # from the status column above and is reported beside it rather than folded
+    # into it (#322). On a grace-period account both fire, and that is the
+    # intended shape: the second is the server's own words for the first.
+    server = None if verification is None else verification.warning
+    if server is not None:
+        notices.append(_account_notice(binding, server))
 
     out.append(
         build_result(
@@ -1788,14 +1803,33 @@ def _check_one(
             ),
             duration_ms=_elapsed(started),
             previous_accepted=accepted,
-            warnings=() if grace is None else ((PASSWORD_GRACE_PERIOD, grace),),
+            warnings=_result_warnings(grace, server),
         )
     )
     return binding, outcome
 
 
-def _grace_notice(binding: Binding, message: str) -> str:
-    """The same finding, addressed to a person rather than to a consumer.
+def _result_warnings(grace: str | None, server: str | None) -> tuple[tuple[str, str], ...]:
+    """The coded entries for one account's ``results[].warnings[]``.
+
+    Order is the order they were learned: the account's state is read before the
+    login is attempted, and on a run where the lockout guard declined there is no
+    second entry at all.
+    """
+    found = []
+    if grace is not None:
+        found.append((PASSWORD_GRACE_PERIOD, grace))
+    if server is not None:
+        found.append((LOGIN_WARNING, server))
+    return tuple(found)
+
+
+def _account_notice(binding: Binding, message: str) -> str:
+    """A finding about one account, addressed to a person rather than a consumer.
+
+    Not named for any one of them: the grace period was the first (#309) and the
+    server's own login warning is the second (#322), and both want the same line
+    under the same table.
 
     The document keeps the account and target in fields of their own; a line
     under a table has to carry them itself, because it is read next to other

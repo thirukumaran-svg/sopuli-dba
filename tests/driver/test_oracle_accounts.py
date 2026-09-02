@@ -421,3 +421,34 @@ def test_setting_a_password_clears_the_grace_period(grace_account: Any) -> None:
     assert state.in_grace is False
     assert state.expired is False
     assert "EXPIRED" not in state.status
+
+
+def test_a_grace_period_login_carries_the_servers_own_warning(grace_account: Any) -> None:
+    """#322, against the thing that could not be reasoned about.
+
+    A grace-period login **succeeds**, so nothing is raised and the diagnostic
+    arrives on the connection instead. It was discarded on every path until #322,
+    which is CLAUDE.md's *never swallow an ORA- code* broken in the one place no
+    exception makes it obvious.
+
+    The code is asserted only as *present*, never matched: the same condition is
+    `ORA-28098` where the profile limits `PASSWORD_GRACE_TIME` and `ORA-28011`
+    where it does not, both on this release, and a test pinning one of them would
+    fail on a profile rather than on a regression.
+    """
+    result = grace_account.verify_password(GRACE_ACCOUNT.upper(), Secret(GRACE_PASSWORD))
+
+    assert result.result == PASS, "the password is right; the warning is not a verdict"
+    assert result.warning is not None
+    assert "ORA-" in result.warning
+    assert "\n" not in result.warning, "a warning is one line, rendered under a table"
+
+
+def test_an_ordinary_login_carries_no_warning(account: Any) -> None:
+    """The common case, and the reason the field is `None`-by-default: almost
+    every login has nothing attached, and a report that said something about all
+    of them would say nothing about any."""
+    result = account.verify_password(ACCOUNT.upper(), Secret(FIRST))
+
+    assert result.result == PASS
+    assert result.warning is None

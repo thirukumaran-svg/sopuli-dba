@@ -946,7 +946,10 @@ may rely on:
 
 - **It is not an error.** A grace login connects, so nothing is raised and the
   notice arrives on the connection. `ORA-28002` sits in the table above as the
-  code to expect and was not produced in either shape on this release.
+  code to expect and was not produced in either shape on this release. Whatever
+  the server does attach is now carried as `SOPULI-W014` rather than discarded
+  (#322) — verbatim, with its code as data, since the code varies with the
+  profile.
 - **The code depends on the profile, not just the version** — two codes for one
   condition, decided by whether the grace time is limited.
 - **`DBA_USERS.ACCOUNT_STATUS` says `EXPIRED(GRACE)` in both cases**, and does not

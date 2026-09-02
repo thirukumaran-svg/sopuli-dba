@@ -72,6 +72,7 @@ from sopuli.driver.oracle.verification import (
     margin_reason,
     result_for,
     skipped_detail,
+    warning_detail,
 )
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
@@ -551,7 +552,7 @@ class OracleSession:
                 detail=skipped_detail(reason),
             )
 
-        outcome, detail = self._attempt(state.name, secret)
+        outcome, detail, warning = self._attempt(state.name, secret)
         if not guarded:
             detail = "; ".join(
                 part
@@ -568,10 +569,17 @@ class OracleSession:
             failed_logins=counter,
             failed_login_limit=state.failed_login_limit,
             detail=detail or None,
+            warning=warning,
         )
 
-    def _attempt(self, name: str, secret: Secret) -> tuple[str, str | None]:
+    def _attempt(self, name: str, secret: Secret) -> tuple[str, str | None, str | None]:
         """One login as ``name``, on a connection of its own.
+
+        Returns the outcome, the detail explaining it, and -- on a login that
+        succeeded while the server had something to say -- that warning (#322).
+        The third is ``None`` on every other path, including every failure: a
+        connection that raised has no ``warning`` attribute to read, and the
+        diagnostic it did carry is already in the detail.
 
         A **fresh connection as that user** is what UC-1 §5 step 6 asks for --
         the admin session proves nothing about this account's password. #180
@@ -599,7 +607,8 @@ class OracleSession:
                 # and folding them into `unavailable` would let an unreachable
                 # target look like an account-level finding.
                 raise diagnosis.as_error() from error
-            return result_for(diagnosis.code or None, diagnosis.message)
+            outcome, detail = result_for(diagnosis.code or None, diagnosis.message)
+            return outcome, detail, None
         else:
             # Labelled like every other connection (§5). A failed login is the
             # most audited thing this tool does, so a verification session that
@@ -614,11 +623,44 @@ class OracleSession:
             # audit-hygiene problem.
             with suppress(Exception):
                 set_identifier(connection, self.correlation_id)
-            return result_for(None)
+            # Read **before** the `finally` closes the connection, and defensively:
+            # `warning` arrived in python-oracledb 2.0 and is absent on older
+            # clients, so `getattr` is what keeps this from turning a working
+            # verification into an AttributeError on a machine with an older
+            # driver (#322).
+            outcome, detail = result_for(None)
+            return outcome, detail, self._connection_warning(connection)
         finally:
             if connection is not None:
                 with suppress(Exception):
                     connection.close()
+
+    @staticmethod
+    def _connection_warning(connection: Any) -> str | None:
+        """The diagnostic a successful connection is carrying, or ``None``.
+
+        ``Connection.warning`` arrived in python-oracledb 2.0 and is ``None`` on
+        an ordinary login. Read through :func:`getattr` because an older client is
+        a machine this tool still has to verify on, and an ``AttributeError`` here
+        would turn a working verification into a crash over a diagnostic nobody
+        asked for -- the opposite trade from the one that made this worth reading.
+
+        Anything raised while reading it is swallowed for the same reason
+        ``set_identifier`` above is: the login has already happened and answered
+        the question, and a report about the answer must not change it.
+        """
+        try:
+            warning = getattr(connection, "warning", None)
+        except Exception:  # noqa: BLE001 -- a diagnostic, never the verdict
+            return None
+        if warning is None:
+            return None
+        code = getattr(warning, "full_code", None) or getattr(warning, "code", None)
+        message = getattr(warning, "message", None) or str(warning)
+        # Both shapes go through one formatter, including the codeless one: it is
+        # what keeps the one-line rule in a single place rather than in two that
+        # can drift apart.
+        return warning_detail(None if code is None else str(code), message)
 
     def require_rollover(self, account: str) -> None:
         """Refuse ``--strategy rollover`` here, at **plan time**, or say nothing.
