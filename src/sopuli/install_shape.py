@@ -156,7 +156,7 @@ def _component(name: str, entry: Backend | DatabaseDriver, configured: Sequence[
     called. Naming those three here is cheaper than a shared base class would be
     everywhere else.
     """
-    status = _status(entry)
+    status = status_of(entry)
     return Component(
         name=name,
         status=status,
@@ -165,7 +165,7 @@ def _component(name: str, entry: Backend | DatabaseDriver, configured: Sequence[
     )
 
 
-def _status(entry: Backend | DatabaseDriver) -> str:
+def status_of(entry: Backend | DatabaseDriver) -> str:
     """Which of the three this is, asked without importing anything.
 
     Order matters, and it is the order :func:`sopuli.store.registry.resolve`
@@ -173,6 +173,12 @@ def _status(entry: Backend | DatabaseDriver) -> str:
     whatever `pip` has put on the machine, so that is asked first -- otherwise
     ``oci``, which has an extra and no module yet, would report itself installed
     on a developer machine that has the SDK and still refuse at connect time.
+
+    **Public because it has a second caller** (#238).
+    :mod:`sopuli.diagnostics` asks it to decide whether an install line is honest
+    for a component, and a second implementation of the same three-way reading is
+    exactly what produced the `doctor` defect #237 fixed. One definition, however
+    many questions are asked of it.
     """
     if not installed((entry.module,)):
         return NOT_IMPLEMENTED

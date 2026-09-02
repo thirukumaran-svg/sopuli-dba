@@ -2123,7 +2123,7 @@ reports what it found:
 |---|---|---|
 | the file loads | 0 | the files read, and how much they declare: targets, bindings, warnings |
 | §10 warnings | 0 | each warning in full, and `diagnostics[]` under `--output json` |
-| a declared backend is not installed | 0 | a warning naming the store, its `type`, and the extra that supplies it (`SOPULI-W003`) |
+| a declared backend is not installed | 0 | a warning naming the store, its `type`, and the extra that supplies it (`SOPULI-W003`) — or, where this build has no module for that backend, that there is nothing to install |
 | anything §9a or §10 refuses | 9 | the message, with its key path and its hint |
 
 **A missing backend warns rather than fails (ADR-006, E4).** The config is
@@ -2132,6 +2132,16 @@ on a laptop a file that runs on a scheduler elsewhere is the ordinary case, not
 the strange one, and a validator that calls a good file broken is less
 trustworthy for exactly the case it exists to serve. The command that actually
 needs the client is where this becomes an error (§3a).
+
+**The warning never names a `pip` command that fixes nothing.** A backend can
+have an extra and no module in this build — `oci` is that today — and the
+install line for it runs, succeeds, and leaves the store exactly as unusable,
+while moving the config into the state where the validator has nothing to say
+about it at all. So the warning is derived from the same three-way status
+`doctor`'s install section reads (E6), and says *this is not something to
+install* where that is the truth. Which stores warn is unchanged and is still
+E4's narrow reading — a backend with no client to look for stays silent, and
+whether it should is open (#238).
 
 Exit 9 rather than 1 or 2: a scheduler can tell "fix your file" from "something
 broke" *and* from "fix your command line". A bad file produces a run document

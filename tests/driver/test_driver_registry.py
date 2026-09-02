@@ -193,6 +193,32 @@ def test_one_target_is_named_rather_than_counted(monkeypatch: pytest.MonkeyPatch
     assert "1 targets" not in found[0].message
 
 
+def test_an_unwritten_driver_is_not_sent_to_pip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store side's #238 defect, on the driver side before it can happen.
+
+    Unreachable from the real table -- ``DRIVERS`` has one entry and its module
+    exists -- and asserted anyway, because the day somebody adds ``postgresql``
+    to ``TARGET_TYPES`` before writing the driver is the day this would otherwise
+    start telling them to `pip install` a driver that is not written.
+    """
+    monkeypatch.setitem(
+        DRIVERS,
+        "oracle",
+        DatabaseDriver(
+            module="sopuli.driver.absent_driver_xyz",
+            extra="oracle",
+            provides=frozenset({"sopuli_absent_client_xyz"}),
+        ),
+    )
+
+    (found,) = driver_diagnostics([generated("pdb-alpha")])
+
+    assert found.level == "warning"
+    assert found.code == MISSING_DRIVER
+    assert "pip install" not in found.message
+    assert "this build has no oracle driver yet" in found.message
+
+
 def test_an_installed_driver_warns_about_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: True)
 

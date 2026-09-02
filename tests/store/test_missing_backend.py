@@ -30,8 +30,10 @@ from jsonschema import Draft202012Validator
 from sopuli import cli as cli_module
 from sopuli import invocation as invocation_module
 from sopuli.cli import cli
-from sopuli.diagnostics import MISSING_BACKEND, WARNINGS
+from sopuli.config.model import Config, Vault
+from sopuli.diagnostics import MISSING_BACKEND, WARNINGS, install_diagnostics
 from sopuli.exit_codes import ExitCode
+from sopuli.install_shape import survey
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.store.registry import BACKENDS, Backend, BackendNotInstalledError
 
@@ -63,6 +65,26 @@ def uninstalled(monkeypatch: pytest.MonkeyPatch) -> None:
         "hashicorp",
         Backend(
             module="sopuli.store.hashicorp",
+            extra="hashicorp",
+            provides=frozenset({"sopuli_absent_client_xyz"}),
+        ),
+    )
+
+
+@pytest.fixture
+def unwritten(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `hashicorp` name a backend with an extra and **no module**.
+
+    ``oci``'s real shape, injected rather than used, for the reason this module
+    already gives: the developer environment is `sopuli-dba[all]` and CI runs a
+    base cell, so a test reading the machine's real install shape would assert
+    different things in the two places.
+    """
+    monkeypatch.setitem(
+        BACKENDS,
+        "hashicorp",
+        Backend(
+            module="sopuli.store.absent_backend_xyz",
             extra="hashicorp",
             provides=frozenset({"sopuli_absent_client_xyz"}),
         ),
@@ -129,6 +151,53 @@ def test_one_warning_per_store_not_per_backend_type(
     assert len(messages) == 2
     assert any("vault-prod" in message for message in messages)
     assert any("vault-dev" in message for message in messages)
+
+
+def test_an_unwritten_backend_is_not_sent_to_pip(
+    unwritten: None, write_config: WriteConfig
+) -> None:
+    """#238's unambiguous half: `pip` cannot supply a backend nobody has written.
+
+    The install line ran, succeeded, and left the store exactly as unusable --
+    and moved the config from "warns wrongly" into "installed, and silent about a
+    store that still cannot work", so following the advice made the validator
+    quieter rather than the machine better.
+
+    The warning itself is unchanged in level, code and existence: the client is
+    genuinely absent, which is E4's narrow condition either way. What is fixed
+    here is what it says. Whether `file` and `keyring` -- silent for every user,
+    because there is no client to look for -- should warn as well is the open
+    half of #238 and is deliberately not decided here.
+    """
+    document = _validate_json(write_config(CONFIG))
+    messages = [entry["message"] for entry in document["diagnostics"]]
+
+    assert document["exit_code"] == ExitCode.SUCCESS
+    assert all(entry["code"] == MISSING_BACKEND for entry in document["diagnostics"])
+    assert all(entry["level"] == "warning" for entry in document["diagnostics"])
+    assert all("pip install" not in message for message in messages)
+    assert all("this build has no hashicorp backend yet" in message for message in messages)
+
+
+def test_the_unwritten_wording_is_the_one_doctor_uses(
+    unwritten: None, write_config: WriteConfig
+) -> None:
+    """One definition of "this machine cannot serve it", not two (#237, #238).
+
+    `config validate` warns and `doctor` errors -- the level is each command's own
+    call and is meant to differ -- but the half of the sentence that states the
+    fact is the same fact, and the two disagreeing about it is what produced the
+    defect #237 fixed one layer up.
+    """
+    shape = survey(
+        Config(version=1, vaults=(Vault(name="vault-prod", type="hashicorp", mount="secret"),))
+    )
+    (from_doctor,) = install_diagnostics(shape)
+    from_validate = _validate_json(write_config(CONFIG))["diagnostics"][0]["message"]
+
+    assert from_doctor.level == "error"
+    assert "but this build has no hashicorp backend yet" in from_doctor.message
+    assert from_doctor.message.split(", ", 1)[1] == from_validate.split(", ", 1)[1]
 
 
 def test_a_backend_with_nothing_to_install_never_warns(write_config: WriteConfig) -> None:
