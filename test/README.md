@@ -74,6 +74,18 @@ reassurance that does nothing.
   not on the dictionary value.** A test checking for
   `PASSWORD_VERIFY_FUNCTION = 'ORA12C_STRONG_VERIFY_FUNCTION'` concludes the
   profile is unconfigured when it is working correctly.
+- **`kv` and `kv1` are shared with whatever you have run by hand**, and that is a
+  trap for any test that surveys a *prefix* rather than reading back the one path
+  it wrote. `lock status` reports every record under `locks/` on purpose (#150),
+  so a single `sopuli creds apply` against the local stack leaves
+  `locks/apps/acme/dev` behind and turns `tests/store/test_lock_status_vault.py`
+  red — a failure that reads as a regression in `lock status` and is nothing of
+  the kind. The fix for one record is
+  `vault kv metadata delete -mount=kv locks/apps/acme/dev`; the fix for a *test*
+  is the `private_mount` fixture in `tests/conftest.py`, which gives the module a
+  KV v2 mount of its own and tears it down afterwards. Prefer the fixture — the
+  mount is the only boundary available, since the `locks/` prefix is fixed by
+  `sopuli.lock.manager.LOCK_PREFIX` and cannot be moved out of the way (#272).
 - **`vault-init` logs two 400 errors on every `up` after the first.** It is a
   one-shot that has already exited, so `up` starts it again, and both
   `vault secrets enable` calls fail with `path is already in use`. `|| true`

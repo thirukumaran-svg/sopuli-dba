@@ -220,6 +220,39 @@ def vault_stack() -> Iterator[VaultStack]:
     client.close()
 
 
+@pytest.fixture
+def private_mount(vault_stack: VaultStack, request: pytest.FixtureRequest) -> Iterator[str]:
+    """A KV v2 mount belonging to one test module, empty at the start of each test.
+
+    `kv` and `kv1` are shared by the whole tier-1 suite **and by whatever the
+    developer has run by hand against the same container**, which is fine for a
+    test that reads back the one path it wrote and fatal for one that surveys a
+    whole prefix: `lock status` deliberately reports every record under `locks/`
+    (#150), so a rotation somebody ran an hour ago is a correct finding and a red
+    test (#272). A test whose subject is a survey needs an estate of its own, and
+    the mount is the only boundary that gives it one -- the prefix is fixed by
+    :data:`~sopuli.lock.manager.LOCK_PREFIX` and cannot be moved out of the way.
+
+    Named after the requesting module and **recreated rather than assumed
+    absent**, so a mount left behind by a crashed run is reset by the next one
+    instead of accumulating.
+    """
+    path = f"kv-{request.module.__name__.replace('_', '-')}"
+    client = vault_stack.client
+    client.delete(f"/v1/sys/mounts/{path}")
+    created = client.post(
+        f"/v1/sys/mounts/{path}", json={"type": "kv", "options": {"version": "2"}}
+    )
+    if created.status_code >= 400:
+        # Not a skip: `vault_stack` already established that a Vault is there and
+        # that the token authenticates, so a refusal here is a broken stack or a
+        # token without `sys/mounts`, and reporting it as "no environment" would
+        # hide it behind the one outcome nobody reads.
+        pytest.fail(f"could not mount {path}: HTTP {created.status_code} {created.text}")
+    yield path
+    client.delete(f"/v1/sys/mounts/{path}")
+
+
 # ---------------------------------------------------------- tier 1: Oracle ---
 #
 # The tier-1 Oracle fixture, and the markers that gate tests on capabilities.
