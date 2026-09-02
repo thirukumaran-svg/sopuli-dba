@@ -91,8 +91,6 @@ from sopuli.config import (
 from sopuli.diagnostics import (
     LOCK_LOST,
     ROTATION_UNCONFIRMED,
-    backend_diagnostics,
-    driver_diagnostics,
     install_diagnostics,
     lock_broken,
     unlistable_stores,
@@ -1397,20 +1395,26 @@ def config_validate(
     paths = run.sources
     config = run.config
 
-    # A configured-but-uninstalled backend warns here and **exits 0** (ADR-006,
-    # E4): the config is valid, the install is incomplete, and the two are
-    # different findings about different machines. It is the only warning in this
-    # command that the config layer did not make, because making it means asking
-    # what is importable and the config layer asks nothing outside the document.
-    backends = backend_diagnostics(config.vaults) + driver_diagnostics(config.expanded_targets)
+    # A backend or driver this machine cannot serve warns here and **exits 0**
+    # (ADR-006, E4): the config is valid, the install is incomplete, and the two
+    # are different findings about different machines. These are the only
+    # warnings in this command that the config layer did not make, because
+    # making them means asking what is importable and the config layer asks
+    # nothing outside the document (`04-testing.md` §4).
+    #
+    # The same survey and the same function `doctor` uses, at a different level
+    # (#238). `doctor` additionally *reports* the survey as a section, which is
+    # E6 and its alone -- this command answers "is my file good", and a table of
+    # every registry entry would bury the answer.
+    warnings = install_diagnostics(install_survey(config), level="warning")
     document.diagnostics.extend(config_diagnostics(config))
-    document.diagnostics.extend(backends)
+    document.diagnostics.extend(warnings)
     targets = len(config.expanded_targets)
     document.finish(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    return render_validation(paths, config, [warning.message for warning in backends])
+    return render_validation(paths, config, [warning.message for warning in warnings])
 
 
 def main() -> None:

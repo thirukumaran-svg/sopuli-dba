@@ -40,9 +40,11 @@ thick mode is required for Native Network Encryption, so Instant Client is a
 runtime prerequisite on every platform. `sopuli doctor` checks for it, and
 reports which backends are installed against which your config declares.
 
-If a config names a backend you have not installed, `config validate` warns and
-still passes — the file is fine, the install is incomplete — and the first
-command that needs to connect stops with the install line to fix it:
+If a config names a backend this machine cannot serve — the client is not
+installed, or this build has no module for that backend yet — `config validate`
+warns and still passes. The file is fine; the install is incomplete. The first
+command that needs to connect stops instead, with the install line where there
+is one to give:
 
 ```
 $ sopuli creds check --application acme

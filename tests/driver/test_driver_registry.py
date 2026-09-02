@@ -20,9 +20,9 @@ from typing import NoReturn
 
 import pytest
 
-from sopuli.config.model import ExpandedTarget, Target
+from sopuli.config.model import Config, ExpandedTarget, Target
 from sopuli.config.targets import TARGET_TYPES
-from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, driver_diagnostics
+from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, install_diagnostics
 from sopuli.driver.registry import (
     DRIVER_NOT_INSTALLED,
     DRIVERS,
@@ -34,6 +34,8 @@ from sopuli.driver.registry import (
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_CLIENT, MISSING_MODULE, missing_kind
+from sopuli.install_shape import survey
+from sopuli.output.document import Diagnostic
 
 ORACLE = DRIVERS["oracle"]
 
@@ -50,6 +52,50 @@ def generated(name: str, *, target_set: str = "appdb") -> ExpandedTarget:
     explicit entries because that is the estate an operator actually has.
     """
     return ExpandedTarget(target=target(name), target_set=target_set)
+
+
+#: A driver whose module and client are both here -- the healthy row.
+#:
+#: ``provides`` is ``json``, a stdlib module, and that is the whole trick: it
+#: makes this constant mean *the client is present* on every machine, rather than
+#: meaning whatever `oracledb`'s install state happens to be. Naming `oracledb`
+#: here would make the tests below assert one thing in the developer environment,
+#: which is `sopuli-dba[all]`, and another in CI's base cell -- which is the rule
+#: this module's docstring already sets.
+PRESENT = DatabaseDriver(
+    module="sopuli.driver.oracle.session", extra="oracle", provides=frozenset({"json"})
+)
+
+#: The module is here and the client is not: `pip` fixes it, and the message says
+#: so. What every one of these warnings looked like before #238.
+CLIENT_MISSING = DatabaseDriver(
+    module="sopuli.driver.oracle.session", extra="oracle", provides=frozenset({"no_such_client"})
+)
+
+#: No module in this build, and an extra all the same. Unreachable from the real
+#: table -- ``DRIVERS`` has one entry and its module exists -- and the state the
+#: day somebody adds a type to ``TARGET_TYPES`` before writing its driver.
+NO_MODULE = DatabaseDriver(
+    module="sopuli.driver.nowhere", extra="oracle", provides=frozenset({"no_such_client"})
+)
+
+
+def warnings(driver: DatabaseDriver, targets: int = 1) -> list[Diagnostic]:
+    """What `config validate` says about ``targets`` targets served by ``driver``.
+
+    Through the survey and :func:`install_diagnostics`, which since #238 is the
+    only thing that answers "can this machine serve it" -- `doctor` reads the
+    same function at ``level="error"``. The registries are injected for the
+    reason :func:`~sopuli.install_shape.survey` takes them at all: the states
+    that matter are unreachable from the real tables on any one machine.
+    """
+    config = Config(
+        version=1,
+        expanded_targets=tuple(generated(f"pdb-{index}") for index in range(targets)),
+    )
+    return install_diagnostics(
+        survey(config, backends={}, drivers={"oracle": driver}), level="warning"
+    )
 
 
 # ----------------------------------------------------------- the two lists ---
@@ -147,9 +193,7 @@ def test_the_three_way_reading_is_the_one_the_stores_use() -> None:
 # ------------------------------------------------------------- the warning ---
 
 
-def test_config_validate_warns_once_per_type_however_many_targets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_config_validate_warns_once_per_type_however_many_targets() -> None:
     """Where this parts company with the store version, and why.
 
     An estate generates targets by the dozen from one ``target_sets:`` entry, so
@@ -157,43 +201,34 @@ def test_config_validate_warns_once_per_type_however_many_targets(
     saying to run one command. A store is written out by hand and its name is
     the thing to go and look at; a target may not appear in the file at all.
     """
-    monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: False)
+    (found,) = warnings(CLIENT_MISSING, targets=3)
 
-    found = driver_diagnostics(
-        [generated("pdb-alpha"), generated("pdb-beta"), generated("pdb-gamma")]
-    )
-
-    assert len(found) == 1
-    assert found[0].code == MISSING_DRIVER
-    assert found[0].level == "warning"
-    assert "3 targets" in found[0].message
-    assert "pdb-alpha" in found[0].message
-    assert 'pip install "sopuli-dba[oracle]"' in found[0].message
+    assert found.code == MISSING_DRIVER
+    assert found.level == "warning"
+    assert "3 targets" in found.message
+    assert "pdb-0" in found.message
+    assert 'pip install "sopuli-dba[oracle]"' in found.message
 
 
-def test_the_verb_agrees_with_the_count(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_verb_agrees_with_the_count() -> None:
     """A warning is read by somebody already having a bad morning; it should at
     least be a sentence."""
-    monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: False)
-
-    one = driver_diagnostics([generated("pdb-alpha")])[0].message
-    many = driver_diagnostics([generated("pdb-alpha"), generated("pdb-beta")])[0].message
+    one = warnings(CLIENT_MISSING, targets=1)[0].message
+    many = warnings(CLIENT_MISSING, targets=2)[0].message
 
     assert "declares type" in one
     assert "declare type" in many
     assert "declares type" not in many
 
 
-def test_one_target_is_named_rather_than_counted(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: False)
+def test_one_target_is_named_rather_than_counted() -> None:
+    (found,) = warnings(CLIENT_MISSING, targets=1)
 
-    found = driver_diagnostics([generated("cdb-root-dev")])
-
-    assert '"cdb-root-dev"' in found[0].message
-    assert "1 targets" not in found[0].message
+    assert '"pdb-0"' in found.message
+    assert "1 targets" not in found.message
 
 
-def test_an_unwritten_driver_is_not_sent_to_pip(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unwritten_driver_is_not_sent_to_pip() -> None:
     """The store side's #238 defect, on the driver side before it can happen.
 
     Unreachable from the real table -- ``DRIVERS`` has one entry and its module
@@ -201,17 +236,7 @@ def test_an_unwritten_driver_is_not_sent_to_pip(monkeypatch: pytest.MonkeyPatch)
     to ``TARGET_TYPES`` before writing the driver is the day this would otherwise
     start telling them to `pip install` a driver that is not written.
     """
-    monkeypatch.setitem(
-        DRIVERS,
-        "oracle",
-        DatabaseDriver(
-            module="sopuli.driver.absent_driver_xyz",
-            extra="oracle",
-            provides=frozenset({"sopuli_absent_client_xyz"}),
-        ),
-    )
-
-    (found,) = driver_diagnostics([generated("pdb-alpha")])
+    (found,) = warnings(NO_MODULE)
 
     assert found.level == "warning"
     assert found.code == MISSING_DRIVER
@@ -219,10 +244,28 @@ def test_an_unwritten_driver_is_not_sent_to_pip(monkeypatch: pytest.MonkeyPatch)
     assert "this build has no oracle driver yet" in found.message
 
 
-def test_an_installed_driver_warns_about_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: True)
+def test_the_warning_is_a_warning_here_and_an_error_in_doctor() -> None:
+    """One fact, two judgements of what it is worth (#238).
 
-    assert driver_diagnostics([generated("cdb1-pdb-orders")]) == []
+    `config validate` says the file is fine and this machine is not; `doctor`
+    says it cannot reach the estate and exits 9. Both read the same survey
+    through the same function, so the sentence cannot drift between them --
+    which is the whole point of deleting the pair that used to compute it
+    separately.
+    """
+    config = Config(version=1, expanded_targets=(generated("pdb-0"),))
+    shape = survey(config, backends={}, drivers={"oracle": NO_MODULE})
+
+    (as_warning,) = install_diagnostics(shape, level="warning")
+    (as_error,) = install_diagnostics(shape)
+
+    assert (as_warning.level, as_error.level) == ("warning", "error")
+    assert as_warning.code == as_error.code
+    assert as_warning.message == as_error.message
+
+
+def test_an_installed_driver_warns_about_nothing() -> None:
+    assert warnings(PRESENT) == []
 
 
 def test_the_warning_is_its_own_code_and_is_registered() -> None:

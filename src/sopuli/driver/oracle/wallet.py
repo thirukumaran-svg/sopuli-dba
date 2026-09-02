@@ -152,7 +152,7 @@ def external_targets(targets: Sequence[ExpandedTarget]) -> tuple[str, ...]:
     """The expanded targets that need a wallet, by name.
 
     Over the **expanded** estate rather than the ``targets:`` list, for the reason
-    :func:`~sopuli.diagnostics.driver_diagnostics` is: most targets are generated,
+    :func:`~sopuli.diagnostics.install_diagnostics` is: most targets are generated,
     and an estate that declares ``auth: external`` only in a ``target_sets:``
     entry would otherwise report that nothing needs a wallet.
     """

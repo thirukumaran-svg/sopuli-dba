@@ -21,7 +21,7 @@ import socket
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 # Re-exported: these were defined here until a lock record needed the same
 # format (#83), and `sopuli.output.emit` and the tests import them from here.
@@ -79,6 +79,14 @@ class Actor:
         return data
 
 
+#: What a ``diagnostics[]`` entry can be, closed exactly as ``03-json-output.md``
+#: §2 closes it and the run schema's ``diagnostic.level`` enum repeats it. Spelled
+#: as a type so the three lists cannot drift: a fourth level is a schema change,
+#: which is a version bump under invariant 12, and it should be impossible to
+#: introduce one by writing a string.
+DiagnosticLevel = Literal["info", "warning", "error"]
+
+
 @dataclass(frozen=True)
 class Diagnostic:
     """One entry in ``diagnostics`` — a run-level message with no single result
@@ -94,9 +102,16 @@ class Diagnostic:
     consumer testing ``"target" in diagnostic`` and a consumer testing
     ``diagnostic["target"] is not None`` should not disagree, and omission is
     what the rest of this module already does.
+
+    ``level`` is a :data:`DiagnosticLevel` rather than a ``str``, so a typo is a
+    type error at the call site rather than a schema-invalid document at the far
+    end of a run. Nothing validates it at runtime and nothing should: the value
+    is a literal at every one of these call sites, `mypy` runs on the whole
+    matrix in CI, and a check here would only be reached by a mistake the type
+    already made unwritable.
     """
 
-    level: str
+    level: DiagnosticLevel
     message: str
     code: str | None = None
     target: str | None = None

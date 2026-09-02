@@ -7,13 +7,16 @@
     that appears only when something is wrong cannot be quoted as proof that
     nothing was.
 
-**This is not what the two diagnostics already do.**
-:func:`~sopuli.diagnostics.backend_diagnostics` and
-:func:`~sopuli.diagnostics.driver_diagnostics` emit one warning per configured
+**This is not what the diagnostics do.**
+:func:`~sopuli.diagnostics.install_diagnostics` emits one entry per configured
 backend or driver that is missing, so a healthy install produces nothing at all
--- which is precisely the shape E6 rules out. They answer *what is wrong*; this
+-- which is precisely the shape E6 rules out. It answers *what is wrong*; this
 answers *what is there*, and a run that said nothing could never be quoted as
 evidence that everything was installed.
+
+The two are the same survey read twice over, never two surveys: since #238 every
+command asking "can this machine serve it" -- `doctor` as an error, `config
+validate` as a warning -- reads :func:`status_of` through that one function.
 
 **Every registry entry appears, configured or not.** That is what makes the
 third direction reportable -- installed and *not* configured, which nothing else

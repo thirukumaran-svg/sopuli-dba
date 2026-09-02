@@ -132,11 +132,35 @@ worse than having it from the start. But user-facing installation instructions
 recommend the extras a site actually has, because a README whose first line is
 `sopuli-dba[all]` quietly undoes the benefit for every reader who copies it.
 
-**`config validate` warns on a configured-but-uninstalled backend (E4).** It
+**`config validate` warns on a backend this machine cannot serve (E4).** It
 does not fail. The config is valid; the install is incomplete. Telling an
 operator their file is broken when it is not would make `config validate` less
 trustworthy for the case it exists to serve — and validating on a laptop a
 config that runs elsewhere is the common case, not the strange one.
+
+**"Cannot serve" is the wide reading, and it was not always** (amended in #238).
+The word originally in this paragraph was *uninstalled*, and it was implemented
+as *the client is not on this machine* — which left the validator silent about
+`file` and `keyring`, whose backends do not exist in this build for anybody, and
+silent about `oci` on any machine that happened to carry the SDK. Three of the
+four types in `01-configuration.md` §3a have no module, so a file declaring all
+four reported one warning, and which one depended on the laptop rather than on
+the file. A validator quiet about a store that cannot work is failing at its one
+job, so E4 now covers both halves:
+
+| What is wrong | What the warning says |
+|---|---|
+| the extra's client is not installed | *install it with:* `pip install "sopuli-dba[…]"` |
+| this build has no module for it | *this build has no `<type>` backend yet — this is not something to install* |
+
+The cost accepted here is a **warning `pip` cannot act on**: a reader who writes
+`type: file` sees the second line on every run until the backend is written. That
+is worth paying because the action it names is a real one — *do not deploy this
+yet* — and because it is temporary by construction, disappearing backend by
+backend, where the silence it replaces was permanent. It is one code
+(`SOPULI-W003`) rather than two: both are the same outage and differ only in the
+remedy, and splitting them would make a consumer alerting on an unusable store
+subscribe to a pair.
 
 **The failure is `config` / exit 9, not `capability` (E5).** `capability` in
 `03-json-output.md` names something a *target* cannot do — a property of the
@@ -190,8 +214,15 @@ nothing yet to settle it from.
   arrive as `ModuleNotFoundError`: the registry matches on `exc.name` against the
   modules the extra provides and re-raises anything else, so our own typo keeps
   its traceback.
-- `01-configuration.md` §3a and §9: what a declared-but-uninstalled `type:`
-  does, and the `config validate` warning (E4).
+- ~~`01-configuration.md` §3a and §9: what a declared-but-uninstalled `type:`
+  does, and the `config validate` warning (E4)~~ — **done, and E4 widened, in
+  #238.** `config validate` derives its warnings from the same
+  `install_shape.survey()` `doctor` reads, through the same
+  `install_diagnostics()` at `level="warning"` rather than `"error"`. The pair
+  that computed the answer separately, `backend_diagnostics` and
+  `driver_diagnostics`, is deleted: two definitions of "this machine cannot serve
+  it" is what produced the `doctor` defect fixed in #237, and the second one had
+  gone on to produce a `pip` line for a backend `pip` cannot supply.
 - `03-json-output.md`: the `error.code` for a missing backend, and the warning's
   diagnostic code (E4/E5).
 - ~~E6: `doctor` reporting install shape~~ — **done in #214.** The `install`

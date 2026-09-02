@@ -9,6 +9,13 @@ Two answers, and the whole of ADR-006's E4/E5 is that they are different:
 * anything that resolves the store to a client **fails**, with ``SOPULI-20001``,
   ``error.category: "config"`` and exit 9.
 
+**E4 reads "uninstalled" as "this machine cannot serve it"** since #238, so both
+of its halves warn: a client `pip` can supply, and a backend nobody has written.
+They are one code and one finding, differing in the remedy the message names.
+The narrow reading -- the client alone -- left the validator saying ``0
+warnings`` about a file whose every store was unusable, which is the one thing a
+validator must not do.
+
 The backend is forced absent by pointing its entry at a module nothing will ever
 install, rather than by relying on this machine's install shape: the developer
 environment is meant to be `sopuli-dba[all]`, where the real `hashicorp` entry is
@@ -163,11 +170,10 @@ def test_an_unwritten_backend_is_not_sent_to_pip(
     store that still cannot work", so following the advice made the validator
     quieter rather than the machine better.
 
-    The warning itself is unchanged in level, code and existence: the client is
-    genuinely absent, which is E4's narrow condition either way. What is fixed
-    here is what it says. Whether `file` and `keyring` -- silent for every user,
-    because there is no client to look for -- should warn as well is the open
-    half of #238 and is deliberately not decided here.
+    The warning's level and code are the same either way; what is fixed here is
+    what it says. `file` and `keyring` -- which have no client to look for at all
+    -- reach the same sentence through
+    :func:`test_a_backend_with_no_module_warns_though_pip_cannot_help`.
     """
     document = _validate_json(write_config(CONFIG))
     messages = [entry["message"] for entry in document["diagnostics"]]
@@ -200,17 +206,67 @@ def test_the_unwritten_wording_is_the_one_doctor_uses(
     assert from_doctor.message.split(", ", 1)[1] == from_validate.split(", ", 1)[1]
 
 
-def test_a_backend_with_nothing_to_install_never_warns(write_config: WriteConfig) -> None:
-    """`file` and `keyring` have no extra (ADR-006's named gap), so there is no
-    install line to offer and warning would name nothing the operator could do.
+def test_a_backend_with_no_module_warns_though_pip_cannot_help(
+    write_config: WriteConfig,
+) -> None:
+    """The case that was wrong for every user, and that no amount of installing
+    fixed (#238).
 
-    Their real state -- no module in this build -- surfaces at `resolve`.
+    `file` and `keyring` have no extra -- ADR-006's named gap -- so the narrow
+    reading found nothing to look for and said nothing, on every machine,
+    unconditionally. A file declaring only those validated as ``0 warnings`` and
+    could not work anywhere.
+
+    Warning about it is not actionable by `pip`, and that is not the same as not
+    actionable: the action is *do not deploy this yet*, and it is the fact its
+    reader most needs before shipping a config they cannot test locally. The cost
+    is temporary by construction -- it goes away backend by backend as they are
+    written -- where the silence it replaces was permanent.
+
+    **No fixture.** This is the one assertion in the module that needs none: the
+    answer does not depend on what is installed, only on what is written, so it
+    is the same on a developer machine and in CI's base cell.
     """
     document = _validate_json(write_config("version: 1\nvaults:\n  local:\n    type: file\n"))
+    (found,) = document["diagnostics"]
 
-    # Omitted rather than empty when there is nothing to say, like every other
-    # optional array in the document.
-    assert document.get("diagnostics", []) == []
+    assert document["exit_code"] == ExitCode.SUCCESS
+    assert found["level"] == "warning"
+    assert found["code"] == MISSING_BACKEND
+    assert "pip install" not in found["message"]
+    assert "this build has no file backend yet" in found["message"]
+
+
+def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfig) -> None:
+    """The report `config validate` owes its reader, and did not give (#238).
+
+    Three of the four types in ``01-configuration.md`` §3a have no module, so a
+    config declaring all four is a config whose stores are three-quarters
+    unusable. It reported **one** warning before this -- and which one depended
+    on whether the machine happened to have the OCI SDK, which is a fact about
+    the laptop and not about the file.
+
+    Asserted as a set rather than a list: the order is the survey's, sorted by
+    backend name, and pinning it here would be pinning `doctor`'s table through a
+    test about warnings.
+    """
+    document = _validate_json(
+        write_config(
+            "version: 1\n"
+            "vaults:\n"
+            "  vault-hc:\n    type: hashicorp\n    mount: secret\n"
+            "  vault-dr:\n    type: oci\n"
+            "  vault-local:\n    type: file\n"
+            "  vault-desktop:\n    type: keyring\n"
+        )
+    )
+    named = {
+        name
+        for name in ("vault-dr", "vault-local", "vault-desktop")
+        if any(f'"{name}"' in entry["message"] for entry in document["diagnostics"])
+    }
+
+    assert named == {"vault-dr", "vault-local", "vault-desktop"}
     assert document["exit_code"] == ExitCode.SUCCESS
 
 

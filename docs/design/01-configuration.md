@@ -2123,7 +2123,7 @@ reports what it found:
 |---|---|---|
 | the file loads | 0 | the files read, and how much they declare: targets, bindings, warnings |
 | §10 warnings | 0 | each warning in full, and `diagnostics[]` under `--output json` |
-| a declared backend is not installed | 0 | a warning naming the store, its `type`, and the extra that supplies it (`SOPULI-W003`) — or, where this build has no module for that backend, that there is nothing to install |
+| a declared backend this machine cannot serve | 0 | a warning naming the store and its `type` (`SOPULI-W003`), and either the extra that supplies it or that there is nothing to install |
 | anything §9a or §10 refuses | 9 | the message, with its key path and its hint |
 
 **A missing backend warns rather than fails (ADR-006, E4).** The config is
@@ -2133,15 +2133,37 @@ the strange one, and a validator that calls a good file broken is less
 trustworthy for exactly the case it exists to serve. The command that actually
 needs the client is where this becomes an error (§3a).
 
-**The warning never names a `pip` command that fixes nothing.** A backend can
-have an extra and no module in this build — `oci` is that today — and the
-install line for it runs, succeeds, and leaves the store exactly as unusable,
-while moving the config into the state where the validator has nothing to say
-about it at all. So the warning is derived from the same three-way status
-`doctor`'s install section reads (E6), and says *this is not something to
-install* where that is the truth. Which stores warn is unchanged and is still
-E4's narrow reading — a backend with no client to look for stays silent, and
-whether it should is open (#238).
+**Missing means "this machine cannot serve it", not "the client is absent"**
+(E4, widened in #238). Three of the four types in §3a have no module in this
+build, so the narrower reading validated a file whose every store was unusable
+as `ok: 0 warnings` — and warned about `oci` only where the machine happened to
+lack the SDK, which is a fact about the laptop rather than about the file. Both
+halves warn now, and the wording carries which is which:
+
+```console
+$ sopuli config validate
+ok: 0 targets, 0 bindings, 2 warnings
+
+2 warnings:
+  vault "vault-local" declares type "file", but this build has no file backend yet -- this is not something to install
+  vault "vault-hc" declares type "hashicorp", but that backend is not installed; install it with: pip install "sopuli-dba[hashicorp]"
+```
+
+Ordered by backend `type:` rather than by the order the stores are written in —
+the survey's order, so a reader comparing this against `doctor`'s table is
+reading the same list twice rather than two shuffles of it.
+
+The second is a warning `pip` cannot act on, and that is the price of the wide
+reading. The action it names is still real — *do not deploy this file yet* — and
+it is temporary by construction, where the silence it replaced was not.
+
+**The same survey `doctor` reads, at a different level.** One function answers
+"can this machine serve it" for the whole tool (`sopuli/diagnostics.py`'s
+`install_diagnostics`); `doctor` reads it as an `error` and exits 9 (E6), this
+command reads it as a `warning` and exits 0. What differs is each command's
+judgement of what the fact is worth, never the fact. `doctor` additionally
+*reports* the survey as a table, which is E6's and its alone — this command
+answers "is my file good", and a row per registry entry would bury the answer.
 
 Exit 9 rather than 1 or 2: a scheduler can tell "fix your file" from "something
 broke" *and* from "fix your command line". A bad file produces a run document

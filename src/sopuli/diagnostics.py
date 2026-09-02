@@ -41,18 +41,14 @@ from datetime import timedelta
 from types import MappingProxyType
 
 from sopuli.clock import Skew, to_rfc3339
-from sopuli.config.model import ExpandedTarget, Vault
 from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
-from sopuli.driver.registry import DRIVERS, DatabaseDriver
-from sopuli.driver.registry import installed as driver_installed
-from sopuli.install_shape import INSTALLED, NOT_IMPLEMENTED, InstallShape, status_of
+from sopuli.install_shape import INSTALLED, InstallShape
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager
 from sopuli.lock.record import LockRecord
-from sopuli.output.document import Diagnostic
+from sopuli.output.document import Diagnostic, DiagnosticLevel
 from sopuli.store.protocol import OK
-from sopuli.store.registry import BACKENDS, Backend, installed
 from sopuli.store.survey import VaultReport
 
 #: A store is holding locks it cannot guard (``locking: advisory-only``, #94).
@@ -65,14 +61,19 @@ ADVISORY_LOCKING = "SOPULI-W001"
 #: "somebody's lock was taken" wants both.
 LOCK_TAKEN_OVER = "SOPULI-W002"
 
-#: A ``vaults:`` entry names a backend whose client is not installed (#130).
+#: A ``vaults:`` entry names a backend **this machine cannot serve** (#130,
+#: #238) -- its client is not installed, or this build has no module for it.
+#: One code for both, because they are one outage and differ only in the
+#: remedy, which the message carries; splitting them would make a consumer
+#: alerting on an unusable store subscribe to two.
 MISSING_BACKEND = "SOPULI-W003"
 
 #: A store in the survey has no ``list`` capability, so the report covers only
 #: the paths the configuration declares (#150).
 UNLISTABLE_STORE = "SOPULI-W005"
 
-#: A ``targets:`` entry names a driver whose client is not installed (#170).
+#: A ``targets:`` entry names a driver this machine cannot serve (#170), read
+#: as widely as :data:`MISSING_BACKEND` is.
 #: Its own code rather than a widening of :data:`MISSING_BACKEND`, whose
 #: registered description names a ``vaults:`` entry: one code meaning "some
 #: backend or other is missing" would leave a consumer unable to tell a store it
@@ -370,146 +371,43 @@ def _names(names: Sequence[str]) -> str:
     return "stores " + ", ".join(quoted)
 
 
-def backend_diagnostics(vaults: Sequence[Vault]) -> list[Diagnostic]:
-    """One warning per configured store whose backend's client is missing (E4).
+def install_diagnostics(
+    shape: InstallShape, *, level: DiagnosticLevel = "error"
+) -> list[Diagnostic]:
+    """What a command says about a configured component this machine cannot serve.
 
-    A **warning**, never an error, and that is the whole decision: the config is
-    valid and the install is incomplete. A validator that calls a good file
-    broken is less trustworthy for the case it exists to serve, and validating on
-    a laptop a config that runs elsewhere is the common case rather than the
-    strange one (ADR-006).
+    **The only definition of that fact in the tool** (#238). `doctor` reports it
+    as an error and exits 9 (E6); `config validate` reports the same finding as a
+    warning and exits 0 (E4). Those are the two commands' own judgements of what
+    it is worth, and it is deliberate that they differ -- but *what happened* is
+    one thing, and until #238 it was computed twice.
 
-    `config validate`'s alone since #214. `doctor` weighs the same fact harder
-    and asks a wider question -- *can this machine serve it at all* -- so it goes
-    through :func:`install_diagnostics` instead, over the survey it has already
-    built. Giving this one a ``level`` was the first attempt and was worse: it
-    made two functions answer "is this component missing" from two different
-    definitions, and they disagreed on the case where a build has no module for a
-    backend whose client happens to be installed.
+    The pair that computed it the other way, ``backend_diagnostics`` and
+    ``driver_diagnostics``, are gone. They asked only whether the *client* was
+    installed, which left `config validate` silent about `file` and `keyring` --
+    unusable in this build for every user, unconditionally -- and silent about
+    `oci` on any machine that happened to have the SDK. Three of the four backend
+    types in ``01-configuration.md`` §3a have no module, so a config declaring
+    all four reported one warning, and which one depended on the machine rather
+    than on the file.
 
-    One per vault rather than one per backend type, unlike :func:`_advisory`
-    above: the operator's unit of action here is the store they wrote down, and
-    two stores of the same missing type are two lines in the file to look at.
-    They do share an install command, which the message repeats, because a
-    consumer reading one diagnostic out of the array should not have to find the
-    other one to learn what to run.
+    ``level`` is the caller's, and it is the *only* thing the caller decides.
+    Giving :func:`backend_diagnostics` a level was tried before #238 and was
+    worse, because there were still two functions answering "is this component
+    missing" from two definitions; with one function there is nothing left to
+    disagree about. It is a :data:`~sopuli.output.document.DiagnosticLevel` and
+    not a ``str``, so a typo here is a type error rather than a document that
+    fails the schema at the end of a run; there is deliberately no runtime check.
 
-    **Two module questions, and neither of them imports anything** -- which is
-    what keeps this safe to call from an offline command, the only kind that
-    calls it. Whether a store warns at all is
-    :func:`~sopuli.store.registry.installed`, which asks only about the *client*
-    modules in :attr:`~sopuli.store.registry.Backend.provides`; what the warning
-    then says is :func:`_install_line`, which asks
-    :func:`~sopuli.install_shape.status_of` about the *backend* module as well.
-    Both stop at :func:`importlib.util.find_spec` (ADR-006 rule 3).
-
-    **Which stores warn is unchanged and is still E4's narrow reading**: a
-    backend with no client to look for stays silent, and whether that is right is
-    open in #238. What is settled there is the *sentence*, and it is fixed here:
-    ``oci`` has an extra and no module in this build, so the warning named a `pip`
-    command that runs, succeeds, and leaves the store exactly as unusable --
-    while moving the config into the state where the validator says nothing at
-    all. :func:`_install_line` is what stops that, over
-    :func:`~sopuli.install_shape.status_of`, so `config validate` and `doctor`
-    read one definition of "this machine cannot serve it" rather than two.
-    """
-    found = []
-    for vault in vaults:
-        backend = BACKENDS[vault.type]
-        if installed(backend):
-            continue
-        found.append(
-            Diagnostic(
-                level="warning",
-                code=MISSING_BACKEND,
-                message=(
-                    f'vault "{vault.name}" declares type "{vault.type}", '
-                    f"{_cannot_serve(vault.type, 'backend', _install_line(backend))}"
-                ),
-            )
-        )
-    return found
-
-
-def driver_diagnostics(targets: Sequence[ExpandedTarget]) -> list[Diagnostic]:
-    """One warning per configured driver whose client is missing (E4).
-
-    The same decision as :func:`backend_diagnostics`, for the same reason: the
-    config is valid and the install is incomplete, and a validator that calls a
-    good file broken is less trustworthy for the case it exists to serve. And
-    `config validate`'s alone for the same reason -- `doctor` asks the wider
-    question through :func:`install_diagnostics`.
-
-    Asks the same two non-importing questions its store counterpart does:
-    :func:`~sopuli.driver.registry.installed` about the client, and
-    :func:`_install_line` about the driver module before offering a `pip` line.
-
-    **Over the expanded estate, not the ``targets:`` list.** Most targets are
-    generated -- ``01-configuration.md`` §2's own example writes one
-    ``target_sets:`` entry and gets twenty-one PDBs -- so counting the explicit
-    entries would report a number nobody recognises, and an estate that declares
-    *only* generated targets would get no warning at all. Taking
-    :class:`~sopuli.config.model.ExpandedTarget` rather than
-    :class:`~sopuli.config.model.Target` is what makes that a type error instead
-    of a quiet one.
-
-    **One per distinct type, not one per target**, which is where this parts
-    company with the store version. Twenty-one PDBs missing ``oracledb`` would
-    otherwise be twenty-one identical lines saying to run one command. A store is
-    written out by hand and its name is the thing to go and look at; a target may
-    not appear in the file at all. So the warning names the type, counts the
-    targets, and names one of them as the place to start reading.
-
-    Carries :func:`_install_line` for the same reason its store counterpart does
-    (#238). Unreachable today -- ``DRIVERS`` has one entry and its module exists
-    -- and written anyway, because the day somebody adds ``postgresql`` to
-    ``TARGET_TYPES`` before writing the driver is the day this would otherwise
-    start telling them to `pip install` it.
-    """
-    seen: dict[str, list[str]] = {}
-    for target in targets:
-        if driver_installed(DRIVERS[target.target.type]):
-            continue
-        seen.setdefault(target.target.type, []).append(target.name)
-
-    found = []
-    for type_name, names in sorted(seen.items()):
-        driver = DRIVERS[type_name]
-        if len(names) > 1:
-            subject = f'{len(names)} targets, including "{names[0]}", declare'
-        else:
-            subject = f'target "{names[0]}" declares'
-        found.append(
-            Diagnostic(
-                level="warning",
-                code=MISSING_DRIVER,
-                message=(
-                    f'{subject} type "{type_name}", '
-                    f"{_cannot_serve(type_name, 'driver', _install_line(driver))}"
-                ),
-            )
-        )
-    return found
-
-
-def install_diagnostics(shape: InstallShape) -> list[Diagnostic]:
-    """What `doctor` says about a configured component it cannot serve (E6).
-
-    **Derived from the survey rather than computed a second time**, which is the
-    whole reason this exists beside :func:`backend_diagnostics`. "Missing" has to
-    mean the same thing in the ``install`` section and in the ``diagnostics``
-    array of the same document, and it did not when the two were worked out
-    separately: the section asks whether this build has a module *and* whether
-    the client is there, and the older pair asked only about the client. On a
-    machine with the `oci` SDK installed and no `oci` backend written, that
+    **Derived from the survey rather than computed a second time.** "Missing" has
+    to mean the same thing in `doctor`'s ``install`` section and in the
+    ``diagnostics`` array of the same document, and it did not when the two were
+    worked out separately: the section asks whether this build has a module *and*
+    whether the client is there, and the older pair asked only about the client.
+    On a machine with the `oci` SDK installed and no `oci` backend written, that
     disagreement produced an exit 9 with no diagnostic at all -- and with the SDK
     absent it produced one that contradicted the section and pointed at a `pip`
     line that fixes nothing.
-
-    **Errors, not warnings.** `config validate` warns over the narrower fact and
-    exits 0 (E4); `doctor` fails. The two commands answer different questions and
-    it is deliberate that they disagree -- but a document exiting 9 must not
-    describe its own reason as a warning.
 
     **The install line comes from the component**, so it appears only where one
     exists. That is structural rather than remembered: a
@@ -524,7 +422,7 @@ def install_diagnostics(shape: InstallShape) -> list[Diagnostic]:
         for name in component.configured:
             found.append(
                 Diagnostic(
-                    level="error",
+                    level=level,
                     code=MISSING_BACKEND,
                     message=(
                         f'vault "{name}" declares type "{component.name}", '
@@ -545,7 +443,7 @@ def install_diagnostics(shape: InstallShape) -> list[Diagnostic]:
             subject = f'target "{names[0]}" declares'
         found.append(
             Diagnostic(
-                level="error",
+                level=level,
                 code=MISSING_DRIVER,
                 message=(
                     f'{subject} type "{component.name}", '
@@ -567,40 +465,17 @@ def _cannot_serve(name: str, kind: str, install_command: str | None) -> str:
     `pip` forever for something `pip` cannot supply.
 
     Takes the three pieces rather than a
-    :class:`~sopuli.install_shape.Component`, so that `config validate`'s two
-    warnings say it in the same words as `doctor`'s errors (#238). The level and
-    the subject differ between the two commands and are decided by the caller;
-    this half of the sentence is the same fact and should not be written twice.
-    ``install_command`` being ``None`` is what selects the second reading, and
-    every caller derives it from the same place -- a
+    :class:`~sopuli.install_shape.Component` because the subject of the sentence
+    differs -- a store is named by its ``vaults:`` key and a driver type is
+    counted across the targets that declare it -- while this half is the same
+    fact for both. ``install_command`` being ``None`` is what selects the second
+    reading, and it comes from one place: a
     :class:`~sopuli.install_shape.Component` carries one only when its status is
-    :data:`~sopuli.install_shape.NOT_INSTALLED`, and :func:`_install_line` asks
-    :func:`~sopuli.install_shape.status_of` directly.
+    :data:`~sopuli.install_shape.NOT_INSTALLED`.
     """
     if install_command is not None:
         return f"but that {kind} is not installed; install it with: {install_command}"
     return f"but this build has no {name} {kind} yet -- this is not something to install"
-
-
-def _install_line(entry: Backend | DatabaseDriver) -> str | None:
-    """``entry``'s install command, or ``None`` where running it would fix nothing.
-
-    The `pip` line is honest only when this build has a module waiting for the
-    client. ``oci`` has an extra and no module, so
-    ``pip install "sopuli-dba[oci]"`` succeeds, changes nothing about whether the
-    store works, and moves the config into the state where the validator has
-    nothing to say about it at all -- which is #238's unambiguous half.
-
-    The ``extra is None`` arm is unreachable from both call sites, which warn
-    only on a component :func:`~sopuli.extras.installed` said no to and answer
-    that vacuously for a component with nothing to look for. It is here because
-    :attr:`~sopuli.store.registry.Backend.install_command` asserts on it, and a
-    helper whose contract is "the line, or nothing" should not be the one place
-    that can raise instead.
-    """
-    if entry.extra is None or status_of(entry) == NOT_IMPLEMENTED:
-        return None
-    return entry.install_command
 
 
 def wallet_diagnostics(report: WalletReport) -> list[Diagnostic]:
