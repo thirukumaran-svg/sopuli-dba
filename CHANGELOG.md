@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.55.0](https://github.com/villebase/sopuli-dba/compare/v0.54.0...v0.55.0) (2026-09-02)
+
+
+### Features
+
+* **check:** carry a diagnostic the server attached to a successful login ([#328](https://github.com/villebase/sopuli-dba/issues/328)) ([4bd4041](https://github.com/villebase/sopuli-dba/commit/4bd404161401483fc88bdc9a8aece83022133a02))
+
+
+### Bug Fixes
+
+* **check:** read a grace period apart from a hard expiry ([#324](https://github.com/villebase/sopuli-dba/issues/324)) ([b50d54d](https://github.com/villebase/sopuli-dba/commit/b50d54d74846746beaf7a95b4b52b6848a0b51a7))
+
 ## [0.54.0](https://github.com/villebase/sopuli-dba/compare/v0.53.0...v0.54.0) (2026-09-02)
 
 
