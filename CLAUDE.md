@@ -163,6 +163,31 @@ they need and skip with a reason when absent — never branch on a version. The
 public suite must stay green using only freely pullable images (tier 0 and
 tier 1); anything needing more must skip, not fail, or forks cannot run it.
 
+**Run it, do not only test it.** A change to what the tool reads from a target
+or a store, writes to one, or *reports* about one is not done when its tests
+pass. Bring the tier-1 stack up — `docker compose --profile tier1 up -d` from
+`test/` — and run the verb end to end. **Tier 1**, because that is the stack that
+comes up locally; tiers 2 and 3 stay the maintainer's pre-release matrix. That is
+a floor rather than a ceiling while the repository is private — reach for a
+harder environment when a change deserves it. `04-testing.md` §1's rule that a
+contributor must be able to go green on their own machine is the thing that would
+cap it, and it starts binding when the repository goes public.
+
+CI already runs tier 1 on every PR, so this is not about coverage. It is about
+the assertions nobody writes, because a test can only check what its author
+already suspected. Three that got through, and how (#309, #322, #326):
+
+- **output that was described rather than produced.** Every sample in a design
+  document, a PR body or a docstring is pasted from a real run. A hand-written
+  one is a *prediction*: #309's first draft documented a warning the command did
+  not print at all.
+- **the shape of what the server actually sends.** `ORA-28002` is the documented
+  grace-period code and 26ai does not send it; the message repeats its own code
+  and appends a URL on a second line. Neither is guessable, and both changed the
+  design (#322).
+- **anything intermittent.** A diagnostic query reported the probe's own session
+  in one run out of two (#326). One run is not a measurement.
+
 **Commits.** Conventional-ish subject lines, imperative mood. Reference the issue.
 Do not commit generated artefacts, `.env` files, Oracle binaries, or anything
 pulled from a real environment.

@@ -335,6 +335,42 @@ Carried over from UC-1 §11, with the environment each one needs:
 | `lock status` reports a record at a path the config does not declare (#150), marked `declared: false`, and a store with no `list` capability warns (`SOPULI-W005`) instead of failing the survey — so the command does not become one that works on some backends and not others | Vault |
 | `lock break` takes a record the tool did not write, with a compare-and-set against a version Vault issued, and **the manager that held it fails its next check** (#149). The fence is the whole reason the verb is allowed to exist, and it is the one thing about it a fake cannot establish: a store that counts integers agrees with the tool by construction | Vault |
 
+### Running it, which is not the same as testing it
+
+The table above is what CI asserts. This is the step before writing any of it,
+and it is a rule rather than a habit: **a change to what the tool reads from a
+target or a store, writes to one, or reports about one is verified by running the
+verb against a real one before the PR opens.** Tier 1 is the floor — it is the
+stack that comes up locally — and tiers 2 and 3 stay the pre-release matrix §1
+describes.
+
+**A floor, not a ceiling.** While the repository is private there are no
+contributors for §1's constraint to protect, so nothing stops a change reaching
+for a harder environment when it deserves one. §1 starts capping this at tier 1
+when the repository goes public, and that is the point to revisit the wording
+rather than now.
+
+The point is not coverage; CI runs tier 1 on every pull request. The point is
+that **a test asserts what its author already suspected**, and the failures worth
+catching here are the ones nobody thought to suspect. Three that got through:
+
+| What happened | Why no test would have caught it |
+|---|---|
+| A `creds check` sample was written into this repository's documents before the command was run, and the command did not print it (#309) | the sample was prose, and prose is not executed |
+| `ORA-28002` is the documented grace-period code; 26ai sends `ORA-28098` or `ORA-28011` depending on the profile, on a connection that **succeeds** (#322) | the dead branch matched a constant nobody had ever seen the server produce |
+| A diagnostic query reported the probing session itself — in one run out of two (#326) | a single green run is not a measurement of an intermittent fault |
+
+Two rules follow from those, and they are the whole of it:
+
+1. **Paste real output.** Any sample in a design document, a PR body, a docstring
+   or an issue comes from a run that happened. Never write what a command *would*
+   print.
+2. **Measure, do not reason, about a vendor's behaviour.** What an error code is,
+   whether it arrives as an exception, what a status column spells — these are
+   facts about somebody else's software. `02-oracle-privileges.md` §4 and
+   `sopuli/driver/oracle/accounts.py` record several that came out the opposite
+   way from the obvious guess.
+
 ### Fault injection (tier 2)
 
 The UC-1 §8 failure table is a test list. Each row asserts the documented
