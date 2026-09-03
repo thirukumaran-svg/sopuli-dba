@@ -305,6 +305,17 @@ nothing else depends on the outcome.
 | `ALTER SYSTEM`, `GRANT ANY *`, `BECOME USER` | no operation needs them |
 | `EXECUTE ON DBMS_LOCK` | P5's advisory lock lives in the vault, not in the database (Q2, decided in #83). It was the one grant a `DBMS_LOCK`-based lock would have added, and the reason it is not here is that session-scoped locking does not solve the problem it looked like it solved: a stalled run's session is still alive, so its lock prevents nothing while its plan goes stale. A fencing token re-checked before every mutation does, and it needs nothing from the database |
 
+**Application containers are the one scope §2 cannot see through a view, and do
+not need to.** `V$PDBS` is granted in the root only and `CDB_PDBS` nowhere, so
+the three views carrying `APPLICATION_ROOT` / `APPLICATION_PDB` are all
+`ORA-00942` to a PDB-mode service account — measured, not assumed (#204). The
+fact is available from `SYS_CONTEXT('USERENV','IS_APPLICATION_ROOT')` and
+`'IS_APPLICATION_PDB'` instead, which need no grant, exactly as `CON_NAME` needs
+none. **No grant is added for this**, which settles the trade #204 asked to argue
+by removing it: there is nothing to buy. On a release without those attributes the
+probe raises `ORA-02003` rather than returning null — the same code `CON_NAME`
+gives on 11.2, carrying a different fact and the same conclusion.
+
 `sopuli doctor --check-privileges` reports what the service account actually
 holds and flags anything on this list. Over-granting is the common failure when
 someone is debugging a permissions problem at 17:00 on a Friday; the tool should
@@ -539,7 +550,13 @@ ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
 - `CONTAINER=ALL` is appended only when the session is in `CDB$ROOT` **and** the
   account is a `C##` common user; otherwise the tool refuses rather than letting
   Oracle produce a confusing error. An **application** root or PDB is refused
-  either way, pending a real one to verify against — see UC-1 §6.2.
+  either way — but the refusal cannot currently fire, because neither scope is
+  detected. Measured in #204 (`sql/oracle/03_app_container_probe.sql`): the
+  application-root case is a real hazard and the shape of it is that a statement
+  with **no** container clause is already container-wide there, so the tool's
+  "no `C##` prefix, therefore local, therefore no clause" path produces an
+  application-container-wide rotation. The application-PDB case needs no refusal
+  of ours. See UC-1 §6.2.
 - **`ALTER USER "ORDERS_APP" ACCOUNT UNLOCK` is built the same way** (#300, UC-1
   §5's first attribute): the same identifier rules, the same container clause, and
   issued directly rather than wrapped, even though it carries nothing secret. The

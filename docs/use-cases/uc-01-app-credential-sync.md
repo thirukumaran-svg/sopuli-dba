@@ -859,23 +859,53 @@ Points that matter:
 | non-CDB | `ALTER USER x IDENTIFIED BY …` | plain |
 | PDB, local user | connect to the PDB service, then plain `ALTER USER` | one password per PDB unless the secret is shared |
 | CDB root, common user | `ALTER USER "C##MON" IDENTIFIED BY … CONTAINER=ALL` | must be connected to `CDB$ROOT`; `CONTAINER=ALL` is the config's `oracle.container_clause` |
-| Application container | connect to the application root; `CONTAINER=ALL` applies within the application container only | distinct scope, must not be conflated with CDB root |
+| Application root | every account is application-common; a statement with **no** container clause is already container-wide | distinct scope, must not be conflated with CDB root |
+| Application PDB, local user | connect to the application PDB service, then plain `ALTER USER` | ordinary; measured, see below |
 
 Guardrails: refuse `CONTAINER=ALL` when not connected to a root; refuse to treat
 `C##`-prefixed names as local users; refuse to apply to a PDB that is not
 `OPEN READ WRITE`; skip (with a clear status) PDBs that are closed or in a
 standby, rather than failing the whole run.
 
-**Application containers are refused outright for now** (#171). The row above
-describes the scope correctly and nothing has ever run against one: whether an
-application-common user is `C##`-prefixed the way a CDB common user is has not
-been checked against a real application root, and `CONTAINER=ALL` there means
-something narrower than it does in `CDB$ROOT`. Guessing which of those applies
-would produce a statement that is either refused or — worse — accepted against
-the wrong set of containers, so `app_root` and `app_pdb` raise instead. The
-refusal names the scope and says why, which is what makes it a gap somebody can
-close rather than a silence. Closing it needs an application container to test
-against, not a decision.
+**Application containers are refused outright for now** (#171), and the refusal
+has never been able to fire: `app_root` and `app_pdb` are not values anything can
+currently produce, because the driver resolves the scope from
+`SYS_CONTEXT('USERENV','CON_NAME')` and an application container has an ordinary
+container name. So an application PDB reads as `pdb` today and takes the ordinary
+path.
+
+**Measured against a real one** (#204, 2026-09-03, 26ai Free 23.26.2.0.0;
+`sql/oracle/03_app_container_probe.sql` builds the container and reproduces every
+line). The two things this section guessed at are now answers, and one of them is
+the reverse of the guess:
+
+- **Detection needs no grant.** `SYS_CONTEXT('USERENV','IS_APPLICATION_ROOT')`
+  and `'IS_APPLICATION_PDB'` separate both scopes from an ordinary PDB, and a
+  service account holding exactly §2's PDB-mode grants reads them in a session
+  where `V$PDBS`, `DBA_PDBS` and `CDB_PDBS` are all `ORA-00942`. The grant this
+  was expected to cost does not exist.
+- **`C##` names cannot exist in an application container at all** — `ORA-60534`,
+  either way. So the question this section asked, whether an application-common
+  user is `C##`-prefixed the way a CDB common user is, has a third answer: there
+  are no common-prefixed names there to be either.
+- **In an application root every account is application-common**; a local one is
+  `ORA-65049`, and `CREATE USER` with no container clause defaults to
+  application-common. The hazard follows, and it is not the one guessed above.
+  `CONTAINER=ALL` does mean something narrower there — but the tool never gets
+  that far. It sees a name without a `C##` prefix, concludes *local account*,
+  appends no clause, and issues a statement Oracle accepts and applies across the
+  whole application container. **The danger is not that the clause means less
+  than it looks; it is that the absence of one already means more.** Confirmed by
+  login: after a clauseless rotation in the root, the new password authenticates
+  in an already-synced application PDB with no sync in between, while the old one
+  does not. `password_change_date` in that PDB reads empty throughout and would
+  have reported the opposite — which is Q1's argument for `login` again (#86).
+- **In an application PDB the refusal is not needed.** A local account is
+  entirely ordinary, and an application-common one is refused by Oracle itself:
+  `ORA-65066` with no clause, `ORA-65040` with `CONTAINER=ALL`.
+
+So the refusal is right for `app_root`, too broad for `app_pdb`, and unreachable
+in both until the scope resolves. Implementing that is #204's remaining half.
 
 ### 6.3 Gradual password rollover (19.12+/21c) — the default strategy
 

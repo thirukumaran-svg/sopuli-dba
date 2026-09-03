@@ -259,11 +259,22 @@ def container_clause(account: Identifier, scope: Scope) -> str:
       one password across the CDB, and altering it from inside a PDB is either
       an error or a different account than the one the estate meant.
     * **an application root, either way.** An application container is a
-      *distinct* scope -- ``CONTAINER=ALL`` there applies within the application
-      container only -- and which names are application-common has not been
-      verified against a real one. Where the answer is unknown the code refuses
-      rather than guesses (CLAUDE.md), so application containers are out of
-      scope until somebody runs one.
+      *distinct* scope: ``CONTAINER=ALL`` there applies within the application
+      container only. Measured against a real one (#204), the hazard is sharper
+      than that and points the other way -- in an application root **every**
+      account is application-common, a local one cannot be created at all, and a
+      statement carrying no container clause is already container-wide. So the
+      branch below that returns ``""`` for a name without a ``C##`` prefix is the
+      dangerous path there, not the safe one. ``C##`` names cannot exist in an
+      application container either (``ORA-60534``), which is why the common-user
+      branch can never reach it.
+
+      **Neither refusal fires yet**, because
+      :func:`~sopuli.driver.oracle.capabilities.scope_type` cannot produce
+      ``app_root`` or ``app_pdb``. Making it able to is #204's remaining half, and
+      when it lands this refusal wants splitting: an application *PDB* needs none
+      of it -- a local account there is ordinary and an application-common one is
+      refused by Oracle itself.
 
     An ``unknown`` scope splits, and the split is the conservative reading of
     each half. An **ordinary** account gets a plain statement, because the

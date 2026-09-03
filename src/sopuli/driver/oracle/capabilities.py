@@ -238,16 +238,29 @@ def container_of(cursor: Cursor) -> str | None:
 def scope_type(container: str | None) -> str:
     """Which of P1's scopes a container name implies.
 
-    Three of the five, and the two that are missing are missing on purpose.
-    ``app_root`` and ``app_pdb`` need ``DBA_PDBS``/``V$PDBS``, which
-    ``02-oracle-privileges.md`` §2 does not grant, and no application container
-    has ever been run against this code -- so an application PDB reads as ``pdb``
-    here. That is a known limit rather than a claim: what depends on it is
-    :func:`~sopuli.driver.oracle.statements.container_clause`, which refuses an
-    application container outright, and its refusal simply will not fire on a
-    scope this cannot yet detect. Verifying it needs a real application
-    container, which puts it in the same class as the other "verify before
-    implementing" questions rather than in this change.
+    Three of the five, and the two that are missing are still missing here.
+    ``app_root`` and ``app_pdb`` read as ``pdb``, so
+    :func:`~sopuli.driver.oracle.statements.container_clause`'s refusal of an
+    application container cannot fire on a scope this cannot produce.
+
+    **The reason given for that limit is no longer the true one.** It was that
+    the fact needs ``DBA_PDBS``/``V$PDBS``, which §2 does not grant. Measured
+    against a real application container (#204,
+    ``sql/oracle/03_app_container_probe.sql``): those views are indeed
+    ``ORA-00942`` to a PDB-mode service account, but
+    ``SYS_CONTEXT('USERENV','IS_APPLICATION_ROOT')`` and
+    ``'IS_APPLICATION_PDB'`` carry the same fact and need no grant, exactly as
+    :data:`CONTAINER_NAME` needs none. So detection costs nothing and the limit
+    is now only that nobody has written it.
+
+    Two things for whoever does. An unknown USERENV attribute **raises**
+    :data:`NO_CONTAINERS` rather than returning null, so a release predating 12.2
+    fails these probes the way 11.2 fails ``CON_NAME`` -- same code, different
+    fact, same conclusion. And the refusal that follows is not symmetric: an
+    application *root* is a genuine hazard, because a statement with no container
+    clause is already container-wide there, while an application *PDB* needs no
+    refusal of ours at all. ``02-oracle-privileges.md`` §2 and UC-1 §6.2 carry the
+    measurements.
     """
     if container is None:
         return "non_cdb"
