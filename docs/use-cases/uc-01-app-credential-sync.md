@@ -290,11 +290,11 @@ Take what the vault holds and make the database match it.
 
 ```
 sopuli creds apply --application orders-app
-                   [--source {pending,current}]   # default: pending if set, else current
+                   [--source {pending,current,previous}]  # default: pending if set, else current
+                   [--confirm]                            # required for --source previous
                    [--strategy {rollover,staged,direct}]
-                   [--preflight]                  # survey every target before writing anything
-                   [--continue-on-error]          # default: fail fast
-                   [--repair FILE]                # act only on a run's unconfirmed set
+                   [--preflight]                          # survey every target before writing anything
+                   [--repair FILE]                        # act only on a run's unconfirmed set
 ```
 
 **Flow, per target**
@@ -526,10 +526,13 @@ A third would be a decision, not an implementation detail.
 
 The spine is implemented: read the source, set the password, verify, promote per
 document. `--strategy` arrived with #262 and is described in §6.3; `--source`
-with #265, and the rollback it exists for is §8. Two things in the sketch above
-are still **not** in this build — `--repair` (#264, whose input is settled
-below) and `--continue-on-error` (#266). The build is fail-fast, which is §5's
-own default.
+with #265, and the rollback it exists for is §8. One thing in the sketch above is
+still **not** in this build — `--repair` (#264, whose input is settled below).
+
+A second, `--continue-on-error`, was in that sketch and has been **removed from
+it** rather than built (#266); the section below says why, because a flag that
+merely stopped being mentioned would read as an omission for as long as anybody
+remembered it.
 
 Step 4's redraw is decided (#268) and built (#312). §6.4 carries the reasoning
 and the four rules.
@@ -648,6 +651,82 @@ all.
 **`--dry-run --preflight` surveys too.** It writes nothing and needs no lock, and
 "show me the plan, and tell me whether it would work" is the invocation somebody
 reaches for first — a flag that silently meant nothing there would be a trap.
+
+### `--continue-on-error`: why the flag is gone rather than built (#266)
+
+The sketch above used to carry `--continue-on-error`, described as the other
+half of a fail-fast default. It is removed, because **the behaviour its name
+promises is already what happens**, and the run-wide stops that are left are
+each something else wearing the same word.
+
+What a run does today when one part of it fails:
+
+| failure | today |
+|---|---|
+| a target that will not connect | `ERROR` rows for its accounts, the run moves to the next target |
+| an account whose statement the server refuses | `ERROR` row, the run moves to the next account |
+| a **promotion** that fails | that document is not promoted, the others still are |
+| a **lock** that cannot be taken | exit 7, nothing ran |
+| a **fence check** that finds the lock stolen | abort, mutate nothing further, exit 7 or 4 |
+| a **pre-flight** blocking finding | exit 1, nothing was written |
+| a **capability** the estate cannot honour | exit 5, before anything is written |
+| a **vault document** that will not read | the store's own exit code, nothing ran |
+
+The first three rows are the flag's whole intent and they need no flag: §5 wants
+an estate surveyed rather than abandoned, so a failure that belongs to one
+target, one account or one document is confined to it.
+
+The first row is the one the flag was written for, so it is measured rather than
+described — an estate of two targets, the unreachable one **first**, against
+Oracle Free 26ai 23.26.2.0.0 and dev-mode Vault:
+
+```
+ACCOUNT        TARGET       STATE    DETAIL
+acme_web_user  appdb-beta   ERROR    ORA-12170: Cannot connect. TCP connect timeout of 20s for host 192.0.2.10 port 1521.
+acme_web_user  appdb-alpha  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`, 1 not confirmed
+```
+
+Exit 4. The target that could not be dialled did not end the run, the one after
+it was applied, and only the failed account's document was held back from
+promotion — which is every behaviour `--continue-on-error` was named for,
+without the flag. The same estate under `--preflight` refuses instead, at exit 1
+with `nothing was written`, which is the row below it.
+
+The remaining five rows are the ones `--continue-on-error` would have to reach in
+order to mean anything, and none of them is a candidate:
+
+- **the stolen lock must not move.** Another run is authoritative and this one
+  stops mutating (§8's "any fence check" row). A flag that overrode it would let
+  two runs write the same account, which is the outcome the fence exists to
+  prevent;
+- **the lock refusal must not move.** Exit 7 means nothing ran, and that is a
+  promise a scheduler reads (`../design/03-json-output.md` §6);
+- **the capability refusal must not move.** Invariant 4 makes a plan-time
+  refusal with its own exit code the required shape, not a preference;
+- **the pre-flight refusal could move, and should not be spelled this way.**
+  "Survey everything, then apply to the targets that cleared" is coherent — with
+  rollover as the default strategy a partial apply causes no outage — but it is
+  a guardrail override, and this command already has one. `--force` waives the
+  §4 account guardrails and records every waiver in the run document; an
+  operator who has read the findings and wants the run anyway is asking for the
+  same thing at estate scope. If that is ever wanted it belongs there, under the
+  flag whose name says what it does. It is not wanted yet: nobody has run a
+  pre-flight and wished it had been advisory, and a flag that only means
+  something when a *second* flag is passed is the trap `--dry-run --preflight`
+  is written to avoid;
+- **the unreadable vault document is a different question.** One document out of
+  twenty that cannot be read aborts before any `ALTER USER`, because the read is
+  one pass over every path the run needs. Degrading that to `ERROR` rows for the
+  affected accounts is arguable — it is the only one of the five that is
+  genuinely "keep going" — but it weakens the same "sopuli could not run"
+  promise exit 7 carries, and it is a change to what an exit code means rather
+  than a flag. It gets its own issue if the multi-store case ever makes it real.
+
+So the honest scope was empty, and a flag documented as doing what the tool does
+anyway is worse than no flag: somebody passing it would conclude the runs where
+they did not pass it had behaved differently.
 
 ### `--repair`, and where the DRIFT list comes from (#264)
 
