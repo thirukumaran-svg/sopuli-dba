@@ -258,23 +258,33 @@ def container_clause(account: Identifier, scope: Scope) -> str:
       ``C##``-*prefixed names as local users*. A common user is one account with
       one password across the CDB, and altering it from inside a PDB is either
       an error or a different account than the one the estate meant.
-    * **an application root, either way.** An application container is a
-      *distinct* scope: ``CONTAINER=ALL`` there applies within the application
-      container only. Measured against a real one (#204), the hazard is sharper
-      than that and points the other way -- in an application root **every**
-      account is application-common, a local one cannot be created at all, and a
-      statement carrying no container clause is already container-wide. So the
-      branch below that returns ``""`` for a name without a ``C##`` prefix is the
-      dangerous path there, not the safe one. ``C##`` names cannot exist in an
-      application container either (``ORA-60534``), which is why the common-user
-      branch can never reach it.
+    * **an application root.** An application container is a *distinct* scope:
+      ``CONTAINER=ALL`` there applies within the application container only.
+      Measured against a real one (#204,
+      ``sql/oracle/03_app_container_probe.sql``), the hazard is sharper than that
+      and points the other way -- in an application root **every** account is
+      application-common, a local one cannot be created at all (``ORA-65049``),
+      and a statement carrying no container clause is already container-wide.
+      Confirmed by login: after a clauseless rotation in the root the new password
+      authenticates in an already-synced application PDB, with no sync between.
 
-      **Neither refusal fires yet**, because
-      :func:`~sopuli.driver.oracle.capabilities.scope_type` cannot produce
-      ``app_root`` or ``app_pdb``. Making it able to is #204's remaining half, and
-      when it lands this refusal wants splitting: an application *PDB* needs none
-      of it -- a local account there is ordinary and an application-common one is
-      refused by Oracle itself.
+      So the ``return ""`` below, which reads as the conservative branch, is the
+      dangerous one there -- and there is no marker to catch it on, because
+      ``C##`` names cannot exist in an application container at all
+      (``ORA-60534``). In ``CDB$ROOT`` the prefix is the operator saying *I know
+      this account spans containers*; an application root has no such statement to
+      make, so the tool cannot tell an intended container-wide rotation from an
+      accidental one and refuses instead.
+
+    **An application PDB is not refused**, and that is a change from the first
+    draft of this rule rather than an omission. Measured in #204: a local account
+    there is entirely ordinary -- ``common=NO``, a plain ``ALTER USER`` accepted
+    -- and an application-common one is refused by Oracle itself, ``ORA-65066``
+    with no clause and ``ORA-65040`` with ``CONTAINER=ALL``. Refusing the scope
+    would have blocked the working case in order to prevent one the server already
+    prevents. It takes the ordinary path below, where a ``C##`` name is refused by
+    the common-user branch -- correctly, and for a second reason: such an account
+    cannot exist there either.
 
     An ``unknown`` scope splits, and the split is the conservative reading of
     each half. An **ordinary** account gets a plain statement, because the
@@ -285,13 +295,14 @@ def container_clause(account: Identifier, scope: Scope) -> str:
     be acted on at all is a question for the connection (#177), one layer
     earlier than this.
     """
-    if scope.type in ("app_root", "app_pdb"):
+    if scope.type == "app_root":
         raise ContainerScopeError(
-            f'account "{account}" is in an application container '
-            f"({scope.type}), which this build does not manage",
+            f'account "{account}" is in an application root, where every account is '
+            "application-common and a rotation reaches the whole application container",
             hint=(
-                "an application container is a distinct scope from the CDB root and its "
-                "common-user rules are unverified; manage this account directly for now"
+                "an ALTER USER issued here carries no container clause and is still "
+                "container-wide, so this tool cannot tell one account from all of them; "
+                "point the target at an application PDB, or rotate this one directly"
             ),
         )
 

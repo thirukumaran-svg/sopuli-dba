@@ -16,6 +16,8 @@ import pytest
 from sopuli.config.model import TargetOracle
 from sopuli.driver.oracle.capabilities import (
     ABSENT_CODES,
+    APPLICATION_PDB,
+    APPLICATION_ROOT,
     CONTAINER_NAME,
     PROBED_OR_STRUCTURAL,
     PROBES,
@@ -23,6 +25,7 @@ from sopuli.driver.oracle.capabilities import (
     ProbeError,
     ReadOnlyTargetError,
     ScopeAssertionError,
+    application_of,
     assert_scope,
     container_of,
     observe,
@@ -262,6 +265,127 @@ def test_scope_type_follows_the_container_name(container: str | None, expected: 
     """Measured on 26ai: `CDB$ROOT` in the root, `FREEPDB1` in the PDB, and
     ``con_id`` 1 and 3 beside them."""
     assert scope_type(container) == expected
+
+
+@pytest.mark.parametrize(
+    ("application", "expected"),
+    [("root", "app_root"), ("pdb", "app_pdb"), (None, "pdb")],
+)
+def test_an_application_container_refines_the_pdb_answer(
+    application: str | None, expected: str
+) -> None:
+    """#204: the container name alone cannot tell these apart.
+
+    ``ACME_ROOT`` and ``ACME_ALPHA`` are ordinary container names, so the two
+    scopes P1 names beyond ``pdb`` are a refinement of that answer and never of
+    the other two.
+    """
+    assert scope_type("ACME_ALPHA", application) == expected
+
+
+@pytest.mark.parametrize("container", [None, "CDB$ROOT"])
+def test_an_application_answer_cannot_override_the_container_name(container: str | None) -> None:
+    """A non-CDB and the CDB root are settled before the question is reached.
+
+    :func:`observe` does not ask it there at all, and this is the half of that
+    which does not depend on remembering to: even handed the answer, the mapping
+    keeps the scope the container name established.
+    """
+    assert scope_type(container, "root") in ("non_cdb", "cdb_root")
+
+
+def test_an_application_root_is_read_from_userenv() -> None:
+    """Measured on 26ai (#204): ``YES``/``NO`` strings, not a flag."""
+    cursor = _Cursor({APPLICATION_ROOT: "YES"})
+
+    assert application_of(cursor) == "root"
+
+
+def test_an_application_pdb_is_read_from_userenv() -> None:
+    cursor = _Cursor({APPLICATION_ROOT: "NO", APPLICATION_PDB: "YES"})
+
+    assert application_of(cursor) == "pdb"
+
+
+def test_an_ordinary_pdb_is_neither() -> None:
+    cursor = _Cursor({APPLICATION_ROOT: "NO", APPLICATION_PDB: "NO"})
+
+    assert application_of(cursor) is None
+
+
+def test_the_second_question_is_not_asked_once_the_first_says_yes() -> None:
+    """A container cannot be both, so the second probe has nothing left to add."""
+    cursor = _Cursor({APPLICATION_ROOT: "YES"})
+
+    application_of(cursor)
+
+    assert APPLICATION_PDB not in cursor.asked
+
+
+def test_a_release_without_application_containers_is_not_one() -> None:
+    """``ORA-02003`` again, carrying its second fact.
+
+    From ``con_name`` it is 11.2 saying there are no containers; from these two it
+    is a release before 12.2 saying there are no *application* containers. One
+    code, two facts, and the same conclusion -- which is why it is read in exactly
+    one function rather than caught wherever it turns up.
+    """
+    cursor = _Cursor({APPLICATION_ROOT: _ora("ORA-02003", "invalid USERENV attribute")})
+
+    assert application_of(cursor) is None
+
+
+def test_the_second_question_is_not_asked_where_the_attribute_is_absent() -> None:
+    """A release before 12.2 says so once, not twice.
+
+    ``ORA-02003`` from the first probe is the release answering for both, so
+    asking the second would spend a round trip and an exception parse to be told
+    the same thing again.
+    """
+    cursor = _Cursor({APPLICATION_ROOT: _ora("ORA-02003", "invalid USERENV attribute")})
+
+    assert application_of(cursor) is None
+    assert APPLICATION_PDB not in cursor.asked
+
+
+def test_a_failure_asking_about_application_containers_is_not_read_as_no() -> None:
+    """Anything but ``ORA-02003`` propagates, for :func:`container_of`'s reason:
+    reporting "not an application container" because the question could not be
+    asked is how the refusal that #204 exists for would go quiet again."""
+    with pytest.raises(RuntimeError):
+        application_of(_Cursor({APPLICATION_ROOT: _ora("ORA-01031")}))
+
+
+def test_a_root_session_is_not_asked_about_application_containers() -> None:
+    """The cost argument in :func:`application_of`, asserted rather than claimed."""
+    cursor = _Cursor(
+        {
+            CONTAINER_NAME: "CDB$ROOT",
+            "select db_unique_name, open_mode from v$database": ("FREE", "READ WRITE"),
+        }
+    )
+
+    observe(cursor)
+
+    assert APPLICATION_ROOT not in cursor.asked
+    assert APPLICATION_PDB not in cursor.asked
+
+
+def test_observe_reports_an_application_pdb() -> None:
+    """End to end through the mapping, on the container names #204 built."""
+    cursor = _Cursor(
+        {
+            CONTAINER_NAME: "ACME_ALPHA",
+            APPLICATION_ROOT: "NO",
+            APPLICATION_PDB: "YES",
+            "select db_unique_name, open_mode from v$database": ("FREE", "READ WRITE"),
+        }
+    )
+
+    found = observe(cursor)
+
+    assert found.type == "app_pdb"
+    assert found.container == "ACME_ALPHA"
 
 
 def test_observe_reports_what_it_found() -> None:

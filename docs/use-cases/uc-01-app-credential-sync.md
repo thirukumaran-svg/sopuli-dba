@@ -867,12 +867,11 @@ Guardrails: refuse `CONTAINER=ALL` when not connected to a root; refuse to treat
 `OPEN READ WRITE`; skip (with a clear status) PDBs that are closed or in a
 standby, rather than failing the whole run.
 
-**Application containers are refused outright for now** (#171), and the refusal
-has never been able to fire: `app_root` and `app_pdb` are not values anything can
-currently produce, because the driver resolves the scope from
-`SYS_CONTEXT('USERENV','CON_NAME')` and an application container has an ordinary
-container name. So an application PDB reads as `pdb` today and takes the ordinary
-path.
+**An application root is refused; an application PDB is not** (#171, #204). The
+refusal used to cover both and could fire on neither, because the driver resolved
+the scope from `SYS_CONTEXT('USERENV','CON_NAME')` alone and an application
+container has an ordinary container name. Both halves changed once there was
+something to measure.
 
 **Measured against a real one** (#204, 2026-09-03, 26ai Free 23.26.2.0.0;
 `sql/oracle/03_app_container_probe.sql` builds the container and reproduces every
@@ -904,8 +903,19 @@ the reverse of the guess:
   entirely ordinary, and an application-common one is refused by Oracle itself:
   `ORA-65066` with no clause, `ORA-65040` with `CONTAINER=ALL`.
 
-So the refusal is right for `app_root`, too broad for `app_pdb`, and unreachable
-in both until the scope resolves. Implementing that is #204's remaining half.
+**What that produced.** The scope now resolves: `IS_APPLICATION_ROOT` and
+`IS_APPLICATION_PDB` are asked from within a container that would otherwise be
+`pdb`, so a non-CDB and a root session pay nothing for a question whose answer
+they already have. An application root is refused, naming the scope and saying
+that a clauseless rotation there reaches the whole application container. An
+application PDB takes the ordinary path — a local account gets a plain statement,
+and a `C##` one is refused by the common-user guardrail, now for a second reason:
+such an account cannot exist there at all.
+
+The one case neither guardrail can pre-empt is an application-common account
+declared against an application PDB, because it carries no marker to recognise it
+by. Oracle refuses it, `ORA-65066`, which is mapped to the container-misuse
+category and exit 9 with a hint naming the root as the place to rotate it from.
 
 ### 6.3 Gradual password rollover (19.12+/21c) — the default strategy
 

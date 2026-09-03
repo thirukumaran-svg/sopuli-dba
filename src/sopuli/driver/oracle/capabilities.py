@@ -159,13 +159,30 @@ STRUCTURAL: dict[str, str] = {
 CONTAINER_NAME = "select sys_context('userenv','con_name') from dual"
 
 #: ``ORA-02003`` from :data:`CONTAINER_NAME` is not a failure and not an absent
-#: capability. It is 11.2 saying it has never heard of containers, which is the
-#: single question in this module where that code carries information.
+#: capability. It is 11.2 saying it has never heard of containers, and from
+#: :data:`APPLICATION_ROOT` or :data:`APPLICATION_PDB` it is a release before 12.2
+#: saying it has never heard of *application* containers. Those are the only two
+#: questions in this module where that code carries information -- one fact each,
+#: and the same conclusion.
 #:
 #: Enumerated here rather than caught loosely, because the whole argument of
 #: :data:`ABSENT_CODES` is that a code meaning something in one place must not be
 #: allowed to mean anything anywhere else.
 NO_CONTAINERS = "ORA-02003"
+
+#: The other two of P1's five scopes. Both need **no grant**, which is the whole
+#: reason they are asked here rather than of ``V$PDBS`` or ``CDB_PDBS``: measured
+#: on 26ai (#204, ``sql/oracle/03_app_container_probe.sql``), a service account
+#: holding exactly ``02-oracle-privileges.md`` §2's PDB-mode grants reads both in
+#: a session where all three views carrying the same fact are ``ORA-00942``.
+#:
+#: Asked only where the answer can change anything -- see :func:`application_of`.
+APPLICATION_ROOT = "select sys_context('userenv','is_application_root') from dual"
+APPLICATION_PDB = "select sys_context('userenv','is_application_pdb') from dual"
+
+#: What ``IS_APPLICATION_*`` says when the answer is yes. Oracle returns the
+#: strings ``YES`` and ``NO``, not a flag.
+YES = "YES"
 
 #: The root's own name. A session here can alter a common user; anywhere else
 #: cannot, and Oracle says so with ``ORA-65040`` rather than a privilege error.
@@ -219,14 +236,18 @@ def _truthy(row: Any) -> bool:
 # -------------------------------------------------------------------- scope ---
 
 
-def container_of(cursor: Cursor) -> str | None:
-    """The container this session is in, or ``None`` where there are none.
+def _userenv(cursor: Cursor, statement: str) -> str | None:
+    """One ``USERENV`` attribute, or ``None`` where this release has not got it.
 
-    ``None`` is 11.2 and a 12.1 non-CDB: no containers exist, so there is no name
-    to report, and that is a fact rather than a gap.
+    Deliberately not :func:`read`. That function's enumerated negatives are
+    :data:`ABSENT_CODES`, and :data:`NO_CONTAINERS` is kept out of them on purpose
+    -- ``ORA-02003`` is an *answer* here and must not be allowed to read as one
+    anywhere else. This is the only place it is allowed to, and it is one function
+    rather than two so that the exception cannot grow a second interpretation by
+    being written out twice.
     """
     try:
-        cursor.execute(CONTAINER_NAME)
+        cursor.execute(statement)
         row = cursor.fetchone()
     except Exception as error:  # noqa: BLE001 -- classified on the next line
         if from_error(error).code == NO_CONTAINERS:
@@ -235,37 +256,66 @@ def container_of(cursor: Cursor) -> str | None:
     return str(row[0]) if row and row[0] else None
 
 
-def scope_type(container: str | None) -> str:
+def container_of(cursor: Cursor) -> str | None:
+    """The container this session is in, or ``None`` where there are none.
+
+    ``None`` is 11.2 and a 12.1 non-CDB: no containers exist, so there is no name
+    to report, and that is a fact rather than a gap.
+    """
+    return _userenv(cursor, CONTAINER_NAME)
+
+
+def application_of(cursor: Cursor) -> str | None:
+    """``root``, ``pdb``, or ``None`` -- which kind of application container this is.
+
+    ``None`` covers two facts that need the same handling: this is an ordinary
+    container, or this release has never heard of application containers
+    (``ORA-02003``, exactly as :func:`container_of` reads it on 11.2). Neither is
+    an application container, and nothing downstream can tell them apart because
+    there is nothing to tell them apart *for*.
+
+    **Asked only from within a container that would otherwise be ``pdb``**, which
+    is what keeps this free. An application container has its own container name
+    and never ``CDB$ROOT`` (#204), so this is a refinement of one answer rather
+    than two more round trips on every connection: a non-CDB and a root session
+    pay nothing, and an application root pays one.
+
+    The two probes are separate for :func:`probe`'s reason -- one question, one
+    attributable answer -- and neither is asked when the first has already
+    settled it. ``YES`` ends it because a container cannot be both; ``None`` ends
+    it because the attribute is not there to ask about, and asking the second
+    would spend a second round trip and a second exception on a release that has
+    already said it has no application containers.
+    """
+    root = _userenv(cursor, APPLICATION_ROOT)
+    if root is None:
+        return None
+    if root.upper() == YES:
+        return "root"
+    pdb = _userenv(cursor, APPLICATION_PDB)
+    return "pdb" if pdb is not None and pdb.upper() == YES else None
+
+
+def scope_type(container: str | None, application: str | None = None) -> str:
     """Which of P1's scopes a container name implies.
 
-    Three of the five, and the two that are missing are still missing here.
-    ``app_root`` and ``app_pdb`` read as ``pdb``, so
-    :func:`~sopuli.driver.oracle.statements.container_clause`'s refusal of an
-    application container cannot fire on a scope this cannot produce.
+    ``container`` alone answers three of the five. ``application`` -- from
+    :func:`application_of`, and meaningful only where the container name would
+    otherwise say ``pdb`` -- answers the other two.
 
-    **The reason given for that limit is no longer the true one.** It was that
-    the fact needs ``DBA_PDBS``/``V$PDBS``, which §2 does not grant. Measured
-    against a real application container (#204,
-    ``sql/oracle/03_app_container_probe.sql``): those views are indeed
-    ``ORA-00942`` to a PDB-mode service account, but
-    ``SYS_CONTEXT('USERENV','IS_APPLICATION_ROOT')`` and
-    ``'IS_APPLICATION_PDB'`` carry the same fact and need no grant, exactly as
-    :data:`CONTAINER_NAME` needs none. So detection costs nothing and the limit
-    is now only that nobody has written it.
-
-    Two things for whoever does. An unknown USERENV attribute **raises**
-    :data:`NO_CONTAINERS` rather than returning null, so a release predating 12.2
-    fails these probes the way 11.2 fails ``CON_NAME`` -- same code, different
-    fact, same conclusion. And the refusal that follows is not symmetric: an
-    application *root* is a genuine hazard, because a statement with no container
-    clause is already container-wide there, while an application *PDB* needs no
-    refusal of ours at all. ``02-oracle-privileges.md`` §2 and UC-1 §6.2 carry the
-    measurements.
+    Kept pure, and given the answer rather than the cursor, because
+    ``04-testing.md`` §4 puts the mapping in tier 0: what to ask a database and
+    how to read what it said are different jobs, and only one of them needs a
+    database to test.
     """
     if container is None:
         return "non_cdb"
     if container.upper() == ROOT_CONTAINER:
         return "cdb_root"
+    if application == "root":
+        return "app_root"
+    if application == "pdb":
+        return "app_pdb"
     return "pdb"
 
 
@@ -282,12 +332,17 @@ def observe(cursor: Cursor) -> Scope:
     halfway through a statement.
     """
     container = container_of(cursor)
+    application = (
+        application_of(cursor)
+        if container is not None and container.upper() != ROOT_CONTAINER
+        else None
+    )
     facts = read(cursor, DATABASE_FACTS)
     version = read(cursor, VERSION)
     open_mode = str(facts[1]) if facts and facts[1] else None
 
     return Scope(
-        type=scope_type(container),
+        type=scope_type(container, application),
         container=container,
         db_unique_name=str(facts[0]) if facts and facts[0] else None,
         db_version=str(version[0]) if version and version[0] else None,

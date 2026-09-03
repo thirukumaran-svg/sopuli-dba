@@ -550,13 +550,16 @@ ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
 - `CONTAINER=ALL` is appended only when the session is in `CDB$ROOT` **and** the
   account is a `C##` common user; otherwise the tool refuses rather than letting
   Oracle produce a confusing error. An **application** root or PDB is refused
-  either way — but the refusal cannot currently fire, because neither scope is
-  detected. Measured in #204 (`sql/oracle/03_app_container_probe.sql`): the
-  application-root case is a real hazard and the shape of it is that a statement
-  with **no** container clause is already container-wide there, so the tool's
-  "no `C##` prefix, therefore local, therefore no clause" path produces an
-  application-container-wide rotation. The application-PDB case needs no refusal
-  of ours. See UC-1 §6.2.
+  either way — **no longer.** Measured in #204
+  (`sql/oracle/03_app_container_probe.sql`), the two halves are not alike. An
+  application **root** is refused: a statement with no container clause is already
+  container-wide there, so the tool's "no `C##` prefix, therefore local, therefore
+  no clause" path produces an application-container-wide rotation, and no property
+  of the name distinguishes it because `C##` names cannot exist in an application
+  container. An application **PDB** takes the ordinary path: a local account there
+  is ordinary, and an application-common one is refused by Oracle itself
+  (`ORA-65066`, mapped) rather than by a guardrail that would also have blocked
+  the working case. See UC-1 §6.2.
 - **`ALTER USER "ORDERS_APP" ACCOUNT UNLOCK` is built the same way** (#300, UC-1
   §5's first attribute): the same identifier rules, the same container clause, and
   issued directly rather than wrapped, even though it carries nothing secret. The

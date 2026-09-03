@@ -90,6 +90,7 @@ def test_the_table_covers_every_row_uc1_names() -> None:
         "ORA-01031",
         "ORA-65040",
         "ORA-65048",
+        "ORA-65066",
         "ORA-12154",
         "ORA-12541",
         "ORA-28040",
@@ -203,6 +204,25 @@ def test_a_container_misuse_is_a_config_problem_on_exit_nine() -> None:
     assert found.kind == CONTAINER_MISUSE
     assert found.category == "config"
     assert found.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_an_application_common_account_says_where_to_rotate_it_instead() -> None:
+    """``ORA-65066`` became reachable when #204 stopped refusing ``app_pdb``.
+
+    An application-common account in an application PDB is refused by Oracle
+    itself, measured both ways: this code with no container clause and
+    ``ORA-65040`` with ``CONTAINER=ALL``. `container_clause` cannot pre-empt it,
+    because an application-common name carries no marker to recognise it by --
+    ``C##`` is forbidden in an application container (``ORA-60534``) -- so the
+    message is the whole of the help the operator gets.
+    """
+    found = classify("ORA-65066", "ORA-65066: The specified changes must apply to all containers")
+
+    assert found.kind == CONTAINER_MISUSE
+    assert found.category == "config"
+    assert found.exit_code == ExitCode.CONFIG_INVALID
+    assert found.hint is not None
+    assert "application root" in found.hint
 
 
 def test_a_verifier_mismatch_explains_the_password_version_trap() -> None:

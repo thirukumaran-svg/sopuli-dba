@@ -198,21 +198,48 @@ def test_a_common_user_outside_the_root_is_refused() -> None:
     assert refused.value.category == "config"
 
 
-@pytest.mark.parametrize("scope_type", ["app_root", "app_pdb"])
-def test_an_application_container_is_refused_rather_than_guessed_at(scope_type: str) -> None:
-    """CLAUDE.md: where the answer is unknown, refuse rather than guess.
+def test_an_application_root_is_refused_whatever_the_account_looks_like() -> None:
+    """#204, measured: there is no safe branch to take in an application root.
 
-    An application container is a distinct scope -- ``CONTAINER=ALL`` applies
-    within it only -- and which names are application-common has never been
-    checked against a real one. Both accounts are refused, common or not,
-    because the uncertainty is about the scope and not about the name.
+    Every account there is application-common -- a local one is ``ORA-65049`` --
+    and a statement with no container clause is already container-wide, confirmed
+    by login across an already-synced application PDB. So the ``""`` that reads as
+    the conservative branch is the dangerous one, and no property of the *name*
+    distinguishes the case: ``C##`` is forbidden in an application container
+    (``ORA-60534``), so the marker the CDB root relies on cannot appear.
     """
-    scope = Scope(type=scope_type)
+    scope = Scope(type="app_root")
 
     for account in (ACCOUNT, COMMON):
         with pytest.raises(ContainerScopeError) as refused:
             container_clause(account, scope)
-        assert scope_type in str(refused.value)
+        assert "application root" in str(refused.value)
+        assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_an_application_pdb_takes_the_ordinary_path() -> None:
+    """The half of #204's refusal that the measurement removed.
+
+    A local account in an application PDB is entirely ordinary -- ``common=NO``,
+    a plain ``ALTER USER`` accepted. Refusing the scope would have blocked a
+    working case to prevent one Oracle already prevents (``ORA-65066``), which is
+    a guardrail costing more than it guards.
+    """
+    assert container_clause(ACCOUNT, Scope(type="app_pdb")) == ""
+
+
+def test_a_common_name_in_an_application_pdb_is_still_refused() -> None:
+    """Right answer, and now for two reasons.
+
+    The common-user branch refuses it because ``CONTAINER=ALL`` is a claim to be
+    in the root. #204 added the second: such an account cannot exist in an
+    application container at all, so a config declaring one is wrong about the
+    estate rather than about the scope.
+    """
+    with pytest.raises(ContainerScopeError) as refused:
+        container_clause(COMMON, Scope(type="app_pdb"))
+
+    assert "app_pdb" in str(refused.value)
 
 
 def test_an_unresolved_scope_gets_the_conservative_reading_of_each_half() -> None:

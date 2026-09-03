@@ -21,7 +21,15 @@ import pytest
 
 from oracle_harness import Environment
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target, TargetOracle
-from sopuli.driver.oracle.capabilities import PROBES, ProbeError, ScopeAssertionError, read
+from sopuli.driver.oracle.capabilities import (
+    APPLICATION_PDB,
+    APPLICATION_ROOT,
+    PROBES,
+    ProbeError,
+    ScopeAssertionError,
+    application_of,
+    read,
+)
 from sopuli.driver.protocol import SCOPE_TYPES, UNKNOWN, Credential
 from sopuli.secrets import Secret
 
@@ -75,6 +83,46 @@ def test_every_probe_is_a_question_oracle_can_answer(
                 read(cursor, statement)
             except ProbeError as failed:  # pragma: no cover - the failure path
                 pytest.fail(f"the {capability} probe is not a valid question: {failed}")
+
+
+def test_the_application_container_questions_are_ones_oracle_can_answer(
+    live_oracle: Environment, session_module: Any
+) -> None:
+    """The test above, for the two statements that are not in ``PROBES`` (#204).
+
+    They sit outside that dict because they are not capabilities -- they refine a
+    *scope* -- so the guard that exists for #195 does not reach them, and they are
+    the same kind of statement it was written for: syntactically fine, passing
+    every tier-0 test, and possibly asking Oracle a question it does not have.
+    ``sys_context('userenv','cdb')`` is exactly that, and it shipped.
+
+    An ordinary PDB answers ``NO`` to both, and that is enough. What is asserted
+    is that the attribute exists at all; which container this happens to be is
+    :func:`test_the_scope_is_what_the_database_says_it_is`'s business.
+
+    **It is deliberately strict, and tolerating ``ORA-02003`` here would empty
+    it.** A misspelled attribute and a release too old to have a correctly spelled
+    one raise the *same code* -- that is exactly how ``'cdb'`` shipped -- so a
+    test that accepted it would pass on the typo it exists to catch. The premise
+    is instead the lane: tier 1 is Oracle Free (``04-testing.md`` §1), which has
+    these attributes, so a failure here means the statement is wrong. The message
+    says so, because pointing ``SOPULI_TEST_ORACLE_DSN`` at a pre-12.2 database is
+    the one way to see it otherwise, and that is not tier 1.
+    """
+    with (
+        _session(session_module, live_oracle.dsn) as session,
+        session.connection.cursor() as cursor,
+    ):
+        for statement in (APPLICATION_ROOT, APPLICATION_PDB):
+            cursor.execute(statement)
+            row = cursor.fetchone()
+            assert row is not None, f"{statement} returned no row"
+            assert str(row[0]).upper() in ("YES", "NO"), (
+                f"{statement} did not answer YES or NO: {row!r}. Either the attribute "
+                "is misspelled, or this is not a tier-1 database -- these arrived in 12.2"
+            )
+
+        assert application_of(cursor) is None, "the tier-1 container is not an application one"
 
 
 def test_the_scope_is_what_the_database_says_it_is(
