@@ -103,6 +103,25 @@ PASSWORD_GRACE_PERIOD = "SOPULI-W013"
 #: condition). Corroboration reads better than a guess.
 LOGIN_WARNING = "SOPULI-W014"
 
+#: `creds generate` could not read a target's password constraints, so the
+#: policy's declared length governed the draw (#317, UC-1 §4 step 2).
+#:
+#: A **warning** rather than an error because §4 makes the fallback legitimate:
+#: staging a password for an estate that is down is a thing operators do, and the
+#: run staged one. What it cannot do is stay quiet -- a password drawn against a
+#: policy alone and one drawn against a database that answered are different
+#: claims about the same run, and nothing in the password distinguishes them.
+#:
+#: One code for both shapes it reports, none-answered and some-answered, because
+#: the remedy is identical -- reach the targets and run it again -- and the
+#: message names which targets in either case. A consumer alerting on this is
+#: watching "the draw was not checked against the estate", and a partial read is
+#: that with fewer databases missing rather than a different condition.
+#:
+#: ``--offline`` emits nothing. It is the operator saying they know, and a
+#: warning that fires because a flag was passed teaches its reader to filter it.
+CONSTRAINTS_UNREAD = "SOPULI-W015"
+
 #: An estate uses ``auth: external`` and this machine has no wallet it can read
 #: (#215). Its own code rather than a widening of anything above: the remedy is a
 #: file on this machine, and a consumer that alerts on "sopuli cannot reach a

@@ -31,6 +31,7 @@ from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import lock_path
 from sopuli.lock.record import Holder, LockRecord
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.passwords import ByteLimit
 from sopuli.payload import PENDING
 from sopuli.store import MemoryStore, SecretStore
 
@@ -539,3 +540,182 @@ def test_a_takeover_mid_run_stops_before_the_next_document_is_staged(
     ]
     assert store.read("apps/acme/appdb-alpha") is not None
     assert store.read("apps/acme/appdb-beta") is None
+
+
+# ------------------------------------------------------- target constraints ---
+#
+# UC-1 §4 step 2 (#317). Every test above reaches this code and takes the
+# unreachable path, because none of them patches a session and `db.example.com`
+# does not exist -- which is itself the assertion that a target that will not
+# answer costs the run nothing but strictness.
+
+
+class _Session:
+    """A connection that answers one question and counts its own closing."""
+
+    def __init__(self, limit: ByteLimit) -> None:
+        self.limit = limit
+        self.closed = False
+
+    def byte_limit(self) -> ByteLimit:
+        return self.limit
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _reachable(
+    monkeypatch: pytest.MonkeyPatch, limits: Mapping[str, ByteLimit]
+) -> dict[str, _Session]:
+    """Targets that answer, by name. Anything unlisted refuses to connect."""
+    opened: dict[str, _Session] = {}
+
+    def fake_open(target: Any, invocation: Any, config: Any) -> _Session:
+        if target.name not in limits:
+            raise RuntimeError(f"no listener for {target.name}")
+        opened[target.name] = _Session(limits[target.name])
+        return opened[target.name]
+
+    monkeypatch.setattr("sopuli.cli._open_session", fake_open)
+    return opened
+
+
+ASCII_128 = ByteLimit(max_bytes=128, encoding="ascii", charset="US7ASCII")
+ASCII_8 = ByteLimit(max_bytes=8, encoding="ascii", charset="US7ASCII")
+
+
+def test_an_unreachable_estate_falls_back_to_the_policy_and_says_so(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """§4's fallback, and the whole reason this is not a new way to fail.
+
+    Staging a password for an estate that is down is a thing operators do. What
+    the run may not do is stay quiet about which of the two answers it got.
+    """
+    result = run(runner, write_config(CONFIG), "--output", "json")
+    found = document(result)
+
+    assert found["exit_code"] == ExitCode.SUCCESS
+    assert "SOPULI-W015" in [one.get("code") for one in found.get("diagnostics", [])]
+    assert staged(store)
+
+
+def test_offline_asks_nothing_and_warns_about_nothing(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A warning that fires because a flag was passed teaches its reader to
+    filter it, so `--offline` is silent -- and it must genuinely not connect,
+    which is what the exploding opener asserts."""
+
+    def explode(target: Any, invocation: Any, config: Any) -> Any:
+        raise AssertionError("--offline connected to a target")
+
+    monkeypatch.setattr("sopuli.cli._open_session", explode)
+
+    found = document(run(runner, write_config(CONFIG), "--offline", "--output", "json"))
+
+    assert found["exit_code"] == ExitCode.SUCCESS
+    assert "SOPULI-W015" not in [one.get("code") for one in found.get("diagnostics", [])]
+    assert staged(store)
+
+
+def test_a_reachable_estate_is_asked_once_per_target_not_once_per_account(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What §4's "one representative target" means for a per-account command.
+
+    `CONFIG` binds two accounts to one target. Asking per account would double
+    the connections, by a factor the config decides rather than the operator.
+    """
+    calls: list[str] = []
+
+    def counting(target: Any, invocation: Any, config: Any) -> _Session:
+        calls.append(target.name)
+        return _Session(ASCII_128)
+
+    monkeypatch.setattr("sopuli.cli._open_session", counting)
+    run(runner, write_config(CONFIG), "--output", "json")
+
+    assert calls == ["appdb-alpha"]
+    assert len(staged(store)) == 2, "two accounts, one connection"
+
+
+def test_the_session_is_closed_after_the_constraint_is_read(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read-only connection is still a connection, and this command holds a
+    lock afterwards -- leaving one open would keep a session for the length of a
+    vault write it has nothing to do with."""
+    opened = _reachable(monkeypatch, {"appdb-alpha": ASCII_128})
+
+    run(runner, write_config(CONFIG), "--output", "json")
+
+    assert opened["appdb-alpha"].closed is True
+
+
+def test_a_limit_the_policy_cannot_satisfy_is_refused_before_anything_is_staged(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal class #317 exists to remove, moved to where it can be fixed.
+
+    A 24-character policy against a target holding 8 bytes is impossible, and
+    without this it is discovered by `apply` -- after the vault has a `pending`
+    that cannot be applied anywhere.
+    """
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_8})
+
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code != 0
+    assert store.read(PATH) is None
+
+
+def test_the_strictest_target_governs_the_draw(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two targets, and the tighter one decides for both documents.
+
+    The generous target would have accepted the policy; the run is refused all
+    the same, because a password staged for the estate has to be applicable to
+    every target in it.
+    """
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128, "appdb-beta": ASCII_8})
+
+    result = run(runner, write_config(TWO_DOCUMENTS))
+
+    assert result.exit_code != 0
+    assert store.read("apps/acme/appdb-alpha") is None
+
+
+def test_a_partly_reachable_estate_stages_and_says_the_limit_may_not_be_strictest(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three of four targets is a caveat on how strict the answer is, not a
+    reason to stop -- and not the same claim as having surveyed the estate."""
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128})
+
+    found = document(run(runner, write_config(TWO_DOCUMENTS), "--output", "json"))
+    warnings = [one for one in found.get("diagnostics", []) if one.get("code") == "SOPULI-W015"]
+
+    assert found["exit_code"] == ExitCode.SUCCESS
+    assert len(warnings) == 1
+    assert "appdb-beta" in warnings[0]["message"]
+    assert "strictest" in warnings[0]["message"]

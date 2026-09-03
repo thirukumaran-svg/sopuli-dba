@@ -261,5 +261,11 @@ def _verdict(states: Sequence[str]) -> str:
     if staged and not failed:
         # The sentence that matters after a successful stage: the database has
         # not changed, and nothing is using this password yet.
-        return f"{line}; no database was touched -- run `sopuli creds apply` to use them"
+        #
+        # "changed" rather than "touched" since #317. A target may well have been
+        # *read* -- step 2 asks each one how long a password may be -- and a line
+        # claiming nothing was touched would be describing the command as it was
+        # before rather than as it ran. The reassurance a reader wants here is
+        # about writes, and that one is still true.
+        return f"{line}; no database was changed -- run `sopuli creds apply` to use them"
     return line

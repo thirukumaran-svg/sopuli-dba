@@ -1,9 +1,18 @@
 """What `creds generate` writes, and how it is grouped into writes (#254).
 
 Stage a new password per the policy into the vault's ``pending`` slot. The first
-credential mutation, and it never connects to a database -- which is what lets it
+credential mutation, and it changes nothing in a database -- which is what lets it
 take the advisory lock at all: the lock lives in the vault (Q2, #83), so a
 database-side one could not have protected the write below.
+
+**It does now connect, and that argument is untouched** (#317). UC-1 §4 step 2
+reads one constraint per selected target -- how long a password may be, in that
+database's own character set -- because a policy written by somebody who never saw
+the estate can otherwise stage a `pending` no target can hold. The lock's case was
+never "this command opens no session"; it was that there is no *change* here for a
+database-side lock to protect, and reading does not make one. The connecting is
+:func:`sopuli.cli._constraints_for`; the merge is :mod:`sopuli.constraints`; what
+arrives here is a :class:`~sopuli.passwords.ByteLimit` or ``None``.
 
 Pure, like :mod:`sopuli.check`. Drawing is :mod:`sopuli.passwords` and writing is
 :mod:`sopuli.store.credentials`; what lives here is the arithmetic between them --
@@ -237,12 +246,36 @@ def policy_for(config: Config, binding: Binding) -> tuple[str, PasswordPolicy]:
     return chosen, found.password
 
 
+def _smallest(limits: Sequence[ByteLimit]) -> ByteLimit | None:
+    """The tightest byte count among ``limits``, or ``None`` where there are none."""
+    return min(limits, key=lambda limit: limit.max_bytes, default=None)
+
+
+def _every_violation(
+    supplied: Secret, policy: PasswordPolicy, limits: Sequence[ByteLimit]
+) -> tuple[Violation, ...]:
+    """Every way ``supplied`` fails the policy at *any* target, each reported once.
+
+    With no limits this is one ordinary :func:`sopuli.passwords.check` -- the
+    policy's own rules, and no byte rule to apply, which is the offline and
+    unreachable case.
+    """
+    if not limits:
+        return check(supplied, policy, limit=None)
+
+    seen: dict[Violation, None] = {}
+    for limit in limits:
+        for violation in check(supplied, policy, limit=limit):
+            seen.setdefault(violation, None)
+    return tuple(seen)
+
+
 def candidate_for(
     binding: Binding,
     policy: PasswordPolicy,
     *,
     name: str,
-    limit: ByteLimit | None = None,
+    limits: Sequence[ByteLimit] = (),
     supplied: Secret | None = None,
     enforce: bool = True,
 ) -> Candidate:
@@ -267,11 +300,29 @@ def candidate_for(
     It has no effect on a generated password -- there is nothing to override when
     the tool drew the value itself, and a flag that silently changed the
     generator would be a different feature wearing this one's name.
+
+    ``limits`` is every target's, and the two paths use it differently for a
+    reason :mod:`sopuli.constraints` sets out: a **drawn** password is ASCII by
+    §8, so only the smallest byte count can bind it, while a **supplied** one is
+    whatever an external system dictated and has to satisfy every target it will
+    be applied to. A password storable in one character set and not another is
+    the deterministic failure #317 exists to move earlier, and checking only the
+    smallest limit would let exactly that one through.
+
+    Checking a supplied password once per limit re-runs the policy half each
+    time, which is deliberate: the alternative is a second entry point that
+    validates only the byte rules, and the second copy of a rule is the one that
+    drifts. Violations are unioned in first-seen order, so a message names each
+    distinct problem once however many targets report it.
     """
     if supplied is None:
-        return Candidate(binding=binding, value=draw_password(policy, limit=limit), policy=name)
+        return Candidate(
+            binding=binding,
+            value=draw_password(policy, limit=_smallest(limits)),
+            policy=name,
+        )
 
-    violations = check(supplied, policy, limit=limit)
+    violations = _every_violation(supplied, policy, limits)
     if violations and enforce:
         raise _refused(binding, name, violations)
     return Candidate(

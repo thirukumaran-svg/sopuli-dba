@@ -63,6 +63,7 @@ import click
 
 from sopuli import apply as apply_states
 from sopuli import check as check_states
+from sopuli import constraints as constraint_source
 from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
@@ -88,7 +89,9 @@ from sopuli.config import (
     parse_selector,
     refuse_unknown,
 )
+from sopuli.constraints import Constraints
 from sopuli.diagnostics import (
+    CONSTRAINTS_UNREAD,
     LOCK_LOST,
     LOGIN_WARNING,
     PASSWORD_GRACE_PERIOD,
@@ -1954,6 +1957,12 @@ def _stored_credential(binding: Binding, stores: Mapping[str, SecretStore]) -> S
     help="Accept a supplied password that violates the policy. Recorded in the audit event.",
 )
 @click.option(
+    "--offline",
+    is_flag=True,
+    default=False,
+    help="Do not connect to any target to read password constraints. Draw from the policy alone.",
+)
+@click.option(
     "--confirm",
     is_flag=True,
     default=False,
@@ -1969,14 +1978,26 @@ def creds_generate(
     policy_name: str | None,
     from_stdin: bool,
     no_policy_check: bool,
+    offline: bool,
     confirm: bool,
     run: Invocation,
 ) -> str:
     """Draw a new password per the policy and stage it in the vault.
 
-    **The database is never touched.** That is what lets this command take the
-    advisory lock at all: the lock lives in the vault (Q2, issue #83), so a
-    database-side lock could not have protected the write this makes.
+    **The database is read and never written.** Step 2 of the use case asks one
+    connection per selected target for the one constraint that can be known in
+    advance -- how long a password may be, in that database's own character set
+    -- and the strictest answer governs the draw (issue #317). Nothing is issued,
+    and the argument for taking the advisory lock is untouched: the lock lives in
+    the vault (Q2, issue #83) because this command makes no *change* a
+    database-side lock could have protected, which was never the same claim as
+    making no connection.
+
+    A target that cannot be reached is not a failure. The policy's declared
+    length governs instead, which is the documented fallback, and the run says
+    which of the two happened rather than leaving a reader to assume the estate
+    agreed. `--offline` declines to ask at all, for staging against an estate
+    that is down on purpose.
 
     **Staging is deliberately separate from applying.** It lets an operator
     prepare a password, get a change window approved, and apply later -- and it
@@ -2032,9 +2053,16 @@ def creds_generate(
         return render_plan(plan, noun="generation") + "\n\nnothing to stage"
 
     supplied = _password_from_stdin() if from_stdin else None
+    limits = _constraints_for(bindings, run, config, offline=offline)
+    document.diagnostics.extend(_constraint_diagnostics(limits))
     candidates = [
         _candidate(
-            binding, config, name=policy_name, supplied=supplied, enforce=not no_policy_check
+            binding,
+            config,
+            name=policy_name,
+            supplied=supplied,
+            enforce=not no_policy_check,
+            limits=limits.limits,
         )
         for binding in bindings
     ]
@@ -2123,6 +2151,7 @@ def _candidate(
     name: str | None,
     supplied: Secret | None,
     enforce: bool,
+    limits: Sequence[ByteLimit] = (),
 ) -> Candidate:
     """One account's password, drawn or validated against its policy.
 
@@ -2132,15 +2161,103 @@ def _candidate(
     before the file's chain is consulted -- so it wins over an application entry
     and still goes through the same dangling-name check every policy name gets.
 
-    ``limit`` is `None`: the byte limit is a property of the *target database*
-    and reading it means connecting, which UC-1 marks optional and #254 leaves
-    out. The policy's declared length governs, which is §4's own fallback.
+    ``limits`` is every answered target's, resolved once for the run by
+    :func:`_constraints_for` and passed in rather than read here: they are a
+    property of the *targets*, not of the binding, and a function called once per
+    account is the wrong place to open a connection. Empty is the documented
+    fallback -- no target answered, or none was asked -- and the policy's declared
+    length then governs, which is what
+    :func:`sopuli.generate.candidate_for` already does with it.
     """
     effective = binding if name is None else replace(binding, policy=name)
     chosen, policy = staging.policy_for(config, effective)
     return staging.candidate_for(
-        binding, policy, name=chosen, limit=None, supplied=supplied, enforce=enforce
+        binding, policy, name=chosen, limits=limits, supplied=supplied, enforce=enforce
     )
+
+
+def _constraints_for(
+    bindings: Sequence[Binding],
+    run: Invocation,
+    config: Config,
+    *,
+    offline: bool,
+) -> Constraints:
+    """What the selected targets say a password may be (#317, UC-1 §4 step 2).
+
+    **One connection per target, not per account.** §4 asks for "one
+    representative target", which for a command whose unit of work is an account
+    and whose selection routinely puts several accounts on one database means:
+    ask each distinct target once, and let the strictest answer govern. Asking
+    per account would multiply connections by a factor the config decides.
+
+    **Every failure here is a caveat, not an error.** A target that will not
+    answer costs the run nothing but strictness, and §4 says so plainly: fall back
+    to the policy's declared limits and say so. That is why this catches broadly
+    -- a listener that is down, a credential that is wrong, a driver that is not
+    installed and a wallet that cannot be read are all the same thing to a
+    command that is not going to write to a database either way.
+
+    `--dry-run` still reads. The plan is a claim about what would be staged, and
+    a preview that skipped the constraint would be previewing a different draw
+    from the one the real run makes.
+    """
+    if offline:
+        return Constraints(source=constraint_source.UNREAD)
+
+    readings: list[tuple[str, ByteLimit]] = []
+    unreachable: list[str] = []
+    for name in dict.fromkeys(binding.target for binding in bindings):
+        session = None
+        try:
+            session = _open_session(_expanded(config, name), run, config)
+            readings.append((name, session.byte_limit()))
+        except Exception:  # noqa: BLE001 -- every failure is the same caveat
+            unreachable.append(name)
+        finally:
+            if session is not None:
+                with suppress(Exception):
+                    session.close()
+    return constraint_source.survey(readings, unreachable=unreachable)
+
+
+def _constraint_diagnostics(limits: Constraints) -> list[Diagnostic]:
+    """Say which of §4's two answers this run got.
+
+    Silence is the one thing not on offer. A password drawn against the policy
+    alone and one drawn against a database that answered are different claims
+    about the same run, and a reader cannot tell them apart from the password.
+
+    Nothing is emitted where every target answered, because that is the case the
+    feature exists to produce and a diagnostic on the happy path is noise a
+    consumer learns to filter.
+    """
+    if limits.source == constraint_source.POLICY:
+        return [
+            Diagnostic(
+                level="warning",
+                code=CONSTRAINTS_UNREAD,
+                message=(
+                    "no target could be reached to read password constraints, so the "
+                    "policy's declared length governs: " + ", ".join(limits.unreachable)
+                ),
+            )
+        ]
+    if limits.partial:
+        return [
+            Diagnostic(
+                level="warning",
+                code=CONSTRAINTS_UNREAD,
+                message=(
+                    "password constraints were read from "
+                    + ", ".join(limits.read)
+                    + " and could not be read from "
+                    + ", ".join(limits.unreachable)
+                    + "; the limit used may not be the estate's strictest"
+                ),
+            )
+        ]
+    return []
 
 
 def _password_from_stdin() -> Secret:

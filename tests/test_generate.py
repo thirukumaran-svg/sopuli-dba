@@ -18,9 +18,9 @@ import pytest
 from sopuli import generate
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
-from sopuli.config.model import Binding, Config
+from sopuli.config.model import Binding, Config, PasswordPolicy
 from sopuli.config.secret_refs import parse_secret_ref
-from sopuli.passwords import PasswordPolicyError
+from sopuli.passwords import ByteLimit, PasswordPolicyError
 from sopuli.payload import CURRENT, GENERATED, ORIGIN, PENDING, SUPPLIED
 from sopuli.secrets import Secret
 
@@ -387,3 +387,81 @@ def test_one_account_per_document_at_the_root_is_still_fine() -> None:
         PENDING: writes[0].candidates[0].value,
         ORIGIN: GENERATED,
     }
+
+
+# ------------------------------------------------------- estate limits (#317) ---
+#
+# `limits` is every answered target's, and the two paths use it differently: a
+# drawn password is ASCII by §8 so only the count can bind it, while a supplied
+# one has to satisfy every target it will be applied to.
+
+BINDING = Binding(account="acme_web_user", target="appdb-alpha")
+
+#: A policy whose alphabet reaches outside every single-byte character set, so
+#: the only thing that can refuse ``ab中z`` is the *target's* encoding.
+WIDE = PasswordPolicy(length=4, charset="custom", allow="abz中", first_char="alpha")
+
+WESTERN = ByteLimit(max_bytes=128, encoding="cp1252", charset="WE8MSWIN1252")
+UNICODE = ByteLimit(max_bytes=128, encoding="utf-8", charset="AL32UTF8")
+LEGACY = ByteLimit(max_bytes=30, encoding="ascii", charset="US7ASCII")
+
+
+def test_a_supplied_password_must_satisfy_every_target_not_the_smallest() -> None:
+    """The failure a single "strictest" limit lets through.
+
+    ``中`` is three bytes in ``AL32UTF8`` and cannot be encoded in
+    ``WE8MSWIN1252`` at all. Both targets declare 128 bytes, so no comparison of
+    counts distinguishes them, and validating against either one alone accepts a
+    password the other deterministically cannot store -- which is the "characters
+    the target will not accept" half of what #317 is for.
+    """
+    with pytest.raises(ConfigError):
+        generate.candidate_for(
+            BINDING, WIDE, name="p", limits=(UNICODE, WESTERN), supplied=Secret("ab中z")
+        )
+
+
+def test_the_same_password_is_accepted_where_every_target_can_hold_it() -> None:
+    """The control, so the test above is measuring the character set and not the
+    password."""
+    found = generate.candidate_for(
+        BINDING, WIDE, name="p", limits=(UNICODE,), supplied=Secret("ab中z")
+    )
+
+    assert found.supplied is True
+
+
+def test_one_violation_is_reported_once_however_many_targets_report_it() -> None:
+    """Checking per limit re-runs the policy half, and a reader should not see
+    the same problem three times because three databases agreed about it."""
+    policy = PasswordPolicy(length=40, charset="alnum", first_char="alpha")
+    found = generate.candidate_for(
+        BINDING,
+        policy,
+        name="p",
+        limits=(LEGACY, WESTERN, UNICODE),
+        supplied=Secret("short"),
+        enforce=False,
+    )
+
+    rules = [violation.rule for violation in found.accepted_violations]
+    assert len(rules) == len(set(rules)), rules
+
+
+def test_a_drawn_password_is_bound_by_the_count_and_not_the_encoding() -> None:
+    """Both targets hold 128 bytes and §8's alphabet is ASCII, so a 40-character
+    policy is satisfiable -- and would not be if the encoding were folded into
+    the comparison."""
+    policy = PasswordPolicy(length=40, charset="alnum", first_char="alpha")
+
+    found = generate.candidate_for(BINDING, policy, name="p", limits=(UNICODE, WESTERN))
+
+    assert len(found.value.reveal()) == 40
+
+
+def test_a_drawn_password_is_refused_where_no_target_can_hold_it() -> None:
+    """The refusal #317 moves from `apply` to here, at the pure layer."""
+    policy = PasswordPolicy(length=40, charset="alnum", first_char="alpha")
+
+    with pytest.raises(PasswordPolicyError):
+        generate.candidate_for(BINDING, policy, name="p", limits=(UNICODE, LEGACY))
