@@ -413,10 +413,13 @@ promotion. Three things are its own.
 
 **The tool assigns a profile and never creates or alters one.** `ALTER PROFILE`
 edits a shared object and so reaches accounts nobody selected; §3 of
-`02-oracle-privileges.md` keeps the privilege off the service account and Q4 (#88)
-is open with a documented leaning of no. `creds finish-rollover` already takes the
-other half of that position — it *reports* the `ALTER PROFILE` an operator would
-run, and never issues it.
+`02-oracle-privileges.md` keeps the privilege off the service account, and Q4
+(#88) decided it: never, in any credential-sync verb. `creds finish-rollover`
+takes the other half of that position — it *reports* the `ALTER PROFILE` an
+operator would run, and never issues it. Creating and altering profiles is UC-4's,
+provisioning (see the roadmap in `docs/README.md`), where a profile is part of
+making an account exist rather than a shared object a credential rotation reached
+sideways — an open question there, not one #88 closed.
 
 **A profile the target has not got is a pre-flight finding, not an `ORA-02380`
 half way through.** Which profiles exist is a property of each database, so an
@@ -889,9 +892,16 @@ Where available, this makes zero-downtime rotation real:
 Tool support:
 
 - `--strategy rollover` (default when the capability exists) verifies the profile
-  actually has a non-zero `PASSWORD_ROLLOVER_TIME`; if not, it reports the exact
-  `ALTER PROFILE` needed rather than silently changing a profile that affects
-  other accounts.
+  actually has a non-zero `PASSWORD_ROLLOVER_TIME`. Where it has not, the tool
+  **reports the exact `ALTER PROFILE` an operator would run and issues none** —
+  decided in Q4 (#88), and the same position `finish-rollover` takes from the
+  other end. A profile is shared, so editing one reaches accounts nobody
+  selected, which is a blast radius invariant 5 cannot express: the config
+  whitelists accounts, not profiles. Enabling rollover on a site that has not got
+  it is therefore an out-of-band DBA change, and the tool's job is to name the
+  statement rather than to run it. What the run does *instead* depends on whether
+  the strategy was asked for — refused at pre-flight if it was, resolved per
+  account to `staged` if it was not; see "What `--strategy` actually decides".
 - `check` reports `ROLLOVER_ACTIVE` with time remaining rather than calling it
   drift.
 - `sopuli creds finish-rollover` ends the window explicitly (#263). Same
@@ -1721,7 +1731,7 @@ is the UC-1 specific list.
 | ~~Q1~~ | ~~Should `check` default to `hash` or `login`?~~ | **decided: `login`, unconditionally** (#86, 2026-08-18) — not profile-dependent. The earlier "hash under an unattended profile" leaning assumed hash mode existed and its grant was default; neither holds. `SELECT ON SYS.USER$` is optional and capability-probed (`02-oracle-privileges.md` §2); where present it powers the `LCOUNT` guard and, if #90 lands positive, hash mode. `check` needs no site-specific grant to run at all |
 | ~~Q2~~ | ~~Where does the advisory lock live?~~ | **decided: in the vault** (#83). One record per secret path, CAS-guarded, carrying holder metadata and a TTL of 15 minutes, under a `locks/` prefix on the secret's own mount so the secret's version history stays clean for `previous` and rollback. `DBMS_LOCK`'s one unique benefit is release on session death, and that does not survive contact with the actual risk: a stalled run's session is still alive, so the lock it holds prevents nothing while its plan goes stale. A **fencing token** — the vault version, re-checked before every mutation — is what prevents it, and once fencing exists, automatic release does not pay for `EXECUTE ON DBMS_LOCK`, a widened grant set, a CDB/PDB scope answer, and product-specific behaviour in the command layer (P1). The grant set in `../design/02-oracle-privileges.md` §2 is unchanged. Keyed on the **path**, which is neither candidate P5 named: per-target is meaningless when every target gets the same value, and per-account misses two accounts sharing one document. Stores without `cas` (KV v1, the file backend) refuse mutations unless configured `locking: advisory-only`. |
 | Q3 | ~~How many generations of `previous` to keep?~~ | **decided: exactly one**, plus whatever the store's native versioning gives for free (#84). C14 (#40) settled it: OCI holds exactly one `PREVIOUS`, and the closed `current` / `pending` / `previous` vocabulary has nothing to address an older generation with. Keeps the emulated payload the same shape as the native one, and `check --include-previous` need not say *which* previous it accepted. |
-| Q4 | Does the tool ever alter a *profile* to enable rollover? | leaning no by default — profiles are shared; report the needed DDL instead |
+| ~~Q4~~ | ~~Does the tool ever alter a *profile* to enable rollover?~~ | **decided: never** (#88, 2026-09-03). A profile is a shared object, so editing one reaches accounts nobody selected — a blast radius invariant 5 cannot express, because the config whitelists *accounts*, not profiles. The tool reports the exact `ALTER PROFILE` an operator would run and issues none: §6.3 for the rollover one, `finish-rollover` for the same DDL from the other end, and §5's assignment attribute (#301) for the general rule — the tool assigns a profile and never creates or alters one. The rejected alternatives cost more than they look: an `--allow-profile-change` opt-in cannot conjure a privilege at runtime, so `ALTER PROFILE` would have to be granted to **every** service account at install time whether or not anybody ever passed the flag — the full blast radius bought permanently for an opt-in that may go unused; and altering only a profile used exclusively by declared accounts is a race between the check and the `ALTER`, on a question that is almost always answered `no` anyway, since the usual profile is `DEFAULT`. **What `--strategy rollover` does against a profile without it needed no separate answer**, having been settled by #262: an explicit `--strategy` is refused for the whole estate at pre-flight, and with no flag the strategy resolves per account to `staged`, which degrades nothing because no promise was made — and is not silent either, since `results[].rollover.profile_rollover_time` is emitted for every account acted on. Creating and altering profiles belongs to UC-4 (see the roadmap in `docs/README.md`) |
 | Q5 | Notification on drift | out of scope for the tool; exit code 3 + JSON output is the integration point |
 | Q6 | Self-rotation mode (tool connects as the account itself, `REPLACE old`) | useful where no admin credential exists; defer to UC-1b (see the roadmap in `docs/README.md`) |
 | ~~Q7~~ | ~~One secret per account vs one secret with many fields for an app~~ | **decided: one secret per application, a field per account** (#85) — the layout §2 of `../design/01-configuration.md` already used in its worked example, now the documented default. An application's accounts are rotated together far more often than separately, and across a dozen tenants and environments the per-account layout is the difference between eight vault paths and forty-eight — which on a store that bills per secret is a line item, and on any store is a policy surface. One secret per account stays fully supported, and is the right answer where an account's lifecycle is genuinely its own. Neither the lock nor the write path changes shape: Q2 (#83) already keyed the lock on the **path** for exactly this case, and §7 already writes one field without touching its siblings — so the **account remains the unit of work** even where the document is shared. What the default settles is the payload, in §3 below. |

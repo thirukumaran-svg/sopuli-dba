@@ -300,7 +300,7 @@ nothing else depends on the outcome.
 | `SELECT ANY DICTIONARY` | includes `SYS.USER$` *and* everything else; if hash mode is wanted, grant `SELECT ON SYS.USER$` specifically |
 | `DBA`, `PDB_DBA`, `CDB_DBA` | the tool needs `ALTER USER`, not a role that carries a hundred other privileges |
 | `SYSDBA` / `SYSOPER` | never; the tool has no operation that requires it |
-| `ALTER PROFILE` | see UC-1 Q4 — the tool reports the DDL needed to enable password rollover rather than changing a shared profile itself |
+| `ALTER PROFILE` | decided in UC-1 Q4 (#88): no credential-sync verb ever edits a profile — a profile is shared, so editing one reaches accounts nobody selected, which the config's account whitelist (invariant 5) has no way to constrain. The tool reports the DDL needed to enable password rollover instead, and `doctor --check-privileges` flags this privilege if the service account has it. Whether UC-4 may create and alter profiles is its own open question, and would be a privilege on a principal UC-4 defines rather than on this grant set |
 | `CREATE USER` / `DROP USER` | account provisioning is out of scope for UC-1 |
 | `ALTER SYSTEM`, `GRANT ANY *`, `BECOME USER` | no operation needs them |
 | `EXECUTE ON DBMS_LOCK` | P5's advisory lock lives in the vault, not in the database (Q2, decided in #83). It was the one grant a `DBMS_LOCK`-based lock would have added, and the reason it is not here is that session-scoped locking does not solve the problem it looked like it solved: a stalled run's session is still alive, so its lock prevents nothing while its plan goes stale. A fencing token re-checked before every mutation does, and it needs nothing from the database |
@@ -548,9 +548,15 @@ ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
 - **`ALTER USER "ORDERS_APP" PROFILE "ORDERS_PROF"` likewise** (#301, §5's second
   attribute). The profile name goes through the same identifier rules and is the
   spelling read back from `DBA_PROFILES`, for the reason the username is. There is
-  no function in the statement layer that builds an `ALTER PROFILE`: the tool
-  assigns a profile and never edits one, because a profile is shared and editing
-  one reaches accounts nobody selected (§3, Q4).
+  no function in the statement layer that builds an `ALTER PROFILE`, and there is
+  not meant to be one: the credential-sync verbs assign a profile and never edit
+  one, because a profile is shared and editing one reaches accounts nobody
+  selected (§3, and Q4 decided in #88). Should UC-4 ever need to author profiles,
+  it needs a builder this grant set does not authorise and a principal of its own,
+  which is the point of keeping the absence visible here. The absence is structural rather than an omission: there is no
+  `ALTER PROFILE` call site to review because nothing builds one — narrow by
+  construction, the way invariant 2 keeps plaintext to a single `reveal()` rather
+  than by remembering to mask at each place it could escape.
 - **The built statement redacts itself.** It carries a password, so it is as
   sensitive as one: every stringification is `ALTER USER "X" IDENTIFIED BY ***`,
   which is also the form `--dry-run` prints, and the plaintext is reachable only

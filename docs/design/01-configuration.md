@@ -1818,7 +1818,9 @@ never an `ORA-02380` part way through an estate.
 **The tool assigns a profile and never creates or alters one.** `ALTER PROFILE`
 edits a shared object, so it reaches accounts nobody selected; §3 of
 `02-oracle-privileges.md` keeps the privilege off the service account, and Q4
-(#88) is open with a documented leaning of no.
+(#88) decided it: never, in any credential-sync verb. Creating and altering
+profiles is UC-4's, provisioning (see the roadmap in `docs/README.md`), and #88
+leaves that question open rather than foreclosing it.
 
 **Naming a profile and naming a `--strategy` in one run is refused** where the
 assignment would actually move the account. A profile decides whether a rotation

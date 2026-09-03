@@ -210,7 +210,18 @@ configured `locking: advisory-only`), ~~how many `previous` generations to keep~
 **decided in #84: exactly one**, plus whatever the store's native versioning
 gives for free. C14 settled it: OCI holds exactly one `PREVIOUS`, and a closed
 three-stage vocabulary has nothing to address an older generation with),
-whether the tool ever alters a profile (Q4), drift notification (Q5),
+~~whether the tool ever alters a profile~~ (Q4 — **decided in #88: never**, in
+any credential-sync verb. A profile is shared, so editing one reaches accounts
+nobody selected, and the config whitelists accounts rather than profiles, so
+invariant 5 has no way to constrain it. The tool reports the `ALTER PROFILE` an
+operator would run and issues none; `02-oracle-privileges.md` §3 keeps the
+privilege off the service account and `doctor` flags it as an over-grant. An
+`--allow-profile-change` opt-in was rejected because a flag cannot conjure a
+privilege — the grant would sit on every installation whether or not anyone used
+it — and altering a profile only where declared accounts use it exclusively was
+rejected as a race, on a question `DEFAULT` almost always answers no. Creating
+and altering profiles is UC-4's to decide, for its own principal), drift
+notification (Q5),
 self-rotation mode (Q6), ~~one-secret-per-account vs one-secret-per-app~~ (Q7 —
 **decided in #85: one secret per application**, a field per account, as the
 documented *default*; per-account stays fully supported. An application's accounts
@@ -398,9 +409,22 @@ UC-1 deliberately does none of it. A missing account is `ACCOUNT_MISSING`, a sta
 to report rather than a failure to recover from, and invariant 5 makes the config
 a whitelist of what may be *touched* rather than a list of what should exist.
 
+Profiles are the one item on that list UC-1 half-touches, so the split is worth
+stating. UC-1 *assigns* a profile (#301) and never creates or alters one, decided
+in Q4 (#88): `ALTER PROFILE` edits a shared object and so reaches accounts nobody
+selected, which the account whitelist cannot constrain. Here that argument does
+not hold in the same way — provisioning is where a profile is authored on purpose
+rather than reached sideways during a rotation — so **whether this use case may
+issue `ALTER PROFILE` and `CREATE PROFILE` is its own question, open, and not
+foreclosed by #88.** What #88 does foreclose is the credential-sync verbs ever
+doing it. If the answer here is yes, the privilege belongs to a principal this use
+case defines, not to UC-1's service account, whose grant set `02-oracle-privileges.md`
+§3 keeps it off.
+
 *Defers to it today:* Q8 (may `apply` create a missing account — no, it belongs
-here), and UC-1 §5's default/temporary tablespace attribute (#303). The tablespace
-one is worth stating plainly: `ALTER USER … DEFAULT TABLESPACE` moves no existing
+here), the *creating and altering* half of profiles, which Q4 (#88) settled only
+for the credential-sync verbs, and UC-1 §5's default/temporary tablespace
+attribute (#303). The tablespace one is worth stating plainly: `ALTER USER … DEFAULT TABLESPACE` moves no existing
 segment, so an account's objects stay exactly where they were. During a credential
 rotation that is a half-change that reads as done and is not — while during
 provisioning, where the account has no objects yet, it is simply part of creating
