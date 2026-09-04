@@ -69,7 +69,17 @@ something specific.
    never the source of truth.
 7. **Never promote in the vault before every target has confirmed.** The
    `pending` → `current` ordering in UC-1 §3 is the whole safety design. Read it
-   before touching rotation.
+   before touching rotation. **`creds generate --promote` is the one exception**
+   (decided in #257): it writes `current` having asked no database anything, and
+   over an existing `current` only with `--overwrite-current`. What the invariant protects
+   is a *window* — a `current` that applications are reading, replaced before any
+   database can serve the new value — and `--promote` exists for the case where
+   the operator already knows the password and no rotation is in flight. The same
+   write moves the value `current` held into `previous`, so §8's rollback keeps
+   somewhere to go.
+   Written here rather than left to be discovered in a diff, as invariant 9's
+   exemption is, and a second one is a decision rather than an implementation
+   detail.
 8. **Every mutating command supports `--dry-run` and prints a plan first.**
 9. **Idempotency:** running any command twice must report `changed: false` the
    second time and emit no mutation audit record. **`creds generate` is the one
