@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.56.0](https://github.com/villebase/sopuli-dba/compare/v0.55.0...v0.56.0) (2026-09-03)
+
+
+### Features
+
+* **generate:** read the target's byte limit before drawing ([#317](https://github.com/villebase/sopuli-dba/issues/317)) ([#335](https://github.com/villebase/sopuli-dba/issues/335)) ([d0f2c67](https://github.com/villebase/sopuli-dba/commit/d0f2c67a32f9d4d82f0115107b2cfd902268a92b))
+* **oracle:** detect application containers and split the refusal ([#204](https://github.com/villebase/sopuli-dba/issues/204)) ([#333](https://github.com/villebase/sopuli-dba/issues/333)) ([b30b0ff](https://github.com/villebase/sopuli-dba/commit/b30b0ff391842ae513bb8fd799a757d85aaf0332))
+
 ## [0.55.0](https://github.com/villebase/sopuli-dba/compare/v0.54.0...v0.55.0) (2026-09-02)
 
 
