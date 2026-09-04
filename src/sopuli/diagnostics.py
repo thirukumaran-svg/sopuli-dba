@@ -42,6 +42,7 @@ from types import MappingProxyType
 
 from sopuli.clock import Skew, to_rfc3339
 from sopuli.config.references import UNVERIFIED_TRANSPORT
+from sopuli.constraints import NAMED, POLICY, UNKNOWN, AccountConstraints, Constraints
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
 from sopuli.install_shape import INSTALLED, InstallShape
 from sopuli.lock.keys import LockKey
@@ -121,6 +122,46 @@ LOGIN_WARNING = "SOPULI-W014"
 #: ``--offline`` emits nothing. It is the operator saying they know, and a
 #: warning that fires because a flag was passed teaches its reader to filter it.
 CONSTRAINTS_UNREAD = "SOPULI-W015"
+
+#: An account's profile names a password verify function, or whether it names one
+#: could not be established (#317, UC-1 §4 step 2).
+#:
+#: **Reported, never acted on.** A verify function is arbitrary PL/SQL and cannot
+#: be consulted before the ``ALTER USER`` is issued (invariants 13 and 14), so
+#: this does not gate a draw and is not a prediction that one will be refused --
+#: #312 answers a refusal by redrawing. It says that something other than the
+#: policy will judge this password, which is a thing an operator who has just
+#: staged one should not have to learn from `apply`.
+#:
+#: The not-knowing shares the code rather than getting its own, because the
+#: consequence is the same: this run cannot tell you that the password will be
+#: accepted. §5's `--preflight` rule is that not knowing is not a finding, and
+#: the message says which of the two it is -- what it must never do is report the
+#: unreadable case as *no verify function*, which reads as a guarantee.
+#:
+#: One per (target, profile) rather than per account. A verify function is a
+#: property of the profile, and an estate that puts forty accounts on one profile
+#: would otherwise get forty copies of one fact.
+VERIFY_FUNCTION_UNCHECKABLE = "SOPULI-W016"
+
+#: An account's profile restricts password reuse, and this run was given a
+#: password rather than drawing one (#317, UC-1 §4 step 2).
+#:
+#: **Only under ``--from-stdin``**, which is the whole reason it is a separate
+#: code from :data:`VERIFY_FUNCTION_UNCHECKABLE`. A drawn password is fresh
+#: randomness and cannot collide with a hashed history in any practical sense, so
+#: warning about reuse on an ordinary `creds generate` would be a warning that
+#: fires on every run and means nothing on any of them. A *supplied* password is
+#: whatever an external system dictated, and "the one it had last year" is an
+#: ordinary thing for one to dictate.
+#:
+#: The reuse history is hashed, so this is no more a prediction than
+#: :data:`VERIFY_FUNCTION_UNCHECKABLE` is: the values are reported and the reader
+#: applies the rule, because ``PASSWORD_REUSE_MAX`` and ``PASSWORD_REUSE_TIME``
+#: interact -- one of them ``UNLIMITED`` beside a number is not the same regime as
+#: both being numbers -- and this run measured neither interaction nor the
+#: history.
+PASSWORD_REUSE_ENFORCED = "SOPULI-W017"
 
 #: An estate uses ``auth: external`` and this machine has no wallet it can read
 #: (#215). Its own code rather than a widening of anything above: the remedy is a
@@ -294,8 +335,189 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "file no longer names would not appear -- in that store. Everything reported "
             "is accurate; the survey is narrower than it looks."
         ),
+        CONSTRAINTS_UNREAD: (
+            "`creds generate` could not read a target's password constraints, so the "
+            "policy's declared length governed the draw. The fallback is legitimate -- "
+            "staging a password for an estate that is down is a thing operators do -- and "
+            "the run staged one; what the code says is that the draw was never checked "
+            "against a database. `--offline` emits nothing, because there the operator "
+            "said so."
+        ),
+        VERIFY_FUNCTION_UNCHECKABLE: (
+            "An account's profile names a password verify function, or whether it names "
+            "one could not be established -- a common profile read from inside a PDB "
+            "answers `FROM ROOT`. Reported and never acted on: the function is arbitrary "
+            "PL/SQL that cannot be consulted before the statement is issued, so this is "
+            "not a prediction that the password will be refused, and `creds apply` "
+            "redraws if it is. It says that something other than the policy will judge "
+            "this password."
+        ),
+        PASSWORD_REUSE_ENFORCED: (
+            "An account's profile restricts password reuse, and this run was given a "
+            "password rather than drawing one. Only `--from-stdin` produces it: fresh "
+            "randomness cannot collide with a hashed history, and a supplied password is "
+            "whatever an external system dictated. The two resource values are reported "
+            "rather than interpreted -- they interact, and this run measured neither the "
+            "interaction nor the history."
+        ),
     }
 )
+
+
+def constraint_diagnostics(found: Constraints, *, supplied: bool = False) -> list[Diagnostic]:
+    """What `creds generate` says about what it read from the estate (#317).
+
+    Two kinds of thing, and they differ in a way the reader can act on:
+
+    * the byte limit either governed the draw or did not, which is
+      :data:`CONSTRAINTS_UNREAD` and is about *this run's password*;
+    * a verify function and a reuse policy govern nothing here, and are reported
+      because something other than the policy will judge the password later.
+
+    ``supplied`` is whether the run was given a password rather than drawing one
+    (``--from-stdin``), and it gates :data:`PASSWORD_REUSE_ENFORCED` alone. See
+    that code: reuse cannot bite a fresh random draw, and a warning that fires on
+    every run is one a reader learns to filter.
+
+    Lives here rather than in :mod:`sopuli.cli` because this is where a domain
+    object becomes a :class:`~sopuli.output.document.Diagnostic` -- the
+    arrangement :func:`install_diagnostics` already has -- and because the
+    grouping below is worth testing without a command-line runner.
+    """
+    return [*_unread(found), *_profile_notices(found, supplied=supplied)]
+
+
+def _unread(found: Constraints) -> list[Diagnostic]:
+    """Say which of §4's two answers governed the draw.
+
+    Silence is the one thing not on offer. A password drawn against the policy
+    alone and one drawn against a database that answered are different claims
+    about the same run, and a reader cannot tell them apart from the password.
+
+    Nothing is emitted where every target answered, because that is the case the
+    feature exists to produce and a diagnostic on the happy path is noise a
+    consumer learns to filter.
+    """
+    if found.source == POLICY:
+        return [
+            Diagnostic(
+                level="warning",
+                code=CONSTRAINTS_UNREAD,
+                message=(
+                    "no target could be reached to read password constraints, so the "
+                    "policy's declared length governs: " + ", ".join(found.unreachable)
+                ),
+            )
+        ]
+    if found.partial:
+        return [
+            Diagnostic(
+                level="warning",
+                code=CONSTRAINTS_UNREAD,
+                message=(
+                    "password constraints were read from "
+                    + ", ".join(found.read)
+                    + " and could not be read from "
+                    + ", ".join(found.unreachable)
+                    + "; the limit used may not be the estate's strictest"
+                ),
+            )
+        ]
+    return []
+
+
+def _profile_notices(found: Constraints, *, supplied: bool) -> list[Diagnostic]:
+    """One entry per (target, profile), for the constraints nothing can check.
+
+    **Grouped rather than per account**, because a verify function and a reuse
+    policy are properties of the profile: an estate that puts forty accounts on
+    one profile would otherwise be told the same fact forty times, and the
+    per-account detail is in the document's ``constraints`` section for a
+    consumer that wants it.
+
+    An account whose profile could not be read at all contributes nothing here.
+    That is the rule the accounts missing from
+    :attr:`~sopuli.constraints.Constraints.accounts` are already covered by: this
+    is a reporting path, and a sentence built out of a profile nobody read would
+    be inventing the subject of its own warning.
+    """
+    groups: dict[tuple[str, str], list[AccountConstraints]] = {}
+    for target, one in found.accounts:
+        if one.profile is not None:
+            groups.setdefault((target, one.profile), []).append(one)
+
+    notices: list[Diagnostic] = []
+    for (target, profile), group in groups.items():
+        # Every account in a group shares a profile, so it shares the profile's
+        # answers; only `versions` differs between them, and nothing here reads
+        # it. The first is a representative rather than a sample.
+        first = group[0]
+        if first.verify_state == NAMED:
+            notices.append(
+                _notice(
+                    VERIFY_FUNCTION_UNCHECKABLE,
+                    target,
+                    group,
+                    f'profile "{profile}" names the verify function '
+                    f"{first.verify_function}, which this run cannot evaluate: a "
+                    f"password it accepts here may still be refused with ORA-28003 "
+                    f"when it is applied",
+                )
+            )
+        elif first.verify_state == UNKNOWN:
+            notices.append(
+                _notice(
+                    VERIFY_FUNCTION_UNCHECKABLE,
+                    target,
+                    group,
+                    f'profile "{profile}" answered FROM ROOT, which is what a common '
+                    f"profile says from inside a PDB, so whether it names a verify "
+                    f"function could not be established from this connection",
+                )
+            )
+        if supplied and first.reuse_enforced:
+            notices.append(
+                _notice(
+                    PASSWORD_REUSE_ENFORCED,
+                    target,
+                    group,
+                    f'profile "{profile}" restricts password reuse '
+                    f"(PASSWORD_REUSE_MAX {first.reuse_max}, PASSWORD_REUSE_TIME "
+                    f"{first.reuse_time}); a supplied password the account has held "
+                    f"before is refused with ORA-28007 when it is applied",
+                )
+            )
+    return notices
+
+
+def _notice(
+    code: str, target: str, group: Sequence[AccountConstraints], message: str
+) -> Diagnostic:
+    """One grouped notice, carrying the account only where there is exactly one.
+
+    ``account`` is a single value in the document, so a group of three cannot go
+    in it -- and naming one of the three there would be worse than naming none.
+    The message carries the list either way.
+    """
+    names = [one.account for one in group]
+    return Diagnostic(
+        level="warning",
+        code=code,
+        target=target,
+        account=names[0] if len(names) == 1 else None,
+        message=f"{target}: {message} ({_accounts(names)})",
+    )
+
+
+def _accounts(names: Sequence[str]) -> str:
+    """The accounts a grouped notice covers, named while naming them is useful.
+
+    Past three the list stops being something a reader scans and starts being
+    something they scroll, and the ``constraints`` section has all of them.
+    """
+    if len(names) > 3:
+        return f"{len(names)} accounts"
+    return ", ".join(names)
 
 
 def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:

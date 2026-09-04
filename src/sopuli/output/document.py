@@ -27,7 +27,7 @@ from typing import Any, Literal
 # format (#83), and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.18"
+SCHEMA_VERSION = "1.19"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -390,6 +390,19 @@ class RunDocument:
     #: same shape #214 found for ``install``.
     #: :mod:`sopuli.output.vault_view` owns the shape.
     vaults: list[dict[str, Any]] | None = None
+    #: The ``constraints`` section, emitted by `creds generate` (#317). What the
+    #: estate said a password may be, before one was drawn: a limit per target,
+    #: and per account the three things §4 step 2 names that no draw can be bound
+    #: by -- a verify function, the reuse resources, and which verifiers the
+    #: account holds.
+    #:
+    #: **Absent means the question was not asked**, which is ``--offline`` and
+    #: nothing else. A run that asked and learned nothing emits the section with
+    #: ``source: "policy"``, because "we could not find out" and "we did not look"
+    #: are answers a report must never merge -- the rule
+    #: ``driver/oracle/privileges.py`` states about an unreadable view, two layers
+    #: up. :mod:`sopuli.output.constraints_view` owns the shape.
+    constraints: dict[str, Any] | None = None
     #: Why the run failed as a whole. Absent on success, and absent on exit 2 --
     #: which never produces a document at all (J7, ``03-json-output.md`` §6).
     error: Error | None = None
@@ -468,6 +481,8 @@ class RunDocument:
             document["wallet"] = self.wallet
         if self.vaults is not None:
             document["vaults"] = self.vaults
+        if self.constraints is not None:
+            document["constraints"] = self.constraints
         if self.error is not None:
             document["error"] = self.error.to_dict()
         return document

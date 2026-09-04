@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.constraints import NAMED, NONE, UNKNOWN
 from sopuli.driver.oracle.accounts import (
     PROFILE_QUERY,
     ROLES_QUERY,
@@ -21,6 +22,7 @@ from sopuli.driver.oracle.accounts import (
     USER_QUERY_NO_CHANGE_DATE,
     RolesUnreadableError,
     describe,
+    password_constraints,
 )
 
 CHANGED = datetime(2026, 8, 22, 10, 41, 36)
@@ -439,3 +441,112 @@ def test_the_account_name_is_bound_and_never_interpolated() -> None:
     the habit that later writes a password into SQL text."""
     assert ":name" in USER_QUERY
     assert "acme" not in USER_QUERY.lower()
+
+
+# ------------------------------------------------- password constraints (#317) ---
+#
+# UC-1 §4 step 2's reporting half. Every literal below was read off 26ai Free
+# 23.26.2.0.0 on 2026-09-04, including the two that look like mistakes: a profile
+# naming no verify function reports the **string** `NULL`, and a common profile
+# read from inside a PDB reports the string `FROM ROOT`.
+
+VERIFY = "PASSWORD_VERIFY_FUNCTION"
+REUSE_MAX = "PASSWORD_REUSE_MAX"
+REUSE_TIME = "PASSWORD_REUSE_TIME"
+
+
+def test_a_named_verify_function_is_reported_with_its_name() -> None:
+    found = password_constraints(
+        _cursor(limits=[(VERIFY, "ORA12C_STRONG_VERIFY_FUNCTION")]), "acme_orders_user"
+    )
+
+    assert found is not None
+    assert found.verify_state == NAMED
+    assert found.verify_function == "ORA12C_STRONG_VERIFY_FUNCTION"
+
+
+def test_the_string_null_is_a_profile_naming_none_and_not_a_function_called_null() -> None:
+    """What `DEFAULT` carries, in the root and in a PDB alike. A reader taking
+    the column at face value would report every default-profile account as
+    guarded by a verify function named `NULL`."""
+    found = password_constraints(_cursor(limits=[(VERIFY, "NULL")]), "acme_orders_user")
+
+    assert found is not None
+    assert found.verify_state == NONE
+    assert found.verify_function is None
+
+
+def test_from_root_is_a_not_knowing_and_never_an_absence() -> None:
+    """The distinction #317 asks for, and the direction that cannot mislead.
+
+    A common profile read from inside a PDB answers this. Reporting it as `none`
+    would tell an operator that nothing will judge their password when something
+    will -- and `not knowing is not a finding` (§5) is the rule, not `not
+    knowing is a clean bill of health`.
+    """
+    found = password_constraints(_cursor(limits=[(VERIFY, "FROM ROOT")]), "acme_orders_user")
+
+    assert found is not None
+    assert found.verify_state == UNKNOWN
+    assert found.verify_function is None
+
+
+def test_a_profile_that_could_not_be_read_is_unknown_rather_than_clean() -> None:
+    found = password_constraints(_cursor(limits=[]), "acme_orders_user")
+
+    assert found is not None
+    assert found.verify_state == UNKNOWN
+
+
+def test_the_reuse_resources_are_carried_as_the_database_spells_them() -> None:
+    """`UNLIMITED` is a word in a column a reader expects numbers in, and the two
+    resources interact -- so they are reported rather than interpreted."""
+    found = password_constraints(
+        _cursor(limits=[(REUSE_MAX, "3"), (REUSE_TIME, "UNLIMITED")]), "acme_orders_user"
+    )
+
+    assert found is not None
+    assert (found.reuse_max, found.reuse_time) == ("3", "UNLIMITED")
+    assert found.reuse_enforced is True
+
+
+def test_a_default_profile_restricts_no_reuse() -> None:
+    found = password_constraints(
+        _cursor(limits=[(REUSE_MAX, "UNLIMITED"), (REUSE_TIME, "UNLIMITED")]), "acme_orders_user"
+    )
+
+    assert found is not None
+    assert found.reuse_enforced is False
+
+
+def test_the_verifiers_the_account_holds_are_carried() -> None:
+    found = password_constraints(_cursor(versions="11G 12C"), "acme_orders_user")
+
+    assert found is not None
+    assert found.versions == ("11G", "12C")
+
+
+def test_the_spelling_is_the_databases_own() -> None:
+    """`02-oracle-privileges.md` §4: the name that reaches anything is the one the
+    dictionary gave back, never the config file's string."""
+    found = password_constraints(_cursor(), "acme_orders_user")
+
+    assert found is not None
+    assert found.account == "ACME_ORDERS_USER"
+
+
+def test_an_account_the_target_has_not_got_is_none() -> None:
+    cursor = _Cursor({USER_QUERY: None, USER_QUERY_NO_CHANGE_DATE: None})
+
+    assert password_constraints(cursor, "acme_orders_user") is None
+
+
+def test_the_roles_query_is_not_asked() -> None:
+    """The reason this returns its own type rather than a `UserState`: a staging
+    command has nothing to guard, and guardrail 4's input is not read for it --
+    so an absent `DBA_ROLE_PRIVS` grant cannot make `creds generate` fail for a
+    reason unrelated to generating."""
+    cursor = _cursor()
+    password_constraints(cursor, "acme_orders_user")
+
+    assert ROLES_QUERY not in cursor.asked

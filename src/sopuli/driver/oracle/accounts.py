@@ -41,8 +41,30 @@ profile with `CONTAINER=ALL`, read from `CDB$ROOT` and from `FREEPDB1`:
     PASSWORD_VERIFY_FUNCTION    ORA12C_STRONG_VERIFY_FUNCTION    FROM ROOT
 
 So the limits this module reads are trustworthy from a PDB and the verify
-function is not. Nothing here reads the verify function; #181 is where that
-matters, and it now knows it must read it in the root or treat it as unreadable.
+function is not. #181 is where that mattered first; :func:`password_constraints`
+reads it now, and reports the not-knowing rather than an absence.
+
+**``FROM ROOT`` is narrower than that reading left it looking**, measured
+2026-09-04 for #317. Three profiles read from inside ``FREEPDB1``:
+
+    profile             created                      PASSWORD_VERIFY_FUNCTION
+    ACME_COMMON_PROF    in the root, CONTAINER=ALL   FROM ROOT
+    ACME_LOCAL_PROF     in the PDB                   ORA12C_STRONG_VERIFY_FUNCTION
+    DEFAULT             Oracle's own                 NULL
+
+So the unreadable case is a **user-created common profile seen from a PDB**, and
+not "a PDB" -- a local profile answers with its function's name, and even
+``DEFAULT``, which is common, answers ``NULL`` rather than deferring. An
+implementation that treated every PDB as unknowable would refuse to report the
+ordinary case, and one that treated the reading as absent would tell an operator
+that nothing will judge their password when something will.
+
+Two values that a caller must not mistake for data came out of the same run:
+``PASSWORD_VERIFY_FUNCTION`` is the string ``NULL`` where a profile names none
+(:data:`NO_FUNCTION`), and ``PASSWORD_REUSE_MAX``/``PASSWORD_REUSE_TIME`` are
+``UNLIMITED`` on the ``DEFAULT`` profile -- vendor words in a column a reader
+expects numbers in, resolved through :data:`PROFILE_QUERY`'s ``DEFAULT`` join
+like every other resource.
 
 **``PASSWORD_CHANGE_DATE`` does track a rotation** on this release — two
 rotations two minutes apart moved it — which is worth stating because #87 is open
@@ -74,6 +96,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
+from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.capabilities import Cursor, read
 from sopuli.driver.oracle.rollover import is_enabled, window_end
 from sopuli.driver.protocol import DriverError, UserState
@@ -188,6 +211,20 @@ FAILED_LOGIN_ATTEMPTS = "FAILED_LOGIN_ATTEMPTS"
 PASSWORD_ROLLOVER_TIME = "PASSWORD_ROLLOVER_TIME"
 PASSWORD_REUSE_MAX = "PASSWORD_REUSE_MAX"
 PASSWORD_REUSE_TIME = "PASSWORD_REUSE_TIME"
+PASSWORD_VERIFY_FUNCTION = "PASSWORD_VERIFY_FUNCTION"
+
+#: What ``DBA_PROFILES`` reports for a profile that names no verify function --
+#: **the four characters, not a SQL null**. Measured on 26ai: the ``DEFAULT``
+#: profile carries it, in the root and in a PDB alike. A caller that read the
+#: column without knowing this would report every default-profile account as
+#: having a verify function called ``NULL``.
+NO_FUNCTION = "NULL"
+
+#: What a **common** profile's verify function reads as from inside a PDB, and
+#: the reason :attr:`~sopuli.constraints.AccountConstraints.verify_function_known`
+#: exists. Measured on 26ai, alongside the two readings that bound it (see the
+#: module docstring): it is narrower than #178 left it looking.
+FROM_ROOT = "FROM ROOT"
 
 #: The token the status carries during a gradual rollover window.
 IN_ROLLOVER = "IN ROLLOVER"
@@ -301,6 +338,50 @@ def login_state(cursor: Cursor, account: str) -> UserState | None:
             else None
         ),
         vendor_maintained=_maintained(row),
+    )
+
+
+def password_constraints(cursor: Cursor, account: str) -> AccountConstraints | None:
+    """What this target says about a password for one account (#317, UC-1 §4 step 2).
+
+    ``None`` where the target has no such account, which is
+    :func:`login_state`'s answer and means the same thing here: `creds generate`
+    stages into a vault and does not need the account to exist yet, so this is a
+    thing not reported rather than a failure.
+
+    **Deliberately not a :class:`~sopuli.driver.protocol.UserState`.** The
+    obvious implementation is to call :func:`login_state` and let the caller take
+    the four fields it wants, and it is refused for the reason :func:`describe`
+    gives for reading roles eagerly: a ``UserState`` with no ``roles`` reads
+    exactly like an account holding none, and guardrail 4 would pass on it. A
+    reporting path must not be able to hand that object to a safety check, so it
+    returns a type that has no such field to misread.
+
+    Two queries, both on the baseline grant set (``02-oracle-privileges.md`` §2),
+    so reading them costs `creds generate` no privilege it did not already need
+    -- and no third: the roles :func:`describe` reads are a guardrail input and a
+    staging command has nothing to guard.
+    """
+    row = _user_row(cursor, account)
+    if row is None:
+        return None
+
+    profile = str(row[2]) if row[2] else None
+    limits = _limits(cursor, profile) if profile else {}
+    verify = limits.get(PASSWORD_VERIFY_FUNCTION)
+    return AccountConstraints(
+        account=str(row[0]),
+        profile=profile,
+        # `NULL` is the profile naming none, `FROM ROOT` is the dictionary
+        # declining to say, and both are the string in the column rather than a
+        # SQL null. They land on the same `verify_function` and are told apart by
+        # `verify_function_known`, which is the distinction #317 asks for: not
+        # knowing is not a finding, and it is not an absence either.
+        verify_function=None if verify in (None, NO_FUNCTION, FROM_ROOT) else verify,
+        verify_function_known=verify is not None and verify != FROM_ROOT,
+        reuse_max=limits.get(PASSWORD_REUSE_MAX),
+        reuse_time=limits.get(PASSWORD_REUSE_TIME),
+        versions=_versions(row[3]),
     )
 
 

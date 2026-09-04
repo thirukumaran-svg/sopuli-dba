@@ -940,6 +940,106 @@ reason, `error` when there is a machine-classified cause to go with it.
 check that proved itself by leaving a lease behind would be a measurement that
 changes what it measures — on a lock mount, one a concurrent rotation notices.
 
+### `constraints`, emitted by `creds generate`
+
+What the estate said a password may be, read before one was drawn (UC-1 §4
+step 2, #317). One entry per target asked, and one per account that answered.
+
+```json
+"constraints": {
+  "source": "targets",
+  "max_password_bytes": 128,
+  "character_set": "AL32UTF8",
+  "targets": [
+    {
+      "target": "appdb-alpha",
+      "reachable": true,
+      "max_password_bytes": 128,
+      "measured_as": "utf-8",
+      "character_set": "AL32UTF8"
+    }
+  ],
+  "accounts": [
+    {
+      "target": "appdb-alpha",
+      "account": "ACME_WEB_USER",
+      "profile": "ACME_LOCAL_PROF",
+      "verify_function": {
+        "state": "named",
+        "name": "ORA12C_STRONG_VERIFY_FUNCTION"
+      },
+      "password_reuse_max": "3",
+      "password_reuse_time": "10",
+      "password_versions": ["11G", "12C"]
+    },
+    {
+      "target": "appdb-alpha",
+      "account": "ACME_BATCH_USER",
+      "profile": "ACME_COMMON_PROF",
+      "verify_function": { "state": "unknown" },
+      "password_reuse_max": "5",
+      "password_reuse_time": "30",
+      "password_versions": ["11G", "12C"]
+    }
+  ]
+}
+```
+
+That is a real document from a tier-1 run, not a sketch — including the second
+account, whose profile was created in the root with `CONTAINER=ALL` and whose
+verify function therefore reads as the literal `FROM ROOT` from inside the PDB.
+
+**Readings, never a verdict.** Nothing here predicts that a password will be
+accepted. Only the byte count *binds* anything: a verify function is arbitrary
+PL/SQL that cannot be consulted (invariants 13 and 14) and a reuse history is
+hashed, so `ORA-28003` and `ORA-28007` stay unpredictable before the statement is
+issued and #312 answers them by redrawing. The section says what the run found
+out; `diagnostics[]` says what it could not check.
+
+**Three states for a verify function, not a nullable name.** `named`, `none` and
+`unknown` are three answers, and a missing name would merge the last two into the
+one reading that misleads — *nothing will judge this password*. §5's
+`--preflight` rule applies here: not knowing is not a finding. The run above is
+the case that makes it concrete: the account reported `unknown` was in fact
+guarded, and applying its staged password was refused with `ORA-28003`.
+
+**`unknown` is narrower than "a PDB".** Measured on 26ai: a **common** profile
+read from inside a PDB answers `FROM ROOT`; a local profile read from the same
+session answers with its function's name; and `DEFAULT`, which is common,
+answers `NULL`. So the unreadable case is a user-created common profile seen from
+a PDB, and treating every PDB as unknowable would refuse to report the ordinary
+one.
+
+**`source` has two values and no third.** `targets` means at least one database
+answered; `policy` means none did and the policy's declared length governed,
+which UC-1 §4 makes a legitimate fallback rather than a failure. A run that asked
+*nothing* — `--offline` — omits the section entirely, because "we could not find
+out" and "we did not look" are answers a report must never merge. Absence is
+therefore the third value, and it is the only one that needs no name.
+
+**Present even when nothing answered**, which is `install`'s rule rather than
+`wallet`'s: the section is evidence that the estate was consulted, and one that
+appeared only when something was wrong could never be quoted as proof that
+nothing was.
+
+**Every reading is kept.** A limit is a byte count *and* the character set it is
+counted in, so 128 bytes of `WE8MSWIN1252` and 128 of `AL32UTF8` do not contain
+one another — "stricter" is a partial order. `max_password_bytes` at the top is
+what a *generated* password was drawn against, which consults no character set;
+`targets[]` carries them all, because a *supplied* password has to satisfy each.
+
+**`measured_as` is the codec, and it is not implied by `character_set`.** An
+unmapped character set falls back to `ascii` deliberately (`driver/oracle/limits.py`),
+which refuses a non-ASCII password rather than guessing its width — and a reader
+whose database refuses one should see that here rather than deduce it from the
+refusal.
+
+**The reuse resources are strings.** `UNLIMITED` is a word in a column a reader
+expects numbers in, and the two resources interact: one of them `UNLIMITED`
+beside a number is not the same regime as both being numbers. They are reported
+rather than interpreted, because this run measured neither the interaction nor
+the hashed history.
+
 ### `results[].changed` vs `results[].state`
 
 Deliberately separate:
@@ -1067,6 +1167,8 @@ is not contract and may improve.
 | `SOPULI-W010` | A configured store answered and cannot serve this run: sealed, standing by, not yet initialised, or refusing the credential it was opened with (#216). Distinct from a store that could not be *reached*, which fails the run instead and gets no code — here something answered, and what the reader does next is go and look at the vault rather than at the network |
 | `SOPULI-W014` | A login **succeeded** and the server attached a diagnostic to the connection rather than raising (#322). A password in its grace period is the ordinary cause: it connects, and Oracle puts the notice on the connection where nothing was reading it. The verification passed and the message is carried verbatim with its vendor code — the code is *data*, never matched against a list, because one condition is `ORA-28098` or `ORA-28011` on the same release depending on the profile. It can appear beside `SOPULI-W013` for one account: those are two sources — what `ACCOUNT_STATUS` says, and what the server said on this login — and they are reported side by side rather than deduplicated, because telling them apart would need exactly the code list this refuses |
 | `SOPULI-W015` | `creds generate` could not read a target's password constraints, so the policy's declared length governed the draw (#317, UC-1 §4 step 2). A **warning** rather than an error because §4 makes the fallback legitimate — staging a password for an estate that is down is a thing operators do, and the run staged one; what it may not do is stay quiet, because a password drawn against a policy alone and one drawn against a database that answered are different claims about the same run and nothing in the password distinguishes them. One code for both shapes — no target answered, and some did — because the remedy is identical and the message names which targets either way; a partial read is the same condition with fewer databases missing. `--offline` emits nothing: it is the operator saying they know, and a warning that fires because a flag was passed teaches its reader to filter it |
+| `SOPULI-W016` | An account's profile names a password verify function, or whether it names one could not be established — a common profile read from inside a PDB answers `FROM ROOT` (#317, UC-1 §4 step 2). **Reported and never acted on**: the function is arbitrary PL/SQL that cannot be consulted before the statement is issued (invariants 13 and 14), so this is not a prediction that the password will be refused, and `creds apply` redraws if it is. What it says is that something other than the policy will judge this password. The not-knowing shares the code because the consequence is identical — this run cannot tell you the password will be accepted — and the message says which of the two it is; what it must never do is report the unreadable case as *no verify function*, which reads as a guarantee. One per (target, profile), because that is where the function lives: forty accounts on one profile is one fact, not forty |
+| `SOPULI-W017` | An account's profile restricts password reuse, and the run was given a password rather than drawing one (#317). **Only under `--from-stdin`**, which is why it is not part of `SOPULI-W016`: fresh randomness cannot collide with a hashed history, so a reuse warning on an ordinary draw would fire on every run and mean nothing on any of them — while a supplied password is whatever an external system dictated, and *the one it had last year* is an ordinary thing for one to dictate. The two resource values are carried and not interpreted: they interact, and the run measured neither the interaction nor the history |
 | `SOPULI-W013` | An account's password is in its grace period: past `PASSWORD_LIFE_TIME`, inside the window `PASSWORD_GRACE_TIME` grants, and **still working** (#309, UC-1 §6.4). Emitted on `results[].warnings[]` beside the state rather than as a state, because `state` is one field and the account may be `IN_SYNC` or may have drifted — a value of its own would have to displace one of those answers and hide what the reader came for. Read from `DBA_USERS.ACCOUNT_STATUS`, so it is reported even on a run where no login was attempted; not from `ORA-28002`, which 26ai does not send |
 | `SOPULI-W012` | A rotation promoted a secret document and then read a different password back out of it (#284, UC-1 §8 step 8). Every database took the new password and the promotion was acknowledged, so nothing needs undoing and `apply` converges what is left — but until the vault serves what it accepted, an application fetching `current` may get the old password. Its own code for the reason `SOPULI-W011` has one: the run exits 4, and so does a run with half its targets failed, and those two want opposite responses. Here the *databases* are the converged half and the vault is not, so the reader goes and looks at the store — replication lag on a mount with read replicas is the ordinary cause |
 
@@ -1480,6 +1582,18 @@ grace before it. A second rename does not get the same treatment.
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
 
+**1.18 became 1.19 when `creds generate` reported what it read** (#317): a
+`constraints` section, described above, carrying the limit that bound the draw
+and — per account — the three things UC-1 §4 step 2 names that no draw can be
+bound by. A new optional property, which §8's own list calls a minor bump.
+
+**A section rather than more warnings**, which is #216's rule applied one verb
+along: a diagnostic is for what the exit code cannot tell you, and everything
+else belongs in the section that names it. A run answering *what may a password
+be here* with eleven warnings has nowhere to put the eleven answers. The two
+codes that come with it, `SOPULI-W016` and `SOPULI-W017`, are a registry addition
+of the kind 1.15 → 1.16 was.
+
 **1.17 became 1.18 when a run could draw a second password** (#312):
 `results[].redraws` says how many *extra* passwords an account was given because
 the server refused the value itself — `ORA-28003` or `ORA-28007`, UC-1 §6.4. A
@@ -1531,7 +1645,7 @@ for the reason every entry above gives.
 |---|---|---|
 | J1 | Should `--output json` stream nothing until completion, even for long runs? | yes — a partial JSON document is worse than none; `jsonl` covers the streaming case |
 | J2 | Include `plan` in every run, or only with `--dry-run`/`--verbose`? | every run; it is small and makes plan-vs-result diffing mechanical |
-| J3 | Stable machine-readable codes for warnings (`SOPULI-W014`) | yes, and they get a documented registry — otherwise consumers grep messages. **Opened, not answered**: §3 now carries a registry with the two codes the advisory lock needed (#83), a third for a configured-but-uninstalled backend (#130), and an error-code registry beside it holding `SOPULI-20001`. The config layer's other warnings still have none. What is left is the policy — which warnings get a code, and how numbers are allocated across categories; #130 allocated two by hand and did not settle it, and #317 allocated `SOPULI-W015` the same way — following the established practice rather than answering the question, which stays open |
+| J3 | Stable machine-readable codes for warnings (`SOPULI-W014`) | yes, and they get a documented registry — otherwise consumers grep messages. **Opened, not answered**: §3 now carries a registry with the two codes the advisory lock needed (#83), a third for a configured-but-uninstalled backend (#130), and an error-code registry beside it holding `SOPULI-20001`. The config layer's other warnings still have none. What is left is the policy — which warnings get a code, and how numbers are allocated across categories; #130 allocated two by hand and did not settle it, and #317 allocated `SOPULI-W015`, `SOPULI-W016` and `SOPULI-W017` the same way — following the established practice rather than answering the question, which stays open |
 | J4 | Emit a top-level `hostname`/`pid` for log correlation | probably, under `invocation.actor` |
 | J5 | OpenTelemetry span export alongside JSON | later; `correlation_id` is already the trace id in spirit |
 | J6 | Should the event stream be resumable after a crash? | no — re-run instead; `check` establishes truth cheaply |

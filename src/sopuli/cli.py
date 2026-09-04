@@ -89,13 +89,14 @@ from sopuli.config import (
     parse_selector,
     refuse_unknown,
 )
-from sopuli.constraints import Constraints
+from sopuli.constraints import AccountConstraints, Constraints
 from sopuli.diagnostics import (
     CONSTRAINTS_UNREAD,
     LOCK_LOST,
     LOGIN_WARNING,
     PASSWORD_GRACE_PERIOD,
     ROTATION_UNCONFIRMED,
+    constraint_diagnostics,
     install_diagnostics,
     lock_broken,
     unlistable_stores,
@@ -161,6 +162,7 @@ from sopuli.output.config_view import (
     render_text,
     render_validation,
 )
+from sopuli.output.constraints_view import build_constraints, render_constraints
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, Summary
@@ -180,6 +182,7 @@ from sopuli.output.lock_view import (
     render_break,
     render_status,
 )
+from sopuli.output.notices import render_notices
 from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
@@ -2054,7 +2057,9 @@ def creds_generate(
 
     supplied = _password_from_stdin() if from_stdin else None
     limits = _constraints_for(bindings, run, config, offline=offline)
-    document.diagnostics.extend(_constraint_diagnostics(limits))
+    document.constraints = build_constraints(limits)
+    notices = constraint_diagnostics(limits, supplied=supplied is not None)
+    document.diagnostics.extend(notices)
     candidates = [
         _candidate(
             binding,
@@ -2069,9 +2074,29 @@ def creds_generate(
     writes = staging.group(candidates)
     names = {write.key.store for write in writes}
 
-    header = "\n".join(
-        [render_plan(plan, noun="generation"), "", *render_write_table(writes, stage=PENDING)]
-    )
+    # Between the plan and the write table, which is where they answer the
+    # question the plan raises: it says which targets are in scope, and these say
+    # what those targets said about a password. Both absent under `--offline`,
+    # where nothing was asked -- and where there is nothing to ask about there is
+    # nothing to be told, so the notes cannot appear without the line.
+    #
+    # **The notes are rendered rather than left in `diagnostics[]`.** A run-level
+    # warning is invisible to somebody reading a terminal -- the emitter prints
+    # the command's text, not the document -- and a verify function reported only
+    # in JSON is reported to nobody who ran this by hand. The same block `check`
+    # and `config validate` print, for #309's reason: a warning that cannot be
+    # seen in the default output is not surfaced.
+    read = render_constraints(limits)
+    lines = [render_plan(plan, noun="generation"), ""]
+    if read is not None:
+        # `SOPULI-W015` is deliberately not among them: the line above already
+        # says the estate was not read, in plainer words and in both of the
+        # shapes that code covers. The code exists so a JSON consumer can branch
+        # on it, and printing the sentence twice under a heading that says
+        # "notes" would teach a reader that the block repeats itself.
+        told = [one.message for one in notices if one.code != CONSTRAINTS_UNREAD]
+        lines.extend([read, *render_notices(told), ""])
+    header = "\n".join([*lines, *render_write_table(writes, stage=PENDING)])
     if run.dry_run:
         # Invariant 8: print the plan, write nothing, take no lock. No `results`
         # either -- `plan` already says what would happen, at the same grain, and
@@ -2206,58 +2231,52 @@ def _constraints_for(
         return Constraints(source=constraint_source.UNREAD)
 
     readings: list[tuple[str, ByteLimit]] = []
+    accounts: list[tuple[str, AccountConstraints]] = []
     unreachable: list[str] = []
     for name in dict.fromkeys(binding.target for binding in bindings):
         session = None
         try:
             session = _open_session(_expanded(config, name), run, config)
             readings.append((name, session.byte_limit()))
+            accounts.extend(_profile_readings(session, name, bindings))
         except Exception:  # noqa: BLE001 -- every failure is the same caveat
             unreachable.append(name)
         finally:
             if session is not None:
                 with suppress(Exception):
                     session.close()
-    return constraint_source.survey(readings, unreachable=unreachable)
+    return constraint_source.survey(readings, unreachable=unreachable, accounts=accounts)
 
 
-def _constraint_diagnostics(limits: Constraints) -> list[Diagnostic]:
-    """Say which of §4's two answers this run got.
+def _profile_readings(
+    session: Any, target: str, bindings: Sequence[Binding]
+) -> list[tuple[str, AccountConstraints]]:
+    """The reporting half of §4 step 2, on the connection already open (#317).
 
-    Silence is the one thing not on offer. A password drawn against the policy
-    alone and one drawn against a database that answered are different claims
-    about the same run, and a reader cannot tell them apart from the password.
+    A verify function, the reuse resources and the account's verifiers -- read
+    per account because they are properties of an account's *profile*, and read
+    over the session the byte limit came from because a second connection to the
+    same database to ask a second question would be a connection per account by
+    another name.
 
-    Nothing is emitted where every target answered, because that is the case the
-    feature exists to produce and a diagnostic on the happy path is noise a
-    consumer learns to filter.
+    **A failure here is silence, not a caveat.** The target answered: it gave the
+    limit that governs the draw, and losing that because a profile could not be
+    read would turn a report nobody asked for into a downgrade of the one thing
+    this command needs. So it is caught per account, and an account that could
+    not be read is simply absent from the section -- which is what the section
+    means by absent.
     """
-    if limits.source == constraint_source.POLICY:
-        return [
-            Diagnostic(
-                level="warning",
-                code=CONSTRAINTS_UNREAD,
-                message=(
-                    "no target could be reached to read password constraints, so the "
-                    "policy's declared length governs: " + ", ".join(limits.unreachable)
-                ),
-            )
-        ]
-    if limits.partial:
-        return [
-            Diagnostic(
-                level="warning",
-                code=CONSTRAINTS_UNREAD,
-                message=(
-                    "password constraints were read from "
-                    + ", ".join(limits.read)
-                    + " and could not be read from "
-                    + ", ".join(limits.unreachable)
-                    + "; the limit used may not be the estate's strictest"
-                ),
-            )
-        ]
-    return []
+    found: list[tuple[str, AccountConstraints]] = []
+    for account in dict.fromkeys(
+        binding.account for binding in bindings if binding.target == target
+    ):
+        try:
+            one = session.password_constraints(account)
+        except Exception:  # noqa: BLE001 -- reporting only; see the docstring
+            continue
+        if one is not None:
+            found.append((target, one))
+    return found
 
 
 def _password_from_stdin() -> Secret:

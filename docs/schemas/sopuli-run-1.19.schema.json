@@ -1,0 +1,1976 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-run-1.19.schema.json",
+  "title": "sopuli-dba run result",
+  "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. A versioned contract: adding a property is a minor bump, renaming or removing one is major, and every release validates its own output against the published schema in CI.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "command",
+    "invocation",
+    "summary",
+    "exit_code"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$",
+      "description": "Major bumps are breaking. Consumers must accept unknown properties within the same major."
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "sopuli"
+        },
+        "version": {
+          "type": "string"
+        },
+        "driver_versions": {
+          "type": "object",
+          "description": "e.g. {\"oracle\": \"python-oracledb 2.5.1 thick, client 21.13\"}",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "command": {
+      "type": "string",
+      "description": "Dotted command path.",
+      "enum": [
+        "creds.generate",
+        "creds.apply",
+        "creds.check",
+        "creds.rotate",
+        "creds.status",
+        "creds.promote",
+        "creds.finish-rollover",
+        "config.validate",
+        "config.show",
+        "target.list",
+        "policy.sample",
+        "lock.status",
+        "lock.break",
+        "doctor",
+        "admin.install"
+      ]
+    },
+    "invocation": {
+      "$ref": "#/$defs/invocation"
+    },
+    "config": {
+      "$ref": "#/$defs/config_view"
+    },
+    "policy": {
+      "$ref": "#/$defs/policy_samples"
+    },
+    "plan": {
+      "$ref": "#/$defs/plan"
+    },
+    "lock": {
+      "$ref": "#/$defs/lock"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/result"
+      }
+    },
+    "targets": {
+      "type": "array",
+      "description": "One entry per target, emitted by `doctor`. Additive in 1.11: no existing consumer sees it, and the credential verbs continue to use `results[]`.",
+      "items": {
+        "$ref": "#/$defs/target_health"
+      }
+    },
+    "install": {
+      "$ref": "#/$defs/install_shape",
+      "description": "Which backends and drivers are installed, which are configured, and where the two disagree — emitted by `doctor` on every run. Additive in 1.13: no existing consumer sees it."
+    },
+    "wallet": {
+      "$ref": "#/$defs/wallet_report",
+      "description": "Whether this machine has a readable Oracle wallet, for estates that use `auth: external`. Additive in 1.14: no existing consumer sees it."
+    },
+    "vaults": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/vault_health"
+      },
+      "description": "Every store the configuration declares, as `doctor` found it. Additive in 1.15: no existing consumer sees it. Emitted whole on every `doctor` run, empty array included, for the reason `install` is (ADR-006 E6): the output is audit evidence as often as it is a diagnostic, and a section appearing only when something was wrong could never be quoted as proof that nothing was."
+    },
+    "constraints": {
+      "$ref": "#/$defs/constraints",
+      "description": "What the estate said a password may be, read by `creds generate` before drawing one (UC-1 §4 step 2). Additive in 1.19: no existing consumer sees it. Absent means the question was not asked, which is `--offline` and nothing else — a run that asked and learned nothing emits the section with `source: \"policy\"`, because \"could not find out\" and \"did not look\" are different answers."
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "diagnostics": {
+      "type": "array",
+      "description": "Run-level messages not attributable to a single result.",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "error": {
+      "$ref": "#/$defs/error",
+      "description": "Why the run as a whole failed. Distinct from `results[].error`, which is one target failing inside a run that otherwise worked: this is present when there is no per-target work to report, as when the configuration could not be read (exit 9). Absent on success."
+    },
+    "exit_code": {
+      "type": "integer",
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "description": "Mirrors the process exit code. See docs/design/00-principles.md P5. 2 is the one code that never appears here: it means the invocation never parsed, so there is no run to describe and stdout is empty (03-json-output.md section 6)."
+    }
+  },
+  "$defs": {
+    "policy_samples": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "samples"
+      ],
+      "description": "What `policy sample` produced: the policy as declared, and one entry per sample describing it. Offline -- no vault, no database, and nothing generated here is stored anywhere. A sample object has no value property at all, deliberately, the same way `secret_ref` has none: `--reveal` prints to a terminal for a human to read and is refused with `--output json`, so this section cannot carry a password even by mistake.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The `policies:` entry sampled."
+        },
+        "length": {
+          "type": "integer",
+          "description": "Characters, as the policy declares. The byte limit is separate -- see `limit`."
+        },
+        "charset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "first_char": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "require": {
+          "type": "object",
+          "description": "Minimum count per character class, as declared.",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "limit": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "max_bytes",
+            "encoding"
+          ],
+          "description": "The target byte limit the samples were measured against, and the encoding it was counted in. Null when none was given: §8 measures the maximum in the database character set, so a byte count without its encoding would be meaningless.",
+          "properties": {
+            "max_bytes": {
+              "type": "integer"
+            },
+            "encoding": {
+              "type": "string"
+            }
+          }
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sample"
+          }
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "characters",
+        "compliant"
+      ],
+      "description": "One generated password, described rather than given.",
+      "properties": {
+        "characters": {
+          "type": "integer"
+        },
+        "encoded_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Null when no byte limit was given."
+        },
+        "counts": {
+          "type": "object",
+          "description": "Characters per class: upper, lower, digit, special.",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "compliant": {
+          "type": "boolean",
+          "description": "Whether the sample satisfies the policy it was drawn from. Always true for a generated sample; false would mean the generator and the validator disagree."
+        }
+      }
+    },
+    "config_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "resolved"
+      ],
+      "description": "What `config show` read, and what it resolves to. Offline: no vault or database is contacted, and no secret value appears. `resolved` discriminates the two shapes, and the allOf below holds the producer to it.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "resolved": {
+                "const": true
+              }
+            },
+            "required": [
+              "resolved"
+            ]
+          },
+          "then": {
+            "required": [
+              "targets",
+              "bindings"
+            ],
+            "not": {
+              "required": [
+                "declared"
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "declared"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "targets"
+                  ]
+                },
+                {
+                  "required": [
+                    "bindings"
+                  ]
+                },
+                {
+                  "required": [
+                    "shared_secrets"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "description": "The config files that were read, in the order they were layered.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolved": {
+          "type": "boolean",
+          "description": "false: `declared` holds the file as loaded. true: `targets` and `bindings` hold what the tool would act on."
+        },
+        "declared": {
+          "type": "object",
+          "description": "The merged config document, as loaded and before expansion. Deliberately untyped here: it is the user's YAML, and reshaping it would answer a different question from the one it is here to answer."
+        },
+        "targets": {
+          "type": "array",
+          "description": "The expanded estate. Present when resolved.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "type",
+              "dsn",
+              "labels",
+              "managed"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "dsn": {
+                "type": "string"
+              },
+              "environment": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "vault": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scope": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "container": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "target_set": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The target_sets entry that generated it; null for an explicit target."
+              },
+              "overridden": {
+                "type": "boolean"
+              },
+              "managed": {
+                "type": "boolean",
+                "description": "Whether any application binds an account here. A declared target that nothing manages is legitimate, not an error."
+              }
+            }
+          }
+        },
+        "bindings": {
+          "type": "array",
+          "description": "One row per account per target, with its secret ref rendered. Present when resolved. Grouped by the document they write, `shared_secrets` is the same rows seen the other way up.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "account",
+              "target"
+            ],
+            "properties": {
+              "application": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "null for the inline form."
+              },
+              "account": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "secret": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The SecretRef as written, rendered per account and target (01-configuration.md 7). An address, never a value. The structured form is plan.units[].secret."
+              },
+              "vault": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "policy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "shared_secrets": {
+          "type": "array",
+          "description": "The documents more than one binding lands on, from the config alone. Present when resolved, and omitted entirely when nothing is shared. `plan.shared_secrets` is the same shape narrowed to one run's work.",
+          "items": {
+            "$ref": "#/$defs/shared_secret"
+          }
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, always UTC with a trailing Z."
+    },
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "correlation_id",
+        "started_at",
+        "finished_at",
+        "duration_ms",
+        "actor",
+        "dry_run"
+      ],
+      "properties": {
+        "correlation_id": {
+          "type": "string",
+          "description": "UUID. Also set as the Oracle client identifier via DBMS_SESSION.SET_IDENTIFIER, so it lands in UNIFIED_AUDIT_TRAIL.CLIENT_ID, and written into the vault secret metadata. One id ties all three trails together."
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "finished_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "os_user",
+            "host"
+          ],
+          "properties": {
+            "os_user": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "vault_identity": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "e.g. \"approle:sopuli-ci\" or \"oci:instance-principal\". Never a token."
+            },
+            "unattended": {
+              "type": "boolean",
+              "description": "True when nobody could have been prompted. Not a flag: run context is a profile (01-configuration.md §5), and a run can be unattended for other reasons, such as a closed stdin."
+            }
+          }
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "config_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The selectors as given, before resolution.",
+          "properties": {
+            "applications": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Application entry names. Empty in a single-application config, where the binding is inline at the top level."
+            },
+            "accounts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "select": {
+              "type": "object",
+              "description": "Label filters as given, e.g. {\"env\": \"dev\", \"tenant\": \"beta\"}.",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "all": {
+              "type": "boolean"
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        },
+        "options": {
+          "type": "object",
+          "description": "Effective option values that changed behaviour, each with the precedence layer it came from.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value",
+              "source"
+            ],
+            "properties": {
+              "value": {},
+              "source": {
+                "type": "string",
+                "enum": [
+                  "cli",
+                  "env",
+                  "env_thirdparty",
+                  "profile",
+                  "object",
+                  "defaults",
+                  "builtin"
+                ]
+              },
+              "source_detail": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "units"
+      ],
+      "description": "What the run intended to do, emitted identically for --dry-run and for a real run.",
+      "properties": {
+        "units": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "account",
+              "target",
+              "intent"
+            ],
+            "properties": {
+              "account": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "intent": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/action_kind"
+                }
+              },
+              "secret": {
+                "$ref": "#/$defs/secret_ref"
+              }
+            }
+          }
+        },
+        "shared_secrets": {
+          "type": "array",
+          "description": "The documents this run's work lands in that more than one binding shares. Same item shape as `config.shared_secrets`, narrowed to what the run touches.",
+          "items": {
+            "$ref": "#/$defs/shared_secret"
+          }
+        },
+        "confirmation_required": {
+          "type": "boolean"
+        },
+        "blast_radius": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "targets": {
+              "type": "integer"
+            },
+            "accounts": {
+              "type": "integer"
+            },
+            "environments": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "description": "Advisory locks (00-principles.md P5, decided in issue #83). Locks live in the vault and are keyed on the store and the secret path being mutated -- not on the account and not on the target, because the mutated resource is the vault document and compare-and-set operates on exactly that. Four arrays, and which one a lock is in says what became of it: `held` is what this run took, `denied` is the one that stopped it, `found` is what `lock status` read at paths it does not hold (issue #105), and `broken` is what `lock break` took from its holder (issue #149). Absent on a run that neither took a lock nor went looking: `check`, `status` and every `--dry-run` of a command that would have taken one.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "cas",
+            "none"
+          ],
+          "description": "The guarantee available in the stores this section is about, not the mechanism. `cas` means every one of them has compare-and-set, so an acquisition carries a fence; `none` means at least one has no atomic primitive (KV v1, the file backend) and was configured `locking: advisory-only`, making the record a courtesy that catches operators minutes apart and misses two jobs in the same second. On a run that took locks that is what it took them under; on `lock status`, which takes none, it is what a lock in those stores would be worth. A consumer branches on this without knowing what KV v1 is."
+        },
+        "held": {
+          "type": "array",
+          "description": "One entry per lock, in acquisition order -- which is sorted and deterministic, so two runs contending on overlapping sets cannot deadlock.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "vault",
+              "path",
+              "fence",
+              "acquired_at",
+              "expires_at",
+              "released"
+            ],
+            "description": "Every field is required, including the two that are only interesting when something went wrong. This section is written when the run ends, by which point all six are known -- a partial entry would mean the producer did not know what it had locked, which is not a state worth being able to describe. `fence` is nullable rather than optional for the same reason: under mode `none` there is no fence, and saying so is different from not saying.",
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "description": "The secret path, not the lock record's own path. Where the record is written is the store's business."
+              },
+              "fence": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "The version returned by the acquiring write, re-checked before every mutation. Null under mode `none`, where there is nothing to fence with."
+              },
+              "acquired_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "expires_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "released": {
+                "type": "boolean",
+                "description": "Release writes a released record rather than deleting one: a delete leaves metadata behind, after which a first acquisition can never compare-and-set against version 0 again."
+              }
+            }
+          }
+        },
+        "found": {
+          "type": "array",
+          "description": "Lock records read at paths this run does not hold -- what `lock status` went looking for (issue #105). Separate from `held` because `held` is possessive: there `released: true` means this run let go cleanly, and here it would mean the path is free, which is one field meaning two things depending on `command`. In key order, which is the sorted order acquisition uses. A declared path with no record at it is not an entry: `found` is what was read, and how many paths were examined is `summary.total` -- the difference between the two is how many are free. Emitted empty rather than omitted, because on `lock status` an empty array is the finding. Entries are not all from the configuration's own estate: since issue #150 the survey also lists each store's lock prefix, so a record left at a path the file no longer declares appears here with `declared: false`. Invariant 5 is untouched by that -- the config whitelists what the tool may *touch*, and `lock status` touches nothing.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "vault",
+              "path",
+              "held",
+              "declared",
+              "state",
+              "expired",
+              "version",
+              "acquired_at",
+              "expires_at",
+              "holder"
+            ],
+            "description": "One record, described by somebody who does not hold it. Every field is required for the reason `held[]`'s are: the entry exists because a record was read, so there is nothing about it left unknown.",
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "description": "The secret path, not the lock record's own path. Where the record is written is the store's business."
+              },
+              "held": {
+                "type": "boolean",
+                "description": "Whether this record stands in the way of taking the lock. Anything that is not `released` is held, including a `state` this build has never heard of -- treating an unknown state as free is the one guess that ends with two runs rotating one credential."
+              },
+              "declared": {
+                "type": "boolean",
+                "description": "Whether the configuration this run read binds an account to the path (issue #150). False is a record the store holds and the file does not name -- an application renamed or removed, or another configuration's estate sharing the mount. It is the entry an operator cannot otherwise see, and the one they are most likely to want cleared. Judged against the *unfiltered* estate, so narrowing a survey with `--select` never turns somebody's own lock into a leftover. Required, and present on the ordinary entries too, so a consumer keeping only its own locks filters on a field that is always there rather than on an absence."
+              },
+              "state": {
+                "type": "string",
+                "description": "What the record says, as written. `held` and `released` are the two this build writes; anything else came from a newer sopuli, or from a half-written record, and is reported rather than flattened so that it stays recognisable. Not an enum, for that reason. `held` above is the verdict; this is the evidence."
+              },
+              "expired": {
+                "type": "boolean",
+                "description": "Whether the holder's claim has lapsed, allowing for a clock-skew margin. False on a released record, which is not a claim and has nothing to lapse."
+              },
+              "version": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "The store's version of the record. Deliberately not called a fence -- a fence is a claim, and nothing here holds one -- but it is what a takeover has to compare-and-set against, and a version that moves between two surveys is a lock somebody is renewing. Null under mode `none`, where the number exists and guarantees nothing."
+              },
+              "acquired_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "expires_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "holder": {
+                "$ref": "#/$defs/lock_holder"
+              }
+            }
+          }
+        },
+        "broken": {
+          "type": "array",
+          "description": "Locks this run ended, which today is the one `sopuli lock break` was given (issue #149). Separate from `held` and from `found` for the reason those two are separate from each other: `held` is possessive and describes a claim this run holds, `found` is a record a survey read and changed nothing about, and this is one the run *wrote over*. The fields that matter are the ones neither of the others has -- which version the write compared against, which version now fences the previous holder, and whether the write happened at all. An array although the verb takes one lock: `denied` is a single object because acquisition is all-or-nothing and stops at the first refusal, which is an argument about acquiring rather than about this. Emitted empty rather than omitted, because there an empty array is the finding -- there was no claim at the path, so nothing was broken and nothing changed.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "vault",
+              "path",
+              "applied",
+              "state",
+              "expired",
+              "version",
+              "new_version",
+              "acquired_at",
+              "expires_at",
+              "holder"
+            ],
+            "description": "One lock taken from its holder, described by the run that took it. Every field is required for the reason `found[]`'s are: the entry exists because a record was read, so there is nothing about it left unknown. This is also the only place the holder is named afterwards -- the write replaces their record with a released one, so if the entry does not describe them, nothing does.",
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "description": "The secret path, not the lock record's own path. Where the record is written is the store's business."
+              },
+              "applied": {
+                "type": "boolean",
+                "description": "Whether the write happened. False under `--dry-run`, which is what makes a plan and the run that follows it one shape rather than two -- a consumer diffing them compares like with like (invariant 8). `summary.changed` is 0 whenever this is false."
+              },
+              "state": {
+                "type": "string",
+                "description": "What the broken record said, as written: the evidence, as in `found[]`. `held` is the ordinary case, and anything else came from a newer sopuli or from a half-written record. A state this build has never heard of is treated as held, and is therefore breakable -- which is what makes an unreadable lock clearable rather than permanent."
+              },
+              "expired": {
+                "type": "boolean",
+                "description": "Whether the holder's claim had lapsed, allowing for a clock-skew margin. False means a lock that was still live was taken, which requires `--force` and is the case somebody reading an audit trail most needs to see named."
+              },
+              "version": {
+                "type": "integer",
+                "description": "The store version the record was read at, and what the write compared against. Never null, unlike `found[].version`: a store with no compare-and-set is refused before the read, because the write that breaks a lock is the only thing fencing its holder."
+              },
+              "new_version": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "The version the write produced. This is what the previous holder's next fence check fails against, which is what makes taking their lock survivable rather than reckless. Null under `--dry-run`, where no version was produced -- repeating the old one there would suggest something had happened."
+              },
+              "acquired_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "expires_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "holder": {
+                "$ref": "#/$defs/lock_holder"
+              }
+            }
+          }
+        },
+        "denied": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "vault",
+            "path",
+            "reason"
+          ],
+          "description": "The lock that stopped the run, on exit 7. The holder is reported so an operator can tell a colleague from a process that died -- which is the whole question at that moment. Never more than one: acquisition is all-or-nothing and stops at the first refusal.",
+          "properties": {
+            "vault": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "held",
+                "race"
+              ],
+              "description": "How the run lost. `held` means a held, unexpired record was read, and the holder and timestamps below describe it. `race` means the compare-and-set write itself was refused, which is another run acquiring between this run's read and its write -- there is nothing to report about the winner, because the winner's record was never read and re-reading it is a second round trip to answer a question the operator can answer by running again. This is why `holder` is optional: it is present exactly when it was read, and absent is a fact rather than a gap."
+            },
+            "holder": {
+              "$ref": "#/$defs/lock_holder"
+            },
+            "acquired_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "expires_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "expired": {
+              "type": "boolean",
+              "description": "True when the lock is past its expiry and was still not taken, which happens when `locking.break_expired` is off. Distinguishes a live holder from one to break."
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "reason": {
+                    "const": "held"
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              },
+              "then": {
+                "required": [
+                  "holder",
+                  "acquired_at",
+                  "expires_at",
+                  "expired"
+                ],
+                "description": "A denial by a record that was read has to describe it. Optional-everywhere would let a producer emit `{vault, path}` on exit 7 and leave the operator with the one question this section exists to answer."
+              }
+            }
+          ]
+        }
+      }
+    },
+    "lock_holder": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Who holds a lock, in the same shape this run's own actor is reported in. Every member is nullable and every one degrades on its own: a record written by another version, or half-written, still has to be reportable, because the alternative is a lock nobody can explain and nobody can break. Never a value -- a lock record carries an identity and a command, and no credential.",
+      "properties": {
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pid": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "os_user": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "correlation_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The holder's run, joinable to its own output and to the database audit trail."
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "shared_secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secret",
+        "targets"
+      ],
+      "description": "One secret document that more than one binding lands on. Keyed on the document rather than on the ref, because the document is what a write, a compare-and-set and the advisory lock all operate on -- so `secret` carries a vault and a path and no field. Sharing is legal and often intended (01-configuration.md 7); it is emitted so that it is never invisible.",
+      "properties": {
+        "secret": {
+          "$ref": "#/$defs/secret_document"
+        },
+        "targets": {
+          "type": "array",
+          "description": "Every target bound to this document: who receives the password. A document with one target still appears when several accounts share it.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "accounts": {
+          "type": "array",
+          "description": "Every account whose credential the config puts in this document (Q7, decided in issue #85). Present only when there is more than one, because a list of one is not a warning: it is the ordinary one-secret-per-account layout. `targets` answers who receives the password; this answers whose passwords a write to the document touches. Read from the config rather than from the store, so that it is offline and deterministic; an account present in the document but absent from the config is drift, which `creds check` reports.",
+          "minItems": 2,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "secret_document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vault",
+        "path"
+      ],
+      "description": "Addresses a whole secret document -- a store and a path, and nothing below them. Deliberately not `secret_ref`, for two reasons. It has no `field` or `pointer` because there is nothing here that addresses part of a document; and its `vault` is nullable, because this is emitted from the config, where a store may not have been named at all. `secret_ref` describes a ref *after* resolution, where the store is always known and C14 makes it required; that is a different moment, and `config.bindings[].vault` is nullable for the same reason this is.",
+      "properties": {
+        "vault": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Null when the config names no store for it -- neither a `vault-name:` prefix, an application's `vault:`, the target's, nor `defaults.vault`."
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "secret_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vault",
+        "path"
+      ],
+      "description": "Addresses a secret. Never carries a value.",
+      "properties": {
+        "vault": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "field": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pointer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "JSON pointer within the field."
+        },
+        "version": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "current",
+            "pending",
+            "previous",
+            null
+          ]
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What the tool found when it connected — observed, not configured.",
+      "properties": {
+        "labels": {
+          "type": "object",
+          "description": "Labels carried by the target, including the dimension values a target_set generated it from, e.g. {\"target_set\": \"appdb\", \"env\": \"qa\", \"tenant\": \"delta\"}. Consumers can group results by these without parsing target names.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "non_cdb",
+            "cdb_root",
+            "pdb",
+            "app_root",
+            "app_pdb",
+            "unknown"
+          ]
+        },
+        "container": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "db_unique_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "db_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "open_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "read_write": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "privilege_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "direct",
+            "self",
+            "package",
+            null
+          ],
+          "description": "How the tool is privileged on this target. \"direct\" = the service account holds ALTER USER (the standard model). \"self\" = connected as the account itself. \"package\" = the optional definer-rights package, not part of the standard install."
+        },
+        "over_granted": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Privileges the service account holds that the tool does not need, e.g. SELECT ANY DICTIONARY or DBA. Reported as a warning, never fatal."
+        },
+        "offline_verify_available": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "True when SELECT ON SYS.USER$ is granted, enabling check --method hash and the LCOUNT lockout guard."
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Capability names the driver reported for this target."
+        }
+      }
+    },
+    "action_kind": {
+      "type": "string",
+      "enum": [
+        "none",
+        "generate",
+        "vault_write_pending",
+        "vault_promote",
+        "vault_rollback",
+        "password_set",
+        "rollover_start",
+        "rollover_finish",
+        "account_unlock",
+        "attribute_set",
+        "verify"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "IN_SYNC",
+        "DRIFT",
+        "PENDING_APPLY",
+        "ROLLOVER_ACTIVE",
+        "ACCOUNT_MISSING",
+        "LOCKED",
+        "EXPIRED",
+        "UNVERIFIABLE",
+        "SKIPPED",
+        "ERROR"
+      ]
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "result"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "login",
+            "hash",
+            "both",
+            "none"
+          ]
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "skipped",
+            "unavailable"
+          ]
+        },
+        "latency_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "lcount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Failed-login counter at the time of the check, when readable."
+        },
+        "failed_login_attempts_limit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lockout_margin_hit": {
+          "type": "boolean",
+          "description": "True when the tool declined to attempt a login because the account was near its lockout threshold."
+        },
+        "previous_password_accepted": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Populated only with --include-previous."
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "account",
+        "target",
+        "state",
+        "changed"
+      ],
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "secret": {
+          "$ref": "#/$defs/secret_ref"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "changed": {
+          "type": "boolean",
+          "description": "False for a no-op. Idempotent re-runs report changed=false."
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "applied"
+            ],
+            "properties": {
+              "kind": {
+                "$ref": "#/$defs/action_kind"
+              },
+              "applied": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "duration_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "verification": {
+          "$ref": "#/$defs/verification"
+        },
+        "rollover": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "active": {
+              "type": "boolean"
+            },
+            "ends_at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "profile_rollover_time": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "password_age_days": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        },
+        "overridden": {
+          "type": "array",
+          "description": "Account guardrails (02-oracle-privileges.md section 4) that --force waived for this account. Present only when something was waived; a run that passed --force and had nothing to waive omits it, because the field records overrides rather than intent.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "check",
+              "reason"
+            ],
+            "properties": {
+              "check": {
+                "type": "string",
+                "description": "Which section 4 check refused.",
+                "enum": [
+                  "vendor_maintained",
+                  "password_file",
+                  "privileged_role",
+                  "deny_list"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "description": "What was observed, for the operator reading the audit trail."
+              }
+            }
+          }
+        },
+        "redraws": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many extra passwords this account was given, over the one the run arrived with, because the server refused the value itself (ORA-28003/ORA-28007, UC-1 section 6.4). Present only when at least one was drawn; an ordinary run omits it, because the field records redraws rather than the budget for them."
+        }
+      }
+    },
+    "error": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "message"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "config",
+            "selection",
+            "connectivity",
+            "authentication",
+            "authorization",
+            "capability",
+            "policy",
+            "vault",
+            "database",
+            "lock",
+            "internal"
+          ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Vendor code where one exists, e.g. \"ORA-01017\" or \"SOPULI-20001\"."
+        },
+        "message": {
+          "type": "string",
+          "description": "Redacted. Never contains a secret."
+        },
+        "hint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the operator should do next."
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "target_capability": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Set when category is \"capability\": the capability that was missing."
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "message"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "account": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "ok",
+        "changed",
+        "failed"
+      ],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unchanged": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "drift": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unverifiable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "target_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One target as `doctor` found it. Separate from `results[]` because that array is per (account, target) and its `state` vocabulary is about credential sync; doctor manages no credential and reports on the target itself.",
+      "required": [
+        "target",
+        "reachable"
+      ],
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "reachable": {
+          "type": "boolean",
+          "description": "Whether a session was opened. False means `error` says why."
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "asserted": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What the target's `oracle:` block claims, when it claims anything (01-configuration.md 3a). Reported beside the observed `scope` so a mismatch can be read without holding the config open.",
+          "properties": {
+            "scope": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "container": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "matches": {
+              "type": "boolean",
+              "description": "False when a declared value disagrees with what the driver found. A target asserting nothing is absent from this object rather than reported as matching."
+            }
+          }
+        },
+        "duration_ms": {
+          "type": "integer"
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "privileges": {
+          "$ref": "#/$defs/privilege_report"
+        }
+      }
+    },
+    "install_shape": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What this machine can serve and what the config asked for, emitted by `doctor` on every run rather than only on a mismatch (ADR-006 E6). Both arrays are emitted whole: a component nobody configured still gets a row, which is what makes \"installed and not configured\" reportable.",
+      "required": [
+        "backends",
+        "drivers"
+      ],
+      "properties": {
+        "backends": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/install_component"
+          }
+        },
+        "drivers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/install_component"
+          }
+        }
+      }
+    },
+    "install_component": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One entry in the in-tree registry of backends or drivers, and what this machine and this config say about it. Emitted for every entry the build knows of, configured or not: a section that appeared only on a mismatch could not be quoted as evidence that nothing was wrong (ADR-006 E6).",
+      "required": [
+        "name",
+        "status"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The `vaults.*.type` or `targets.*.type` this entry serves."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "installed",
+            "not_installed",
+            "not_implemented"
+          ],
+          "description": "`installed` — this build has the module and the client is present. `not_installed` — the module is here and the client is not; `pip` fixes it, and `install_command` is the line. `not_implemented` — this build has no module for it, and nothing the operator installs changes that. The last two are separate because only one of them has a remedy the reader can run."
+        },
+        "install_command": {
+          "type": "string",
+          "description": "Present only on `not_installed`. Absent means `pip` cannot help — either it is already installed, or this build has no module for it."
+        },
+        "vaults": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Backends only: the `vaults:` entries that declare this type, named because a store is written out by hand and its name is the thing to go and look at. Empty means nothing in the config asks for it."
+        },
+        "targets": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Drivers only: how many expanded targets declare this type. A count and not names, because targets are generated by the dozen from one `target_sets:` entry and `targets[]` already lists every one."
+        }
+      }
+    },
+    "wallet_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Whether this machine has an Oracle wallet the run can authenticate with, emitted by `doctor` and **absent when nothing in the estate uses `auth: external`** (#215). Unlike `install`, absence is the right answer here: a target with a password-based `admin.auth` has no wallet to report on. Nothing in this section moves the exit code -- each target's own reachability decides the run, and this explains the failure that is about to happen rather than pre-empting it.",
+      "required": [
+        "required_by",
+        "tns_admin",
+        "directory",
+        "readable",
+        "files",
+        "auto_login",
+        "unreadable"
+      ],
+      "properties": {
+        "required_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The expanded targets using `auth: external`. Never empty -- the section is absent instead."
+        },
+        "tns_admin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "$TNS_ADMIN as given, or null when the variable is unset. Nulled rather than omitted: a consumer must be able to tell 'unset' from 'not reported'."
+        },
+        "directory": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where the wallet was actually looked for, which is not always $TNS_ADMIN -- see `from_sqlnet`. Null when there was nowhere to look."
+        },
+        "from_sqlnet": {
+          "type": "boolean",
+          "description": "Whether `directory` came from sqlnet.ora's WALLET_LOCATION rather than from $TNS_ADMIN. Reported because a reader who checks the obvious directory and finds nothing needs to know the tool looked elsewhere."
+        },
+        "readable": {
+          "type": "boolean",
+          "description": "Whether `directory` exists and this process could list it."
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "cwallet.sso",
+              "ewallet.p12"
+            ]
+          },
+          "description": "Which wallet files are there **and openable by this process**. Measured by reading a byte, not by `is_file`: presence is not access, and a wallet owned by the account a service runs as looks present from every account on the machine and opens from exactly one."
+        },
+        "unreadable": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Wallet files that are there and cannot be read by this process. Distinct from absent, because the remedy differs entirely: a missing wallet is somebody to ask for one, and an unreadable one is already where it should be and owned by the wrong account. A cwallet.sso listed here does not count towards `auto_login`."
+        },
+        "auto_login": {
+          "type": "boolean",
+          "description": "Whether cwallet.sso is present, i.e. whether an unattended run can open the wallet without a passphrase. An encrypted wallet alone cannot serve `auth: external` here, because the tool has no way to supply one."
+        },
+        "insecure": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Wallet files reachable by somebody other than their owner. An auto-login wallet is a credential, so this is P4's config-file permission check applied to the file that actually holds a password. The trustee or mode is in the SOPULI-W008 diagnostic, not here -- one fact, one place."
+        }
+      }
+    },
+    "vault_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One configured store as `doctor` found it (#216, P4). Neither per-target nor per-account, so it gets a section of its own rather than a column somewhere else. **An unreachable store fails the run** at exit 1, the same as an unreachable target: the vault is master (invariant 6), so a store nobody can reach is an estate no command can run against. `degraded` does not -- something answered, and what a reader does next is go and look at the vault rather than at the network.",
+      "required": [
+        "vault",
+        "type",
+        "status"
+      ],
+      "properties": {
+        "vault": {
+          "type": "string",
+          "description": "The name under `vaults:` in the configuration."
+        },
+        "type": {
+          "type": "string",
+          "description": "The backend serving it, as `vaults.*.type` spells it."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "degraded",
+            "unreachable"
+          ],
+          "description": "P2's own vocabulary. `ok` is answering and able to serve this run; `degraded` is answering and not able to -- sealed, standing by, not initialised, or refusing this run's credential; `unreachable` is nothing recognisable answering at all, which includes a reply this build cannot read. That last is deliberate: an answer the tool cannot interpret is not evidence a store is well, and a proxy's 502 is what it would otherwise be mistaken for."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Why, in the store's own words -- `sealed`, `standby`, the transport error, the reason the store could not be opened at all. **Always the one-line answer to 'why'**, whichever of those it is, so a reader never has to look in two places for it. Absent only when `status` says everything there is to say. The wording is not the contract; `status` is."
+        },
+        "version": {
+          "type": "string",
+          "description": "What the store reports itself to be running, where it says so. Its own property rather than part of `detail`, because a consumer reads it as a value and one recoverable only by parsing a sentence breaks the first time the sentence is reworded."
+        },
+        "authenticated": {
+          "type": "boolean",
+          "description": "Whether the credential this store was opened with was accepted. **Absent means not asked**, which is a third state and not a shrug: a sealed store refuses the request that would answer it, and reporting false there would blame a token for a seal. Asked at all because a health endpoint that takes no token answers perfectly for a store whose credential expired last night."
+        },
+        "duration_ms": {
+          "type": "integer",
+          "description": "What the probe cost, end to end."
+        },
+        "server_time": {
+          "$ref": "#/$defs/timestamp",
+          "description": "The store's own clock. Absent when the backend exposes none -- never substituted with this host's, which is the very thing being measured."
+        },
+        "skew_ms": {
+          "type": "integer",
+          "description": "`server_time` minus this host's clock, positive when the store is ahead. Absent together with `server_time`: absent means the store cannot say, and 0 means the clocks agree, and a consumer must never read one as the other."
+        },
+        "skew_uncertain_by_ms": {
+          "type": "integer",
+          "description": "What the measurement cannot account for: half the round trip, plus whatever the store rounds its own answer to. The far end read its clock somewhere inside the request, so this is an exact width rather than a margin of safety -- and it is why a slow link cannot manufacture a skew finding."
+        },
+        "skew_within_tolerance": {
+          "type": "boolean",
+          "description": "Whether any reading inside the uncertainty band is within `tolerance_ms`. False raises SOPULI-W009 and does **not** move the exit code: a skewed clock is a real hazard this run did not create and cannot fix, and refusing to survey an estate over it would block the person who ran it."
+        },
+        "tolerance_ms": {
+          "type": "integer",
+          "description": "What the reading was judged against: the allowance the advisory lock already makes when it decides whether a lease has expired (#83). Reported so the verdict can be checked rather than assumed, and because the number is the whole reason the skew is measured -- a host outside it takes over locks that are still live, or refuses ones long dead, and the failure looks like a locking bug rather than an NTP problem."
+        },
+        "error": {
+          "$ref": "#/$defs/error",
+          "description": "Present when opening the store **threw** -- a backend this build has no module for, a client that is not installed, a refused login -- because those carry a category and an error code a consumer branches on (SOPULI-20001, and exit 6 for a refused credential). A store that was opened and then answered `unreachable` has no exception behind it and so no `error`: the reason is in `detail`, which is populated either way. So the reading order is `status` to branch, `detail` for the reason, and `error` when there is a machine-classified cause to go with it."
+        }
+      }
+    },
+    "privilege_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "held",
+        "missing",
+        "common",
+        "roles",
+        "unaudited",
+        "unreadable"
+      ],
+      "description": "What the service account holds, emitted by `doctor --check-privileges` and absent otherwise -- so a consumer can tell 'not asked' from 'nothing found'. Present whole whenever it is present at all, empty arrays included: a section that appeared only on a problem could not be quoted as evidence that there was none (ADR-006 E6, applied to an audit). Added in 1.12; nothing existing moved. Every property is required, so the promise above is the schema's and not only the producer's: a run that emitted half a section would fail validation rather than read as a complete audit that found less.",
+      "properties": {
+        "held": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Grants from 02-oracle-privileges.md 2 that this account has, spelled as the GRANT that issues them. A dictionary grant is answered by reading the view rather than by reading a grant table: a grant row is not access."
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Grants from 2 that it does not have. Empty on a correct install. What makes a half-installed account visible here rather than as unrelated failures several commands later. `V_$PDBS` is required only in the CDB root, where 2 grants it, and is absent from both lists elsewhere."
+        },
+        "common": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Direct system privileges granted commonly (USER_SYS_PRIVS.COMMON). For a C## account, the difference between a grant reaching every PDB and one reaching this one. SESSION_PRIVS has no such column, which is why the direct view is read as well."
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Every role held, traversed through nested grants. Reported whole rather than only where it matched, so a reader can see how an over-grant arrived: a site role two levels up is the case nobody guesses."
+        },
+        "unaudited": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Rows of 3's must-not-grant list that no view reachable under 2's grants carries -- SYSDBA and SYSOPER (V$PWFILE_USERS), and EXECUTE ON DBMS_LOCK (an object privilege). Never empty today. Reported rather than omitted, because a list missing some of its rows reads as a clean audit."
+        },
+        "unreadable": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Views the audit could not read, making it partial. Empty is the ordinary case. Distinguishes 'I looked and found nothing' from 'I could not look', which an empty over_granted alone cannot."
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "targets"
+      ],
+      "description": "Readings, never a verdict. Nothing here predicts that a password will be accepted or refused: a verify function is arbitrary PL/SQL that cannot be consulted before the statement is issued, and a reuse history is hashed. What the section reports is what the run found out, and `diagnostics[]` carries what it could not check (`SOPULI-W016`, `SOPULI-W017`).",
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "targets",
+            "policy"
+          ],
+          "description": "Where the limit that governed the draw came from. `targets`: at least one database answered. `policy`: none did, and the policy's declared length governed, which UC-1 §4 makes a legitimate fallback rather than a failure — `SOPULI-W015` says so in `diagnostics[]`. There is no third value: a run that asked nothing omits the section."
+        },
+        "max_password_bytes": {
+          "type": "integer",
+          "description": "The byte count a generated password was drawn against — the smallest of the answers, with no character set consulted. §8's alphabets are ASCII and an ASCII character is one byte in every character set the driver maps, so the count is the only thing that can bind a password this tool draws. Absent under `source: \"policy\"`, where no target answered."
+        },
+        "character_set": {
+          "type": "string",
+          "description": "The database character set the count above is measured in, in the vendor's own word for it (`AL32UTF8`). Absent where it could not be read."
+        },
+        "strictest_target": {
+          "type": "string",
+          "description": "The target whose count decided the draw, where more than one answered. Absent for a single reading: there was nothing to be strictest than, and naming a winner of a one-horse race invites a reader to think an estate was surveyed."
+        },
+        "targets": {
+          "type": "array",
+          "description": "One entry per target the run asked, answered or not. Every reading is kept rather than collapsed into the strictest: a limit is a byte count *and* the character set it is counted in, so 128 bytes of `WE8MSWIN1252` and 128 of `AL32UTF8` do not contain one another, and a supplied password has to satisfy each of them.",
+          "items": {
+            "$ref": "#/$defs/target_constraint"
+          }
+        },
+        "accounts": {
+          "type": "array",
+          "description": "One entry per account that answered. Absent where none did, and an account the target has not got is simply missing: this is a reporting path and nothing here gates a draw, so an entry that could not be made is a thing not said rather than a finding.",
+          "items": {
+            "$ref": "#/$defs/account_constraint"
+          }
+        }
+      }
+    },
+    "target_constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "reachable"
+      ],
+      "description": "How long a password may be on one target, in that database's character set.",
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "reachable": {
+          "type": "boolean",
+          "description": "Whether this target answered. False is a caveat and not an error: the run staged a password anyway, and UC-1 §4 says it may."
+        },
+        "max_password_bytes": {
+          "type": "integer",
+          "description": "Absent where the target did not answer."
+        },
+        "character_set": {
+          "type": "string",
+          "description": "The database character set, in the vendor's own word for it."
+        },
+        "measured_as": {
+          "type": "string",
+          "description": "The codec the byte count was measured in, which the character set does not always imply: an unmapped character set falls back to `ascii` deliberately, which refuses a non-ASCII password rather than guessing its width. A reader whose database refuses one wants to see that here rather than deduce it."
+        }
+      }
+    },
+    "account_constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "account",
+        "verify_function"
+      ],
+      "description": "What one account's profile says about a password, beyond how long it may be. None of it gates the draw — UC-1 §4 step 2 names these three, and none can be evaluated before the `ALTER USER` is issued.",
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string",
+          "description": "As the database spells it, never as the config file does."
+        },
+        "profile": {
+          "type": "string",
+          "description": "The profile the account sits on, which is where the verify function and the reuse resources come from. Absent where it could not be read."
+        },
+        "verify_function": {
+          "$ref": "#/$defs/verify_function"
+        },
+        "password_reuse_max": {
+          "type": "string",
+          "description": "`PASSWORD_REUSE_MAX`, as the database spells it — a count, or `UNLIMITED`. A string because a vendor word is not a number, and reported rather than interpreted: it interacts with `password_reuse_time`, and the run measured neither the interaction nor the hashed history."
+        },
+        "password_reuse_time": {
+          "type": "string",
+          "description": "`PASSWORD_REUSE_TIME` — days, or `UNLIMITED`."
+        },
+        "password_versions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Which password verifiers the account currently holds (`[\"11G\", \"12C\"]` on 26ai). Reported and nothing more: which of them a later rotation regenerates is decided by the server's own configuration, not by this tool."
+        }
+      }
+    },
+    "verify_function": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "description": "Whether a verify function will judge this password. An object with a state rather than a nullable name, because there are three answers and a missing name would merge the two that must not be merged: not knowing is not the same as there being none, and only one of them reads as a guarantee.",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "named",
+            "none",
+            "unknown"
+          ],
+          "description": "`named`: the profile names one, and this run cannot evaluate it. `none`: the profile names none. `unknown`: the dictionary would not say — a common profile read from inside a PDB answers the literal `FROM ROOT`, measured on 26ai, and a local profile read from the same session answers with its function's name."
+        },
+        "name": {
+          "type": "string",
+          "description": "Present only for `named`."
+        }
+      }
+    }
+  }
+}

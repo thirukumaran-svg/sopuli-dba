@@ -25,6 +25,7 @@ from sopuli.cli import cli
 from sopuli.clock import utc_now
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
+from sopuli.constraints import AccountConstraints
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError
 from sopuli.lock.keys import LockKey
@@ -551,21 +552,36 @@ def test_a_takeover_mid_run_stops_before_the_next_document_is_staged(
 
 
 class _Session:
-    """A connection that answers one question and counts its own closing."""
+    """A connection that answers two questions and counts its own closing.
 
-    def __init__(self, limit: ByteLimit) -> None:
+    The second question is per account and the first is not, which is the split
+    §4 step 2 makes: how long a password may be is a property of the database,
+    and what will judge it is a property of the account's profile.
+    """
+
+    def __init__(
+        self, limit: ByteLimit, profiles: Mapping[str, AccountConstraints] | None = None
+    ) -> None:
         self.limit = limit
+        self.profiles = dict(profiles or {})
+        self.asked: list[str] = []
         self.closed = False
 
     def byte_limit(self) -> ByteLimit:
         return self.limit
+
+    def password_constraints(self, account: str) -> AccountConstraints | None:
+        self.asked.append(account)
+        return self.profiles.get(account)
 
     def close(self) -> None:
         self.closed = True
 
 
 def _reachable(
-    monkeypatch: pytest.MonkeyPatch, limits: Mapping[str, ByteLimit]
+    monkeypatch: pytest.MonkeyPatch,
+    limits: Mapping[str, ByteLimit],
+    profiles: Mapping[str, AccountConstraints] | None = None,
 ) -> dict[str, _Session]:
     """Targets that answer, by name. Anything unlisted refuses to connect."""
     opened: dict[str, _Session] = {}
@@ -573,11 +589,35 @@ def _reachable(
     def fake_open(target: Any, invocation: Any, config: Any) -> _Session:
         if target.name not in limits:
             raise RuntimeError(f"no listener for {target.name}")
-        opened[target.name] = _Session(limits[target.name])
+        opened[target.name] = _Session(limits[target.name], profiles)
         return opened[target.name]
 
     monkeypatch.setattr("sopuli.cli._open_session", fake_open)
     return opened
+
+
+#: What the estate says about a password once one has been drawn -- the half of
+#: §4 step 2 that reports rather than binds (#317). Keyed by the account name the
+#: *config* uses; the value carries the database's own spelling, as the driver
+#: returns it.
+GUARDED = {
+    "acme_web_user": AccountConstraints(
+        account="ACME_WEB_USER",
+        profile="ACME_PROF",
+        verify_function="ORA12C_STRONG_VERIFY_FUNCTION",
+        reuse_max="3",
+        reuse_time="10",
+        versions=("11G", "12C"),
+    ),
+    "acme_batch_user": AccountConstraints(
+        account="ACME_BATCH_USER",
+        profile="ACME_PROF",
+        verify_function="ORA12C_STRONG_VERIFY_FUNCTION",
+        reuse_max="3",
+        reuse_time="10",
+        versions=("11G", "12C"),
+    ),
+}
 
 
 ASCII_128 = ByteLimit(max_bytes=128, encoding="ascii", charset="US7ASCII")
@@ -719,3 +759,193 @@ def test_a_partly_reachable_estate_stages_and_says_the_limit_may_not_be_strictes
     assert len(warnings) == 1
     assert "appdb-beta" in warnings[0]["message"]
     assert "strictest" in warnings[0]["message"]
+
+
+def test_the_constraints_section_reports_what_the_estate_said(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+) -> None:
+    """The whole of §4 step 2 in one document: the limit that bound the draw, and
+    the three things that bind nothing and are reported anyway."""
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)
+
+    found = document(run(runner, write_config(CONFIG), "--output", "json"))
+    validator.validate(found)
+    section = found["constraints"]
+
+    assert found["exit_code"] == ExitCode.SUCCESS
+    assert section["source"] == "targets"
+    assert section["max_password_bytes"] == 128
+    assert section["targets"] == [
+        {
+            "target": "appdb-alpha",
+            "reachable": True,
+            "max_password_bytes": 128,
+            "measured_as": "ascii",
+            "character_set": "US7ASCII",
+        }
+    ]
+    assert [one["account"] for one in section["accounts"]] == [
+        "ACME_WEB_USER",
+        "ACME_BATCH_USER",
+    ]
+    assert section["accounts"][0]["verify_function"] == {
+        "state": "named",
+        "name": "ORA12C_STRONG_VERIFY_FUNCTION",
+    }
+    assert section["accounts"][0]["password_versions"] == ["11G", "12C"]
+
+
+def test_offline_emits_no_section_because_nothing_was_asked(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absence means the question was not asked. A run that asked and learned
+    nothing emits the section with `source: policy`, which is a different run."""
+
+    def explode(target: Any, invocation: Any, config: Any) -> Any:
+        raise AssertionError("--offline connected to a target")
+
+    monkeypatch.setattr("sopuli.cli._open_session", explode)
+
+    found = document(run(runner, write_config(CONFIG), "--offline", "--output", "json"))
+
+    assert "constraints" not in found
+
+
+def test_an_unreachable_estate_still_gets_a_section(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """`db.example.com` does not exist, so the run falls back -- and the section
+    is the evidence that the estate was consulted, which is `install`'s rule."""
+    found = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    assert found["constraints"]["source"] == "policy"
+    assert found["constraints"]["targets"] == [{"target": "appdb-alpha", "reachable": False}]
+    assert "accounts" not in found["constraints"]
+
+
+def test_a_verify_function_is_warned_about_once_for_the_profile(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two accounts, one profile, one warning -- and the password is still staged,
+    because nothing here gates a draw."""
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)
+
+    found = document(run(runner, write_config(CONFIG), "--output", "json"))
+    warnings = [one for one in found["diagnostics"] if one.get("code") == "SOPULI-W016"]
+
+    assert len(warnings) == 1
+    assert "ACME_WEB_USER, ACME_BATCH_USER" in warnings[0]["message"]
+    assert warnings[0]["target"] == "appdb-alpha"
+    assert len(staged(store)) == 2
+
+
+def test_reuse_is_warned_about_only_when_a_password_was_supplied(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drawn password cannot collide with a hashed history; a dictated one can."""
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)
+
+    drawn = document(run(runner, write_config(CONFIG), "--output", "json"))
+    assert [one.get("code") for one in drawn["diagnostics"]].count("SOPULI-W017") == 0
+
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)
+    given = document(
+        run(
+            runner,
+            write_config(CONFIG),
+            "--from-stdin",
+            "--output",
+            "json",
+            stdin="SuppliedPassw0rdForAcme1\n",
+        )
+    )
+    reuse = [one for one in given["diagnostics"] if one.get("code") == "SOPULI-W017"]
+
+    assert given["exit_code"] == ExitCode.SUCCESS, "the warning rides a run that staged"
+    assert len(reuse) == 1
+    assert "PASSWORD_REUSE_MAX 3" in reuse[0]["message"]
+
+
+def test_a_profile_that_cannot_be_read_does_not_cost_the_run_its_limit(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The target answered the question that matters. Losing the byte limit
+    because a report could not be assembled would turn a reporting change into a
+    downgrade of the one reading that governs the draw."""
+
+    class _Refusing(_Session):
+        def password_constraints(self, account: str) -> AccountConstraints | None:
+            raise RuntimeError("ORA-00942: table or view does not exist")
+
+    def fake_open(target: Any, invocation: Any, config: Any) -> _Session:
+        return _Refusing(ASCII_128)
+
+    monkeypatch.setattr("sopuli.cli._open_session", fake_open)
+
+    found = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    assert found["constraints"]["source"] == "targets"
+    assert found["constraints"]["max_password_bytes"] == 128
+    assert "accounts" not in found["constraints"]
+    assert [one.get("code") for one in found.get("diagnostics", [])] == []
+    assert len(staged(store)) == 2
+
+
+def test_the_terminal_says_what_bound_the_draw(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The JSON is the contract and this is the sentence an operator reads."""
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)
+
+    result = run(runner, write_config(CONFIG))
+
+    assert "constraints: 128 bytes in US7ASCII, from appdb-alpha" in result.output
+
+
+def test_the_notes_are_visible_to_somebody_reading_a_terminal(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#309's rule: a warning nobody can see in the default output is not
+    surfaced. The emitter prints the command's text and not the document, so a
+    verify function reported only in `diagnostics[]` is reported to nobody who
+    ran this by hand."""
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)
+
+    output = run(runner, write_config(CONFIG)).output
+
+    assert "1 note:" in output
+    assert "ORA12C_STRONG_VERIFY_FUNCTION" in output
+
+
+def test_the_unread_estate_is_said_once_and_not_twice(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """`SOPULI-W015` stays out of the notes block: the constraints line above it
+    already says the estate was not read, and a block headed "notes" that repeats
+    the line above teaches a reader to skip it."""
+    output = run(runner, write_config(CONFIG)).output
+
+    assert "constraints: no target answered" in output
+    assert "note" not in output

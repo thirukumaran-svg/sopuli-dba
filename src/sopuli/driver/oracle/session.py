@@ -40,10 +40,12 @@ from typing import Any
 import oracledb
 
 from sopuli.config.model import ExpandedTarget
+from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.accounts import (
     describe,
     failed_logins,
     login_state,
+    password_constraints,
     resolve_name,
     resolve_profile,
 )
@@ -253,6 +255,23 @@ class OracleSession:
         """
         with self.connection.cursor() as cursor:
             return describe(cursor, account)
+
+    def password_constraints(self, account: str) -> AccountConstraints | None:
+        """What this target says about a password for one account (#317).
+
+        The reporting half of UC-1 §4 step 2 -- a verify function, the reuse
+        resources and the verifiers the account holds. **Nothing gates on any of
+        it**: none of the three can be evaluated before the statement is issued,
+        which is why they are read to be said rather than to be acted on.
+
+        Not cached, unlike :meth:`byte_limit`. That one is a property of the
+        database and this is a property of an account's profile, which a run
+        reads once per account and which a concurrent ``ALTER PROFILE`` can move
+        under it -- a cache keyed by account would save nothing and would be a
+        second place for the answer to age.
+        """
+        with self.connection.cursor() as cursor:
+            return password_constraints(cursor, account)
 
     def byte_limit(self) -> ByteLimit:
         """How long a password may be here, in this database's character set.

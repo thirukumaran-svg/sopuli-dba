@@ -248,9 +248,10 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
 
 1. Resolve selection and policy; resolve SecretRefs from templates.
 2. If reachable, connect to read *constraints* — **one connection per selected
-   target, not per account** — and let the strictest answer govern. If no target
-   is reachable, fall back to the policy's declared limits and say so in the
-   output. `--offline` declines to ask at all.
+   target, not per account** — and let the strictest answer govern the draw. The
+   constraints that cannot govern anything are read on the same connection and
+   reported. If no target is reachable, fall back to the policy's declared limits
+   and say so in the output. `--offline` declines to ask at all.
 3. Generate from a CSPRNG. Reject and regenerate candidates that violate charset,
    first-character, length-in-bytes, or composition requirements. Bounded retries.
 4. Acquire the lock for the secret path (Q2, #83) — which `generate` can do
@@ -264,22 +265,45 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
 
 **Notes**
 
-**What step 2 reads, and what it deliberately does not** (#317). The byte limit
-and the character set, and nothing else. Those are the *deterministic*
-constraints: a password too long in bytes, or holding characters the target will
-not accept, fails identically for every account in the selection and one policy
-fix ends it — which is exactly the class of refusal that can be moved from
-`apply` to here. The rest of the list this step used to name cannot be:
+**What step 2 binds the draw with, and what it only reports** (#317). One thing
+binds it: the byte limit, counted in the target's character set. That is the
+*deterministic* constraint — a password too long in bytes, or holding characters
+the target will not accept, fails identically for every account in the selection
+and one policy fix ends it, which is exactly the class of refusal that can be
+moved from `apply` to here.
+
+The other three names in step 2 cannot bind anything, and are read so the run can
+**say** they are there:
 
 - a **verify function** is arbitrary PL/SQL and cannot be consulted (invariants 13
-  and 14), and from inside a PDB `PASSWORD_VERIFY_FUNCTION` reads as the literal
-  `FROM ROOT`, so even its *presence* is not always knowable;
-- **`PASSWORD_REUSE_*`** history is hashed.
+  and 14). Its *presence* is reported, including the not-knowing: from inside a
+  PDB a **common** profile's `PASSWORD_VERIFY_FUNCTION` reads as the literal
+  `FROM ROOT`, and reporting that as *none* would tell an operator that nothing
+  will judge their password when something will. §5's `--preflight` rule — *not
+  knowing is not a finding* — applied to a reading rather than a check;
+- **`PASSWORD_REUSE_*`** history is hashed, so the two resource values are
+  reported and never interpreted. The warning fires only under `--from-stdin`:
+  fresh randomness cannot collide with a history, and a supplied password is
+  whatever an external system dictated;
+- **`PASSWORD_VERSIONS`** is which verifiers the account holds, reported as a
+  fact. Which of them a later rotation regenerates is the server's own
+  configuration and not this tool's.
 
 So `ORA-28003` and `ORA-28007` stay unpredictable before the statement is issued
-and #312 handles them by redrawing. Reporting the first two — including the
-not-knowing, which is §5's `--preflight` rule that *not knowing is not a
-finding* — is its own change and not this one.
+and #312 handles them by redrawing. None of this is a prediction that a password
+will be refused; it is the run saying that something other than the policy will
+judge it. The readings go in the document's `constraints` section
+(`03-json-output.md`), the caveats in `diagnostics[]` as `SOPULI-W016` and
+`SOPULI-W017`, and both are printed under the constraints line in the default
+output — a warning nobody can see in a terminal is not surfaced.
+
+**Measured, on 26ai Free 23.26.2.0.0.** `FROM ROOT` is narrower than the
+paragraph above used to leave it looking: a local profile read from inside a PDB
+answers with its function's name, and `DEFAULT` — which is common — answers
+`NULL`. So the unreadable case is a user-created common profile seen from a PDB.
+A profile naming no verify function reports the **string** `NULL`, and
+`PASSWORD_REUSE_MAX`/`PASSWORD_REUSE_TIME` report `UNLIMITED`; both are vendor
+words in columns a reader expects other things in.
 
 **There is no single strictest limit**, and the run does not invent one. A limit
 is a byte count *and* the character set it is counted in, which makes "stricter"
@@ -1184,9 +1208,12 @@ no earlier verb that could have avoided it:
   or in a bind (invariant 14), and there is no third way to invoke one. That is
   also why §5's flow no longer claims to pre-flight a password against the verify
   function "where possible": there is no possible.
-- From inside a PDB, `PASSWORD_VERIFY_FUNCTION` reads as the literal `FROM ROOT`,
-  so a service account without a root connection cannot even *name* the function
-  it has to satisfy (`02-oracle-privileges.md`).
+- From inside a PDB, a **common** profile's `PASSWORD_VERIFY_FUNCTION` reads as
+  the literal `FROM ROOT`, so a service account without a root connection cannot
+  even *name* the function it has to satisfy (`02-oracle-privileges.md`).
+  Measured for #317: a *local* profile answers with the function's name from the
+  same session, and `DEFAULT` answers `NULL` — so §4 step 2 reports the reading
+  it got rather than assuming the container decides it.
 - `ORA-28007` is hashed per-account history. `apply` already reads
   `PASSWORD_REUSE_MAX`/`TIME`; they state the rule, never whether this draw
   collides with it.

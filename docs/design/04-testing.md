@@ -319,7 +319,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | Idempotency: every command twice, second reports `unchanged` | any |
 | Drift: change a password out of band, `check` reports DRIFT, exit 3 | any |
 | **Lockout regression**: profile with `FAILED_LOGIN_ATTEMPTS 3`, run `check` against a drifted account 5×, assert the account never locks | any |
-| Verify-function: profile with `ora12c_strong_verify_function` and a violating policy — bounded regeneration, then a clear error carrying the server message. **Assert on the error, never on `DBA_PROFILES`**: in a PDB the `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` rather than the function name, so a dictionary check reports an unconfigured profile while the function is in fact enforcing (`ORA-28003` + `ORA-20000`) | any |
+| Verify-function: profile with `ora12c_strong_verify_function` and a violating policy — bounded regeneration, then a clear error carrying the server message. **Assert on the error, never on `DBA_PROFILES`**: in a PDB a *common* profile's `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` rather than the function name, so a dictionary check reports an unconfigured profile while the function is in fact enforcing (`ORA-28003` + `ORA-20000`). Measured for #317: a profile created *in* the PDB answers with the function's name, so a fixture that builds one locally can read it back — which is why `creds generate` reports three states and not two | any |
 | Password reuse: `PASSWORD_REUSE_MAX`, assert no blind retry on ORA-28007 | any |
 | 30-byte limit and 10G/11G verifiers | 11g XE / 18c XE |
 | Common user + `CONTAINER=ALL`, and refusal outside `CDB$ROOT` | any CDB |
