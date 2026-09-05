@@ -110,11 +110,17 @@ def refuse_if_over_limit(
     gives it no built-in on purpose -- "an unset max_targets is no limit, which is
     not the same claim as a default limit the tool chose" -- and inventing one here
     would put that default somewhere a reviewer reading the registry would not find
-    it. P5 does say "default 1", but it says it about *confirmation*, which is a
-    different gate and is not this one; wiring that up is #247's excluded scope,
-    waiting on a profile's `confirm:` reaching the resolver. #292 built the
-    *environment* half of that gate and left this one alone; whether P5's
-    "default 1" should ever fire is #294.
+    it.
+
+    P5 did say "default 1", about *confirmation* rather than about this ceiling.
+    #247 excluded that reading from its scope and wrote the tension down here,
+    where it sat as an open question until **#294 decided the trigger away**: a
+    threshold that prompted on every multi-target mutation would fire on estates
+    that configured nothing, and a ceiling is not a confirmation threshold in the
+    first place. So this function is the only consumer `max_targets` has and the
+    only one it is going to get -- which is worth knowing before reading the
+    absent built-in as an oversight. Confirmation is `confirm_environments` and
+    nothing else (:func:`confirmation_demanded`).
 
     **Refuses a `--dry-run` too**, for :func:`refuse_if_readonly`'s reason and one
     more of its own: the plan is what the operator is being shown, and showing a
@@ -167,10 +173,18 @@ def confirmation_demanded(
 ) -> Confirmation | None:
     """Whether ``safety.confirm_environments`` covers anything this run reaches.
 
-    P5 says every mutating command supports ``--confirm``/``--yes`` and that
-    confirmation is required by default in some circumstances; this is the
-    configurable half of that, and it had been parsed, ratcheted as a union and
-    read by nothing since the config model was written (#292).
+    P5 says every mutating command supports ``--confirm`` and that confirmation
+    is required in some circumstances; this is **all** of the circumstances. The
+    setting had been parsed, ratcheted as a union and read by nothing since the
+    config model was written (#292), and this is its consumer.
+
+    **There is no second trigger to come.** P5 asked for two more -- a built-in
+    `prod` and a blast radius over ``max_targets`` -- and #294 declined both: the
+    first is an unremovable floor under ``01-configuration.md`` §9's union
+    ratchet, and the second would prompt on every multi-target mutation for an
+    estate that wrote no safety block. So a ``None`` from here means *this run
+    needs no assent*, full stop, rather than *this gate had nothing to say and
+    another might*.
 
     **Matched against the environments the run reaches, not the estate's.**
     :class:`~sopuli.plan.BlastRadius` already carries them for this purpose --

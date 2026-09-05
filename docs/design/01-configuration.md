@@ -1015,7 +1015,8 @@ Four things about it are decisions:
   prod merely because prod exists elsewhere in the estate — a gate that asked
   every time is one that gets switched off within a week.
 - **`--confirm` satisfies it.** P5 says every mutating command supports
-  `--confirm`/`--yes`, and this setting says these environments are not entered
+  `--confirm` — and only that, since #294 struck the `--yes` alias P5 had
+  promised and nothing ever built — and this setting says these environments are not entered
   without an explicit yes; the flag is that yes, given in advance. So the setting
   configures *where a yes is required*, not a second gate that a yes cannot
   answer. A scheduler adds one flag rather than keeping an environment list in
@@ -1035,14 +1036,26 @@ the *account* guardrails of `02-oracle-privileges.md` §4 and never on a safety
 setting. It is not a setting, has no layer to arrive on, and so has nothing to
 relax (invariant 10).
 
-**There is no built-in list, and that is load-bearing.** P5 says confirmation is
-required by default when "the target is marked `environment: prod`", which reads
-like a built-in `confirm_environments: [prod]` — and §9 forbids exactly that: a
-built-in taking part in a union ratchet is an unremovable floor, so no layer
-could ever remove `prod` again. §9's own worked example of the trap is `confirm`.
-The two documents disagree, and the disagreement is filed rather than settled
-here (#294): what shipped is the configurable half, which no reading of either
-document objects to.
+**There is no built-in list, and that is load-bearing.** P5 used to say
+confirmation was required by default when "the target is marked
+`environment: prod`", which reads like a built-in `confirm_environments: [prod]`
+— and §9 forbids exactly that: a built-in taking part in a union ratchet is an
+unremovable floor, so no layer could ever remove `prod` again. §9's own worked
+example of the trap is `confirm`.
+
+**§9 won, and P5 was reworded** (#294, C17). The two documents could not both be
+honoured as written, and the tie-breaker was which of them would be doing damage
+if it were wrong: a §9 that yields here gains an unremovable floor and loses the
+property that makes the whole precedence table legible, while a P5 that yields
+loses a default some estates would have wanted and that any of them can write in
+one line. So confirmation is **opt-in**, `environment: prod` is a label like any
+other, and a site that wants the prompt lists `prod` — which is the thing the
+estate was always going to have to do for `staging` or `uat` anyway.
+
+The consequence is worth stating plainly rather than leaving to be inferred: an
+estate that marks a target `environment: prod` and writes no
+`confirm_environments` is **not prompted**, and that is specified behaviour and
+not an unimplemented trigger.
 
 ---
 
@@ -2365,3 +2378,4 @@ notices until a rotation.
 | C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. The run schema is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
 | C15 | ~~A binding names a secret and no store, anywhere — refuse, warn, or leave it to plan time?~~ | **decided in #118: mostly plan time, refused only when nothing could ever complete it.** `_vault_for`'s chain resolving to `None` is not always a mistake — a profile's `vault:` or `SOPULI_VAULT` may still supply one, and neither is consulted while bindings are built (§5, §9), so the null can be a real, temporary state rather than an error. Left alone: `config show --resolved` renders it as `-` (§10), and the command that actually needs a store fails there, once a run's profile is known and the answer is exact. Refused at load only for the narrower, genuinely unrecoverable case — `vaults:` declaring nothing at all, so there is no name even a profile or `SOPULI_VAULT` could point at (§10). The naive rule — refuse whenever a binding's store is unnamed — was rejected first: it rejects the legitimate config where one profile sets `vault:` and a run selects a different one that inherits `defaults.vault` instead |
 | C16 | ~~What does `--vault-token` take? Every document treated it as a step in a chain and none said what an operator types after it~~ | **decided: nothing — it takes a path under a different name.** `--vault-token-file PATH` is the command line's position in `method: token`'s chain (§3a), and a bare `--vault-token` is **refused** with a message naming invariant 1 and all four working sources. A token as an option *value* is visible in `ps` and in the Windows process list, and P5's "or a vault ref" escape cannot apply to vault auth itself, since a ref is resolved *by* an authenticated store — the same bootstrap shape P2 already describes for the database admin credential, one layer earlier. `--vault-token-stdin` is deferred rather than rejected, because `--from-stdin` (UC-1 §5) already claims the pipe; the constraint it will have to satisfy is banked in P5 today. Reusing the MaterialRef grammar (`--vault-token env:NAME`) was rejected outright: `env:` / `file:` in a SecretRef means "resolve this via an already-authenticated store", so two identical-looking grammars would have opposite resolution order. Filed as #145 and recorded in [ADR-007](../decisions/adr-007-vault-token-flag.md), which also confirms `vault login` plus `~/.vault-token` as the intended bootstrap for a human at a terminal, and gives the flag's file P4's permission check |
+| C17 | ~~P5 requires confirmation "by default" when a target is `environment: prod` or the blast radius exceeds `max_targets`; §9 forbids a built-in that joins a ratchet. Both are binding and they cannot both hold~~ | **decided: §9 governs, and P5 is reworded** (#294). Confirmation is opt-in through `safety.confirm_environments` and there is no built-in list — a built-in `[prod]` would be an unremovable floor, which is the trap §9 illustrates with `confirm` itself. The `max_targets` trigger is declined separately and for its own reason: it would prompt on every multi-target mutation for an estate that configured nothing, and it reads a *ceiling* as a confirmation threshold, which `refuse_if_over_limit` already refuses to do. Neither is deferred — a `prod` target nobody listed is not prompted for, by design, and `tests/test_cli_confirm_environments.py` pins it. `creds rotate` and `lock break` confirm unconditionally and were never part of the question |

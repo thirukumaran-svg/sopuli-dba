@@ -189,6 +189,21 @@ def issued(harness: dict[str, Any]) -> list[tuple[str, str]]:
     return [one for session in harness["sessions"] for one in session.changed]
 
 
+def radius(result: Result) -> int:
+    """How many targets the run resolved to, from its own plan.
+
+    #294's declined `max_targets` trigger is about the *radius*, so a test for it
+    has to establish the radius rather than infer it from an estate that happened
+    to be written to twice.
+    """
+    return int(json.loads(result.output)["plan"]["blast_radius"]["targets"])
+
+
+def reached(result: Result) -> list[str]:
+    """The environments the run resolved to, likewise."""
+    return list(json.loads(result.output)["plan"]["blast_radius"]["environments"])
+
+
 #: Every verb the setting governs, and the argv that reaches its mutation.
 #: `creds rotate` is absent on purpose -- it asks unconditionally (UC-1 §8 step
 #: 1), so the setting can only ever make its gate weaker. Its own suite covers
@@ -277,6 +292,91 @@ def test_a_dry_run_is_never_gated(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert versions(harness) == before
+
+
+# ------------------------------------------ the triggers that were declined (#294) ---
+#
+# P5 asked for three confirmation triggers and #294 kept one. The other two are
+# **declined, not deferred**, which is a thing tests can say and prose cannot: if
+# somebody later reads the absent behaviour as a gap and builds it, these fail.
+#
+# Both run unattended -- `CliRunner` has no terminal -- so a gate that fired would
+# refuse (exit 8) rather than block on a prompt. What is asserted is the exit code
+# plus the **plan**: that the run really did resolve to a prod target, or to two
+# targets, so a case that quietly narrowed to nothing cannot pass by having
+# nothing to be gated about. Deliberately not "the estate was written to":
+# `creds finish-rollover` legitimately writes nothing when no window is open, and
+# an assertion it cannot satisfy is one that gets deleted rather than fixed.
+
+
+@pytest.mark.parametrize("argv", VERBS)
+def test_a_prod_target_nobody_listed_is_not_prompted_for(
+    argv: list[str], runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """P5's second trigger, declined: `environment: prod` is a label like any other.
+
+    A built-in `confirm_environments: [prod]` is what that trigger amounts to, and
+    `01-configuration.md` §9 forbids a built-in that joins a union ratchet — no
+    layer could remove `prod` again, and §9 uses `confirm` itself as the worked
+    example of that trap. So the estate below marks a target `prod`, lists
+    nothing, and is not asked.
+
+    `tenant=alpha` **is** the prod target, which is what makes this the trigger's
+    case rather than a general smoke test -- and it is asserted from the plan
+    rather than from a write, because `creds finish-rollover` legitimately writes
+    nothing when no window is open and would pass a "the estate changed" check
+    vacuously.
+    """
+    estate()
+    result = run(
+        runner, argv, write_config(UNGUARDED), "--select", "tenant=alpha", "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert reached(result) == ["prod"]
+
+
+@pytest.mark.parametrize("argv", VERBS)
+def test_a_multi_target_run_is_not_prompted_for(
+    argv: list[str], runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """P5's third trigger, declined: blast radius is not a confirmation threshold.
+
+    "Confirmation is required when blast radius exceeds `max_targets` (default 1)"
+    would make **every** multi-target mutation prompt on an estate that wrote no
+    safety block — which is most estates and every other suite in this repository.
+    `max_targets` is a ceiling, and `refuse_if_over_limit` already declines to read
+    an unset one as a limit of anything.
+
+    No selector, so both targets are in scope: the radius is 2 against an unset
+    ceiling, which is exactly the combination the declined trigger would have
+    caught. The radius is read off the plan rather than assumed -- a run that
+    resolved to one target would pass the exit-code check while testing nothing.
+    """
+    estate()
+    result = run(runner, argv, write_config(UNGUARDED), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert radius(result) == 2
+
+
+def test_the_declined_triggers_do_not_return_when_the_setting_is_present(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The combination, because the two decisions could disagree and only here.
+
+    An estate that lists `dev` and runs against `prod` gets **no** prompt: the
+    setting is what decides, and `environment: prod` contributes nothing of its
+    own. A built-in that had survived as a union member would show up precisely
+    here — as a gate firing on an environment the file did not name.
+    """
+    harness = estate()
+    before = versions(harness)
+    listed_dev = CONFIG.replace("confirm_environments: [prod]", "confirm_environments: [dev]")
+    result = run(runner, ["creds", "apply"], write_config(listed_dev), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert versions(harness) != before, "`creds apply` writes, so this one can say so"
 
 
 # --------------------------------------------------------------- the refusal ---

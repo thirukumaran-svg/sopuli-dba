@@ -755,17 +755,35 @@ question is where their test database lives.
 **Safety**
 
 - Every mutating command supports `--dry-run` and prints the exact plan, redacted.
-- Every mutating command supports `--confirm`/`--yes`; interactive confirmation is
-  required by default when blast radius exceeds `max_targets` (default 1) or the
-  target is marked `environment: prod`.
-  **One of those three triggers is built** (#292): `safety.confirm_environments`
-  is enforced by `creds generate`, `creds apply` and `creds finish-rollover` —
-  `creds rotate` confirms unconditionally under UC-1 §8 step 1 and `lock break`
-  always has. The other two are **open, and not merely unimplemented**: a built-in
-  `[prod]` would be an unremovable floor under §9's union ratchet, which §9
-  explicitly forbids, and "blast radius over `max_targets`, default 1" would make
-  every multi-target mutation prompt on an estate that configured nothing. The
-  contradiction is filed as #294 rather than settled in a diff.
+- Every mutating command supports **`--confirm`**. **Interactive confirmation
+  is required where the configuration asks for it, and nowhere else** — decided in
+  #294, and this bullet is the rewrite that decision called for. It asked for
+  three triggers and only one survives:
+
+  | trigger | status |
+  |---|---|
+  | the run reaches an environment in `safety.confirm_environments` | **built** (#292) |
+  | ~~the target is marked `environment: prod`~~ | **declined** — it is a built-in `[prod]` in everything but name, and `01-configuration.md` §9 forbids a built-in that takes part in a union ratchet: no layer could ever remove `prod` again. §9's own worked example of the trap is `confirm` |
+  | ~~blast radius exceeds `max_targets` (default 1)~~ | **declined** — it would make every multi-target mutation prompt on an estate that wrote no safety block at all, and `max_targets` is a *ceiling* rather than a confirmation threshold. An unset one is no limit, which is not the same claim as a default limit the tool chose |
+
+  **The two declined triggers are declined, not deferred**, which is the half
+  worth writing down: an estate that marks a target `environment: prod` and does
+  not list `prod` gets no prompt, and that is the specified behaviour rather than
+  a gap. `sopuli/safety.py` and `tests/test_cli_confirm_environments.py` pin both.
+
+  Two gates confirm without consulting the setting, and are unaffected: `creds
+  rotate` confirms unconditionally under UC-1 §8 step 1, and `lock break` always
+  has. `--confirm` is the yes given in advance for all three; a profile's
+  `confirm: false` says nobody could be asked, which makes a gated run *refuse*
+  (exit 8) rather than proceed.
+
+  **The flag is `--confirm`, and there is no `--yes` alias.** This bullet
+  promised one from the first draft and nothing ever built it, which #294's
+  review caught: a spec naming a flag the binary does not have is the same defect
+  as a trigger that never fires, one document over. Struck rather than
+  implemented — the alias buys an operator four keystrokes and costs the CLI a
+  second spelling of one flag, and if a site wants it that is a change to D2's
+  grammar rather than a footnote here.
 - `--limit`/`--max-targets` prevents a wildcard from hitting 200 PDBs by accident.
 - Mutating operations take an advisory **lock** keyed on the secret path being
   mutated, so two operators or two CI jobs cannot rotate the same credential
@@ -875,3 +893,4 @@ somebody typing, the other is a deployed artefact a scheduler is running.
 | D7 | Minimum Oracle version | 11.2 stays in scope, and testing it is cheap: `gvenzl/oracle-xe:11.2.0.2-slim` pulls freely and starts in seconds, so 11.2 is a tier-2 compose service rather than maintainer-only (T1, resolved 2026-08-08). Two independent caveats on Apple Silicon: it has only the 23.x client, which reaches 19c and later, and the 11g XE image is published for linux/amd64 only. Intel macOS, Linux and Windows all have a 19.x client that reaches it. | decided |
 | D8 | CLI framework | click. The grammar (D2) and exit code 2 on usage errors are equally easy in argparse; the deciding factors were `click.testing.CliRunner`, which keeps tier-0 CLI tests in-process and I/O-free, and a real exception hierarchy to hang error mapping on. See `../decisions/adr-002-cli-framework.md`. | decided |
 | D9 | Dependency layering | Vendor clients are install extras; base carries only the CLI framework, the YAML parser, `pywin32` on Windows and sopuli itself, and opens no sockets. Stores and drivers follow the same rule, `sopuli-dba[all]` exists but is not the recommended install, a configured-but-uninstalled backend warns in `config validate` and fails `doctor`, and reaches the operator as `error.category: "config"` with exit 9. See `../decisions/adr-006-optional-dependencies.md`. | decided |
+| D10 | Which confirmation triggers are built in | **none** (#294). P5 asked for three; `safety.confirm_environments` is the only one, and the other two are declined rather than deferred. A built-in `[prod]` is an unremovable floor under `01-configuration.md` §9's union ratchet — §9 uses `confirm` as its worked example of exactly that trap — and "blast radius over `max_targets`, default 1" would prompt on every multi-target mutation for an estate that configured nothing, while also reading `max_targets` as a threshold when it is a ceiling. What P5 and §9 could not both be is *as written*; §9 governs and P5 now says so | decided |

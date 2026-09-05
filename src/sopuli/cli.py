@@ -1285,7 +1285,11 @@ def _confirm_environments(
 
     ``safety.confirm_environments`` had been parsed, ratcheted as a union across
     layers, and read by nothing (#292) -- a config that looked like protection and
-    was not, which is worse than the setting not existing. This is the consumer.
+    was not, which is worse than the setting not existing. This is the consumer,
+    and since #294 it is the only one: P5's other two triggers -- a built-in
+    `prod`, and a blast radius over `max_targets` -- were **declined** rather than
+    left for later. A target marked `environment: prod` that no layer listed is
+    not prompted for, by design.
 
     **The flag satisfies the setting**, rather than being a separate gate that
     also has to pass. P5 says every mutating command supports ``--confirm``, and

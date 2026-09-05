@@ -153,7 +153,18 @@ cleverness — two identical-looking grammars with opposite resolution order.
 `--vault-token-stdin` is deferred because `--from-stdin` claims the pipe, and the
 rule it will have to satisfy is banked in P5 now. Recorded in
 [ADR-007](decisions/adr-007-vault-token-flag.md), which also confirms `vault
-login` as the human bootstrap and gives the flag's file P4's permission check).
+login` as the human bootstrap and gives the flag's file P4's permission check),
+~~P5 requires confirmation by default on `environment: prod` and over
+`max_targets`, and §9 forbids a built-in that joins a ratchet~~ (C17 —
+**decided in #294: §9 governs and P5 is reworded.** Confirmation is opt-in
+through `safety.confirm_environments` alone. A built-in `[prod]` is an
+unremovable floor under the union ratchet — §9 illustrates that trap with
+`confirm` itself — and the blast-radius trigger would prompt on every
+multi-target mutation for an estate that configured nothing, while reading a
+*ceiling* as a confirmation threshold. Both are **declined rather than
+deferred**, so a `prod` target no layer listed is not prompted for by design, and
+`tests/test_cli_confirm_environments.py` fails if either returns. `creds rotate`
+and `lock break` confirm unconditionally and were never part of the question).
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
 documented default (P1), ~~grant `SELECT ON SYS.USER$` by default~~ (P2 —
