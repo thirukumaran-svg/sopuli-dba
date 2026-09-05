@@ -1,9 +1,14 @@
 """Reading an account's state from the dictionary (#178).
 
-`DBA_USERS`, `DBA_PROFILES` and `DBA_ROLE_PRIVS` — all reads, no `SYS.USER$`,
-which #86 made an optional grant and which nothing here touches. Three consumers
-want this object: UC-1 §5's pre-flight step 3, the client-side guardrails (#173),
-and `creds status`'s inventory.
+`DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and -- opportunistically --
+`V$PWFILE_USERS`: all reads, no `SYS.USER$`, which #86 made an optional grant and
+which nothing here touches. Three consumers want this object: UC-1 §5's pre-flight
+step 3, the client-side guardrails (#173), and `creds status`'s inventory.
+
+The last of the four is the one that is **expected to fail on a correct install**
+(#296). `V$PWFILE_USERS` is not in §2's grant set and #296 decided not to put it
+there, so :func:`password_file_member` answers `None` where nobody could look --
+and the guardrail turns that into a caveat rather than into a pass.
 
 Five things here were measured on 26ai Free 23.26.2.0.0 rather than reasoned
 about, and each would have been got wrong by reasoning. The fifth arrived later
@@ -169,6 +174,26 @@ ROLES_QUERY = (
     "connect by nocycle prior granted_role = grantee"
 )
 
+#: Whether the account is in the password file -- guardrail 3's only input, and
+#: the one dictionary read here that a correctly installed service account is
+#: **expected to be refused** (#296).
+#:
+#: ``V$PWFILE_USERS`` is not in ``02-oracle-privileges.md`` §2's grant set, and
+#: that is a decision rather than an omission: the accounts check 3 catches are
+#: largely caught by checks 2 and 4 as well, and widening what every service
+#: account needs for the remainder is a poor trade. So the grant is **optional**,
+#: the way ``SELECT ON SYS.USER$`` is (#86), and the answer here is three-valued:
+#: a member, not a member, or *nobody looked*.
+#:
+#: ``count(*)`` rather than selecting the row, because the question is membership
+#: and a count answers it in one column that is never null. What distinguishes
+#: "not a member" from "could not look" is therefore whether there is a row at
+#: all, which is exactly the distinction :func:`~sopuli.driver.oracle.capabilities.read`
+#: draws: an enumerated negative (``ORA-00942`` for the ungranted view,
+#: ``ORA-41900`` where the asker is privileged enough to be told it exists) is
+#: ``None``, and anything else raises.
+PWFILE_QUERY = "select count(*) from v$pwfile_users where username = :name"
+
 #: Just the spelling, for the one caller that needs the name and nothing else.
 #:
 #: Separate from :data:`USER_QUERY` rather than reusing :func:`describe`, because
@@ -262,7 +287,7 @@ def describe(cursor: Cursor, account: str) -> UserState | None:
     not create accounts (Q8 — provisioning is its own use case), so a missing one
     is a state to report rather than a failure to recover from.
 
-    Three queries, and roles are one of them rather than something a caller opts
+    Four queries, and roles are one of them rather than something a caller opts
     into. #178 raised the alternative — role membership is consulted only before
     a mutation, and `creds status` reads this object for every account in an
     estate, so a lazy read would save two thirds of the work on the command that
@@ -271,11 +296,23 @@ def describe(cursor: Cursor, account: str) -> UserState | None:
     :class:`~sopuli.driver.protocol.UserState` whose empty ``roles`` reads exactly
     like an account holding none, and guardrail 4 would pass. A safety check must
     not depend on a caller remembering to enable its input.
+
+    **The fourth is the password file** (#296), and it is here rather than in
+    :func:`login_state` for the same reason roles are: it is a guardrail input, so
+    it belongs on the object a mutation reads and not on the one `creds check`
+    reads. Unlike roles it is allowed to fail — the grant is optional — and the
+    ``None`` it then carries is the whole of what #296 fixed: guardrail 3 has been
+    reading "nobody looked" as "not a member" since it was written, because
+    nothing looked.
     """
     state = login_state(cursor, account)
     if state is None:
         return None
-    return replace(state, roles=_roles(cursor, state.name))
+    return replace(
+        state,
+        roles=_roles(cursor, state.name),
+        password_file_member=password_file_member(cursor, state.name),
+    )
 
 
 def login_state(cursor: Cursor, account: str) -> UserState | None:
@@ -420,6 +457,39 @@ def _user_row(cursor: Cursor, account: str) -> Any:
 def _limits(cursor: Cursor, profile: str) -> dict[str, str]:
     cursor.execute(PROFILE_QUERY, {"profile": profile})
     return {str(name): str(limit) for name, limit in cursor.fetchall() if limit is not None}
+
+
+def password_file_member(cursor: Cursor, name: str) -> bool | None:
+    """Whether ``name`` is in the password file, or ``None`` if nobody could look.
+
+    Guardrail 3's input (``02-oracle-privileges.md`` §4), and the **only**
+    guardrail input that is allowed to come back unknown. The contrast with
+    :func:`_roles` is the decision worth stating, because the two look like the
+    same situation and are not:
+
+    * ``DBA_ROLE_PRIVS`` is granted by §2, so a service account that cannot read
+      it is **misinstalled**, and an empty role set would read as a pass on a
+      check whose whole job is to refuse. That one raises
+      (:class:`RolesUnreadableError`).
+    * ``V$PWFILE_USERS`` is **not** granted by §2, and #296 decided not to add it:
+      the accounts check 3 catches are largely caught by checks 2 and 4 as well,
+      and widening the baseline install for the remainder is a poor trade. So the
+      ordinary, correct estate cannot answer this, and raising would refuse every
+      mutation on every correctly installed target.
+
+    What must not happen either way is the merge :mod:`sopuli.driver.oracle.privileges`
+    refuses one layer up — "I looked and found nothing" reported as the same thing
+    as "I could not look". So the answer is three-valued, the guardrail turns the
+    third into a caveat rather than a pass, and the command reports it.
+
+    ``name`` is bound **unchanged**, for the reason :func:`failed_logins` gives:
+    it is already the spelling ``DBA_USERS`` gave back, ``V$PWFILE_USERS.USERNAME``
+    carries the same one, and upper-casing here would miss a quoted lower-case
+    account and return a zero count -- which reads as *not a member* and is the
+    one wrong answer that is silent.
+    """
+    row = read(cursor, PWFILE_QUERY, name=name)
+    return None if row is None else bool(row[0])
 
 
 def _roles(cursor: Cursor, name: str) -> frozenset[str]:

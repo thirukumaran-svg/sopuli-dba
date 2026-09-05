@@ -291,6 +291,59 @@ reproduce reliably, drop hash mode from the CLI surface entirely — `login`
 with the optional `LCOUNT` guard is already the complete default path, so
 nothing else depends on the outcome.
 
+### §4 check 3, and the optional `V$PWFILE_USERS` grant
+
+Guardrail 3 refuses an account in the password file, and the only place to see
+that is `V$PWFILE_USERS`. It is **optional**, not part of the default install —
+decided in #296, which considered adding it to the set above and did not:
+
+```sql
+GRANT SELECT ON SYS.V_$PWFILE_USERS TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
+```
+
+**Measured on 26ai Free 23.26.2.0.0, 2026-09-05.** A service account holding
+exactly the grants above gets
+`ORA-00942: table or view "SYS"."V_$PWFILE_USERS" does not exist` from it — the
+same enumerated negative `ABSENT_CODES` already reads as *absent* — so the
+driver answers `None` and never `False`. With the grant it answers a count from
+inside a PDB without further privilege.
+
+**Why it stays optional.** The accounts check 3 catches are largely caught by
+checks 2 and 4 as well, and widening what every service account needs for the
+remainder is a poor trade. What is left over is real, though, and was measured
+rather than argued: an account granted `SYSDBA` **inside a PDB** appears in
+`V$PWFILE_USERS` with its own `CON_ID` — visible from the PDB and from
+`CDB$ROOT` — while reading `ORACLE_MAINTAINED = 'N'` and holding no roles at
+all. So it is a site-created account that checks 2, 4 and 5 all pass, and only
+this one refuses. Sites have those.
+
+**Without the grant the check does not silently pass.** That was the bug (#296):
+nothing populated the field, so *nobody looked* read as *not a member*. The run
+now says so — `SOPULI-W018`, one warning per target, naming this grant — and
+goes ahead, because refusing on an unread check would refuse every mutation on
+every estate installed exactly as documented. §4 has the reasoning. What it looks
+like, pasted from a `creds apply` against a PDB service account holding exactly
+the grants above:
+
+```
+ACCOUNT        TARGET       STATE    DETAIL
+acme_web_user  appdb-alpha  IN_SYNC  the vault's password is already accepted; nothing to change
+
+nothing changed
+
+1 note:
+  appdb-alpha: guardrail check `password_file` did not run: could not establish whether the account is in the password file -- GRANT SELECT ON SYS.V_$PWFILE_USERS to the service account to enable it (ACME_WEB_USER)
+```
+
+and, once the grant is taken, the same run with no note. With `SYSDBA` granted to
+`ACME_WEB_USER` and the view readable, check 3 fires for the first time:
+
+```
+ACCOUNT        TARGET       STATE    DETAIL
+acme_web_user  appdb-alpha  SKIPPED  the account is in the password file
+```
+
+
 ---
 
 ## 3. What must not be granted
@@ -373,7 +426,7 @@ was.
 
 | Row | Why not | What it would take |
 |---|---|---|
-| `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's grant set, and an account holding them would not be exercising them on this connection anyway | a grant added only so the tool can report |
+| `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's default grant set, and an account holding them would not be exercising them on this connection anyway | the optional grant §2 documents for guardrail 3 (#296) — which a site may already have taken, and which this audit does not yet read |
 | `EXECUTE ON DBMS_LOCK` | an **object** privilege; the three views above carry system privileges and roles | `USER_TAB_PRIVS` and `ROLE_TAB_PRIVS`, the second of which does not compose with the nested-role traversal — a design question rather than a query |
 
 A refused `DBA_ROLE_PRIVS` joins them at runtime, taking the three role rows with
@@ -396,7 +449,8 @@ Before any `ALTER USER`, the tool refuses when the target account:
    entry) — the config *is* the whitelist, just advisory rather than enforced
 2. has `DBA_USERS.ORACLE_MAINTAINED = 'Y'` — covers SYS, SYSTEM, DBSNMP,
    GSMADMIN_INTERNAL and the rest without a hand-maintained list going stale
-3. appears in `V$PWFILE_USERS`
+3. appears in `V$PWFILE_USERS` — behind an **optional** grant, so on most
+   estates this check has no input and says so rather than passing (#296; §2)
 4. holds `DBA`, `PDB_DBA`, `CDB_DBA`, or `AUDIT_ADMIN`
 5. is on a literal deny list, for 11.2 where `ORACLE_MAINTAINED` does not exist
 
@@ -472,16 +526,38 @@ suite, while `creds apply` would happily issue `ALTER USER` against an
   be able to branch on "this account was forced" rather than grep a sentence. It
   is omitted where nothing was waived: the field records overrides, not intent.
 
-**Two of the five checks cannot fire as things stand**, and both are recorded
-rather than quietly tolerated:
+**Two of the five checks could not fire when #286 landed**, and both were
+recorded rather than quietly tolerated. Both are now built:
 
-- **Check 3 never runs.** `UserState.password_file_member` is `None`-when-unknown
-  and **nothing populates it** — no query in the Oracle driver reads
-  `V$PWFILE_USERS`, and §2 does not grant it, which is the same reason
-  `privileges.py` reports `SYSDBA`/`SYSOPER` as `UNAUDITABLE` rather than absent.
-  So `review()` currently reads "I could not look" as "I looked and found
-  nothing", which is exactly the merge that module refuses to make. Filed as
-  #296.
+- ~~**Check 3 never runs.**~~ **Fixed in #296**, and the fix is not the obvious
+  one. `UserState.password_file_member` was `None`-when-unknown and *nothing
+  populated it* — no query read `V$PWFILE_USERS` — so `review()` read "I could
+  not look" as "I looked and found nothing", which is exactly the merge
+  `privileges.py` refuses to make one layer up about the same view. The driver
+  now reads it. That alone would not have fixed anything: §2 deliberately does
+  not grant the view, so the answer on a correct install is still *unknown*.
+
+  What fixes it is that **`review()` has a third answer**. Refused, permitted,
+  or *could not establish* — a `Caveat`, which refuses nothing, rides through
+  `--force` untouched, and is reported as `SOPULI-W018`, one warning per target,
+  naming the optional grant that would settle it. Three things about it are
+  decisions:
+
+  - **It does not refuse.** The estate that cannot answer check 3 is the
+    correctly installed one, so refusing would mean the tool mutating nothing
+    anywhere. The shape is `--preflight`'s for a privilege audit the service
+    account may not read: a `warning`-level finding, and the run proceeds.
+  - **It is one entry per (target, check), not per account.** What could not be
+    read is a grant on a database; an estate with forty accounts on one target
+    would otherwise be told the same fact forty times. `creds generate` groups
+    the constraints it cannot check the same way and for the same reason.
+  - **It is printed, not only serialised.** The emitter prints the command's
+    text rather than the document, so a run-level warning is invisible to
+    somebody reading a terminal — and a guardrail that did not run, reported
+    only in JSON, is reported to nobody who ran the command by hand (#309).
+
+  An account the guardrails **refused** contributes no caveat: it was not
+  touched, so what an unread check might have said about it changed nothing.
 - ~~**The "operator named the account" half of the refusal rule is
   unreachable.**~~ **Built in #297**, which added `--account` along with
   `--target`, `--group` and `--application`. An account the operator named is

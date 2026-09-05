@@ -277,3 +277,59 @@ def test_the_self_inspection_views_need_no_grant(service_account: Any) -> None:
         "select count(*) from session_privs",
         "select count(*) from user_sys_privs",
     )
+
+
+# --------------------------------------------- the check that cannot look (#296) ---
+
+
+def test_the_password_file_is_not_readable_under_the_documented_grants(
+    service_account: Any,
+) -> None:
+    """§4 check 3's input, refused to the account §2 describes.
+
+    Measured, and it is the measurement the whole of #296 turns on:
+    `ORA-00942: table or view "SYS"."V_$PWFILE_USERS" does not exist`, from an
+    account holding exactly the documented set. That code is in
+    :data:`~sopuli.driver.oracle.capabilities.ABSENT_CODES`, so the driver reads
+    it as an enumerated negative and answers `None` -- *nobody looked* -- rather
+    than `False`, which would read as *not a member* and pass the guardrail.
+
+    Asserted here rather than only in tier 0 because tier 0 is handed the
+    exception. What only a server can say is that the correct install really is
+    the one that cannot answer, which is why #296 made the check a caveat instead
+    of a refusal.
+    """
+    with pytest.raises(Exception, match="ORA-00942") as raised:
+        _run(service_account, "select count(*) from v$pwfile_users")
+
+    assert "ORA-00942" in str(raised.value)
+
+
+def test_an_account_is_still_described_with_the_password_file_unreadable(
+    service_account: Any,
+) -> None:
+    """The consequence, end to end: `describe_user` succeeds and the field is
+    `None`.
+
+    The contrast with `DBA_ROLE_PRIVS` is the design. That one is granted, so an
+    account that cannot read it is misinstalled and the driver refuses to
+    describe anything (`RolesUnreadableError`); this one is deliberately not, so
+    refusing would mean a correctly installed tool could mutate nothing anywhere.
+    The account described here is the service account itself, which is the only
+    one this fixture is sure exists.
+
+    **Returning at all is the control**, and the first draft of this test got
+    that wrong: it asserted `state.roles` was non-empty, on the assumption that
+    an account reachable through `DBA_ROLE_PRIVS` must hold something. §2 grants
+    privileges directly and no roles, so this account holds none and the
+    assertion failed against a database that was behaving exactly as documented.
+    What proves the roles view was read is that `describe_user` did not raise --
+    an empty set and an unreadable view are precisely the two things
+    `RolesUnreadableError` exists to keep apart.
+    """
+    state = service_account.describe_user(ACCOUNT)
+
+    assert state is not None
+    assert state.password_file_member is None
+    assert state.roles == frozenset(), "§2 grants privileges directly and no roles"
+    assert state.vendor_maintained is False, "the control: DBA_USERS was read"

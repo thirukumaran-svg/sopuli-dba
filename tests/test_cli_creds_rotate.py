@@ -258,7 +258,11 @@ class FakeSession:
 
 
 def user(name: str = "ACME_WEB_USER", **fields: Any) -> UserState:
-    return UserState(**{"name": name, "status": "OPEN", **fields})
+    return UserState(
+        # `False` rather than the default, for `test_cli_creds_apply.py`'s
+        # reason: a rotation case must not also be a guardrail-3 case (#296).
+        **{"name": name, "status": "OPEN", "password_file_member": False, **fields}
+    )
 
 
 Harness = Callable[..., dict[str, Any]]

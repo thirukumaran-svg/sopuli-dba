@@ -97,6 +97,7 @@ from sopuli.diagnostics import (
     PASSWORD_GRACE_PERIOD,
     ROTATION_UNCONFIRMED,
     constraint_diagnostics,
+    guardrail_diagnostics,
     install_diagnostics,
     lock_broken,
     unlistable_stores,
@@ -2921,6 +2922,8 @@ def creds_apply(
 
     document.lock = build_lock_section(manager)
     document.results = [_applied_json(record, promotions) for record in applied]
+    unchecked = _guardrail_caveats(applied)
+    document.diagnostics.extend(unchecked)
     states = [record.outcome.state for record in applied]
     # `mutated`, not `changed`: an account this run unlocked and did not need to
     # re-password changed, and a summary counting only the DDL would call a run
@@ -2979,7 +2982,13 @@ def creds_apply(
         repair=repair,
         stopped=None if stolen is None else str(stolen),
     )
-    return f"{_header(plan, sources)}\n\n{table}"
+    # Printed as well as put in `diagnostics[]`, which is `creds generate`'s rule
+    # and #309's before it: the emitter prints the command's text and not the
+    # document, so a run-level warning is invisible to somebody reading a
+    # terminal -- and a guardrail that did not run, reported only in JSON, is
+    # reported to nobody who ran this by hand.
+    notes = render_notices([one.message for one in unchecked])
+    return "\n".join([f"{_header(plan, sources)}\n\n{table}", *notes])
 
 
 @dataclass(frozen=True)
@@ -3012,6 +3021,13 @@ class _Applied:
     #: waiving, so the row carries what was gone past rather than merely that the
     #: run was allowed to proceed.
     overridden: tuple[guardrails.Refusal, ...] = ()
+    #: §4 checks that could not be run against this account (#296). Empty where
+    #: every check had its input; on Oracle, non-empty for check 3 on any target
+    #: that has not taken the optional `V$PWFILE_USERS` grant, which is most of
+    #: them. Reported as a run-level warning rather than on the row, because what
+    #: could not be read is a grant on the *target* and one entry per account
+    #: would say the same thing forty times.
+    caveats: tuple[guardrails.Caveat, ...] = ()
     duration_ms: int | None = None
     error: Error | None = None
     #: Whether the server refused the *password itself* -- the vendor-neutral
@@ -3378,6 +3394,7 @@ def _apply_one(
     started = time.monotonic()
     before = None
     overridden: tuple[guardrails.Refusal, ...] = ()
+    caveats: tuple[guardrails.Caveat, ...] = ()
     enforced: tuple[AttributeChange, ...] = ()
     try:
         user = session.describe_user(binding.account)
@@ -3416,6 +3433,11 @@ def _apply_one(
                 duration_ms=_elapsed(started),
             )
         overridden = review.overridden
+        # §4's third answer, carried on the accounts this run went on to act on
+        # (#296). Not on the refused ones above: an account the guardrails turned
+        # away was not touched, so what an unread check might have said about it
+        # changed nothing.
+        caveats = review.caveats
 
         if attributes.requested():
             # The driver decides what still needs doing and reports a row either
@@ -3437,6 +3459,7 @@ def _apply_one(
                     changed=False,
                     attributes=enforced,
                     overridden=overridden,
+                    caveats=caveats,
                     duration_ms=_elapsed(started),
                 )
 
@@ -3461,6 +3484,7 @@ def _apply_one(
                 # override only when something happened would be missing exactly
                 # the runs somebody skims looking for `--force`.
                 overridden=overridden,
+                caveats=caveats,
                 duration_ms=_elapsed(started),
             )
 
@@ -3506,6 +3530,7 @@ def _apply_one(
             # row: it happened, and a row that dropped it would leave a mutation
             # this run made in no document at all.
             overridden=overridden,
+            caveats=caveats,
             attributes=enforced,
             duration_ms=_elapsed(started),
             error=reported,
@@ -3523,6 +3548,7 @@ def _apply_one(
         verified_before=before,
         rollover=_rollover_json(after_user),
         overridden=overridden,
+        caveats=caveats,
         attributes=enforced,
         duration_ms=_elapsed(started),
     )
@@ -4489,6 +4515,27 @@ def _rotated_by() -> str:
     return f"{holder.os_user}@{holder.host}"
 
 
+def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
+    """§4's checks that could not be run, as this run's warnings (#296).
+
+    A run-level diagnostic rather than a ``results[].warnings`` entry, and the
+    reason is what the reader is being told: the fact that could not be read is a
+    grant on a *target*, not a property of an account, so the account list belongs
+    inside one message and not spread over forty rows. `creds generate` already
+    groups the constraints it cannot check the same way, for the same reason.
+
+    Emitted by `apply` and by `rotate`, which are the two verbs that ask the
+    guardrails anything. Grouping and wording are
+    :func:`sopuli.diagnostics.guardrail_diagnostics`', because turning a domain
+    object into something an operator reads is that module's job and the remedy it
+    appends is a `GRANT` statement -- product knowledge the guardrails deliberately
+    do not carry.
+    """
+    return guardrail_diagnostics(
+        [(record.binding.target, caveat) for record in applied for caveat in record.caveats]
+    )
+
+
 def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) -> dict[str, Any]:
     """One `results[]` entry, once the promotion for its document is known."""
     binding = record.binding
@@ -5083,6 +5130,8 @@ def creds_rotate(
     document.results = sequence.staged_json + [
         _applied_json(record, sequence.promotions) for record in sequence.applied
     ]
+    unchecked = _guardrail_caveats(sequence.applied)
+    document.diagnostics.extend(unchecked)
     states = [record.outcome.state for record in sequence.applied]
     changed = sum(1 for record in sequence.applied if record.mutated)
 
@@ -5136,7 +5185,10 @@ def creds_rotate(
         repair=repair,
     )
     header = _rotation_header(plan, sequence.selections, max_age_days)
-    return f"{header}\n\n{table}"
+    # See `apply`'s: a warning that cannot be seen in the default output is not
+    # surfaced.
+    notes = render_notices([one.message for one in unchecked])
+    return "\n".join([f"{header}\n\n{table}", *notes])
 
 
 @dataclass

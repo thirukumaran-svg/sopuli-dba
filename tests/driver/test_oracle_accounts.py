@@ -26,6 +26,7 @@ import pytest
 from oracle_harness import Environment
 from sopuli.check import grace_warning
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
+from sopuli.driver.guardrails import ADMIN_ROLES
 from sopuli.driver.protocol import PASS, Credential
 from sopuli.secrets import Secret
 
@@ -76,6 +77,37 @@ def _run(session: Any, *statements: str) -> None:
 
 
 @pytest.fixture
+def sysdba(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
+    """A `SYS AS SYSDBA` connection, for the one statement `system` cannot issue.
+
+    Measured: `GRANT SYSDBA TO <account>` from `system` is `ORA-01031`, which is
+    Oracle refusing to let an administrative privilege be handed out by anything
+    short of one. Raw `oracledb` rather than the tool's driver, for the reason
+    `test_oracle_service_account.py` gives for the same fixture: `connect` has no
+    `SYSDBA` mode and must not grow one -- §3 puts `SYSDBA` on the must-not-grant
+    list, and this is an operator's statement rather than one of the tool's.
+    """
+    oracledb = pytest.importorskip("oracledb")
+    session_module.initialise(env=os.environ)
+    connection = oracledb.connect(
+        user="sys",
+        password=PASSWORD,
+        dsn=live_oracle.dsn,
+        mode=oracledb.AUTH_MODE_SYSDBA,
+    )
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+def _as_sysdba(connection: Any, *statements: str) -> None:
+    with connection.cursor() as cursor:
+        for statement in statements:
+            cursor.execute(statement)
+
+
+@pytest.fixture
 def account(session: Any) -> Iterator[Any]:
     """One account on a profile that sets two limits and leaves the rest unset.
 
@@ -97,6 +129,11 @@ def account(session: Any) -> Iterator[Any]:
 
 
 def _drop(session: Any) -> None:
+    # `SYSDBA` needs no separate revoke here, which was measured rather than
+    # assumed (#296): dropping an account that holds it takes its row out of
+    # `V$PWFILE_USERS` too. A suppressed `revoke` beside these would fail with
+    # `ORA-01031` on this connection anyway, and would read as cleanup that is
+    # not happening.
     for statement in (f"drop user {ACCOUNT} cascade", f"drop profile {PROFILE} cascade"):
         # Absent is the desired state, so "it was not there" is a success.
         with contextlib.suppress(Exception):
@@ -268,6 +305,63 @@ def test_the_effective_rollover_time_is_carried(account: Any) -> None:
     assert state is not None
     assert state.rollover_time == "1", "set on the profile"
     assert state.password_reuse_max == "UNLIMITED", "unset, so resolved from DEFAULT"
+
+
+# ------------------------------------------------------- the password file (#296) ---
+#
+# Guardrail 3's input, read for the first time. Everything below was measured on
+# 26ai Free 23.26.2.0.0 on 2026-09-05; the tier-0 fixtures in `test_accounts.py`
+# carry the same literals.
+
+
+def test_an_ordinary_account_is_not_in_the_password_file(account: Any) -> None:
+    """`False`, and specifically not `None`.
+
+    This connection can read `V$PWFILE_USERS` -- `system` holds
+    `SELECT_CATALOG_ROLE` -- so the answer is an answer, which is what makes it
+    the control for the two cases below. Before #296 nothing populated the field
+    at all and every account read `None`.
+    """
+    state = account.describe_user(ACCOUNT)
+
+    assert state is not None
+    assert state.password_file_member is False
+
+
+def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
+    account: Any, sysdba: Any
+) -> None:
+    """The account guardrail 3 exists for, and the one checks 2, 4 and 5 miss.
+
+    Measured here rather than assumed, because the obvious reasoning gets it
+    wrong twice over: a *local* account in a PDB does land in `V$PWFILE_USERS`
+    (with its own `CON_ID`, and visible from `CDB$ROOT` as well), and it does so
+    while reading `ORACLE_MAINTAINED = 'N'` and holding no roles. So this is a
+    site-created application account that every other §4 check passes, and until
+    #296 the tool would have rotated it.
+
+    `SYSDBA` is granted and revoked inside one test, over a `SYS AS SYSDBA`
+    connection because `system` is refused it (`ORA-01031`, measured). No
+    teardown is needed beyond the fixture's own `drop user`: dropping an account
+    that holds `SYSDBA` takes its row out of `V$PWFILE_USERS` as well, which was
+    measured rather than assumed.
+    """
+    _as_sysdba(sysdba, f"grant sysdba to {ACCOUNT}")
+    try:
+        state = account.describe_user(ACCOUNT)
+
+        assert state is not None
+        assert state.password_file_member is True
+        # The three checks that do not catch it, asserted alongside so the claim
+        # above is measured rather than asserted in prose.
+        assert state.vendor_maintained is False
+        assert not ADMIN_ROLES & state.roles
+    finally:
+        _as_sysdba(sysdba, f"revoke sysdba from {ACCOUNT}")
+
+    after = account.describe_user(ACCOUNT)
+    assert after is not None
+    assert after.password_file_member is False, "the revoke takes it back out of the view"
 
 
 # --------------------------------------------------------- the grace period ---

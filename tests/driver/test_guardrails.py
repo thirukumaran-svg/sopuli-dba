@@ -181,3 +181,75 @@ def test_every_check_but_the_first_is_overridable(check: str) -> None:
     prose, so a sixth guardrail has to choose a side deliberately."""
     assert Refusal(check, "ACME_WEB_USER", "…").overridable
     assert not Refusal(DECLARED, "ACME_WEB_USER", "…").overridable
+
+
+# ---------------------------------------------- the third answer (#296, §4.3) ---
+#
+# Refused, permitted, or *could not establish*. Check 3 is the only one that can
+# produce the third today, and it produces it on essentially every estate:
+# `V$PWFILE_USERS` is outside §2's grant set on purpose.
+
+
+def test_an_unreadable_password_file_is_a_caveat_and_never_a_pass() -> None:
+    """The bug #296 reported, from the other end.
+
+    `password_file_member` was `None` for every account on every path, and
+    `if state.password_file_member:` read that as *not a member*. So check 3 had
+    never fired and could not. The fix is not that it now refuses -- it must not,
+    or a correctly installed estate could apply nothing -- but that the
+    not-knowing is reported instead of being indistinguishable from a clean
+    account.
+    """
+    reviewed = review(account(password_file_member=None), declared=DECLARED_SET)
+
+    assert reviewed.permitted
+    assert reviewed.refusals == ()
+    assert [caveat.check for caveat in reviewed.caveats] == [PASSWORD_FILE]
+    assert reviewed.caveats[0].account == "ACME_WEB_USER"
+    assert "could not establish" in reviewed.caveats[0].reason
+
+
+def test_an_answered_check_leaves_no_caveat() -> None:
+    """Both answers, because only the absence of one is a caveat. A `False` that
+    produced one would make the warning fire on the estates that took the grant,
+    which is the reading that teaches people to filter it."""
+    assert review(account(password_file_member=False), declared=DECLARED_SET).caveats == ()
+    assert review(account(password_file_member=True), declared=DECLARED_SET).caveats == ()
+
+
+def test_a_caveat_does_not_make_an_account_impermissible() -> None:
+    """Stated separately from the reasons above, because it is the property every
+    other verb depends on: `permitted` reads `refusals` and nothing else."""
+    reviewed = review(account(password_file_member=None), declared=DECLARED_SET)
+
+    assert reviewed.permitted is True
+
+
+def test_a_caveat_survives_force() -> None:
+    """`--force` waives an answer, and a caveat is the absence of one.
+
+    Suppressing it under the flag would hide a missing grant from the one
+    operator most likely to be reading what the guardrails did -- and would make
+    the report of what this run established depend on a flag about what it was
+    allowed to do.
+    """
+    reviewed = review(
+        account("dbsnmp", vendor_maintained=True, password_file_member=None),
+        declared=DECLARED_SET,
+        force=True,
+    )
+
+    assert reviewed.permitted
+    assert [refusal.check for refusal in reviewed.overridden] == [VENDOR_MAINTAINED]
+    assert [caveat.check for caveat in reviewed.caveats] == [PASSWORD_FILE]
+
+
+def test_a_caveat_rides_alongside_a_refusal_from_another_check() -> None:
+    """The two are independent lists, and an account refused by check 4 with
+    check 3 unreadable has both to report."""
+    reviewed = review(
+        account(password_file_member=None, roles=frozenset({"DBA"})), declared=DECLARED_SET
+    )
+
+    assert [refusal.check for refusal in reviewed.refusals] == [PRIVILEGED_ROLE]
+    assert [caveat.check for caveat in reviewed.caveats] == [PASSWORD_FILE]

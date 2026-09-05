@@ -43,6 +43,7 @@ from types import MappingProxyType
 from sopuli.clock import Skew, to_rfc3339
 from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.constraints import NAMED, POLICY, UNKNOWN, AccountConstraints, Constraints
+from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
 from sopuli.install_shape import INSTALLED, InstallShape
 from sopuli.lock.keys import LockKey
@@ -162,6 +163,29 @@ VERIFY_FUNCTION_UNCHECKABLE = "SOPULI-W016"
 #: both being numbers -- and this run measured neither interaction nor the
 #: history.
 PASSWORD_REUSE_ENFORCED = "SOPULI-W017"
+
+#: A §4 account guardrail could not be run, because the fact it checks could not
+#: be read (#296). The run went ahead; the check did not.
+#:
+#: Its own code for #216's rule -- a code exists for what the exit code cannot
+#: tell you. This run exits 0 with every account applied, and the thing that is
+#: not in the exit code, the states, or ``results[].overridden`` is that one of
+#: the five checks contributed nothing to the answer. An operator who reads
+#: ``changed: true`` and no refusal is entitled to believe five checks passed.
+#:
+#: **Not a refusal**, and the reason is the estate rather than the severity.
+#: Check 3 reads ``V$PWFILE_USERS``, which ``02-oracle-privileges.md`` §2
+#: deliberately does not grant -- so refusing on an unread check would refuse
+#: every mutation on every correctly installed target. The optional grant is what
+#: silences it, which is what makes it a warning worth leaving on rather than one
+#: a reader learns to filter: it has a remedy, and taking the remedy is a site's
+#: decision about how much of the guardrail set it wants.
+#:
+#: One per (target, check) rather than per account, on
+#: :data:`VERIFY_FUNCTION_UNCHECKABLE`'s reasoning: the missing grant is a
+#: property of the target, and an estate with forty accounts on one database
+#: would otherwise be told the same fact forty times.
+GUARDRAIL_UNCHECKED = "SOPULI-W018"
 
 #: An estate uses ``auth: external`` and this machine has no wallet it can read
 #: (#215). Its own code rather than a widening of anything above: the remedy is a
@@ -360,6 +384,15 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "rather than interpreted -- they interact, and this run measured neither the "
             "interaction nor the history."
         ),
+        GUARDRAIL_UNCHECKED: (
+            "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
+            "against a target, because the fact it checks could not be read. The run "
+            "proceeded and the other checks were applied. Today this is always check 3, "
+            "the password file: `V$PWFILE_USERS` is outside §2's grant set on purpose, so "
+            "the code appears on a correctly installed estate and the optional grant is "
+            "what removes it. It is reported rather than passed over silently because a "
+            "check with no input reads exactly like a check that found nothing wrong."
+        ),
     }
 )
 
@@ -518,6 +551,66 @@ def _accounts(names: Sequence[str]) -> str:
     if len(names) > 3:
         return f"{len(names)} accounts"
     return ", ".join(names)
+
+
+#: What to do about a guardrail that could not be run, by check (#296).
+#:
+#: Here rather than on :class:`~sopuli.driver.guardrails.Caveat`, because a
+#: remedy is a grant on one product and the guardrails are product-neutral by
+#: design -- ``guardrails.py`` states the rule and the driver supplies the facts,
+#: and a `GRANT` statement is a fact. This module is already the boundary where a
+#: domain object becomes something an operator reads, and it is already Oracle-
+#: aware; a caveat with no entry here is reported without a remedy rather than
+#: not reported.
+GUARDRAIL_REMEDIES: Mapping[str, str] = MappingProxyType(
+    {
+        PASSWORD_FILE: "GRANT SELECT ON SYS.V_$PWFILE_USERS to the service account to enable it",
+    }
+)
+
+
+def guardrail_diagnostics(caveats: Sequence[tuple[str, Caveat]]) -> list[Diagnostic]:
+    """§4's checks that could not be run, as the warnings a consumer reads (#296).
+
+    ``caveats`` is (target, caveat) pairs, in the order the run produced them --
+    the target is the command's to know and the caveat is the guardrail's, which
+    is why neither type carries both.
+
+    **One entry per (target, check)**, on
+    :data:`VERIFY_FUNCTION_UNCHECKABLE`'s reasoning: what could not be read is a
+    grant on a database, so an estate with forty accounts on one target would
+    otherwise be told the same fact forty times. The accounts are named in the
+    message while naming them is useful, by :func:`_accounts`' rule.
+
+    The caller passes only the accounts the run **acted on** -- an account the
+    guardrails already turned away was not touched, so what an unread check might
+    have said about it changed nothing. This function does not enforce that and
+    could not: which accounts a run acted on is the command's knowledge, and the
+    rule is written where the pairs are built.
+    """
+    grouped: dict[tuple[str, str], list[Caveat]] = {}
+    for target, caveat in caveats:
+        grouped.setdefault((target, caveat.check), []).append(caveat)
+
+    notices: list[Diagnostic] = []
+    for (target, check), group in grouped.items():
+        names = [one.account for one in group]
+        remedy = GUARDRAIL_REMEDIES.get(check)
+        reason = group[0].reason
+        notices.append(
+            Diagnostic(
+                level="warning",
+                code=GUARDRAIL_UNCHECKED,
+                target=target,
+                account=names[0] if len(names) == 1 else None,
+                message=(
+                    f"{target}: guardrail check `{check}` did not run: {reason}"
+                    + (f" -- {remedy}" if remedy else "")
+                    + f" ({_accounts(names)})"
+                ),
+            )
+        )
+    return notices
 
 
 def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:

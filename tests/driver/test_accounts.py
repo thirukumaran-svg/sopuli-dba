@@ -17,12 +17,14 @@ import pytest
 from sopuli.constraints import NAMED, NONE, UNKNOWN
 from sopuli.driver.oracle.accounts import (
     PROFILE_QUERY,
+    PWFILE_QUERY,
     ROLES_QUERY,
     USER_QUERY,
     USER_QUERY_NO_CHANGE_DATE,
     RolesUnreadableError,
     describe,
     password_constraints,
+    password_file_member,
 )
 
 CHANGED = datetime(2026, 8, 22, 10, 41, 36)
@@ -75,6 +77,7 @@ def _cursor(
     expires: datetime | None = EXPIRES,
     limits: list[tuple[str, str]] | None = None,
     roles: list[tuple[str]] | None = None,
+    pwfile: Any = (0,),
 ) -> _Cursor:
     return _Cursor(
         {
@@ -89,6 +92,10 @@ def _cursor(
             ),
             PROFILE_QUERY: limits if limits is not None else [("FAILED_LOGIN_ATTEMPTS", "5")],
             ROLES_QUERY: roles if roles is not None else [],
+            # `count(*)`, so a readable view always answers with a row. An
+            # `ORA-00942` here is the ungranted view, which is the ordinary case
+            # -- see the password-file section below.
+            PWFILE_QUERY: pwfile,
         }
     )
 
@@ -441,6 +448,82 @@ def test_the_account_name_is_bound_and_never_interpolated() -> None:
     the habit that later writes a password into SQL text."""
     assert ":name" in USER_QUERY
     assert "acme" not in USER_QUERY.lower()
+
+
+# ------------------------------------------------------------- password file ---
+#
+# Guardrail 3's input (#296), and the one dictionary read here that a correctly
+# installed service account is expected to be refused. Every literal below was
+# measured on 26ai Free 23.26.2.0.0 on 2026-09-05 -- see
+# `tests/driver/test_oracle_accounts.py` for the tier-1 run that produced them.
+
+
+def test_a_password_file_member_is_reported_as_one() -> None:
+    assert password_file_member(_cursor(pwfile=(1,)), "ACME_WEB_USER") is True
+
+
+def test_an_account_outside_the_password_file_is_reported_as_outside_it() -> None:
+    assert password_file_member(_cursor(pwfile=(0,)), "ACME_ORDERS_USER") is False
+
+
+def test_an_ungranted_view_is_none_and_never_false() -> None:
+    """The whole of #296, in one assertion.
+
+    `V$PWFILE_USERS` is outside `02-oracle-privileges.md` §2's grant set on
+    purpose, so a correctly installed service account gets `ORA-00942` from it --
+    measured, as `ORA-00942: table or view "SYS"."V_$PWFILE_USERS" does not
+    exist`. That has to come back as *nobody looked*: `False` would mean *not a
+    member*, guardrail 3 reads it as a pass, and the check silently never fires,
+    which is the state this issue found the tool in.
+    """
+    cursor = _cursor()
+    cursor.answers[PWFILE_QUERY] = _ora("ORA-00942", 'table or view "SYS"."V_$PWFILE_USERS"')
+
+    assert password_file_member(cursor, "ACME_ORDERS_USER") is None
+
+
+def test_the_password_file_is_read_on_every_describe() -> None:
+    """A guardrail input, so it is read with the object a mutation reads -- the
+    same rule roles are read under, and for the same reason: a caller that had to
+    ask for it would get `None` by forgetting, and `None` is not a refusal."""
+    cursor = _cursor()
+    state = describe(cursor, "acme_orders_user")
+
+    assert PWFILE_QUERY in cursor.asked
+    assert state is not None
+    assert state.password_file_member is False
+
+
+def test_an_unreadable_password_file_still_describes_the_account() -> None:
+    """Unlike `DBA_ROLE_PRIVS`, which raises.
+
+    The asymmetry is the decision: §2 grants the roles view, so an account that
+    cannot read it is misinstalled, while §2 deliberately does not grant this one
+    -- so raising would refuse every mutation on every correctly installed
+    target. The account is described, the field is `None`, and the guardrail
+    turns that into a caveat.
+    """
+    cursor = _cursor()
+    cursor.answers[PWFILE_QUERY] = _ora("ORA-00942", 'table or view "SYS"."V_$PWFILE_USERS"')
+
+    state = describe(cursor, "acme_orders_user")
+
+    assert state is not None
+    assert state.password_file_member is None
+
+
+def test_the_password_file_name_is_bound_unchanged() -> None:
+    """Bound, and bound as the dictionary spelled it.
+
+    `V$PWFILE_USERS.USERNAME` carries `DBA_USERS`' own spelling, so upper-casing
+    here would miss a quoted lower-case account and answer a count of zero --
+    which reads as *not a member* and is the one wrong answer that is silent.
+    """
+    cursor = _cursor()
+    describe(cursor, "acme_orders_user")
+
+    assert ":name" in PWFILE_QUERY
+    assert "acme" not in PWFILE_QUERY.lower()
 
 
 # ------------------------------------------------- password constraints (#317) ---

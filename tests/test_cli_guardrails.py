@@ -27,6 +27,7 @@ from jsonschema import Draft202012Validator
 from sopuli.apply import SKIPPED
 from sopuli.cli import cli
 from sopuli.config.model import Vault
+from sopuli.diagnostics import GUARDRAIL_UNCHECKED, WARNINGS
 from sopuli.driver.protocol import (
     PASS,
     ChangeResult,
@@ -130,8 +131,15 @@ class FakeSession:
 
 
 def account(name: str, **fields: Any) -> UserState:
-    """One account as the database would describe it, guardrail fields included."""
-    return UserState(**{"name": name, "status": "OPEN", **fields})
+    """One account as the database would describe it, guardrail fields included.
+
+    ``password_file_member`` defaults to ``False`` -- *asked and answered* -- so
+    that a case about check 2 or check 4 is not also a case about check 3 having
+    no input (#296). The estate that cannot answer is its own fixture below,
+    because that is a separate fact about a run and deserves to be asserted
+    rather than arrive as a side effect of every other test.
+    """
+    return UserState(**{"name": name, "status": "OPEN", "password_file_member": False, **fields})
 
 
 #: An ordinary application account: nothing §4 objects to.
@@ -676,3 +684,184 @@ def test_rotate_takes_force_as_well(
     )
 
     assert "ACME_WEB_USER" in changed(harness)
+
+
+# ------------------------------------------ the check that could not run (#296) ---
+#
+# §4's third answer. `V$PWFILE_USERS` is outside §2's grant set on purpose, so
+# the ordinary estate cannot answer check 3 -- which is why the driver reports
+# `None` rather than `False`, and why the run says so rather than refusing.
+
+
+def unreadable(name: str = "ACME_WEB_USER") -> UserState:
+    """An ordinary account on a target whose service credential cannot read the
+    password file, which is every target installed exactly as §2 documents."""
+    return account(name, vendor_maintained=False, password_file_member=None)
+
+
+def diagnostics(result: Result) -> list[dict[str, Any]]:
+    return list(document(result).get("diagnostics", []))
+
+
+def test_an_unreadable_password_file_warns_and_applies_anyway(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The whole shape of #296 in one run.
+
+    Refusing would be the wrong fix: the estate that cannot answer check 3 is the
+    correctly installed one, so a refusal here means the tool applies nothing
+    anywhere. What must not happen is the run reporting a clean result while one
+    of five checks contributed nothing to it.
+    """
+    harness = estate(
+        {"ACME_WEB_USER": unreadable(), "ACME_BATCH_USER": unreadable("ACME_BATCH_USER")}
+    )
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert changed(harness) == ["ACME_WEB_USER", "ACME_BATCH_USER"]
+    warnings = [one for one in diagnostics(result) if one["code"] == GUARDRAIL_UNCHECKED]
+    assert len(warnings) == 1
+    assert warnings[0]["level"] == "warning"
+    assert warnings[0]["target"] == "appdb-alpha"
+    assert "password_file" in warnings[0]["message"]
+    assert "V_$PWFILE_USERS" in warnings[0]["message"]
+    # A code is contract in the way an enum value is (`03-json-output.md` §8), so
+    # it needs a documented meaning and not only a message somebody may reword.
+    assert GUARDRAIL_UNCHECKED in WARNINGS
+
+
+def test_the_warning_is_one_per_target_and_names_the_accounts(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """What could not be read is a grant on a database, so an estate with forty
+    accounts on one target must not be told the same fact forty times -- the rule
+    `creds generate` already applies to the constraints it cannot check.
+
+    ``account`` is omitted where the group holds more than one, because the field
+    takes a single value and naming one of two would be worse than naming none.
+    """
+    estate({"ACME_WEB_USER": unreadable(), "ACME_BATCH_USER": unreadable("ACME_BATCH_USER")})
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    warning = next(one for one in diagnostics(result) if one["code"] == GUARDRAIL_UNCHECKED)
+    assert "account" not in warning
+    assert "ACME_WEB_USER" in warning["message"]
+    assert "ACME_BATCH_USER" in warning["message"]
+
+
+def test_a_target_that_can_answer_says_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A site that took the optional grant gets a silent run, which is what makes
+    this a warning worth leaving on: it has a remedy, and taking the remedy
+    removes it."""
+    estate({"ACME_WEB_USER": ordinary(), "ACME_BATCH_USER": ordinary("ACME_BATCH_USER")})
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert [one for one in diagnostics(result) if one["code"] == GUARDRAIL_UNCHECKED] == []
+
+
+def test_a_password_file_member_is_still_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Check 3, firing for the first time.
+
+    Measured on 26ai 23.26.2.0.0: an account granted `SYSDBA` inside a PDB
+    appears in `V$PWFILE_USERS` with its own `CON_ID`, reads
+    `ORACLE_MAINTAINED = N`, and holds no roles at all -- so checks 2, 4 and 5
+    all pass it and only this one does not. That is the account the issue says
+    exists in real estates, and until now the tool would have rotated it.
+    """
+    harness = estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", password_file_member=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert "ACME_WEB_USER" not in changed(harness)
+    assert states(result)["acme_web_user"] == SKIPPED
+    assert "ACME_BATCH_USER" in changed(harness)
+
+
+def test_a_refused_account_contributes_no_caveat(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """An account the guardrails turned away was not touched, so what an unread
+    check might have said about it changed nothing. The caveat is about what this
+    run went ahead and did without."""
+    estate(
+        {
+            "ACME_WEB_USER": account(
+                "ACME_WEB_USER", vendor_maintained=True, password_file_member=None
+            ),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert states(result)["acme_web_user"] == SKIPPED
+    assert [one for one in diagnostics(result) if one["code"] == GUARDRAIL_UNCHECKED] == []
+
+
+def test_force_does_not_silence_the_caveat(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--force` waives an answer, and a caveat is the absence of one.
+
+    The operator who passed the flag is the one most likely to be reading what
+    the guardrails did, so hiding a missing grant from them is the wrong way
+    round.
+    """
+    estate(
+        {
+            "ACME_WEB_USER": account(
+                "ACME_WEB_USER", vendor_maintained=True, password_file_member=None
+            ),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--output", "json", "--force")
+
+    warning = next(one for one in diagnostics(result) if one["code"] == GUARDRAIL_UNCHECKED)
+    assert warning["account"] == "ACME_WEB_USER"
+
+
+def test_rotate_reports_it_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Asserted rather than assumed, for `test_rotate_is_guarded_too`'s reason:
+    that `rotate` sequences `apply` is a property of today's call graph."""
+    estate({"ACME_WEB_USER": unreadable(), "ACME_BATCH_USER": unreadable("ACME_BATCH_USER")})
+    result = runner.invoke(
+        cli,
+        [
+            "creds",
+            "rotate",
+            "--config",
+            str(write_config(CONFIG)),
+            "--confirm",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert [one for one in diagnostics(result) if one["code"] == GUARDRAIL_UNCHECKED]
+
+
+def test_the_document_still_validates(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """Invariant 12. The warning needed no schema change -- `diagnostics[]` has
+    carried a `code`, a `target` and an `account` since the section existed --
+    which is the half worth pinning: a fix that quietly widened the contract
+    would be a major question rather than a bug fix."""
+    estate({"ACME_WEB_USER": unreadable(), "ACME_BATCH_USER": unreadable("ACME_BATCH_USER")})
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    validator.validate(document(result))

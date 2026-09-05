@@ -50,8 +50,11 @@ SCRIPT = Path(__file__).resolve().parents[1] / "sql" / "oracle" / "00_install.sq
 #: `SYS.USER$` is #86's decision: optional, capability-probed, and its absence is
 #: the ordinary configuration rather than a fault. `SET CONTAINER` is §2's other
 #: optional row, for a site whose tool switches containers on an open session
-#: rather than connecting to each PDB service.
-OPTIONAL = frozenset({"SELECT ON USER$", "SET CONTAINER"})
+#: rather than connecting to each PDB service. `V_$PWFILE_USERS` is #296's: it is
+#: guardrail 3's only input, and #296 decided against widening the default set for
+#: it -- so the ordinary install cannot run that check and says so on every run
+#: rather than passing it silently.
+OPTIONAL = frozenset({"SELECT ON USER$", "SET CONTAINER", "SELECT ON V_$PWFILE_USERS"})
 
 #: `GRANT <what> TO <account>`, wherever it appears -- bare, or inside the
 #: `EXECUTE IMMEDIATE` of a PL/SQL block, which is how the script issues the ones
@@ -139,7 +142,9 @@ def test_the_root_only_grant_is_in_the_script_and_not_in_the_default_set() -> No
 def test_the_optional_grants_are_optional_on_both_sides() -> None:
     """`SYS.USER$` is #86's decision -- optional, probed, and its absence ordinary.
     A script that granted it unconditionally, or a tool that required it, would
-    each quietly reverse that."""
+    each quietly reverse that. `V_$PWFILE_USERS` is #296's, and the same holds:
+    requiring it would make guardrail 3 the reason a correct install fails, which
+    is precisely what #296 refused."""
     assert not OPTIONAL & required()
     for grant in OPTIONAL:
         assert grant in granted(), f"{grant} should still be offered by the script"

@@ -437,7 +437,14 @@ class FakeSession:
 
 
 def user(name: str = "ACME_WEB_USER", **fields: Any) -> UserState:
-    return UserState(**{"name": name, "status": "OPEN", **fields})
+    """One account as the database describes it.
+
+    ``password_file_member`` defaults to ``False`` -- *asked and answered* -- so
+    that a case about something else is not also a case about guardrail 3 having
+    no input (#296). The estate that cannot answer it belongs in
+    `test_cli_guardrails.py`, where it is the subject rather than a side effect.
+    """
+    return UserState(**{"name": name, "status": "OPEN", "password_file_member": False, **fields})
 
 
 def passes(count: int = 2) -> list[VerifyResult]:

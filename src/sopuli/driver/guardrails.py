@@ -30,10 +30,28 @@ the command layer applies.
 2. **vendor-maintained** — Oracle's ``DBA_USERS.ORACLE_MAINTAINED = 'Y'``, which
    covers SYS, SYSTEM, DBSNMP, GSMADMIN_INTERNAL and the rest without a
    hand-maintained list going stale.
-3. **in the password file** — ``V$PWFILE_USERS``.
+3. **in the password file** — ``V$PWFILE_USERS``. The one check that routinely
+   has no input: §2 does not grant that view, so on a correctly installed estate
+   this answers neither yes nor no — see below.
 4. **holds an administrative role** — ``DBA``, ``PDB_DBA``, ``CDB_DBA``,
    ``AUDIT_ADMIN``.
 5. **on a literal deny list**, for the version that has no answer to check 2.
+
+### Refused, permitted, or *could not establish*
+
+The third answer arrived with #296, and it arrived because it was missing:
+``UserState.password_file_member`` was ``None`` for every account on every path,
+nothing populated it, and ``if state.password_file_member:`` therefore read
+"nobody looked" as "not a member". Check 3 had never fired and could not.
+
+Reading it (:func:`sopuli.driver.oracle.accounts.password_file_member`) does not
+by itself fix that, because the view is deliberately outside §2's grant set: the
+answer for most estates is still *unknown*. What fixes it is that unknown is now
+a :class:`Caveat` — reported at warning level, refusing nothing, and pointing at
+the optional grant that would settle it. "I looked and found nothing" and "I
+could not look" are answers a safety report must never merge, which is what
+:mod:`sopuli.driver.oracle.privileges` already says one layer up about the same
+view.
 
 ### `--force` overrides 2 to 5, and never 1
 
@@ -167,6 +185,37 @@ class Refusal:
 
 
 @dataclass(frozen=True)
+class Caveat:
+    """One check that could not be run, on an account nothing refused.
+
+    The third answer :class:`Review` grew in #296, and the reason it is a type
+    rather than a ``None`` somewhere is that "I looked and found nothing" and "I
+    could not look" are answers a safety report must never merge --
+    :mod:`sopuli.driver.oracle.privileges` says so about ``SYSDBA`` in the
+    privilege audit, and guardrail 3 was making exactly that merge one layer
+    down. A check with no input reads as a pass, and a pass is what a guardrail
+    is there not to give away by accident.
+
+    **A caveat does not refuse**, and that is the decision rather than a
+    consequence of where the field sits. Check 3's input is ``V$PWFILE_USERS``,
+    which ``02-oracle-privileges.md`` §2 deliberately does not grant, so the
+    correctly installed estate is the one that cannot answer -- refusing on it
+    would mean the tool refusing every mutation everywhere. So it reports, at
+    warning level, and the run goes on: the same shape `--preflight` already has
+    for a privilege audit the service account may not read.
+
+    Same three fields as :class:`Refusal`, and deliberately not the same type. A
+    caller that wanted to know whether it may proceed must not be able to reach
+    for a sequence that mixes the two and get the answer wrong by iterating the
+    wrong one.
+    """
+
+    check: str
+    account: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class Review:
     """What the guardrails found, and what `--force` did about it.
 
@@ -194,10 +243,23 @@ class Review:
     account: str
     refusals: tuple[Refusal, ...] = ()
     overridden: tuple[Refusal, ...] = ()
+    #: Checks that could not be run at all (#296). Reported, never refusing --
+    #: see :class:`Caveat`. Unaffected by ``force``, because there is nothing to
+    #: waive: a check that produced no answer produced no refusal either, and a
+    #: run that would have overridden the answer had it come still did not get
+    #: one. Suppressing these under ``--force`` would hide the missing grant from
+    #: the one operator most likely to be looking at what the guardrails did.
+    caveats: tuple[Caveat, ...] = ()
 
     @property
     def permitted(self) -> bool:
-        """Whether the tool may proceed against this account."""
+        """Whether the tool may proceed against this account.
+
+        Caveats are **not** consulted. A check that could not be run has refused
+        nothing, and #296 decided that an unestablished guardrail reports rather
+        than blocks -- the alternative refuses every account on every estate
+        installed exactly as §2 documents.
+        """
         return not self.refusals
 
 
@@ -229,8 +291,13 @@ def review(state: UserState, *, declared: Collection[str], force: bool = False) 
 
     ``force`` waives checks 2 to 5 and never check 1, and what it waives is
     reported in :attr:`Review.overridden` rather than dropped.
+
+    **A check with no input is neither**, and that is the third answer #296 added:
+    it lands in :attr:`Review.caveats`, refuses nothing, and survives ``force``
+    untouched. Check 3 is the only one that can produce one today.
     """
     found: list[Refusal] = []
+    caveats: list[Caveat] = []
     name = state.name
 
     if not is_declared(name, declared):
@@ -261,16 +328,32 @@ def review(state: UserState, *, declared: Collection[str], force: bool = False) 
 
     if state.password_file_member:
         found.append(Refusal(PASSWORD_FILE, name, "the account is in the password file"))
+    elif state.password_file_member is None:
+        # The third answer, and the ordinary one (#296). `V$PWFILE_USERS` is not
+        # in §2's grant set, so a correctly installed service account gets here
+        # -- which is why this is a caveat and not a refusal. What it must not
+        # be is silence: an unread check reads as a pass, and check 3 read as one
+        # for every account of every run from the day it was written until this.
+        caveats.append(
+            Caveat(
+                PASSWORD_FILE,
+                name,
+                "could not establish whether the account is in the password file",
+            )
+        )
 
     held = sorted(ADMIN_ROLES & {role.upper() for role in state.roles})
     if held:
         found.append(Refusal(PRIVILEGED_ROLE, name, f"the account holds {', '.join(held)}"))
 
     if not force:
-        return Review(account=name, refusals=tuple(found))
+        return Review(account=name, refusals=tuple(found), caveats=tuple(caveats))
 
     return Review(
         account=name,
         refusals=tuple(refusal for refusal in found if not refusal.overridable),
         overridden=tuple(refusal for refusal in found if refusal.overridable),
+        # Carried through the waiver unchanged. `--force` waives an answer, and a
+        # caveat is the absence of one -- see :attr:`Review.caveats`.
+        caveats=tuple(caveats),
     )
