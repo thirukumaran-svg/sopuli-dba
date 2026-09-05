@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.57.0](https://github.com/villebase/sopuli-dba/compare/v0.56.0...v0.57.0) (2026-09-05)
+
+
+### Features
+
+* **generate:** `--promote` writes `current`, behind `--overwrite-current` ([#257](https://github.com/villebase/sopuli-dba/issues/257)) ([#339](https://github.com/villebase/sopuli-dba/issues/339)) ([e4e5331](https://github.com/villebase/sopuli-dba/commit/e4e5331caf5dc4871082825b307c4002c7a35cab))
+* **generate:** report the constraints a draw cannot be bound by ([#317](https://github.com/villebase/sopuli-dba/issues/317)) ([#336](https://github.com/villebase/sopuli-dba/issues/336)) ([6d7159c](https://github.com/villebase/sopuli-dba/commit/6d7159c4eff8bd18a9d4b5a30b1b0110b2d8ba93))
+
 ## [0.56.0](https://github.com/villebase/sopuli-dba/compare/v0.55.0...v0.56.0) (2026-09-03)
 
 
