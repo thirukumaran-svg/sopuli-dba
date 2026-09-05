@@ -19,16 +19,25 @@ pair is what a partial rotation is diagnosed from later.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sopuli.generate import Candidate, DocumentWrite
+from sopuli.lock.keys import LockKey
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.payload import PENDING
 
-__all__ = ["build_result", "render_generate", "render_write_table", "summarise"]
+__all__ = [
+    "VAULT_ONLY",
+    "WRITTEN",
+    "build_result",
+    "render_generate",
+    "render_promotion_table",
+    "render_write_table",
+    "summarise",
+]
 
 #: The state a successfully staged account reports.
 #:
@@ -40,8 +49,25 @@ __all__ = ["build_result", "render_generate", "render_write_table", "summarise"]
 #: saying the vocabulary was wrong, which this one is not.
 STAGED = "PENDING_APPLY"
 
+#: What `--promote` reports (#257): the vault holds this password and no database
+#: has been asked. A new value rather than a reused one, and #257's blocker 2 is
+#: the argument -- each of the four candidates asserts something untrue, and
+#: `PENDING_APPLY` in particular would send `check` and `apply` looking for a
+#: `pending` that does not exist.
+#:
+#: **Not the same claim as `PENDING_APPLY` with the stage swapped.** That state
+#: says a rotation is in flight; this one says there is none, and the next thing
+#: to run is `apply`, which will find the databases behind the vault and converge
+#: them.
+VAULT_ONLY = "VAULT_ONLY"
+
 #: A write that did not happen. `results[].error` carries the reason.
 FAILED = "ERROR"
+
+#: The states a write actually happened in. `changed` is true of both, and #254's
+#: exemption from invariant 9 covers both for the same reason -- a fresh draw has
+#: no fixed point to converge on, whichever stage it lands in.
+WRITTEN = (STAGED, VAULT_ONLY)
 
 _ACCOUNT = 24
 _SECRET = 40
@@ -54,6 +80,7 @@ def build_result(
     stage: str,
     version: int | None = None,
     replaced: int | None = None,
+    overwritten: bool = False,
     mechanism: str | None = None,
     changed: bool,
     detail: str,
@@ -85,16 +112,18 @@ def build_result(
         entry["secret"] = secret
     entry["actions"] = [
         {
-            # `vault_write_pending` from the schema's `action_kind` enum. The
-            # stage is a parameter because `--promote` will add, and the
-            # action it performs is a different one -- naming it here keeps that
-            # a one-line change rather than a rediscovery.
+            # `vault_write_pending` and `vault_promote`, both from the schema's
+            # `action_kind` enum. The stage was a parameter before `--promote`
+            # existed, in anticipation of it (#257), which is why adding the verb
+            # changed this line not at all.
             "kind": "vault_write_pending" if stage == PENDING else "vault_promote",
-            "applied": state == STAGED,
+            # Either write is an action that happened. Testing `== STAGED` would
+            # have reported every promotion as an action that did not apply.
+            "applied": state in WRITTEN,
             "detail": detail,
         }
     ]
-    warnings = _warnings(candidate, replaced=replaced, mechanism=mechanism)
+    warnings = _warnings(candidate, replaced=replaced, overwritten=overwritten, mechanism=mechanism)
     if warnings:
         entry["warnings"] = warnings
     if error is not None:
@@ -119,15 +148,21 @@ def _secret(candidate: Candidate, *, stage: str, version: int | None) -> dict[st
 
 
 def _warnings(
-    candidate: Candidate, *, replaced: int | None, mechanism: str | None
+    candidate: Candidate, *, replaced: int | None, overwritten: bool, mechanism: str | None
 ) -> list[dict[str, Any]]:
     """What this run did that somebody should know about.
 
-    Two things qualify, and both are consequences an operator did not type:
+    Three things qualify, and each is a consequence an operator did not type:
 
     * **a replaced ``pending``** -- the previous staged password is gone, and if
       it had been handed to anybody it is now worthless. Safe, per UC-1 §4, and
       not silent;
+    * **a replaced ``current``** -- `--promote` wrote over the field applications
+      read (#257). Authorised, since `--overwrite-current` is what let it happen,
+      and reported anyway: what the vault now advertises is a password no
+      database has been given, and the run that did it is the last place anybody
+      will look for that fact. It is a **warning** and not an error for the same
+      reason the flag exists -- the operator asked for exactly this;
     * **an accepted policy violation** -- ``--no-policy-check`` let something
       through, and §4 requires the audit event to say *what*. The rule names and
       counts go in; never the characters (:class:`~sopuli.passwords.Violation`).
@@ -145,6 +180,17 @@ def _warnings(
                 "message": (
                     f"replaced a pending password that was already staged "
                     f"(document version {replaced}); anything holding it is now stale"
+                ),
+                "account": binding.account,
+            }
+        )
+    if overwritten:
+        found.append(
+            {
+                "level": "warning",
+                "message": (
+                    "replaced the `current` password; the vault now advertises one no "
+                    "database has been given -- run `sopuli creds apply` to converge them"
                 ),
                 "account": binding.account,
             }
@@ -182,7 +228,7 @@ def summarise(states: Sequence[str]) -> Summary:
     success is a mutation is exactly where they coincide. ``unchanged`` is what
     did *not* get written, which under #254's decision is only ever failures.
     """
-    staged = sum(1 for state in states if state == STAGED)
+    staged = sum(1 for state in states if state in WRITTEN)
     failed = sum(1 for state in states if state == FAILED)
     return Summary(
         total=len(states),
@@ -210,6 +256,50 @@ def render_write_table(writes: Sequence[DocumentWrite], *, stage: str) -> list[s
                 Column("ACCOUNTS"),
             ],
             [[str(write.key), stage, ", ".join(write.accounts)] for write in writes],
+        )
+    )
+
+
+def render_promotion_table(
+    writes: Sequence[DocumentWrite], held: Mapping[LockKey, Sequence[str]]
+) -> list[str]:
+    """What `--promote` is about to write, split by what it would replace (#257).
+
+    Two columns rather than one, because seeding an account that has no `current`
+    and replacing one that has are different risks and the operator is the one
+    who has to weigh them. A single ACCOUNTS column would make the run look
+    uniform and leave the count of destructive writes to be worked out from a
+    refusal message.
+
+    One row per document, as :func:`render_write_table` has: the document is the
+    unit of the write, the compare-and-set and the lock.
+
+    ``held`` is what the plan-time read found. Under ``--overwrite-current`` the
+    REPLACED column is the authorisation being spent; without it, on a
+    ``--dry-run``, it is the list of accounts the run would refuse over -- and
+    the same table answers both, which is why a preview is never gated.
+    """
+    rows = []
+    for write in writes:
+        replacing = set(held.get(write.key, ()))
+        seeded = [account for account in write.accounts if account not in replacing]
+        replaced = [account for account in write.accounts if account in replacing]
+        rows.append(
+            [
+                str(write.key),
+                ", ".join(seeded) or Cell("-", Role.MUTED),
+                Cell(", ".join(replaced), Role.NOTABLE) if replaced else Cell("-", Role.MUTED),
+            ]
+        )
+    return list(
+        render_table(
+            # Neither account column is capped: both hold a list, and a run that
+            # truncated one would hide exactly the account somebody is looking
+            # for -- the REPLACED column especially, which is the destructive
+            # half. `render_write_table` leaves its ACCOUNTS column uncapped for
+            # the same reason.
+            [Column("SECRET", _SECRET), Column("SEEDED"), Column("REPLACED")],
+            rows,
         )
     )
 
@@ -253,12 +343,18 @@ def _result(state: str, detail: str) -> Cell | str:
 
 def _verdict(states: Sequence[str]) -> str:
     staged = sum(1 for state in states if state == STAGED)
+    promoted = sum(1 for state in states if state == VAULT_ONLY)
     failed = sum(1 for state in states if state == FAILED)
-    parts = [f"{staged} staged"]
+    parts = [f"{staged} staged"] if staged else []
+    if promoted:
+        # "promoted" rather than "staged", because the two leave the document in
+        # different states and the sentence below is the same advice for both:
+        # `apply` is what makes a database match either of them.
+        parts.append(f"{promoted} promoted to current")
     if failed:
         parts.append(f"{failed} failed")
-    line = ", ".join(parts)
-    if staged and not failed:
+    line = ", ".join(parts) or "nothing written"
+    if (staged or promoted) and not failed:
         # The sentence that matters after a successful stage: the database has
         # not changed, and nothing is using this password yet.
         #

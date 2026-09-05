@@ -33,7 +33,7 @@ from sopuli.lock.manager import lock_path
 from sopuli.lock.record import Holder, LockRecord
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.passwords import ByteLimit
-from sopuli.payload import PENDING
+from sopuli.payload import ORIGIN, PENDING, PREVIOUS
 from sopuli.store import MemoryStore, SecretStore
 
 RUN_SCHEMA = (
@@ -949,3 +949,288 @@ def test_the_unread_estate_is_said_once_and_not_twice(
 
     assert "constraints: no target answered" in output
     assert "note" not in output
+
+
+# ------------------------------------------------------------- --promote (#257) ---
+#
+# UC-1 §4's adoption path, and invariant 7's one exception. The assertions worth
+# having are about what ends up in the document and what a run is not allowed to
+# do to it silently: `current` is the field applications read, and replacing it
+# is the thing `--overwrite-current` exists to make somebody type.
+
+CONTAINER = "DB_CREDENTIALS"
+
+
+def current(store: MemoryStore) -> dict[str, Any]:
+    """What the document's current stage holds, by account."""
+    found = store.read(PATH)
+    assert found is not None
+    return dict(found.data[CONTAINER])
+
+
+def seed_current(store: MemoryStore, **values: str) -> None:
+    """A document that already advertises a password, as an estate in use has."""
+    store.write(PATH, {CONTAINER: dict(values)}, cas=0)
+
+
+def test_promote_writes_current_and_stages_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """S1: the account exists, its password is not in the vault, and one write
+    adopts it. Staging first would mean a `pending` nothing has read and a
+    `current` that does not exist."""
+    result = run(runner, write_config(CONFIG), "--promote")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert set(current(store)) == {"acme_web_user", "acme_batch_user"}
+    found = store.read(PATH)
+    assert found is not None
+    assert found.data.get(PENDING, {}) == {}, "a promote stages nothing"
+
+
+def test_promote_reports_vault_only(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    validator: Draft202012Validator,
+) -> None:
+    """#257 blocker 2. The vault holds this password and no database has been
+    asked, which is the one thing none of the other states could say."""
+    found = document(run(runner, write_config(CONFIG), "--promote", "--output", "json"))
+    validator.validate(found)
+    entry = found["results"][0]
+
+    assert entry["state"] == "VAULT_ONLY"
+    assert entry["changed"] is True
+    assert entry["actions"][0] == {
+        "kind": "vault_promote",
+        "applied": True,
+        "detail": "promoted to v1",
+    }
+    assert entry["secret"]["stage"] == "current"
+    assert found["summary"]["by_state"] == {"VAULT_ONLY": 2}
+
+
+def test_the_stamps_go_in_the_same_write(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """UC-1 §3 requires them beside the value, and one write is what makes the
+    document never describe a state that was not true."""
+    run(runner, write_config(CONFIG), "--promote")
+
+    found = store.read(PATH)
+    assert found is not None
+    assert found.version == 1, "one write, not one per key"
+    assert sorted(found.data["rotated_at"]) == ["acme_batch_user", "acme_web_user"]
+    assert found.data["policy"]["acme_web_user"] == "app-standard"
+
+
+def test_a_seeded_account_gets_no_previous(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """There was nothing to roll back to, and a `previous` naming the password
+    just written would be a rollback target that never worked."""
+    run(runner, write_config(CONFIG), "--promote")
+
+    found = store.read(PATH)
+    assert found is not None
+    assert found.data.get(PREVIOUS, {}) == {}
+
+
+def test_an_existing_current_is_refused_without_the_flag(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """Invariant 7's exception is `--overwrite-current`, and this is the gate.
+
+    Exit 8 -- "aborted, or confirmation declined" -- because a required
+    authorisation nobody gave is that: the file is not wrong and the run is not
+    broken.
+    """
+    seed_current(store, acme_web_user="the-live-one")
+
+    result = run(runner, write_config(CONFIG), "--promote")
+
+    assert refused(result) == ExitCode.ABORTED
+    assert current(store) == {"acme_web_user": "the-live-one"}, "nothing was written"
+
+
+def test_the_refusal_names_the_accounts_rather_than_counting_them(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """The operator's next move is deciding whether *those* passwords may be
+    replaced, and "1 account" sends them to `--dry-run` to find out which."""
+    seed_current(store, acme_web_user="the-live-one")
+
+    result = run(runner, write_config(CONFIG), "--promote")
+
+    assert isinstance(result.exception, ConfigError)
+    assert "acme_web_user" in str(result.exception)
+    assert "--overwrite-current" in (result.exception.hint or "")
+
+
+def test_a_dry_run_is_never_refused_and_shows_the_split(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """A preview is how somebody finds out they need the flag. Refusing to show
+    it would leave them guessing which accounts it was about."""
+    seed_current(store, acme_web_user="the-live-one")
+
+    result = run(runner, write_config(CONFIG), "--promote", "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "SEEDED" in result.output
+    assert "REPLACED" in result.output
+    assert "nothing was written (--dry-run)" in result.output
+
+
+def test_the_authorised_overwrite_moves_the_old_value_into_previous(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """The value `current` held, never the one being written -- or §8's rollback
+    has nothing to roll back to."""
+    seed_current(store, acme_web_user="the-live-one")
+
+    result = run(runner, write_config(CONFIG), "--promote", "--overwrite-current")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    found = store.read(PATH)
+    assert found is not None
+    assert found.data[PREVIOUS]["acme_web_user"] == "the-live-one"
+    assert found.data[CONTAINER]["acme_web_user"] != "the-live-one"
+
+
+def test_replacing_a_current_is_warned_about_per_account(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """A shared document can seed one account and replace another's `current` in
+    one write, and telling the seeded account its password was replaced sends
+    somebody looking for a credential that never existed."""
+    seed_current(store, acme_web_user="the-live-one")
+
+    found = document(
+        run(
+            runner,
+            write_config(CONFIG),
+            "--promote",
+            "--overwrite-current",
+            "--output",
+            "json",
+        )
+    )
+    by_account = {entry["account"]: entry for entry in found["results"]}
+
+    replaced = [
+        one["message"]
+        for one in by_account["acme_web_user"].get("warnings", [])
+        if "replaced the `current`" in one["message"]
+    ]
+    assert len(replaced) == 1
+    assert "no database has been given" in replaced[0]
+    assert by_account["acme_batch_user"].get("warnings", []) == []
+    assert "replaced the current" in by_account["acme_web_user"]["actions"][0]["detail"]
+    assert "replaced the current" not in by_account["acme_batch_user"]["actions"][0]["detail"]
+
+
+def test_a_promote_clears_a_pending_that_would_otherwise_win(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """The hazard that makes clearing necessary rather than tidy.
+
+    `creds apply --source` defaults to `pending` where there is one, so a staged
+    password left beside a freshly promoted one is a password the next `apply`
+    would prefer -- undoing this run without anybody asking it to.
+    """
+    store.write(PATH, {CONTAINER: {"acme_web_user": "the-live-one"}, PENDING: {}}, cas=0)
+    run(runner, write_config(CONFIG))  # stage a pending for both accounts
+    assert set(staged(store)) == {"acme_web_user", "acme_batch_user"}
+
+    run(runner, write_config(CONFIG), "--promote", "--overwrite-current")
+
+    found = store.read(PATH)
+    assert found is not None
+    assert found.data.get(PENDING, {}) == {}
+    assert found.data.get(ORIGIN, {}) == {}
+
+
+def test_a_current_that_appears_after_the_plan_is_not_overwritten(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The re-check under the lock. The plan-time read happens before acquiring,
+    so a `current` written in between would otherwise be replaced by a run that
+    was told there was none -- which is the one case the flag cannot have
+    authorised, because nobody knew to pass it."""
+    seed_current(store, acme_web_user="the-live-one")
+    monkeypatch.setattr("sopuli.cli._current_holders", lambda writes, stores: {})
+
+    found = document(run(runner, write_config(CONFIG), "--promote", "--output", "json"))
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    assert {entry["state"] for entry in found["results"]} == {"ERROR"}
+    assert "after the plan" in found["results"][0]["actions"][0]["detail"]
+    assert current(store) == {"acme_web_user": "the-live-one"}, "nothing was written"
+
+
+def test_the_terminal_says_promoted_rather_than_staged(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """Two verbs leaving the document in different states should not report the
+    same word, and the advice that follows is the same for both: `apply` is what
+    makes a database match either."""
+    output = run(runner, write_config(CONFIG), "--promote").output
+
+    assert "2 promoted to current" in output
+    assert "staged" not in output
+    assert "no database was changed" in output
+
+
+def test_a_failed_promote_is_not_reported_as_a_pending_write(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stage travels with the failure, not only with the success.
+
+    Left to default, a refused promote reports `vault_write_pending` and
+    `secret.stage: pending` -- a consumer reading it would conclude a `pending`
+    is sitting there waiting for `apply`, when nothing was written at all.
+    """
+    seed_current(store, acme_web_user="the-live-one")
+    monkeypatch.setattr("sopuli.cli._current_holders", lambda writes, stores: {})
+
+    found = document(run(runner, write_config(CONFIG), "--promote", "--output", "json"))
+    entry = found["results"][0]
+
+    assert entry["state"] == "ERROR"
+    assert entry["actions"][0]["kind"] == "vault_promote"
+    assert entry["actions"][0]["applied"] is False
+    assert entry["secret"]["stage"] == "current"
+
+
+def test_a_document_shaped_wrongly_fails_that_document_and_not_the_run(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    validator: Draft202012Validator,
+) -> None:
+    """The config and the vault disagree about where a password lives.
+
+    Reading it raises `SecretShapeError`, and letting that out would abort a run
+    over twenty documents for one of them -- while the identical failure from the
+    *write* is already a per-document finding. The plan-time read says nothing
+    about such a document on purpose; this is where the disagreement is named.
+    """
+    store.write(PATH, {CONTAINER: {"acme_web_user": {"nested": "wrong"}}}, cas=0)
+
+    found = document(
+        run(runner, write_config(CONFIG), "--promote", "--overwrite-current", "--output", "json")
+    )
+    validator.validate(found)
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    assert {entry["state"] for entry in found["results"]} == {"ERROR"}
+    assert found["results"][0]["error"]["category"] == "vault"
+    assert current(store) == {"acme_web_user": {"nested": "wrong"}}, "nothing was written"

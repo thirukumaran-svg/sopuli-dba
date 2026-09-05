@@ -169,7 +169,15 @@ from sopuli.output.document import Diagnostic, Error, Summary
 from sopuli.output.finish_rollover_view import build_result as build_finish_result
 from sopuli.output.finish_rollover_view import render_finish, render_window_table
 from sopuli.output.finish_rollover_view import summarise as summarise_finish
-from sopuli.output.generate_view import FAILED, STAGED, render_generate, render_write_table
+from sopuli.output.generate_view import (
+    FAILED,
+    STAGED,
+    VAULT_ONLY,
+    WRITTEN,
+    render_generate,
+    render_promotion_table,
+    render_write_table,
+)
 from sopuli.output.generate_view import build_result as build_generate_result
 from sopuli.output.generate_view import summarise as summarise_generate
 from sopuli.output.install_view import build as build_install
@@ -197,7 +205,7 @@ from sopuli.output.vault_view import render as render_vaults
 from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate
-from sopuli.payload import ORIGIN, PENDING, PREVIOUS, stage_layout
+from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, stage_layout
 from sopuli.preflight import Finding
 from sopuli.safety import (
     RefusedError,
@@ -209,7 +217,7 @@ from sopuli.safety import (
 from sopuli.secrets import Secret
 from sopuli.status import Row
 from sopuli.store import SecretStore, StoreError, connect
-from sopuli.store.credentials import StoredSecret, read_secret
+from sopuli.store.credentials import StoredSecret, read_secret, resolve
 from sopuli.store.credentials import apply_patch as write_credential
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
@@ -1966,6 +1974,19 @@ def _stored_credential(binding: Binding, stores: Mapping[str, SecretStore]) -> S
     help="Do not connect to any target to read password constraints. Draw from the policy alone.",
 )
 @click.option(
+    "--promote",
+    is_flag=True,
+    default=False,
+    help="Write straight to `current` instead of staging. Still asks no database anything.",
+)
+@click.option(
+    "--overwrite-current",
+    "overwrite",
+    is_flag=True,
+    default=False,
+    help="Authorise replacing a `current` that already exists. Required wherever one does.",
+)
+@click.option(
     "--confirm",
     is_flag=True,
     default=False,
@@ -1982,6 +2003,8 @@ def creds_generate(
     from_stdin: bool,
     no_policy_check: bool,
     offline: bool,
+    promote: bool,
+    overwrite: bool,
     confirm: bool,
     run: Invocation,
 ) -> str:
@@ -2006,6 +2029,17 @@ def creds_generate(
     prepare a password, get a change window approved, and apply later -- and it
     makes each half independently retryable. Nothing is using the new password
     until `sopuli creds apply` puts it in the database and promotes it.
+
+    **`--promote` writes `current` instead**, for first adoption of an account
+    that already exists and whose password is not in the vault (use case section
+    4). It is invariant 7's one exception and it is not a small one: what the
+    invariant protects is a `current` applications are reading being replaced
+    before any database can serve the new value. Where the account has no
+    `current` there is no such window and the write is unremarkable; where it has
+    one, `--overwrite-current` has to say so, and without it the run refuses at
+    plan time naming the accounts. The value `current` held moves to `previous`
+    in the same write, and any `pending` is cleared -- a staged password left
+    behind is one the next `apply` would prefer to what was just promoted.
 
     **A second run replaces what was staged, and reports a change.** That is an
     explicit exemption from the idempotency invariant, decided in issue #254: the
@@ -2032,7 +2066,9 @@ def creds_generate(
     Help text stays ASCII throughout, which is P4's rule.
     """
     document = run.document
-    refuse_if_readonly(run.resolved, action="staging a password")
+    refuse_if_readonly(
+        run.resolved, action="promoting a password" if promote else "staging a password"
+    )
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
@@ -2041,14 +2077,17 @@ def creds_generate(
     document.diagnostics.extend(config_diagnostics(config))
 
     config = binding_stores.complete(config, env=os.environ)
-    binding_stores.refuse_unresolved(config, action="staging a password")
-
-    plan = plan_builder.build(config, intent=["generate", "vault_write_pending"])
-    refuse_if_over_limit(run.resolved, plan.blast_radius, action="staging a password")
-    document.plan = plan.as_json()
-    _confirm_environments(
-        plan, run, action="staging a password", confirmed=confirm, noun="generation"
+    binding_stores.refuse_unresolved(
+        config, action="promoting a password" if promote else "staging a password"
     )
+
+    action = "promoting a password" if promote else "staging a password"
+    plan = plan_builder.build(
+        config, intent=["generate", "vault_promote" if promote else "vault_write_pending"]
+    )
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
+    document.plan = plan.as_json()
+    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="generation")
 
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
@@ -2074,6 +2113,24 @@ def creds_generate(
     writes = staging.group(candidates)
     names = {write.key.store for write in writes}
 
+    # **A promote reads before it plans**, which is why the stores open here
+    # rather than after the `--dry-run` return. The refusal is a plan-time one
+    # (invariant 4) and the plan itself has to say which accounts would be
+    # seeded and which replaced, so both need the documents -- and a preview
+    # that could not tell those apart would be a preview of the wrong question.
+    # An ordinary `--dry-run` still opens nothing.
+    stores = (
+        _stores_for(names, config, token_file=run.vault_token_file)
+        if promote or not run.dry_run
+        else {}
+    )
+    held = _current_holders(writes, stores) if promote else {}
+    if held and not overwrite and not run.dry_run:
+        # Never under `--dry-run`: a preview is how somebody finds out they need
+        # the flag, and refusing to show it would leave them guessing which
+        # accounts it was about.
+        _refuse_overwrite(held)
+
     # Between the plan and the write table, which is where they answer the
     # question the plan raises: it says which targets are in scope, and these say
     # what those targets said about a password. Both absent under `--offline`,
@@ -2096,7 +2153,12 @@ def creds_generate(
         # "notes" would teach a reader that the block repeats itself.
         told = [one.message for one in notices if one.code != CONSTRAINTS_UNREAD]
         lines.extend([read, *render_notices(told), ""])
-    header = "\n".join([*lines, *render_write_table(writes, stage=PENDING)])
+    table = (
+        render_promotion_table(writes, held)
+        if promote
+        else render_write_table(writes, stage=PENDING)
+    )
+    header = "\n".join([*lines, *table])
     if run.dry_run:
         # Invariant 8: print the plan, write nothing, take no lock. No `results`
         # either -- `plan` already says what would happen, at the same grain, and
@@ -2104,7 +2166,6 @@ def creds_generate(
         document.finish(ExitCode.SUCCESS, Summary(total=len(candidates)))
         return f"{header}\n\nnothing was written (--dry-run)"
 
-    stores = _stores_for(names, config, token_file=run.vault_token_file)
     manager = LockManager(
         stores={name: _lockable(name, config, stores) for name in names},
         correlation_id=document.correlation_id,
@@ -2128,7 +2189,13 @@ def creds_generate(
                 except LockStolenError as lost:
                     stolen = lost
                     break
-                rows.extend(_stage(write, stores[write.key.store], out=results))
+                rows.extend(
+                    _promote_document(
+                        write, stores[write.key.store], authorised=overwrite, out=results
+                    )
+                    if promote
+                    else _stage(write, stores[write.key.store], out=results)
+                )
     except LockDeniedError as denied:
         document.lock = build_lock_section(manager, denied=denied)
         raise
@@ -2298,6 +2365,193 @@ def _password_from_stdin() -> Secret:
     return Secret(text)
 
 
+def _current_holders(
+    writes: Sequence[DocumentWrite], stores: Mapping[str, SecretStore]
+) -> dict[LockKey, tuple[str, ...]]:
+    """Which selected accounts already have a `current`, per document (#257).
+
+    The input to both halves of `--promote`'s gate: the plan-time refusal, and
+    the plan's own split between accounts that would be **seeded** and accounts
+    whose `current` would be **replaced**. Those are different risks and an
+    operator should not have to count them.
+
+    **Read before the lock, and used for neither of the values written.** What
+    comes back here is a classification and nothing else -- the password that
+    becomes ``previous`` is read again inside the lock, by
+    :func:`_promote_document`, because a value read before acquiring is a value
+    another run may have replaced in between. Carrying it forward would write a
+    `previous` that never was `current`.
+
+    A document that cannot be read contributes nothing rather than raising. The
+    write is about to fail on the same store and will say so per document with
+    the store's own message; refusing here would report a vault outage as a
+    refusal to overwrite, which is a different thing to go and fix.
+    """
+    found: dict[LockKey, tuple[str, ...]] = {}
+    for write in writes:
+        store = stores.get(write.key.store)
+        if store is None:  # pragma: no cover - `names` is built from these keys
+            continue
+        try:
+            document = store.read(write.key.path)
+        except Exception:  # noqa: BLE001 -- see the docstring: the write reports it
+            continue
+        holders = tuple(
+            candidate.binding.account
+            for candidate in write.candidates
+            if _holds_current(document, candidate)
+        )
+        if holders:
+            found[write.key] = holders
+    return found
+
+
+def _holds_current(document: Any, candidate: Candidate) -> bool:
+    """Whether this account's `current` is already there.
+
+    A ref that will not resolve is **not** a holder. `resolve` raises on a
+    document of the wrong shape -- a container where a password should be -- and
+    that is a configuration problem the write will report; reading it as "there
+    is a current here" would turn it into a refusal naming the wrong cause.
+    """
+    ref = candidate.binding.secret
+    if ref is None:  # pragma: no cover - bindings without a ref never reach here
+        return False
+    try:
+        return resolve(document.data if document is not None else None, ref) is not None
+    except Exception:  # noqa: BLE001 -- see the docstring
+        return False
+
+
+def _refuse_overwrite(held: Mapping[LockKey, Sequence[str]]) -> None:
+    """Stop a promote that would replace a `current` nobody authorised (#257).
+
+    Invariant 7's exception is `--overwrite-current` and this is where the
+    exception is enforced. **Exit 8**, which is "aborted, or confirmation
+    declined": a required authorisation nobody gave is that, and the file is not
+    wrong and the run is not broken.
+
+    **Named accounts, not a count.** The operator's next move is to decide
+    whether those particular passwords may be replaced, and a message saying
+    "3 accounts" sends them to `--dry-run` to find out which -- which they can
+    still do, and should not have to.
+    """
+    named = sorted(account for accounts in held.values() for account in accounts)
+    listed = ", ".join(named)
+    raise RefusedError(
+        f"{len(named)} of the selected accounts already have a `current` in the vault "
+        f"({listed}), and promoting would replace what applications are reading",
+        hint=(
+            "pass --overwrite-current to authorise replacing them, --dry-run to see "
+            "which would be seeded and which replaced, or drop --promote to stage a "
+            "`pending` instead"
+        ),
+    )
+
+
+def _promote_document(
+    write: DocumentWrite,
+    store: SecretStore,
+    *,
+    authorised: bool,
+    out: list[dict[str, Any]],
+) -> list[tuple[Candidate, str, str]]:
+    """Write one document's passwords straight to `current` (#257, UC-1 §4).
+
+    The same shape as :func:`_stage` -- one read, one compare-and-set, one
+    outcome shared by every account in the document -- and the same reason for
+    sharing it: one write either landed or it did not.
+
+    **The authorisation is checked again here**, against the document this run
+    actually holds the lock on. The plan-time refusal reads before acquiring, so
+    a `current` written in between would otherwise be replaced by a run that was
+    told there was none. Where the flag was passed there is nothing left to
+    check: the overwrite is authorised wherever it is found.
+
+    **`previous` comes from this read**, not from the plan-time one. It is the
+    value `current` held a moment ago under this lock, which is the only reading
+    that can be true of the write it accompanies.
+
+    Reuses :func:`sopuli.apply.promotion_patch` rather than spelling a second
+    promotion. What that function does beyond `current` and `previous` is
+    exactly what is wanted here: it clears `pending` and the `origin` describing
+    it, and a staged password left beside a freshly promoted one is a password
+    the next `apply` would prefer -- `--source` defaults to `pending` where there
+    is one, so leaving it would let a later run undo this one.
+
+    A seeded document therefore acquires an empty ``pending`` and ``origin``,
+    which is the clearing meeting a document that had neither. Cosmetic and
+    deliberately not special-cased: :meth:`~sopuli.payload.StageLayout.read`
+    answers an empty container exactly as it answers an absent one, and one
+    definition of what a promotion writes is worth more than a tidier first
+    version.
+    """
+    existing = store.read(write.key.path)
+    cas = 0 if existing is None else existing.version
+    data = existing.data if existing is not None else None
+
+    entries: list[apply_states.Promotable] = []
+    replaced: list[str] = []
+    for candidate in write.candidates:
+        ref = candidate.binding.secret
+        try:
+            held = resolve(data, ref) if ref is not None else None
+        except StoreError as error:
+            # A document shaped the way this ref does not address -- the config
+            # and the vault disagree about where a password lives. Reported per
+            # document like a refused write, rather than raised: it is one
+            # document's problem, and a run over twenty of them should write the
+            # nineteen it can. The plan-time read reached the same document and
+            # said nothing for the same reason (`_holds_current`), which is what
+            # makes this the place the disagreement is named.
+            reported = _as_error(error)
+            return _reported(
+                write, FAILED, reported.message, out=out, stage=CURRENT, error=reported
+            )
+        if held is not None:
+            replaced.append(candidate.binding.account)
+        entries.append(
+            apply_states.Promotable(
+                binding=candidate.binding,
+                value=candidate.value,
+                replaces=held,
+                policy=candidate.policy,
+                # Empty, and that is the whole of what `--promote` is: no target
+                # confirmed this password, because none was asked. A stamp
+                # naming targets would claim a confirmation that never happened.
+                targets=(),
+            )
+        )
+
+    if replaced and not authorised:
+        return _reported(
+            write,
+            FAILED,
+            f"a `current` appeared for {', '.join(replaced)} after the plan was made, "
+            f"and replacing it was not authorised (--overwrite-current)",
+            out=out,
+            stage=CURRENT,
+        )
+
+    patch = apply_states.promotion_patch(entries, at=utc_now(), by=_rotated_by())
+    try:
+        written = write_credential(store, write.key.path, patch, cas=cas)
+    except Exception as error:  # noqa: BLE001 -- a per-document finding
+        reported = _as_error(error)
+        return _reported(write, FAILED, reported.message, out=out, stage=CURRENT, error=reported)
+
+    return _reported(
+        write,
+        VAULT_ONLY,
+        f"promoted to v{written.version}",
+        out=out,
+        stage=CURRENT,
+        version=written.version,
+        overwritten=tuple(replaced),
+        mechanism=written.mechanism,
+    )
+
+
 def _stage(
     write: DocumentWrite, store: SecretStore, *, out: list[dict[str, Any]]
 ) -> list[tuple[Candidate, str, str]]:
@@ -2338,8 +2592,10 @@ def _reported(
     detail: str,
     *,
     out: list[dict[str, Any]],
+    stage: str = PENDING,
     version: int | None = None,
     replaced: Mapping[str, int] | None = None,
+    overwritten: Sequence[str] = (),
     mechanism: str | None = None,
     error: Error | None = None,
 ) -> list[tuple[Candidate, str, str]]:
@@ -2350,21 +2606,30 @@ def _reported(
     while its neighbours did not, and telling the neighbours their password was
     replaced sends somebody looking for a credential that never existed. So the
     warning and the detail suffix are looked up per account.
+
+    ``overwritten`` is the same argument one stage along (#257): a `--promote`
+    can seed one account and replace another's `current` in the same write, and
+    replacing a `current` is the more consequential of the two to report to the
+    wrong account.
     """
     replaced = replaced or {}
     rows = []
     for candidate in write.candidates:
-        was = replaced.get(candidate.binding.account)
+        account = candidate.binding.account
+        was = replaced.get(account)
         line = detail if was is None else f"{detail}, replaced the pending in v{was}"
+        if account in overwritten:
+            line = f"{line}, replaced the current"
         out.append(
             build_generate_result(
                 candidate,
                 state=state,
-                stage=PENDING,
+                stage=stage,
                 version=version,
                 replaced=was,
+                overwritten=account in overwritten,
                 mechanism=mechanism,
-                changed=state == STAGED,
+                changed=state in WRITTEN,
                 detail=line,
                 error=error,
             )

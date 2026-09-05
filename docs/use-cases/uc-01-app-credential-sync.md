@@ -427,7 +427,22 @@ refuse: the overwrite is authorised whenever it is found.
 database has been asked. A new `state` value rather than a reused one: the other
 four candidates each assert something untrue (`03-json-output.md` §3), and
 `PENDING_APPLY` in particular would send `check` and `apply` looking for a
-`pending` that does not exist. It lands with the schema bump that builds this.
+`pending` that does not exist. `sopuli-run-1.20` carries it.
+
+**Any `pending` is cleared, with the `origin` describing it.** Not tidiness:
+`creds apply --source` defaults to `pending` where there is one, so a staged
+password left beside a freshly promoted one is a password the next `apply` would
+prefer — undoing this run without anybody asking it to. The promotion patch that
+`creds apply` uses already does this, and `--promote` reuses it rather than
+spelling a second promotion.
+
+**Measured end to end**, on tier 1 against Oracle Free 23.26.2.0.0 and a dev-mode
+Vault: `generate --promote` seeds `current` at v1, `apply` reads it with
+`SOURCE: current` and reports `IN_SYNC` "changed and verified by login", and
+`check` then reports `IN_SYNC` "vault v1 verified by login". A second promote
+over that document refuses on exit 8 naming both accounts; with
+`--overwrite-current` it writes v2, and `previous` holds what v1's `current`
+held.
 
 **There is still no `creds promote` verb**, and this does not reopen #276. That
 decision is about promoting a *rotation* — advertising a password on the strength

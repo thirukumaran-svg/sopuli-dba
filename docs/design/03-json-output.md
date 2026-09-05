@@ -1092,24 +1092,29 @@ Enums are part of the contract. Adding a value is a minor version bump; removing
 or renaming one is major.
 
 **`state`** — `IN_SYNC`, `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`,
-`ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `UNVERIFIABLE`, `SKIPPED`, `ERROR`
+`ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `UNVERIFIABLE`, `SKIPPED`, `ERROR`,
+`VAULT_ONLY`
 
-**`VAULT_ONLY` is decided and not yet emitted** (#257). `creds generate
---promote` writes `current` and touches no database, and none of the values above
-is true of the result: `IN_SYNC` asserts a match nobody checked, `DRIFT` asserts a
-comparison that never happened — and exits 3, so a successful adoption would exit
-non-zero — `PENDING_APPLY` sends `check` and `apply` looking for a `pending` that
-is not there, and `UNVERIFIABLE` means *tried and could not*, which `check` leans
-on. Reusing `SKIPPED` was weighed and refused as a lie, and emitting no
-`results[]` at all was refused because it would leave the one verb that writes
-the field applications read with nothing machine-readable to say about what it
-changed. So the enum gains a value, which this section's own first line makes a
-**minor** bump; the cost is a consumer switching exhaustively over `state`, and it
-is paid once here rather than argued again per verb. The value becomes contract
-when the schema bump that builds `--promote` adds it to the list above and to
-`sopuli-run-1.20`, together — until then nothing emits it and no consumer should
-expect it. Deciding a value before shipping it is fine; *listing* one the schema
-does not carry would be a contract that disagrees with itself.
+**`VAULT_ONLY` is what `creds generate --promote` reports** (#257): the vault
+holds this password and no database has been asked. None of the other values
+would have been true of that result. `IN_SYNC` asserts a match nobody checked;
+`DRIFT` asserts a comparison that never happened — and exits 3, so a successful
+adoption would exit non-zero; `PENDING_APPLY` sends `check` and `apply` looking
+for a `pending` that is not there; and `UNVERIFIABLE` means *tried and could
+not*, which `check` leans on. Reusing `SKIPPED` was weighed and refused as a lie,
+and emitting no `results[]` at all was refused because it would leave the one verb
+that writes the field applications read with nothing machine-readable to say about
+what it changed. So the enum gains a value, which this section's own first line
+makes a **minor** bump. The cost is a consumer switching exhaustively over
+`state`, paid once here rather than argued again per verb, and `sopuli-run-1.20`
+carries it.
+
+**Not `PENDING_APPLY` with the stage swapped.** That state says a rotation is in
+flight and something is waiting to be applied; this one says there is none. What
+follows a `VAULT_ONLY` is still `creds apply` — it finds the databases behind the
+vault and converges them — but a consumer counting rotations in progress must not
+count these, and `check` looking for a `pending` here would find nothing and be
+right.
 
 **`action_kind`** — `none`, `generate`, `vault_write_pending`, `vault_promote`,
 `vault_rollback`, `password_set`, `rollover_start`, `rollover_finish`,
@@ -1598,6 +1603,18 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.19 became 1.20 when a password could be written straight to `current`**
+(#257): `state` gains `VAULT_ONLY`, which §3's own first line makes a **minor**
+bump — an added enum value, with nothing existing changing meaning. The cost is a
+consumer switching exhaustively over `state`, and it is paid deliberately: the
+alternatives were a value that asserts something untrue and a successful mutation
+with no `results[]` at all.
+
+Nothing else in the document moves. `vault_promote` has been in the `action_kind`
+enum since the schema was written, and `results[].secret.stage` has always been
+able to say `current`, so the verb that arrived with this bump needed one new
+word and no new shape.
 
 **1.18 became 1.19 when `creds generate` reported what it read** (#317): a
 `constraints` section, described above, carrying the limit that bound the draw
