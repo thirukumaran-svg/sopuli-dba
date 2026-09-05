@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.57.1](https://github.com/villebase/sopuli-dba/compare/v0.57.0...v0.57.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **guardrails:** read `V$PWFILE_USERS`, and report check 3 when it cannot ([#296](https://github.com/villebase/sopuli-dba/issues/296)) ([#340](https://github.com/villebase/sopuli-dba/issues/340)) ([abc3f62](https://github.com/villebase/sopuli-dba/commit/abc3f6279a97d1a1814802e73025dcc11d0e785e))
+
 ## [0.57.0](https://github.com/villebase/sopuli-dba/compare/v0.56.0...v0.57.0) (2026-09-05)
 
 
