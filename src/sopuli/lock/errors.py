@@ -106,10 +106,16 @@ class NoFenceError(StoreError):
     exit code, and the module note above says a lock error deliberately does not
     -- because for those two the right code depends on what the run had already
     applied, and only the command knows. This one has no such ambiguity: it is
-    invariant 4's plan-time capability refusal, raised before anything is read or
-    written, and 5 is the code that means it whoever is asking. Sitting in the
-    hierarchy that already carries ``exit_code`` and ``category`` is what keeps
-    that from being a special case at the boundary.
+    invariant 4's plan-time capability refusal, raised before any lock record is
+    read or written, and 5 is the code that means it whoever is asking. Sitting
+    in the hierarchy that already carries ``exit_code`` and ``category`` is what
+    keeps that from being a special case at the boundary.
+
+    :meth:`~sopuli.lock.manager.LockManager.preflight` raises it for the same
+    fact on the acquisition path (#346) -- after reading the lock path's
+    metadata, which is how it knows, and before touching the record itself. Both
+    verbs then answer the same way about the same store, which they did not
+    before: ``lock break`` said 5 and ``creds apply`` said 7.
     """
 
     category = "capability"

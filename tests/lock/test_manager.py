@@ -13,6 +13,7 @@ Vault. What it checks is a version comparison, so it belongs here first.
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -20,6 +21,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
+from sopuli.exit_codes import ExitCode
 from sopuli.lock import (
     CLOCK_SKEW,
     DEFAULT_TTL,
@@ -28,10 +30,12 @@ from sopuli.lock import (
     Holder,
     LockableStore,
     LockDeniedError,
+    LockError,
     LockKey,
     LockManager,
     LockRecord,
     LockStolenError,
+    NoFenceError,
     lock_path,
 )
 from sopuli.store import MemoryStore, PathMetadata, Stored
@@ -459,6 +463,52 @@ def test_renewing_a_stolen_lock_fails_rather_than_taking_it_back() -> None:
         stalled.renew()
 
 
+def test_a_takeover_between_the_check_and_the_renewal_write_is_a_takeover() -> None:
+    """#346. `renew` checks and then writes, and the gap is real.
+
+    The check is not the whole guard: a takeover can land between it and the
+    write, or on lock two after lock one has already been rewritten. `_write`
+    translated **every** lost compare-and-set into `LockDeniedError` -- exit 7,
+    "nothing has been touched" -- in a message saying the run was *acquiring* a
+    lock it had held since the first target. Neither half is true of a renewal.
+    """
+    store = Contested()
+    clock = Clock()
+    run = manager(store, clock=clock)
+    run.acquire([KEY])
+    clock.advance(timedelta(minutes=10))
+
+    with pytest.raises(LockStolenError) as caught:
+        run.renew()
+
+    assert store.raced, "nobody raced, so this asserts nothing"
+    assert "taken over" in str(caught.value)
+    assert "acquiring" not in str(caught.value)
+
+
+class Contested(MemoryStore):
+    """Somebody else writes the lock record in the gap `renew` cannot close.
+
+    A real compare-and-set conflict out of the real store rather than a raised
+    exception: the interfering write uses the version this run was about to use,
+    so the renewal's own CAS is stale by the time it lands -- which is what
+    happens when two runs renew the same lock a moment apart.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.raced = False
+
+    def write(self, path: str, data: Mapping[str, Any], *, cas: int | None = None) -> int:
+        if not self.raced and path == lock_path(KEY) and cas:
+            self.raced = True
+            theirs = LockRecord.acquired(
+                correlation_id="01JTHEIRS", command="creds rotate", holder=HOLDER, now=NOW
+            )
+            super().write(path, theirs.to_dict(), cas=cas)
+        return super().write(path, data, cas=cas)
+
+
 def test_a_renewed_lock_is_not_taken_over_by_a_run_that_waited() -> None:
     """The reason renewal exists: a long run must not lose its lock for being long."""
     store = MemoryStore()
@@ -727,7 +777,7 @@ def test_breaking_expired_locks_is_refused_where_there_is_no_fence() -> None:
 def test_a_store_that_cannot_lock_is_refused_before_anything_is_written() -> None:
     store = MemoryStore(capabilities=frozenset())
 
-    with pytest.raises(LockDeniedError) as caught:
+    with pytest.raises(NoFenceError) as caught:
         manager(store).acquire([KEY])
 
     assert "no compare-and-set" in str(caught.value)
@@ -741,10 +791,36 @@ def test_a_lock_path_that_does_not_require_a_compare_and_set_is_refused() -> Non
     store = MemoryStore()
     store.configure(lock_path(KEY), PathMetadata(cas_required=False))
 
-    with pytest.raises(LockDeniedError) as caught:
+    with pytest.raises(NoFenceError) as caught:
         manager(store).acquire([KEY])
 
     assert "cas-required" in str(caught.value)
+
+
+def test_a_pre_flight_refusal_is_a_capability_refusal_and_not_a_held_lock() -> None:
+    """#346. Both pre-flight checks used to raise `LockDeniedError`, which the
+    boundary maps to exit 7 -- "another process holds the lock".
+
+    Neither is a held lock, and the difference is what a scheduler does next. A
+    KV v1 mount nobody marked `locking: advisory-only` is a fact about the store
+    that is true again on the next run and the one after that, so exit 7 had an
+    unattended runner retrying for ever on a condition that can never clear.
+    Exit 5 says the tool cannot do this here, which is invariant 4's answer and
+    the one `sopuli lock break` already gave for the identical fact.
+    """
+    no_cas = MemoryStore(capabilities=frozenset())
+    no_promise = MemoryStore()
+    no_promise.configure(lock_path(KEY), PathMetadata(cas_required=False))
+
+    for store in (no_cas, no_promise):
+        with pytest.raises(NoFenceError) as caught:
+            manager(store).acquire([KEY])
+
+        assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+        assert caught.value.category == "capability"
+        # Not a `LockError` at all, which is what keeps the boundary's
+        # `LockDeniedError -> 7` mapping from ever seeing one of these.
+        assert not isinstance(caught.value, LockError)
 
 
 def test_a_path_with_no_metadata_at_all_is_fine() -> None:

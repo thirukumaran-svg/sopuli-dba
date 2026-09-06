@@ -836,7 +836,8 @@ What a run does today when one part of it fails:
 | a target that will not connect | `ERROR` rows for its accounts, the run moves to the next target |
 | an account whose statement the server refuses | `ERROR` row, the run moves to the next account |
 | a **promotion** that fails | that document is not promoted, the others still are |
-| a **lock** that cannot be taken | exit 7, nothing ran |
+| a **lock** somebody else holds | exit 7, nothing ran |
+| a **lock** this store or path cannot fence | exit 5, before anything is read or written (#346) |
 | a **fence check** that finds the lock stolen | abort, mutate nothing further, exit 7 or 4 |
 | a **pre-flight** blocking finding | exit 1, nothing was written |
 | a **capability** the estate cannot honour | exit 5, before anything is written |
@@ -1619,6 +1620,16 @@ setting is what stops a *different* writer — an operator with a vault CLI — 
 replacing the record without a compare-and-set, and the tool cannot claim a
 guarantee it has not checked. A path with no metadata at all is the ordinary
 state before the first lock and is not a failure.
+
+**Both pre-flight refusals are exit 5, not exit 7** (#346). Neither is a held
+lock — one is a store with no compare-and-set that nobody marked
+`locking: advisory-only`, the other is a path that does not require one — and
+both are decided before any lock record is read or written. Exit 7 said "another
+process holds the lock", which is a condition that clears; these do not, so an
+unattended runner retried one for ever. `sopuli lock break` has always answered
+5 for the identical fact, through `check_fenceable`. The second refusal is 5
+rather than 9 because it is not *this tool's* configuration that is invalid —
+the file is fine, and the remedy is a vault command.
 
 `max_versions: 10` is recommended and deliberately **not** enforced. Pruning old
 versions does not reset the version counter, so fencing survives any value of it,

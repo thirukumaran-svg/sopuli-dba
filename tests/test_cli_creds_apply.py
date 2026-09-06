@@ -1309,6 +1309,58 @@ def test_closing_the_rollover_window_is_behind_the_fence(
     assert applying(harness).finished == []
 
 
+def test_a_takeover_during_the_renewal_keeps_what_the_run_applied(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#346. The renewal's compare-and-set loses, and that is a *takeover*.
+
+    `renew()` checks the fence and then writes, and a takeover can land in
+    between -- or on lock two after lock one has already been rewritten. Every
+    conflict used to become `LockDeniedError`, whose message said the run was
+    "acquiring" a lock it had held since the first target, and which
+    `_apply_estate` does not catch: it escaped to `creds apply`'s own handler,
+    which set `document.lock` and re-raised, and the boundary mapped it to exit
+    7. `document.results` was never set and the accumulated `applied` list went
+    with the exception.
+
+    So a scheduler was told **exit 7 -- nothing happened** at the exact moment
+    the first target had already been re-passworded. Exit 4 with the results
+    kept is what the split in `sopuli/lock/errors.py` describes, and what the
+    command layer already does for every other takeover.
+    """
+    harness = estate()
+    store = harness["store"]
+    first = lock_path(LockKey(store="vault-prod", path="apps/acme/appdb-alpha"))
+    write = store.write
+    raced: list[str] = []
+
+    def racing_write(path: str, data: Mapping[str, Any], *, cas: int | None = None) -> int:
+        # The renewal is the first write to a lock path carrying a non-zero CAS:
+        # acquisition passes 0, and the release comes after this. Somebody else
+        # gets there with the version this run was about to use.
+        if not raced and path == first and cas:
+            raced.append(path)
+            theirs = LockRecord.acquired(
+                correlation_id="01JSOMEBODYELSE",
+                command="creds rotate",
+                holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
+                now=utc_now(),
+            )
+            write(path, theirs.to_dict(), cas=cas)
+        return int(write(path, data, cas=cas))
+
+    store.write = racing_write
+
+    result = run(runner, write_config(CONFIG), "--output", "json")
+    found = document(result)
+
+    assert raced, "the renewal never wrote, so this asserts nothing"
+    assert found["exit_code"] == ExitCode.PARTIAL
+    # The whole point: what the first target applied is still in the document.
+    assert [one["account"] for one in found["results"]] == ["acme_web_user"]
+    assert sum(len(session.changed) for session in harness["sessions"]) == 1
+
+
 def test_the_lease_is_renewed_at_each_target_boundary(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

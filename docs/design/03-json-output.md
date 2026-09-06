@@ -537,7 +537,9 @@ was refused — another run acquired between this run's read and its write — a
 there the winner's record was never read. The schema therefore leaves `holder`
 optional and `reason` says why it is absent, which is better than a producer
 emitting an all-null holder that a consumer cannot distinguish from a vault that
-answered badly. Everything in `held[]` is required by contrast: that section is
+answered badly. A conflict on the *renewal* write is neither of these and is not
+`denied` at all — this run held the lock, so losing the compare-and-set is a
+takeover, reported the way every other takeover is (#346). Everything in `held[]` is required by contrast: that section is
 written when the run ends, by which point there is nothing about its own locks
 the tool does not know.
 
