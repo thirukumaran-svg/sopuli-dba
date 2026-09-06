@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import pytest
 
+from sopuli.config.errors import ConfigError
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.lock import LockKey, acquisition_order, lock_key, normalise_path
+from sopuli.lock.keys import parse_lock_key
 
 STORE = "vault-prod"
 
@@ -122,3 +124,69 @@ def test_the_order_is_stable_across_stores_too() -> None:
 def test_a_key_prints_as_store_and_path() -> None:
     """What exit 7 and the lock events show, so it is worth pinning."""
     assert str(key("apps/acme/db")) == "vault-prod:apps/acme/db"
+
+
+# ------------------------------------------------ paths that address nothing ---
+#
+# #344. `normalise_path` dropped only empty segments, so `.` and `..` survived
+# into a lock key. `lock_path()` prefixes `locks/`, and a `..` walks straight
+# back out of it: measured against a real Vault, `lock break 'kv:../secrets/acme/db'`
+# read the *credential* document as a lock record and CAS-wrote a `released`
+# record onto it, with nothing written under `locks/` at all.
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("../secrets/acme/db", id="leading"),
+        pytest.param("apps/../secrets/acme/db", id="interior"),
+        pytest.param("apps/acme/..", id="trailing"),
+        pytest.param("apps/./acme/db", id="single-dot"),
+        pytest.param("..", id="bare"),
+        pytest.param("apps//../acme/db", id="after-an-empty-segment"),
+    ],
+)
+def test_a_relative_segment_is_refused_rather_than_dropped(path: str) -> None:
+    """Refused, and specifically not stripped.
+
+    Stripping would silently rewrite what the operator typed, so `lock status`
+    and `lock break` would report and act on different records -- which is the
+    failure the normalisation exists to prevent, arrived at from the other side.
+    """
+    with pytest.raises(ValueError, match="cannot address a document"):
+        normalise_path(path)
+
+
+def test_the_empty_segment_rule_is_untouched() -> None:
+    """The half that was always right: normalising *merges* two spellings of one
+    document, which over-locks at worst. #344 is that `..` does not merge, it
+    redirects."""
+    assert normalise_path("apps//acme/db") == "apps/acme/db"
+    assert normalise_path("/apps/acme/db/") == "apps/acme/db"
+    assert normalise_path("apps/acme/db") == "apps/acme/db"
+
+
+def test_a_dot_inside_a_segment_is_still_an_ordinary_path() -> None:
+    """Only a whole segment counts. Vault paths carry dots -- `acme.db`,
+    `v1.2` -- and refusing those would refuse ordinary estates."""
+    assert normalise_path("apps/acme.db/v1.2") == "apps/acme.db/v1.2"
+    assert normalise_path("apps/..db/x") == "apps/..db/x"
+
+
+def test_a_typed_lock_key_carrying_one_is_refused() -> None:
+    """`lock break`'s argument. `cli.py` turns this `ValueError` into a
+    `click.UsageError` -- exit 2, no run document, nothing wrong with any file."""
+    with pytest.raises(ValueError, match="cannot address a document"):
+        parse_lock_key("vault-prod:../apps/acme/db")
+
+
+def test_a_ref_carrying_one_is_refused_by_the_config_layer_with_a_location() -> None:
+    """The refusal an operator actually meets.
+
+    `normalise_path` raises a `ValueError`, which is right for a command line and
+    wrong for a file -- so the ref grammar refuses it first, with the key it was
+    written at and a hint. The lock-side check stays as the backstop for a path
+    that reached a key some other way.
+    """
+    with pytest.raises(ConfigError, match="as a path segment"):
+        parse_secret_ref("apps/../acme/db#DB_CREDENTIALS/acme_web_user")

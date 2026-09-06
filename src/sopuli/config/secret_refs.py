@@ -48,6 +48,16 @@ from dataclasses import dataclass
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 
+#: Path segments that address something other than a document. Refused rather
+#: than dropped, everywhere a path is read (#344).
+#:
+#: Lives here rather than beside :func:`~sopuli.lock.keys.normalise_path`, which
+#: is the other place that enforces it, because ``sopuli.lock.keys`` imports
+#: :class:`SecretRef` from this module and the reverse would be a cycle. The ref
+#: grammar is also the right owner: this is a rule about what a path may say, and
+#: the lock layer is one of its consumers rather than its author.
+TRAVERSAL = frozenset({".", ".."})
+
 #: The qualifiers §7 names. Closed, because a misspelt one would otherwise
 #: become part of the field name and read a secret that does not exist -- or,
 #: worse, one that does.
@@ -157,6 +167,26 @@ def parse_secret_ref(text: str, *, at: KeyPath = ROOT) -> SecretRef:
     remainder, version, stage = _split_qualifier(text, at=at)
     remainder, vault = _split_vault(remainder, text, at=at)
     path, field, pointer = _split_field(remainder, text, at=at)
+
+    # Refused here as well as at the lock key, and this is the one an operator
+    # sees: a ref in a file gets a message with a location, rather than the
+    # `ValueError` backstop `normalise_path` raises for a path that reached it
+    # some other way (#344). A `..` does not address a document -- it walks out
+    # of whatever prefix the caller put it under, which for a lock is the
+    # `locks/` prefix that keeps lock writes off the secret itself.
+    traversal = sorted({segment for segment in path.split("/") if segment in TRAVERSAL})
+    if traversal:
+        raise ConfigError(
+            f"secret ref {text!r} contains "
+            f"{', '.join(repr(one) for one in traversal)} as a path segment",
+            at=at,
+            hint=(
+                "write the path the document actually lives at -- a relative segment "
+                "resolves somewhere else on the way to the store, so the ref addresses "
+                "a document other than the one written here; a lock for it, for "
+                "instance, would not land under `locks/`"
+            ),
+        )
 
     return SecretRef(
         path=path,
