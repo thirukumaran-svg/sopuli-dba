@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.58.0](https://github.com/villebase/sopuli-dba/compare/v0.57.3...v0.58.0) (2026-09-06)
+
+
+### Features
+
+* **oracle:** audit SYSDBA and SYSOPER where V$PWFILE_USERS is readable ([#366](https://github.com/villebase/sopuli-dba/issues/366)) ([6b25da0](https://github.com/villebase/sopuli-dba/commit/6b25da0bd4179ab00b0e7f604ef9a2c0a8e3dbda))
+
 ## [0.57.3](https://github.com/villebase/sopuli-dba/compare/v0.57.2...v0.57.3) (2026-09-06)
 
 
