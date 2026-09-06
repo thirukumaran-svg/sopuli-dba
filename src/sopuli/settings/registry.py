@@ -209,6 +209,25 @@ class Setting:
     #: renames a setting, and the failure mode is a guardrail that stops holding
     #: while every test still passes.
     safe_bool: bool = True
+    #: Why this setting is accepted and then ignored, or ``None`` where it is
+    #: wired to something (#358).
+    #:
+    #: A key can be worth declaring before anything reads it -- the schema
+    #: accepts it, `config show` prints it, and an estate can write it without
+    #: the file being invalid. What that must not be is *accidental*, and four
+    #: times it was: #292, #296, #348 and `lock_diagnostics` in #356 were each a
+    #: complete implementation with the one wire missing, and each was found by
+    #: somebody reading the code rather than by a test.
+    #:
+    #: So the claim moves out of prose and into the registry, where
+    #: `tests/settings/test_settings_are_wired.py` holds it to **both**
+    #: directions: a setting with no reason must have a consumer, and a setting
+    #: with one must have none. The second is the half that stops the marking
+    #: rotting -- wiring an inert key up fails the suite until somebody deletes
+    #: the reason, which is the moment to ask whether the documents still say
+    #: the right thing. `01-configuration.md` §5's paragraph about
+    #: `db.query_timeout_s` had already gone stale exactly that way.
+    inert_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.type not in SETTING_TYPES:
@@ -218,6 +237,12 @@ class Setting:
             )
         if not self.layers:
             raise ValueError(f"setting {self.name!r} declares no layers; nothing could supply it")
+        if self.inert_reason is not None and not self.inert_reason.strip():
+            raise ValueError(
+                f"setting {self.name!r} is marked inert with no reason; the reason is the "
+                f"point -- it is what a reader needs in order to know whether the marking "
+                f"is still true"
+            )
         ratchet = self.policy is MergePolicy.RATCHET
         safety = self.name in SAFETY_SETTINGS
         if safety and not ratchet:
@@ -280,6 +305,7 @@ def _setting(
     policy: MergePolicy,
     builtin: Any = None,
     safe_bool: bool = True,
+    inert_reason: str | None = None,
 ) -> Setting:
     return Setting(
         name=name,
@@ -288,6 +314,7 @@ def _setting(
         policy=policy,
         builtin=builtin,
         safe_bool=safe_bool,
+        inert_reason=inert_reason,
     )
 
 
@@ -481,6 +508,14 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 layers=(Layer.PROFILE, Layer.BUILTIN),
                 policy=MergePolicy.OVERRIDE,
                 builtin=NO_QUERY_TIMEOUT,
+                inert_reason=(
+                    "accepted and not consulted: `_timeouts()` in `sopuli/cli.py` builds "
+                    "`Timeouts(connect_s=...)` and passes no `query_s`, so a profile "
+                    "setting this changes nothing. The driver end is complete -- "
+                    "`Timeouts.query_s` becomes `Connection.call_timeout` and "
+                    "`tests/driver/test_oracle_connect.py` asserts it -- and only the "
+                    "command-side wire is missing (#358)"
+                ),
             ),
             _setting(
                 # May an unattended runner take over a lock past its expiry
