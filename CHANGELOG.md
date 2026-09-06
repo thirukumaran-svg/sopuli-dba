@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.57.3](https://github.com/villebase/sopuli-dba/compare/v0.57.2...v0.57.3) (2026-09-06)
+
+
+### Bug Fixes
+
+* **config:** import the package's re-exports on demand ([#363](https://github.com/villebase/sopuli-dba/issues/363)) ([#365](https://github.com/villebase/sopuli-dba/issues/365)) ([d68d526](https://github.com/villebase/sopuli-dba/commit/d68d526590d16a0bc77a4788d1d640a07c98568d))
+* **config:** move `normalise_path` to the ref grammar that owns it ([#357](https://github.com/villebase/sopuli-dba/issues/357)) ([#364](https://github.com/villebase/sopuli-dba/issues/364)) ([777758a](https://github.com/villebase/sopuli-dba/commit/777758a3d4ad16077b64fadc46b0e32762c9f0c9))
+* **config:** wire both `db` budgets to the driver ([#360](https://github.com/villebase/sopuli-dba/issues/360)) ([#361](https://github.com/villebase/sopuli-dba/issues/361)) ([b820c0a](https://github.com/villebase/sopuli-dba/commit/b820c0abaedd488c580fd8c5963f7d59115ff2e9))
+
 ## [0.57.2](https://github.com/villebase/sopuli-dba/compare/v0.57.1...v0.57.2) (2026-09-06)
 
 
