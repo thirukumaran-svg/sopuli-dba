@@ -138,6 +138,21 @@ defaults:
 """
 )
 
+#: Two accounts in one document, both opted in to the unlock. The pairing is what
+#: makes #347's second exposure visible: the fence is checked once per account, so
+#: an account after the first in the same target is one the run reaches with a
+#: lock it may no longer hold.
+SHARED_UNLOCKING_CONFIG = (
+    SHARED_CONFIG
+    + """policies:
+  app-standard:
+    account:
+      unlock_if_locked: true
+defaults:
+  policy: app-standard
+"""
+)
+
 #: The same estate again, opted in to §5's profile assignment (#301). The profile
 #: is one `FakeSession` knows about; `MOVING_TO_NOTHING` names one no database has.
 ASSIGNING_CONFIG = (
@@ -1208,6 +1223,90 @@ def test_a_takeover_before_any_change_is_exit_seven(
     assert result.exit_code == ExitCode.LOCK_HELD
     assert harness["sessions"][0].changed == []
     assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]["acme_web_user"] == STAGED
+
+
+def test_the_attribute_pass_is_behind_the_fence(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#347. `apply_attributes` issues `ALTER USER ... ACCOUNT UNLOCK`, which is a
+    database change like any other and was being made before any fence check.
+
+    The takeover lands on this run's *first* `describe_user`, so the lock is
+    somebody else's before the attribute pass is reached. Before #347 the only
+    check in `_apply_one` ran after it, and this run unlocked an account on a
+    lock it no longer held -- a smaller blast radius than a password and the same
+    rule broken.
+    """
+    harness = estate(
+        users={"ACME_WEB_USER": user(status="LOCKED", locked=True)},
+        on_call=steal("apps/acme/appdb-alpha", at="describe_user"),
+    )
+
+    result = run(runner, write_config(UNLOCKING_CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.LOCK_HELD
+    assert harness["sessions"][0].unlocked == []
+    assert harness["sessions"][0].changed == []
+
+
+def test_a_takeover_stops_the_next_account_before_its_attribute_pass(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The second half of #347's exposure: every account after the first *within*
+    a target.
+
+    `renew()` fences each target boundary, so a two-target estate is covered at
+    the seam between them. Two accounts in one target have no seam -- the run
+    goes straight from one to the next -- and the attribute pass was the first
+    thing each of them did. The takeover here lands on the first account's
+    `set_password`, so the first account's work stands and the second must not
+    even be unlocked.
+    """
+    harness = estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+            }
+        },
+        users={
+            "ACME_WEB_USER": user(status="LOCKED", locked=True),
+            "ACME_BATCH_USER": user("ACME_BATCH_USER", status="LOCKED", locked=True),
+        },
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+        on_call=steal("apps/acme/db", at="set_password"),
+    )
+
+    result = run(runner, write_config(SHARED_UNLOCKING_CONFIG))
+
+    session = harness["sessions"][0]
+    assert session.unlocked == ["ACME_WEB_USER"]
+    assert session.changed == [("ACME_WEB_USER", STAGED)]
+    assert result.exit_code == ExitCode.PARTIAL
+
+
+def test_closing_the_rollover_window_is_behind_the_fence(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#347's second mutation. `creds finish-rollover` fences this same call and
+    `creds apply` did not, which is one operation encoding two rules about
+    whether the fence applies to it -- and only one of them can be the intended
+    one.
+
+    The window stays open, which is the safe direction: an operator can close it
+    deliberately, and a window closed by a run that had lost its lock is an old
+    password stopped working by somebody who was no longer holding the estate.
+    """
+    harness = estate(
+        users={"ACME_WEB_USER": rollover_user()},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        on_call=steal("apps/acme/appdb-alpha", at="set_password"),
+    )
+
+    run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--strategy", "direct")
+
+    assert applying(harness).changed == [("ACME_WEB_USER", STAGED)]
+    assert applying(harness).finished == []
 
 
 def test_the_lease_is_renewed_at_each_target_boundary(

@@ -3370,10 +3370,19 @@ def _apply_one(
     where it could not run (:func:`_refuse_unhonourable_strategy`), so by here it
     is a regime this account can honour.
 
-    **The fence is re-read immediately before the statement** (UC-1 §8), and
-    narrowed to this account's own document: that is the lock the change is about
-    to be made under, and checking the run's other twenty would be twenty store
-    reads to establish nineteen facts nothing here is about to act on.
+    **The fence is re-read immediately before every mutating call** (UC-1 §8),
+    and narrowed to this account's own document: that is the lock the change is
+    about to be made under, and checking the run's other twenty would be twenty
+    store reads to establish nineteen facts nothing here is about to act on.
+    *Every* is the word #347 cost -- the attribute pass and the rollover close
+    are mutations too, and each carries its own check rather than resting on the
+    distance to the one before `set_password`.
+
+    *Call*, not *statement*: `apply_attributes` may issue both an
+    `ACCOUNT UNLOCK` and a `PROFILE` change under one check. The check is per
+    driver call because that is the granularity the fence can have -- a run
+    cannot re-read a vault between two statements the driver sends -- and the
+    guarantee is that no call begins on a lock this run has lost.
 
     **A lock error is never a per-account finding.** Everything else that goes
     wrong with one account is a row in the table and the run carries on, which is
@@ -3444,6 +3453,14 @@ def _apply_one(
         caveats = review.caveats
 
         if attributes.requested():
+            # Fenced like every other mutation (P5, #347). `apply_attributes`
+            # issues `ALTER USER ... ACCOUNT UNLOCK` and `ALTER USER ... PROFILE`
+            # -- a smaller blast radius than a password, and still a database
+            # change this run must not make on a lock it no longer holds. Before
+            # #347 the only check in this function ran forty-five lines later,
+            # which left the first account of the run and every account after the
+            # first within a target unfenced.
+            manager.check(_lock_key(binding))
             # The driver decides what still needs doing and reports a row either
             # way, which is where invariant 9 lives for these: an account that is
             # already unlocked is `changed: false` rather than an absent action.
@@ -3511,6 +3528,14 @@ def _apply_one(
             # change was confirmed would leave an account whose old password has
             # stopped working and whose new one is not known to work -- the one
             # state worse than the grace period `direct` exists to avoid.
+            #
+            # Checked again rather than resting on the check before
+            # `set_password` (#347). A DDL, a `describe_user` and a login with
+            # `attempts=2` sit between the two, so the window is real -- but the
+            # reason is the rule rather than the size of the window: `creds
+            # finish-rollover` fences this same call, and one operation cannot
+            # encode two different rules about whether the fence applies to it.
+            manager.check(_lock_key(binding))
             session.finish_rollover(after_user.name)
             after_user = session.describe_user(binding.account) or after_user
             outcome = apply_states.after_change(after_user, after)
