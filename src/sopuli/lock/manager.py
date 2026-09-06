@@ -212,10 +212,13 @@ class LockManager:
     def acquire(self, keys: Iterable[LockKey]) -> None:
         """Take every lock, in order, or none of them.
 
-        Raises :class:`~sopuli.lock.errors.LockDeniedError` on the first refusal,
-        having released whatever it had already taken -- so a run that loses a
-        race is a run that touched nothing, rather than one holding two locks
-        nobody can account for.
+        Releases whatever it had already taken before re-raising **whatever
+        stopped it** -- so a run that fails part way through acquisition is a run
+        that touched nothing, rather than one holding two locks nobody can
+        account for. That is usually
+        :class:`~sopuli.lock.errors.LockDeniedError`, a race lost; it is also
+        every way a store can fail, and #345 is what it cost to unwind on only
+        the first of those.
 
         ``keys`` is materialised first because it is walked **twice** -- once by
         :meth:`preflight` and once here -- and the parameter is typed
@@ -229,7 +232,20 @@ class LockManager:
         for key in acquisition_order(wanted):
             try:
                 self.held.append(self._take(key))
-            except LockDeniedError:
+            except BaseException:
+                # **Anything**, not just a refusal (#345). A refusal is the
+                # expected way to lose a lock, and it was the only one this
+                # unwound for -- so a store that timed out, sealed, failed over
+                # to a standby, or refused a token that expired between the
+                # first key and the second left every lock already taken sitting
+                # in the vault as `held` for the full TTL. `holding()` cannot
+                # help: it calls this *before* its `try`, so its `finally` never
+                # runs when acquisition is what failed.
+                #
+                # `BaseException` rather than `Exception`, deliberately. A
+                # `KeyboardInterrupt` between two acquisitions is exactly the
+                # case an operator most wants cleaned up, and re-raising
+                # immediately is what keeps that from being a swallowed signal.
                 self.release()
                 raise
 

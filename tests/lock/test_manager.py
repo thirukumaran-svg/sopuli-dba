@@ -35,6 +35,7 @@ from sopuli.lock import (
     lock_path,
 )
 from sopuli.store import MemoryStore, PathMetadata, Stored
+from sopuli.store.protocol import StoreError
 
 STORE = "vault-prod"
 KEY = LockKey(store=STORE, path="apps/acme/db")
@@ -218,6 +219,87 @@ def test_a_partial_acquisition_gives_back_what_it_took() -> None:
 
     assert record_at(store, KEY)["state"] == "released"
     assert record_at(store, OTHER)["correlation_id"] == "01JTHEIRS"
+
+
+def test_a_store_that_fails_mid_acquisition_gives_back_what_it_took() -> None:
+    """#345: the unwind covers every way acquisition can stop, not just a refusal.
+
+    This unwound on `LockDeniedError` alone, which is the *expected* way to lose
+    a lock and not the only one. `_take` reads and writes a store, and the
+    HashiCorp adapter raises `StoreError` on a timeout, `StoreAuthError` on a
+    token that expired between the first key and the second, and
+    `StoreUnavailableError` on a sealed vault or a standby failover. None of
+    those is a refusal, so every lock already taken stayed `held` in the vault
+    for the full TTL -- and `holding()` could not clean up after it, because
+    `acquire` runs before its `try`.
+    """
+
+    class Flaky(MemoryStore):
+        """Fine for the first lock, unreachable for the second."""
+
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            if path == lock_path(OTHER):
+                raise StoreError("the store went away mid-acquisition")
+            return super().read(path, version=version)
+
+    store = Flaky()
+    run = manager(store)
+
+    with pytest.raises(StoreError):
+        run.acquire([KEY, OTHER])
+
+    assert record_at(store, KEY)["state"] == "released"
+    assert [one.released for one in run.held] == [True]
+
+
+def test_the_body_never_runs_when_acquisition_fails_and_nothing_stays_held() -> None:
+    """The same thing through `holding()`, which is how every command takes locks.
+
+    Worth asserting separately: `holding` calls `acquire` **outside** its `try`,
+    so the `finally` that releases on every other path is not what saves this
+    one. If the unwind ever moves back inside `acquire`'s old `except`, this
+    fails while the test above still describes a function nobody calls directly.
+    """
+
+    class Flaky(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            if path == lock_path(OTHER):
+                raise StoreError("the store went away mid-acquisition")
+            return super().read(path, version=version)
+
+    store = Flaky()
+    run = manager(store)
+    entered = False
+
+    with pytest.raises(StoreError), run.holding([KEY, OTHER]):
+        entered = True  # pragma: no cover - the point is that it does not run
+
+    assert not entered
+    assert record_at(store, KEY)["state"] == "released"
+
+
+def test_an_interrupt_during_acquisition_still_gives_the_locks_back() -> None:
+    """`BaseException`, not `Exception`, and this is why.
+
+    A `KeyboardInterrupt` between two acquisitions is the case an operator most
+    wants tidied up -- they stopped it, and a lock left behind is the thing they
+    then have to go and break. Re-raised immediately, so the interrupt is
+    cleaned up after rather than swallowed.
+    """
+
+    class Interrupted(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            if path == lock_path(OTHER):
+                raise KeyboardInterrupt
+            return super().read(path, version=version)
+
+    store = Interrupted()
+    run = manager(store)
+
+    with pytest.raises(KeyboardInterrupt):
+        run.acquire([KEY, OTHER])
+
+    assert record_at(store, KEY)["state"] == "released"
 
 
 def test_one_secret_reached_twice_is_locked_once() -> None:
