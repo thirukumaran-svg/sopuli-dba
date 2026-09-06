@@ -13,6 +13,7 @@ header records which paths ran and which are still untried.
 | [design/04-testing.md](design/04-testing.md) | What can and cannot be containerised, capability-driven matrix, tiering, fault injection, release gates |
 | [use-cases/uc-01-app-credential-sync.md](use-cases/uc-01-app-credential-sync.md) | UC-1: application DB account credentials, vault as master — `generate` / `apply` / `check` / `rotate` |
 | [workflow.md](workflow.md) | Binding: branching (`issue-<n>-<slug>`, no long-lived integration branch), Conventional Commits, release-please and the 0.x policy |
+| [local-testing.md](local-testing.md) | Exercising the implemented surface by hand: laptop, WSL, the tier-1 stack, the `creds` lifecycle end to end, and every refusal worth producing on purpose |
 
 ## Machine-readable artefacts
 

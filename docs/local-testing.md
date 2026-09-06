@@ -3,12 +3,16 @@
 How to set up a laptop, WSL, containers and OCI so you can exercise every command
 this build has, and see each one succeed *and* fail on purpose.
 
-Every command and every output in this document was run on 2026-08-27 against
-Windows 11, Instant Client 23.26.3.0.0, and the `tier1` container stack. Where
-something was **not** verified it says so.
+Every command and every output in this document was re-run on 2026-09-06 against
+Windows 11, sopuli 0.58.0, Instant Client 23.26.3.0.0, and the `tier1` container
+stack. Where something was **not** verified it says so. Working paths in the
+samples are shortened to `C:\tmp\sopuli-guide\` — that is the only edit made to
+any output here.
 
 Related: [`../test/README.md`](../test/README.md) for the container stack itself,
-[`design/04-testing.md`](design/04-testing.md) for the automated tiers, and
+[`design/04-testing.md`](design/04-testing.md) for the automated tiers,
+[`use-cases/uc-01-app-credential-sync.md`](use-cases/uc-01-app-credential-sync.md)
+for the design the `creds` verbs implement, and
 [`design/01-configuration.md`](design/01-configuration.md) as the configuration
 reference this guide only skims.
 
@@ -16,21 +20,25 @@ reference this guide only skims.
 
 ## 1. What actually exists, before you plan an evening around it
 
-`sopuli --help` lists five nouns, and the whole implemented surface is **seven
+`sopuli --help` lists five nouns, and the implemented surface is **thirteen
 commands**:
 
 ```
-sopuli config validate      sopuli lock status
-sopuli config show          sopuli lock break
-sopuli target list          sopuli doctor
-sopuli policy sample
+sopuli config validate      sopuli creds generate         sopuli lock status
+sopuli config show          sopuli creds apply            sopuli lock break
+sopuli target list          sopuli creds check            sopuli doctor
+sopuli policy sample        sopuli creds rotate
+                            sopuli creds status
+                            sopuli creds finish-rollover
 ```
 
-**There is no `sopuli creds` and no `sopuli admin` yet.** The JSON schema's
-`command` enum lists `creds.generate`, `creds.apply`, `creds.rotate`,
-`admin.install` and others, because the contract was written ahead of the code —
-but nothing implements them. **You cannot rotate a credential end to end today.**
-If that is what you sat down to test, stop here; UC-1 is not built.
+**UC-1 is built.** You can rotate a credential end to end against the local
+stack, roll one back, detect drift, open and close a rollover window, and watch
+each guardrail refuse. §10 is that walkthrough, and it is the reason to sit down.
+
+**There is still no `sopuli admin`.** The JSON schema's `command` enum lists
+`admin.install`, because the contract was written ahead of the code; run the SQL
+in `sql/oracle/` by hand (§9).
 
 Likewise, of the four store backends `vaults:` accepts, **only `hashicorp` is
 implemented**. `file`, `keyring` and `oci` parse in a config file and fail when a
@@ -47,7 +55,7 @@ install
 ```
 
 So "test against OCI" means an OCI-hosted **database** through Instant Client.
-OCI Vault as a secret store does not exist — see §12.
+OCI Vault as a secret store does not exist — see §14.
 
 ---
 
@@ -60,7 +68,7 @@ OCI Vault as a secret store does not exist — see §12.
 | **Docker** | Oracle and Vault. Neither needs installing on the host |
 | **OCI** | the only place Native Network Encryption and a real ADB wallet can be exercised |
 
-Run through §§3–10 on Windows first, then repeat §§6–10 in WSL. The interesting
+Run through §§3–12 on Windows first, then repeat §§6–12 in WSL. The interesting
 differences are called out as they come.
 
 ---
@@ -91,6 +99,14 @@ sopuli --version
 worth doing once, because it is what a new user gets — use `pip install -e .` in
 a separate venv and run `sopuli doctor`; the `install` section will show
 `hashicorp` as `not_installed` with the exact `pip` line that fixes it.
+
+**`sopuli --version` reports the version recorded when the editable install was
+made, not the version in the tree.** An install left over from an earlier session
+will happily report `0.24.0` against a `0.58.0` checkout, and it is the number
+that lands in every `--output json` run document as `tool.version` — so an audit
+sample captured that way is wrong in the one field an auditor would trust.
+`pip install -e . --no-deps` refreshes the metadata in a second or two; do it
+after any pull that crossed a release.
 
 ---
 
@@ -154,6 +170,28 @@ that will bite otherwise:
 Credentials: Vault root token `sopuli-test-root` at `http://127.0.0.1:8200`
 (UI included). Oracle `SYSTEM` / `sopuli-test` at `127.0.0.1:1521/FREEPDB1`.
 
+### The accounts §10 rotates
+
+The container ships profiles, not accounts — `test/oracle-init/` creates
+`SOPULI_LOCKOUT`, `SOPULI_STRONG`, `SOPULI_REUSE` and `SOPULI_ROLLOVER`, and the
+automated suite makes its own accounts per run. For this guide, make three:
+
+```sql
+CREATE USER acme_app_user   IDENTIFIED BY "Placeholder#1" QUOTA UNLIMITED ON USERS;
+CREATE USER acme_batch_user IDENTIFIED BY "Placeholder#1";
+CREATE USER acme_priv_user  IDENTIFIED BY "Placeholder#1";
+GRANT CREATE SESSION TO acme_app_user, acme_batch_user, acme_priv_user;
+GRANT DBA TO acme_priv_user;
+```
+
+```bash
+docker exec -i sopuli-test-oracle-free-1 \
+  sqlplus -S system/sopuli-test@localhost:1521/FREEPDB1 < accounts.sql
+```
+
+`acme_priv_user` holds `DBA` on purpose: it is what §11's guardrail refuses, and a
+refusal you have not watched happen is one you are trusting rather than testing.
+
 ---
 
 ## 6. A config file, and the check that will reject it first
@@ -210,10 +248,11 @@ faithfully rotate a production password into it.
 A file you just created will normally **fail** this:
 
 ```
-error: config file is accessible to BUILTIN\Users
+sopuli: C:\tmp\sopuli-guide\sopuli.yaml: config file is accessible to BUILTIN\Users
+  hint: remove the extra grant, e.g. icacls "<file>" /inheritance:r /grant:r "%USERNAME%:R"
 ```
 
-Fix it before anything else:
+Exit 9. Fix it before anything else:
 
 ```powershell
 icacls sopuli.yaml /inheritance:r /grant:r "$($env:USERNAME):F"
@@ -226,7 +265,31 @@ The POSIX check is on `0o077` — *any* group or other access, not just read —
 because refusing a world-readable file while accepting a group-writable one would
 guard the smaller problem.
 
-### Four things worth getting wrong on purpose
+### `#{account}` holds exactly one account
+
+The `secret_template` above works, and it stops working the moment the
+application has a second account. Add one and the file is refused at load:
+
+```
+sopuli: C:\tmp\sopuli-guide\clash.yaml: applications[0]: `acme_app_user` and `acme_priv_user`
+  share the secret document vault-dev:acme/dev/acme and would both stage into `pending`, so one
+  password would overwrite the other
+  hint: give the ref a pointer per account, as in `path#FIELD/{account}` -- a bare `#{account}`
+        makes each account a root *field*, and the mirror rule then puts every account's stage at
+        the document root
+```
+
+Exit 9, at load time rather than at the second rotation — which is the whole
+argument for parsing refs when the file is read. The pointer form is what a
+multi-account entry wants:
+
+```yaml
+    secret_template: "vault-dev:acme/{env}/{application}#DB_CREDENTIALS/{account}"
+```
+
+§11 uses that form, because it needs two accounts in one entry.
+
+### Four more things worth getting wrong on purpose
 
 Each of these is a real error message worth seeing once:
 
@@ -239,6 +302,25 @@ Each of these is a real error message worth seeing once:
 
 All four cost me time while writing this guide, which is why they are here.
 
+### The one warning you will see without asking for it
+
+If `VAULT_ADDR` is set in your shell — and it will be, because §8 tells you to set
+it — a config with no `defaults.vault` says so:
+
+```
+ok: 1 target, 1 binding, 1 warning
+
+1 warning:
+  VAULT_ADDR is set and was not applied: this run has no default store, and a third-party
+  variable names none
+    hint: P3 honours it as a setting of the store `defaults.vault` names, below SOPULI_VAULT --
+          write `defaults.vault`, or ignore this if the variable belongs to something else on
+          this machine
+```
+
+That is correct behaviour and not a problem to fix: the store's `addr:` is in the
+file, so nothing is missing. It is here so you recognise it rather than chase it.
+
 ---
 
 ## 7. The offline commands
@@ -249,6 +331,8 @@ None of these open a socket. They work with Docker stopped and no Instant Client
 sopuli --config sopuli.yaml config validate
 ```
 ```
+config: C:\tmp\sopuli-guide\sopuli.yaml
+
 ok: 1 target, 1 binding, 0 warnings
 ```
 
@@ -256,6 +340,8 @@ ok: 1 target, 1 binding, 0 warnings
 sopuli --config sopuli.yaml target list
 ```
 ```
+config: C:\tmp\sopuli-guide\sopuli.yaml
+
 NAME      DSN                      ENV  SCOPE  SOURCE
 free-pdb  127.0.0.1:1521/FREEPDB1  dev  pdb    targets
 
@@ -272,12 +358,67 @@ which is the fastest way to understand the precedence chain.
 
 ```
 settings
-  output          = text   [built-in default]
-  safety.dry_run  = false  [built-in default]
-  safety.readonly = false  [built-in default]
+  db.connect_timeout_s = 30     [built-in default]
+  db.query_timeout_s   = 0      [built-in default]
+  output               = text   [built-in default]
+  safety.dry_run       = false  [built-in default]
+  safety.readonly      = false  [built-in default]
 ```
 
-Set `SOPULI_OUTPUT=json` and run it again to watch a layer change.
+Set `SOPULI_OUTPUT=json` and run it again to watch a layer change. Only three
+variables reach a setting this way — `SOPULI_OUTPUT`, `SOPULI_DRY_RUN` and
+`SOPULI_PROFILE` — plus `SOPULI_VAULT` and the per-store `SOPULI_VAULT__*` forms.
+**There is no `SOPULI_READONLY` and no `SOPULI_MAX_TARGETS`**, and an invented one
+is ignored rather than refused, so a run you believe is guarded by an environment
+variable is not guarded at all. Those live in the file (§11).
+
+### Profiles
+
+A profile changes how a run behaves, never what it acts on. Add one:
+
+```yaml
+profiles:
+  unattended:
+    confirm: false
+    output: json
+    safety:
+      confirm_environments: []
+    locking:
+      break_expired: true
+    rotation:
+      strategy: staged
+    db:
+      connect_timeout_s: 60
+```
+
+```bash
+sopuli --config sopuli.yaml --profile unattended config show --explain --output text
+```
+```
+profiles
+unattended
+
+...
+
+settings
+  db.connect_timeout_s  = 60          [profiles.unattended.db.connect_timeout_s]
+  db.query_timeout_s    = 0           [built-in default]
+  locking.break_expired = true        [profiles.unattended.locking.break_expired]
+  output                = text        [cli --output (verb)]
+  profile               = unattended  [cli --profile (group)]
+  safety.dry_run        = false       [built-in default]
+  safety.readonly       = false       [built-in default]
+```
+
+Two things to read out of that. `--output text` on the command line beat the
+profile's `output: json`, which is precedence working — drop the flag and the
+source reads `[profiles.unattended.output]`.
+
+And `confirm`, `rotation.strategy` and `verify.method` are **absent from the list
+entirely**. They validate, they appear in `config show`, and nothing reads them
+yet — deliberately (`sopuli/settings/registry.py`: a setting arrives with its
+consumer), but it means a profile can look like it configures something it does
+not. `--explain` is how you tell, and it is worth checking before trusting one.
 
 ### Password policy
 
@@ -285,14 +426,18 @@ Set `SOPULI_OUTPUT=json` and run it again to watch a layer change.
 sopuli --config sopuli.yaml policy sample --count 2
 ```
 ```
-policy: standard    length 24, alnum_safe, first_char alpha, require digit 1, ...
+config: C:\tmp\sopuli-guide\sopuli.yaml
+policy: standard    length 24, alnum_safe, first_char alpha, require digit 1, lower 1, special 1, upper 1
 
 #  CHARS  BYTES  CLASSES
-1  24     -      u8 l10 d3 s3
-2  24     -      u5 l14 d3 s2
+1  24     -      u10 l8 d4 s2
+2  24     -      u10 l6 d4 s4
 
 2 samples, all compliant. Not stored anywhere; pass --reveal to print them.
 ```
+
+The policy name is a positional argument (`policy sample standard`), so an estate
+with several policies does not need a config edit to look at one of them.
 
 `--reveal` prints the passwords — the one place this tool prints a secret, allowed
 because a sample is not a credential: nothing authenticates with it and it is
@@ -303,8 +448,8 @@ sopuli --config sopuli.yaml policy sample --reveal --output json
 ```
 ```
 Error: --reveal cannot be used with --output json
-       json output is what gets captured and shipped to log aggregation, so a
-       sample never appears in it -- drop --reveal, or use the text output
+       json output is what gets captured and shipped to log aggregation, so a sample never
+       appears in it -- drop --reveal, or use the text output
 ```
 
 Exit 2. Also try `--max-bytes 30 --encoding cp1252` to see the byte-limit preview
@@ -312,7 +457,7 @@ that models an 11g password.
 
 ---
 
-## 8. Vault
+## 8. Vault, locks, and the one chore nobody warns you about
 
 `lock status` is the first command that opens a socket. It needs a token, and
 **the token is never a command-line value** — it comes from the environment, a
@@ -324,20 +469,76 @@ export VAULT_TOKEN=sopuli-test-root
 sopuli --config sopuli.yaml lock status
 ```
 ```
+config: C:\tmp\sopuli-guide\sopuli.yaml
 mode:   cas
 
 0 of 1 declared lock paths held
 ```
 
 `mode: cas` means the store can fence — it supports compare-and-set, so two runs
-starting in the same second cannot both believe they hold a lock. Set
-`locking: advisory-only` on the vault and watch the mode change and a
-`SOPULI-W001` warning appear.
+starting in the same second cannot both believe they hold a lock.
+
+**`mode` follows the store, not the config key.** Setting
+`locking: advisory-only` on a KV v2 vault changes nothing here — it is
+*permission* to run without a fence, not a demotion, and a store that can fence
+still reports `cas`. To see `mode: none` you need a store that genuinely cannot,
+which the dev stack has: point the vault at the `kv1` mount.
+
+```yaml
+    mount: kv1
+    kv_version: 1
+    locking: advisory-only
+```
+```
+mode:   none
+
+0 of 1 declared lock paths held
+```
+
+Drop the `locking:` line and the same config is refused before it writes
+anything:
+
+```
+sopuli: vault-dev:acme/dev/acme cannot be locked: store 'vault-dev' has no compare-and-set
+  hint: set `vaults.vault-dev.locking: advisory-only` to proceed without one, or move the
+        secret to a store with versioning
+```
+
+Exit 5 — the weakening has to be written down somewhere a reviewer sees it,
+rather than discovered at rotation time.
+
+That combination is a demonstration, not a working setup: `advisory-only` gets a
+run past the *lock* preflight, and then the credential write asks for a
+compare-and-set of its own and fails on the same mount.
+
+```
+ACCOUNT        SECRET                   RESULT
+acme_app_user  vault-dev:acme/dev/acme  this store has no compare-and-set, and the write to
+                                        'acme/dev/acme' asked for one
+
+1 failed
+```
+
+Exit 1. Put the vault back on `kv` before §10.
 
 Without a token:
 
 ```
-error: vault "vault-dev": no token, and none of the places it is looked for had one
+sopuli: vault "vault-dev": no token, and none of the places it is looked for had one
+  hint: write `token: { file: … }` on the store, or supply one of: --vault-token-file PATH,
+        $SOPULI_VAULT_TOKEN, $VAULT_TOKEN, or `vault login` so that ~/.vault-token exists
+```
+
+Exit 9 — no token is a configuration gap, not an authentication failure. A token
+that is present and *wrong* is the one that exits 6, and it is worth seeing the
+pair next to each other:
+
+```
+sopuli: the store refused this token at 'locks/': 2 errors occurred:
+        * permission denied
+        * invalid token
+
+  hint: check the token's policy for this path, and that it has not expired
 ```
 
 Try the file form too, which is what `--vault-token-file` is for:
@@ -349,11 +550,117 @@ chmod 600 vault-token.txt      # or icacls, same as the config file
 sopuli --config sopuli.yaml --vault-token-file vault-token.txt lock status
 ```
 
-`sopuli lock break vault-dev:<path>` takes a lock back. With nothing held it is
-exit 0 having changed nothing, which is what makes running it twice safe. To see
-it do something you need a held lock, and nothing writes one yet — the commands
-that take locks are the unimplemented `creds` verbs. `--dry-run` still prints the
-plan.
+### Set `cas-required` on each lock path, once, before §10
+
+**Every locking verb fails on its second run against a fresh dev Vault**, and the
+failure is confusing precisely because the first run worked:
+
+```
+sopuli: vault-dev:acme/dev/acme cannot be locked safely: its lock path does not require
+  compare-and-set
+  hint: another writer could replace the lock record without one;
+        `vault kv metadata put -cas-required=true locks/acme/dev/acme`
+```
+
+Exit 5. The tool is not being fussy: `cas_required` on the path is what stops
+*someone else* — an operator with a vault CLI — replacing the lock record without
+a compare-and-set. sopuli always sends one; the setting is about everybody else. A
+path with no metadata at all is the ordinary state before the first lock and
+passes, which is exactly why run one succeeds and run two does not.
+
+The remedy is the hint, run once per secret path:
+
+```bash
+docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=sopuli-test-root \
+  sopuli-test-vault-1 \
+  vault kv metadata put -mount=kv -cas-required=true locks/acme/dev/acme
+```
+
+Do it for every path §§10–11 use — `locks/acme/dev/acme`, `locks/acme/dev/batch`,
+`locks/acme/dev/guarded` — before you start, or budget for being stopped once
+each.
+
+### Making a held lock, so `lock break` has something to break
+
+`lock break` with nothing held is exit 0 having changed nothing, which is what
+makes running it twice safe — and it means the interesting paths never run. Write
+a held record by hand instead. Read the current version first, because the write
+needs it:
+
+```bash
+docker exec ... vault kv get -mount=kv -format=json locks/acme/dev/acme
+```
+
+then, with `-cas=` set to the version that came back:
+
+```json
+{
+  "state": "held",
+  "command": "creds rotate",
+  "correlation_id": "11111111-2222-3333-4444-555555555555",
+  "acquired_at": "2026-09-06T18:00:00.000000Z",
+  "expires_at": "2026-09-06T23:59:00.000000Z",
+  "holder": {"host": "beta.example.com", "os_user": "someone-else", "pid": 1234}
+}
+```
+
+```bash
+docker exec -i ... sh -c 'cat > /tmp/held.json && \
+  vault kv put -mount=kv -cas=29 locks/acme/dev/acme @/tmp/held.json'
+```
+
+Write `holder` as nested JSON, not as `holder=host=...` key-value pairs — the flat
+form stores a string, and `lock status` then reports the holder as `unknown`,
+which looks like a tool bug and is a fixture bug.
+
+Now all three paths are reachable:
+
+```
+LOCK                     STATE  HOLDER                        COMMAND       SINCE                 EXPIRES
+vault-dev:acme/dev/acme  held   someone-else@beta.example...  creds rotate  2026-09-06T18:00:00Z  2026-09-06T23:59:00Z
+
+not declared by this config -- a leftover, or another config's:
+LOCK                        STATE     HOLDER              COMMAND       SINCE                        EXPIRES
+vault-dev:acme/dev/batch    released  ville@Awesominator  creds rotate  2026-09-06T17:29:55.224821Z  2026-09-06T17:44:55.224821Z
+vault-dev:acme/dev/guarded  released  ville@Awesominator  creds rotate  2026-09-06T17:31:42.920345Z  2026-09-06T17:46:42.920345Z
+vault-dev:apps/acme/dev     released  ville@Awesominator  creds apply   2026-09-06T14:47:56.306209Z  2026-09-06T15:02:56.306209Z
+
+1 of 1 declared lock paths held; 3 records at paths this config does not declare (0 held)
+```
+
+That second table is `lock status` surveying the whole `locks/` prefix rather than
+only what this config declares — deliberate, and the reason the local `kv` mount
+accumulates records from every config you have ever pointed at it.
+
+Any mutating verb now stops:
+
+```
+sopuli: vault-dev:acme/dev/acme is locked by someone-else@beta.example.com pid 1234 running
+  creds rotate
+  hint: wait for it to finish, or coordinate with whoever is running it
+```
+
+Exit 7. So does `lock break` without `--force`, because the lock has not expired:
+
+```
+sopuli: vault-dev:acme/dev/acme is held by someone-else@beta.example.com pid 1234 running
+  creds rotate and has not expired
+  hint: wait for it to finish, or coordinate with whoever is running it. `--force` breaks a
+        lock that is still live -- the holder is fenced and stops at its next check, having
+        applied whatever it applied
+```
+
+Exit 7 again. With `--force`:
+
+```
+broke this lock at version 30; someone-else@beta.example.com pid 1234 running creds rotate is
+fenced at version 31 and stops at its next check
+```
+
+Exit 0. The version numbers are the fence: the broken holder re-reads before its
+next mutation, finds 31 where it wrote 30, and stops. That is the mechanism
+`--force` is safe *because of*, and those two numbers in one line are the clearest
+look at it you will get.
 
 ---
 
@@ -375,6 +682,10 @@ install
   backend  oci        not_implemented  -
   driver   oracle     installed        1 target
 
+vaults
+  VAULT      TYPE       STATUS  AUTH  SKEW
+  vault-dev  hashicorp  ok      yes   -468ms
+
 client
   tns_admin         (unset)
   instant_client    23.26.3.0.0
@@ -384,9 +695,14 @@ TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
 free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
 ```
 
+The `vaults` section is the store half of the same survey: whether the address
+answers, whether the token authenticates, and the clock skew between this machine
+and the server. Skew matters because lock expiry is written in the store's time —
+a laptop minutes adrift will take over locks that have not expired, or wait on
+ones that have.
+
 Then `--output json` for the same run — `targets[].scope.capabilities` names the
-six the driver probed for, which is what `--strategy rollover` will later branch
-on.
+six the driver probed for, which is what `--strategy rollover` branches on in §10.
 
 ### Failures worth causing
 
@@ -407,9 +723,12 @@ Reports what the service account holds and does not need. Against `SYSTEM` it is
 dramatic, which makes the point:
 
 ```
-free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK, SYSDBA, SYSOPER
-free-pdb: over-granted, and the tool needs none of it: ALTER PROFILE, ALTER SYSTEM,
-  BECOME USER, CREATE USER, DBA, DROP USER, GRANT ANY DATA ROLE, ...
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+  free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
+  free-pdb: over-granted, and the tool needs none of it: ALTER PROFILE, ALTER SYSTEM,
+    BECOME USER, CREATE USER, DBA, DROP USER, GRANT ANY DATA ROLE, GRANT ANY OBJECT
+    PRIVILEGE, GRANT ANY PRIVILEGE, GRANT ANY ROLE, SELECT ANY DICTIONARY
 ```
 
 **It warns and never fails** — exit 0. An over-granted account is somebody else's
@@ -418,7 +737,9 @@ person who ran it mid-incident over a condition they did not create.
 
 The first line matters as much as the second: it names what the audit *could not
 see*, so `over_granted: []` can never mean both "nothing is over-granted" and "the
-view that would have said so was refused".
+view that would have said so was refused". It is short here because `SYSTEM` holds
+`SELECT ANY DICTIONARY` and can therefore read `V$PWFILE_USERS`; a service account
+that cannot will see `SYSDBA, SYSOPER` listed as unchecked alongside `DBMS_LOCK`.
 
 For a realistic run, create the proper service account with
 [`../sql/oracle/00_install.sql`](../sql/oracle/00_install.sql) and point the
@@ -435,7 +756,465 @@ run. Use `99_uninstall.sql` to undo it.
 
 ---
 
-## 10. Oracle wallets and `auth: external`
+## 10. The `creds` verbs, end to end
+
+This is UC-1, and it is what the rest of the guide has been setting up. Everything
+below is one continuous session against the config in §6 and the accounts in §5,
+in order — each command's state is the previous one's output.
+
+```bash
+export VAULT_TOKEN=sopuli-test-root
+export SOPULI_DB_ADMIN_PASSWORD=sopuli-test
+```
+
+Every verb prints its plan before doing anything, and every mutating one takes
+`--dry-run`. The plan is not decoration: `max_targets`, `confirm_environments` and
+the capability refusals are all decided from it, before the first connection.
+
+### 10.1 `status` — the inventory that spends no logins
+
+Start here, always. It reads the vault and the data dictionary and attempts no
+authentication, so it cannot lock anything out:
+
+```
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT        TARGET    INTENT  SECRET
+acme_app_user  free-pdb  none    vault-dev:acme/dev/acme
+
+ACCOUNT        TARGET    STATE         VAULT_V  AGE  DB_PW_CHANGED  PROFILE  ROLLOVER
+acme_app_user  free-pdb  UNVERIFIABLE  -        -    2026-09-06     DEFAULT  not configured
+
+1 account, nothing to act on
+```
+
+`UNVERIFIABLE` with `VAULT_V -` is the empty state: there is no document in the
+vault at all. `DB_PW_CHANGED` comes from the dictionary, so it is populated even
+now — the database has a password, the vault has never heard of it, and nothing
+has been compared.
+
+### 10.2 `generate` — stage a password, touch no database
+
+```bash
+sopuli --config sopuli.yaml creds generate --dry-run
+```
+```
+Plan: 1 account x 1 target = 1 generation   [dev]
+
+ACCOUNT        TARGET    INTENT                         SECRET
+acme_app_user  free-pdb  generate, vault_write_pending  vault-dev:acme/dev/acme
+
+constraints: 128 bytes in AL32UTF8, from free-pdb
+
+SECRET                   STAGE    ACCOUNTS
+vault-dev:acme/dev/acme  pending  acme_app_user
+
+nothing was written (--dry-run)
+```
+
+The `constraints:` line is the one surprise in this verb: `generate` **does**
+connect, to ask each selected target how long a password may be in that database's
+own character set, and the strictest answer governs the draw. It reads and never
+writes. `--offline` declines to ask — the line disappears and the policy's declared
+length governs instead — which is what you want when staging against an estate that
+is deliberately down.
+
+Drop `--dry-run`:
+
+```
+ACCOUNT        SECRET                   RESULT
+acme_app_user  vault-dev:acme/dev/acme  staged v1
+
+1 staged; no database was changed -- run `sopuli creds apply` to use them
+```
+
+**Run it twice and it stages again**, which is invariant 9's one exemption —
+drawing a fresh random secret has no state to converge on. The run says so rather
+than leaving you to notice:
+
+```
+acme_app_user  vault-dev:acme/dev/acme  staged v2, replaced the pending in v1
+```
+
+Supplying a password instead of drawing one goes through stdin, never a flag:
+
+```bash
+printf 'Correct#Horse9Battery' | sopuli --config sopuli.yaml creds generate --from-stdin
+```
+```
+sopuli: the supplied password for 'acme_app_user' violates policy 'standard'
+  hint: length (is 21 characters, policy asks for at least 24) -- fix the password, or pass
+        `--no-policy-check`, which records in the audit event what it let through
+```
+
+Exit 9. A compliant one stages exactly like a drawn one.
+
+### 10.3 `apply` — vault to database, then promote
+
+```
+Plan: 1 account x 1 target = 1 apply   [dev]
+
+ACCOUNT        TARGET    INTENT                               SECRET
+acme_app_user  free-pdb  verify, password_set, vault_promote  vault-dev:acme/dev/acme
+
+ACCOUNT        TARGET    SECRET                   SOURCE
+acme_app_user  free-pdb  vault-dev:acme/dev/acme  pending
+
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+```
+
+`SOURCE pending` and `1 promoted to current` are invariant 7 in two lines: the
+database confirmed the new password before the vault promoted it, never the other
+way round.
+
+Run it again — this is the verb idempotency actually governs:
+
+```
+ACCOUNT        TARGET    SECRET                   SOURCE
+acme_app_user  free-pdb  vault-dev:acme/dev/acme  current
+
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  free-pdb  IN_SYNC  the vault's password is already accepted; nothing to change
+
+nothing changed
+```
+
+`SOURCE` moved from `pending` to `current` on its own, because there is no longer a
+pending to apply, and nothing was written.
+
+### 10.4 `check` — drift, and the exit code that carries it
+
+Change the password behind the tool's back:
+
+```sql
+ALTER USER acme_app_user IDENTIFIED BY "Drifted#2026x";
+```
+
+```
+ACCOUNT        TARGET    STATE  DETAIL
+acme_app_user  free-pdb  DRIFT  vault v3 the database rejected this password (ORA-01017):
+                                ORA-01017: invalid credential or not authorized; logon denied
+
+1 drift
+```
+
+**Exit 3**, its own code precisely so a scheduler can tell drift from failure.
+`creds apply` converges it — vault to database, always, never the reverse:
+
+```
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 changed
+```
+
+### 10.5 `check` and the lockout guard
+
+`check` authenticates, so a loop over a drifted account is a loop that can lock it
+out. `--lockout-margin` is the guard. Put the account somewhere it matters and
+spend two of its three attempts:
+
+```sql
+ALTER USER acme_app_user PROFILE sopuli_lockout;   -- FAILED_LOGIN_ATTEMPTS 3
+ALTER USER acme_app_user IDENTIFIED BY "Drifted#2026x";
+```
+```bash
+# twice, to record two failed logins
+docker exec sopuli-test-oracle-free-1 \
+  sqlplus -S -L acme_app_user/wrongpw@localhost:1521/FREEPDB1 < /dev/null
+```
+
+```bash
+sopuli --config sopuli.yaml creds check --lockout-margin 2
+```
+```
+ACCOUNT        TARGET    STATE         DETAIL
+acme_app_user  free-pdb  UNVERIFIABLE  no login attempted: 2 of 3 failed logins are already
+                                       recorded, and 1 more would leave less than the
+                                       2-attempt margin
+
+1 unverifiable
+```
+
+**Exit 0, and no login was attempted.** `UNVERIFIABLE` is the honest answer — the
+tool declines to find out rather than risk the lockout, and names the fact that
+stopped it. This needs `SELECT ON SYS.USER$`; `test/oracle-init/` grants it to
+`SYSTEM`, and without it the guard reports itself unavailable instead.
+
+Put the account back on `DEFAULT` before continuing.
+
+### 10.6 `rotate` — the whole sequence under one lock
+
+`rotate` is `generate` then `apply`, in one run, holding the lock throughout —
+which is the point, since the two halves run separately leave a window where
+another run can interleave.
+
+```
+Plan: 1 account x 1 target = 1 rotation   [dev]
+
+ACCOUNT        TARGET    INTENT                                                              SECRET
+acme_app_user  free-pdb  generate, vault_write_pending, verify, password_set, vault_promote  vault-dev:acme/dev/acme
+
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+
+rotation: staged 1 document, promoted 1 document
+```
+
+That `INTENT` column is the whole use case in one row, and it is worth reading once
+in that order.
+
+### 10.7 Rolling back
+
+`--source previous` re-applies the value the last promotion displaced:
+
+```
+ACCOUNT        TARGET    SECRET                   SOURCE
+acme_app_user  free-pdb  vault-dev:acme/dev/acme  previous
+
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 rolled back, 1 promoted to `current`
+```
+
+Exercise this at least once. It is the reason a promotion moves the old `current`
+into `previous` rather than overwriting it, and the reason invariant 7's ordering is
+worth the extra vault write.
+
+### 10.8 `--promote`, and the refusal in front of it
+
+`creds generate --promote` writes `current` directly, for adopting an account whose
+password you already know. It is invariant 7's one exception, and where a `current`
+already exists it refuses:
+
+```
+sopuli: 1 of the selected accounts already have a `current` in the vault (acme_app_user), and
+  promoting would replace what applications are reading
+  hint: pass --overwrite-current to authorise replacing them, --dry-run to see which would be
+        seeded and which replaced, or drop --promote to stage a `pending` instead
+```
+
+Exit 8. With `--overwrite-current`:
+
+```
+ACCOUNT        TARGET    INTENT                   SECRET
+acme_app_user  free-pdb  generate, vault_promote  vault-dev:acme/dev/acme
+
+SECRET                   SEEDED  REPLACED
+vault-dev:acme/dev/acme  -       acme_app_user
+
+ACCOUNT        SECRET                   RESULT
+acme_app_user  vault-dev:acme/dev/acme  promoted to v9, replaced the current
+
+1 promoted to current; no database was changed -- run `sopuli creds apply` to use them
+```
+
+Note the `INTENT` has no `password_set`: nothing asked a database anything. Which is
+why the very next `check` reports drift —
+
+```
+acme_app_user  free-pdb  DRIFT  vault v9 the database rejected this password (ORA-01017): ...
+```
+
+— and that is correct, not a bug. The vault is master; the database has not caught
+up yet, and `apply` is what makes it.
+
+### 10.9 Rollover, and `finish-rollover`
+
+Gradual password rollover lets the old password keep working for a window after the
+new one is set, so applications can be restarted at leisure. It comes from the
+account's **profile**, and a policy can put it there:
+
+```yaml
+policies:
+  rollover-capable:
+    password: { length: 24, charset: alnum_safe, first_char: alpha,
+                require: { upper: 1, lower: 1, digit: 1, special: 1 } }
+    account:
+      profile: SOPULI_ROLLOVER
+```
+
+`apply` then assigns the profile before setting the password, and the window opens
+by itself:
+
+```
+ACCOUNT          TARGET    INTENT                                              SECRET
+acme_batch_user  free-pdb  attribute_set, verify, password_set, vault_promote  vault-dev:acme/dev/batch
+
+ACCOUNT          TARGET    STATE            DETAIL
+acme_batch_user  free-pdb  ROLLOVER_ACTIVE  changed and verified; a rollover window is open, so
+                                            the previous password authenticates until it closes
+```
+
+`status` and `check --include-previous` both report the window rather than treating
+it as drift:
+
+```
+ACCOUNT          TARGET    STATE            VAULT_V  AGE  DB_PW_CHANGED  PROFILE          ROLLOVER
+acme_batch_user  free-pdb  ROLLOVER_ACTIVE  2        0d   2026-09-06     SOPULI_ROLLOVER  window open
+```
+```
+ACCOUNT          TARGET    STATE            DETAIL
+acme_batch_user  free-pdb  ROLLOVER_ACTIVE  vault v2 accepted, but a rollover window is open:
+                                            the previous password still works too
+```
+
+Close it early once the applications have restarted:
+
+```
+ACCOUNT          TARGET    WINDOW
+acme_batch_user  free-pdb  open, 59m left
+
+ACCOUNT          TARGET    STATE    DETAIL
+acme_batch_user  free-pdb  IN_SYNC  rollover window closed, 59m early
+
+1 closed
+```
+
+Run it again to see invariant 9 hold on a verb where it was easy to get wrong —
+Oracle accepts the statement silently when no window is open, so a driver that just
+issued it would report `changed: true` for a run that did nothing:
+
+```
+ACCOUNT          TARGET    WINDOW
+acme_batch_user  free-pdb  none open
+
+ACCOUNT          TARGET    STATE    DETAIL
+acme_batch_user  free-pdb  IN_SYNC  no rollover window is open
+
+no rollover window was open on any of 1
+```
+
+### 10.10 Asking for a strategy the estate cannot serve
+
+`--strategy rollover` against an account on `DEFAULT` fails **at plan time**, before
+anything is written, and names the fix rather than performing it:
+
+```
+sopuli: profile DEFAULT grants no rollover window (PASSWORD_ROLLOVER_TIME is 0)
+  hint: sopuli does not alter a profile, because profiles are shared and changing one affects
+        accounts nobody selected. Run this yourself if it is what you want:
+        ALTER PROFILE DEFAULT LIMIT PASSWORD_ROLLOVER_TIME 1;
+```
+
+Exit **1**, not 5, and the difference is worth knowing: exit 5 means the *release*
+cannot do rollover at all (18c, 11g), which no local action changes. This is a
+profile setting, which one `ALTER PROFILE` changes — a configuration rather than a
+limitation. The tool never issues that statement itself; `ALTER PROFILE` reaches
+accounts nobody selected.
+
+---
+
+## 11. Getting refused on purpose
+
+Everything in §10 succeeded. These are the paths that must not.
+
+### The account guardrails, and the two answers they give
+
+`02-oracle-privileges.md` §4 refuses accounts a credential-sync tool has no
+business touching. Put `acme_priv_user` (which holds `DBA`) in the same application
+entry as `acme_app_user` — this needs the pointer-form `secret_template` from §6 —
+and rotate both:
+
+```
+ACCOUNT         TARGET    STATE    DETAIL
+acme_app_user   free-pdb  IN_SYNC  changed and verified by login
+acme_priv_user  free-pdb  SKIPPED  the account holds DBA
+
+1 changed, 1 promoted to `current`, 1 not confirmed
+
+rotation: staged 1 document, promoted 1 document
+the vault read back a different password for: acme_priv_user
+```
+
+**Exit 4, partial.** The run did the rest of its job; the refused account carries
+its reason. That last line is `generate`'s half having run before the guardrail
+declined the `apply` half — a staged `pending` nothing will use, which `status`
+shows until the next successful rotation replaces it.
+
+Name the account explicitly and the same fact reads differently:
+
+```bash
+sopuli --config guarded.yaml creds rotate --account acme_priv_user --confirm
+```
+```
+ACCOUNT         TARGET    STATE  DETAIL
+acme_priv_user  free-pdb  ERROR  the account holds DBA -- you named this account, so the run
+                                 stopped short: pass --force to override, which is recorded
+
+nothing changed, 1 not confirmed
+```
+
+Exit 1. Asking for one thing and being told "skipped" would be a run reporting
+success for work nobody did. `--force` overrides it, and is audited:
+
+```
+ACCOUNT         TARGET    STATE    DETAIL
+acme_priv_user  free-pdb  IN_SYNC  changed and verified by login
+```
+
+`--force` reaches these guardrails and nothing else. It cannot extend the whitelist
+(invariant 5) and it cannot relax a safety setting (invariant 10).
+
+### A selector cannot invent an account
+
+```bash
+sopuli --config sopuli.yaml creds status --account nosuch
+```
+```
+sopuli: --account: name not declared in the configuration: `nosuch`
+  hint: the configuration declares acme_app_user -- a selector filters the declared set and
+        cannot extend it (invariant 5)
+```
+
+Exit 2. `--target`, `--group`, `--application` and `--select K=V` all behave the
+same way: they narrow, never widen.
+
+### The safety block
+
+These go under `defaults:` (or a profile), never at the top level — a top-level
+`safety:` is `unknown key 'safety'`, exit 9.
+
+```yaml
+defaults:
+  policy: standard
+  safety:
+    readonly: true
+```
+
+```
+sopuli: applying a password is a mutation, and `safety.readonly` is set
+  hint: set at defaults.safety.readonly; no layer can relax it (invariant 10) --
+        `sopuli lock status` reads without writing
+```
+
+Exit 8, and **`--dry-run` is refused too** — under `readonly` the mutating verbs are
+unavailable, and the read-only verb is how you ask. `creds check` still runs and
+exits 0.
+
+Swap it for `confirm_environments: [dev]` and run a mutation with nothing on stdin
+(`sopuli ... creds apply < /dev/null`):
+
+```
+applying a password in `dev`? [y/N]: sopuli: aborted
+```
+
+Exit 8. `--confirm` satisfies it, given in advance; `--force` does not and is not
+consulted.
+
+`max_targets` is the third key, and `readonly: true` is the way to block
+everything — `max_targets: 0` is far more likely to be a slip that then blocks every
+run.
+
+---
+
+## 12. Oracle wallets and `auth: external`
 
 A target using `auth: external` connects as `/@alias`, and the wallet supplies
 **both** the username and the password. This is the case where failures are most
@@ -458,7 +1237,7 @@ To create a *real* wallet you need one of these, **none verified here**:
 - Oracle's own container image from `container-registry.oracle.com/database/free`,
   which is the full product rather than a slimmed rebuild;
 - for OCI Autonomous Database, the wallet Oracle generates for you — download it
-  from the console and skip `mkstore` entirely (§12).
+  from the console and skip `mkstore` entirely (§14).
 
 For reference, the real commands are:
 
@@ -526,14 +1305,25 @@ wallet
 ```
   found             cwallet.sso
   auto-login        yes
-  cwallet.sso wallet file is accessible to BUILTIN\Users: an auto-login wallet is
-  a credential, and this one is not private
 ```
 
-That second warning (`SOPULI-W008`) fires because a file created normally under
-Windows `%TEMP%` inherits a `BUILTIN\Users` grant. Tighten it with `icacls` and
-watch it go away — this is P4's config-file check applied to the file that
-actually holds a password.
+The permission warning (`SOPULI-W008`) is the one worth producing deliberately, and
+on this machine it did **not** fire on a file simply created under `%TEMP%` — that
+directory grants no `BUILTIN\Users` here, so the file inherits none. Add the grant
+yourself:
+
+```powershell
+icacls tns\cwallet.sso /grant "BUILTIN\Users:R"
+```
+```
+  found             cwallet.sso
+  auto-login        yes
+  cwallet.sso wallet file is accessible to BUILTIN\Users: an auto-login wallet is a credential,
+  and this one is not private
+```
+
+Tighten it again with `/inheritance:r /grant:r` and watch it go away — this is P4's
+config-file check applied to the file that actually holds a password.
 
 ### The reason all of this exists
 
@@ -548,12 +1338,12 @@ Run `doctor --output json` against that dummy wallet and read the target's error
 }
 ```
 
-**The wallet is the problem and the error is entirely about the password.** Left
-to that message you would go looking for an account and a password you do not
-have. The `wallet` section above it is what redirects you to the file.
+**The wallet is the problem and the error is entirely about the password.** Left to
+that message you would go looking for an account and a password you do not have.
+The `wallet` section above it is what redirects you to the file.
 
-Nothing in that section changes the exit code — a bad wallet rides on the
-target's own reachability, which the connection settles a moment later.
+Nothing in that section changes the exit code — a bad wallet rides on the target's
+own reachability, which the connection settles a moment later.
 
 ### Other states worth producing
 
@@ -573,25 +1363,25 @@ deliberately, since most estates have no wallet to report on.
 
 ---
 
-## 11. WSL
+## 13. WSL
 
-Repeat §§6–10. Everything behaves identically except two things, and both are
-worth seeing:
+Repeat §§6–12. Everything behaves identically except two things, and both are worth
+seeing:
 
 - **Permissions are modes, not ACLs.** `chmod 600` instead of `icacls`, and the
   message reads `config file is accessible to others (mode 0644)`. `chmod 640` is
   refused too — the check is on `0o077`, not just the read bits.
 - **Reaching the containers.** Under WSL2 with Docker Desktop, `127.0.0.1` works
   from WSL. Under a Docker daemon running inside WSL, it also works. If you are
-  running Docker on Windows and sopuli in a *different* WSL distro, use the
-  Windows host IP from `/etc/resolv.conf` instead.
+  running Docker on Windows and sopuli in a *different* WSL distro, use the Windows
+  host IP from `/etc/resolv.conf` instead.
 
 Install a separate Instant Client for Linux; the Windows one is not usable from
 WSL.
 
 ---
 
-## 12. OCI
+## 14. OCI
 
 Two halves, and only one exists.
 
@@ -611,8 +1401,8 @@ targets:
 
 For Autonomous Database, download the wallet zip from the OCI console, unzip it,
 and set `TNS_ADMIN` to that directory. It contains `cwallet.sso`, `tnsnames.ora`
-and `sqlnet.ora` already — which is the one path to a real wallet that does not
-need `mkstore` at all. The aliases (`_high`, `_medium`, `_low`) are in its
+and `sqlnet.ora` already — which is the one path to a real wallet that does not need
+`mkstore` at all. The aliases (`_high`, `_medium`, `_low`) are in its
 `tnsnames.ora`.
 
 **Locally you can approximate the NNE constraint** without OCI:
@@ -624,29 +1414,30 @@ docker compose --profile nne up -d      # Oracle on 1525, NNE required
 Note `test/compose.yaml`'s own header: the `nne` profile is **unrun and its image
 tag unverified**. Treat a failure there as possibly the fixture.
 
-**OCI Vault as a secret store — does not exist.** `type: oci` parses and then
-fails: there is no `sopuli/store/oci` module. `doctor` reports it as
-`not_implemented` with no install command, precisely because `pip` cannot supply
-it. Do not spend time on it.
+**OCI Vault as a secret store — does not exist.** `type: oci` parses and then fails:
+there is no `sopuli/store/oci` module. `doctor` reports it as `not_implemented` with
+no install command, precisely because `pip` cannot supply it. Do not spend time on
+it.
 
 ---
 
-## 13. Exit codes
+## 15. Exit codes
 
-Branch on these; they are a published interface.
+Branch on these; they are a published interface. Every one is now reachable from
+this guide.
 
 | Code | Meaning | Where you will see it here |
 |---|---|---|
 | 0 | success, or nothing to do | most runs |
-| 1 | generic failure | an unreachable target in `doctor` |
-| 2 | argv did not parse — **no JSON document, message on stderr** | `--reveal --output json` |
-| 3 | `check` found drift | not reachable yet |
-| 4 | partial | not reachable yet |
-| 5 | unsupported capability | not reachable yet |
+| 1 | generic failure | an unreachable target in `doctor` (§9); `--strategy rollover` on a `DEFAULT`-profile account (§10.10); a named account the guardrails refuse (§11) |
+| 2 | argv did not parse — **no JSON document, message on stderr** | `--reveal --output json` (§7); `--account` naming something undeclared (§11) |
+| 3 | `check` found drift | §10.4 |
+| 4 | partial | a guardrail-skipped account inside a wider selection (§11) |
+| 5 | unsupported capability | a lock path with no `cas_required` (§8); rollover on 18c/11g |
 | 6 | authentication failed | a bad vault token |
-| 7 | lock held | `lock break` on a live lock without `--force` |
-| 8 | aborted / confirmation declined | `lock break` answering no |
-| 9 | configuration unusable | bad YAML, bad permissions, or a configured backend this build cannot serve |
+| 7 | lock held | any mutating verb against a held lock, and `lock break` without `--force` (§8) |
+| 8 | aborted / confirmation declined | `readonly` and `confirm_environments` (§11); `--promote` over an existing `current` (§10.8) |
+| 9 | configuration unusable | bad YAML, bad permissions, two accounts sharing a staging root (§6), a supplied password violating policy (§10.2), or a configured backend this build cannot serve |
 
 **Exit 2 is the only one that never produces a run document.** Every other code
 emits one on stdout under `--output json`, including 9 — a validator that goes
@@ -657,31 +1448,98 @@ once:
 sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ```
 
+### The JSON contract
+
+`--output json` on any verb emits the run document
+[`schemas/run.schema.json`](schemas/run.schema.json) describes. `creds check`,
+trimmed to its shape:
+
+```json
+{
+  "schema_version": "1.20",
+  "tool": { "name": "sopuli", "version": "0.58.0" },
+  "command": "creds.check",
+  "invocation": {
+    "correlation_id": "f1757186-be28-4a09-84dc-b107dffc35d5",
+    "started_at": "2026-09-06T18:39:48.625270Z",
+    "duration_ms": 940,
+    "actor": { "os_user": "ville", "host": "Awesominator" },
+    "dry_run": false,
+    "options": {
+      "output": { "value": "json", "source": "cli", "source_detail": "--output (group)" }
+    }
+  },
+  "summary": { "total": 1, "ok": 1, "changed": 0, "drift": 0, "by_state": { "IN_SYNC": 1 } },
+  "exit_code": 0,
+  "plan": {
+    "units": [ { "account": "acme_app_user", "target": "free-pdb", "intent": ["verify"],
+                 "secret": { "vault": "vault-dev", "path": "acme/dev/acme",
+                             "field": "acme_app_user" } } ],
+    "blast_radius": { "targets": 1, "accounts": 1, "environments": ["dev"] }
+  },
+  "results": [
+    {
+      "account": "acme_app_user", "target": "free-pdb", "state": "IN_SYNC", "changed": false,
+      "secret": { "vault": "vault-dev", "path": "acme/dev/acme", "field": "acme_app_user",
+                  "version": 9, "stage": "current" },
+      "actions": [ { "kind": "verify", "applied": true, "detail": "vault v9 verified by login" } ],
+      "verification": { "method": "login", "result": "pass", "lcount": 0,
+                        "failed_login_attempts_limit": "UNLIMITED", "lockout_margin_hit": false,
+                        "previous_password_accepted": null },
+      "password_age_days": 0.0, "duration_ms": 123
+    }
+  ]
+}
+```
+
+`invocation.options` is `--explain` in machine form, `plan.blast_radius` is what
+`max_targets` and `confirm_environments` read, and no field anywhere holds a
+password. Grepping a captured document for one is a reasonable thing to do once.
+
 ---
 
-## 14. Cleanup
+## 16. Cleanup
 
 ```bash
 cd test
 docker compose --profile '*' down          # the only form that works
 ```
 
-Then remove the config, the token file and the `TNS_ADMIN` directory. Nothing
-sopuli did wrote outside them — every command in this guide either reads, or
-writes only to Vault under its lock prefix.
+That discards the database, so the accounts from §5 go with it. If you are keeping
+the container — and you should, startup dominates everything else — drop them
+instead:
+
+```sql
+DROP USER acme_app_user CASCADE;
+DROP USER acme_batch_user CASCADE;
+DROP USER acme_priv_user CASCADE;
+```
+
+Vault's `kv` mount is in-memory and goes with a restart, but it is shared with every
+config you have pointed at it, so `lock status` keeps listing this guide's records
+under "not declared by this config" until then.
+`vault kv metadata delete -mount=kv locks/acme/dev/acme` removes one for good.
+
+Then remove the config, the token file and the `TNS_ADMIN` directory. Nothing sopuli
+did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`.
 
 ---
 
 ## What this guide cannot cover yet
 
-- **Credential rotation.** `creds generate|apply|check|rotate|promote` do not
-  exist. The vault→database direction, the `pending`→`current` promotion, drift
-  detection and rollover are all unbuilt.
 - **`admin install`**, which will run the SQL in `sql/oracle/` for you. Run the
   scripts by hand for now.
-- **`--output jsonl`** and the streaming event contract.
-- **A real wallet without a full Oracle install**, per §10.
+- **`--output jsonl`** and the streaming event contract. Nothing streams yet, so the
+  format is deliberately not offered.
+- **`--method hash`**, verification without a login attempt. It depends on the `T:`
+  verifier layout in `SYS.USER$.SPARE4`, which is unconfirmed — `verify.method`
+  parses in a profile and reaches no consumer.
+- **`--repair`**, which will act on the DRIFT list `check` produces.
+- **The `file`, `keyring` and `oci` stores.** Only `hashicorp` exists.
+- **A real wallet without a full Oracle install**, per §12.
+- **Anything above tier 1.** 21c, 18c and 11g are the maintainer's pre-release
+  matrix; the rollover refusals those versions produce are reasoned about here and
+  not measured.
 
 When those land, this document should grow with them — it is meant to stay a
-complete map of what can be exercised by hand, and a stale one is worse than
-none.
+complete map of what can be exercised by hand, and a stale one is worse than none.

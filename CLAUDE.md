@@ -30,6 +30,7 @@ so — that is a design decision, not an implementation detail.
 | `docs/decisions/adr-006-optional-dependencies.md` | before adding a dependency, or before assuming a vendor client is present — vendor clients are install extras and base opens no sockets |
 | `docs/decisions/adr-007-vault-token-flag.md` | before giving any flag a secret *value*, or before adding `--vault-token-stdin` — `--vault-token` was considered and is refused; the flag takes a path |
 | `docs/README.md` | before deferring work to "another use case" — the roadmap names UC-2…UC-5 and UC-1b, and says what already defers to each |
+| `docs/local-testing.md` | adding or changing a command, a flag, an exit code, or a message an operator meets — the by-hand guide moves with the surface, not after it |
 | `docs/workflow.md` | branching, commit format, and release process |
 
 ---
@@ -161,6 +162,24 @@ before writing the larger version.
 document in the same PR. The documents are the specification, not a description
 written afterwards — if they disagree with the code, that is a bug in one of them
 and it needs resolving, not noting.
+
+**`docs/local-testing.md` moves with the CLI surface**, and that is a second
+obligation rather than a restatement of the first. The design documents say what
+the tool is *for*; the guide is the by-hand map of what this build can actually be
+made to do, so a PR that adds or changes a command, a flag, an exit code, or a
+message an operator meets belongs in it too — including the failures worth causing
+on purpose, which are most of its value.
+
+Paste the output from the run "Run it, do not only test it" already required.
+That rule and this one are the same work: you ran the verb, so write down what it
+printed, and no sample in the guide is ever written from a diff.
+
+A guide that lists eight commands when there are thirteen is worse than no guide,
+because it reads as an inventory — so whatever it omits reads as *not built*. It
+went stale exactly that way between #243 and #366: the entire `creds` surface
+shipped while the document still told the reader "you cannot rotate a credential
+end to end today; if that is what you sat down to test, stop here". Nobody was
+lied to by a design document in that window; they were lied to by this one.
 
 **Order of work.** Tier 0 first (`docs/design/04-testing.md` §4): config parsing
 and validation, target-set expansion, precedence resolution, SecretRef parsing,
