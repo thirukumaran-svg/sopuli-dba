@@ -29,6 +29,7 @@ from sopuli.driver.oracle.privileges import (
     FORBIDDEN_PREFIX,
     FORBIDDEN_PRIVILEGES,
     FORBIDDEN_ROLES,
+    PASSWORD_FILE_PRIVILEGES,
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
 )
@@ -249,6 +250,11 @@ def test_check_privileges_finds_an_over_granted_account(
     list — rather than on an exact set, because which privileges `system` holds
     is Oracle's business and varies by release. Pinning it would make this a test
     of the container image.
+
+    :data:`PASSWORD_FILE_PRIVILEGES` is in the permitted set since #341, and for
+    the same reason: `system` holds `SELECT ANY DICTIONARY`, so it can read
+    `V$PWFILE_USERS` and those two rows are now answered rather than declined.
+    Whether it is *in* the password file is again the image's business.
     """
     config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
 
@@ -257,9 +263,29 @@ def test_check_privileges_finds_an_over_granted_account(
     assert result.exit_code == 0, result.output
     over_granted = _document(result)["targets"][0]["scope"]["over_granted"]
     assert over_granted, "`system` holds a great deal the tool does not need"
-    assert set(over_granted) <= set(FORBIDDEN_PRIVILEGES) | set(FORBIDDEN_ROLES) | {
-        privilege for privilege in over_granted if privilege.startswith(FORBIDDEN_PREFIX)
-    }
+    assert set(over_granted) <= set(FORBIDDEN_PRIVILEGES) | set(FORBIDDEN_ROLES) | set(
+        PASSWORD_FILE_PRIVILEGES
+    ) | {privilege for privilege in over_granted if privilege.startswith(FORBIDDEN_PREFIX)}
+
+
+def test_a_dictionary_reader_audits_the_password_file_rows(
+    runner: CliRunner, live_oracle: Environment, tmp_path: Path
+) -> None:
+    """#341, end to end through the command. `system` can read
+    `V$PWFILE_USERS`, so the two rows §3 lists there are answered — and what
+    `unaudited` carries is the one row no grant reaches.
+
+    The pair to this is `test_oracle_service_account.py`, which builds both
+    estates deliberately. This one asserts that the wiring reaches the run
+    document at all.
+    """
+    config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
+
+    result = _run_with_flags(runner, config, "--check-privileges")
+
+    assert result.exit_code == 0, result.output
+    unaudited = _document(result)["targets"][0]["privileges"]["unaudited"]
+    assert unaudited == ["EXECUTE ON DBMS_LOCK"], unaudited
 
 
 def test_an_over_granted_account_warns_and_does_not_fail(

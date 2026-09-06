@@ -722,6 +722,66 @@ with `matches: true`. `01-configuration.md` §3a is explicit that an assertion
 nobody makes is not a gap, and an object claiming a match would be reporting
 agreement with a claim that was never made.
 
+### `targets[].privileges`, emitted by `doctor --check-privileges`
+
+What the service account holds, from `02-oracle-privileges.md` §2's and §3's
+lists. Added in 1.12 and owed prose here ever since; written now by #341, the
+first change to alter what one of its properties means. Pasted from a run against
+a PDB service account on 26ai Free 23.26.2.0.0:
+
+```json
+"privileges": {
+  "held": ["ALTER USER", "CREATE SESSION", "SELECT ON DBA_PROFILES",
+           "SELECT ON DBA_ROLE_PRIVS", "SELECT ON DBA_USERS",
+           "SELECT ON V_$DATABASE", "SELECT ON V_$INSTANCE"],
+  "missing": [],
+  "common": [],
+  "roles": [],
+  "unaudited": ["EXECUTE ON DBMS_LOCK"],
+  "unreadable": []
+}
+```
+
+**Absent unless the flag asked, and whole whenever it is present** — empty arrays
+included, which is why every property is required. That is ADR-006's E6 applied
+to an audit: a section that appeared only on a problem could not be quoted as
+evidence that there was none. *Not asked* and *asked, nothing found* are
+different facts, and a consumer that tested the section for truthiness would
+merge them.
+
+**The findings are not here.** `over_granted` lives on `scope`, where the schema
+has had it since 1.10, and two copies of one finding are two things that can
+disagree. A consumer reads what was found from `scope.over_granted` and how far
+the audit reached from this section.
+
+**`held`/`missing` and `over_granted` are independent questions**, not two ends
+of one scale: what the account needs and may not have, and what it has and must
+not. An account can be in both states at once, which is what a half-finished
+debugging session leaves behind. `missing` is spelled as the `GRANT` to issue,
+because the point of an entry is that somebody has to go and issue it.
+
+**`unaudited` and `unreadable` are the report's two ways of saying it did not
+look**, and they are not interchangeable:
+
+- **`unaudited`** is a row of §3's list this run did not check. Never empty on
+  Oracle — `EXECUTE ON DBMS_LOCK` is an object privilege that no view the audit
+  reads carries. `SYSDBA` and `SYSOPER` join it only where §2's *optional*
+  `SELECT ON V$PWFILE_USERS` was not granted; where it was, they are audited like
+  anything else and a held one appears in `scope.over_granted` (#341). Before
+  that they were named unaudited unconditionally, which was true of the default
+  install and not of every install.
+- **`unreadable`** is a view that *raised*, which makes the audit partial and
+  changes how `over_granted` should be read. A grant the product documents as
+  optional never lands here: declining it is the documented install, and a run
+  that called every correct install partial would teach a reader to skip the line
+  that matters when a view really was refused.
+
+Both reach the text report and `targets[].warnings` as caveats, on every run
+rather than only on a bad one — including a line naming the `GRANT` that would
+shrink `unaudited`, where one exists. Neither moves the exit code: P5 is decided
+and `--check-privileges` warns rather than fails, because failing would block
+somebody mid-incident over a condition they did not create.
+
 ### `install`, emitted by `doctor`
 
 Which backends and drivers this build can serve, which the config asks for, and
@@ -1567,8 +1627,8 @@ and lied in every document.
 required. The minor rule for the sixth time. Recorded here after the fact —
 #227 bumped the schema and did not write the entry, and a list that skips a
 number reads as a rename nobody can account for, which §8's own 1.5-to-1.8 gap
-already demonstrated. The section's prose is still missing from §2 and is owed by
-whoever next touches the privilege audit.
+already demonstrated. The section's prose was owed to §2 by whoever next touched
+the privilege audit, and #341 was that — it is there now.
 
 **1.12 became 1.13 when `doctor` reported install shape** (#214, ADR-006 E6):
 `install` joined the document as an optional property, and `doctor` was already

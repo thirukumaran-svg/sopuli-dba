@@ -256,6 +256,10 @@ END;
 -- (SOPULI-W018) rather than treating "could not look" as "not a member", and
 -- applies anyway. With it, the check runs.
 --
+-- It also lets `doctor --check-privileges` audit §3's SYSDBA and SYSOPER rows for
+-- THIS account, which it otherwise reports as unchecked (§3). Same view, and the
+-- audit asks about the service account itself rather than about a target one.
+--
 -- Worth taking on an estate that has any site-created account holding SYSDBA: it
 -- reads ORACLE_MAINTAINED = 'N' and may hold no roles at all, so checks 2, 4 and
 -- 5 all pass it and this is the only one that does not.
@@ -266,10 +270,11 @@ BEGIN
   IF UPPER('&grant_pwfile') = 'Y' THEN
     EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.V_$PWFILE_USERS TO &eff_user&cont_all';
     DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.V_$PWFILE_USERS '
-      || '(enables guardrail 3, the password-file check)');
+      || '(enables guardrail 3, and the SYSDBA/SYSOPER rows of the audit)');
   ELSE
     DBMS_OUTPUT.PUT_LINE('V$PWFILE_USERS not granted: guardrail 3 cannot run, '
-      || 'and every run warns SOPULI-W018 that it did not');
+      || 'every run warns SOPULI-W018 that it did not, and the privilege '
+      || 'audit reports SYSDBA/SYSOPER as unchecked');
   END IF;
 END;
 /

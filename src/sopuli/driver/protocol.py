@@ -339,7 +339,9 @@ class PrivilegeAudit:
     A third thing is carried and is not a finding: **what was not looked at**.
     ``unaudited`` and ``unreadable`` are the difference between "I looked and
     found nothing" and "I could not look", and a report that merged them would
-    have its most reassuring output be its least trustworthy.
+    have its most reassuring output be its least trustworthy. ``remedies`` is the
+    part of that a site can do something about, which since #341 is not always
+    empty.
 
     Here rather than in a driver package for the reason :class:`Scope` is here:
     the output layer renders it, and one that imported a vendor module would make
@@ -371,12 +373,36 @@ class PrivilegeAudit:
     #: which for a ``C##`` account is the difference between a grant that reaches
     #: every PDB and one that reaches this one.
     common: tuple[str, ...] = ()
-    #: §3 entries that were not checked, and why. :data:`UNAUDITABLE` always,
-    #: plus anything a refused view took with it.
+    #: §3 entries that were not checked: the rows no view carries, plus whatever
+    #: a refused or ungranted one took with it. Never empty on Oracle, where one
+    #: row has no view to read at all.
     unaudited: tuple[str, ...] = ()
     #: Views that raised. Empty is the ordinary case; non-empty means the audit
     #: is partial and the report has to say so rather than read as clean.
+    #:
+    #: **A grant the product documents as optional does not belong here** (#341):
+    #: an estate that declined it is installed as documented, and a report that
+    #: called every correct install partial would teach a reader to skip the
+    #: line. Those rows go to ``unaudited`` and bring a ``remedies`` entry.
     unreadable: tuple[str, ...] = ()
+    #: What a site could do to shrink ``unaudited``, in the product's own words.
+    #:
+    #: Empty where nothing would help, which is the ordinary meaning of a row
+    #: being unauditable and was the only meaning until #341. The strings are the
+    #: driver's because a ``GRANT`` statement is a fact about one product, and
+    #: this class is deliberately free of any -- the same seam
+    #: :data:`~sopuli.diagnostics.GUARDRAIL_REMEDIES` sits on. Rendered as a
+    #: caveat rather than emitted in the run document, so no consumer parses it.
+    #:
+    #: **The one field here that is not sorted**, and the exception is the class
+    #: docstring's own reason read the other way: sorting exists because
+    #: dictionary order is nobody's contract, and every other field holds names
+    #: that arrive from a query or a set. These are sentences, produced by a
+    #: driver in a fixed sequence, and alphabetising prose orders it by whichever
+    #: word happens to start it. :meth:`caveats` already orders by meaning rather
+    #: than by spelling -- the partial-audit line first, because it changes how
+    #: the rest is read -- and this follows that.
+    remedies: tuple[str, ...] = ()
 
     def caveats(self) -> tuple[str, ...]:
         """What a reader has to know before trusting ``over_granted``.
@@ -393,15 +419,23 @@ class PrivilegeAudit:
             lines.append("this audit is partial -- could not read " + ", ".join(self.unreadable))
         if self.unaudited:
             lines.append("not checked, and not visible from here: " + ", ".join(self.unaudited))
+        # Last, and separate lines rather than a clause on the one above: the
+        # caveat is what an auditor quotes and the remedy is what an operator
+        # acts on, and only some of the rows above have one (#341).
+        lines.extend(self.remedies)
         return tuple(lines)
 
     @property
     def complete(self) -> bool:
         """Whether every row of §3's list actually got looked at.
 
-        Never true today -- :data:`UNAUDITABLE` is always in ``unaudited`` -- and
-        it is a property rather than a constant because that is a fact about
-        §2's grant set rather than about this code, and the grant set can change.
+        Never true on Oracle today, and it is a property rather than a constant
+        because that is a fact about §2's grant set rather than about this code,
+        and the grant set can change. It changed once already: #296 made
+        ``V$PWFILE_USERS`` an optional grant and #341 made the audit read it, so
+        two of the three rows this used to fail on are now answered wherever a
+        site has taken it. The row left is an object privilege with no view to
+        read, which is a design question rather than a grant.
         """
         return not self.unaudited and not self.unreadable
 

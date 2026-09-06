@@ -308,6 +308,13 @@ same enumerated negative `ABSENT_CODES` already reads as *absent* — so the
 driver answers `None` and never `False`. With the grant it answers a count from
 inside a PDB without further privilege.
 
+**It buys two things, and the second arrived later.** Guardrail 3 is the one it
+was taken for; since #341 the same view also answers §3's `SYSDBA` and `SYSOPER`
+rows for `doctor --check-privileges`, which reported them unaudited from a
+constant until then. Same grant, same query, two consumers — and the audit asks
+about the *session's own user* where the guardrail asks about a target account,
+so neither reads the other's answer.
+
 **Why it stays optional.** The accounts check 3 catches are largely caught by
 checks 2 and 4 as well, and widening what every service account needs for the
 remainder is a poor trade. What is left over is real, though, and was measured
@@ -419,19 +426,82 @@ a non-default `DBA` grant is one `SET ROLE` away. For a guardrail that would be
 splitting hairs; for an audit asking what an account could become, a privilege
 one statement away is held.
 
-**Three rows cannot be audited from here**, and the report names them on every
-run rather than omitting them — E6's argument, applied to a caveat: one that
-appears only when something is wrong cannot be quoted as evidence that nothing
-was.
+**One row cannot be audited anywhere, and two more only where §2's optional
+grant was declined.** The report names whichever apply on every run rather than
+omitting them — E6's argument, applied to a caveat: one that appears only when
+something is wrong cannot be quoted as evidence that nothing was.
 
 | Row | Why not | What it would take |
 |---|---|---|
-| `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's default grant set, and an account holding them would not be exercising them on this connection anyway | the optional grant §2 documents for guardrail 3 (#296) — which a site may already have taken, and which this audit does not yet read |
 | `EXECUTE ON DBMS_LOCK` | an **object** privilege; the three views above carry system privileges and roles | `USER_TAB_PRIVS` and `ROLE_TAB_PRIVS`, the second of which does not compose with the nested-role traversal — a design question rather than a query |
+| `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's *default* grant set | nothing, on an estate that took the optional grant §4 check 3 documents. Read since #341, and unaudited only where the answer came back absent |
 
 A refused `DBA_ROLE_PRIVS` joins them at runtime, taking the three role rows with
 it. "I looked and found nothing" and "I could not look" are answers this report
 never merges.
+
+**The password-file rows are read, not assumed** (#341). Until then the audit
+reported them unaudited from a constant, which #296 made wrong for the estates
+that took the grant: the answer was available and the report said *I could not
+look*, which is the same merge this section refuses, arrived at from the side
+that under-reports. Three readings, measured on 26ai Free 23.26.2.0.0 on
+2026-09-05 against a PDB-local service account holding §2's grants plus that one:
+
+- **the two rows are answered separately**, because the view carries a column
+  each — `SYSDBA`, `SYSOPER`, and four more it does not ask about. Granted and
+  revoked one at a time, all four combinations read back as themselves;
+  collapsing them into "in the password file" would report `SYSOPER` on the
+  strength of a `SYSDBA` row;
+- **a held row is an `over_granted` finding like any other**, which makes it the
+  audit's first that is neither a system privilege nor a role. §3's must-not-grant
+  list is one list, and a reader must not have to know which view each row came
+  from;
+- **taking the grant does not itself make `doctor` complain.** `over_granted`
+  reads system privileges and roles, and this is an object privilege — confirmed
+  on the same run, and it would have been a defect in #296 rather than a
+  follow-up.
+
+**An absent answer does not make the audit partial.** `unreadable` says the
+report cannot be taken at face value; an estate that declined an optional grant
+is installed exactly as documented. So the two rows go to the unaudited list and
+bring a remedy with them — since #296 the reason they are unchecked is *you may
+enable this* rather than *this cannot be known*, and only one of those has a next
+action. The audit's own shape names no database, so the `GRANT` is the driver's
+words rather than the report's, the same seam guardrail 3's remedy sits on.
+
+**This does not make the audit complete**, and "make the audit complete" is the
+tempting framing. `EXECUTE ON DBMS_LOCK` stays unauditable for its own reason and
+no grant fixes it: it is two of three rows, on the estates that opted in.
+
+What the three estates look like, pasted from `doctor --check-privileges`
+against a PDB service account on 26ai Free 23.26.2.0.0. The default install,
+which is unchanged except that the caveat now carries a next action:
+
+```
+TARGET       REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+appdb-alpha  yes        pdb    FREEPDB1   READ WRITE  5
+  appdb-alpha: not checked, and not visible from here: EXECUTE ON DBMS_LOCK, SYSDBA, SYSOPER
+  appdb-alpha: SYSDBA and SYSOPER need SELECT on V$PWFILE_USERS, which 02-oracle-privileges.md §2 leaves optional: GRANT SELECT ON SYS.V_$PWFILE_USERS to the service account to audit them
+```
+
+the same account with the grant taken, holding neither privilege — one row left
+unchecked, and nothing to suggest about it:
+
+```
+TARGET       REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+appdb-alpha  yes        pdb    FREEPDB1   READ WRITE  5
+  appdb-alpha: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
+```
+
+and the same account granted `SYSDBA`, which is the finding this could not make
+before — reported and, per P5, not fatal (the run exits 0):
+
+```
+TARGET       REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+appdb-alpha  yes        pdb    FREEPDB1   READ WRITE  5
+  appdb-alpha: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
+  appdb-alpha: over-granted, and the tool needs none of it: SYSDBA
+```
 
 ---
 

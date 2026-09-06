@@ -27,6 +27,9 @@ import pytest
 
 from sopuli.driver.oracle.privileges import (
     FORBIDDEN_ROLES,
+    PASSWORD_FILE_PRIVILEGES,
+    PWFILE_HELD,
+    PWFILE_QUERY,
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     ROOT_ONLY_READS,
@@ -39,14 +42,20 @@ from sopuli.driver.protocol import PrivilegeAudit
 #: the one that has to stay silent.
 INSTALLED = frozenset({"CREATE SESSION", "ALTER USER"})
 
+#: The default estate: §2's optional `V$PWFILE_USERS` grant not taken, so nobody
+#: could look. `None` rather than `()` throughout this module for that reason —
+#: the empty tuple is the *other* answer, and #341 is about not merging them.
+UNGRANTED: tuple[str, ...] | None = None
+
 
 def audit_of(
     privileges: frozenset[str] = INSTALLED,
     roles: frozenset[str] = frozenset(),
     common: frozenset[str] = frozenset(),
     unreadable: tuple[str, ...] = (),
+    password_file: tuple[str, ...] | None = UNGRANTED,
 ) -> PrivilegeAudit:
-    return classify(privileges, roles, common, unreadable=unreadable)
+    return classify(privileges, roles, common, unreadable=unreadable, password_file=password_file)
 
 
 # ------------------------------------------------------------- staying quiet ---
@@ -126,9 +135,9 @@ def test_findings_are_sorted() -> None:
 # --------------------------------------------------- what it could not look at ---
 
 
-def test_sysdba_is_reported_as_unaudited_rather_than_absent() -> None:
-    """It is on §3's list and lives in `V$PWFILE_USERS`, which §2 does not grant.
-    A list that quietly dropped two of its rows would read as a clean audit."""
+def test_the_rows_no_view_carries_are_reported_as_unaudited_rather_than_absent() -> None:
+    """On §3's list and readable from nowhere here. A list that quietly dropped
+    one of its rows would read as a clean audit."""
     audit = audit_of()
 
     assert set(UNAUDITABLE) <= set(audit.unaudited)
@@ -145,10 +154,13 @@ def test_a_refused_role_view_takes_the_role_rows_with_it() -> None:
     assert set(FORBIDDEN_ROLES) <= set(audit.unaudited)
 
 
-def test_an_audit_is_never_complete_while_sysdba_cannot_be_seen() -> None:
+def test_an_audit_is_not_complete_while_an_object_privilege_has_no_view() -> None:
     """A property rather than a constant, because it is a fact about §2's grant
-    set and that can change."""
-    assert audit_of().complete is False
+    set and that can change. It changed: #341 answers two of the three rows this
+    used to fail on. `EXECUTE ON DBMS_LOCK` is the one left, and it is left for a
+    reason no grant fixes."""
+    assert audit_of(password_file=()).complete is False
+    assert audit_of(password_file=()).unaudited == ("EXECUTE ON DBMS_LOCK",)
 
 
 def test_a_readable_run_still_reports_the_privileges_it_did_see() -> None:
@@ -157,6 +169,103 @@ def test_a_readable_run_still_reports_the_privileges_it_did_see() -> None:
     audit = audit_of(INSTALLED | {"SELECT ANY DICTIONARY"}, unreadable=("DBA_ROLE_PRIVS",))
 
     assert audit.over_granted == ("SELECT ANY DICTIONARY",)
+
+
+# ------------------------------------------------------- the password file (#341) ---
+#
+# §3's two remaining rows, which `V$PWFILE_USERS` carries and §2 makes an
+# optional grant. Three answers rather than two, and the whole of this section is
+# about not merging them: held, asked-and-not-held, and nobody-could-look.
+
+
+@pytest.mark.parametrize("privilege", PASSWORD_FILE_PRIVILEGES)
+def test_a_password_file_privilege_is_an_over_grant_like_any_other(privilege: str) -> None:
+    """The audit's first finding that is neither a system privilege nor a role,
+    and it lands where the other findings do. §3's must-not-grant list is one
+    list, and a reader looking for what this account holds and should not must
+    not have to know which view each row came from."""
+    audit = audit_of(password_file=(privilege,))
+
+    assert audit.over_granted == (privilege,)
+    assert privilege not in audit.unaudited
+
+
+def test_the_two_rows_are_answered_separately() -> None:
+    """The view carries a column each, so collapsing them would report `SYSOPER`
+    on the strength of a `SYSDBA` row. Measured both ways round on 26ai
+    23.26.2.0.0 -- granted one at a time, each reads back as itself."""
+    assert audit_of(password_file=("SYSDBA",)).over_granted == ("SYSDBA",)
+    assert audit_of(password_file=("SYSOPER",)).over_granted == ("SYSOPER",)
+
+
+def test_asked_and_not_held_is_not_the_same_as_nobody_looked() -> None:
+    """The distinction #341 is. An estate that took the grant and holds neither
+    privilege has been *audited*, and saying otherwise is the merge this module
+    exists to refuse -- arrived at from the side that under-reports."""
+    asked = audit_of(password_file=())
+    unasked = audit_of(password_file=UNGRANTED)
+
+    assert asked.over_granted == ()
+    assert not set(PASSWORD_FILE_PRIVILEGES) & set(asked.unaudited)
+    assert set(PASSWORD_FILE_PRIVILEGES) <= set(unasked.unaudited)
+
+
+def test_an_ungranted_view_does_not_make_the_audit_partial() -> None:
+    """`unreadable` says the report cannot be taken at face value. §2 leaves this
+    grant optional, so an estate that declined it is installed as documented --
+    and a run that called every correct install partial would teach a reader to
+    skip the line that matters when a view really was refused."""
+    audit = audit_of(password_file=UNGRANTED)
+
+    assert audit.unreadable == ()
+    assert "V$PWFILE_USERS" not in " ".join(audit.unreadable)
+
+
+def test_the_unaudited_rows_come_with_something_to_do_about_them() -> None:
+    """Question 3 of #341. The rows read the same as they did before the grant
+    existed; the *reason* does not, and only "you may enable this" has a next
+    action. The `GRANT` is the driver's words because it is a fact about one
+    product -- the audit's own shape names no database."""
+    caveats = audit_of(password_file=UNGRANTED).caveats()
+
+    assert any("V$PWFILE_USERS" in line for line in caveats)
+    assert any("GRANT SELECT" in line for line in caveats)
+
+
+def test_an_estate_that_took_the_grant_is_offered_no_remedy() -> None:
+    """Nothing to fix, so nothing to say. A remedy printed on a run that already
+    took it is the advice people learn to stop reading."""
+    assert audit_of(password_file=()).remedies == ()
+    assert audit_of(password_file=("SYSDBA",)).remedies == ()
+
+
+def test_the_query_answers_the_constants_in_the_order_they_are_written() -> None:
+    """`_password_file` reads the columns by position against
+    `PASSWORD_FILE_PRIVILEGES`, so the query and the constant have to agree. They
+    are two lines apart and would still drift; this is what notices."""
+    columns = PWFILE_QUERY.split(" from ")[0]
+
+    assert [
+        privilege
+        for privilege in PASSWORD_FILE_PRIVILEGES
+        if f"{privilege.lower()} = '{PWFILE_HELD}'" in columns
+    ] == list(PASSWORD_FILE_PRIVILEGES)
+    assert columns.index("sysdba") < columns.index("sysoper")
+
+
+def test_the_probe_asks_about_the_session_and_binds_nothing() -> None:
+    """The grantee *is* the session, which is `SELF_ROLES_QUERY`'s reasoning: a
+    bind would cost a round trip to say what `user` already says. It also means
+    there is no account name here to get the spelling of wrong."""
+    assert " user" in PWFILE_QUERY
+    assert ":" not in PWFILE_QUERY
+
+
+def test_the_probe_aggregates_so_a_non_member_still_returns_a_row() -> None:
+    """The reason this is not `accounts.PWFILE_QUERY` with `user` bound. An
+    unaggregated select over a non-member returns no row, `read` answers `None`
+    for a refused view, and the two would arrive here as the same value."""
+    assert PWFILE_QUERY.count("count(") == len(PASSWORD_FILE_PRIVILEGES)
 
 
 # --------------------------------------------------------------- common grants ---
@@ -180,9 +289,18 @@ def test_a_clean_audit_still_states_what_it_did_not_check() -> None:
     down rather than inferred from its absence."""
     caveats = audit_of().caveats()
 
-    assert len(caveats) == 1
     assert "SYSDBA" in caveats[0]
     assert "DBMS_LOCK" in caveats[0]
+
+
+def test_an_estate_that_took_the_optional_grant_still_names_the_row_left() -> None:
+    """The caveat shrinks and does not go away. `EXECUTE ON DBMS_LOCK` is still
+    unchecked, and the line that says so is still the one an auditor quotes."""
+    caveats = audit_of(password_file=()).caveats()
+
+    assert len(caveats) == 1
+    assert "DBMS_LOCK" in caveats[0]
+    assert "SYSDBA" not in caveats[0]
 
 
 def test_a_partial_audit_says_so_before_anything_else() -> None:
@@ -191,7 +309,6 @@ def test_a_partial_audit_says_so_before_anything_else() -> None:
     have said so was refused"."""
     caveats = audit_of(unreadable=("DBA_ROLE_PRIVS",)).caveats()
 
-    assert len(caveats) == 2
     assert "partial" in caveats[0]
     assert "DBA_ROLE_PRIVS" in caveats[0]
 

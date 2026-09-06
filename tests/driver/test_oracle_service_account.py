@@ -21,6 +21,12 @@ Three things only this account can establish, and all three are load-bearing:
   exactly like the pass above. §8's P7 row makes the same argument for keeping
   its `ORA-00990` assertion after the question was answered.
 
+A fourth arrived with #341, and it needs a *second* account: §2's optional
+`V$PWFILE_USERS` grant, taken. What the pair proves is that the audit's answer
+about `SYSDBA` and `SYSOPER` follows the estate rather than a constant — one
+account reports them unchecked and the other reports them, and a suite that only
+ever built the first would pass on the bug #341 is about.
+
 The grants come from `sopuli/driver/oracle/privileges.py` rather than from a list
 written here, so this account is by construction the one the tool asks for; that
 those constants match `sql/oracle/00_install.sql` is `tests/test_install_sql.py`,
@@ -39,6 +45,7 @@ import pytest
 from oracle_harness import Environment
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.oracle.privileges import (
+    PASSWORD_FILE_PRIVILEGES,
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     audit,
@@ -69,6 +76,13 @@ CORRELATION_ID = "9f1c4e02-77ab-4d51-9c6e-3b8a5d2f0e14"
 #: against the same database later cannot collide with this.
 ACCOUNT = "acme_svc_user"
 ACCOUNT_PASSWORD = "Service-Account-9z"
+
+#: §2's optional grant, spelled the way :func:`_grants` spells the rest of the
+#: set -- lower-case keywords around the object name §2 and `00_install.sql` use,
+#: so a grep for `V_$PWFILE_USERS` across the docs, the script and this file finds
+#: all three. Not in :func:`_grants`, because it is the thing whose presence and
+#: absence this module has to be able to tell apart.
+PASSWORD_FILE_GRANT = f"grant SELECT ON SYS.V_$PWFILE_USERS to {ACCOUNT}"
 
 
 def _run(session: Any, *statements: str) -> None:
@@ -130,14 +144,20 @@ def admin(live_oracle: Environment) -> Iterator[Any]:
         connection.close()
 
 
-@pytest.fixture
-def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
-    """An account holding exactly §2's grants, connected **as itself**.
+@contextlib.contextmanager
+def _installed(admin: Any, live_oracle: Environment, *extra: str) -> Iterator[Any]:
+    """§2's account, created and connected **as itself**, then dropped.
 
     Connected as itself is the whole point: `USER_SYS_PRIVS`, `SESSION_PRIVS` and
     the `ORA-00942` this module pins are all facts about the *session's own*
     user, and a test that asked them from `system` would be asking a different
     question and getting a reassuring answer.
+
+    ``extra`` is what §2 documents as optional, issued **before the session
+    opens** rather than into an open one. That is the order an operator installs
+    in, and it means no test here depends on when a fresh grant becomes visible
+    to a session that predates it -- a question this module has not measured and
+    does not need to.
     """
     session_module = pytest.importorskip("sopuli.driver.oracle.session")
     if _container(admin) == "CDB$ROOT":
@@ -157,7 +177,12 @@ def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
     # next one will tidy up" leaves the database dirty at the end of the session,
     # which on a developer's own instance is litter and on a shared one is worse.
     try:
-        _execute(admin, f'create user {ACCOUNT} identified by "{ACCOUNT_PASSWORD}"', *_grants())
+        _execute(
+            admin,
+            f'create user {ACCOUNT} identified by "{ACCOUNT_PASSWORD}"',
+            *_grants(),
+            *extra,
+        )
 
         driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
         opened = driver.connect(
@@ -184,6 +209,26 @@ def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
     finally:
         opened.close()
         _drop(admin)
+
+
+@pytest.fixture
+def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
+    """The default install: §2's grants and neither of its optional ones."""
+    with _installed(admin, live_oracle) as opened:
+        yield opened
+
+
+@pytest.fixture
+def password_file_reader(admin: Any, live_oracle: Environment) -> Iterator[Any]:
+    """The same account with §2's optional `V$PWFILE_USERS` grant taken (#341).
+
+    The estate #341 is about, and it is a *second* account rather than a flag on
+    the first because what the two prove is the pair: the same code has to report
+    two of §3's rows as unaudited on one and audited on the other, and a test
+    that only ever saw one of them would pass on a constant.
+    """
+    with _installed(admin, live_oracle, PASSWORD_FILE_GRANT) as opened:
+        yield opened
 
 
 def _drop(admin: Any) -> None:
@@ -333,3 +378,81 @@ def test_an_account_is_still_described_with_the_password_file_unreadable(
     assert state.password_file_member is None
     assert state.roles == frozenset(), "§2 grants privileges directly and no roles"
     assert state.vendor_maintained is False, "the control: DBA_USERS was read"
+
+
+def test_the_audit_reports_the_password_file_rows_as_unaudited(service_account: Any) -> None:
+    """The default estate, and the half of #341 that did not change.
+
+    Nobody could look, so §3's two password-file rows are named as unchecked --
+    and the remedy names the grant, because since #296 the reason is "you may
+    enable this" rather than "this cannot be known".
+    """
+    found = _audit(service_account)
+
+    assert set(PASSWORD_FILE_PRIVILEGES) <= set(found.unaudited)
+    assert found.over_granted == ()
+    assert found.unreadable == (), "an optional grant declined is not a partial audit"
+    assert any("V_$PWFILE_USERS" in line.upper() for line in found.remedies)
+
+
+# --------------------------------------------- the estate that opted in (#341) ---
+
+
+def test_the_optional_grant_makes_the_password_file_rows_auditable(
+    password_file_reader: Any,
+) -> None:
+    """The other half, and the defect #341 reports: the audit used to say *I
+    could not look* here from a constant, on a session that could.
+
+    The account holds neither privilege, so this is the answer that has to stay
+    quiet -- and the assertion that matters is not `over_granted == ()`, which
+    was already true, but that the two rows are gone from `unaudited`. With
+    nothing left to enable, there is no remedy either.
+    """
+    found = _audit(password_file_reader)
+
+    assert not set(PASSWORD_FILE_PRIVILEGES) & set(found.unaudited)
+    assert found.unaudited == ("EXECUTE ON DBMS_LOCK",), "the row no grant can answer"
+    assert found.over_granted == ()
+    assert found.remedies == ()
+
+
+def test_a_granted_sysdba_is_found_and_sysoper_is_not(
+    admin: Any, password_file_reader: Any
+) -> None:
+    """§3's row, reported for the first time -- and reported as one row.
+
+    `V$PWFILE_USERS` carries a column per privilege, so the two are answered
+    independently; collapsing them would report `SYSOPER` on the strength of a
+    `SYSDBA` row. Granted here and revoked in the same test rather than left to
+    the fixture, because what is being measured is the difference the grant makes
+    to one session's answer.
+
+    An account granted `SYSDBA` inside a PDB appears in the view with its own
+    `CON_ID` (§2), which is why this works from a PDB-local service account at
+    all.
+    """
+    before = _audit(password_file_reader)
+    _execute(admin, f"grant sysdba to {ACCOUNT}")
+    try:
+        after = _audit(password_file_reader)
+    finally:
+        _execute(admin, f"revoke sysdba from {ACCOUNT}")
+
+    assert before.over_granted == ()
+    assert after.over_granted == ("SYSDBA",)
+    assert "SYSOPER" not in after.over_granted
+    assert _audit(password_file_reader).over_granted == (), "the control: the revoke took"
+
+
+def test_taking_the_optional_grant_is_not_itself_an_over_grant(
+    password_file_reader: Any,
+) -> None:
+    """The thing that would have been a defect in #296 rather than a follow-up.
+
+    `over_granted` reads system privileges and roles; this is an object
+    privilege, so a site that takes the grant §2 recommends must not then be told
+    `doctor` disapproves of it.
+    """
+    assert _audit(password_file_reader).over_granted == ()
+    assert _audit(password_file_reader).missing == ()

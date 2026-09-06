@@ -1824,7 +1824,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Rows of 3's must-not-grant list that no view reachable under 2's grants carries -- SYSDBA and SYSOPER (V$PWFILE_USERS), and EXECUTE ON DBMS_LOCK (an object privilege). Never empty today. Reported rather than omitted, because a list missing some of its rows reads as a clean audit."
+          "description": "Rows of 3's must-not-grant list this run did not check. EXECUTE ON DBMS_LOCK is always here -- it is an object privilege and no view the audit reads carries it. SYSDBA and SYSOPER join it only where the optional SELECT on V$PWFILE_USERS was not granted; where it was, they are audited and a held one appears in scope.over_granted. Never empty today. Reported rather than omitted, because a list missing some of its rows reads as a clean audit."
         },
         "unreadable": {
           "type": "array",
