@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.57.2](https://github.com/villebase/sopuli-dba/compare/v0.57.1...v0.57.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* **apply:** fence the attribute pass and the rollover close ([#347](https://github.com/villebase/sopuli-dba/issues/347)) ([#353](https://github.com/villebase/sopuli-dba/issues/353)) ([5b20400](https://github.com/villebase/sopuli-dba/commit/5b20400a2b7ddbad1e68d35b3c198c8c49808791))
+* **lock:** give back the locks already taken when acquisition fails ([#345](https://github.com/villebase/sopuli-dba/issues/345)) ([#350](https://github.com/villebase/sopuli-dba/issues/350)) ([7a09372](https://github.com/villebase/sopuli-dba/commit/7a093723596369342eba452e2182ab9b33696711))
+* **lock:** let `lock status` survey a slice past a binding with no store ([#349](https://github.com/villebase/sopuli-dba/issues/349)) ([#355](https://github.com/villebase/sopuli-dba/issues/355)) ([768d4a5](https://github.com/villebase/sopuli-dba/commit/768d4a5800637d22ab30a12c8bb05f848a3f5f40))
+* **lock:** refuse `.` and `..` in a secret path ([#344](https://github.com/villebase/sopuli-dba/issues/344)) ([#351](https://github.com/villebase/sopuli-dba/issues/351)) ([bd4bcce](https://github.com/villebase/sopuli-dba/commit/bd4bccec214232d75d66af32c919b0624c897cde))
+* **lock:** report a renewal takeover as one, and a capability refusal as one ([#346](https://github.com/villebase/sopuli-dba/issues/346)) ([#354](https://github.com/villebase/sopuli-dba/issues/354)) ([ea64baa](https://github.com/villebase/sopuli-dba/commit/ea64baa36572110357bb4b2f68985b2b98275ad1))
+* **lock:** wire `locking.break_expired` through to the LockManager ([#348](https://github.com/villebase/sopuli-dba/issues/348)) ([#356](https://github.com/villebase/sopuli-dba/issues/356)) ([fe0cf5f](https://github.com/villebase/sopuli-dba/commit/fe0cf5fce7952bc59878f5eeda2e358b3c6e3c54))
+
 ## [0.57.1](https://github.com/villebase/sopuli-dba/compare/v0.57.0...v0.57.1) (2026-09-05)
 
 
