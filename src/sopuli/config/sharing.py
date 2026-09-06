@@ -60,7 +60,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sopuli.config.model import Binding
-from sopuli.lock.keys import normalise_path
+from sopuli.config.secret_refs import normalise_path
 from sopuli.payload import PENDING, stage_layout
 
 __all__ = ["SharedSecret", "StageCollision", "colliding_stages", "shared_secrets"]

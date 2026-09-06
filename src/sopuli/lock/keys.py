@@ -16,7 +16,21 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sopuli.config.secret_refs import TRAVERSAL, SecretRef
+from sopuli.config.secret_refs import SecretRef, normalise_path
+
+#: ``normalise_path`` is re-exported deliberately, and is why this list exists.
+#: It moved to :mod:`sopuli.config.secret_refs` with the rule it enforces (#357),
+#: and the lock layer is the place that *applies* it -- :func:`lock_key` and
+#: :func:`parse_lock_key` both do -- so a caller building keys still reaches for
+#: it here. Naming it keeps that a decision rather than an implicit re-export
+#: mypy would refuse under ``--strict``.
+__all__ = [
+    "LockKey",
+    "acquisition_order",
+    "lock_key",
+    "normalise_path",
+    "parse_lock_key",
+]
 
 
 @dataclass(frozen=True, order=True)
@@ -110,41 +124,6 @@ def lock_key(ref: SecretRef, *, store: str) -> LockKey:
     them here would make two different documents share a lock.
     """
     return LockKey(store=store, path=normalise_path(ref.path))
-
-
-def normalise_path(path: str) -> str:
-    """Collapse a path to the one spelling this module locks on.
-
-    Empty segments are dropped -- ``apps//acme/db`` and ``apps/acme/db`` are one
-    document, and two keys for it would be two locks that never contend.
-
-    **`.` and `..` are refused rather than dropped** (#344). Dropping them would
-    silently rewrite the path the operator typed, so `lock status` and `lock
-    break` would disagree about which record they mean; keeping them was worse
-    still. `lock_path()` prefixes this with ``locks/``, and a `..` walks straight
-    back out of that prefix: measured, ``lock break 'kv:../secrets/acme/db'``
-    built ``locks/../secrets/acme/db``, which httpx collapsed to the *secret's*
-    own path, and the run CAS-wrote a lock record onto the credential document.
-
-    That is the sentence in :func:`lock_key` about normalisation only ever
-    *merging* keys -- "which over-locks at worst" -- being false. Merging is
-    safe; redirecting is not, and the difference is these two segments.
-
-    :class:`ValueError` rather than a :class:`~sopuli.config.errors.ConfigError`,
-    for :func:`parse_lock_key`'s reason: this is reached from a command line as
-    well as from a file, and the command boundary already turns it into exit 2.
-    A ref in a *file* is refused earlier and with a location, by
-    :func:`sopuli.config.secret_refs.parse_secret_ref`, so this is the backstop
-    rather than the message an operator normally sees.
-    """
-    segments = [segment for segment in path.split("/") if segment]
-    offending = sorted({segment for segment in segments if segment in TRAVERSAL})
-    if offending:
-        raise ValueError(
-            f"secret path {path!r} contains {', '.join(repr(one) for one in offending)}, "
-            f"which cannot address a document"
-        )
-    return "/".join(segments)
 
 
 def acquisition_order(keys: Iterable[LockKey]) -> tuple[LockKey, ...]:

@@ -45,12 +45,11 @@ from sopuli.config.model import (
     as_dict,
 )
 from sopuli.config.references import dangling
-from sopuli.config.secret_refs import SecretRef, parse_secret_ref
+from sopuli.config.secret_refs import SecretRef, normalise_path, parse_secret_ref
 from sopuli.config.selection import matches, select
 from sopuli.config.sharing import STAGE_COLLISION_HINT, StageCollision, colliding_stages
 from sopuli.config.templates import substitute
 from sopuli.config.vaults import STAGING_EMULATED, STAGING_LABELS
-from sopuli.lock.keys import normalise_path
 from sopuli.payload import stage_layout
 
 #: What an unresolved token in a secret ref is measured against (§7).
