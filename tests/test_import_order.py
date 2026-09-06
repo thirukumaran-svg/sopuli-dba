@@ -27,19 +27,16 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
-#: Cycles that are still here, and the issue that tracks each.
+#: Cycles that are still here, and the issue that tracks each. **Empty** since
+#: #363, which was the last one.
 #:
 #: Asserted **exactly** rather than as a floor, which is the half that matters:
 #: fixing one fails this test until its entry is deleted, so the list cannot
-#: quietly describe a repository that has moved on. The same discipline
+#: quietly describe a repository that has moved on. It did its job once already
+#: -- `sopuli.payload` sat here between #357 and #363, and deleting the entry was
+#: part of closing the second. The same discipline
 #: `tests/settings/test_settings_are_wired.py` uses for `inert_reason`.
-KNOWN_CYCLES = {
-    "sopuli.payload": (
-        "#363 -- `sopuli.payload` imports `sopuli.config.errors`, which runs "
-        "`sopuli/config/__init__.py`, which imports `bindings` -> `sharing`, which "
-        "imports `sopuli.payload`. The same shape as #357 and a different pair"
-    ),
-}
+KNOWN_CYCLES: dict[str, str] = {}
 
 PROBE = """
 import importlib, json, pathlib, sys
