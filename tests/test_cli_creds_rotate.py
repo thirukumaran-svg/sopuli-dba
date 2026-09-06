@@ -487,6 +487,38 @@ def test_the_lock_is_taken_for_the_whole_run(
     assert all(one["released"] for one in held)
 
 
+def test_a_run_that_ends_early_still_reports_its_locks_as_released(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The lock section is built after `holding` lets go, on every path.
+
+    `release()` is what flips `HeldLock.released`, and it runs in the `finally`
+    inside `holding`. `_rotate_estate` returns three of its endings from *inside*
+    that block, and the section was built there -- so the document said
+    `released: false` for locks the store already had down as released. A
+    consumer reading the run document to find out what this run still holds got
+    the opposite of the truth, on the most ordinary ending a scheduled rotation
+    has: nothing was due.
+
+    Asserted against the store as well as the document, because the bug was the
+    two disagreeing rather than either one alone.
+    """
+    harness = estate(documents=_two_targets(days=3))
+
+    result = run(runner, write_config(CONFIG), "--max-age-days", "90", "--output", "json")
+    held = document(result)["lock"]["held"]
+
+    assert [one["path"] for one in held] == [
+        "apps/acme/appdb-alpha",
+        "apps/acme/appdb-beta",
+    ]
+    assert all(one["released"] for one in held)
+    for one in held:
+        record = harness["store"].read(f"locks/{one['path']}")
+        assert record is not None
+        assert record.data["state"] == "released"
+
+
 # ------------------------------------------------------------- invariant 8 ---
 
 

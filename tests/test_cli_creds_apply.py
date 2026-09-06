@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ from sopuli import apply, check
 from sopuli.cli import cli
 from sopuli.clock import utc_now
 from sopuli.config.model import Vault
+from sopuli.diagnostics import LOCK_TAKEN_OVER
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.oracle.errors import classify
 from sopuli.driver.protocol import (
@@ -52,7 +54,15 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.lock import Holder, LockKey, LockRecord, lock_path
+from sopuli.lock import (
+    CLOCK_SKEW,
+    DEFAULT_TTL,
+    Holder,
+    LockDeniedError,
+    LockKey,
+    LockRecord,
+    lock_path,
+)
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
@@ -150,6 +160,28 @@ SHARED_UNLOCKING_CONFIG = (
       unlock_if_locked: true
 defaults:
   policy: app-standard
+"""
+)
+
+#: The same estate, with #83's standing permission for an unattended runner.
+#: Config-only by design -- there is no flag and no environment variable -- so a
+#: test about it is a test about the file.
+BREAK_EXPIRED_CONFIG = (
+    CONFIG
+    + """defaults:
+  locking:
+    break_expired: true
+"""
+)
+
+#: The same permission, written in a profile instead. Both layers are declared in
+#: `settings/registry.py` and only one of them is `defaults:`.
+BREAK_EXPIRED_PROFILE_CONFIG = (
+    CONFIG
+    + """profiles:
+  scheduled:
+    locking:
+      break_expired: true
 """
 )
 
@@ -1129,6 +1161,37 @@ def test_a_changed_database_with_no_promotion_carries_a_warning(
 # ------------------------------------------------------------------ the fence ---
 
 
+#: The lock guarding the first target's document, which is the one every test in
+#: this section writes a record onto.
+ALPHA_LOCK = LockKey(store="vault-prod", path="apps/acme/appdb-alpha")
+
+
+def other_run(*, now: Any) -> dict[str, Any]:
+    """A held record left by somebody else, as of ``now``."""
+    return LockRecord.acquired(
+        correlation_id="01JSOMEBODYELSE",
+        command="creds rotate",
+        holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
+        now=now,
+    ).to_dict()
+
+
+def lapsed() -> dict[str, Any]:
+    """A record whose claim has run out, past the clock-skew margin.
+
+    Taken out long enough ago that `expires_at` is behind *now* by more than
+    `CLOCK_SKEW`, because a lock is not expired until it is past both -- and a
+    test that only just cleared `expires_at` would pass or fail on how long the
+    run took.
+    """
+    return other_run(now=utc_now() - DEFAULT_TTL - CLOCK_SKEW - timedelta(minutes=1))
+
+
+def fresh() -> dict[str, Any]:
+    """A record somebody is still working under."""
+    return other_run(now=utc_now())
+
+
 def steal(path: str, *, at: str) -> Callable[[dict[str, Any], str], None]:
     """Somebody else takes this document's lock, once, mid-run (#282).
 
@@ -1359,6 +1422,116 @@ def test_a_takeover_during_the_renewal_keeps_what_the_run_applied(
     # The whole point: what the first target applied is still in the document.
     assert [one["account"] for one in found["results"]] == ["acme_web_user"]
     assert sum(len(session.changed) for session in harness["sessions"]) == 1
+
+
+def test_an_expired_lock_stops_a_run_that_was_not_given_permission(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The default, and the behaviour #348 must not change by accident.
+
+    An expired record is still somebody's claim until a person or a standing
+    permission says otherwise: the holder may be alive and slow rather than
+    dead. So without the key this is exit 7, and the hint names the two ways
+    out.
+    """
+    harness = estate()
+    harness["store"].write(lock_path(ALPHA_LOCK), lapsed(), cas=0)
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    # `CliRunner` drives the group rather than `sopuli.cli.main`, so the refusal
+    # arrives as the exception and the runner's own code is 1. `LockDeniedError`
+    # is what the boundary maps to exit 7, and it deliberately carries no code of
+    # its own (`sopuli/lock/errors.py`).
+    assert isinstance(result.exception, LockDeniedError), result.exception
+    assert harness["sessions"] == []
+    assert "break_expired" in str(result.exception)
+
+
+def test_break_expired_in_defaults_lets_an_unattended_run_take_the_lock(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#348. The key was resolved, ratcheted, cross-checked twice, and
+    implemented in `decide()` -- and no `LockManager` was ever built with it.
+
+    So an operator set it, hit exit 7, was told by `_hint_for` to set the key
+    they had already set, and had nothing in the output to tell them it was not
+    consulted. This is that wire, asserted where it shows: the run proceeds.
+    """
+    harness = estate()
+    harness["store"].write(lock_path(ALPHA_LOCK), lapsed(), cas=0)
+
+    result = run(runner, write_config(BREAK_EXPIRED_CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert harness["sessions"][0].changed == [("ACME_WEB_USER", STAGED)]
+
+
+def test_a_takeover_says_so_in_the_output(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, validator: Any
+) -> None:
+    """A guardrail that fires silently is half a guardrail, and this one did.
+
+    `lock_diagnostics` was written and unit-tested and called by nothing -- the
+    same shape as #348 itself -- so a run that broke somebody's lock said so
+    nowhere. `01-configuration.md` §5.3 says this and `sopuli lock break` "emit
+    the same warning code, because it is the same event", and `_taken_over`'s own
+    docstring says why it has to: the evidence is gone from the path the moment
+    the takeover write lands, so if this run does not report it, nothing ever
+    does.
+    """
+    harness = estate()
+    harness["store"].write(lock_path(ALPHA_LOCK), lapsed(), cas=0)
+
+    result = run(
+        runner, write_config(BREAK_EXPIRED_CONFIG), "--select", "tenant=alpha", "--output", "json"
+    )
+    found = document(result)
+
+    validator.validate(found)
+    warnings = [one for one in found["diagnostics"] if one.get("code") == LOCK_TAKEN_OVER]
+    assert len(warnings) == 1
+    # The holder, so somebody can go and ask whether they were still working.
+    assert "svc_sopuli@ci-runner-3" in warnings[0]["message"]
+
+
+def test_break_expired_in_a_profile_reaches_the_manager_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Both layers the registry declares, not just the one the fix was written
+    against. `defaults:` and a profile are the two, and a wire that carried only
+    the first would be #348 again for every estate that puts it where
+    `01-configuration.md` says it belongs -- "the profile is where this belongs:
+    it is a property of running without anybody watching"."""
+    harness = estate()
+    harness["store"].write(lock_path(ALPHA_LOCK), lapsed(), cas=0)
+
+    result = run(
+        runner,
+        write_config(BREAK_EXPIRED_PROFILE_CONFIG),
+        "--profile",
+        "scheduled",
+        "--select",
+        "tenant=alpha",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert harness["sessions"][0].changed == [("ACME_WEB_USER", STAGED)]
+
+
+def test_a_live_lock_is_refused_even_with_break_expired(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The permission is for a lock past `expires_at` plus the skew margin, and
+    for nothing else. A colleague mid-rotation still holds theirs."""
+    harness = estate()
+    harness["store"].write(lock_path(ALPHA_LOCK), fresh(), cas=0)
+
+    result = run(runner, write_config(BREAK_EXPIRED_CONFIG), "--select", "tenant=alpha")
+
+    assert isinstance(result.exception, LockDeniedError), result.exception
+    assert "is locked by" in str(result.exception)
+    assert harness["sessions"] == []
 
 
 def test_the_lease_is_renewed_at_each_target_boundary(
