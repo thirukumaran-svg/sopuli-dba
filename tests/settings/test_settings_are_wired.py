@@ -41,6 +41,7 @@ from pathlib import Path
 import pytest
 
 from sopuli.config.vault_layers import REACH_KEYS, TLS_KEYS, setting_name
+from sopuli.invocation import RESOLVED_SETTINGS
 from sopuli.settings.registry import SETTINGS
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "sopuli"
@@ -197,6 +198,38 @@ def test_every_setting_declared_inert_really_is() -> None:
         f"declared inert and read anyway: {contradicted}. Something now consults "
         f"these -- delete `inert_reason=` and check that the design documents still "
         f"describe what the key does"
+    )
+
+
+def test_every_wired_setting_can_actually_be_resolved() -> None:
+    """The hole the sweep above cannot see, found the day it was written (#360).
+
+    A consumer is half a wire. `_timeouts()` read `db.connect_timeout_s` off
+    `Invocation.resolved` while the name was absent from `RESOLVED_SETTINGS`, so
+    it was never *in* that mapping: the read returned `None` on every run and the
+    built-in was used whatever the profile said. The sweep above reported it as
+    wired, correctly by its own rule -- the name does reach a module -- and
+    that rule is exactly what its docstring warns is not a proof.
+
+    This is the other end, and it is structural rather than textual: a run
+    setting that is not resolved at run time cannot be read at run time,
+    whoever mentions it. `vaults.*` is exempt because it is resolved inside the
+    file by `config/vault_layers.py`, which is the same exemption the sweep makes
+    for it and for the same reason -- it describes a store, not a run.
+    """
+    resolvable = set(RESOLVED_SETTINGS) | _constructed()
+    wired = consumers(set(SETTINGS))
+    stranded = {
+        name: wired[name]
+        for name, definition in SETTINGS.items()
+        if definition.inert_reason is None and wired[name] and name not in resolvable
+    }
+
+    assert not stranded, (
+        f"read at run time and never resolved into `Invocation.resolved`, so the read "
+        f"returns None every time: {sorted(stranded)}. Add the name to "
+        f"`invocation.RESOLVED_SETTINGS` and contribute it in "
+        f"`settings/sources.py`, or the consumer is reading a mapping it is not in"
     )
 
 

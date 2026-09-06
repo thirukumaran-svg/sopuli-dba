@@ -835,16 +835,38 @@ def _examine(
 def _timeouts(run: Invocation) -> Timeouts:
     """The run's own budgets, not the driver's defaults.
 
-    `db.connect_timeout_s` is a documented setting with a whole precedence chain
-    behind it, and a command that resolved it and then connected on the built-in
-    anyway would be #176's review finding all over again: a key that looks
-    configured and does nothing. `doctor` is also the command most likely to be
-    pointed at something unreachable, which is exactly when the number matters.
+    Both keys, which is the whole point of the function. Each is a documented
+    setting with a precedence chain behind it, and a command that resolved one
+    and then connected on the built-in anyway would be #176's review finding all
+    over again: a key that looks configured and does nothing. `doctor` is also
+    the command most likely to be pointed at something unreachable, which is
+    exactly when `connect_timeout_s` matters.
+
+    `db.query_timeout_s` was the key that did nothing (#360). It reached
+    `Timeouts.query_s` -- which becomes `Connection.call_timeout` -- from
+    nowhere, because this function read its sibling and passed no `query_s` at
+    all, so a profile setting it changed exactly nothing.
+
+    **Wiring it does not change what the tool imposes**, and that distinction is
+    the reason it is safe to wire. The built-in stays `NO_QUERY_TIMEOUT`, for the
+    reason stated where that constant lives: a call timeout cancels the round
+    trip without undoing what the server did with it, `ALTER USER` is not
+    transactional, and a rotation cut off at the wrong moment leaves a run that
+    cannot say whether the password changed -- the one state invariant 7 has no
+    answer for. What changes is that an operator can now *reach* that state on
+    purpose, which `01-configuration.md` §5 has always said is theirs to choose.
+
+    Absent means the built-in, for both, and `Timeouts` already holds those two
+    numbers -- so an :class:`Invocation` built without resolution (a test, the
+    preliminary one) gets the documented behaviour rather than a zero.
     """
-    resolved = run.resolved.get("db.connect_timeout_s")
-    if resolved is None:
-        return Timeouts()
-    return Timeouts(connect_s=int(resolved.value))
+    fallback = Timeouts()
+    connect = run.resolved.get("db.connect_timeout_s")
+    query = run.resolved.get("db.query_timeout_s")
+    return Timeouts(
+        connect_s=int(connect.value) if connect is not None else fallback.connect_s,
+        query_s=int(query.value) if query is not None else fallback.query_s,
+    )
 
 
 def _elapsed(started: float) -> int:

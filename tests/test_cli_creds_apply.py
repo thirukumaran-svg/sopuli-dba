@@ -66,6 +66,7 @@ from sopuli.lock import (
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
+from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
 from sopuli.store import MemoryStore, SecretStore
 
 RUN_SCHEMA = (
@@ -160,6 +161,19 @@ SHARED_UNLOCKING_CONFIG = (
       unlock_if_locked: true
 defaults:
   policy: app-standard
+"""
+)
+
+#: The same estate, with a profile that narrows both database budgets (#360).
+#: Profile-only by declaration -- there is no flag and no environment variable --
+#: so a test about these keys is a test about the file.
+TIMEOUTS_CONFIG = (
+    CONFIG
+    + """profiles:
+  ci:
+    db:
+      connect_timeout_s: 90
+      query_timeout_s: 600
 """
 )
 
@@ -549,8 +563,12 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
             return store
 
         class FakeDriver:
-            def __init__(self, **_: Any) -> None:
-                pass
+            def __init__(self, **kwargs: Any) -> None:
+                # Recorded so a test can assert what the *command* handed the
+                # driver, which is where #360's missing wire was. The session
+                # fake below cannot see it: `timeouts` is settled at
+                # construction and never reaches a statement.
+                harness.setdefault("driver_kwargs", []).append(kwargs)
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
                 if connect_error is not None:
@@ -1532,6 +1550,60 @@ def test_a_live_lock_is_refused_even_with_break_expired(
     assert isinstance(result.exception, LockDeniedError), result.exception
     assert "is locked by" in str(result.exception)
     assert harness["sessions"] == []
+
+
+# ------------------------------------------------------------- the budgets ---
+
+
+def test_both_database_budgets_reach_the_driver(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#360. `db.query_timeout_s` was resolved, ratcheted and passed to nobody.
+
+    `_timeouts()` read `connect_timeout_s` and built `Timeouts(connect_s=...)`,
+    so a profile writing `query_timeout_s` validated, appeared in `config show`,
+    and changed nothing at all. The driver end had been complete since #176 --
+    `Timeouts.query_s` becomes `Connection.call_timeout`, asserted in
+    `tests/driver/test_oracle_connect.py` -- and the command-side wire was the
+    missing half, which is exactly the half no test looked at.
+
+    Asserted on what the *command* handed the driver rather than on what the
+    driver did with it, because that is where the gap was: the driver was right
+    all along.
+    """
+    harness = estate()
+
+    result = run(
+        runner, write_config(TIMEOUTS_CONFIG), "--profile", "ci", "--select", "tenant=alpha"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    timeouts = harness["driver_kwargs"][0]["timeouts"]
+    assert (timeouts.connect_s, timeouts.query_s) == (90, 600)
+    assert timeouts.call_timeout_ms == 600_000
+
+
+def test_an_unset_query_budget_stays_unbounded(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Wiring the key does not change what the tool *imposes*, and that is the
+    reason wiring it was safe.
+
+    The built-in stays `NO_QUERY_TIMEOUT`: a call timeout cancels the round trip
+    without undoing what the server did with it, `ALTER USER` is not
+    transactional, and a rotation cut off at the wrong moment leaves a run that
+    cannot say whether the password changed -- the one state invariant 7 has no
+    answer for. An estate that never asked for a bound must not acquire one by
+    way of this fix.
+    """
+    harness = estate()
+
+    run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    timeouts = harness["driver_kwargs"][0]["timeouts"]
+    assert timeouts.query_s == NO_QUERY_TIMEOUT
+    assert timeouts.call_timeout_ms == 0
+    assert timeouts.connect_s == DEFAULT_CONNECT_TIMEOUT_S
 
 
 def test_the_lease_is_renewed_at_each_target_boundary(

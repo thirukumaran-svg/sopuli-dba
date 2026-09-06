@@ -508,14 +508,6 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 layers=(Layer.PROFILE, Layer.BUILTIN),
                 policy=MergePolicy.OVERRIDE,
                 builtin=NO_QUERY_TIMEOUT,
-                inert_reason=(
-                    "accepted and not consulted: `_timeouts()` in `sopuli/cli.py` builds "
-                    "`Timeouts(connect_s=...)` and passes no `query_s`, so a profile "
-                    "setting this changes nothing. The driver end is complete -- "
-                    "`Timeouts.query_s` becomes `Connection.call_timeout` and "
-                    "`tests/driver/test_oracle_connect.py` asserts it -- and only the "
-                    "command-side wire is missing (#358)"
-                ),
             ),
             _setting(
                 # May an unattended runner take over a lock past its expiry

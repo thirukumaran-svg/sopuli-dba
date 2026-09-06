@@ -126,9 +126,18 @@ GLOBAL_PARAMS = (
 #: the safety block and `locking.break_expired` have layers to come from and
 #: `profile` has something to select.
 #:
-#: `verify.method`, `confirm`, `log_level` and the `db` budgets are still absent,
-#: and a profile may still write every one of them: they are parsed, validated and
-#: waiting for a consumer, which is the rule `sopuli/settings/registry.py` states.
+#: `verify.method`, `confirm` and `log_level` are still absent, and a profile may
+#: still write every one of them: they are parsed, validated and waiting for a
+#: consumer, which is the rule `sopuli/settings/registry.py` states.
+#:
+#: **The `db` budgets are here now** (#360). They were in the paragraph above --
+#: "waiting for a consumer" -- after one had already arrived: `_timeouts()` reads
+#: `db.connect_timeout_s` off `Invocation.resolved`, and a name absent from this
+#: tuple is never *in* that mapping, so the read returned `None` on every run and
+#: the built-in was used whatever the profile said. A key with a consumer and no
+#: entry here is the quietest way to be inert: it looks wired from both ends and
+#: is joined in the middle by nothing. `tests/settings/test_settings_are_wired.py`
+#: now refuses that shape.
 #: `vaults.*` is absent for a different reason -- it is resolved inside the file,
 #: by `sopuli/config/vault_layers.py`, because it describes a store rather than
 #: a run. `vault` is the one next to it that *is* a run setting and so is here
@@ -139,6 +148,8 @@ GLOBAL_PARAMS = (
 #: needs the answer while the file is still being built. Same two contributions,
 #: same resolver, so there is nothing for them to disagree about.
 RESOLVED_SETTINGS = (
+    "db.connect_timeout_s",
+    "db.query_timeout_s",
     "locking.break_expired",
     "output",
     "profile",

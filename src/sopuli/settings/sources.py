@@ -43,7 +43,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from sopuli.config.errors import ROOT, ConfigError
-from sopuli.config.model import Config, Locking, Safety
+from sopuli.config.model import Config, Locking, ProfileDb, Safety
 from sopuli.config.vault_env import DEFAULT_STORE_SETTING, DEFAULT_STORE_VARIABLE
 from sopuli.settings.registry import Layer
 from sopuli.settings.resolver import Contribution
@@ -138,17 +138,21 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
     reads them, and a contribution for a setting nothing consults would be
     refused by :func:`sopuli.invocation._wired` anyway.
 
-    A profile's ``db:`` block is deliberately absent too, and #176's review is
-    why. Emitting it made a previously valid config die with a raw ``ValueError``
-    at exit 1, because :func:`sopuli.invocation._wired` refuses a setting no
-    command consults -- which is not a bug in the guard but the guard doing its
-    job. Nothing connects yet, so nothing reads a timeout, and a run document
-    reporting that ``profiles.ci.db.connect_timeout_s`` influenced a run it could
-    not have influenced is exactly the lie that guard exists to prevent. The two
-    names are registered in :mod:`sopuli.settings.registry` -- the vocabulary and
-    the built-ins are real, and :class:`~sopuli.driver.oracle.client.Timeouts`
-    reads them -- and they join ``RESOLVED_SETTINGS`` and this function together,
-    in the change that gives them a consumer.
+    **A profile's ``db:`` block is here now** (#360), which is the change the
+    previous version of this paragraph described in advance: the two names
+    "join ``RESOLVED_SETTINGS`` and this function together, in the change that
+    gives them a consumer". They now have one -- :func:`sopuli.cli._timeouts`
+    hands both to every driver the tool builds.
+
+    #176's review is why they were held back, and the reasoning was right for its
+    moment: emitting a contribution for a setting no command consults makes
+    :func:`sopuli.invocation._wired` refuse it, and a run document reporting that
+    ``profiles.ci.db.connect_timeout_s`` influenced a run it could not have
+    influenced is the lie that guard exists to prevent. What went wrong is that
+    ``_timeouts`` acquired a *reader* for ``connect_timeout_s`` without either
+    half of this joining it -- so the read hit a mapping the name was never in,
+    returned ``None`` on every run, and the built-in was used whatever the
+    profile said. Half-wired reads as wired from both ends.
 
     ``vaults.<name>.*`` is deliberately absent. It is the one part of a profile
     that is applied inside the file (:mod:`sopuli.config.vault_layers`), because
@@ -165,6 +169,7 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
         found.append(("output", profile.output, f"{at}.output", Layer.PROFILE))
         found.extend(_safety(profile.safety, at=at, layer=Layer.PROFILE))
         found.extend(_locking(profile.locking, at=at, layer=Layer.PROFILE))
+        found.extend(_db(profile.db, at=at, layer=Layer.PROFILE))
 
     found.append(("profile", config.defaults.profile, "defaults.profile", Layer.DEFAULTS))
     found.append((DEFAULT_STORE_SETTING, config.defaults.vault, "defaults.vault", Layer.DEFAULTS))
@@ -182,6 +187,27 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
             Contribution(layer=layer, value=value, detail=detail)
         )
     return contributions
+
+
+def _db(db: ProfileDb, *, at: str, layer: Layer) -> list[tuple[str, object, str, Layer]]:
+    """A profile's ``db:`` block, one entry per budget it wrote (#360).
+
+    ``ProfileDb`` is never ``None`` -- ``Profile`` builds an empty one -- so this
+    takes the block rather than an optional, and the ``None`` per *field* is what
+    says a key went unwritten. The caller drops those, which is the same
+    distinction every other block here keeps: a key nobody wrote is not a key
+    written to the built-in.
+
+    Profile only, because that is what the registry declares for both names. §5
+    puts them there because they are a property of *where a run is invoked from*
+    -- the same estate reached from a CI runner across a WAN and from a laptop on
+    the same subnet wants two different numbers, and neither is a fact about the
+    target.
+    """
+    return [
+        ("db.connect_timeout_s", db.connect_timeout_s, f"{at}.db.connect_timeout_s", layer),
+        ("db.query_timeout_s", db.query_timeout_s, f"{at}.db.query_timeout_s", layer),
+    ]
 
 
 def _safety(

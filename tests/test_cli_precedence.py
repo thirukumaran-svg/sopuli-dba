@@ -394,15 +394,23 @@ def test_a_profile_block_no_command_consults_yet_still_loads(
 ) -> None:
     """The other direction from the test above, and the one that was missing.
 
-    `profiles.*.db` is parsed, validated and schema-checked, and no command
-    reads it yet -- so `sopuli/settings/sources.py` must not emit it. #176 made
-    it emit, and the guard above did exactly what it exists to do: a previously
+    A key `profiles:` accepts and no command reads must not be emitted by
+    `sopuli/settings/sources.py`, because the guard above refuses a contribution
+    for a setting this run does not consult. #176 made the `db:` block emit while
+    nothing read it, and the guard did exactly what it exists to do: a previously
     valid config died with a raw `ValueError` and exit 1 on every command.
 
-    Nothing caught it, because every fixture config in the suite happened to
-    have no `db:` block. So this is not a test of the guard -- that one is
-    above -- but of the far more ordinary thing the guard can break: a key the
-    file is allowed to contain.
+    Nothing caught it, because every fixture config in the suite happened to have
+    no such block. So this is not a test of the guard -- that one is above -- but
+    of the far more ordinary thing the guard can break: a key the file is allowed
+    to contain.
+
+    **`db:` was the subject here and has graduated** (#360): both budgets now have
+    a consumer and are contributed, so the block no longer stands for "accepted
+    and unread" and this test would go on passing while asserting nothing.
+    `log_level` does stand for it -- parsed, closed against `LOG_LEVELS`, read by
+    nothing -- and it is written *beside* the `db:` block, so one config still
+    covers both.
     """
     # `write_config` rather than a hand-written file: it sets 0600, which P4's
     # permission check requires on POSIX. Writing it by hand passed on Windows
@@ -415,6 +423,7 @@ def test_a_profile_block_no_command_consults_yet_still_loads(
         "    addr: https://vault.example.com:8200\n"
         "profiles:\n"
         "  ci:\n"
+        "    log_level: debug\n"
         "    db:\n"
         "      connect_timeout_s: 90\n"
         "      query_timeout_s: 600\n"
