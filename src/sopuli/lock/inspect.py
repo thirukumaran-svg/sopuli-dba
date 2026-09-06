@@ -118,6 +118,10 @@ def declared_locks(config: Config) -> tuple[LockKey, ...]:
     open on purpose -- a profile or ``SOPULI_VAULT`` may complete it once a run
     picks one -- and this is the command that needs the answer, so it refuses
     here rather than surveying a store it had to guess (invariant 4).
+
+    :func:`resolvable_locks` is the same walk without the refusal, for the one
+    caller that does not need it. See its docstring for why that is not this
+    function with a flag.
     """
     keys = []
     for binding in config.bindings:
@@ -136,6 +140,40 @@ def declared_locks(config: Config) -> tuple[LockKey, ...]:
             )
         keys.append(lock_key(binding.secret, store=binding.vault))
     return acquisition_order(keys)
+
+
+def resolvable_locks(config: Config) -> tuple[LockKey, ...]:
+    """The keys this configuration declares *and* can name a store for (#349).
+
+    For membership, and only for membership: deciding whether a record found in
+    a store is one the configuration declares (``declared: false``, #150). A
+    binding whose store is unknown cannot match any discovered path -- there is
+    no key to compare -- so leaving it out changes no answer, and refusing over
+    it answers a question nobody asked.
+
+    That is what `lock status --select` did. It builds two estates: the narrowed
+    one it surveys, and the **unfiltered** one that decides what counts as
+    declared, because a path a selector excluded is still one the configuration
+    declares and reporting it as a leftover would be alarming and wrong. Both
+    calls were :func:`declared_locks`, so an estate where one application
+    resolves its store from a profile failed on an account in a *different*
+    application that the run was never going to survey -- and the narrowed call
+    on the next line could not rescue it, because the unfiltered one had already
+    raised.
+
+    **A second function rather than a flag**, because :func:`declared_locks`'s
+    refusal is the documented point of it: a command that acts on these keys
+    must not survey a store it had to guess (invariant 4). A parameter would put
+    "and sometimes not" into the docstring that explains why it always does, and
+    the caller that wants the refusal off is the one that is not about to act.
+    """
+    return acquisition_order(
+        [
+            lock_key(binding.secret, store=binding.vault)
+            for binding in config.bindings
+            if binding.secret is not None and binding.vault is not None
+        ]
+    )
 
 
 @dataclass(frozen=True)

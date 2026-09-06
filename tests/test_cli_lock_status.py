@@ -26,6 +26,7 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli.cli import cli
+from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
 from sopuli.diagnostics import UNLISTABLE_STORE, WARNINGS
 from sopuli.exit_codes import ExitCode
@@ -73,6 +74,33 @@ applications:
     accounts: [acme_web_user]
     secret_template: "apps/acme/{target}#password"
 """
+
+#: The same estate plus an application whose store nothing in the file names
+#: (#349). Legal: `_check_has_somewhere_to_resolve_from` leaves it open because a
+#: profile's `vault:` or `SOPULI_VAULT` may complete it once a run picks one, and
+#: `vaults:` declares somewhere for them to point at.
+UNRESOLVED_CONFIG = CONFIG.replace(
+    """applications:
+  - name: acme
+    accounts: [acme_web_user]
+    secret_template: "apps/acme/{target}#password"
+""",
+    """  - name: appdb-gamma
+    type: oracle
+    dsn: db-dev.example.com:1521/gamma.pdb.example.com
+    environment: dev
+    labels: { env: dev }
+applications:
+  - name: acme
+    accounts: [acme_web_user]
+    targets: [appdb-alpha, appdb-beta]
+    secret_template: "apps/acme/{target}#password"
+  - name: beta
+    accounts: [acme_beta_user]
+    targets: [appdb-gamma]
+    secret_template: "apps/beta/{target}#password"
+""",
+)
 
 DEV = LockKey(store="vault-dev", path="apps/acme/appdb-alpha")
 PROD = LockKey(store="vault-prod", path="apps/acme/appdb-beta")
@@ -140,6 +168,77 @@ def run(runner: CliRunner, config: Path, *args: str) -> Result:
 
 def section(result: Result) -> dict[str, Any]:
     return dict(json.loads(result.output)["lock"])
+
+
+# ---------------------------------------------------- a store nothing named ---
+
+
+def test_a_selector_survives_a_binding_whose_store_is_unknown(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """#349. `--select` failed over a binding it had already excluded.
+
+    The command builds two estates, and the unfiltered one -- which decides only
+    what counts as *declared* -- refused when any binding named no store. So an
+    estate where one application resolves its store from a profile could not run
+    `lock status --app acme` at all: it failed naming an account in a
+    different application, which this run was never going to survey, and the
+    narrowed call on the next line could not rescue it because the unfiltered one
+    had already raised.
+    """
+    with_locks((DEV, held()))
+
+    result = run(runner, write_config(UNRESOLVED_CONFIG), "--app", "acme")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "names no store" not in result.output
+    assert "apps/acme/appdb-alpha" in result.output
+
+
+def test_a_binding_with_no_store_is_left_out_of_the_declared_set(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """Skipping it changes no answer, which is why skipping it is safe.
+
+    The unfiltered estate exists to decide whether a *discovered* record is one
+    the configuration declares (#150). A binding whose store is unknown has no
+    key to compare against a discovered path, so it can never be the reason a
+    record is or is not declared -- and a record that really is undeclared still
+    reports as one.
+
+    Selected down to `acme`, because without a selector the *narrowed* estate is
+    the whole estate and `beta`'s missing store is then a question this command
+    really does need answered -- which is the test below.
+    """
+    with_locks((DEV, held()), (LEFTOVER, held()))
+
+    result = run(runner, write_config(UNRESOLVED_CONFIG), "--app", "acme", "--output", "json")
+    found = section(result)
+
+    declared = {entry["path"]: entry["declared"] for entry in found["found"]}
+    assert declared[DEV.path] is True
+    assert declared[LEFTOVER.path] is False
+
+
+def test_a_command_that_acts_on_the_keys_still_refuses(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """The refusal is right where the answer is acted on, and it stays.
+
+    `declared_locks` refuses a binding with no store because a command about to
+    take that lock must not survey a store it had to guess (invariant 4). #349
+    is about the *membership* pass only, so the narrowed estate -- the one this
+    command surveys -- must still refuse when the selector keeps such a binding.
+    """
+    result = run(runner, write_config(UNRESOLVED_CONFIG), "--app", "beta")
+
+    # `CliRunner` drives the group rather than `sopuli.cli.main`, so the refusal
+    # arrives as the exception and the runner's own code is 1. What the command
+    # decided is the code the exception carries -- the same reading
+    # `test_cli_lock_break.refused` takes.
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert "names no store" in str(result.exception)
 
 
 # ------------------------------------------------------------- what it surveys ---

@@ -139,7 +139,7 @@ from sopuli.invocation import (
     group_options,
 )
 from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
-from sopuli.lock.inspect import declared_locks, mode_of, survey
+from sopuli.lock.inspect import declared_locks, mode_of, resolvable_locks, survey
 from sopuli.lock.inspect import discover as discover_locks
 from sopuli.lock.keys import LockKey, acquisition_order, normalise_path, parse_lock_key
 from sopuli.lock.manager import LockableStore, LockManager, describe_holder
@@ -1083,7 +1083,14 @@ def lock_status(
     # `--select` excluded is still one this configuration declares, and reporting
     # it as a leftover because this run was not looking at it would be alarming
     # and wrong.
-    everything = declared_locks(config)
+    #
+    # `resolvable_locks` for the membership pass and `declared_locks` for the one
+    # this command acts on (#349). The unfiltered pass is used only to decide
+    # whether a discovered record is `declared: false`, and a binding whose store
+    # is unknown can match no discovered path -- so refusing over one made
+    # `--select` fail on an account in an application the run was never going to
+    # survey.
+    everything = resolvable_locks(config)
     keys = declared_locks(filter_estate(config, selection))
 
     stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
