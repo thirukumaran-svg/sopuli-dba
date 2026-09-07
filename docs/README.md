@@ -1,8 +1,22 @@
 # sopuli-dba — design documentation
 
-Sketch stage. Nothing here is implemented. The SQL in `sql/oracle/` has been
-executed against Oracle 26ai Free 23.26.2.0.0 only; each script's `STATUS:`
-header records which paths ran and which are still untried.
+This index is for contributors. **If you arrived here wanting to use the tool,
+start at [getting-started.md](getting-started.md) instead** — the documents below
+are the specification, written in the project's own declarative voice.
+
+Pre-alpha. UC-1 is built and the rest of this directory is ahead of the code; each
+document says which of it exists. The SQL in `sql/oracle/` has been executed
+against Oracle 26ai Free 23.26.2.0.0 only; each script's `STATUS:` header records
+which paths ran and which are still untried.
+
+## For a reader outside the project
+
+| Document | Contents |
+|---|---|
+| [getting-started.md](getting-started.md) | first run: install, a first config file, `config validate`, `doctor`, and one command under `--dry-run` |
+| [security-model.md](security-model.md) | what the tool can and cannot do to a database, and what stops a mistake from being silent — plain English, for deciding whether to trust it |
+
+## Design
 
 | Document | Contents |
 |---|---|
