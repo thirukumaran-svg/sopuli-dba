@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/sopuli-dba-logo.jpg" alt="sopuli-dba logo" width="200">
+  <img src="docs/assets/sopuli-dba-logo.png" alt="sopuli-dba logo" width="200">
 </p>
 
 # sopuli-dba
