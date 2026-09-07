@@ -15,6 +15,11 @@ which paths ran and which are still untried.
 |---|---|
 | [getting-started.md](getting-started.md) | first run: install, a first config file, `config validate`, `doctor`, and one command under `--dry-run` |
 | [security-model.md](security-model.md) | what the tool can and cannot do to a database, and what stops a mistake from being silent — plain English, for deciding whether to trust it |
+| [scenarios/rotate-and-sync.md](scenarios/rotate-and-sync.md) | one password rotation end to end: stage, apply, check, roll back, and close the rollover window |
+| [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md) | the vault-write side of an External Secrets Operator setup, and the division of responsibility that makes it safe |
+| [../examples/](../examples/) | three runnable config files, commented: smallest, several applications, safety-hardened |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | what a first-time contributor needs that `workflow.md` and `CLAUDE.md` do not say for that audience |
+| [../SECURITY.md](../SECURITY.md) | reporting a vulnerability privately |
 
 ## Design
 
@@ -47,6 +52,7 @@ which paths ran and which are still untried.
 | [decisions/adr-005-vault-client.md](decisions/adr-005-vault-client.md) | The HTTP API directly, over `httpx`, not `hvac` — measured against a real Vault, why renewal doesn't change the answer, and what still binds OCI to its own SDK |
 | [decisions/adr-006-optional-dependencies.md](decisions/adr-006-optional-dependencies.md) | Vendor clients are install extras: what base carries, why base opens no sockets, and what a configured-but-uninstalled backend does |
 | [decisions/adr-007-vault-token-flag.md](decisions/adr-007-vault-token-flag.md) | `--vault-token-file` takes a path and `--vault-token` is refused; why a SecretRef cannot authenticate the store it lives in, and where the token chain merges |
+| [decisions/adr-008-contribution-provenance.md](decisions/adr-008-contribution-provenance.md) | A DCO sign-off rather than a CLA, why review-time checking rather than CI, and what would change either |
 | `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 

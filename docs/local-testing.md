@@ -1451,7 +1451,7 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/run.schema.json`](schemas/run.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.20.schema.json`](schemas/sopuli-run-1.20.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json

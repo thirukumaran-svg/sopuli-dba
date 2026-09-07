@@ -158,8 +158,7 @@ send one. The tool refuses the password rather than mangling it.
 
 The longer version, for deciding whether to trust this with a production
 credential: [`docs/security-model.md`](docs/security-model.md).
-To report a security problem privately: `SECURITY.md` — not yet published, see
-"Not written yet" below.
+To report a security problem privately: [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -219,7 +218,7 @@ the tool safe to run from a scheduler.
 
 The full walkthroughs, with the config file these commands read and what to do
 when an answer is not `IN_SYNC`, are in
-`docs/scenarios/`, which is not yet published — see "Not written yet" below.
+[`docs/scenarios/`](docs/scenarios/).
 
 ---
 
@@ -228,23 +227,15 @@ when an answer is not `IN_SYNC`, are in
 | Read this | If you want to |
 |---|---|
 | [docs/getting-started.md](docs/getting-started.md) | install the tool, write your first config file, and run one command safely |
+| [docs/scenarios/rotate-and-sync.md](docs/scenarios/rotate-and-sync.md) | follow one password rotation from start to finish |
+| [docs/scenarios/kubernetes-eso.md](docs/scenarios/kubernetes-eso.md) | let applications running in Kubernetes pick up the new password automatically |
+| [examples/](examples/) | three complete config files, commented, from smallest to safety-hardened |
 | [docs/security-model.md](docs/security-model.md) | decide whether to trust this with a production credential |
 | [docs/local-testing.md](docs/local-testing.md) | exercise every command by hand, including the failures worth causing on purpose |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | send a change |
+| [SECURITY.md](SECURITY.md) | report a security problem privately |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | know what is expected of everyone taking part |
 | [docs/README.md](docs/README.md) | read the full design: principles, configuration reference, Oracle privileges, JSON output contract, testing strategy, and every decision record |
-
-### Not written yet
-
-Named here rather than left out, so you can tell "not built" from "not yet
-documented". These are being written now, and this section becomes links as each
-one lands:
-
-| Will be | For |
-|---|---|
-| `docs/scenarios/rotate-and-sync.md` | one password rotation from start to finish, including closing a rollover window |
-| `docs/scenarios/kubernetes-eso.md` | letting applications running in Kubernetes pick up the new password automatically |
-| `examples/` | three complete config files, commented, from smallest to safety-hardened |
-| `CONTRIBUTING.md` | sending a change |
-| `SECURITY.md` | reporting a security problem privately |
 
 Licensed under [Apache 2.0](LICENSE).
 

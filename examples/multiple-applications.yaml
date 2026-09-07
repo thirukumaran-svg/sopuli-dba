@@ -1,0 +1,118 @@
+# Two or more applications in the same estate. The moment a second application
+# has its own secret layout, one `secret_template` cannot serve both -- so the
+# binding keys move out of the top level and into an `applications:` list.
+#
+# This file also shows the two things that stop an estate config becoming a
+# wall of repetition: groups, and per-application target selection.
+#
+# Check it before you use it:
+#     sopuli --config multiple-applications.yaml config validate
+#
+# Full reference: ../docs/design/01-configuration.md
+
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-1.3.schema.json
+
+version: 1
+
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: http://127.0.0.1:8200
+    mount: kv
+    kv_version: 2
+    auth: { method: token }
+
+defaults:
+  vault: vault-dev
+  policy: app-standard
+
+targets:
+  # Two tenants in dev, each its own pluggable database. `labels:` are
+  # free-form key-value pairs you invent; `groups:` and `overrides:` below
+  # select on them.
+  - name: dev-alpha
+    type: oracle
+    environment: dev
+    dsn: "127.0.0.1:1521/ALPHA"
+    admin: { username: SYSTEM, auth: { method: env } }
+    oracle: { scope: pdb, container: ALPHA }
+    labels: { tenant: alpha, tier: sandbox }
+
+  - name: dev-beta
+    type: oracle
+    environment: dev
+    dsn: "127.0.0.1:1521/BETA"
+    admin: { username: SYSTEM, auth: { method: env } }
+    oracle: { scope: pdb, container: BETA }
+    labels: { tenant: beta, tier: sandbox }
+
+  # The container root, which exists for maintenance of accounts common to
+  # every pluggable database. No ordinary application belongs here -- which is
+  # exactly why this file cannot use the single-application shape: "all
+  # targets" would include this one.
+  - name: dev-cdb-root
+    type: oracle
+    environment: dev
+    dsn: "127.0.0.1:1521/FREE"
+    admin: { username: SYSTEM, auth: { method: env } }
+    oracle: { scope: cdb_root }
+    labels: { tier: root }
+
+# A named set of targets, so an application can say "these" in one word.
+# `match:` selects on the labels above; every key has to match, and each value
+# is one string rather than a list.
+groups:
+  dev-tenants:
+    match: { tier: sandbox }
+
+policies:
+  app-standard:
+    password:
+      length: 24
+      charset: alnum_safe
+      first_char: alpha
+      require: { upper: 1, lower: 1, digit: 1, special: 1 }
+
+  # A separate policy for a reporting account nothing interactive uses, so it
+  # can afford to be longer.
+  reporting-standard:
+    password:
+      length: 32
+      charset: alnum_safe
+      first_char: alpha
+      require: { upper: 1, lower: 1, digit: 1, special: 1 }
+
+# ---------------------------------------------------------------------------
+# One entry per application. Each says: these accounts, in these targets, are
+# mastered by these secrets, under this policy.
+# ---------------------------------------------------------------------------
+applications:
+  # Three accounts sharing one document per tenant. Note the pointer form of
+  # the ref -- `#DB_CREDENTIALS/{account}` -- which gives each account its own
+  # field inside one document. A bare `#{account}` would make each account a
+  # top-level field, and the accounts would then overwrite each other's staged
+  # password. The tool refuses that at load time rather than at the second
+  # rotation.
+  - name: acme
+    accounts: [acme_web_user, acme_api_user, acme_batch_user]
+    targets: { group: dev-tenants }
+    secret_template: "vault-dev:tenants/{tenant}#DB_CREDENTIALS/{account}"
+    policy: app-standard
+
+  # One account, its own secret, its own policy. `secret:` rather than
+  # `secret_template:` because there is nothing to substitute -- one account in
+  # one place. An entry uses one or the other, never both.
+  - name: reporting
+    accounts: [report_reader]
+    targets: { group: dev-tenants }
+    secret: "vault-dev:reporting/dev/db#password"
+    policy: reporting-standard
+
+  # An account that lives in the container root rather than in a tenant. This
+  # is the entry that could not be expressed at all in the single-application
+  # shape.
+  - name: monitoring
+    accounts: ["C##MONITOR"]
+    targets: [dev-cdb-root]
+    secret: "vault-dev:ops/monitoring/db#password"
+    policy: app-standard

@@ -451,16 +451,12 @@ it on the database and then promotes it — and that is the next document.
 
 | Read this | For |
 |---|---|
+| [scenarios/rotate-and-sync.md](scenarios/rotate-and-sync.md) | the rest of this story: `apply`, `check`, rolling back, and closing a rollover window |
+| [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md) | letting applications in Kubernetes collect the new password by themselves |
+| [../examples/](../examples/) | three complete config files, commented, from smallest to safety-hardened |
 | [security-model.md](security-model.md) | what the tool can and cannot do, before you trust it with production |
 | [design/01-configuration.md](design/01-configuration.md) | the full config reference — every key, every rule |
 | [local-testing.md](local-testing.md) | every command this build has, and the failures worth causing on purpose |
-
-Two documents that continue this story are being written and are not published
-yet: `scenarios/rotate-and-sync.md`, which picks up at `creds apply` and runs to
-the end, and `scenarios/kubernetes-eso.md`, on letting applications in Kubernetes
-collect the new password by themselves. Until they land,
-[local-testing.md](local-testing.md) §10 covers the same ground for a reader who
-does not mind a contributor's voice.
 
 ---
 

@@ -341,8 +341,5 @@ versions and surfaces still unchecked, are in the
 ## 6. Reporting a problem
 
 If you have found a security vulnerability in this tool, please do not open a
-public issue.
-
-The private reporting route is going into `SECURITY.md`, which is not published
-yet. Until it is, this repository is private, so the only people who can see it
-are people who can already reach the maintainer directly.
+public issue. [SECURITY.md](../SECURITY.md) has the private route, and says
+what to include and what happens next.

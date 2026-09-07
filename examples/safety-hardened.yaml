@@ -1,0 +1,143 @@
+# The same estate as single-application.yaml, with the safety settings turned
+# on. Read this one for the `safety:` and `profiles:` blocks; everything else
+# is here so the file works.
+#
+# The rule that makes these settings worth writing: **safety settings only ever
+# ratchet toward safe.** For an ordinary setting, the most specific layer wins.
+# For these, the *safest* layer wins, wherever it sits. So a team's own config
+# file, or a profile, or a command-line flag, can add to what is here. None of
+# them can take any of it away.
+#
+# Check it before you use it:
+#     sopuli --config safety-hardened.yaml config validate
+#
+# See which layer produced each effective setting:
+#     sopuli --config safety-hardened.yaml config show --explain
+
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-1.3.schema.json
+
+version: 1
+
+vaults:
+  vault-prod:
+    type: hashicorp
+    addr: https://vault.example.com:8200
+    mount: kv
+    kv_version: 2
+    auth: { method: token }
+    # Verify the vault's TLS certificate against this CA bundle rather than
+    # the system store. Leave it out to use the system store.
+    tls:
+      ca_file: /etc/ssl/certs/example-internal-ca.pem
+
+defaults:
+  vault: vault-prod
+  policy: app-standard
+
+  # -------------------------------------------------------------------------
+  # The safety block. Every key is optional, and an unset key stays unset --
+  # it does not fall back to a built-in default, because "safest of all
+  # layers" has to be able to tell a layer that said nothing from a layer that
+  # said the permissive thing.
+  # -------------------------------------------------------------------------
+  safety:
+    # A run that would touch any target in one of these environments asks
+    # before changing anything. `--confirm` is that yes, given in advance,
+    # which is what a scheduled job passes instead of keeping this list in
+    # step with its own configuration.
+    #
+    # There is no built-in list. Marking a target `environment: prod` does not
+    # by itself cause a prompt -- you have to name the environment here. A
+    # site wants this when a mistake in prod costs more than the ten seconds
+    # the prompt costs everywhere else.
+    #
+    # With no terminal -- a scheduler, a CI job -- there is nobody to ask, so
+    # the run refuses rather than hanging. It names this setting and both
+    # --confirm and --dry-run in the message.
+    confirm_environments: [prod, uat]
+
+    # The most databases one run may touch. This is a ceiling, not a
+    # confirmation threshold: a run that would exceed it stops while printing
+    # its plan, before the first connection.
+    #
+    # A site wants this because the damage from a mistyped selector scales
+    # with the size of the estate. `--select env=prod` where you meant
+    # `--select env=dev` is one character.
+    #
+    # Raise it deliberately for a genuine estate-wide rotation. The minimum is
+    # 1; to stop changes entirely, use `readonly` below rather than trying to
+    # write 0.
+    max_targets: 4
+
+    # Refuse every change, everywhere. Not set here -- see the `audit` profile
+    # below for where it is, and why.
+    #
+    # A site would set it *here* when this file exists only so sopuli can
+    # report on the estate, and no run from this file should ever be able to
+    # write. Under `readonly`, the changing commands are unavailable and
+    # --dry-run on them is refused too, because the read-only commands
+    # (`creds check`, `creds status`, `lock status`) are how you ask instead.
+    # readonly: true
+
+targets:
+  - name: prod-orders
+    type: oracle
+    environment: prod
+    dsn: "db-orders.example.com:1521/ORDERS"
+    admin: { username: SOPULI_SVC, auth: { method: env } }
+    oracle: { scope: pdb, container: ORDERS }
+    labels: { tier: production }
+
+  - name: uat-orders
+    type: oracle
+    environment: uat
+    dsn: "db-uat.example.com:1521/ORDERS"
+    admin: { username: SOPULI_SVC, auth: { method: env } }
+    oracle: { scope: pdb, container: ORDERS }
+    labels: { tier: preproduction }
+
+policies:
+  app-standard:
+    password:
+      length: 24
+      charset: alnum_safe
+      first_char: alpha
+      require: { upper: 1, lower: 1, digit: 1, special: 1 }
+
+# ---------------------------------------------------------------------------
+# Profiles say how a run is invoked -- never what it points at. Selecting one
+# with `--profile NAME` cannot change which accounts or targets are in scope.
+# ---------------------------------------------------------------------------
+profiles:
+  # For a scheduled drift check. It can look at everything and change nothing.
+  audit:
+    output: json
+    safety:
+      # This is the ratchet doing its job in the direction that is easy to
+      # miss: a profile can add `readonly`, and once added, no command-line
+      # flag can take it off again for that run.
+      readonly: true
+      # Lower than the site ceiling above, because a check reads every target
+      # it is pointed at and there is no reason for this job to be pointed at
+      # more than the estate has.
+      max_targets: 2
+
+  # For a rotation run from a scheduler, where nobody is at a terminal.
+  # `confirm: false` says nobody *could* be asked. Combined with the
+  # `confirm_environments` above, a run that reaches prod under this profile
+  # refuses rather than hanging on a prompt with no reader -- which is the
+  # answer you want from a job at 03:00.
+  #
+  # To let that job actually rotate prod, pass --confirm on its command line.
+  # That is the yes, given in advance, by whoever wrote the job.
+  unattended:
+    confirm: false
+    output: json
+    db:
+      connect_timeout_s: 60
+
+accounts:
+  - acme_app_user
+
+secret_template: "vault-prod:acme/{env}/db#DB_CREDENTIALS/{account}"
+policy: app-standard
