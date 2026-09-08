@@ -769,14 +769,14 @@ inconclusive rather than counted as a pass.
 **Every finding below is scoped to the versions its row names**, and it is not a
 general statement about Oracle. The column head is 26ai Free 23.26.2.0.0 in both
 `CDB$ROOT` and a PDB, which is where all of it was first measured; **21c XE
-21.3.0.0.0 was added in a PDB on 2026-09-08 (#380) and agrees on every row it
-reached**, including the two it can answer and 26ai cannot — `DBA_AUDIT_TRAIL`
-and `SYS.AUD$`, since 23ai desupported traditional auditing — and it is what the
-OS audit-file row now rests on. 19c, 18c and 11.2 have still not been run (#381,
-#382); the README's gate-2 table records what is open. A row that names only 26ai
-means only 26ai.
+21.3.0.0.0 and 18c XE 18.4.0.0.0 were added in a PDB on 2026-09-08 (#380, #381)
+and agree on every row they reached**, including the two they can answer and 26ai
+cannot — `DBA_AUDIT_TRAIL` and `SYS.AUD$`, since 23ai desupported traditional
+auditing — and they are what the OS audit-file row now rests on. 19c and 11.2
+have still not been run (#382); the README's gate-2 table records what is open. A
+row that names only 26ai means only 26ai.
 
-| Surface | 26ai 23.26.2.0.0, `CDB$ROOT` and PDB; 21c 21.3 in a PDB | Action |
+| Surface | 26ai 23.26.2.0.0, `CDB$ROOT` and PDB; 21c 21.3 and 18c 18.4 in a PDB | Action |
 |---|---|---|
 | `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` — the `CREATE/ALTER USER` statement itself | **no cursor for the DDL exists at all.** Not masked — absent. Holds for client-issued DDL and for DDL run via `EXECUTE IMMEDIATE` alike | nothing to do on this version; re-run the probe on every version claimed as supported, because this is a retention behaviour and not a documented guarantee |
 | **An anonymous PL/SQL block carrying the password as a literal** | **leaks in full** into `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` and `V$DB_OBJECT_CACHE`. Oracle's protection is keyed to the `CREATE/ALTER USER` statement; a block that merely *contains* one is an ordinary block, and the block's own text is retained verbatim | **the tool never builds one.** Issue `ALTER USER` directly — invariant 13 |
@@ -784,7 +784,7 @@ means only 26ai.
 | AWR — `DBA_HIST_SQLTEXT` | **untested.** It reported `pop=y` in one FREEPDB1 run and `pop=n` in the next, and no snapshot was taken before the sweep, so "clean" here is an absence of evidence | take an AWR snapshot, then re-run the sweep. Needs the Diagnostics Pack. Stays untested until then — not clean |
 | `V$SQL_BIND_CAPTURE` — bind values in SQL *predicates* | sampled at hard parse and retained in clear. Does not apply to rotation, since DDL cannot take binds | constrains `check --method hash` if verifier comparison ever moves server-side: **never bind a password or a verifier into a predicate** — invariant 14 |
 | SQL trace / 10046 | **untested.** The probe's §7 emits the `grep` commands; they have not been run | run them. Until then assume not redacted: the tool never enables trace on its own sessions, and a DBA who traces this session captures the password |
-| OS audit files (`audit_file_dest`) — the SYSDBA path | **clean on 21c**, untested elsewhere. §7's greps were run for the first time on 2026-09-08 (#380), on 21c XE with `AUDIT_SYS_OPERATIONS = TRUE`: no canary value appears in `audit_file_dest`, the trace directory, the listener log or the client history. Note what it took to get a trustworthy answer — the grep as written matched the canary *prefix*, which the probe's own SQL text contains, so it reported a leak in the one place a leak would matter most. Fixed to match the numbered canaries; a run before 2026-09-08 that reported a hit here was reading the probe | run the same greps on the other versions, and run the probe once with `svc_user = sys`. Matters most on 11.2, where `AUDIT_SYS_OPERATIONS` writes statement text to files no query in the probe can see, and where it is still untested (#382) |
+| OS audit files (`audit_file_dest`) — the SYSDBA path | **clean on 21c and 18c**, untested elsewhere. §7's greps were run for the first time on 2026-09-08 (#380, #381), on both with `AUDIT_SYS_OPERATIONS = TRUE`: no canary value appears in `audit_file_dest`, the trace directory, the listener log or the client history. Note what it took to get a trustworthy answer — the grep as written matched the canary *prefix*, which the probe's own SQL text contains, so it reported a leak in the one place a leak would matter most. Fixed to match the numbered canaries; a run before 2026-09-08 that reported a hit here was reading the probe | run the same greps on the other versions, and run the probe once with `svc_user = sys`. Matters most on 11.2, where `AUDIT_SYS_OPERATIONS` writes statement text to files no query in the probe can see, and where it is still untested (#382) |
 | Network | encrypted when NNE or TLS is in use | `sopuli doctor` warns on an unencrypted connection |
 | Tool's own output and logs | redacted at the sink | covered by the redaction release gate, UC-1 §11 |
 

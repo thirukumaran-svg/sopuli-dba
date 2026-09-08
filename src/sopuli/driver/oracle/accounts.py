@@ -127,13 +127,48 @@ USER_QUERY = (
     "from dba_users where username = :name"
 )
 
-#: 11.2's version of the same question. ``ORACLE_MAINTAINED`` arrived in 12.1 too,
-#: so both columns go together and one fallback covers both -- and the ``None``
-#: this produces for ``vendor_maintained`` is what makes the guardrails fall back
-#: to their literal deny list (``02-oracle-privileges.md`` §4 check 5) rather than
-#: reading a missing column as "no".
+#: The same seven columns for a release that has no ``PASSWORD_CHANGE_DATE``.
+#:
+#: **The two columns do not travel together, and assuming they did cost 18c its
+#: guardrails.** This constant used to select five columns and say
+#: "``ORACLE_MAINTAINED`` arrived in 12.1 too, so both columns go together and
+#: one fallback covers both". Measured 2026-09-08 (#381):
+#:
+#: ===============  =====================  ======================
+#: release          ``ORACLE_MAINTAINED``  ``PASSWORD_CHANGE_DATE``
+#: ===============  =====================  ======================
+#: 26ai 23.26       present                present
+#: 21c 21.3         present                present
+#: **18c 18.4**     **present**            **ORA-00904**
+#: 11g 11.2         ORA-00904              ORA-00904
+#: ===============  =====================  ======================
+#:
+#: So on 18c the full query failed, the short one answered, and
+#: ``vendor_maintained`` came back ``None`` from a column sitting right there and
+#: readable -- which switched guardrail check 2 off and dropped it to check 5's
+#: literal deny list, on a release that can answer properly.
+#:
+#: Both queries now project the **same seven columns in the same order**, with
+#: ``NULL`` where the release has nothing to put. That removes the length test
+#: :func:`_maintained` used to make, and with it the fragility the comment on
+#: :data:`USER_QUERY` worries about: there is one shape, so a column can no
+#: longer move under a fixed index.
 USER_QUERY_NO_CHANGE_DATE = (
-    "select username, account_status, profile, password_versions, expiry_date "
+    "select username, account_status, profile, password_versions, "
+    "oracle_maintained, cast(null as date), expiry_date "
+    "from dba_users where username = :name"
+)
+
+#: 11.2, which has neither column. Same seven, two of them ``NULL``.
+#:
+#: ``ORACLE_MAINTAINED`` being absent here is what the ``None`` in
+#: :func:`_maintained` is *for*: the guardrails fall back to their literal deny
+#: list (``02-oracle-privileges.md`` §4 check 5) rather than reading a missing
+#: column as "no". On 18c that fallback was firing by accident; here it is the
+#: intended behaviour.
+USER_QUERY_LEGACY = (
+    "select username, account_status, profile, password_versions, "
+    "cast(null as varchar2(1)), cast(null as date), expiry_date "
     "from dba_users where username = :name"
 )
 
@@ -441,17 +476,25 @@ def resolve_profile(cursor: Cursor, profile: str) -> str | None:
 
 
 def _user_row(cursor: Cursor, account: str) -> Any:
-    """``DBA_USERS``, falling back to 11.2's shorter column list.
+    """``DBA_USERS``, narrowing one column at a time until the server answers.
 
-    The fallback is driven by the server refusing the column rather than by a
+    Each fallback is driven by the server refusing a column rather than by a
     version test, which is invariant 3 in the small: `ORA-00904` *is* the answer
     to "does this release have `PASSWORD_CHANGE_DATE`", and it needs no capability
     of its own because the query itself is the probe.
+
+    **Three shapes, not two, and they are tried in that order for a reason.**
+    18c has `ORACLE_MAINTAINED` and not `PASSWORD_CHANGE_DATE`; 11.2 has neither
+    (measured -- see :data:`USER_QUERY_NO_CHANGE_DATE`). Dropping both together
+    made 18c answer as 11.2 and gave up a guardrail input it could have read.
+    Every shape projects the same seven columns, so a caller reads fixed
+    positions whichever one answered.
     """
-    row = read(cursor, USER_QUERY, name=account.upper())
-    if row is not None:
-        return row
-    return read(cursor, USER_QUERY_NO_CHANGE_DATE, name=account.upper())
+    for query in (USER_QUERY, USER_QUERY_NO_CHANGE_DATE, USER_QUERY_LEGACY):
+        row = read(cursor, query, name=account.upper())
+        if row is not None:
+            return row
+    return None
 
 
 def _limits(cursor: Cursor, profile: str) -> dict[str, str]:
@@ -527,12 +570,14 @@ def _changed_at(row: Any) -> datetime | None:
 
 
 def _expires_at(row: Any) -> datetime | None:
-    """``EXPIRY_DATE``, which both queries select and both select **last**.
+    """``EXPIRY_DATE``, which every query selects and every one selects **last**.
 
-    ``row[-1]`` rather than a number, because the two rows are different lengths
-    and this is the one column whose position is the same in each. That is the
-    property the queries are written to have, and reading it this way is what
-    keeps the two facts in one place instead of two.
+    ``row[-1]`` rather than a number because it read the same in every shape back
+    when the shapes had different lengths. Since #381 they do not -- all three
+    project the same seven columns -- so this is now simply the last of seven and
+    `row[6]` would be as correct. Left as written: it is the one index that
+    cannot go wrong if a fourth shape is ever added with a column dropped from
+    the middle, and that is the mistake this module has already made once.
 
     ``None`` where the profile expires nothing. A caller must not read that as
     *not expiring soon* and then as *expiring never*: it is the same answer either
@@ -549,15 +594,13 @@ def _maintained(row: Any) -> bool | None:
     reading as "not vendor-maintained" would quietly switch off the fallback that
     exists for exactly that release.
 
-    The threshold moved from 5 to 6 when #309 appended ``EXPIRY_DATE`` to both
-    queries: the 11.2 row is now five columns, and the old test would have read
-    its last one -- a date -- as ``ORACLE_MAINTAINED``, come back *not
-    vendor-maintained*, and switch off that fallback silently. Which is the whole
-    argument for why the column was appended rather than inserted, one length
-    test over.
+    **No length test any more** (#381). Every query in :func:`_user_row` projects
+    the same seven columns, selecting ``NULL`` where the release has nothing to
+    put, so this reads one fixed position on every version and a ``None`` here
+    means the column said nothing rather than that the row was short. The old
+    ``len(row) < 6`` test was correct for the two shapes that existed and was the
+    thing that made 18c -- which *has* ``ORACLE_MAINTAINED`` -- report ``None``.
     """
-    if len(row) < 6:
-        return None
     return str(row[4]).upper() == "Y" if row[4] is not None else None
 
 

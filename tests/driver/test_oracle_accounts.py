@@ -27,7 +27,7 @@ from oracle_harness import Environment
 from sopuli.check import grace_warning
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.guardrails import ADMIN_ROLES
-from sopuli.driver.protocol import PASS, Credential
+from sopuli.driver.protocol import PASS, PASSWORD_ROLLOVER, Credential
 from sopuli.secrets import Secret
 
 USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
@@ -116,11 +116,22 @@ def account(session: Any) -> Iterator[Any]:
 
     The unset ones are the point: they are what report `DEFAULT`, and what
     `PROFILE_QUERY` has to resolve.
+
+    **`PASSWORD_ROLLOVER_TIME` is only in the profile where the server has it.**
+    Below 19.12 the resource does not exist and `CREATE PROFILE` is `ORA-02376:
+    invalid or redundant resource`, which failed this fixture and errored eleven
+    tests on 18c -- nine of which have nothing to do with rollover (#381). The
+    two that do declare `password_rollover` and skip with a reason, which is
+    §3's rule; the profile follows the same capability rather than a version, so
+    what is asked for is what the target said it supports.
     """
     _drop(session)
+    limits = "failed_login_attempts 5"
+    if PASSWORD_ROLLOVER in session.scope().capabilities:
+        limits = f"password_rollover_time 1 {limits}"
     _run(
         session,
-        f"create profile {PROFILE} limit password_rollover_time 1 failed_login_attempts 5",
+        f"create profile {PROFILE} limit {limits}",
         f'create user {ACCOUNT} identified by "{FIRST}" profile {PROFILE}',
         f"grant create session to {ACCOUNT}",
         f"grant connect to {ACCOUNT}",
@@ -173,6 +184,7 @@ def test_the_effective_limit_is_resolved_and_never_the_word_default(account: Any
     assert state.failed_login_limit == "5", "set on the profile, so its own value"
 
 
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_a_rotation_opens_a_rollover_window_the_status_reports(account: Any) -> None:
     """The finding this module rests on.
 
@@ -237,10 +249,25 @@ def test_password_change_date_tracks_a_rotation(account: Any) -> None:
     has second granularity, so two rotations in the same second are equal — and
     an implementation that always returned the account's original timestamp would
     satisfy ``>=`` while pinning nothing at all.
+
+    **Skipped where the release has no column to read**, on the account's own
+    answer rather than on a version. `DBA_USERS.PASSWORD_CHANGE_DATE` arrived in
+    19c: 26ai and 21c have it, 18c and 11.2 do not (measured 2026-09-08, #381 --
+    and note that `ORACLE_MAINTAINED` does *not* travel with it, which is the bug
+    `_user_row`'s three shapes now exist for). The account was created moments
+    ago by the fixture, so a release that has the column has already filled it;
+    `None` here can only mean the column is absent, which makes this a reading
+    and not a version test.
+
+    There is deliberately no capability for it. The list in P1 is a design
+    decision and adding an eighth entry is not this issue's to make -- and
+    nothing branches on the value, so an absent change date costs `creds status`
+    its `DB_PW_CHANGED` column and nothing else.
     """
     before = account.describe_user(ACCOUNT)
     assert before is not None
-    assert before.password_changed_at is not None
+    if before.password_changed_at is None:
+        pytest.skip("this release has no DBA_USERS.PASSWORD_CHANGE_DATE to track")
 
     time.sleep(1.1)
     _run(account, f'alter user {ACCOUNT} identified by "{SECOND}"')
@@ -299,6 +326,7 @@ def test_oracle_refuses_to_build_a_role_cycle_at_all(account: Any) -> None:
                 _run(account, f"drop role {role}")
 
 
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_the_effective_rollover_time_is_carried(account: Any) -> None:
     """#181 reads this at plan time. One query already resolved it, so reading it
     again from a second, uncoordinated one would be a second chance to disagree

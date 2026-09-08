@@ -5,10 +5,10 @@ master record. Oracle first, multi-product by design.
 
 **Status: pre-implementation.** The design documents are complete and decided;
 almost no code exists yet. The SQL in `sql/` has been executed against Oracle 26ai
-Free 23.26.2.0.0 and Oracle 21c XE 21.3.0.0.0. Each script carries a `STATUS:`
-header saying which paths ran and which are still untried — trust that header, not
-this line, and update it when you run one. 19c, 18c and 11.2 are still untried
-(#381, #382).
+Free 23.26.2.0.0, Oracle 21c XE 21.3.0.0.0 and Oracle 18c XE 18.4.0.0.0. Each
+script carries a `STATUS:` header saying which paths ran and which are still
+untried — trust that header, not this line, and update it when you run one. 19c
+and 11.2 are still untried (#382).
 
 ---
 

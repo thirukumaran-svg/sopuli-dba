@@ -10,7 +10,9 @@
 --         simply ignored).
 --         Confirmed on 21c XE 21.3.0.0.0 (2026-09-08, #380) through
 --         tests/driver/test_oracle_install_script.py, both keep_audit
---         settings. Untried on 19c, 18c and 11.2.
+--         settings.
+--         Confirmed on 18c XE 18.4.0.0.0 (2026-09-08, #381), same route.
+--         Untried on 19c and 11.2.
 --
 -- Removes the service account and the audit policies. Does NOT change any
 -- application account's password — whatever the tool last applied stays in

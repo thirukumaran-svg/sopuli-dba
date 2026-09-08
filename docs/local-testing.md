@@ -194,8 +194,8 @@ refusal you have not watched happen is one you are trusting rather than testing.
 
 ### Running all of this against a different Oracle version
 
-Everything from here on works against tier 2 as well. **21c is done** (#380);
-18c and 11g are open as #381 and #382, and this subsection is the map for them.
+Everything from here on works against tier 2 as well. **21c and 18c are done**
+(#380, #381); 11g is open as #382, and this subsection is the map for it.
 
 ```bash
 cd test
@@ -206,7 +206,7 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 |---|---|---|---|
 | 26ai Free | `sopuli-test-oracle-free-1` | `127.0.0.1:1521/FREEPDB1` | CDB + PDB |
 | 21c XE | `sopuli-test-oracle-xe21-1` | `127.0.0.1:1522/XEPDB1`, root `.../XE` | CDB + PDB |
-| 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** |
+| 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` so `status` leaves `DB_PW_CHANGED` empty |
 | 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
@@ -1166,10 +1166,33 @@ sopuli: profile DEFAULT grants no rollover window (PASSWORD_ROLLOVER_TIME is 0)
 ```
 
 Exit **1**, not 5, and the difference is worth knowing: exit 5 means the *release*
-cannot do rollover at all (18c, 11g), which no local action changes. This is a
-profile setting, which one `ALTER PROFILE` changes — a configuration rather than a
+cannot do rollover at all, which no local action changes. This is a profile
+setting, which one `ALTER PROFILE` changes — a configuration rather than a
 limitation. The tool never issues that statement itself; `ALTER PROFILE` reaches
 accounts nobody selected.
+
+**And here is the exit 5, measured on 18c** (#381) — the same command against a
+release that has no such feature, so §5's table is the only thing that changed:
+
+```
+$ sopuli --config sopuli-18c.yaml creds apply --application acme --strategy rollover --dry-run
+sopuli: target "xe18-pdb" does not support password_rollover
+  hint: gradual password rollover needs Oracle 19.12 or later; this release has no such
+        feature and no profile setting adds it -- use `--strategy staged`, or omit
+        `--strategy` and let the target decide
+```
+
+It refuses under `--dry-run`, which is the point: nothing was staged, nothing was
+connected to twice, and the plan never became a run. `--output json` carries the
+same fact for a consumer that should not be parsing prose — `exit_code: 5`,
+`error.category: "capability"`, `error.target_capability: "password_rollover"` —
+and emits the `plan` object alongside it, so the document shows what *would* have
+happened next to the reason it did not.
+
+`doctor` says the same thing one column earlier, and is the cheaper place to find
+out: **`CAPABILITIES` reads 5 on 18c and 6 on 21c and 26ai.** The missing one is
+`password_rollover`, and `--output json` names them under
+`targets[].scope.capabilities`.
 
 ---
 
@@ -1599,12 +1622,11 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
 - **`--repair`**, which will act on the DRIFT list `check` produces.
 - **The `file`, `keyring` and `oci` stores.** Only `hashicorp` exists.
 - **A real wallet without a full Oracle install**, per §12.
-- **18c and 11g.** 21c is no longer on this list — §5's *Running all of this
-  against a different Oracle version* covers it, and everything in §§6–12 was run
-  against it for #380 with output identical to 26ai's, rollover included. 18c
-  (#381) and 11g (#382) are still open, and the rollover *refusal* those two
-  produce — `--strategy rollover` failing at plan time, §10.10 — is still
-  reasoned about here rather than measured.
+- **11g.** 21c (#380) and 18c (#381) are no longer on this list — §5's *Running
+  all of this against a different Oracle version* covers both, and §10.10 now
+  carries the exit-5 refusal pasted from a real 18c run rather than reasoned
+  about. 11g (#382) is still open, and it is the one whose *shape* differs
+  rather than its capabilities: a non-CDB, no unified audit, no `T:` verifier.
 
 When those land, this document should grow with them — it is meant to stay a
 complete map of what can be exercised by hand, and a stale one is worse than none.

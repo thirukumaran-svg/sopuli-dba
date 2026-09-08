@@ -200,6 +200,35 @@ def test_require_capability_refuses_and_permits() -> None:
     require_capability(with_it, PASSWORD_ROLLOVER, target="cdb1-pdb-billing")
 
 
+def test_the_callers_hint_reaches_the_refusal() -> None:
+    """Exit 5 is what to *stop*; the hint is what to do instead.
+
+    `require_capability` cannot write one -- what replaces an absent capability
+    depends on which capability it was -- so the caller supplies it and this is
+    the wire it travels on. Added for #381, where the 18c refusal was correct,
+    carried the category and the capability, and told an operator nothing about
+    which of `--strategy`'s three values the release could still serve.
+    """
+    without = Scope(type="pdb", capabilities=frozenset())
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        require_capability(
+            without,
+            PASSWORD_ROLLOVER,
+            target="cdb1-pdb-billing",
+            hint="use `--strategy staged`",
+        )
+
+    assert "hint: use `--strategy staged`" in str(refused.value)
+    assert refused.value.capability == PASSWORD_ROLLOVER, "and still branchable"
+
+    # A caller with nothing useful to say passes nothing, and gets no hint line.
+    with pytest.raises(UnsupportedCapabilityError) as bare:
+        require_capability(without, PASSWORD_ROLLOVER, target="cdb1-pdb-billing")
+
+    assert "hint:" not in str(bare.value)
+
+
 def test_offline_verify_is_read_off_the_capability_set() -> None:
     """The field the schema has and this does not."""
     assert Scope(capabilities=frozenset({OFFLINE_VERIFY})).supports(OFFLINE_VERIFY)

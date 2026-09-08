@@ -71,6 +71,15 @@
 --   untested, assume not redacted" on 21c. It stays open on 11.2, which is the
 --   version the row says it matters most on.
 --
+--   2026-09-08, 18c XE 18.4.0.0.0 (gvenzl/oracle-xe:18-slim), XEPDB1, position
+--   1, isdba=FALSE (#381). **Identical again** -- 4 unified events and 3
+--   traditional, all with sql_text, every audit source clean, C3 the only leak,
+--   and no numbered canary anywhere under audit_file_dest, the trace directory
+--   or the listener log.
+--
+--   So invariant 13 now holds on three releases and two audit implementations,
+--   and the C3-only result has not varied once.
+--
 --   Two things about the container itself, both of which cost a run before they
 --   were understood -- see the PROMPTs in §1 and §7:
 --     - gvenzl/oracle-xe ships AUDIT_TRAIL = NONE, and captures nothing at all

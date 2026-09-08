@@ -13,9 +13,18 @@ answers is the pair this file exists for:
   decides whether a rollover window opens, which is why assigning one is not a
   cosmetic change and why `--strategy` refuses to be named across one.
 
-Measured on 26ai Free 23.26.2.0.0. `SOPULI_ROLLOVER` is the profile
-`test/oracle-init/01_test_profiles.sql` creates with `PASSWORD_ROLLOVER_TIME`,
-so the second property is checked against limits the suite controls.
+Measured on 26ai Free 23.26.2.0.0 and 21c XE 21.3.0.0.0, and run on 18c XE
+18.4.0.0.0 (#381).
+
+**The destination profile is `SOPULI_REUSE`, not `SOPULI_ROLLOVER`**, for
+everything except the one test that is about rollover limits. Both come from
+`test/oracle-init/01_test_profiles.sql`, so the suite is not asserting against a
+profile it invented in the same breath -- but that script cannot create
+`SOPULI_ROLLOVER` below 19.12 and says so rather than aborting, so on 18c and
+11g it is simply absent. Six tests here used it as "some other profile that
+exists" and failed on 18c with `resolve_profile` answering `None` (#381). What
+they need is a second profile; only `test_the_move_carries_the_new_profiles_limits`
+needs that profile to grant a rollover window, and it declares the capability.
 """
 
 from __future__ import annotations
@@ -31,6 +40,7 @@ from oracle_harness import Environment
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.protocol import (
     ATTRIBUTE_SET,
+    PASSWORD_ROLLOVER,
     AccountAttributes,
     Credential,
     DriverError,
@@ -44,9 +54,16 @@ CORRELATION_ID = "4e8d2b19-6f3a-4c07-b5e1-9a2d7c4f0836"
 
 ACCOUNT = "acme_profiled_user"
 
-#: Created by `test/oracle-init/01_test_profiles.sql`, so the suite is not
-#: asserting against a profile it invented in the same breath.
+#: All three are created by `test/oracle-init/01_test_profiles.sql`, so the suite
+#: is not asserting against a profile it invented in the same breath.
+#:
+#: `SOPULI_ROLLOVER` is the exception to that: below 19.12 the script cannot
+#: create it, so it exists on 26ai and 21c and not on 18c or 11g. Only the test
+#: that asserts on a rollover limit may name it, and that test declares
+#: `password_rollover`. Everything else moves the account to `REUSE_PROFILE`,
+#: which every version has.
 ROLLOVER_PROFILE = "sopuli_rollover"
+REUSE_PROFILE = "sopuli_reuse"
 LOCKOUT_PROFILE = "sopuli_lockout"
 
 LIVE = "Pr0filed-Pa55-word1"
@@ -112,8 +129,8 @@ def _profile(session: Any) -> str | None:
 def test_a_profile_is_resolved_to_the_dictionarys_spelling(session: Any) -> None:
     """Written lower-case in a file, upper-case in `DBA_PROFILES`, and it is the
     second that may reach a statement."""
-    assert session.resolve_profile(ROLLOVER_PROFILE) == ROLLOVER_PROFILE.upper()
-    assert session.resolve_profile(ROLLOVER_PROFILE.upper()) == ROLLOVER_PROFILE.upper()
+    assert session.resolve_profile(REUSE_PROFILE) == REUSE_PROFILE.upper()
+    assert session.resolve_profile(REUSE_PROFILE.upper()) == REUSE_PROFILE.upper()
 
 
 def test_a_profile_this_database_has_not_got_is_none(session: Any) -> None:
@@ -126,19 +143,19 @@ def test_a_profile_this_database_has_not_got_is_none(session: Any) -> None:
 
 
 def test_the_account_is_moved_to_the_declared_profile(account: Any) -> None:
-    changes = account.apply_attributes(ACCOUNT, AccountAttributes(profile=ROLLOVER_PROFILE))
+    changes = account.apply_attributes(ACCOUNT, AccountAttributes(profile=REUSE_PROFILE))
 
     assert [change.attribute for change in changes] == [ATTRIBUTE_SET]
     assert changes[0].changed is True
-    assert _profile(account) == ROLLOVER_PROFILE.upper()
+    assert _profile(account) == REUSE_PROFILE.upper()
 
 
 def test_the_detail_names_both_profiles(account: Any) -> None:
     """`attribute_set` is a kind two attributes share, so the detail is what says
     which one moved and where from."""
-    changes = account.apply_attributes(ACCOUNT, AccountAttributes(profile=ROLLOVER_PROFILE))
+    changes = account.apply_attributes(ACCOUNT, AccountAttributes(profile=REUSE_PROFILE))
 
-    assert changes[0].detail == f"profile {LOCKOUT_PROFILE.upper()} -> {ROLLOVER_PROFILE.upper()}"
+    assert changes[0].detail == f"profile {LOCKOUT_PROFILE.upper()} -> {REUSE_PROFILE.upper()}"
 
 
 def test_an_account_already_on_the_profile_is_not_altered(account: Any) -> None:
@@ -150,18 +167,26 @@ def test_an_account_already_on_the_profile_is_not_altered(account: Any) -> None:
 
 
 def test_a_second_assignment_reports_no_change(account: Any) -> None:
-    first = account.apply_attributes(ACCOUNT, AccountAttributes(profile=ROLLOVER_PROFILE))
-    second = account.apply_attributes(ACCOUNT, AccountAttributes(profile=ROLLOVER_PROFILE))
+    first = account.apply_attributes(ACCOUNT, AccountAttributes(profile=REUSE_PROFILE))
+    second = account.apply_attributes(ACCOUNT, AccountAttributes(profile=REUSE_PROFILE))
 
     assert first[0].changed is True
     assert second[0].changed is False
 
 
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_the_move_carries_the_new_profiles_limits(account: Any) -> None:
     """The reason assigning a profile is not cosmetic: a profile decides whether
     `ALTER USER … IDENTIFIED BY` opens a rollover window, so the regime a rotation
     would run under changes with it. This is the fact `--strategy` refuses to be
-    named across (#301)."""
+    named across (#301).
+
+    The only test here that may name `ROLLOVER_PROFILE`, and the reason it
+    declares the capability rather than the profile: below 19.12 there is no
+    limit for the profile to carry, so there is nothing for this to assert. The
+    absence is covered instead by `test_oracle_rollover.py` and by
+    `creds apply --strategy rollover` refusing at plan time.
+    """
     before = account.describe_user(ACCOUNT)
     assert before is not None
     assert not before.rollover_enabled
@@ -185,7 +210,7 @@ def test_a_profile_that_does_not_exist_is_refused_by_name(account: Any) -> None:
 
 def test_a_missing_account_is_an_error_rather_than_a_silent_no_op(session: Any) -> None:
     with pytest.raises(DriverError):
-        session.apply_attributes("acme_no_such_user", AccountAttributes(profile=ROLLOVER_PROFILE))
+        session.apply_attributes("acme_no_such_user", AccountAttributes(profile=REUSE_PROFILE))
 
 
 def test_both_attributes_run_in_one_pass(account: Any) -> None:
@@ -195,8 +220,8 @@ def test_both_attributes_run_in_one_pass(account: Any) -> None:
     _run(account, f"alter user {ACCOUNT} account lock")
 
     changes = account.apply_attributes(
-        ACCOUNT, AccountAttributes(unlock=True, profile=ROLLOVER_PROFILE)
+        ACCOUNT, AccountAttributes(unlock=True, profile=REUSE_PROFILE)
     )
 
     assert [change.changed for change in changes] == [True, True]
-    assert _profile(account) == ROLLOVER_PROFILE.upper()
+    assert _profile(account) == REUSE_PROFILE.upper()

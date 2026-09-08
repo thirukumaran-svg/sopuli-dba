@@ -899,13 +899,24 @@ class Driver(Protocol):
         ...
 
 
-def require_capability(scope: Scope, capability: str, *, target: str) -> None:
+def require_capability(
+    scope: Scope, capability: str, *, target: str, hint: str | None = None
+) -> None:
     """Refuse unless ``scope`` reported ``capability`` (invariant 4).
 
     Called at **plan time**, before anything is written anywhere. The whole
     value of the capability model is that `--strategy rollover` against 18c
     fails while the plan is being printed rather than after two of five targets
-    already have a new password.
+    already have a new password. Measured on 18c XE for the first time on
+    2026-09-08 (#381): exit 5, `error.category` ``capability``,
+    `error.target_capability` ``password_rollover``, and the plan emitted with
+    nothing done.
+
+    ``hint`` is the caller's, because this function cannot write one. What to do
+    instead of an absent capability depends entirely on which capability it was,
+    and a generic "this target cannot do that" adds nothing an operator can act
+    on -- which is what the style rule about hints is for. A caller with nothing
+    useful to say passes nothing.
     """
     if not scope.supports(capability):
-        raise UnsupportedCapabilityError(capability, target=target)
+        raise UnsupportedCapabilityError(capability, target=target, hint=hint)

@@ -702,7 +702,22 @@ class OracleSession:
         with a documented leaning of no; reporting the statement is that leaning,
         and it is the half that can be reversed if #88 ever says otherwise.
         """
-        require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
+        # The hint matters more here than on most refusals, because the two
+        # halves of this method fail for opposite reasons and an operator meeting
+        # the first one has no local remedy: no `ALTER PROFILE` reaches it, and
+        # the version is the answer. So it says which strategies remain rather
+        # than leaving the reader to find `--strategy` in `--help` and guess
+        # which of its three values this release can serve (#381).
+        require_capability(
+            self.scope(),
+            PASSWORD_ROLLOVER,
+            target=self.target.name,
+            hint=(
+                "gradual password rollover needs Oracle 19.12 or later; this release "
+                "has no such feature and no profile setting adds it -- use "
+                "`--strategy staged`, or omit `--strategy` and let the target decide"
+            ),
+        )
 
         state = self.describe_user(account)
         if state is None:

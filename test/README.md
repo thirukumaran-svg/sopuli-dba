@@ -10,7 +10,14 @@ the whole suite is green against both `XEPDB1` and the `XE` root. **Set
 `ORA_LOGON_FAILURES` policy after a real failed logon. `alter system set
 audit_trail=db,extended scope=spfile` and restart; quoting the value is
 `ORA-00096`.
-`oracle-xe18`, `oracle-xe11`, `nne` and `emulators` are still unrun (#381, #382).
+**18c verified working 2026-09-08** (#381) — same again, and it is the version
+the matrix keeps for what it *cannot* do: `password_rollover` is absent, so
+`doctor` reports 5 capabilities rather than 6 and `--strategy rollover` is exit 5
+at plan time. `SOPULI_ROLLOVER` is not created there, by design — step 4 of
+`oracle-init/01_test_profiles.sql` reports and carries on — so a test needing a
+second profile must use `SOPULI_REUSE`. The `AUDIT_TRAIL` note above applies to
+this image too.
+`oracle-xe11`, `nne` and `emulators` are still unrun (#382).
 Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testing.md).
 
 ## Quick start

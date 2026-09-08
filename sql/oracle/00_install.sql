@@ -13,7 +13,9 @@
 --         and by hand as SYSDBA. It did NOT run there until this date: the
 --         service account's random password was 31 bytes, which is ORA-00972
 --         on every line before 23ai, so section 1 failed having created
---         nothing. Now 30. Untried on 19c, 18c and 11.2.
+--         nothing. Now 30.
+--         Confirmed on 18c XE 18.4.0.0.0 (2026-09-08, #381), XEPDB1 and
+--         CDB$ROOT, same route. Untried on 19c and 11.2.
 --         Review before running; try a throwaway DB first.
 --
 --         grant_pwfile (position 6) added and run on the same release

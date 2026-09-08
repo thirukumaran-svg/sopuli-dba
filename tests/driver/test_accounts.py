@@ -20,6 +20,7 @@ from sopuli.driver.oracle.accounts import (
     PWFILE_QUERY,
     ROLES_QUERY,
     USER_QUERY,
+    USER_QUERY_LEGACY,
     USER_QUERY_NO_CHANGE_DATE,
     RolesUnreadableError,
     describe,
@@ -230,7 +231,7 @@ def test_a_closed_window_has_no_end_to_report() -> None:
 def test_a_missing_account_is_a_state_and_not_an_error() -> None:
     """UC-1's `ACCOUNT_MISSING`. The tool does not create accounts (Q8), so this
     is something to report rather than something to recover from."""
-    cursor = _Cursor({USER_QUERY: None, USER_QUERY_NO_CHANGE_DATE: None})
+    cursor = _Cursor({USER_QUERY: None, USER_QUERY_NO_CHANGE_DATE: None, USER_QUERY_LEGACY: None})
 
     assert describe(cursor, "acme_no_such_user") is None
 
@@ -291,8 +292,12 @@ def test_a_release_without_password_change_date_falls_back(  # noqa: D401
     """`ORA-00904` *is* the answer to "does this release have the column".
 
     Invariant 3 in the small: the query is its own probe, so no capability and no
-    version test is needed to find out. 11.2 is the release, and both columns
-    arrived in 12.1, so one fallback covers them together.
+    version test is needed to find out.
+
+    **This is 18c's shape, not 11.2's**, and the distinction is the point (#381).
+    18c refuses `PASSWORD_CHANGE_DATE` and answers `ORACLE_MAINTAINED` perfectly
+    well, so narrowing to the legacy query here would give up a guardrail input
+    the release can supply. The next test is 11.2, which has neither.
     """
     cursor = _Cursor(
         {
@@ -302,6 +307,8 @@ def test_a_release_without_password_change_date_falls_back(  # noqa: D401
                 "OPEN",
                 "DEFAULT",
                 "10G 11G",
+                "N",
+                None,
                 EXPIRES,
             ),
             PROFILE_QUERY: [("FAILED_LOGIN_ATTEMPTS", "10")],
@@ -314,16 +321,26 @@ def test_a_release_without_password_change_date_falls_back(  # noqa: D401
     assert state is not None
     assert state.password_changed_at is None
     assert state.password_versions == ("10G", "11G")
+    assert state.vendor_maintained is False, (
+        "18c has ORACLE_MAINTAINED; only the change date is missing"
+    )
 
 
 def test_a_missing_oracle_maintained_column_is_none_and_not_false() -> None:
     """Load-bearing: guardrail check 5's literal deny list is consulted *only*
     where check 2 could not answer, so a missing column reading as "not
-    vendor-maintained" would switch off the fallback that exists for 11.2."""
+    vendor-maintained" would switch off the fallback that exists for 11.2.
+
+    11.2 refuses both columns, so both queries above it are `ORA-00904` and the
+    legacy shape answers with `NULL` in each position. Until #381 this was the
+    *only* row that produced `None` here on purpose, and 18c produced it by
+    accident on the same path.
+    """
     cursor = _Cursor(
         {
             USER_QUERY: _ora("ORA-00904"),
-            USER_QUERY_NO_CHANGE_DATE: ("SYS", "OPEN", "DEFAULT", "11G", EXPIRES),
+            USER_QUERY_NO_CHANGE_DATE: _ora("ORA-00904"),
+            USER_QUERY_LEGACY: ("SYS", "OPEN", "DEFAULT", "11G", None, None, EXPIRES),
             PROFILE_QUERY: [],
             ROLES_QUERY: [],
         }
@@ -619,7 +636,7 @@ def test_the_spelling_is_the_databases_own() -> None:
 
 
 def test_an_account_the_target_has_not_got_is_none() -> None:
-    cursor = _Cursor({USER_QUERY: None, USER_QUERY_NO_CHANGE_DATE: None})
+    cursor = _Cursor({USER_QUERY: None, USER_QUERY_NO_CHANGE_DATE: None, USER_QUERY_LEGACY: None})
 
     assert password_constraints(cursor, "acme_orders_user") is None
 

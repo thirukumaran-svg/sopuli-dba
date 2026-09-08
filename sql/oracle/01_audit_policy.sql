@@ -12,7 +12,9 @@
 --         captures nothing on it, so a policy that was created and enabled
 --         still records no rows. Setting the parameter and restarting is
 --         what makes the section 4 queries mean anything -- see
---         02_password_leak_probe.sql section 1. Untried on 19c, 18c and 11.2.
+--         02_password_leak_probe.sql section 1.
+--         Confirmed on 18c XE 18.4.0.0.0 (2026-09-08, #381), same route and
+--         the same AUDIT_TRAIL caveat. Untried on 19c and 11.2.
 --
 -- The service account holds ALTER USER, which has no object scope. Unified
 -- auditing is therefore not housekeeping — it is the compensating control for
