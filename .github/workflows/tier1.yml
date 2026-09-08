@@ -24,29 +24,50 @@ on:
   pull_request:
     # Prose only. **This list is a measured allowlist, not "docs".** The suite
     # reads `docs/design/00-principles.md`, `docs/design/01-configuration.md`,
-    # every `docs/schemas/*.json` and `sql/oracle/00_install.sql` -- the config
-    # reference's YAML examples must parse, and the schemas are validated as
-    # artefacts (invariant 12). A blanket `docs/**` would silently stop testing
-    # all four, so only files nothing opens are listed here.
+    # every `docs/schemas/*.json`, every `examples/*.yaml` and
+    # `sql/oracle/00_install.sql` -- the config reference's YAML examples must
+    # parse, the schemas are validated as artefacts (invariant 12), and since
+    # #372 `tests/test_examples.py` runs `config validate` against every example
+    # so one cannot drift out of date with the config layer. A blanket `docs/**`
+    # would silently stop testing the first three, and an `examples/**` here
+    # would switch the fourth off while leaving its test green on whatever was
+    # last committed. So only files nothing opens are listed below.
     #
-    # To re-measure after adding a test, run pytest under an audit hook and see
-    # which paths it opens:
+    # `examples/` joined that set in #372 and is called out because it is the
+    # newest and the least obvious: a directory that looks like documentation,
+    # is documentation, and is also a fixture.
     #
-    #   python -c "import sys,pytest;sys.addaudithook(lambda e,a: e=='open' and print(a[0]));pytest.main(['tests/','-q'])" | sort -u
+    # To re-measure after adding a test:
     #
-    # Anything under docs/ or sql/ that appears there must NOT be listed below.
+    #   docker compose --profile tier1 up -d   # from test/
+    #   python test/paths_ignore_probe.py       # from the repository root
+    #
+    # It runs the suite under an audit hook, prints every file under `docs/`,
+    # `sql/` or `examples/` that was opened, and exits non-zero if a pattern
+    # below covers one of them. **The one-liner this comment used to carry
+    # under-reported** -- the hook printed to `sys.stdout`, which pytest's
+    # capture and Click's `CliRunner` both replace, so it found 1 of 19 files
+    # (#375). That is the most likely reason seven patterns from #370 and #373
+    # went unnoticed until every documentation pull request was starting Oracle.
     paths-ignore:
       - 'docs/local-testing.md'
       - 'docs/workflow.md'
       - 'docs/README.md'
+      - 'docs/getting-started.md'
+      - 'docs/security-model.md'
       - 'docs/decisions/**'
       - 'docs/use-cases/**'
+      - 'docs/scenarios/**'
+      - 'docs/assets/**'
       - 'docs/design/02-oracle-privileges.md'
       - 'docs/design/03-json-output.md'
       - 'docs/design/04-testing.md'
       - 'README.md'
       - 'CLAUDE.md'
       - 'CHANGELOG.md'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
+      - 'CODE_OF_CONDUCT.md'
       - 'LICENSE'
       - '.gitignore'
   workflow_dispatch:

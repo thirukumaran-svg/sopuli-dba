@@ -23,38 +23,14 @@ name: ci
 
 on:
   pull_request:
-    # Prose only. **This list is a measured allowlist, not "docs".** The suite
-    # reads `docs/design/00-principles.md`, `docs/design/01-configuration.md`,
-    # every `docs/schemas/*.json` and `sql/oracle/00_install.sql` -- the config
-    # reference's YAML examples must parse, and the schemas are validated as
-    # artefacts (invariant 12). A blanket `docs/**` would silently stop testing
-    # all four, so only files nothing opens are listed here.
-    #
-    # To re-measure after adding a test, run pytest under an audit hook and see
-    # which paths it opens:
-    #
-    #   python -c "import sys,pytest;sys.addaudithook(lambda e,a: e=='open' and print(a[0]));pytest.main(['tests/','-q'])" | sort -u
-    #
-    # Anything under docs/ or sql/ that appears there must NOT be listed below.
-    paths-ignore:
-      - 'docs/local-testing.md'
-      - 'docs/workflow.md'
-      - 'docs/README.md'
-      - 'docs/decisions/**'
-      - 'docs/use-cases/**'
-      - 'docs/design/02-oracle-privileges.md'
-      - 'docs/design/03-json-output.md'
-      - 'docs/design/04-testing.md'
-      - 'README.md'
-      - 'CLAUDE.md'
-      - 'CHANGELOG.md'
-      - 'LICENSE'
-      - '.gitignore'
   workflow_dispatch:
 
 # Read-only. This workflow reports; it never writes to the repository.
+# `pull-requests: read` is for the `changes` job below, which asks the API which
+# files a pull request touches.
 permissions:
   contents: read
+  pull-requests: read
 
 # Safe to cancel, unlike release-please, where a cancelled run can leave a stale
 # release PR. Here a superseded run is only telling us about a commit that is no
@@ -70,8 +46,123 @@ defaults:
     shell: bash
 
 jobs:
+  # Prose-only pull requests skip the lanes below. **This is a job rather than a
+  # `paths-ignore` on the trigger, and that difference is the whole point.**
+  #
+  # `tier1.yml` filters with `paths-ignore` and is right to. This one cannot,
+  # because `workflow.md` names `ci ok` -- the last job in this file -- as the
+  # status check to require the day branch protection becomes available (it is
+  # 403 on a private repository on the free plan today), and `ci ok` needs every
+  # job below. The two mechanisms look alike and do opposite things under
+  # protection:
+  #
+  # * a workflow skipped by `paths-ignore` never starts, so its check contexts
+  #   are never created and a required one stays **pending forever** -- every
+  #   prose-only pull request becomes unmergeable, three years after the line
+  #   that caused it was written;
+  # * a job skipped by an `if:` inside a workflow that *did* start reports a
+  #   conclusion of `skipped`, which branch protection accepts, and which
+  #   allocates no runner and bills nothing.
+  #
+  # So the saving survives and the trap does not. Decided in #375, which measured
+  # the alternative: dropping the filter from this workflow outright costs about
+  # twenty billed minutes for a prose-only pull request -- ten jobs, each rounded
+  # up to a whole minute, with the Windows cell billing at 2x. This job costs one.
+  #
+  # A skipped required check *passes*, so a broken filter here could wave a red
+  # pull request through. `set -euo pipefail` is the first half of the answer
+  # and `ci ok` is the other half -- see the comment on it.
+  #
+  # The list below is `tier1.yml`'s `paths-ignore` written a second time, which
+  # is a real cost of doing it this way; `tests/test_workflow_prose_list.py`
+  # fails when the two drift apart. What either list may contain is measured, not
+  # guessed -- see the comment on `tier1.yml`'s copy, and
+  # `test/paths_ignore_probe.py`, which is how it is measured.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      # No checkout: the API answers this without a clone, and a clone is most of
+      # what the job would otherwise cost.
+      - name: does this pull request touch anything but prose?
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$PR" ]; then
+            echo "not a pull request -- running everything"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          prose=(
+            # prose-list-start
+            'docs/local-testing.md'
+            'docs/workflow.md'
+            'docs/README.md'
+            'docs/getting-started.md'
+            'docs/security-model.md'
+            'docs/decisions/**'
+            'docs/use-cases/**'
+            'docs/scenarios/**'
+            'docs/assets/**'
+            'docs/design/02-oracle-privileges.md'
+            'docs/design/03-json-output.md'
+            'docs/design/04-testing.md'
+            'README.md'
+            'CLAUDE.md'
+            'CHANGELOG.md'
+            'CONTRIBUTING.md'
+            'SECURITY.md'
+            'CODE_OF_CONDUCT.md'
+            'LICENSE'
+            '.gitignore'
+            # prose-list-end
+          )
+
+          # Every wildcard in that list is `**`, and bash's `*` already crosses
+          # `/`, so each pattern is used as written. A single `*` would be wrong
+          # here -- it does not mean the same thing to bash as it does to
+          # GitHub -- and there is deliberately none in the list.
+          is_prose() {
+            local file=$1 pattern
+            for pattern in "${prose[@]}"; do
+              # shellcheck disable=SC2053
+              if [[ $file == $pattern ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          code=false
+          while IFS= read -r file; do
+            if is_prose "$file"; then
+              echo "  prose  $file"
+            else
+              echo "  code   $file"
+              code=true
+            fi
+          done < <(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
+
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = true ]; then
+            echo "::notice::something other than prose changed -- running every lane"
+          else
+            echo "::notice::prose only -- lint, test and install shape will report skipped"
+          fi
+
   lint:
     name: lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -117,6 +208,8 @@ jobs:
     # 3.13 rather than the floor: Linux 3.11 already fails first on anything
     # version-specific, so the Windows cell is better spent on what people install.
     name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -201,6 +294,8 @@ jobs:
   # and is not an extra.
   install-shape:
     name: install shape (${{ matrix.shape }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -251,3 +346,55 @@ jobs:
               sys.exit(f"base install pulled in a backend client: {', '.join(present)}")
           print("base carries no backend client")
           PY
+
+  # The one check to require, and the reason it exists rather than requiring the
+  # jobs above directly.
+  #
+  # `changes` makes prose-only pull requests skip those jobs, and a skipped job
+  # reports `skipped`, which branch protection accepts -- that much holds for
+  # `lint`, whose context is called `lint` either way. **It does not hold for a
+  # matrix.** Measured on a prose-only pull request against this branch (#379):
+  # a skipped matrix job never expands, so instead of six contexts named
+  # `test (ubuntu-latest, py3.11)` and so on, it publishes exactly one, named
+  # `test (${{ matrix.os }}, py${{ matrix.python-version }})` -- the literal
+  # expression. Requiring the cell names would therefore leave six contexts that
+  # were never created, pending forever, which is the whole failure #375 set out
+  # to avoid, moved one step along.
+  #
+  # So `workflow.md` requires this job instead of naming any of them. It has a
+  # fixed name, it runs on every pull request, and it is red whenever anything
+  # above is. That also closes the other edge: a `changes` job that *failed*
+  # would skip everything downstream, and skipped-passes would wave the pull
+  # request through -- here it is a dependency like any other, and a failure is
+  # a failure.
+  #
+  # `if: always()` rather than a condition on `changes`: without it this job
+  # would itself be skipped when its dependencies were, and a required check
+  # that is skipped for the right reason is indistinguishable from one skipped
+  # for the wrong one.
+  ci-ok:
+    name: ci ok
+    needs: [changes, lint, test, install-shape]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every lane passed or was skipped
+        env:
+          # `join(needs.*.result, ' ')` rather than four separate expressions:
+          # a job added above and forgotten here would otherwise be unguarded,
+          # and this is the check that is supposed to notice.
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "lane results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *)
+                echo "::error::a lane reported '$result'"
+                exit 1
+                ;;
+            esac
+          done
+          echo "every lane passed or was skipped"

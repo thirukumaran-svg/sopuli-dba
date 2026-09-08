@@ -55,6 +55,17 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   isolation. The run on `main` afterwards re-tested an identical tree and was
   billed again for it, which on a private repository's free minutes is the
   single largest duplicate there is.
+- **A prose-only pull request runs neither lane**, and the two arrange that
+  differently. `tier1.yml` filters on the trigger with `paths-ignore`; `ci.yml`
+  filters in a `changes` job that every other job carries an `if:` on, for the
+  branch-protection reason below. **Both lists are measured, not "docs"** — the
+  suite reads `docs/design/00-principles.md`, `docs/design/01-configuration.md`,
+  every `docs/schemas/*.json`, every `examples/*.yaml` and
+  `sql/oracle/00_install.sql`, so a blanket `docs/**` or an `examples/**` would
+  switch off a test while leaving it green. `test/paths_ignore_probe.py` measures
+  what the suite opens; `tests/test_workflow_prose_list.py` keeps the two copies
+  of the list equal. The lists drifted seven patterns behind the tree between
+  #370 and #373, which is what #375 fixed.
 - **`ruff` runs once**, on Linux. It is deterministic — same answer on every OS
   and interpreter — so six identical failures would be noise, not coverage.
 - **`mypy` runs on the whole matrix**, unlike `ruff`, because it is not
@@ -85,9 +96,31 @@ merged anyway.
 
 This is recorded rather than assumed closed. The workflow exists now so that
 closing the gap later is a settings change and not a project: when the repository
-goes public (or the plan changes), add `lint` and the `test` cells as required
-status checks. Those job names are the contract — renaming a job silently
-disables the requirement that names it.
+goes public (or the plan changes), **add `ci ok` as the required status check.
+One name, and not `lint` or the `test` cells** — that job name is the contract,
+and renaming it silently disables the requirement.
+
+That is a change from what this paragraph used to say, and it is measured rather
+than reasoned (#375, verified on #379). `ci.yml` skips its lanes on a prose-only
+pull request — `changes` decides, and `lint`, `test` and `install shape` carry
+`if: needs.changes.outputs.code == 'true'` — because a job skipped by an `if:`
+reports `skipped`, which protection accepts, while a whole workflow skipped by
+`paths-ignore` never creates its contexts at all and a required one stays pending
+forever. That is why `ci.yml` has no `paths-ignore` and `tier1.yml` still does.
+
+But **a skipped matrix job never expands.** Instead of six contexts named
+`test (ubuntu-latest, py3.11)` and so on, it publishes exactly one, named
+`test (${{ matrix.os }}, py${{ matrix.python-version }})` — the literal
+expression. Requiring the cell names would leave six contexts that were never
+created, which is the original trap one step along. `ci ok` has a fixed name,
+runs on every pull request under `if: always()`, and fails if any lane reports
+anything but `success` or `skipped`.
+
+It closes the other edge too: because a skipped required check *passes*, a
+`changes` job that failed would skip everything downstream and wave the pull
+request through. `ci ok` needs `changes` like any other lane, so a failure there
+is a failure here. Tier 1 needs none of this — it is not among the required
+checks, so it can keep filtering on the trigger.
 
 **Nothing runs on `main` itself any more**, and that is not a widening of this
 gap. Because a `pull_request` run tests the merge result, the commit that lands on
