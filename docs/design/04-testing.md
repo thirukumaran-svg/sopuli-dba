@@ -93,8 +93,12 @@ release is cut.
 ### Two Oracle behaviours containers do not give you
 
 - **Gradual password rollover** needs 19.12+. The buildable 19c base is 19.3.
-  Rollover therefore gets tested on 23ai Free (public tier) and on real OCI 19c
-  (maintainer tier), and *nowhere in between*.
+  Rollover therefore gets tested on 23ai Free (public tier), on 21c XE (tier 2,
+  and the *only* thing between them — run 2026-09-08 for #380: `apply` opens the
+  window, `status` and `check --include-previous` report it rather than calling it
+  drift, `finish-rollover` closes it early and a second run reports
+  `changed: false`, all identical to 26ai) and on real OCI 19c (maintainer tier).
+  19.12 to 19.x itself is still covered nowhere but the tenancy.
 - **Native Network Encryption**, the thing that forces thick mode, is properly
   exercised only against a real NNE-required server. It can be **approximated
   locally**: set `SQLNET.ENCRYPTION_SERVER = required` in a container's
@@ -321,7 +325,8 @@ Carried over from UC-1 §11, with the environment each one needs:
 | **Lockout regression**: profile with `FAILED_LOGIN_ATTEMPTS 3`, run `check` against a drifted account 5×, assert the account never locks | any |
 | Verify-function: profile with `ora12c_strong_verify_function` and a violating policy — bounded regeneration, then a clear error carrying the server message. **Assert on the error, never on `DBA_PROFILES`**: in a PDB a *common* profile's `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` rather than the function name, so a dictionary check reports an unconfigured profile while the function is in fact enforcing (`ORA-28003` + `ORA-20000`). Measured for #317: a profile created *in* the PDB answers with the function's name, so a fixture that builds one locally can read it back — which is why `creds generate` reports three states and not two | any |
 | Password reuse: `PASSWORD_REUSE_MAX`, assert no blind retry on ORA-28007 | any |
-| 30-byte limit and 10G/11G verifiers | 11g XE / 18c XE |
+| **30-byte password limit** — a policy asking for more must be refused at *plan* time, not by `ORA-00972` mid-`apply`. Measured 2026-09-08 (#380): 31 bytes is refused on 11g XE, 18c XE **and 21c XE**, and accepted on 26ai. The two halves of the old wording do not travel together — see the next row — and `sopuli/driver/oracle/limits.py` keys the limit to 12.2, which is wrong on every line below 23ai (#383) | 21c XE / 18c XE / 11g XE |
+| 10G/11G verifiers, and no `T:` — so `--method hash` must refuse rather than guess. Measured 2026-09-08: `SYS.USER$.SPARE4` carries `S:` alone on 11g and `S:` plus `T:` on 18c, 21c and 26ai (#382, #90) | 11g XE |
 | Common user + `CONTAINER=ALL`, and refusal outside `CDB$ROOT` | any CDB |
 | Rollover: both passwords valid during the window; `finish-rollover` ends it | 23ai Free, real 19.12+ |
 | Rollover *absent*: `--strategy rollover` fails at plan time, not execution | 18c XE, 11g XE |

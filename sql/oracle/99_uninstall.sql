@@ -7,7 +7,10 @@
 --         drop. Also run against a PDB install with both parameters passed
 --         (`ACME_SVC N` -- deliberately NOT the default name, because a run
 --         using the default cannot tell whether the parameter was honoured or
---         simply ignored). Untried on 19c, 21c and 11.2.
+--         simply ignored).
+--         Confirmed on 21c XE 21.3.0.0.0 (2026-09-08, #380) through
+--         tests/driver/test_oracle_install_script.py, both keep_audit
+--         settings. Untried on 19c, 18c and 11.2.
 --
 -- Removes the service account and the audit policies. Does NOT change any
 -- application account's password — whatever the tool last applied stays in

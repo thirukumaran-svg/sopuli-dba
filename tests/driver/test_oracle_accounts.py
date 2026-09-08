@@ -37,6 +37,9 @@ CORRELATION_ID = "5c2a9b71-8e34-4d06-a7f1-2e9b6c0d1a53"
 
 ACCOUNT = "acme_orders_user"
 PROFILE = "acme_orders_prof"
+#: A second account for the password-file test, which must NOT be on `PROFILE`.
+#: See :func:`password_file_account`.
+PWFILE_ACCOUNT = "acme_pwfile_user"
 SITE_ROLE = "acme_app_admin"
 LOOP_A = "acme_loop_a"
 LOOP_B = "acme_loop_b"
@@ -328,8 +331,55 @@ def test_an_ordinary_account_is_not_in_the_password_file(account: Any) -> None:
     assert state.password_file_member is False
 
 
+@pytest.fixture
+def password_file_account(session: Any) -> Iterator[Any]:
+    """An ordinary account on the `DEFAULT` profile, for the `SYSDBA` test.
+
+    Deliberately **not** the `account` fixture, and not on `PROFILE`, which sets
+    `PASSWORD_ROLLOVER_TIME` for the tests about rollover reporting. Granting
+    `SYSDBA` to an account whose profile sets that limit is refused on 21c with
+    `ORA-28227: Gradual password rollover is not supported for administrative
+    users`, and allowed on 26ai -- measured on both, 2026-09-08 (#380). The
+    coupling was invisible while 26ai was the only server this ran against.
+
+    The dependency was incidental in the first place: what this test needs is an
+    account an operator would have made, and rollover has nothing to do with the
+    password file. So it gets its own rather than a version guard, and the
+    difference is recorded in `docs/design/02-oracle-privileges.md` §2's
+    `V$PWFILE_USERS` subsection -- where it is a fact about the password file and
+    about profiles, rather than about this fixture.
+
+    The `alter user ... profile` route reaches the same state on 21c and is not
+    used here for the same reason: it would preserve a coupling this test never
+    needed.
+
+    Skipped outside a PDB, on the scope the *driver observed* rather than on a
+    version -- the same shape as `test_oracle_doctor.py`'s root skip. What the
+    test is about is a PDB-*local* account, and the root has no such thing:
+    `grant sysdba` there is `ORA-65175, cannot grant SYSDBA privilege locally in
+    the root` (measured on the 21c root, 2026-09-08). CI's lane is a PDB, so
+    this still runs on every pull request.
+    """
+    scope = session.scope()
+    if scope.type != "pdb":
+        pytest.skip(f"a PDB-local account needs a PDB session; this one is {scope.type}")
+    with contextlib.suppress(Exception):
+        _run(session, f"drop user {PWFILE_ACCOUNT} cascade")
+    _run(
+        session,
+        f'create user {PWFILE_ACCOUNT} identified by "{FIRST}"',
+        f"grant create session to {PWFILE_ACCOUNT}",
+        f"grant connect to {PWFILE_ACCOUNT}",
+    )
+    try:
+        yield session
+    finally:
+        with contextlib.suppress(Exception):
+            _run(session, f"drop user {PWFILE_ACCOUNT} cascade")
+
+
 def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
-    account: Any, sysdba: Any
+    password_file_account: Any, sysdba: Any
 ) -> None:
     """The account guardrail 3 exists for, and the one checks 2, 4 and 5 miss.
 
@@ -346,9 +396,9 @@ def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
     that holds `SYSDBA` takes its row out of `V$PWFILE_USERS` as well, which was
     measured rather than assumed.
     """
-    _as_sysdba(sysdba, f"grant sysdba to {ACCOUNT}")
+    _as_sysdba(sysdba, f"grant sysdba to {PWFILE_ACCOUNT}")
     try:
-        state = account.describe_user(ACCOUNT)
+        state = password_file_account.describe_user(PWFILE_ACCOUNT)
 
         assert state is not None
         assert state.password_file_member is True
@@ -357,9 +407,9 @@ def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
         assert state.vendor_maintained is False
         assert not ADMIN_ROLES & state.roles
     finally:
-        _as_sysdba(sysdba, f"revoke sysdba from {ACCOUNT}")
+        _as_sysdba(sysdba, f"revoke sysdba from {PWFILE_ACCOUNT}")
 
-    after = account.describe_user(ACCOUNT)
+    after = password_file_account.describe_user(PWFILE_ACCOUNT)
     assert after is not None
     assert after.password_file_member is False, "the revoke takes it back out of the view"
 

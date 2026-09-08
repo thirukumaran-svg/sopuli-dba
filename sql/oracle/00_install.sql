@@ -7,7 +7,13 @@
 --         grant_set_container. The mode guards were checked too: PDB in
 --         CDB$ROOT gives ORA-20011 and an unknown mode ORA-20012, each exiting
 --         non-zero. Parameters were driven both ways: defaults with no
---         arguments, and every position passed. Untried on 19c, 21c and 11.2.
+--         arguments, and every position passed.
+--         Confirmed on 21c XE 21.3.0.0.0 (2026-09-08, #380), in XEPDB1 and
+--         CDB$ROOT, through the whole of tests/driver/test_oracle_install_script.py
+--         and by hand as SYSDBA. It did NOT run there until this date: the
+--         service account's random password was 31 bytes, which is ORA-00972
+--         on every line before 23ai, so section 1 failed having created
+--         nothing. Now 30. Untried on 19c, 18c and 11.2.
 --         Review before running; try a throwaway DB first.
 --
 --         grant_pwfile (position 6) added and run on the same release
@@ -148,6 +154,16 @@ END;
 -- Created with a random password and PASSWORD EXPIRE: it is unusable until a
 -- DBA sets a real one. Store that password in the vault, or use an Oracle
 -- Wallet / external authentication and never give it a usable password at all.
+--
+-- **27 + 3 = 30 bytes, and the 30 is a ceiling rather than a preference.**
+-- Oracle raised the password limit past 30 bytes at 23ai; every earlier line
+-- still refuses a 31st with `ORA-00972: identifier is too long`, and refuses it
+-- from inside this block, so the script fails at step 1 having created nothing.
+-- Measured 2026-09-08 (#380): 31 bytes is accepted on 26ai 23.26.2.0.0 and
+-- rejected on 21c XE 21.3, 18c XE 18.4 and 11g XE 11.2. The script ran only on
+-- 26ai until now, which is why a 31-byte password looked fine.
+-- `aA1` is appended rather than left to chance because `STRING('X', n)` draws
+-- from uppercase and digits only, and a verify function wants a lowercase too.
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT [1] account &eff_user
@@ -157,7 +173,7 @@ BEGIN
   SELECT COUNT(*) INTO l_cnt FROM dba_users WHERE username = UPPER('&eff_user');
   IF l_cnt = 0 THEN
     EXECUTE IMMEDIATE 'CREATE USER &eff_user IDENTIFIED BY "'
-                   || DBMS_RANDOM.STRING('X', 28) || 'aA1" '
+                   || DBMS_RANDOM.STRING('X', 27) || 'aA1" '
                    || 'DEFAULT TABLESPACE &svc_tablespace '
                    || 'PASSWORD EXPIRE' || '&cont_all';
     DBMS_OUTPUT.PUT_LINE('created &eff_user (random password, expired - set it now)');

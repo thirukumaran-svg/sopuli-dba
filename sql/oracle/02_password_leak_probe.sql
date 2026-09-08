@@ -49,6 +49,37 @@
 --   right way round: wrapping the DDL is what exposes the password, and issuing
 --   it directly is what hides it. C2 and C3 differ only in the wrapper.
 --
+--   2026-09-08, 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim), XEPDB1, position
+--   1 -- svc_user = SOPULI_SVC, isdba=FALSE (#380). **Identical to 26ai**, and
+--   it adds the half 26ai cannot answer at all:
+--
+--     UNIFIED_AUDIT_TRAIL   events=4  with sql_text=4   clean
+--     DBA_AUDIT_TRAIL       events=3  with sql_text=3   clean
+--     SYS.AUD$.sqltext                                  clean
+--     DBA_COMMON_AUDIT_TRAIL.sql_text                   clean
+--     leaks: C3 only, in V$SQL / V$SQLAREA / V$SQLSTATS / GV$SQL and
+--            V$DB_OBJECT_CACHE.name
+--
+--   **Traditional auditing masks the password too.** 26ai desupported it, so
+--   this could not be measured there, and 11.2 to 21c is where it is the only
+--   audit trail many sites have. C1, C2 and C4 clean in every source.
+--
+--   Section 7's off-database greps have now been RUN, for the first time, on
+--   21c with AUDIT_SYS_OPERATIONS = TRUE: no numbered canary appears in
+--   audit_file_dest, the trace directory, the listener log or the client
+--   history. That answers 02-oracle-privileges.md §4's "OS audit files --
+--   untested, assume not redacted" on 21c. It stays open on 11.2, which is the
+--   version the row says it matters most on.
+--
+--   Two things about the container itself, both of which cost a run before they
+--   were understood -- see the PROMPTs in §1 and §7:
+--     - gvenzl/oracle-xe ships AUDIT_TRAIL = NONE, and captures nothing at all
+--       on it. Section 4a said "NOTHING CAPTURED" until the parameter was set
+--       and the container restarted.
+--     - §7's grep matched the bare canary prefix, which this script's own SQL
+--       text contains, so it reported a leak in audit_file_dest that was the
+--       probe reading itself. Fixed to match the numbered canaries.
+--
 --   Note also what V$SQL_BIND_CAPTURE holds after a run: the probe's own canary
 --   binds, in clear, from its own sweep queries. Nothing to do with rotation --
 --   and a live demonstration of why invariant 14 exists.
@@ -195,11 +226,22 @@ SELECT name, value FROM v$parameter
  ORDER BY name;
 
 PROMPT
-PROMPT  On 11.2 to 21c: if AUDIT_TRAIL is DB rather than DB,EXTENDED then
-PROMPT  DBA_AUDIT_TRAIL.SQL_TEXT is NULL for every statement ever executed, and
-PROMPT  a clean traditional result below means nothing. The sweep reports pop=n
-PROMPT  for that case rather than calling it clean. To fix, and restart:
-PROMPT     ALTER SYSTEM SET audit_trail = 'DB,EXTENDED' SCOPE = SPFILE
+PROMPT  On 11.2 to 21c: if AUDIT_TRAIL is NONE, or DB rather than DB,EXTENDED,
+PROMPT  then DBA_AUDIT_TRAIL.SQL_TEXT is NULL for every statement ever executed,
+PROMPT  and a clean traditional result below means nothing. The sweep reports
+PROMPT  pop=n for that case rather than calling it clean. To fix, and restart:
+PROMPT     ALTER SYSTEM SET audit_trail = db,extended SCOPE = SPFILE
+PROMPT
+PROMPT  Unquoted and two tokens. Quoting it is ORA-00096 -- "invalid value
+PROMPT  DB,EXTENDED for parameter audit_trail, must be from among extended, xml,
+PROMPT  none, os, db". Measured on 21c XE, 2026-09-08 (#380): this line said
+PROMPT  'DB,EXTENDED' until then and had never been run.
+PROMPT
+PROMPT  gvenzl/oracle-xe ships AUDIT_TRAIL = NONE, and on that setting NOTHING is
+PROMPT  captured -- not even the Oracle-supplied ORA_LOGON_FAILURES policy after
+PROMPT  a real failed logon, measured on 21c XE. So section 4a reporting zero
+PROMPT  events on a container image is the image, not the server: fix the
+PROMPT  parameter, restart, and run again before concluding anything.
 PROMPT
 PROMPT  On 23ai and later: AUDIT_TRAIL is absent and traditional auditing is
 PROMPT  desupported. ORA-46401 below is expected, not a failure. Only the
@@ -670,20 +712,38 @@ PROMPT =========================================================================
 PROMPT  7. Off-database checks, run these on the server
 PROMPT ================================================================================
 
+-- The pattern is the canary PREFIX PLUS A DIGIT, never the bare prefix.
+--
+-- Measured on 21c, 2026-09-08 (#380): with AUDIT_SYS_OPERATIONS = TRUE the bare
+-- prefix always matches, because this script's own text contains it -- section
+-- 4b's `c_pfx CONSTANT VARCHAR2(30) := '<prefix>'` and these four PROMPT lines
+-- are themselves SQL that a SYSDBA session executes, so they land in
+-- audit_file_dest and the grep finds itself. It reads as a leak in the one place
+-- where a leak would matter most, which is the worst possible false positive.
+--
+-- The whole reason §0 holds the prefix and the suffix apart in separate DEFINEs
+-- is that the probe's own SQL text must never match itself. Printing the bare
+-- prefix here undid that. `[0-9]` restores it: C1 to C4 are the planted
+-- passwords, the prefix alone is this script talking about them.
 SET HEADING OFF
-SELECT '  grep -rl ''&cpfx'' ' || value || '/     # trace files, 10046, incident dumps'
+SELECT '  grep -rlE ''&cpfx.[0-9]'' ' || value || '/     # trace files, 10046, incident dumps'
   FROM v$diag_info WHERE name = 'Diag Trace'
 UNION ALL
-SELECT '  grep -rl ''&cpfx'' ' || value || '/     # OS audit files, the SYSDBA path'
+SELECT '  grep -rlE ''&cpfx.[0-9]'' ' || value || '/     # OS audit files, the SYSDBA path'
   FROM v$parameter WHERE name = 'audit_file_dest'
 UNION ALL
-SELECT '  grep -rl ''&cpfx'' $ORACLE_BASE/diag/tnslsnr/*/*/          # listener log'
+SELECT '  grep -rlE ''&cpfx.[0-9]'' $ORACLE_BASE/diag/tnslsnr/*/*/     # listener log'
   FROM dual
 UNION ALL
-SELECT '  grep -rl ''&cpfx'' ~/.sqlplus_history 2>/dev/null          # client history'
+SELECT '  grep -rlE ''&cpfx.[0-9]'' ~/.sqlplus_history 2>/dev/null     # client history'
   FROM dual;
 SET HEADING ON
 
+PROMPT
+PROMPT  A hit names the file; grep the numbered canary again inside it to see
+PROMPT  WHICH path leaked. A match on the bare prefix and none on a numbered
+PROMPT  canary is this script's own text, not a password -- see the comment on
+PROMPT  the query above.
 PROMPT
 PROMPT  The audit_file_dest grep tests the SYSDBA path specifically, so it is
 PROMPT  answered by the C1 canary in this run rather than by C2 to C4. Run the

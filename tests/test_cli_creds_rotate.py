@@ -34,7 +34,7 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
-from sopuli.cli import cli
+from sopuli.cli import _reach, cli
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.model import Vault
 from sopuli.driver.protocol import (
@@ -51,6 +51,7 @@ from sopuli.driver.protocol import (
 from sopuli.exit_codes import ExitCode
 from sopuli.lock import Holder, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.plan import BlastRadius
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore, StoreError
 from sopuli.store.protocol import Stored
@@ -572,6 +573,40 @@ def test_a_refused_confirmation_writes_nothing(
     runner.invoke(cli, ["creds", "rotate", "--config", str(write_config(CONFIG))])
 
     assert harness["store"].read("apps/acme/appdb-alpha").version == before
+
+
+@pytest.mark.parametrize(
+    ("radius", "expected"),
+    [
+        (BlastRadius(targets=1, accounts=1), "1 account on 1 target"),
+        (BlastRadius(targets=3, accounts=2), "2 accounts on 3 targets"),
+        (
+            BlastRadius(targets=1, accounts=1, environments=("dev",)),
+            "1 account on 1 target in `dev`",
+        ),
+        (
+            BlastRadius(targets=11, accounts=1, environments=("dev", "prod")),
+            "1 account on 11 targets in `dev`, `prod`",
+        ),
+    ],
+)
+def test_the_confirmation_names_the_reach_in_words(radius: BlastRadius, expected: str) -> None:
+    """The last sentence an operator reads before an estate's passwords change.
+
+    It used to interpolate the `BlastRadius` itself and render as `draw a new
+    password for BlastRadius(targets=1, accounts=1, environments=('dev',))
+    account(s) and promote it?` -- a dataclass repr in a confirmation prompt,
+    with `account(s)` appended to an object that already said `accounts=1`.
+    Nothing caught it because `CliRunner` has no terminal, so the two tests above
+    take the `_can_prompt()` refusal path and the prompt never renders (#380,
+    found by running `creds rotate` rather than by testing it).
+
+    So the phrase is asserted here instead, where it needs no terminal. Both
+    counts are in it deliberately: `1 account on 11 targets` and `11 accounts on
+    1 target` are different things to say yes to, and `BlastRadius` carries the
+    two separately for exactly that reason.
+    """
+    assert _reach(radius) == expected
 
 
 # ------------------------------------------------------------ --max-age-days ---

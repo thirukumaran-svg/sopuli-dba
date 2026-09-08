@@ -5577,6 +5577,33 @@ def _unconfirmed(accounts: Sequence[str]) -> Diagnostic:
     )
 
 
+def _reach(radius: Any) -> str:
+    """How much of the estate a run reaches, as a phrase an operator can read.
+
+    This is what the confirmation prompt interpolates. It used to interpolate the
+    :class:`~sopuli.plan.BlastRadius` itself, which is a frozen dataclass, so the
+    question read `draw a new password for BlastRadius(targets=1, accounts=1,
+    environments=('dev',)) account(s) and promote it?` -- a repr in the last
+    sentence an operator sees before a whole estate's passwords change, with the
+    word `account(s)` after an object that already said `accounts=1`. Found by
+    running the verb rather than by a test, on 21c for #380, and not
+    version-specific: every rotation has always asked it this way.
+
+    Targets **and** accounts, because the two differ exactly where sharing
+    happens and that difference is what the person answering needs: `1 account on
+    11 targets` and `11 accounts on 1 target` are very different things to say
+    yes to, and `BlastRadius` carries both for this reason. The environments come
+    along because they are what `confirm_environments` is about.
+    """
+    accounts = f"{radius.accounts} account{'' if radius.accounts == 1 else 's'}"
+    targets = f"{radius.targets} target{'' if radius.targets == 1 else 's'}"
+    where = f"{accounts} on {targets}"
+    if radius.environments:
+        named = ", ".join(f"`{name}`" for name in radius.environments)
+        where = f"{where} in {named}"
+    return where
+
+
 def _confirm_rotation(plan: Any, *, confirmed: bool) -> None:
     """Section 8 step 1: print the plan and ask, unless somebody already answered.
 
@@ -5610,7 +5637,7 @@ def _confirm_rotation(plan: Any, *, confirmed: bool) -> None:
         )
     click.echo(render_plan(plan, noun="rotation"), err=True)
     click.confirm(
-        f"draw a new password for {plan.blast_radius} account(s) and promote it?",
+        f"draw a new password for {_reach(plan.blast_radius)} and promote it?",
         abort=True,
         err=True,
     )

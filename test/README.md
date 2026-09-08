@@ -2,7 +2,15 @@
 
 **tier0 and tier1 verified working 2026-08-17** — both come up, Vault mounts both
 KV versions, Oracle initialises and the profiles in `oracle-init/` are created.
-tier2, `nne` and `emulators` are still unrun and their image tags unverified.
+**21c verified working 2026-09-08** (#380) — `oracle-xe21` comes up in about a
+minute, the `oracle-init/` profiles are created including `SOPULI_ROLLOVER`, and
+the whole suite is green against both `XEPDB1` and the `XE` root. **Set
+`AUDIT_TRAIL` before believing anything about auditing on it** — the image ships
+`NONE`, on which nothing is captured at all, not even the Oracle-supplied
+`ORA_LOGON_FAILURES` policy after a real failed logon. `alter system set
+audit_trail=db,extended scope=spfile` and restart; quoting the value is
+`ORA-00096`.
+`oracle-xe18`, `oracle-xe11`, `nne` and `emulators` are still unrun (#381, #382).
 Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testing.md).
 
 ## Quick start

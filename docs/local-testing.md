@@ -192,6 +192,68 @@ docker exec -i sopuli-test-oracle-free-1 \
 `acme_priv_user` holds `DBA` on purpose: it is what §11's guardrail refuses, and a
 refusal you have not watched happen is one you are trusting rather than testing.
 
+### Running all of this against a different Oracle version
+
+Everything from here on works against tier 2 as well. **21c is done** (#380);
+18c and 11g are open as #381 and #382, and this subsection is the map for them.
+
+```bash
+cd test
+docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
+```
+
+| Version | Container | DSN | Shape |
+|---|---|---|---|
+| 26ai Free | `sopuli-test-oracle-free-1` | `127.0.0.1:1521/FREEPDB1` | CDB + PDB |
+| 21c XE | `sopuli-test-oracle-xe21-1` | `127.0.0.1:1522/XEPDB1`, root `.../XE` | CDB + PDB |
+| 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** |
+
+Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
+follows. All three images are already on the machine and reach healthy in about a
+minute; the 11g one is the smallest and fastest of the four.
+
+**One Instant Client covers all of them.** Measured 2026-09-08 with the
+23.26.3.0.0 client from §4: 21c, 18c and 11.2 all connect. That is worth knowing
+before planning an evening, because `00-principles.md` D7 warns that a 23.x
+client reaches 19c and later, which reads like 18c and 11g need a second client
+and a second process. They do not. Note that connecting is not the same as being
+*certified*, and `doctor`'s `reaches 19.1 and later` line is Oracle's support
+statement rather than a measurement — on 18c and 11g it will read as though the
+connection you are looking at should not exist.
+
+To point the automated suite at one instead:
+
+```bash
+SOPULI_TEST_TIER1=required \
+SOPULI_TEST_ORACLE_DSN=localhost:1522/XEPDB1 \
+SOPULI_TEST_ORACLE_NAME="21c XE" \
+SOPULI_TEST_ORACLE_CONTAINER=sopuli-test-oracle-xe21-1 \
+pytest
+```
+
+`SOPULI_TEST_ORACLE_CONTAINER` is not optional. `tests/driver/test_oracle_install_script.py`
+shells into a container by name — SQL\*Plus is a *client*, and the only one the
+suite can rely on is inside the container — and it defaults to the tier-1 one. Left
+unset, that module reports on 26ai while everything else reports on 21c, and
+nothing says so.
+
+**Auditing is off in the XE images, and silently.** They ship
+`AUDIT_TRAIL = NONE`, on which nothing is captured at all — not even the
+Oracle-supplied `ORA_LOGON_FAILURES` policy after a real failed logon, measured
+on 21c. So `01_audit_policy.sql` creates and enables a policy that then records
+nothing, and `02_password_leak_probe.sql` reports `NOTHING CAPTURED - this trail
+proves nothing` in §4a. Fix it before concluding anything about auditing:
+
+```sql
+alter system set audit_trail=db,extended scope=spfile;
+alter system set audit_sys_operations=true scope=spfile;
+```
+
+then `docker restart` the container. **Unquoted and two tokens** —
+`audit_trail='DB,EXTENDED'` is `ORA-00096: invalid value DB,EXTENDED for
+parameter audit_trail, must be from among extended, xml, none, os, db`.
+
 ---
 
 ## 6. A config file, and the check that will reject it first
@@ -1537,9 +1599,12 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
 - **`--repair`**, which will act on the DRIFT list `check` produces.
 - **The `file`, `keyring` and `oci` stores.** Only `hashicorp` exists.
 - **A real wallet without a full Oracle install**, per §12.
-- **Anything above tier 1.** 21c, 18c and 11g are the maintainer's pre-release
-  matrix; the rollover refusals those versions produce are reasoned about here and
-  not measured.
+- **18c and 11g.** 21c is no longer on this list — §5's *Running all of this
+  against a different Oracle version* covers it, and everything in §§6–12 was run
+  against it for #380 with output identical to 26ai's, rollover included. 18c
+  (#381) and 11g (#382) are still open, and the rollover *refusal* those two
+  produce — `--strategy rollover` failing at plan time, §10.10 — is still
+  reasoned about here rather than measured.
 
 When those land, this document should grow with them — it is meant to stay a
 complete map of what can be exercised by hand, and a stale one is worse than none.
