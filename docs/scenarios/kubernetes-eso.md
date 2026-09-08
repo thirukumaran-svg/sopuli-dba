@@ -311,6 +311,131 @@ kubectl -n acme get secret acme-db-credentials \
 If those two agree and the database says `IN_SYNC`, the loop is closed and you
 can run `creds finish-rollover`.
 
+**One column will mislead you.** `kubectl get secretstore` prints a
+`CAPABILITIES` column, and for this store it says `ReadWrite`:
+
+```
+NAME        AGE     STATUS   CAPABILITIES   READY
+vault-dev   6m51s   Valid    ReadWrite      True
+```
+
+That describes what ESO's vault support *can* do in general — it can write to a
+vault, given a role that allows it. It says nothing about what your role is
+allowed to do, and it does not change when you tighten the policy. To find out
+whether the role really is read-only, ask the vault: log in with the service
+account and try a write, which is what
+[`../../test/k8s_eso_probe.py`](../../test/k8s_eso_probe.py) does.
+
+---
+
+## 7. Has any of this been run, or is it just written down?
+
+It has been run. This section says exactly what was run and what was not, so
+you can tell the measured parts from the reasoned ones.
+
+[`test/k8s_eso_probe.py`](../../test/k8s_eso_probe.py) in this repository
+stands the whole arrangement up on a throwaway cluster and checks it.
+**It does not keep a copy of the manifests above — it reads them out of this
+file** and applies those. A copy would drift away from the document over time,
+and a check that passes against its own stale copy is worse than no check at
+all.
+
+```bash
+python test/k8s_eso_probe.py
+```
+
+Run on 2026-09-07 against Kubernetes 1.36.1 (the cluster built into Docker
+Desktop), ESO 2.10.0, and sopuli 0.58.0. The last part of what it printed —
+the setup before this is Vault, ESO and the vault role being created:
+
+```
+=== sopuli writes the credential to the vault =========================
+  $ ... vault kv metadata delete -mount=kv acme/dev/acme
+  $ sopuli.exe --config ...\sopuli.yaml --vault-token-file ...\vault-token.txt creds generate --promote --offline --application acme
+
+=== what sopuli actually wrote ========================================
+  $ ... vault kv get -mount=kv -format=json acme/dev/acme
+  top-level keys written:    ['DB_CREDENTIALS', 'origin', 'pending', 'policy', 'rotated_at', 'rotated_by']
+  top-level keys documented: ['DB_CREDENTIALS', 'origin', 'pending', 'policy', 'previous', 'rotated_at', 'rotated_by', 'targets']
+  absent as expected: previous -- no `current` existed to move (first adoption)
+  absent as expected: targets -- no database confirmed anything (`--promote` asks none)
+
+=== applying the document's own manifests =============================
+  $ kubectl -n sopuli-test delete externalsecret acme-db-credentials --ignore-not-found
+  $ kubectl apply -f -
+  $ kubectl apply -f -
+
+=== does ESO produce the Kubernetes Secret? ===========================
+  $ kubectl -n sopuli-test wait --for=condition=Ready externalsecret/acme-db-credentials --timeout=120s
+externalsecret.external-secrets.io/acme-db-credentials condition met
+  $ kubectl -n sopuli-test get secret acme-db-credentials -o jsonpath={.data.DB_PASSWORD}
+  sha256 in the vault:             292043d7fde9
+  sha256 in the Kubernetes Secret: 292043d7fde9
+
+=== is ESO's vault role really read-only? =============================
+  $ kubectl -n sopuli-test create token acme-secret-reader --duration=10m
+  $ kubectl -n sopuli-test exec -i deploy/vault -- sh -c <script>
+  logged in as acme-secret-reader through the `acme-reader` role: ['READ_OK', 'WRITE_DENIED']
+
+=== result ============================================================
+  PASS: the manifests in docs/scenarios/kubernetes-eso.md work as written.
+  PASS: `property: DB_CREDENTIALS.acme_app_user` resolves against a document
+        sopuli wrote, and the value reaches a Kubernetes Secret unchanged.
+  PASS: the vault policy in section 3 permits the read and refuses a write.
+```
+
+The password itself is never printed. The two lines above are the first twelve
+characters of a SHA-256 of each side's value — a fingerprint, which is enough
+to see that the two agree and no use to anyone reading over your shoulder.
+
+**Two lines are edited before the manifests are applied**, and the script says
+so each time it does it. Both are placeholders that no example could avoid
+having:
+
+| In this document | What the test uses instead |
+|---|---|
+| `namespace: acme` | `namespace: sopuli-test`, the throwaway namespace |
+| `server: "https://vault.example.com:8200"` | the address of the throwaway Vault inside the cluster |
+
+Everything else is applied exactly as it is written above: the `property`
+pointer, the whole Kubernetes authentication block, the vault policy, the KV
+mount name and the path.
+
+### What that establishes
+
+- **The `SecretStore` in section 3 is accepted by ESO and works.** ESO logged
+  in to the vault as the `acme-secret-reader` service account through the
+  `acme-reader` role, with no vault token stored anywhere in the cluster.
+- **The vault policy in section 3 is the right shape.** It permits the read ESO
+  needs, and a write with the same credentials is refused. That is section 1's
+  claim about direction — sopuli writes, ESO reads — checked rather than
+  asserted.
+- **The `ExternalSecret` in section 4 works, `property` included.** The
+  `DB_CREDENTIALS.acme_app_user` pointer resolved against a document sopuli
+  itself wrote, and the password arrived in the Kubernetes Secret unchanged.
+- **The document shape in section 2 is what sopuli writes**, with two keys
+  missing for a reason worth knowing: the test has no database, so it writes
+  the password with `creds generate --promote`. `previous` holds whatever
+  `current` held before, and there was no earlier `current`. `targets` records
+  which databases *confirmed* the password, and only `creds apply` can write
+  that, because only `apply` asks a database anything. A completed rotation —
+  which is what section 2 was captured from — has both.
+
+### What it does not establish
+
+- **Anything about TLS.** The test's vault is plain HTTP inside the cluster.
+  Section 3's `https://` address is what you should use and is not what was
+  tested.
+- **Anything about a real vault.** The test uses Vault in development mode:
+  in memory, unsealed, with a known root token. The authentication *path* is
+  the real one; the server is not a real deployment of one.
+- **That an application picks the Secret up.** Nothing consumed the Kubernetes
+  Secret. That half is your deployment's business and is unchanged by any of
+  this.
+- **The timings in section 5.** Nobody waited an hour for a refresh, and there
+  was no Oracle and therefore no rollover window. Section 5 is reasoning about
+  how the pieces compose, not a measurement.
+
 ---
 
 ## What is not built yet
@@ -324,12 +449,12 @@ Said plainly rather than left for you to discover:
 - **Only HashiCorp Vault is supported today.** ESO can read many stores; sopuli
   can currently write to one. `oci`, `file` and `keyring` are accepted in a config
   file and report that this build has no module for them.
-- **Nothing here has been run end to end against a real cluster.** The sopuli
-  side of it — the document shape in section 2, the `creds check` output in
-  section 6 — is from a real run against the project's test containers. The ESO
-  manifests are written from that document shape and from ESO's own published
-  API, and have not been applied to a cluster by this project. Treat them as a
-  starting point and check them against your ESO version's documentation.
+- **The manifests are checked against one ESO version, and that version will
+  move.** Section 7 has the details of what was run. It was ESO 2.10.0; ESO's
+  own API has changed between major versions before, and `apiVersion:
+  external-secrets.io/v1` is the line most likely to need changing. If your
+  cluster runs a different version, read its documentation before assuming the
+  YAML above is current.
 
 ---
 

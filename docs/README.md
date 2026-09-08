@@ -55,6 +55,7 @@ which paths ran and which are still untried.
 | [decisions/adr-008-contribution-provenance.md](decisions/adr-008-contribution-provenance.md) | A DCO sign-off rather than a CLA, why review-time checking rather than CI, and what would change either |
 | `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
+| `../test/k8s_eso_probe.py` | Applies [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md)'s own manifests to a throwaway Kubernetes cluster, and checks that ESO reads what sopuli wrote. Needs a cluster, not compose |
 
 All three schemas validate as Draft 2020-12, and the example validates against the
 run schema. That is no longer an assertion in prose: `tests/test_schemas.py`
