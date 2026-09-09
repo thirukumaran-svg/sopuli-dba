@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.59.0](https://github.com/villebase/sopuli-dba/compare/v0.58.0...v0.59.0) (2026-09-09)
+
+
+### Features
+
+* one palette for result states, and one function that decides it ([#396](https://github.com/villebase/sopuli-dba/issues/396)) ([e1f7beb](https://github.com/villebase/sopuli-dba/commit/e1f7beb77acf607bdf40c2622d4eed03a56417c5))
+
+
+### Bug Fixes
+
+* arrange the compare-and-set guarantee on a lock path, do not just read it ([#393](https://github.com/villebase/sopuli-dba/issues/393)) ([760e584](https://github.com/villebase/sopuli-dba/commit/760e58475b02a81d3377cb997850abbdf6e2344e))
+
 ## [0.58.0](https://github.com/villebase/sopuli-dba/compare/v0.57.3...v0.58.0) (2026-09-06)
 
 
