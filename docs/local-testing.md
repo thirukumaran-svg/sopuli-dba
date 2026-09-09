@@ -561,7 +561,7 @@ that models an 11g password.
 
 ---
 
-## 8. Vault, locks, and the one chore nobody warns you about
+## 8. Vault, locks, and the fence that makes them mean something
 
 `lock status` is the first command that opens a socket. It needs a token, and
 **the token is never a command-line value** — it comes from the environment, a
@@ -654,35 +654,74 @@ chmod 600 vault-token.txt      # or icacls, same as the config file
 sopuli --config sopuli.yaml --vault-token-file vault-token.txt lock status
 ```
 
-### Set `cas-required` on each lock path, once, before §10
+### The lock path's `cas_required`, which the tool now arranges itself
 
-**Every locking verb fails on its second run against a fresh dev Vault**, and the
-failure is confusing precisely because the first run worked:
+**This used to be a chore, and it is not one any more** (#390). Read this only if
+you meet the refusal below on a stack that was set up before that change, or if
+your Vault token cannot write path metadata.
+
+`cas_required` on a lock path is what stops *someone else* — an operator with a
+vault CLI — replacing the lock record without a compare-and-set. sopuli always
+sends one; the setting is about everybody else. Until #390 the tool read that
+setting and never arranged it, so a first acquisition created the path without
+it and every run after that was refused:
 
 ```
 sopuli: vault-dev:acme/dev/acme cannot be locked safely: its lock path does not require
   compare-and-set
-  hint: another writer could replace the lock record without one;
-        `vault kv metadata put -cas-required=true locks/acme/dev/acme`
 ```
 
-Exit 5. The tool is not being fussy: `cas_required` on the path is what stops
-*someone else* — an operator with a vault CLI — replacing the lock record without
-a compare-and-set. sopuli always sends one; the setting is about everybody else. A
-path with no metadata at all is the ordinary state before the first lock and
-passes, which is exactly why run one succeeds and run two does not.
+Now the first acquisition sets it, and the second run just works:
 
-The remedy is the hint, run once per secret path:
+```
+$ sopuli creds generate --application acme --offline    # brand-new path
+ACCOUNT        SECRET                   RESULT
+acme_app_user  vault-dev:acme/dev/acme  staged v1
+
+$ vault kv metadata get -mount=kv locks/acme/dev/acme
+cas_required    true
+
+$ sopuli creds generate --application acme --offline    # this used to be exit 5
+acme_app_user  vault-dev:acme/dev/acme  staged v2, replaced the pending in v1
+```
+
+**Worth causing on purpose: a token that cannot write metadata.** Vault grants
+`update` on `<mount>/metadata/<path>` separately from the data path, so a policy
+written for secrets alone locks perfectly well and cannot set this. The run goes
+ahead and says so rather than stopping — it is no worse off than it was before
+the tool asked:
+
+```bash
+docker exec -i -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=sopuli-test-root \
+  sopuli-test-vault-1 sh -c 'cat > /tmp/p.hcl <<EOF
+path "kv/data/*"     { capabilities = ["create","update","read"] }
+path "kv/metadata/*" { capabilities = ["read","list"] }
+EOF
+vault policy write dataonly /tmp/p.hcl'
+# then run with a token created from it:
+#   vault token create -policy=dataonly
+```
+
+```
+1 staged; no database was changed -- run `sopuli creds apply` to use them
+
+1 note:
+  the lock path for vault-dev:acme/dev/acme is not guarded against a write carrying no compare-and-set: the store refused to set `cas_required` on 'locks/acme/dev/acme'
+    hint: a Vault policy grants `update` on <mount>/metadata/<path> separately from the data path -- add it, or run `vault kv metadata put -cas-required=true kv/locks/acme/dev/acme` once
+```
+
+`SOPULI-W019`, and the run exits 0. Run it a second time and you get the exit-5
+refusal above, which is correct and is the sequence to look at whole: the run that
+could not arrange the guarantee warns, and the next one refuses. Nobody is
+silently unguarded twice.
+
+If you need to set it by hand — an old path, or that token:
 
 ```bash
 docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=sopuli-test-root \
   sopuli-test-vault-1 \
   vault kv metadata put -mount=kv -cas-required=true locks/acme/dev/acme
 ```
-
-Do it for every path §§10–11 use — `locks/acme/dev/acme`, `locks/acme/dev/batch`,
-`locks/acme/dev/guarded` — before you start, or budget for being stopped once
-each.
 
 ### Making a held lock, so `lock break` has something to break
 
@@ -1560,7 +1599,7 @@ this guide.
 | 2 | argv did not parse — **no JSON document, message on stderr** | `--reveal --output json` (§7); `--account` naming something undeclared (§11) |
 | 3 | `check` found drift | §10.4 |
 | 4 | partial | a guardrail-skipped account inside a wider selection (§11) |
-| 5 | unsupported capability | a lock path with no `cas_required` (§8); rollover on 18c/11g |
+| 5 | unsupported capability | a lock path with no `cas_required` — since #390 the tool sets it on a path it creates, so this is a path created before that or by something else (§8); rollover on 18c/11g |
 | 6 | authentication failed | a bad vault token |
 | 7 | lock held | any mutating verb against a held lock, and `lock break` without `--force` (§8) |
 | 8 | aborted / confirmation declined | `readonly` and `confirm_environments` (§11); `--promote` over an existing `current` (§10.8) |

@@ -93,6 +93,7 @@ from sopuli.constraints import AccountConstraints, Constraints
 from sopuli.diagnostics import (
     CONSTRAINTS_UNREAD,
     LOCK_LOST,
+    LOCK_PATH_UNGUARDED,
     LOGIN_WARNING,
     PASSWORD_GRACE_PERIOD,
     ROTATION_UNCONFIRMED,
@@ -2248,13 +2249,16 @@ def creds_generate(
         document.finish(
             ExitCode.PARTIAL if rows else ExitCode.LOCK_HELD, summarise_generate(states)
         )
-        return f"{header}\n\n{render_generate(rows)}\n\n{stolen}"
+        body = f"{header}\n\n{render_generate(rows)}\n\n{stolen}"
+        return "\n".join([body, *render_notices(_lock_notices(manager))])
 
     document.finish(
         ExitCode.FAILURE if FAILED in states else ExitCode.SUCCESS,
         summarise_generate(states),
     )
-    return f"{header}\n\n{render_generate(rows)}"
+    return "\n".join(
+        [f"{header}\n\n{render_generate(rows)}", *render_notices(_lock_notices(manager))]
+    )
 
 
 def _lockable(name: str, config: Config, stores: Mapping[str, SecretStore]) -> LockableStore:
@@ -3023,7 +3027,7 @@ def creds_apply(
     # document, so a run-level warning is invisible to somebody reading a
     # terminal -- and a guardrail that did not run, reported only in JSON, is
     # reported to nobody who ran this by hand.
-    notes = render_notices([one.message for one in unchecked])
+    notes = render_notices([one.message for one in unchecked] + _lock_notices(manager))
     return "\n".join([f"{_header(plan, sources)}\n\n{table}", *notes])
 
 
@@ -3190,6 +3194,22 @@ def _record_locks(
     """
     document.lock = build_lock_section(manager, denied=denied)
     document.diagnostics.extend(lock_diagnostics(manager))
+
+
+def _lock_notices(manager: LockManager) -> list[str]:
+    """Lock findings a person reading a terminal has to see (#390).
+
+    #309's rule applied to the one lock diagnostic that asks the reader to go
+    and do something: a warning that cannot be seen in the default output is not
+    surfaced, and the emitter prints the command's text rather than the
+    document. A path created without `cas_required` is a thing to fix in the
+    vault, and a JSON-only report of it reaches nobody who ran this by hand.
+
+    **Only that one.** `SOPULI-W001` and `SOPULI-W002` stay in `diagnostics[]`
+    alone, which is a gap rather than a decision -- do not read this function's
+    narrowness as an argument that they belong in JSON only.
+    """
+    return [one.message for one in lock_diagnostics(manager) if one.code == LOCK_PATH_UNGUARDED]
 
 
 def _break_expired(run: Invocation) -> bool:
@@ -5317,7 +5337,7 @@ def creds_rotate(
     header = _rotation_header(plan, sequence.selections, max_age_days)
     # See `apply`'s: a warning that cannot be seen in the default output is not
     # surfaced.
-    notes = render_notices([one.message for one in unchecked])
+    notes = render_notices([one.message for one in unchecked] + _lock_notices(manager))
     return "\n".join([f"{header}\n\n{table}", *notes])
 
 

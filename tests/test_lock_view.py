@@ -18,7 +18,13 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
-from sopuli.diagnostics import ADVISORY_LOCKING, LOCK_TAKEN_OVER, WARNINGS, lock_diagnostics
+from sopuli.diagnostics import (
+    ADVISORY_LOCKING,
+    LOCK_PATH_UNGUARDED,
+    LOCK_TAKEN_OVER,
+    WARNINGS,
+    lock_diagnostics,
+)
 from sopuli.exit_codes import ExitCode
 from sopuli.lock import (
     CLOCK_SKEW,
@@ -34,6 +40,7 @@ from sopuli.lock.inspect import survey
 from sopuli.output.document import SCHEMA_VERSION, RunDocument, Summary
 from sopuli.output.lock_view import build_lock_section, build_status_section, render_status
 from sopuli.store import CAS, MemoryStore
+from sopuli.store.protocol import MetadataNotPermittedError
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STORE = "vault-prod"
@@ -280,6 +287,43 @@ def test_an_advisory_store_warns_once_rather_than_once_per_lock() -> None:
     run.acquire([KEY, LockKey(store=STORE, path="apps/beta/db")])
 
     assert len(lock_diagnostics(run)) == 1
+
+
+def test_a_path_the_store_would_not_guard_warns_with_its_own_code() -> None:
+    """#390. The run succeeded, its lock was written under a compare-and-set, and
+    its fence held -- so nothing in the result is wrong and the exit code cannot
+    say this. What is missing is the store refusing an un-CAS'd write from
+    anybody else, on a path that will still be unguarded on the next run."""
+    store = MemoryStore()
+
+    def refuse(path: str) -> None:
+        raise MetadataNotPermittedError(f"the store refused to set `cas_required` on {path!r}")
+
+    store.require_cas = refuse  # type: ignore[method-assign]
+    run = manager(store)
+    run.acquire([KEY])
+
+    (warning,) = lock_diagnostics(run)
+
+    assert warning.level == "warning"
+    assert warning.code == LOCK_PATH_UNGUARDED
+    assert str(KEY) in warning.message
+
+
+def test_an_unguarded_path_is_reported_once_per_path() -> None:
+    """The opposite of the advisory case above, and deliberately so: that one is
+    a property of the store and is one fact however many locks are held, while
+    this is a property of a path and names the path to go and fix."""
+    store = MemoryStore()
+
+    def refuse(path: str) -> None:
+        raise MetadataNotPermittedError("nope")
+
+    store.require_cas = refuse  # type: ignore[method-assign]
+    run = manager(store)
+    run.acquire([KEY, LockKey(store=STORE, path="apps/beta/db")])
+
+    assert len(lock_diagnostics(run)) == 2
 
 
 def test_taking_over_a_lock_says_so_and_says_whose() -> None:

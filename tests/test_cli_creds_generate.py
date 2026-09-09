@@ -35,6 +35,7 @@ from sopuli.output.document import SCHEMA_VERSION
 from sopuli.passwords import ByteLimit
 from sopuli.payload import ORIGIN, PENDING, PREVIOUS
 from sopuli.store import MemoryStore, SecretStore
+from sopuli.store.protocol import MetadataNotPermittedError
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -252,6 +253,49 @@ def test_two_accounts_in_one_document_take_one_lock(
     assert len(body["lock"]["held"]) == 1
 
 
+def test_a_new_lock_path_is_made_to_require_a_compare_and_set(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """#390. The run creates the path, so the metadata it creates it with is what
+    every later run is judged against -- and used to be refused by."""
+    run(runner, write_config(CONFIG))
+
+    metadata = store.metadata(lock_path(LockKey(store="vault-prod", path=PATH)))
+    assert metadata is not None
+    assert metadata.cas_required is True
+
+
+def test_a_store_that_will_not_guard_the_path_says_so_where_it_can_be_read(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """The whole point of the degradation (#390): the run succeeds, and the fact
+    that it could not arrange the guarantee reaches somebody.
+
+    In the text, not only in `diagnostics[]` -- #309's rule, and this is a
+    warning whose entire purpose is to send a reader to the vault.
+    """
+
+    def refuse(path: str) -> None:
+        raise MetadataNotPermittedError(f"the store refused to set `cas_required` on {path!r}")
+
+    store.require_cas = refuse  # type: ignore[method-assign]
+
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == 0
+    assert "SOPULI-W019" not in result.output  # the code is the JSON contract's, not the text's
+    assert "not guarded against a write carrying no compare-and-set" in result.output
+
+    # A second look at the same thing through the machine stream, and the path is
+    # wiped first so that this run is a *first* acquisition too. Left alone it
+    # would meet the exit-5 refusal instead -- which is the correct next thing to
+    # happen and is asserted in `tests/lock/test_manager.py`, not here.
+    store.paths.pop(lock_path(LockKey(store="vault-prod", path=PATH)), None)
+    body = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    assert "SOPULI-W019" in [one["code"] for one in body["diagnostics"]]
+
+
 def test_a_held_lock_stops_the_run_and_writes_nothing(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
@@ -263,6 +307,10 @@ def test_a_held_lock_stops_the_run_and_writes_nothing(
     from sopuli.lock.record import Holder, LockRecord
 
     key = LockKey(store="vault-prod", path=PATH)
+    # With the metadata a real rival run would have arranged (#390): a lock path
+    # created without `cas_required` is refused by pre-flight, which is a
+    # different refusal from the held-lock one under test here.
+    store.require_cas(lock_path(key))
     store.write(
         lock_path(key),
         LockRecord.acquired(
@@ -526,7 +574,10 @@ def test_a_takeover_mid_run_stops_before_the_next_document_is_staged(
                     holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
                     now=utc_now(),
                 )
-                plant(lock_path(beta), theirs.to_dict(), cas=None)
+                # Under the version it is at: since #390 the acquisition sets
+                # `cas_required`, so an unguarded write is refused by the store.
+                at = store.read(lock_path(beta))
+                plant(lock_path(beta), theirs.to_dict(), cas=None if at is None else at.version)
         return original(path, *args, **fields)
 
     monkeypatch.setattr(store, "read", read)

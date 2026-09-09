@@ -50,7 +50,13 @@ from sopuli.lock.record import (
     LockRecord,
     current_holder,
 )
-from sopuli.store.protocol import CAS, CasConflictError, SecretStore, Stored
+from sopuli.store.protocol import (
+    CAS,
+    CasConflictError,
+    MetadataNotPermittedError,
+    SecretStore,
+    Stored,
+)
 
 #: Where a lock record lives, relative to the mount the secret is on. Under a
 #: prefix rather than beside the secret so the secret's own version history stays
@@ -85,6 +91,25 @@ class LockableStore:
     def can_fence(self) -> bool:
         """Whether this store's writes carry a compare-and-set."""
         return CAS in self.store.supports()
+
+
+@dataclass(frozen=True)
+class Unguarded:
+    """A lock path this run could not make refuse an un-CAS'd write (#390).
+
+    Carried rather than raised, because the run is no worse off than it was
+    before the tool tried: the record it writes still passes a compare-and-set,
+    and what is missing is the store enforcing the same on everybody else. The
+    command layer turns each of these into a diagnostic
+    (:data:`~sopuli.diagnostics.LOCK_PATH_UNGUARDED`).
+
+    ``reason`` is the store's own refusal, kept whole for the reason every
+    driver error is: the remedy is in the message the server wrote, and a
+    reworded one loses the capability's name.
+    """
+
+    key: LockKey
+    reason: str
 
 
 @dataclass
@@ -123,6 +148,9 @@ class LockManager:
     skew: timedelta = CLOCK_SKEW
     now: Callable[[], datetime] = utc_now
     held: list[HeldLock] = field(default_factory=list)
+    #: Paths whose metadata this run could not set (#390). Read by the
+    #: command layer after :meth:`preflight`, never by the lock itself.
+    unguarded: list[Unguarded] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.break_expired and any(
@@ -162,9 +190,24 @@ class LockManager:
         * a lock path whose metadata says ``cas_required: false`` is refused,
           because that is the setting stopping *another* writer -- an operator
           with a vault CLI -- from clobbering the record without a CAS. The tool
-          always passes one itself; this is about everybody else. A path with no
-          metadata at all is the ordinary state before the first lock and is
-          fine.
+          always passes one itself; this is about everybody else.
+
+        A path with **no metadata at all** is the ordinary state before the first
+        lock, and until #390 that was the end of it: the acquisition went through
+        unguarded, created the path with ``cas_required`` unset, and every later
+        run was then refused by the check above until somebody set it by hand.
+        The guard read a guarantee it could have arranged. Now it arranges it --
+        :meth:`~sopuli.store.protocol.SecretStore.require_cas` -- and the refusal
+        above is left for the case it is actually about: a path somebody else
+        configured without one.
+
+        **Where the store will not let it, the run goes ahead and says so**
+        (:data:`~sopuli.diagnostics.LOCK_PATH_UNGUARDED`). Setting metadata is a
+        separate Vault capability from writing the record, so a token that has
+        locked correctly for a year can refuse this one call, and stopping the
+        run would break an install over a guarantee it never had. What is lost is
+        protection from *other* writers, which is what it was before the tool
+        asked -- so the honest report is a warning, and it names the remedy.
 
         The third check #83 named, ``max_versions: 10``, is deliberately **not**
         enforced. Pruning old versions does not reset the version counter, so
@@ -201,15 +244,39 @@ class LockManager:
                     ),
                 )
             metadata = entry.store.metadata(lock_path(key))
-            if entry.can_fence and metadata is not None and not metadata.cas_required:
+            if not entry.can_fence:
+                continue
+            if metadata is None:
+                self._require_cas(entry, key)
+                continue
+            if not metadata.cas_required:
                 raise NoFenceError(
                     f"{key} cannot be locked safely: its lock path does not require "
                     f"compare-and-set",
                     hint=(
-                        "another writer could replace the lock record without one; "
-                        f"`vault kv metadata put -cas-required=true {lock_path(key)}`"
+                        "another writer could replace the lock record without one; set "
+                        f"`cas_required` on {lock_path(key)!r} in the mount behind "
+                        f"`vaults.{key.store}` -- `vault kv metadata put -cas-required=true "
+                        f"<mount>/{lock_path(key)}`"
                     ),
                 )
+
+    def _require_cas(self, entry: LockableStore, key: LockKey) -> None:
+        """Arrange the guarantee on a path that has never been locked (#390).
+
+        Called only where :meth:`preflight` found no metadata, which on a store
+        that can fence means the path is new: this run is about to create it, and
+        the metadata it creates it with is the one every later run will be
+        judged against.
+
+        A refusal is recorded rather than raised, and only that one -- anything
+        else is a store failing at a write it accepted the shape of, which is not
+        a policy and not this method's to soften.
+        """
+        try:
+            entry.store.require_cas(lock_path(key))
+        except MetadataNotPermittedError as refused:
+            self.unguarded.append(Unguarded(key=key, reason=str(refused)))
 
     # ----------------------------------------------------------- acquisition ---
 

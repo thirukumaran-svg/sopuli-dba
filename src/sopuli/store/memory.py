@@ -216,6 +216,21 @@ class MemoryStore:
         entry.data = copy.deepcopy(data)
         entry.history[entry.version] = entry.data
         entry.deleted = False
+        if entry.metadata is None:
+            # A write creates the path's metadata, with nothing set on it.
+            # Measured against Vault 2.0.4 (#390): `vault kv metadata get` on a
+            # path that has only ever been written answers `cas_required: false`,
+            # where before the write it answers nothing at all.
+            #
+            # **The fake did not do this, and that is how #390 stayed invisible
+            # in tier 0.** The lock's pre-flight reads "no metadata" as "new
+            # path, nothing to check", so against this store every run on a path
+            # looked like the first one and the whole bug -- second run refused,
+            # for metadata the first run created -- could not happen here. A fake
+            # that is wrong in the direction of *nothing going wrong* is the
+            # expensive kind, which is the argument for this module living in
+            # `src/` and being held to the conformance suite.
+            entry.metadata = PathMetadata()
         return entry.version
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
@@ -252,6 +267,26 @@ class MemoryStore:
     def metadata(self, path: str) -> PathMetadata | None:
         entry = self.paths.get(path)
         return None if entry is None else entry.metadata
+
+    def require_cas(self, path: str) -> None:
+        """Set ``cas_required`` on ``path``, creating its metadata if need be (#390).
+
+        The property the lock depends on, and the one a looser fake would get
+        wrong: **this does not create a version.** A path configured here and
+        never written still has ``version == 0``, so the ``cas: 0`` write a first
+        acquisition makes still succeeds -- which is what makes it safe to
+        arrange the guarantee *before* taking the lock rather than after. Checked
+        against Vault 2.0.4 before it was written here (#390), because a fake
+        that quietly bumped the counter would have let an implementation pass
+        that locks every new path out of its own first acquisition.
+
+        Refusal is not modelled: this store has no policy, and the one refusal
+        that matters -- :class:`MetadataNotPermittedError` -- is a backend's to
+        raise. A test that wants it raises it from a stub around this one.
+        """
+        entry = self.paths.setdefault(path, _Path())
+        current = entry.metadata or PathMetadata()
+        entry.metadata = PathMetadata(cas_required=True, max_versions=current.max_versions)
 
     def list(self, prefix: str) -> tuple[str, ...]:
         """Every known path under ``prefix``, sorted.

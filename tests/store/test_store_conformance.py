@@ -422,6 +422,61 @@ def test_an_unguarded_write_is_refused_where_cas_is_required(harness: Harness) -
     assert not isinstance(caught.value, CasConflictError)
 
 
+def test_a_store_can_require_a_compare_and_set_for_itself(harness: Harness) -> None:
+    """The write half of the metadata pair (#390).
+
+    Until then only an *operator* could set this -- `Admin.require_cas` above is
+    exactly the `vault kv metadata put` a human runs -- so the lock could read
+    the guarantee and never arrange one. Now the store does it, and both stores
+    have to agree about what it leaves behind.
+    """
+    harness.store.require_cas(harness.path)
+
+    metadata = harness.store.metadata(harness.path)
+
+    assert metadata is not None
+    assert metadata.cas_required is True
+
+
+def test_requiring_a_compare_and_set_does_not_create_a_version(harness: Harness) -> None:
+    """The property the lock's first acquisition rests on (#390).
+
+    Metadata outlives data in KV v2 and, in the other direction, arrives without
+    it: configuring a path leaves the version counter at zero, so the ``cas: 0``
+    write a first acquisition makes still succeeds afterwards. Were it otherwise,
+    arranging the guarantee would lock every new path out of its own first
+    acquisition -- the same trap a deleted lock record sets, from the other end.
+
+    Measured against Vault 2.0.4 before the code was written, and here so that
+    the fake cannot quietly disagree: a store that bumped the counter would make
+    every new lock unacquirable and would do it only in tier 1.
+    """
+    harness.store.require_cas(harness.path)
+
+    assert harness.store.read(harness.path) is None
+    version = harness.store.write(harness.path, {"state": "held"}, cas=0)
+
+    assert version == 1
+
+
+def test_a_store_that_required_it_then_refuses_an_unguarded_write(harness: Harness) -> None:
+    """End to end, and the whole point of #390: the guarantee the store arranged
+    for itself is the same one an operator's `vault kv metadata put` arranges.
+
+    The test above this one asserts the setting is reported; this asserts it
+    *bites*, through the store's own call rather than the admin helper -- which
+    is the difference between the metadata being set and the metadata being set
+    to something Vault enforces.
+    """
+    harness.store.require_cas(harness.path)
+    harness.store.write(harness.path, {"state": "held"}, cas=0)
+
+    with pytest.raises(StoreError) as caught:
+        harness.store.write(harness.path, {"state": "clobbered"}, cas=None)
+
+    assert not isinstance(caught.value, CasConflictError)
+
+
 # ------------------------------------------------------------- listing (#150) ---
 
 

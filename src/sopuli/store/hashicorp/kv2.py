@@ -51,6 +51,7 @@ from sopuli.store.protocol import (
     LIST,
     MERGE_PATCH,
     VERSIONING,
+    MetadataNotPermittedError,
     PatchNotPermittedError,
     PathMetadata,
     Stored,
@@ -210,6 +211,38 @@ class Kv2Store:
             cas_required=bool(payload.get("cas_required")),
             max_versions=None if maximum in (None, UNLIMITED) else int(maximum),
         )
+
+    def require_cas(self, path: str) -> None:
+        """``POST /v1/<mount>/metadata/<path>`` with ``cas_required: true`` (#390).
+
+        The same endpoint :meth:`metadata` reads, written rather than read. Only
+        ``cas_required`` is sent: a metadata write replaces the fields it names
+        and leaves the rest, so naming ``max_versions`` here would push this
+        store's opinion onto a housekeeping setting the lock deliberately does
+        not enforce (:meth:`~sopuli.lock.manager.LockManager.preflight`).
+
+        **403 is a policy, not a fault.** ``update`` on ``<mount>/metadata/<path>``
+        is a separate capability from the ``create``/``update`` on
+        ``<mount>/data/<path>`` that writing a record needs, so a policy written
+        for secrets alone produces this on a token that then locks perfectly
+        well. :class:`MetadataNotPermittedError` says so, and the lock degrades.
+        The asymmetry with :meth:`patch` is deliberate and the same: **401 is not
+        included**, because a token Vault will not accept is not a token some
+        policy could have saved.
+        """
+        response = self.transport.request(
+            "POST", f"{self.mount}/metadata/{path}", json={"cas_required": True}
+        )
+        if response.status == 403:
+            raise MetadataNotPermittedError(
+                f"the store refused to set `cas_required` on {path!r}",
+                hint=(
+                    "a Vault policy grants `update` on <mount>/metadata/<path> separately "
+                    f"from the data path -- add it, or run `vault kv metadata put "
+                    f"-cas-required=true {self.mount}/{path}` once"
+                ),
+            )
+        _check(response, path=path)
 
     def list(self, prefix: str) -> tuple[str, ...]:
         """Every path under ``prefix``, walked out of KV's one-level listing.

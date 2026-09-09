@@ -165,6 +165,34 @@ class PatchNotPermittedError(StoreError):
     exit_code = ExitCode.AUTH_FAILURE
 
 
+class MetadataNotPermittedError(StoreError):
+    """This store could set path metadata, and is not allowed to right now.
+
+    :meth:`SecretStore.require_cas`'s counterpart to
+    :class:`PatchNotPermittedError`, and the same distinction: not "this store
+    has no metadata" -- that is a store answering ``None`` from
+    :meth:`SecretStore.metadata`, which KV v1 always does -- but "the endpoint is
+    there and *this caller* is refused it".
+
+    On Vault that is an ordinary policy. Writing a lock record needs
+    ``create``/``update`` on ``<mount>/data/<path>``; setting ``cas_required``
+    needs ``update`` on ``<mount>/metadata/<path>``, which is a separate rule a
+    policy written for secrets alone will not carry. Measured against a real
+    Vault (#390, 2026-09-09): a token holding ``create, update, read`` on
+    ``kv/data/*`` and ``read, list`` on ``kv/metadata/*`` gets **403** from the
+    metadata write and writes the record itself perfectly well.
+
+    **The caller degrades rather than stopping**, which is why this is its own
+    exception and not a bare refusal: an estate whose token cannot set the
+    metadata is exactly as safe as it was before the tool tried, so failing the
+    run would break installs that work today over a guarantee they never had. The
+    run says so instead -- ``SOPULI-W019``.
+    """
+
+    category = "authorization"
+    exit_code = ExitCode.AUTH_FAILURE
+
+
 @dataclass(frozen=True)
 class Stored:
     """A document read from a store, and the version it was read at."""
@@ -412,6 +440,34 @@ class SecretStore(Protocol):
         ``None`` for a path that has never been written *and* never had metadata
         configured. That is the ordinary state of a lock path before the first
         lock is taken, so it is not a failure.
+        """
+        ...
+
+    def require_cas(self, path: str) -> None:
+        """Make ``path`` refuse any write that carries no compare-and-set (#390).
+
+        The write half of :meth:`metadata`, and it exists for one caller: the
+        lock's first acquisition of a path. Until #390 the guard read the
+        metadata, found none -- the ordinary state of a path nobody has locked --
+        and let the acquisition through, which then created the path with
+        ``cas_required`` unset and left every later run refused until somebody
+        set it by hand. Reading a guarantee the tool could have arranged was the
+        bug; this arranges it.
+
+        **Creating metadata does not create a version**, which is what makes this
+        safe to do before a first write. Measured against Vault 2.0.4 (#390,
+        2026-09-09): after setting ``cas_required`` on a path holding nothing,
+        ``current_version`` is 0 and the version list is empty, and the ``cas: 0``
+        write a first acquisition makes still succeeds. Were it otherwise this
+        would lock every new path out of its own first acquisition, exactly as
+        deleting a lock record does (:mod:`sopuli.store.hashicorp.kv2`).
+
+        Raises :class:`MetadataNotPermittedError` where the endpoint is there and
+        this caller may not use it. A store with no metadata at all -- KV v1,
+        whose :meth:`metadata` is always ``None`` -- raises
+        :class:`StoreError`, and is never asked: it has no :data:`CAS` capability
+        either, so the lock has already refused it or been configured
+        ``advisory-only``.
         """
         ...
 

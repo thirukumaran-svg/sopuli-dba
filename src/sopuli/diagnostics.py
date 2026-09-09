@@ -47,7 +47,7 @@ from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
 from sopuli.install_shape import INSTALLED, InstallShape
 from sopuli.lock.keys import LockKey
-from sopuli.lock.manager import LockableStore, LockManager
+from sopuli.lock.manager import LockableStore, LockManager, Unguarded
 from sopuli.lock.record import LockRecord
 from sopuli.output.document import Diagnostic, DiagnosticLevel
 from sopuli.store.protocol import OK
@@ -252,6 +252,28 @@ LOCK_LOST = "SOPULI-W011"
 #: and the one nothing else in the document says.
 ROTATION_UNCONFIRMED = "SOPULI-W012"
 
+#: A lock path was created without the store being made to require a
+#: compare-and-set on it, because this run's credential may not set metadata
+#: (#390).
+#:
+#: Emitted once per path, on the run that creates it and never again -- a path
+#: whose metadata *is* set never reaches this, and one somebody else created
+#: without it is refused outright rather than warned about.
+#:
+#: Its own code, and #216's rule is what earns it: the exit code cannot say this.
+#: The run succeeds, the lock it took was itself written under a compare-and-set,
+#: and the fence held for every mutation -- so nothing in the result is wrong.
+#: What is missing is the store enforcing the same rule on *other* writers, which
+#: is a property of the path that outlives this run and will be just as missing on
+#: the next one. That is a thing to go and fix in the vault, and nothing else in
+#: the document says it.
+#:
+#: Deliberately not a widening of :data:`ADVISORY_LOCKING`, which is the run
+#: having no fence at all by configuration. Here the run has one; it is everybody
+#: else who is unconstrained. A consumer alerting on "this estate is locking
+#: without a fence" wants the first and would be paged wrongly by the second.
+LOCK_PATH_UNGUARDED = "SOPULI-W019"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -345,6 +367,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "left -- but until the vault serves what it accepted, an application fetching "
             "`current` may get the old password. Look at the vault, not at the databases; "
             "replication lag on a store with read replicas is the ordinary cause."
+        ),
+        LOCK_PATH_UNGUARDED: (
+            "A lock path was created without `cas_required`, because this run's store "
+            "credential may not write path metadata. The run's own lock was still taken "
+            "under a compare-and-set and its fence held -- what is missing is the store "
+            "refusing an un-CAS'd write from anybody else, an operator with a vault CLI "
+            "included. Grant `update` on the mount's metadata path, or set it once by "
+            "hand; the message names the path."
         ),
         STORE_DEGRADED: (
             "A configured store answered and cannot serve this run: sealed, standing by, "
@@ -649,15 +679,42 @@ def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
 def lock_diagnostics(manager: LockManager) -> list[Diagnostic]:
     """What a run should say about the locks it took.
 
-    Both warnings describe something that *worked*, which is why they are
+    All three warnings describe something that *worked*, which is why they are
     warnings and not errors: the run holds its locks, and it holds them on terms
     the operator should be able to see afterwards without going and reading the
     config file or the vault.
     """
     return [
         *_advisory(manager.stores),
+        *(_unguarded(one) for one in manager.unguarded),
         *(_taken_over(one.key, one.broke) for one in manager.held if one.broke is not None),
     ]
+
+
+def _unguarded(one: Unguarded) -> Diagnostic:
+    """A lock path created without ``cas_required``, because the store said no (#390).
+
+    One per path rather than one per store, which is the opposite of
+    :func:`_advisory` and for the opposite reason: advisory locking is a property
+    of the store and is the same fact however many locks are held on it, while
+    this is a property of one path and the remedy names that path. A run that
+    creates three new paths under a token with no metadata write has three
+    things to go and fix.
+
+    It is only ever emitted by the run that *creates* the path, so it does not
+    repeat: the next run finds metadata, finds ``cas_required`` unset, and is
+    refused by pre-flight instead. That asymmetry is deliberate -- the first run
+    could not have known, and every one after it is looking at a condition
+    somebody has now been told about.
+    """
+    return Diagnostic(
+        level="warning",
+        code=LOCK_PATH_UNGUARDED,
+        message=(
+            f"the lock path for {one.key} is not guarded against a write carrying no "
+            f"compare-and-set: {one.reason}"
+        ),
+    )
 
 
 def _advisory(stores: Mapping[str, LockableStore]) -> list[Diagnostic]:

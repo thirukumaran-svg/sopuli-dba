@@ -1234,8 +1234,13 @@ def steal(path: str, *, at: str) -> Callable[[dict[str, Any], str], None]:
             holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
             now=utc_now(),
         )
+        # With the version the record is at, which is what a real taker passes:
+        # the path requires a compare-and-set since #390, so an unguarded write
+        # is refused by the store rather than by anything under test here.
+        key = LockKey(store="vault-prod", path=path)
+        held = harness["store"].read(lock_path(key))
         harness["store"].write(
-            lock_path(LockKey(store="vault-prod", path=path)), theirs.to_dict(), cas=None
+            lock_path(key), theirs.to_dict(), cas=None if held is None else held.version
         )
 
     return take
@@ -1442,6 +1447,19 @@ def test_a_takeover_during_the_renewal_keeps_what_the_run_applied(
     assert sum(len(session.changed) for session in harness["sessions"]) == 1
 
 
+def plant_lock(store: Any, key: LockKey, body: dict[str, Any]) -> None:
+    """Somebody else's lock record, planted the way a real run would leave it.
+
+    The `require_cas` is not decoration: since #390 an acquisition arranges that
+    guarantee on a path it creates, so a rival run's record comes with it. A
+    record planted without it describes a path *nobody's* sopuli created, which
+    pre-flight refuses on sight -- a different test from the one each caller
+    below is writing.
+    """
+    store.require_cas(lock_path(key))
+    store.write(lock_path(key), body, cas=0)
+
+
 def test_an_expired_lock_stops_a_run_that_was_not_given_permission(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
@@ -1453,7 +1471,7 @@ def test_an_expired_lock_stops_a_run_that_was_not_given_permission(
     out.
     """
     harness = estate()
-    harness["store"].write(lock_path(ALPHA_LOCK), lapsed(), cas=0)
+    plant_lock(harness["store"], ALPHA_LOCK, lapsed())
 
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
 
@@ -1477,7 +1495,7 @@ def test_break_expired_in_defaults_lets_an_unattended_run_take_the_lock(
     consulted. This is that wire, asserted where it shows: the run proceeds.
     """
     harness = estate()
-    harness["store"].write(lock_path(ALPHA_LOCK), lapsed(), cas=0)
+    plant_lock(harness["store"], ALPHA_LOCK, lapsed())
 
     result = run(runner, write_config(BREAK_EXPIRED_CONFIG), "--select", "tenant=alpha")
 
@@ -1499,7 +1517,7 @@ def test_a_takeover_says_so_in_the_output(
     does.
     """
     harness = estate()
-    harness["store"].write(lock_path(ALPHA_LOCK), lapsed(), cas=0)
+    plant_lock(harness["store"], ALPHA_LOCK, lapsed())
 
     result = run(
         runner, write_config(BREAK_EXPIRED_CONFIG), "--select", "tenant=alpha", "--output", "json"
@@ -1522,7 +1540,7 @@ def test_break_expired_in_a_profile_reaches_the_manager_too(
     `01-configuration.md` says it belongs -- "the profile is where this belongs:
     it is a property of running without anybody watching"."""
     harness = estate()
-    harness["store"].write(lock_path(ALPHA_LOCK), lapsed(), cas=0)
+    plant_lock(harness["store"], ALPHA_LOCK, lapsed())
 
     result = run(
         runner,
@@ -1543,7 +1561,7 @@ def test_a_live_lock_is_refused_even_with_break_expired(
     """The permission is for a lock past `expires_at` plus the skew margin, and
     for nothing else. A colleague mid-rotation still holds theirs."""
     harness = estate()
-    harness["store"].write(lock_path(ALPHA_LOCK), fresh(), cas=0)
+    plant_lock(harness["store"], ALPHA_LOCK, fresh())
 
     result = run(runner, write_config(BREAK_EXPIRED_CONFIG), "--select", "tenant=alpha")
 

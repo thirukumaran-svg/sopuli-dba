@@ -1618,8 +1618,28 @@ version history stays clean for `previous` and rollback.
 Pre-flight asserts `cas_required` on the lock path rather than assuming it: that
 setting is what stops a *different* writer — an operator with a vault CLI — from
 replacing the record without a compare-and-set, and the tool cannot claim a
-guarantee it has not checked. A path with no metadata at all is the ordinary
-state before the first lock and is not a failure.
+guarantee it has not checked.
+
+**On a path with no metadata at all — the ordinary state before the first lock —
+pre-flight sets it** (#390). It used to read the absence as "new path, nothing to
+check" and go ahead, which created the path with `cas_required` unset and left
+every later run refused by the assertion above until somebody set it by hand.
+Reading a guarantee the tool could have arranged was the bug, and arranging it is
+safe to do first: configuring a path does not create a version, so the `cas: 0`
+write a first acquisition makes still succeeds (measured on Vault 2.0.4).
+
+What the fix does *not* close is a gap between runs of this tool. A first
+acquisition has always written with `cas: 0`, which succeeds only against a path
+with no history, so two runs racing for a new lock have always had exactly one
+winner. What was missing is the **store** enforcing on everybody else what the
+tool already did voluntarily.
+
+Where the store will not have it — Vault grants metadata writes as a capability
+separate from data writes, so an ordinary policy refuses this one call — the run
+goes ahead and reports `SOPULI-W019`. Stopping would break an install over a
+guarantee it never had; the honest answer is that the path is unguarded, said out
+loud, with the remedy named. The next run then meets the exit-5 refusal below,
+which is correct: by then somebody has been told.
 
 **Both pre-flight refusals are exit 5, not exit 7** (#346). Neither is a held
 lock — one is a store with no compare-and-set that nobody marked

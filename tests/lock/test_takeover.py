@@ -91,6 +91,12 @@ class Unfenced:
     def metadata(self, path: str) -> PathMetadata | None:  # pragma: no cover - not asked
         return None
 
+    def require_cas(self, path: str) -> None:  # pragma: no cover - never reached
+        raise AssertionError(
+            "a store that cannot fence has no compare-and-set to require, and must be "
+            "refused before anything asks it to"
+        )
+
     def list(self, prefix: str) -> tuple[str, ...]:  # pragma: no cover - not asked
         return ()
 

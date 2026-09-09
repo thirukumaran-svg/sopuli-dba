@@ -874,8 +874,13 @@ def steal(path: str, *, at: str) -> Callable[[dict[str, Any], str], None]:
             holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
             now=utc_now(),
         )
+        # With the version the record is at, which is what a real taker passes:
+        # the path requires a compare-and-set since #390, so an unguarded write
+        # is refused by the store rather than by anything under test here.
+        key = LockKey(store="vault-prod", path=path)
+        held = harness["store"].read(lock_path(key))
         harness["store"].write(
-            lock_path(LockKey(store="vault-prod", path=path)), theirs.to_dict(), cas=None
+            lock_path(key), theirs.to_dict(), cas=None if held is None else held.version
         )
 
     return take

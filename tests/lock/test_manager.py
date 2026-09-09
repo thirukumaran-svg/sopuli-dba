@@ -39,7 +39,7 @@ from sopuli.lock import (
     lock_path,
 )
 from sopuli.store import MemoryStore, PathMetadata, Stored
-from sopuli.store.protocol import StoreError
+from sopuli.store.protocol import MetadataNotPermittedError, StoreError
 
 STORE = "vault-prod"
 KEY = LockKey(store=STORE, path="apps/acme/db")
@@ -364,7 +364,13 @@ def test_a_record_rewritten_by_someone_else_is_caught_by_the_correlation_id() ->
     theirs = LockRecord.acquired(
         correlation_id="01JTHEIRS", command="creds rotate", holder=HOLDER, now=NOW
     )
-    store.write(lock_path(KEY), theirs.to_dict(), cas=None)
+    # Under a CAS, as a real taker's write is: since #390 the acquisition sets
+    # `cas_required` on the path, so an unguarded write is refused by the store
+    # itself -- which is the point of that change and not an obstacle to this
+    # test. What is being exercised here is the fence *matching* and the record
+    # having changed anyway, so the next line puts the fence back where the
+    # takeover left it.
+    store.write(lock_path(KEY), theirs.to_dict(), cas=run.held[0].fence)
     run.held[0].fence = store.read(lock_path(KEY)).version  # type: ignore[union-attr]
 
     with pytest.raises(LockStolenError) as caught:
@@ -830,6 +836,107 @@ def test_a_path_with_no_metadata_at_all_is_fine() -> None:
     manager(store).acquire([KEY])
 
     assert record_at(store)["state"] == "held"
+
+
+# ------------------------------------- arranging the guarantee (#390) ---
+
+
+def test_a_first_acquisition_makes_the_path_require_a_compare_and_set() -> None:
+    """#390. The path is new, so this run's acquisition is what creates it -- and
+    the metadata it is created with is what every later run is judged against."""
+    store = MemoryStore()
+
+    manager(store).acquire([KEY])
+
+    metadata = store.metadata(lock_path(KEY))
+    assert metadata is not None
+    assert metadata.cas_required is True
+
+
+def test_the_second_run_on_a_path_this_tool_created_is_not_refused() -> None:
+    """The bug in one test (#390).
+
+    A first acquisition used to create the path with `cas_required` unset,
+    because there was no metadata to read and nothing arranged any. The check
+    above then refused every run after it, so the tool locked a new path once
+    and never again until somebody ran `vault kv metadata put` by hand.
+    """
+    store = MemoryStore()
+    first = manager(store)
+    first.acquire([KEY])
+    first.release()
+
+    manager(store, correlation_id="01JSECOND").acquire([KEY])
+
+    assert record_at(store)["correlation_id"] == "01JSECOND"
+
+
+def test_what_the_first_acquisition_buys_is_refusing_somebody_elses_write() -> None:
+    """Not protection from another *run* -- there never was a gap there.
+
+    A first acquisition writes with `cas: 0`, which succeeds only against a path
+    with no history, so two runs racing for a new lock have always had one
+    winner. What was missing is the store refusing an un-CAS'd write from
+    anybody else: an operator with a vault CLI, a script, another tool.
+    """
+    store = MemoryStore()
+    manager(store).acquire([KEY])
+
+    with pytest.raises(StoreError):
+        store.write(lock_path(KEY), {"state": "clobbered"}, cas=None)
+
+
+def test_a_store_that_cannot_fence_is_never_asked_to_require_one() -> None:
+    """Advisory-only: there is no compare-and-set to require, and asking would
+    be a call the store answers with an exception on every run."""
+    store = MemoryStore(capabilities=frozenset())
+    asked: list[str] = []
+    store.require_cas = lambda path: asked.append(path)  # type: ignore[method-assign]
+
+    manager(store, locking=LOCK_ADVISORY_ONLY).acquire([KEY])
+
+    assert asked == []
+
+
+def test_a_store_that_will_not_set_the_metadata_is_a_warning_and_not_a_refusal() -> None:
+    """Degrade, do not stop (#390).
+
+    Setting metadata is a separate Vault capability from writing the record, so
+    a token that has locked correctly for a year can refuse this one call. The
+    run is then exactly as safe as it was before the tool asked, and failing it
+    would break an install over a guarantee it never had.
+    """
+    store = MemoryStore()
+
+    def refuse(path: str) -> None:
+        raise MetadataNotPermittedError(f"the store refused to set `cas_required` on {path!r}")
+
+    store.require_cas = refuse  # type: ignore[method-assign]
+    run = manager(store)
+
+    run.acquire([KEY])
+
+    assert record_at(store)["state"] == "held"
+    assert [one.key for one in run.unguarded] == [KEY]
+    assert "cas_required" in run.unguarded[0].reason
+
+
+def test_a_store_failing_the_metadata_write_for_any_other_reason_stops_the_run() -> None:
+    """The refusal that is softened is a *policy*, and only that one.
+
+    Anything else is a store failing at a write whose shape it accepted, which is
+    not something to carry on through -- the next thing this run does is take a
+    lock on it.
+    """
+    store = MemoryStore()
+
+    def fail(path: str) -> None:
+        raise StoreError("the store fell over")
+
+    store.require_cas = fail  # type: ignore[method-assign]
+
+    with pytest.raises(StoreError):
+        manager(store).acquire([KEY])
 
 
 def test_max_versions_is_not_enforced() -> None:

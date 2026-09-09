@@ -148,6 +148,27 @@ class Kv1Store:
         """
         return None
 
+    def require_cas(self, path: str) -> None:
+        """Always raises. A v1 mount has no metadata to set (#390).
+
+        The mirror of :meth:`metadata` answering ``None``, and a raise rather
+        than a silent no-op for the reason that method gives at greater length:
+        "there is nothing to configure here" and "it is configured" are answers a
+        caller must never confuse, and a no-op would let the lock report a
+        guarantee this mount cannot make.
+
+        **Nothing reaches it.** A v1 mount has no :data:`~sopuli.store.protocol.CAS`
+        capability, so the lock has already refused it or been configured
+        ``locking: advisory-only``, where there is no compare-and-set to require.
+        """
+        raise StoreError(
+            f"a KV v1 mount cannot require a compare-and-set on {path!r}",
+            hint=(
+                "there is no metadata endpoint on a v1 mount, and no compare-and-set to "
+                "require -- this store locks under `locking: advisory-only` or not at all"
+            ),
+        )
+
     def list(self, prefix: str) -> tuple[str, ...]:
         """Every path under ``prefix``. The same walk as v2, one endpoint shorter.
 
