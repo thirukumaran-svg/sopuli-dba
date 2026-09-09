@@ -27,6 +27,7 @@ import pytest
 
 from sopuli.driver.oracle.privileges import (
     FORBIDDEN_ROLES,
+    NO_COMMON_COLUMN,
     PASSWORD_FILE_PRIVILEGES,
     PWFILE_HELD,
     PWFILE_QUERY,
@@ -34,6 +35,7 @@ from sopuli.driver.oracle.privileges import (
     REQUIRED_READS,
     ROOT_ONLY_READS,
     UNAUDITABLE,
+    _common_privileges,
     classify,
 )
 from sopuli.driver.protocol import PrivilegeAudit
@@ -447,3 +449,49 @@ def test_nothing_expected_means_nothing_reported_either_way() -> None:
 
     assert audit.held == ("ALTER USER", "CREATE SESSION")
     assert audit.missing == ()
+
+
+# ------------------------------------------------- a release with no containers ---
+
+
+class _RaisingCursor:
+    """A cursor that fails one query the way a real server does."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def execute(self, sql: str, parameters: object = None, /) -> None:
+        raise self.error
+
+    def fetchall(self) -> list[object]:  # pragma: no cover -- execute raises first
+        return []
+
+
+def _ora(code: str) -> Exception:
+    return RuntimeError(f"{code}: invalid identifier")
+
+
+def test_a_release_with_no_common_column_reports_nothing_common() -> None:
+    """11.2 has no containers, so no privilege can be common.
+
+    `USER_SYS_PRIVS.COMMON` arrived with multitenant in 12.1, and on 11g XE the
+    query is `ORA-00904` -- which took the whole of `doctor --check-privileges`
+    down with it until #382: the target reported `-` for scope, `0` capabilities
+    and a bare ORA- code, while still exiting 0.
+
+    An empty set rather than an unknown, because "none are common" is the true
+    answer on a database with no containers rather than a degraded one.
+    """
+    assert _common_privileges(_RaisingCursor(_ora(NO_COMMON_COLUMN))) == frozenset()
+
+
+def test_any_other_failure_from_that_query_still_raises() -> None:
+    """The narrow catch is the point, and `ORA-01031` is why it is narrow.
+
+    `USER_SYS_PRIVS` is granted to PUBLIC, so a refusal is a finding worth
+    raising rather than swallowing -- and "the read was refused" is not the same
+    fact as "nothing is common". Reading it as one would report a clean audit for
+    an account nobody could inspect.
+    """
+    with pytest.raises(RuntimeError):
+        _common_privileges(_RaisingCursor(_ora("ORA-01031")))

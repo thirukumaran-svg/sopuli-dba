@@ -24,6 +24,8 @@ from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Targ
 from sopuli.driver.oracle.capabilities import (
     APPLICATION_PDB,
     APPLICATION_ROOT,
+    CONTAINER_NAME,
+    NO_CONTAINERS,
     PROBES,
     ProbeError,
     ScopeAssertionError,
@@ -113,6 +115,22 @@ def test_the_application_container_questions_are_ones_oracle_can_answer(
         _session(session_module, live_oracle.dsn) as session,
         session.connection.cursor() as cursor,
     ):
+        # The one release where `ORA-02003` is not a typo, told apart from a typo
+        # by a *correctly spelled* attribute of the same family (#382).
+        # `CON_NAME` exists on every release from 12.1; where it raises too, this
+        # database has no containers at all and the two below cannot exist by
+        # definition. Where it answers and they do not, the statement is wrong --
+        # which is the case this test exists to catch, and it is still caught.
+        try:
+            cursor.execute(CONTAINER_NAME)
+        except Exception as error:  # noqa: BLE001 -- classified on the next line
+            # `ORA-02003` only. Skipping on anything else would let a broken
+            # connection look like an old release, and this test's whole value is
+            # that it does not accept that code as an excuse -- see above.
+            if NO_CONTAINERS not in str(error):
+                raise
+            pytest.skip("this release has no containers, so no application containers either")
+
         for statement in (APPLICATION_ROOT, APPLICATION_PDB):
             cursor.execute(statement)
             row = cursor.fetchone()
@@ -191,7 +209,13 @@ def test_a_wrong_container_is_caught_against_a_real_database(
         message = str(raised.value)
         assert "ACME_NO_SUCH_CONTAINER" in message, "the declared value has to be named"
         found = session.scope().container
-        assert found is not None
+        if found is None:
+            # A non-CDB has no container to name, and the refusal still fires on
+            # the declaration alone -- measured on 11g, where the message reads
+            # `found scope='non_cdb' container=None` (#382). The assertion below
+            # is about the *found* name appearing next to the declared one, which
+            # needs there to be a found one.
+            return
         assert found in message, "and so does the one the connection actually found"
 
 

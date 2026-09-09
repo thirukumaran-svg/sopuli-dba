@@ -14,7 +14,12 @@
 --         what makes the section 4 queries mean anything -- see
 --         02_password_leak_probe.sql section 1.
 --         Confirmed on 18c XE 18.4.0.0.0 (2026-09-08, #381), same route and
---         the same AUDIT_TRAIL caveat. Untried on 19c and 11.2.
+--         the same AUDIT_TRAIL caveat.
+--         Run on 11g XE 11.2.0.2.0 (2026-09-08, #382), where it now REFUSES:
+--         audit policies arrived in 12.1 and section 0 stops with ORA-20020
+--         naming the release and the traditional-auditing statement to use
+--         instead. Before that it produced four ORA-00942s and left the
+--         reader to work out why. Untried on 19c.
 --
 -- The service account holds ALTER USER, which has no object scope. Unified
 -- auditing is therefore not housekeeping — it is the compensating control for
@@ -52,6 +57,48 @@ SELECT NULL AS "1" FROM dual WHERE 1 = 0;
 COLUMN p_user NEW_VALUE svc_user NOPRINT
 SELECT NVL('&1', 'C##SOPULI_SVC') AS p_user FROM dual;
 SET TERMOUT ON
+
+--------------------------------------------------------------------------------
+-- 0. Unified auditing, or nothing this script can do
+--
+-- Every statement below is `CREATE AUDIT POLICY` / `AUDIT POLICY`, which arrived
+-- in 12.1. On 11.2 the whole file is `ORA-00942: table or view does not exist`
+-- against `AUDIT_UNIFIED_POLICIES`, four times, wrapped in `ORA-06550` -- an
+-- operator is told a view is missing and left to work out which release they are
+-- on and why (measured on 11g XE 11.2.0.2.0, #382; the script exited 150, so it
+-- did at least fail rather than pretend).
+--
+-- **The refusal is the fix, not an 11.2 path.** Traditional `AUDIT ALTER USER`
+-- into `DBA_AUDIT_TRAIL` is the equivalent there, and adding it would be a
+-- second audit story for the tool to own -- `02-oracle-privileges.md` §5 is
+-- written entirely around unified auditing, and what it should say about a
+-- release without it is a design decision rather than a missing statement
+-- (#382). Until that is answered, this stops early and says which release it
+-- needs, so the operator can decide rather than debug.
+--------------------------------------------------------------------------------
+DECLARE
+  l_cnt PLS_INTEGER;
+BEGIN
+  BEGIN
+    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM audit_unified_policies WHERE ROWNUM = 1'
+      INTO l_cnt;
+  EXCEPTION
+    WHEN OTHERS THEN
+      -- ORA-00942 only: the view is not there, which is what "no unified
+      -- auditing" looks like. ORA-01031 from the same read would mean the
+      -- session may not look, and rewriting that as "this release needs 12.1"
+      -- would send an operator to upgrade a database that is already new enough.
+      IF SQLCODE != -942 THEN
+        RAISE;
+      END IF;
+      RAISE_APPLICATION_ERROR(-20020,
+        'unified auditing is not available on this release (needs 12.1 or later): '
+        || SQLERRM || '. Audit ALTER USER with traditional auditing instead -- '
+        || 'AUDIT ALTER USER BY ACCESS; and set AUDIT_TRAIL = db,extended -- '
+        || 'and see docs/design/02-oracle-privileges.md section 5');
+  END;
+END;
+/
 
 --------------------------------------------------------------------------------
 -- 1. Audit every user-management statement, by anyone

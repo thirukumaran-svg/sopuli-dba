@@ -15,7 +15,13 @@
 --         on every line before 23ai, so section 1 failed having created
 --         nothing. Now 30.
 --         Confirmed on 18c XE 18.4.0.0.0 (2026-09-08, #381), XEPDB1 and
---         CDB$ROOT, same route. Untried on 19c and 11.2.
+--         CDB$ROOT, same route.
+--         Confirmed on 11g XE 11.2.0.2.0 (2026-09-08, #382) in NONCDB mode,
+--         which had never run anywhere. Two things stopped it there and both
+--         are fixed here: SYS_CONTEXT('USERENV','CON_NAME') RAISES on a
+--         non-CDB (ORA-02003) rather than answering NULL, and section 7's
+--         report selected DBA_SYS_PRIVS.COMMON, a 12.1 column, which failed
+--         the whole install AFTER every grant had been made. Untried on 19c.
 --         Review before running; try a throwaway DB first.
 --
 --         grant_pwfile (position 6) added and run on the same release
@@ -114,11 +120,43 @@ COLUMN eff_user  NEW_VALUE eff_user
 COLUMN cont_all  NEW_VALUE cont_all
 COLUMN cont_note NEW_VALUE cont_note
 
+-- **`CON_NAME` raises on a non-CDB rather than answering NULL.** `ORA-02003:
+-- invalid USERENV parameter`, measured on 11g XE 11.2.0.2.0 (#382) -- so an
+-- `NVL` around it does nothing and a bare SELECT takes the whole script down
+-- before it prints its banner. It is read in PL/SQL with a handler instead, and
+-- the sanity block below does the same for the same reason.
+--
+-- `NON-CDB` rather than NULL, because the value is compared: the block below
+-- refuses `mode=COMMON` unless the session is in `CDB$ROOT`, and a NULL would
+-- make that comparison unknown and the refusal silently not happen. A non-CDB
+-- has no common users, so being refused there is correct and the message says
+-- what it found.
+SET TERMOUT OFF
+VARIABLE con_name VARCHAR2(128)
+BEGIN
+  BEGIN
+    SELECT SYS_CONTEXT('USERENV','CON_NAME') INTO :con_name FROM dual;
+  EXCEPTION
+    WHEN OTHERS THEN
+      -- ORA-02003 only. It is the one code here that carries information --
+      -- 11.2 saying it has never heard of containers -- and the driver makes the
+      -- same narrowing for the same query (capabilities.NO_CONTAINERS). Anything
+      -- else is a real fault, and swallowing it would install under a container
+      -- name this script invented.
+      IF SQLCODE != -2003 THEN
+        RAISE;
+      END IF;
+      :con_name := 'NON-CDB';
+  END;
+END;
+/
+SET TERMOUT ON
+
 SELECT CASE WHEN UPPER('&mode') = 'COMMON' THEN 'C##&svc_name'
             ELSE '&svc_name' END                        AS eff_user,
        CASE WHEN UPPER('&mode') = 'COMMON' THEN ' CONTAINER=ALL'
             ELSE '' END                                 AS cont_all,
-       SYS_CONTEXT('USERENV','CON_NAME')                AS cont_note
+       :con_name                                        AS cont_note
   FROM dual;
 
 PROMPT ============================================================
@@ -134,8 +172,20 @@ PROMPT ============================================================
 PROMPT
 PROMPT [check] session container is valid for mode=&mode
 DECLARE
-  l_con VARCHAR2(128) := SYS_CONTEXT('USERENV','CON_NAME');
+  l_con VARCHAR2(128);
 BEGIN
+  -- Assigned in the body and not in the DECLARE: an exception raised while
+  -- initialising a declaration propagates *out* of the block, so a handler down
+  -- here would never see it. That is what `ORA-02003` did on 11.2 (#382).
+  BEGIN
+    l_con := SYS_CONTEXT('USERENV','CON_NAME');
+  EXCEPTION
+    WHEN OTHERS THEN
+      IF SQLCODE != -2003 THEN
+        RAISE;   -- see the same narrowing above
+      END IF;
+      l_con := 'NON-CDB';
+  END;
   IF UPPER('&mode') = 'COMMON' AND l_con != 'CDB$ROOT' THEN
     RAISE_APPLICATION_ERROR(-20010,
       'mode=COMMON must be run in CDB$ROOT; this session is in ' || l_con);
@@ -258,9 +308,21 @@ END;
 PROMPT
 PROMPT [5] optional: SET CONTAINER (grant_set_container=&grant_set_container)
 BEGIN
-  IF UPPER('&grant_set_container') = 'Y' AND UPPER('&mode') = 'COMMON' THEN
+  IF UPPER('&grant_set_container') != 'Y' THEN
+    NULL;
+  ELSIF UPPER('&mode') = 'COMMON' THEN
     EXECUTE IMMEDIATE 'GRANT SET CONTAINER TO &eff_user CONTAINER=ALL';
     DBMS_OUTPUT.PUT_LINE('granted SET CONTAINER');
+  ELSE
+    -- Asked for and not applicable, which is not the same as not asked for.
+    -- SET CONTAINER moves a session between containers, so it means nothing in
+    -- PDB or NONCDB mode and nothing at all on a release with no containers.
+    -- Said out loud because the alternative is a parameter that was honoured and
+    -- one that was ignored looking identical -- the failure mode #231 found
+    -- twice in this file (#382).
+    DBMS_OUTPUT.PUT_LINE('SET CONTAINER not granted: mode=&mode installs a local '
+                      || 'account in one container, so there is nowhere to switch to. '
+                      || 'The grant is COMMON-mode only.');
   END IF;
 END;
 /
@@ -308,8 +370,28 @@ COLUMN table_name FORMAT A20
 PROMPT
 PROMPT [7] report: exactly what this account now holds
 PROMPT
+-- `DBA_SYS_PRIVS.COMMON` arrived with multitenant in 12.1. On 11.2 naming it is
+-- `ORA-00904`, and under this file's `WHENEVER SQLERROR EXIT SQL.SQLCODE` that
+-- takes the whole install down **after every grant has already been made** --
+-- measured on 11g XE 11.2.0.2.0 (#382): the account existed, held exactly the
+-- right grants, and the script exited 136. A report is diagnostic and must never
+-- be the reason an install fails.
+--
+-- Resolved rather than branched on a version (invariant 3 in the small): ask the
+-- dictionary whether the column is there, and select a literal in its place
+-- where it is not. `COUNT(*)` and not `EXISTS`, which 11.2 does not allow in a
+-- SELECT list.
+SET TERMOUT OFF
+COLUMN p_common NEW_VALUE common_col NOPRINT
+SELECT CASE WHEN (SELECT COUNT(*) FROM dba_tab_columns
+                   WHERE table_name = 'DBA_SYS_PRIVS' AND column_name = 'COMMON') > 0
+            THEN 'common'
+            ELSE '''n/a'' AS common' END AS p_common
+  FROM dual;
+SET TERMOUT ON
+
 PROMPT --- system privileges
-SELECT privilege, common FROM dba_sys_privs WHERE grantee = UPPER('&eff_user');
+SELECT privilege, &common_col FROM dba_sys_privs WHERE grantee = UPPER('&eff_user');
 
 PROMPT --- roles (expect none)
 SELECT granted_role FROM dba_role_privs WHERE grantee = UPPER('&eff_user');

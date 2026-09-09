@@ -12,7 +12,9 @@
 --         tests/driver/test_oracle_install_script.py, both keep_audit
 --         settings.
 --         Confirmed on 18c XE 18.4.0.0.0 (2026-09-08, #381), same route.
---         Untried on 19c and 11.2.
+--         Confirmed on 11g XE 11.2.0.2.0 (2026-09-08, #382) for the account
+--         and its grants. The keep_audit paths are untestable there --
+--         there are no audit policies to keep or drop. Untried on 19c.
 --
 -- Removes the service account and the audit policies. Does NOT change any
 -- application account's password — whatever the tool last applied stays in

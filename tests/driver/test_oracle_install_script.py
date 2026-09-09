@@ -432,8 +432,112 @@ def drop(container: str, connect: str, account: str) -> None:
     )
 
 
+@pytest.fixture(scope="session")
+def is_cdb(container: str) -> bool:
+    """Whether this container holds a CDB, asked of the server.
+
+    `SYS_CONTEXT('USERENV','CON_NAME')` **raises** on a non-CDB rather than
+    answering NULL: `ORA-02003: invalid USERENV parameter`, measured on 11g XE
+    11.2.0.2.0 (#382). So the question is answered by whether the query runs at
+    all, which is the same reading `capabilities.NO_CONTAINERS` makes in the
+    driver and `00_install.sql` makes in its own guard.
+
+    Session-scoped: a container does not stop being a CDB between tests, and this
+    is a `docker exec` per call.
+    """
+    probe = _exec(
+        container,
+        ROOT,
+        script=(
+            "WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+            "SET HEADING OFF PAGESIZE 0 FEEDBACK OFF\n"
+            "SELECT sys_context('userenv','con_name') FROM dual;\nEXIT\n"
+        ),
+    )
+    return probe.returncode == 0
+
+
 @pytest.fixture
-def clean(container: str, scripts: str) -> Iterator[None]:
+def local_connect(is_cdb: bool) -> str:
+    """Where a *local* service account goes: the PDB on a CDB, the database
+    itself on a non-CDB.
+
+    `PDB` and `NONCDB` modes both install a local account and differ only in
+    which guard they pass, so on a non-CDB the account belongs in the one
+    container there is. Hard-coding `PDB` here is what made
+    `test_noncdb_mode_installs_the_same_local_account` fail on 11g with
+    `ORA-12514` — a test about the non-CDB mode that could only run on a CDB.
+    """
+    return PDB if is_cdb else ROOT
+
+
+@pytest.fixture(scope="session")
+def has_unified_audit(container: str) -> bool:
+    """Whether this release has unified auditing, asked of the server.
+
+    `AUDIT_UNIFIED_POLICIES` arrived in 12.1. On 11.2 it is `ORA-00942`, and
+    `01_audit_policy.sql` refuses with `ORA-20020` rather than running (#382).
+    """
+    probe = _exec(
+        container,
+        ROOT,
+        script=(
+            "WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+            "SET HEADING OFF PAGESIZE 0 FEEDBACK OFF\n"
+            "SELECT COUNT(*) FROM audit_unified_policies WHERE ROWNUM = 1;\nEXIT\n"
+        ),
+    )
+    return probe.returncode == 0
+
+
+@pytest.fixture
+def unified_audit_only(has_unified_audit: bool) -> None:
+    """Skip where the release has no unified auditing to police.
+
+    Not a coverage gap: `01_audit_policy.sql` creates audit *policies*, which do
+    not exist before 12.1, and what the tool should do about auditing on such a
+    release is an open decision rather than a missing statement (#382). The
+    refusal itself is covered by `test_the_audit_script_refuses_a_release_without_unified_auditing`.
+    """
+    if not has_unified_audit:
+        pytest.skip("this release has no unified auditing: audit policies do not exist")
+
+
+@pytest.fixture
+def install_mode(is_cdb: bool) -> str:
+    """`COMMON` where there is a root to install into, `NONCDB` otherwise.
+
+    Several tests below are about something else entirely -- the optional grants,
+    re-running the script, the uninstall -- and used `COMMON` only because it is
+    the script's default. On a non-CDB that is `ORA-20010` from the mode guard,
+    which is the guard working and the test asking the wrong question (#382).
+    Both modes run in the only container there is, so only the mode and the
+    account name change.
+    """
+    return "COMMON" if is_cdb else "NONCDB"
+
+
+@pytest.fixture
+def install_account(is_cdb: bool) -> str:
+    """The account name `install_mode` will produce. `COMMON` prefixes `C##`."""
+    return COMMON_SVC if is_cdb else LOCAL_SVC
+
+
+@pytest.fixture
+def cdb_only(is_cdb: bool) -> None:
+    """Skip where the container has no containers.
+
+    `COMMON` mode needs `CDB$ROOT` and `PDB` mode needs a PDB; neither exists on
+    a non-CDB, and neither is a gap in coverage there — a release with no
+    containers has no common users to install for. `NONCDB` mode is what these
+    two become, and it has its own test.
+    """
+    if not is_cdb:
+        pytest.skip("this container is a non-CDB: COMMON and PDB modes do not apply")
+
+
+@pytest.fixture
+def clean(container: str, scripts: str, is_cdb: bool) -> Iterator[None]:
     """No test account before or after, in either container.
 
     Dropped **after** as well as before. A fixture whose recovery is "the next one
@@ -441,7 +545,8 @@ def clean(container: str, scripts: str) -> Iterator[None]:
     developer's own instance is litter and on a shared one is worse -- the same
     finding review raised against `test_oracle_service_account.py` (#226).
     """
-    accounts = ((ROOT, COMMON_SVC), (ROOT, COMMON_SVC_OTHER), (PDB, LOCAL_SVC))
+    local = PDB if is_cdb else ROOT
+    accounts = ((ROOT, COMMON_SVC), (ROOT, COMMON_SVC_OTHER), (local, LOCAL_SVC))
     for connect, account in accounts:
         drop(container, connect, account)
     yield
@@ -453,7 +558,7 @@ def clean(container: str, scripts: str) -> Iterator[None]:
 
 
 def test_common_install_grants_exactly_what_the_tool_requires(
-    container: str, scripts: str, clean: None
+    container: str, scripts: str, clean: None, cdb_only: None
 ) -> None:
     """`COMMON` in `CDB$ROOT`: the documented install, asserted both ways.
 
@@ -471,7 +576,7 @@ def test_common_install_grants_exactly_what_the_tool_requires(
 
 
 def test_pdb_install_is_local_and_omits_the_root_only_read(
-    container: str, scripts: str, clean: None
+    container: str, scripts: str, clean: None, cdb_only: None
 ) -> None:
     """`PDB` mode: no `C##` prefix, and no `V_$PDBS`.
 
@@ -491,23 +596,30 @@ def test_pdb_install_is_local_and_omits_the_root_only_read(
 
 
 def test_noncdb_mode_installs_the_same_local_account(
-    container: str, scripts: str, clean: None
+    container: str, scripts: str, clean: None, local_connect: str
 ) -> None:
     """`NONCDB` differs from `PDB` only in which guard it passes.
 
     Worth its own test rather than an assumption: the two modes reach the same
     grants by different branches, and the sanity check treats them differently.
+
+    **`local_connect`, not `PDB`.** This is the one mode test that has to run on
+    an actual non-CDB, and it was the one that could not: the hard-coded PDB
+    service is `ORA-12514` on 11g, so the test named after the mode was the only
+    one in the module that had never met it (#382).
     """
-    result = sqlplus(container, PDB, f"{scripts}/00_install.sql", "NONCDB", SVC)
+    result = sqlplus(container, local_connect, f"{scripts}/00_install.sql", "NONCDB", SVC)
     assert result.returncode == 0, result.stdout[-2000:]
-    assert grants_of(container, PDB, LOCAL_SVC) == set(REQUIRED_PRIVILEGES) | set(REQUIRED_READS)
+    assert grants_of(container, local_connect, LOCAL_SVC) == set(REQUIRED_PRIVILEGES) | set(
+        REQUIRED_READS
+    )
 
 
 # --------------------------------------------------------------- the guards ---
 
 
 def test_common_mode_refuses_to_run_outside_the_root(
-    container: str, scripts: str, clean: None
+    container: str, scripts: str, clean: None, cdb_only: None
 ) -> None:
     """`PDB` mode in `CDB$ROOT` is refused, and the refusal is non-zero.
 
@@ -534,58 +646,77 @@ def test_an_unknown_mode_is_refused_before_anything_is_created(
 
 
 def test_the_optional_grants_are_off_unless_asked_for(
-    container: str, scripts: str, clean: None
+    container: str, scripts: str, clean: None, install_mode: str, install_account: str
 ) -> None:
     """`SYS.USER$` and `SET CONTAINER` are opt-in, and both directions matter.
 
     §2 calls them optional; #86 makes `SYS.USER$`'s absence the ordinary
     configuration rather than a fault. A default that quietly granted either
     would hand every install a password-verifier read nobody asked for.
+
+    **`SET CONTAINER` is asserted only in `COMMON` mode**, because it is only
+    granted there: it moves a session between containers, so it means nothing to
+    a local account in one container and nothing at all on 11.2. The script says
+    so now rather than skipping in silence, and that sentence is asserted here --
+    a parameter that was honoured and one that was ignored used to look identical
+    (#382).
     """
-    assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
-    default = grants_of(container, ROOT, COMMON_SVC)
+    first = sqlplus(container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC)
+    assert first.returncode == 0, first.stdout[-2000:]
+    default = grants_of(container, ROOT, install_account)
     assert "SELECT ON USER$" not in default
     assert "SET CONTAINER" not in default
 
-    result = sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC, "USERS", "Y", "Y")
+    result = sqlplus(
+        container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC, "USERS", "Y", "Y"
+    )
     assert result.returncode == 0, result.stdout[-2000:]
-    asked = grants_of(container, ROOT, COMMON_SVC)
+    asked = grants_of(container, ROOT, install_account)
     assert "SELECT ON USER$" in asked
-    assert "SET CONTAINER" in asked
+    if install_mode == "COMMON":
+        assert "SET CONTAINER" in asked
+    else:
+        assert "SET CONTAINER" not in asked
+        assert "SET CONTAINER not granted" in result.stdout, "asked for, skipped, and said so"
 
 
-def test_installing_twice_changes_nothing(container: str, scripts: str, clean: None) -> None:
+def test_installing_twice_changes_nothing(
+    container: str, scripts: str, clean: None, install_mode: str, install_account: str
+) -> None:
     """Invariant 9, at the level of the script an operator re-runs.
 
     The second run must leave the same grants and must not fail on the account it
     created itself -- `CREATE USER` on an existing account is `ORA-01920`, and the
     existence check is what stops it.
     """
-    first = sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC)
+    first = sqlplus(container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC)
     assert first.returncode == 0, first.stdout[-2000:]
-    before = grants_of(container, ROOT, COMMON_SVC)
+    before = grants_of(container, ROOT, install_account)
 
-    second = sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC)
+    second = sqlplus(container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC)
     assert second.returncode == 0, second.stdout[-2000:]
     assert "already exists" in second.stdout
-    assert grants_of(container, ROOT, COMMON_SVC) == before
+    assert grants_of(container, ROOT, install_account) == before
 
 
 # ------------------------------------------------------------- the uninstall ---
 
 
 def test_uninstall_removes_the_account_and_every_grant_with_it(
-    container: str, scripts: str, clean: None
+    container: str, scripts: str, clean: None, install_mode: str, install_account: str
 ) -> None:
     """Dropping the account takes the grants, which is what `99` claims."""
-    assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
-    assert grants_of(container, ROOT, COMMON_SVC)
+    installed = sqlplus(container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC)
+    assert installed.returncode == 0, installed.stdout[-2000:]
+    assert grants_of(container, ROOT, install_account)
 
-    result = sqlplus(container, ROOT, f"{scripts}/99_uninstall.sql", COMMON_SVC)
+    result = sqlplus(container, ROOT, f"{scripts}/99_uninstall.sql", install_account)
     assert result.returncode == 0, result.stdout[-2000:]
-    assert grants_of(container, ROOT, COMMON_SVC) == set()
+    assert grants_of(container, ROOT, install_account) == set()
     assert (
-        query(container, ROOT, f"SELECT username FROM dba_users WHERE username = '{COMMON_SVC}';")
+        query(
+            container, ROOT, f"SELECT username FROM dba_users WHERE username = '{install_account}';"
+        )
         == []
     )
 
@@ -602,7 +733,7 @@ def _policies(container: str) -> set[str]:
 
 
 def test_uninstall_with_keep_audit_n_drops_every_policy(
-    container: str, scripts: str, clean: None
+    container: str, scripts: str, clean: None, cdb_only: None, unified_audit_only: None
 ) -> None:
     """`keep_audit=N` removes both policies. Regression for #231's third bug.
 
@@ -626,7 +757,7 @@ def test_uninstall_with_keep_audit_n_drops_every_policy(
 
 
 def test_uninstall_with_keep_audit_n_drops_a_policy_another_install_enabled(
-    container: str, scripts: str, clean: None
+    container: str, scripts: str, clean: None, cdb_only: None, unified_audit_only: None
 ) -> None:
     """Two installs, then uninstall one. This is the case that finds the bug.
 
@@ -669,7 +800,7 @@ def test_uninstall_with_keep_audit_n_drops_a_policy_another_install_enabled(
 
 
 def test_audit_policy_script_fails_loudly_on_an_account_that_does_not_exist(
-    container: str, scripts: str, clean: None
+    container: str, scripts: str, clean: None, cdb_only: None, unified_audit_only: None
 ) -> None:
     """`01` must not report success for an install that did not happen.
 
@@ -866,3 +997,32 @@ def test_a_timeout_fails_the_test_rather_than_escaping_as_a_traceback(
 
     assert "did not return" in str(failure.value)
     assert "[2] core grants" in str(failure.value)
+
+
+def test_the_audit_script_refuses_a_release_without_unified_auditing(
+    container: str, scripts: str, has_unified_audit: bool
+) -> None:
+    """`01_audit_policy.sql` on 11.2, which has no audit policies to create.
+
+    Until #382 it ran head first into `AUDIT_UNIFIED_POLICIES` and produced four
+    `ORA-00942`s wrapped in `ORA-06550` -- an operator told a view was missing
+    and left to work out which release they were on and why. It did at least exit
+    non-zero, so nothing was silently skipped; the fix is the message, not the
+    exit code.
+
+    The refusal names the release it needs and the traditional-auditing statement
+    to use instead. It stops there deliberately: emitting `AUDIT ALTER USER`
+    would give the tool a second audit story to own, and
+    `02-oracle-privileges.md` §5 is written entirely around unified auditing, so
+    what it should say about a release without it is a decision rather than a
+    missing statement (#382).
+    """
+    if has_unified_audit:
+        pytest.skip("this release has unified auditing: there is nothing to refuse")
+
+    result = sqlplus(container, ROOT, f"{scripts}/01_audit_policy.sql", LOCAL_SVC)
+
+    assert result.returncode != 0, "a refusal that exits 0 is indistinguishable from a run"
+    assert "ORA-20020" in result.stdout
+    assert "12.1" in result.stdout, "the release it needs, so nobody has to look it up"
+    assert "AUDIT ALTER USER" in result.stdout, "and what to do instead"

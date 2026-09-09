@@ -61,6 +61,7 @@ from __future__ import annotations
 from typing import Any
 
 from sopuli.driver.oracle.capabilities import read
+from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.protocol import PrivilegeAudit
 
 #: The one scope §2 grants ``V_$PDBS`` in, from
@@ -339,9 +340,7 @@ def audit(cursor: Any, *, scope_type: str = "") -> PrivilegeAudit:
     session_privileges = frozenset(
         str(row[0]).upper() for row in _rows(cursor, SESSION_PRIVS_QUERY)
     )
-    common = frozenset(
-        str(row[0]).upper() for row in _rows(cursor, USER_SYS_PRIVS_QUERY) if _yes(row[1])
-    )
+    common = _common_privileges(cursor)
 
     try:
         roles = frozenset(str(row[0]).upper() for row in _rows(cursor, SELF_ROLES_QUERY))
@@ -402,6 +401,44 @@ def _forbidden(privilege: str) -> bool:
 def _rows(cursor: Any, query: str, parameters: dict[str, Any] | None = None) -> list[Any]:
     cursor.execute(query, parameters or {})
     return list(cursor.fetchall())
+
+
+#: What 11.2 says when asked whether a privilege is *common*: there is no such
+#: column, because there are no containers.
+#:
+#: One code, not :data:`~sopuli.driver.oracle.capabilities.ABSENT_CODES`. The
+#: argument that list makes is that a code meaning something in one place must
+#: not be allowed to mean anything anywhere else, and here only ``ORA-00904``
+#: carries information. ``ORA-01031`` from this query would mean the read was
+#: *refused*, which is not the same as "nothing is common" and must not be
+#: reported as it -- and ``USER_SYS_PRIVS`` is granted to PUBLIC, so a refusal
+#: would be a finding worth raising rather than swallowing.
+NO_COMMON_COLUMN = "ORA-00904"
+
+
+def _common_privileges(cursor: Any) -> frozenset[str]:
+    """Which of this session's direct grants are *common*.
+
+    Empty on a release with no such concept, and that is a reading rather than a
+    shrug: a database with no containers has no common privileges, so "none are
+    common" is the true answer. :func:`classify` then treats it exactly as it
+    treats a PDB whose grants are all local.
+
+    ``USER_SYS_PRIVS.COMMON`` arrived with multitenant in 12.1. On 11.2 the
+    column does not exist and this query is ``ORA-00904`` -- measured on 11g XE
+    11.2.0.2.0 (#382), where it took the whole of `doctor --check-privileges`
+    down with it: the target reported ``-`` for scope, ``0`` capabilities and a
+    bare ORA- code, **while still exiting 0**. The audit is three reads per
+    target and this was the only one with no answer for a release that cannot
+    take the question.
+    """
+    try:
+        rows = _rows(cursor, USER_SYS_PRIVS_QUERY)
+    except Exception as error:  # noqa: BLE001 -- classified on the next line
+        if from_error(error).code != NO_COMMON_COLUMN:
+            raise
+        return frozenset()
+    return frozenset(str(row[0]).upper() for row in rows if _yes(row[1]))
 
 
 def _yes(value: Any) -> bool:

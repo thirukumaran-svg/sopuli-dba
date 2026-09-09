@@ -80,6 +80,33 @@
 --   So invariant 13 now holds on three releases and two audit implementations,
 --   and the C3-only result has not varied once.
 --
+--   2026-09-08, 11g XE 11.2.0.2.0 (gvenzl/oracle-xe:11.2.0.2-slim), non-CDB,
+--   position 1, isdba=FALSE (#382). **NOT identical, and this is the one to
+--   read.** Traditional auditing is clean as on 18c and 21c -- DBA_AUDIT_TRAIL
+--   3 of 3 with sql_text, SYS.AUD$ and DBA_COMMON_AUDIT_TRAIL clean -- and the
+--   off-database greps are clean across 835 adump files, which answers
+--   02-oracle-privileges.md §4's "OS audit files, untested, matters most on
+--   11.2" outright.
+--
+--   But V$SQLSTATS leaks **C2 and C4** as well as C3:
+--
+--     V$SQLSTATS.sql_text        *** LEAK ***  C2(1) C3(2) C4(1)
+--     V$SQLSTATS.sql_fulltext    *** LEAK ***  C2(1) C3(2) C4(1)
+--     V$SQL.sql_text             *** LEAK ***  C3(1)      <- as everywhere else
+--
+--   C2 is the statement sopuli issues: a plain client-side ALTER USER, no
+--   wrapper. Confirmed by reading the view directly rather than trusting the
+--   sweep -- `ALTER USER sopulitest IDENTIFIED BY "<canary>"` is there verbatim.
+--   V$SQL holds no cursor for it on 11.2 either, exactly as on every other
+--   release; V$SQLSTATS keeps its own copy, and that copy outlives the cursor.
+--
+--   So the *conclusion* "issuing the DDL directly keeps the password out of the
+--   shared pool" holds on 18c, 21c and 26ai and NOT on 11.2. Invariant 13's
+--   reasoning is untouched -- C3 is worse everywhere -- but #387 is open on what
+--   the tool should do about it. Do not quote a leak result from 11.2 without
+--   reading that issue. The service account cannot read V$SQLSTATS (ORA-00942,
+--   measured); a dictionary reader can.
+--
 --   Two things about the container itself, both of which cost a run before they
 --   were understood -- see the PROMPTs in §1 and §7:
 --     - gvenzl/oracle-xe ships AUDIT_TRAIL = NONE, and captures nothing at all
@@ -194,11 +221,44 @@ SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED
 -- Name the log for the version and container so three runs coexist.
 -- REGEXP demands at least one dot, so it skips the marketing number ("26ai",
 -- "11g") and lands on the release number.
+--
+-- **`CON_NAME` raises on a non-CDB, so `NVL` around it does nothing.**
+-- `ORA-02003: invalid USERENV parameter`, measured on 11g XE 11.2.0.2.0 (#382).
+-- The `NVL` above read as a handled absence and was not one: the SELECT failed,
+-- `&logname` was never defined, and SQL*Plus then PROMPTED for it -- twice --
+-- and spooled nowhere. Read in PL/SQL with a handler instead, exactly as
+-- `00_install.sql` does.
+--
+-- Promoted from the bind to a SUBSTITUTION variable, because this script
+-- CONNECTs three times and SQL*Plus clears bind variables on every CONNECT --
+-- section 3's `whoami` would have printed an empty container had it stayed a
+-- bind. A `DEFINE` survives, which is why every other parameter here is one.
+SET TERMOUT OFF
+VARIABLE probe_con VARCHAR2(128)
+BEGIN
+  BEGIN
+    SELECT SYS_CONTEXT('USERENV','CON_NAME') INTO :probe_con FROM dual;
+  EXCEPTION
+    WHEN OTHERS THEN
+      -- ORA-02003 only. Anything else is a real fault, and a probe that
+      -- swallowed it would spool its findings to a log named after a container
+      -- it never reached.
+      IF SQLCODE != -2003 THEN
+        RAISE;
+      END IF;
+      :probe_con := 'noncdb';
+  END;
+END;
+/
+COLUMN p_con NEW_VALUE con_name NOPRINT
+SELECT :probe_con AS p_con FROM dual;
+SET TERMOUT ON
+
 COLUMN logname NEW_VALUE logname NOPRINT
 SELECT 'sopuli_leak_probe-'
     || REGEXP_SUBSTR(banner, '\d+(\.\d+)+')
     || '-'
-    || REPLACE(LOWER(NVL(SYS_CONTEXT('USERENV','CON_NAME'), 'noncdb')), '$', '_')
+    || REPLACE(LOWER('&con_name'), '$', '_')
     || '.log' AS logname
   FROM v$version WHERE ROWNUM = 1;
 
@@ -216,7 +276,7 @@ COLUMN feature FORMAT A34
 COLUMN value   FORMAT A70
 
 SELECT 'banner'      AS feature, banner AS value FROM v$version WHERE ROWNUM = 1
-UNION ALL SELECT 'container',    SYS_CONTEXT('USERENV','CON_NAME')       FROM dual
+UNION ALL SELECT 'container',    '&con_name'                             FROM dual
 UNION ALL SELECT 'session user', SYS_CONTEXT('USERENV','SESSION_USER')   FROM dual
 UNION ALL SELECT 'isdba',        NVL(SYS_CONTEXT('USERENV','ISDBA'),'?') FROM dual
 UNION ALL SELECT 'service account under test', UPPER('&svc_user')        FROM dual
@@ -364,10 +424,37 @@ PROMPT =========================================================================
 -- Watermarks, taken before planting. MAX(timestamp) rather than a clock
 -- reading, so repeated runs are separated without caring whether
 -- EVENT_TIMESTAMP is UTC or local.
+--
+-- **The unified watermark is read in PL/SQL, because 11.2 has no unified trail
+-- at all.** `UNIFIED_AUDIT_TRAIL` is `ORA-00942` there, and a bare SELECT left
+-- `&uat_mark` undefined -- whereupon SQL*Plus prompts for it and eats the next
+-- line of the script (measured on 11g XE 11.2.0.2.0, #382). The 1900 sentinel
+-- is what an empty trail already produces, so a release with no trail lands on
+-- the same value by the same reasoning: nothing was captured before this run.
+SET TERMOUT OFF
+VARIABLE probe_uat VARCHAR2(40)
+BEGIN
+  BEGIN
+    EXECUTE IMMEDIATE
+      'SELECT TO_CHAR(NVL(MAX(event_timestamp), TIMESTAMP ''1900-01-01 00:00:00''),'
+      || ' ''YYYY-MM-DD HH24:MI:SS.FF6'') FROM unified_audit_trail'
+      INTO :probe_uat;
+  EXCEPTION
+    WHEN OTHERS THEN
+      -- ORA-00942 only: there is no unified trail here. A privilege or
+      -- configuration failure reading one that *does* exist would set the
+      -- sentinel and make section 4a count events from every previous run,
+      -- which is the separation this watermark exists to provide.
+      IF SQLCODE != -942 THEN
+        RAISE;
+      END IF;
+      :probe_uat := '1900-01-01 00:00:00.000000';
+  END;
+END;
+/
 COLUMN uat_mark NEW_VALUE uat_mark NOPRINT
-SELECT TO_CHAR(NVL(MAX(event_timestamp), TIMESTAMP '1900-01-01 00:00:00'),
-               'YYYY-MM-DD HH24:MI:SS.FF6') AS uat_mark
-  FROM unified_audit_trail;
+SELECT :probe_uat AS uat_mark FROM dual;
+SET TERMOUT ON
 
 COLUMN dat_mark NEW_VALUE dat_mark NOPRINT
 SELECT TO_CHAR(NVL(MAX(timestamp), DATE '1900-01-01'), 'YYYY-MM-DD HH24:MI:SS')
@@ -401,7 +488,7 @@ SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED
 
 COLUMN whoami FORMAT A100
 SELECT 'connected as ' || SYS_CONTEXT('USERENV','SESSION_USER')
-    || ' in ' || NVL(SYS_CONTEXT('USERENV','CON_NAME'), 'noncdb')
+    || ' in ' || '&con_name'
     || ', isdba=' || NVL(SYS_CONTEXT('USERENV','ISDBA'), '?') AS whoami
   FROM dual;
 

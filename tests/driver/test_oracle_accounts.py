@@ -165,7 +165,12 @@ def test_an_account_is_described_from_the_baseline_grant_set(account: Any) -> No
     assert not state.locked
     assert not state.expired
     assert state.profile == PROFILE.upper()
-    assert state.vendor_maintained is False
+    # `False` where the release has the column and `None` where it has not.
+    # `ORACLE_MAINTAINED` arrived in 12.1, so 11.2 answers neither -- and that
+    # `None` is load-bearing rather than a gap: guardrail check 5's literal deny
+    # list is consulted only where check 2 could not answer, and reading a
+    # missing column as "not vendor-maintained" would switch it off (#382).
+    assert state.vendor_maintained is not True, "a site-created account either way"
     assert "CONNECT" in state.roles
 
 

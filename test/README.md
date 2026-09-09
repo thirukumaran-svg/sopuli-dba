@@ -17,7 +17,16 @@ at plan time. `SOPULI_ROLLOVER` is not created there, by design — step 4 of
 `oracle-init/01_test_profiles.sql` reports and carries on — so a test needing a
 second profile must use `SOPULI_REUSE`. The `AUDIT_TRAIL` note above applies to
 this image too.
-`oracle-xe11`, `nne` and `emulators` are still unrun (#382).
+**11g verified working 2026-09-08** (#382) — the fastest of the four, healthy in
+well under a minute. It is the one whose *shape* differs rather than its
+capabilities: a non-CDB, so `SYS_CONTEXT('USERENV','CON_NAME')` **raises**
+(`ORA-02003`) rather than answering NULL; no unified auditing, so
+`01_audit_policy.sql` refuses; no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or
+`COMMON` columns; and `ora12c_strong_verify_function` does not exist, so
+`SOPULI_STRONG` is absent alongside `SOPULI_ROLLOVER`. **Read #387 before
+quoting any leak result from it**: `V$SQLSTATS` retains the `ALTER USER` text
+there, which no other release in the matrix does.
+`nne` and `emulators` are still unrun.
 Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testing.md).
 
 ## Quick start

@@ -194,8 +194,9 @@ refusal you have not watched happen is one you are trusting rather than testing.
 
 ### Running all of this against a different Oracle version
 
-Everything from here on works against tier 2 as well. **21c and 18c are done**
-(#380, #381); 11g is open as #382, and this subsection is the map for it.
+Everything from here on works against tier 2 as well. **All three are done** —
+21c (#380), 18c (#381) and 11g (#382). What each one differs in is in the table
+below; nothing in §§6–12 needs anything but a different `dsn:`.
 
 ```bash
 cd test
@@ -207,7 +208,7 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 26ai Free | `sopuli-test-oracle-free-1` | `127.0.0.1:1521/FREEPDB1` | CDB + PDB |
 | 21c XE | `sopuli-test-oracle-xe21-1` | `127.0.0.1:1522/XEPDB1`, root `.../XE` | CDB + PDB |
 | 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` so `status` leaves `DB_PW_CHANGED` empty |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, no `DB_PW_CHANGED`, no unified auditing — `01_audit_policy.sql` refuses. **See #387 before trusting a leak result here** |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
 follows. All three images are already on the machine and reach healthy in about a
@@ -1622,11 +1623,12 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
 - **`--repair`**, which will act on the DRIFT list `check` produces.
 - **The `file`, `keyring` and `oci` stores.** Only `hashicorp` exists.
 - **A real wallet without a full Oracle install**, per §12.
-- **11g.** 21c (#380) and 18c (#381) are no longer on this list — §5's *Running
-  all of this against a different Oracle version* covers both, and §10.10 now
-  carries the exit-5 refusal pasted from a real 18c run rather than reasoned
-  about. 11g (#382) is still open, and it is the one whose *shape* differs
-  rather than its capabilities: a non-CDB, no unified audit, no `T:` verifier.
+- **19c, and anything above tier 2.** The whole tier-2 matrix is done — 21c
+  (#380), 18c (#381) and 11g (#382) — and §5's *Running all of this against a
+  different Oracle version* is the map. 19c is tier 3, needs a real OCI tenancy
+  or a built 19c, and is now what two open questions turn on: the password byte
+  limit (#383) and whether the `ALTER USER` text survives in `V$SQLSTATS`
+  (#387, measured true on 11.2 and false on 18c and later).
 
 When those land, this document should grow with them — it is meant to stay a
 complete map of what can be exercised by hand, and a stale one is worse than none.

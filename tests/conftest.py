@@ -379,8 +379,7 @@ def oracle_target() -> Iterator[Environment]:
         oracle_session.initialise(env=os.environ)
         connection = oracledb.connect(user=USER, password=PASSWORD, dsn=DSN)
         cursor = connection.cursor()
-        row = cursor.execute("select version_full from v$instance").fetchone()
-        environment.version = row[0] if row else None
+        environment.version = _server_version(cursor)
         environment.capabilities = set(probe(cursor))
     except Exception as exc:  # noqa: BLE001 -- any failure means "not available"
         environment.unreachable_reason = _why(exc)
@@ -391,6 +390,43 @@ def oracle_target() -> Iterator[Environment]:
     finally:
         if connection is not None:
             connection.close()
+
+
+def _server_version(cursor: Any) -> str | None:
+    """The server's version, preferring the patched one where it exists.
+
+    ``V$INSTANCE.VERSION_FULL`` arrived in **18c**. This asked for it
+    unconditionally, so on 11g XE the query raised `ORA-00904: "VERSION_FULL":
+    invalid identifier`, the whole `live_oracle` fixture went to its
+    `except Exception` and every tier-1 test on that target reported *environment
+    unavailable* -- which under `SOPULI_TEST_TIER1=required` is 102 errors that
+    say nothing about 11g and everything about one column (#382).
+
+    `VERSION` exists on every release and is what the driver itself reads
+    (`capabilities.VERSION`), so the fallback is the tool's own query. It answers
+    the base release rather than the patch level -- `18.0.0.0.0` where
+    `VERSION_FULL` says `18.4.0.0.0` -- which is why it is second rather than
+    first: this string is what the capability matrix is labelled with, and a
+    patch level is worth having where the server will give one.
+
+    Two queries rather than a version test, for the reason the driver gives for
+    the same shape: `ORA-00904` *is* the answer to "does this release have the
+    column".
+
+    **Only `ORA-00904` falls through to the second query.** Anything else --
+    `ORA-01031` on `V$INSTANCE`, a dropped connection -- propagates, so the
+    caller's `except` reports the environment unavailable with that reason
+    instead of this quietly answering `None` about a database it could not read.
+    A missing column and a refused read are different findings and only the first
+    one is a fallback.
+    """
+    try:
+        row = cursor.execute("select version_full from v$instance").fetchone()
+    except Exception as error:  # noqa: BLE001 -- classified on the next line
+        if "ORA-00904" not in str(error):
+            raise
+        row = cursor.execute("select version from v$instance").fetchone()
+    return str(row[0]) if row else None
 
 
 def _why(exc: BaseException) -> str:

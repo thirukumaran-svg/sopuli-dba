@@ -155,7 +155,14 @@ def test_a_matching_assertion_is_reported_as_matching(
     )
     found = first["targets"][0]["scope"]
 
-    asserted = f"    oracle: {{ scope: {found['type']}, container: {found['container']} }}"
+    # `container:` is omitted where the driver found none, rather than fed back as
+    # the string `None`. A non-CDB has no container, so a round trip that wrote
+    # `container: None` was declaring a container called "None" and asserting
+    # itself into a mismatch -- measured on 11g (#382).
+    keys = f"scope: {found['type']}"
+    if found["container"] is not None:
+        keys = f"{keys}, container: {found['container']}"
+    asserted = f"    oracle: {{ {keys} }}"
     config = _config(tmp_path / "b.yaml", live_oracle.dsn, asserted=asserted)
 
     document = _document(_run(runner, config, "--output", "json"))
