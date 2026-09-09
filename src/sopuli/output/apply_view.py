@@ -31,12 +31,12 @@ from collections.abc import Sequence
 from typing import Any
 
 from sopuli.apply import CONFIRMED, Source, counts, is_confirmed, is_failure, is_inconclusive
-from sopuli.check import ACCOUNT_MISSING, ERROR, ROLLOVER_ACTIVE, Outcome
+from sopuli.check import ROLLOVER_ACTIVE, Outcome
 from sopuli.config.model import Binding
 from sopuli.driver.guardrails import Refusal
 from sopuli.driver.protocol import FAIL, PASS, AttributeChange, VerifyResult
 from sopuli.output.document import Error, Summary
-from sopuli.output.palette import Role, paint
+from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.payload import CURRENT, PREVIOUS
 
@@ -521,14 +521,14 @@ def _address(binding: Binding) -> Cell | str:
 
 
 def _state(state: str) -> Cell | str:
-    """The state cell, with the two that need acting on picked out.
+    """The state cell, coloured by :func:`~sopuli.output.palette.role_for_state`.
 
-    ``ERROR`` is the run that did not work and ``ACCOUNT_MISSING`` is the estate
-    disagreeing with the file. `check` paints only ``DRIFT``, which this command
-    never reports: by the time a row is written the drift has either been fixed
-    or has become one of these.
+    This function used to name ``ERROR`` and ``ACCOUNT_MISSING`` itself, and
+    `check`'s named ``DRIFT`` -- so the same state was emphasised or not
+    depending on which verb printed the row. #395 made one function decide, and
+    this is now the wrapper the table needs rather than a policy of its own.
     """
-    return Cell(state, Role.NOTABLE) if state in (ERROR, ACCOUNT_MISSING) else state
+    return state_cell(state)
 
 
 def _verdict(

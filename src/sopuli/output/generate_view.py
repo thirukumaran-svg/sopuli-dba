@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from sopuli.generate import Candidate, DocumentWrite
+from sopuli.generate import VAULT_ONLY, Candidate, DocumentWrite
 from sopuli.lock.keys import LockKey
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role
@@ -49,17 +49,10 @@ __all__ = [
 #: saying the vocabulary was wrong, which this one is not.
 STAGED = "PENDING_APPLY"
 
-#: What `--promote` reports (#257): the vault holds this password and no database
-#: has been asked. A new value rather than a reused one, and #257's blocker 2 is
-#: the argument -- each of the four candidates asserts something untrue, and
-#: `PENDING_APPLY` in particular would send `check` and `apply` looking for a
-#: `pending` that does not exist.
-#:
-#: **Not the same claim as `PENDING_APPLY` with the stage swapped.** That state
-#: says a rotation is in flight; this one says there is none, and the next thing
-#: to run is `apply`, which will find the databases behind the vault and converge
-#: them.
-VAULT_ONLY = "VAULT_ONLY"
+#: Re-exported from :mod:`sopuli.generate`, where #395 moved it: every other
+#: state in the schema's enum is declared in a domain module, and the palette
+#: cannot import a view. Kept in this module's namespace because `cli` and the
+#: tests import it from here.
 
 #: A write that did not happen. `results[].error` carries the reason.
 FAILED = "ERROR"

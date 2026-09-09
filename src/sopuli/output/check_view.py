@@ -27,7 +27,7 @@ from sopuli.config.model import Binding
 from sopuli.driver.protocol import FAIL, PASS, VerifyResult
 from sopuli.output.document import Diagnostic, Error, Summary
 from sopuli.output.notices import render_notices
-from sopuli.output.palette import Role, paint
+from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 
 __all__ = ["build_result", "render_check", "summarise"]
@@ -243,14 +243,18 @@ def render_check(rows: Sequence[tuple[Binding, Outcome]], *, notices: Sequence[s
 
 
 def _state(state: str) -> Cell | str:
-    """The state cell, with drift picked out.
+    """The state cell, coloured by :func:`~sopuli.output.palette.role_for_state`.
 
-    Only ``DRIFT`` takes colour. It is the state with an exit code of its own,
-    and painting the inconclusive ones as well would make four of the eight
-    states shout -- at which point the colour has stopped saying anything. The
-    word is on the line either way, so `NO_COLOR` loses nothing.
+    This used to paint ``DRIFT`` alone, on the argument that colouring the
+    inconclusive states too would make four of the eight shout at once. That
+    argument is answered rather than overruled (#395): they are **dim**, not
+    coloured, so a row nothing could be concluded about recedes instead of
+    competing. Nothing shouts that did not shout before, and ``IN_SYNC`` --
+    which is most rows on a healthy estate -- is now visibly not one of them.
+
+    The word is on the line either way, so `NO_COLOR` still loses nothing.
     """
-    return Cell(state, Role.NOTABLE) if state == DRIFT else state
+    return state_cell(state)
 
 
 def _verdict(states: Sequence[str]) -> str:

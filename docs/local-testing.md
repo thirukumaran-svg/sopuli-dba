@@ -914,6 +914,76 @@ Every verb prints its plan before doing anything, and every mutating one takes
 `--dry-run`. The plan is not decoration: `max_targets`, `confirm_environments` and
 the capability refusals are all decided from it, before the first connection.
 
+### Colour, and turning it off
+
+The `STATE` column is coloured, and nothing else in a result table is. Four
+meanings, decided in #395:
+
+| Looks like | Means | States |
+|---|---|---|
+| cyan | nothing to do | `IN_SYNC` |
+| yellow | somebody has to act, the run is fine | `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY` |
+| red, bold | the tool could not do the job, or the estate is not in a state it can | `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED` |
+| dim | nothing could be concluded | `UNVERIFIABLE`, `SKIPPED` |
+
+**Converged is cyan and not green on purpose.** Green against yellow is the one
+pairing a red-green colour-blind reader cannot separate, and `IN_SYNC` against
+`DRIFT` is the exact distinction this tool exists to report. If you were about to
+file "shouldn't ok be green" — that is why, and `tests/test_palette.py` will fail
+if somebody changes it without reading this.
+
+**The colour never carries the meaning.** The word is on the line either way, so
+piping to a file, `--color never` and `NO_COLOR=1` all lose nothing at all. Worth
+proving to yourself once, because it is a rule the whole design leans on:
+
+```bash
+sopuli --color always creds check --application acme | cat -v   # see the escapes
+NO_COLOR=1 sopuli creds check --application acme                # the same table, plain
+```
+
+`--output json` is never coloured, whatever any of that says.
+
+**Worth seeing on purpose**, since a healthy estate is all one colour. Against
+§5's accounts, in this order, each command's output feeding the next:
+
+```
+$ sopuli creds check --application acme
+ACCOUNT        TARGET  STATE    DETAIL
+acme_app_user  xe11    IN_SYNC  vault v2 verified by login          <- cyan
+
+all 1 in sync
+```
+
+then change the password behind the tool's back —
+`ALTER USER acme_app_user IDENTIFIED BY "Drifted2026x"` —
+
+```
+ACCOUNT        TARGET  STATE  DETAIL
+acme_app_user  xe11    DRIFT  vault v2 the database rejected this password (ORA-01017)
+
+1 drift                                                             <- yellow
+```
+
+and drop the account outright:
+
+```
+ACCOUNT        TARGET  STATE            DETAIL
+acme_app_user  xe11    ACCOUNT_MISSING  the config declares this account; the database has no such user
+
+1 unverifiable                                                      <- red, bold
+```
+
+**That last pair is not a bug.** The row is red and the counter says
+`unverifiable`, because they answer different questions: the summary counts what
+the run learned *about the password* — nothing, here — while the colour says
+whether this is a row to go and look at. A missing account is very much one.
+`03-json-output.md` §1 has the reasoning.
+
+`creds status` is the command where the palette is most obvious, because its
+ordinary row is `UNVERIFIABLE` — it spends no logins, so most rows say the
+password was not checked. The whole column goes dim, and the one row that is not
+`UNVERIFIABLE` is the only thing on the screen with a colour.
+
 ### 10.1 `status` — the inventory that spends no logins
 
 Start here, always. It reads the vault and the data dictionary and attempts no

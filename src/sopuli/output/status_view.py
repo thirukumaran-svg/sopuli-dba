@@ -33,7 +33,7 @@ from sopuli.driver.oracle.rollover import days as rollover_days
 from sopuli.driver.protocol import UserState
 from sopuli.output.document import Diagnostic, Error, Summary
 from sopuli.output.notices import render_notices
-from sopuli.output.palette import Role, paint
+from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.status import PENDING_APPLY, Row
 
@@ -274,14 +274,15 @@ def _notices(rows: Sequence[Row]) -> list[str]:
 
 
 def _state(state: str) -> Cell | str:
-    """The two states worth picking out.
+    """The state cell, coloured by :func:`~sopuli.output.palette.role_for_state`.
 
-    ``ACCOUNT_MISSING`` is the config and the estate disagreeing, and
-    ``PENDING_APPLY`` is a rotation nobody finished -- the only two rows here
-    that name something to go and do. ``UNVERIFIABLE`` is every ordinary row and
-    painting it would make the whole column shout.
+    Worth reading twice for this command, because it is the one whose ordinary
+    row is ``UNVERIFIABLE`` -- `status` spends no logins, so most rows say the
+    password was not checked. Under #395 those go **dim**, which is the whole
+    column receding rather than shouting, and it is what makes the two rows this
+    function used to name by hand stand out without being named by hand.
     """
-    return Cell(state, Role.NOTABLE) if state in (ACCOUNT_MISSING, PENDING_APPLY, ERROR) else state
+    return state_cell(state)
 
 
 def _version(version: int | None) -> Cell | str:

@@ -20,9 +20,15 @@ has no states at all, so these roles map onto the fields its ``config`` section
 *does* emit -- ``overridden``, ``environment``, ``non_production``, and absence.
 Same vocabulary, reinforced; not a second one that could disagree with it.
 
-The result palette is deliberately absent. Nothing emits a ``state`` yet, and a
-mapping written before there is anything to map is the renderer-against-guesses
-that ADR-003 and #12 both warn about. It arrives with ``creds check``.
+**The result palette arrived in #395**, which is what that deferral was waiting
+for. Four roles -- :attr:`Role.GOOD`, :attr:`Role.ATTENTION`, :attr:`Role.BAD`,
+:attr:`Role.INCONCLUSIVE` -- and :func:`role_for_state` is the one function that
+decides which a state gets. Before it, four views each kept their own subset of
+the state enum and painted it :attr:`Role.NOTABLE`: ``check`` coloured ``DRIFT``
+and ``apply`` did not, ``apply`` coloured ``ERROR`` and ``check`` did not. Same
+state, same run, different emphasis depending on which verb printed it -- which
+is precisely the "yellow meaning three things in three views" this indirection
+exists to prevent. The indirection was here; nobody had used it for states.
 
 Styling goes through :func:`paint` rather than ``click.style`` at call sites, so
 the set of things a role can do stays visible in one file -- and so a renderer
@@ -32,9 +38,25 @@ cannot invent a colour that means nothing to anyone else.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
+
+from sopuli.apply import PENDING_APPLY, SKIPPED
+from sopuli.check import (
+    ACCOUNT_MISSING,
+    DRIFT,
+    ERROR,
+    EXPIRED,
+    IN_SYNC,
+    LOCKED,
+    ROLLOVER_ACTIVE,
+    UNVERIFIABLE,
+)
+from sopuli.generate import VAULT_ONLY
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from sopuli.output.table import Cell
 
 
 class Role(StrEnum):
@@ -62,6 +84,38 @@ class Role(StrEnum):
     keys `confirm_environments` on it, and it is what `--select env=prod` is
     about to touch."""
 
+    GOOD = "good"
+    """This account and this target agree, and nobody has to do anything.
+
+    One state, `IN_SYNC`, and it is the only role here that means *stop reading*.
+    Worth a colour of its own precisely because most rows on a healthy estate are
+    this one: what a reader is looking for is the row that is **not**."""
+
+    ATTENTION = "attention"
+    """Something is true that a person has to act on, and the run is fine.
+
+    `DRIFT` is the case this exists for -- exit code 3, and the reason `check` is
+    schedulable. `PENDING_APPLY` and `ROLLOVER_ACTIVE` join it because both
+    describe work that is staged or half-done rather than wrong, and `VAULT_ONLY`
+    because a password promoted with no database behind it is the same shape of
+    unfinished."""
+
+    BAD = "bad"
+    """The tool could not do the job, or the estate is not in a state it can.
+
+    Distinct from :attr:`ATTENTION` because the reader's next action differs: a
+    drifted account is repaired by running `apply`, and an `ERROR` or a
+    `LOCKED` account is not repaired by running anything until somebody has
+    looked. Distinct from :attr:`INCONCLUSIVE` because these are answers."""
+
+    INCONCLUSIVE = "inconclusive"
+    """No answer, and the absence is the finding.
+
+    Dim rather than coloured, and that is the decision: a row nothing could be
+    concluded about must not compete with a row that says something, and must
+    not read as either good or bad. `UNVERIFIABLE` always carries *why* beside
+    it, and `SKIPPED` is a row the tool deliberately did not act on."""
+
 
 #: Role to ``click.style`` keywords. Kept small and conventional on purpose --
 #: a palette a reader has to learn is a palette that has stopped helping.
@@ -70,7 +124,80 @@ _STYLES: dict[Role, dict[str, Any]] = {
     Role.MUTED: {"dim": True},
     Role.NOTABLE: {"fg": "yellow"},
     Role.PRODUCTION: {"fg": "red", "bold": True},
+    Role.GOOD: {"fg": "cyan"},
+    Role.ATTENTION: {"fg": "yellow"},
+    Role.BAD: {"fg": "red", "bold": True},
+    Role.INCONCLUSIVE: {"dim": True},
 }
+
+#: What a state means to a reader, which is not always what it means to the exit
+#: code -- see :func:`role_for_state`.
+_STATE_ROLES: dict[str, Role] = {
+    IN_SYNC: Role.GOOD,
+    DRIFT: Role.ATTENTION,
+    PENDING_APPLY: Role.ATTENTION,
+    ROLLOVER_ACTIVE: Role.ATTENTION,
+    VAULT_ONLY: Role.ATTENTION,
+    ERROR: Role.BAD,
+    ACCOUNT_MISSING: Role.BAD,
+    LOCKED: Role.BAD,
+    EXPIRED: Role.BAD,
+    UNVERIFIABLE: Role.INCONCLUSIVE,
+    SKIPPED: Role.INCONCLUSIVE,
+}
+
+
+def role_for_state(state: str) -> Role | None:
+    """Which role a result state gets. The one place that decides (#395).
+
+    Four views used to keep their own subset of the state enum and paint it
+    :attr:`Role.NOTABLE`, which is how ``DRIFT`` came to be coloured by `check`
+    and not by `apply` while ``ERROR`` was coloured by `apply` and not by
+    `check`. One state, one run, different emphasis depending on which verb
+    printed it. This function is the fix, and a view that hand-rolls a subset
+    again is re-introducing the bug rather than adding a feature.
+
+    **The grouping is not `check`'s exit-code grouping, and the difference is
+    deliberate.** :func:`sopuli.check.is_inconclusive` counts
+    ``ACCOUNT_MISSING``, ``LOCKED`` and ``EXPIRED`` as inconclusive, because none
+    of them says anything about *the password* -- which is the right question for
+    an exit code. It is the wrong question for a colour: a locked account is not
+    an absence of news, it is news, and dimming it would tell a reader to look
+    past the row they most need to see. So those three are :attr:`Role.BAD` here
+    and inconclusive there, and the two classifications answer different
+    questions rather than disagreeing. Only ``UNVERIFIABLE`` and ``SKIPPED`` --
+    where the tool genuinely learned nothing and deliberately did nothing -- are
+    :attr:`Role.INCONCLUSIVE`.
+
+    ``None`` for a string that is not a state, which is not a failure: a caller
+    may hand this whatever is in a cell, and an unknown value renders plain
+    rather than raising. A state added to the schema and not to :data:`_STATE_ROLES`
+    therefore loses its colour and keeps its word, which is the safe direction --
+    ``tests/test_palette.py`` asserts the map covers the enum so it does not
+    happen quietly.
+    """
+    return _STATE_ROLES.get(state)
+
+
+def state_cell(state: str) -> Cell | str:
+    """A table cell for ``state``, coloured by :func:`role_for_state`.
+
+    Returns the bare string where there is no role, so a table's plain rows stay
+    plain strings and only the ones that mean something carry a
+    :class:`~sopuli.output.table.Cell`. Imported by every result view, which is
+    what makes "one function decides" true at the call sites rather than only in
+    this module.
+
+    :class:`~sopuli.output.table.Cell` lives in :mod:`sopuli.output.table`, which
+    imports *this* module -- so the import is under ``TYPE_CHECKING`` and the
+    runtime one is inside the function. The annotation is the real type either
+    way, which matters: returning ``Any`` here would silently switch off type
+    checking in every view that calls it, and four of them do.
+    """
+    from sopuli.output.table import Cell
+
+    role = role_for_state(state)
+    return Cell(state, role) if role is not None else state
 
 
 def paint(text: str, role: Role | None = None) -> str:

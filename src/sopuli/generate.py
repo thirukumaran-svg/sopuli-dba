@@ -59,9 +59,30 @@ from sopuli.payload import GENERATED, ORIGIN, PENDING, SUPPLIED, merge
 from sopuli.secrets import Secret
 from sopuli.store.credentials import staged_patch
 
+#: What ``--promote`` reports (#257): the vault holds this password and no
+#: database has been asked. A new value rather than a reused one, and #257's
+#: blocker 2 is the argument -- each of the four candidates asserts something
+#: untrue, and ``PENDING_APPLY`` in particular would send `check` and `apply`
+#: looking for a ``pending`` that does not exist.
+#:
+#: **Not the same claim as ``PENDING_APPLY`` with the stage swapped.** That state
+#: says a rotation is in flight; this one says there is none, and the next thing
+#: to run is `apply`, which will find the databases behind the vault and converge
+#: them.
+#:
+#: **Here rather than in the view** (#395). Every other member of the schema's
+#: ``state`` enum is declared in the domain module of the verb that reports it --
+#: ``IN_SYNC`` in `check`, ``PENDING_APPLY`` in `apply` -- and this one sat in
+#: ``output/generate_view.py`` alone. That was invisible until the palette needed
+#: to map every state in one place and could not import a view without a cycle:
+#: the output layer imports the domain, so a state living in the output layer is
+#: a state nothing else can name.
+VAULT_ONLY = "VAULT_ONLY"
+
 __all__ = [
     "Candidate",
     "DocumentWrite",
+    "VAULT_ONLY",
     "candidate_for",
     "group",
     "policy_for",

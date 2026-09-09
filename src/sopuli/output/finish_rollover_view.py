@@ -26,7 +26,7 @@ from sopuli.config.model import Binding
 from sopuli.driver.protocol import UserState, VerifyResult
 from sopuli.finish_rollover import PENDING_APPLY, SKIPPED, remaining
 from sopuli.output.document import Error, Summary
-from sopuli.output.palette import Role, paint
+from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 
 __all__ = ["build_result", "render_finish", "render_window_table", "summarise"]
@@ -228,13 +228,13 @@ def render_finish(
 
 
 def _state(state: str) -> Cell | str:
-    """Only ``DRIFT`` takes colour, which is `check`'s rule.
+    """The state cell, coloured by :func:`~sopuli.output.palette.role_for_state`.
 
-    It is the state with an exit code of its own here too, and the one that says
-    an account was left open because something is actually wrong rather than
-    because there was nothing to do.
+    It was `check`'s rule copied, which is how a rule becomes four rules. One
+    function decides now (#395), and this command's ``SKIPPED`` rows -- windows
+    that were already closed -- recede instead of reading like the rest.
     """
-    return Cell(state, Role.NOTABLE) if state == DRIFT else state
+    return state_cell(state)
 
 
 def _verdict(states: Sequence[str], *, closed: int, would_close: int | None = None) -> str:

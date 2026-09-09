@@ -133,12 +133,44 @@ emits. Implemented in `sopuli/output/palette.py`:
 | `muted` | the `-` standing in for a value that is not there | any nullable field |
 | `notable` | an overridden target, a `non_production` store, a warning | `overridden`, `non_production` |
 | `production` | the `prod` environment wherever it appears | `environment` |
+| `good` | a state a reader can stop reading at | `state` = `IN_SYNC` |
+| `attention` | something true that a person has to act on, the run being fine | `state` ∈ `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY` |
+| `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED` |
+| `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED` |
 
 Nothing there is a new category: each is a field the JSON already carries, so
-the two views still cannot disagree. **The result palette is deliberately not
-defined yet** — nothing emits a `state`, and a mapping written before there is
-anything to map is the renderer-against-guesses ADR-003 warns about. It arrives
-with `creds check`.
+the two views still cannot disagree.
+
+**The result palette arrived in #395**, which is what the deferral this paragraph
+used to carry was waiting for. Four roles, and one function —
+`sopuli/output/palette.py`'s `role_for_state` — decides which a state gets. Before
+it, four views each kept their own subset of the enum and painted it `notable`:
+`check` coloured `DRIFT` and `apply` did not, `apply` coloured `ERROR` and `check`
+did not. One state, one run, different emphasis depending on the verb, which is
+the thing the role indirection exists to prevent.
+
+Three properties of that palette are decisions rather than taste.
+
+**Converged is cyan, not green.** Green `IN_SYNC` against yellow `DRIFT` is the
+one pairing a deuteranopic reader cannot separate, on the exact distinction this
+tool exists to report — so the conventional traffic light is the wrong palette
+here specifically. Red is kept for `bad`, where it is close to universal, and the
+three that must never collapse into one are asserted distinct in
+`tests/test_palette.py`.
+
+**Inconclusive is dim rather than coloured.** A row nothing could be concluded
+about must not compete with a row that says something, and must not read as
+either good or bad. It is also what makes the palette affordable in `creds
+status`, whose *ordinary* row is `UNVERIFIABLE` — the whole column recedes
+instead of shouting.
+
+**The grouping is not the exit code's grouping, deliberately.**
+`sopuli.check.is_inconclusive` counts `ACCOUNT_MISSING`, `LOCKED` and `EXPIRED`
+as inconclusive, correctly: none says anything about the *password*. For a colour
+that is the wrong question — a locked account is not an absence of news — so those
+three are `bad` in the palette and inconclusive in the summary. A reader will meet
+both at once, an `ACCOUNT_MISSING` row in red above a `1 unverifiable` counter,
+and the two are answering different questions rather than contradicting each other.
 
 **Meaning is never carried by colour alone.** Drift has its own exit code (3)
 because schedulers alert on it; a human needs that distinction without colour
