@@ -34,8 +34,16 @@ from sopuli.check import (
     UNVERIFIABLE,
 )
 from sopuli.generate import VAULT_ONLY
-from sopuli.output.palette import Role, paint, role_for_state, state_cell
+from sopuli.output.palette import (
+    Role,
+    absent_cell,
+    paint,
+    role_for_health,
+    role_for_state,
+    state_cell,
+)
 from sopuli.output.table import Cell
+from sopuli.store.protocol import DEGRADED, OK, UNREACHABLE
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1] / "docs" / "schemas" / "sopuli-run-1.20.schema.json"
@@ -199,3 +207,48 @@ def test_every_result_view_defers_to_the_one_decision(module: str) -> None:
         rendered = view._state(state)
         expected = state_cell(state)
         assert rendered == expected, f"{module} disagrees about {state}"
+
+
+# ------------------------------------------- the second vocabulary (#395) ---
+
+
+@pytest.mark.parametrize(
+    ("status", "role"),
+    [(OK, Role.GOOD), (DEGRADED, Role.ATTENTION), (UNREACHABLE, Role.BAD)],
+)
+def test_store_health_maps_onto_the_same_four_roles(status: str, role: Role) -> None:
+    """A second vocabulary, not a second palette. `doctor` and every `creds`
+    run print this word about the same store, so one function decides it."""
+    assert role_for_health(status) is role
+
+
+def test_a_degraded_store_is_not_as_loud_as_an_unreachable_one() -> None:
+    """The distinction `sopuli.store.protocol` already draws, kept in the colour.
+
+    A degraded store *answered* and sends the reader to the vault; an
+    unreachable one did not and sends them to the network. Collapsing them would
+    undo the whole reason those are three words instead of a boolean.
+    """
+    assert role_for_health(DEGRADED) is not role_for_health(UNREACHABLE)
+
+
+def test_a_word_that_is_not_a_health_status_gets_no_role() -> None:
+    assert role_for_health("splendid") is None
+
+
+# --------------------------------------------------- the absent placeholder ---
+
+
+@pytest.mark.parametrize("value", ["", None])
+def test_an_absent_value_becomes_a_dimmed_placeholder(value: str | None) -> None:
+    """`-` has to mean the same thing in every table, which is what stops a
+    column of them competing with the values beside it."""
+    cell = absent_cell(value)
+
+    assert isinstance(cell, Cell)
+    assert cell.text == "-"
+    assert cell.role is Role.MUTED
+
+
+def test_a_value_that_is_there_is_left_alone() -> None:
+    assert absent_cell("FREEPDB1") == "FREEPDB1"

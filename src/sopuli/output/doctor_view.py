@@ -35,7 +35,8 @@ from typing import Any
 from sopuli.config.model import ExpandedTarget
 from sopuli.driver.protocol import PrivilegeAudit, Scope
 from sopuli.output.document import Error
-from sopuli.output.table import Column, render_table
+from sopuli.output.palette import Role, absent_cell
+from sopuli.output.table import Cell, Column, render_table
 from sopuli.preflight import assertion_holds
 
 
@@ -163,6 +164,20 @@ def _asserted(target: ExpandedTarget, scope: Scope) -> dict[str, Any] | None:
     }
 
 
+def _reachable(reachable: bool) -> Cell | str:
+    """``no`` is coloured and ``yes`` is not, which is the rule this table wants.
+
+    Not the rule :func:`~sopuli.output.palette.state_cell` follows, and the
+    difference is worth stating because both are right. A result state is one of
+    eleven and has no norm, so ``IN_SYNC`` earns a colour saying *this row is
+    done*. Reachability has two values and an overwhelming norm: colouring
+    ``yes`` would paint the whole column on a healthy estate and make the one
+    ``no`` ordinary again -- which is `config show`'s argument for painting
+    ``prod`` and no other environment, one screen over.
+    """
+    return "yes" if reachable else Cell("no", Role.BAD)
+
+
 def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
     """The text report: the client once, then a row per target.
 
@@ -183,17 +198,17 @@ def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
         Column("OPEN MODE"),
         Column("CAPABILITIES"),
     ]
-    rows = []
+    rows: list[list[Cell | str]] = []
     for entry in entries:
         scope = entry.get("scope") or {}
         rows.append(
             [
                 entry["target"],
-                "yes" if entry["reachable"] else "no",
-                str(scope.get("type", "-")),
-                str(scope.get("container") or "-"),
-                str(scope.get("open_mode") or "-"),
-                str(len(scope.get("capabilities", []))) if entry["reachable"] else "-",
+                _reachable(bool(entry["reachable"])),
+                absent_cell(str(scope.get("type") or "")),
+                absent_cell(str(scope.get("container") or "")),
+                absent_cell(str(scope.get("open_mode") or "")),
+                absent_cell(str(len(scope.get("capabilities", []))) if entry["reachable"] else ""),
             ]
         )
     lines.extend(render_table(columns, rows))

@@ -33,8 +33,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from sopuli.install_shape import Component, InstallShape
-from sopuli.output.table import Column, render_table
+from sopuli.install_shape import (
+    INSTALLED,
+    NOT_INSTALLED,
+    Component,
+    InstallShape,
+)
+from sopuli.output.palette import Role, absent_cell
+from sopuli.output.table import Cell, Column, render_table
 
 
 def build(shape: InstallShape) -> dict[str, Any]:
@@ -67,11 +73,40 @@ def _component(component: Component) -> dict[str, Any]:
     return found
 
 
-def _targets(count: int) -> str:
+def _targets(count: int) -> Cell | str:
     """``-``, ``1 target``, ``21 targets``. ASCII throughout, which is P4's rule."""
     if count == 0:
-        return "-"
+        return absent_cell(None)
     return "1 target" if count == 1 else f"{count} targets"
+
+
+def _status(component: Component) -> Cell | str:
+    """What this row's status is worth looking at, which depends on the row.
+
+    Three statuses and three answers, and the middle one is the reason this is a
+    function rather than a lookup:
+
+    ``installed`` is plain. It is the norm, and painting it would colour most of
+    the table on a working machine -- `doctor`'s ``REACHABLE`` column takes the
+    same view for the same reason.
+
+    ``not_installed`` is :attr:`~sopuli.output.palette.Role.ATTENTION`. There is
+    a ``pip`` line under the table and somebody can act on it.
+
+    ``not_implemented`` is **dim when nothing is configured and
+    :attr:`~sopuli.output.palette.Role.BAD` when something is**, which is the
+    only place in this palette where a status's role depends on another column.
+    It earns the exception: `file`, `keyring` and `oci` are unimplemented on
+    every run of this build, so colouring them would make every `doctor` look
+    broken to somebody who configured none of them -- while a *configured*
+    backend this build has no module for is the run's actual failure, exit 9,
+    and nothing anybody installs will fix it.
+    """
+    if component.status == INSTALLED:
+        return component.status
+    if component.status == NOT_INSTALLED:
+        return Cell(component.status, Role.ATTENTION)
+    return Cell(component.status, Role.BAD if component.configured else Role.MUTED)
 
 
 def render(shape: InstallShape) -> list[str]:
@@ -89,15 +124,15 @@ def render(shape: InstallShape) -> list[str]:
         Column("STATUS"),
         Column("CONFIGURED"),
     ]
-    rows = [
-        ["backend", one.name, one.status, ", ".join(one.configured) or "-"]
+    rows: list[list[Cell | str]] = [
+        ["backend", one.name, _status(one), absent_cell(", ".join(one.configured))]
         for one in shape.backends
     ]
     rows.extend(
         [
             "driver",
             one.name,
-            one.status,
+            _status(one),
             # A count, and the word, because "21" alone in a column shared with
             # store names reads as an identifier rather than a quantity.
             _targets(len(one.configured)),

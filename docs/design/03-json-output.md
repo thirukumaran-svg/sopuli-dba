@@ -138,6 +138,35 @@ emits. Implemented in `sopuli/output/palette.py`:
 | `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED` |
 | `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED` |
 
+The same four roles carry a second vocabulary — a store's health — rather than
+growing a palette of their own:
+
+| Value | Role | Why |
+|---|---|---|
+| `vaults[].status` = `ok` | `good` | |
+| `= degraded` | `attention` | it **answered** and cannot serve; the reader goes to the vault |
+| `= unreachable` | `bad` | nothing answered; the reader goes to the network |
+| `install.backends[].status` / `install.drivers[].status` = `not_installed` | `attention` | there is a `pip` line under the table |
+| `= not_implemented`, nothing configured | `muted` | true on every run of this build; colouring it would make every `doctor` look broken |
+| `= not_implemented`, something configured | `bad` | the run's actual failure, exit 9, and no install fixes it |
+| `targets[].reachable` = `false` | `bad` | |
+
+**Two rules a reader will otherwise take as inconsistency.** `IN_SYNC` is
+coloured and `reachable: true` is not, because a result state is one of eleven
+with no norm — cyan says *this row is done* — while reachability has two values
+and an overwhelming one, so painting the common one would make the single `no`
+ordinary again. That is `config show`'s argument for painting `prod` and no other
+environment, and it is the same rule seen from the other end. And
+`not_implemented` is the one status whose role depends on another column, which
+it earns: unconfigured it is noise on every run, configured it is why the run
+exited 9.
+
+Two views were reviewed and left plain on purpose: `wallet_view` and
+`constraints_view` render prose and key-value blocks rather than tables, so there
+is no column to scan and a colour would decorate a sentence. Both already carry
+diagnostic codes for a consumer that wants to branch. Their module docstrings say
+so, rather than leaving the absence to look like an oversight.
+
 Nothing there is a new category: each is a field the JSON already carries, so
 the two views still cannot disagree.
 

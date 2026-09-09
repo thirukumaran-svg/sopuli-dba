@@ -311,3 +311,22 @@ def test_a_missing_grant_reaches_the_text_report() -> None:
 
     assert "SELECT ON DBA_PROFILES" in output
     assert "the tool needs it" in output
+
+
+# ------------------------------------------------------------- colour (#395) ---
+
+
+def test_an_unreachable_target_is_the_only_coloured_reachability() -> None:
+    """`no` is coloured and `yes` is not.
+
+    Deliberately not `state_cell`'s rule, and the docstring on `_reachable` says
+    why: a result state is one of eleven with no norm, while reachability has
+    two values and an overwhelming one. Colouring `yes` would paint the whole
+    column on a healthy estate and make the single `no` ordinary again.
+    """
+    from sopuli.output.doctor_view import _reachable
+    from sopuli.output.palette import Role
+    from sopuli.output.table import Cell
+
+    assert _reachable(True) == "yes"
+    assert _reachable(False) == Cell("no", Role.BAD)

@@ -37,7 +37,8 @@ from typing import Any
 
 from sopuli.clock import to_rfc3339
 from sopuli.output.document import Error
-from sopuli.output.table import Column, render_table
+from sopuli.output.palette import Role, absent_cell, role_for_health
+from sopuli.output.table import Cell, Column, render_table
 from sopuli.store.protocol import OK, UNREACHABLE
 from sopuli.store.survey import VaultReport
 
@@ -125,11 +126,11 @@ def render(reports: list[VaultReport]) -> list[str]:
         Column("AUTH"),
         Column("SKEW"),
     ]
-    rows = [
+    rows: list[list[Cell | str]] = [
         [
             report.name,
             report.type,
-            report.health.status,
+            _status(report),
             _auth(report),
             _skew(report),
         ]
@@ -141,7 +142,19 @@ def render(reports: list[VaultReport]) -> list[str]:
     return lines
 
 
-def _auth(report: VaultReport) -> str:
+def _status(report: VaultReport) -> Cell | str:
+    """The store's health, coloured by :func:`~sopuli.output.palette.role_for_health`.
+
+    One function decides, for the reason `role_for_state` is one function: this
+    word appears in `doctor` and in every `creds` run's ``vaults`` section, and
+    a store that is ``degraded`` in one and plain in the other is the bug #395
+    was filed about, one vocabulary over.
+    """
+    role = role_for_health(report.health.status)
+    return Cell(report.health.status, role) if role is not None else report.health.status
+
+
+def _auth(report: VaultReport) -> Cell | str:
     """Three states in one column, and none of them collapsible.
 
     ``-`` is *not asked*, not *no*: a sealed store refuses the lookup that would
@@ -149,11 +162,11 @@ def _auth(report: VaultReport) -> str:
     that was never the problem.
     """
     if report.health.authenticated is None:
-        return "-"
-    return "yes" if report.health.authenticated else "no"
+        return absent_cell(None)
+    return "yes" if report.health.authenticated else Cell("no", Role.BAD)
 
 
-def _skew(report: VaultReport) -> str:
+def _skew(report: VaultReport) -> Cell | str:
     """The clock difference, or why there is not one.
 
     ``-`` for a backend that exposes no server time. That is a different answer
@@ -161,9 +174,14 @@ def _skew(report: VaultReport) -> str:
     scanning for trouble treats a number as a measurement somebody took.
     """
     if report.skew is None:
-        return "-"
-    marked = "" if not report.skew.beyond_tolerance else "  (!)"
-    return f"{_ms(report.skew.delta):+d}ms{marked}"
+        return absent_cell(None)
+    if not report.skew.beyond_tolerance:
+        return f"{_ms(report.skew.delta):+d}ms"
+    # Beyond tolerance is `attention` and not `bad`: the store answered and the
+    # run works, and what is wrong is usually this machine's clock rather than
+    # anything in the vault. `(!)` stays -- the colour reinforces the marker it
+    # already had rather than replacing it.
+    return Cell(f"{_ms(report.skew.delta):+d}ms  (!)", Role.ATTENTION)
 
 
 def _findings(reports: list[VaultReport]) -> list[str]:

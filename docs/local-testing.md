@@ -984,6 +984,53 @@ ordinary row is `UNVERIFIABLE` — it spends no logins, so most rows say the
 password was not checked. The whole column goes dim, and the one row that is not
 `UNVERIFIABLE` is the only thing on the screen with a colour.
 
+**`doctor` uses the same four roles for two more vocabularies**, and a healthy
+run is deliberately quiet — the only colour on it is `ok`:
+
+```
+install
+  KIND     NAME       STATUS           CONFIGURED
+  backend  file       not_implemented  -              <- dim: true on every run
+  backend  hashicorp  installed        vault-dev
+  driver   oracle     installed        1 target
+
+vaults
+  VAULT      TYPE       STATUS  AUTH  SKEW
+  vault-dev  hashicorp  ok      yes   -833ms          <- cyan
+
+TARGET  REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES
+xe11    yes        non_cdb  -          READ WRITE  4  <- `-` dim on a non-CDB
+```
+
+Two worth causing on purpose. Add `vault-x: { type: oci }` to `vaults:` — the
+row that was dim on every other run turns red, because a backend nobody
+configured is noise and one somebody configured is why the run exits 9:
+
+```
+  backend  oci        not_implemented  vault-x        <- red, bold
+vaults
+  vault-x    oci        unreachable  -     -          <- red, bold; the `-`s dim
+```
+
+And `docker stop sopuli-test-oracle-xe11-1`:
+
+```
+TARGET  REACHABLE  SCOPE  CONTAINER  OPEN MODE  CAPABILITIES
+xe11    no         -      -          -          -
+        ^^ red     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ all dim
+  xe11: ORA-12541: Cannot connect. No listener at host 127.0.0.1 port 1524.
+```
+
+That row is the design working: reachability is the first fact and everything
+else is *absent* rather than empty, and the colours say exactly that without a
+word of explanation.
+
+**`yes` is not coloured and `IN_SYNC` is**, which looks inconsistent until you
+see why. A result state is one of eleven with no norm, so cyan means "this row is
+done". Reachability has two values and almost always the same one — painting
+`yes` would colour the whole column and make the single `no` ordinary again. Same
+reason `config show` paints `prod` and no other environment.
+
 ### 10.1 `status` — the inventory that spends no logins
 
 Start here, always. It reads the vault and the data dictionary and attempts no

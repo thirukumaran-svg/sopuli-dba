@@ -20,6 +20,12 @@ which is `install`'s rule and right for the same reason: the section is evidence
 that the estate was consulted, and one that appeared only when something was
 wrong could never be quoted as proof that nothing was. ``--offline`` is the
 exception, and the only one: there the question was not asked.
+
+**Deliberately not coloured** (#395), for the reason
+:mod:`sopuli.output.wallet_view` gives: this section is one line of prose, and
+`render_constraints` returns a sentence rather than a row. Its caveats print
+themselves as warnings with codes of their own (`SOPULI-W015`, `SOPULI-W016`,
+`SOPULI-W017`), which is where a reader looking for trouble is already sent.
 """
 
 from __future__ import annotations

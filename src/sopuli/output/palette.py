@@ -54,6 +54,7 @@ from sopuli.check import (
     UNVERIFIABLE,
 )
 from sopuli.generate import VAULT_ONLY
+from sopuli.store.protocol import DEGRADED, OK, UNREACHABLE
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from sopuli.output.table import Cell
@@ -147,6 +148,28 @@ _STATE_ROLES: dict[str, Role] = {
 }
 
 
+#: A store's health, which is a second vocabulary and not a second palette
+#: (#395). The same four roles, mapped from ``StoreHealth.status`` -- one place
+#: for the same reason :data:`_STATE_ROLES` is one place, and the reason is
+#: `doctor` and `creds` printing the same word about the same store.
+#:
+#: :data:`~sopuli.store.protocol.DEGRADED` is :attr:`Role.ATTENTION` rather than
+#: :attr:`Role.BAD` deliberately, and the distinction is the one that module
+#: already draws: a sealed or standing-by store **answered**, and the reader's
+#: next move is to go and look at the vault. An unreachable one did not answer,
+#: and sends them to the network instead.
+_HEALTH_ROLES: dict[str, Role] = {
+    OK: Role.GOOD,
+    DEGRADED: Role.ATTENTION,
+    UNREACHABLE: Role.BAD,
+}
+
+
+def role_for_health(status: str) -> Role | None:
+    """Which role a store's health gets. ``None`` for a word that is not one."""
+    return _HEALTH_ROLES.get(status)
+
+
 def role_for_state(state: str) -> Role | None:
     """Which role a result state gets. The one place that decides (#395).
 
@@ -177,6 +200,20 @@ def role_for_state(state: str) -> Role | None:
     happen quietly.
     """
     return _STATE_ROLES.get(state)
+
+
+def absent_cell(value: str | None, placeholder: str = "-") -> Cell | str:
+    """A value, or a dimmed placeholder where there is not one.
+
+    The idiom six views had already written by hand, made callable so the
+    seventh does not have to decide the placeholder for itself. :attr:`Role.MUTED`
+    is the established meaning -- a column of placeholders must not compete with
+    the values beside it -- and the point is that ``-`` keeps meaning the same
+    thing in every table rather than being dim in some and plain in others.
+    """
+    from sopuli.output.table import Cell
+
+    return value if value else Cell(placeholder, Role.MUTED)
 
 
 def state_cell(state: str) -> Cell | str:

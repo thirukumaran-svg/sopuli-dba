@@ -162,3 +162,36 @@ def test_no_backend_module_is_loaded_by_an_offline_command(tmp_path: Path) -> No
     result = _probe(tmp_path, CONFIG_NAMING_A_BACKEND)
 
     assert result["loaded_backends"] == []
+
+
+# ------------------------------------------------------------- colour (#395) ---
+
+
+def test_an_unimplemented_backend_nobody_configured_is_dimmed() -> None:
+    """`file`, `keyring` and `oci` are unimplemented on every run of this build.
+
+    Colouring them would make every `doctor` look broken to somebody who
+    configured none of them, which is the opposite of what the column is for.
+    """
+    from sopuli.install_shape import NOT_IMPLEMENTED, Component
+    from sopuli.output.install_view import _status
+    from sopuli.output.palette import Role
+    from sopuli.output.table import Cell
+
+    idle = Component(name="oci", status=NOT_IMPLEMENTED, configured=())
+
+    assert _status(idle) == Cell(NOT_IMPLEMENTED, Role.MUTED)
+
+
+def test_an_unimplemented_backend_somebody_configured_is_not() -> None:
+    """The same status, and the run's actual failure -- exit 9, and nothing
+    anybody installs will fix it. The only place in this palette where a
+    status's role depends on another column, and this is what it buys."""
+    from sopuli.install_shape import NOT_IMPLEMENTED, Component
+    from sopuli.output.install_view import _status
+    from sopuli.output.palette import Role
+    from sopuli.output.table import Cell
+
+    asked_for = Component(name="oci", status=NOT_IMPLEMENTED, configured=("vault-x",))
+
+    assert _status(asked_for) == Cell(NOT_IMPLEMENTED, Role.BAD)

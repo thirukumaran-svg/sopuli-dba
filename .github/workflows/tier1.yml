@@ -122,7 +122,20 @@ jobs:
       # fallback.
       - name: install Oracle Instant Client
         run: |
-          sudo apt-get update -qq
+          # `update` must not be the gate, and the install must be. The runner
+          # image carries third-party repositories this job needs nothing from
+          # -- Google Chrome's among them -- and one of them serving a corrupt
+          # index fails `apt-get update` with exit 100 over a package nobody
+          # here is asking for. Seen on 2026-09-09: `E: Failed to fetch
+          # https://dl.google.com/linux/chrome-stable/... Hash Sum mismatch`,
+          # twice in a row, on a change that touched no CI at all.
+          #
+          # So a failed update is reported and carried past, and the two lines
+          # below decide the step. `libaio` comes from Ubuntu's own archive: if
+          # *that* is what is broken, the install fails and the job fails with a
+          # message naming the package rather than somebody else's repository.
+          sudo apt-get update -qq \
+            || echo "::warning::apt-get update reported errors; the install below is the gate"
           sudo apt-get install -y --no-install-recommends libaio1t64 \
             || sudo apt-get install -y --no-install-recommends libaio1
           # Ubuntu 24.04's time_t transition renamed the library to
