@@ -208,7 +208,7 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 26ai Free | `sopuli-test-oracle-free-1` | `127.0.0.1:1521/FREEPDB1` | CDB + PDB |
 | 21c XE | `sopuli-test-oracle-xe21-1` | `127.0.0.1:1522/XEPDB1`, root `.../XE` | CDB + PDB |
 | 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` so `status` leaves `DB_PW_CHANGED` empty |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, no `DB_PW_CHANGED`, no unified auditing — `01_audit_policy.sql` refuses. **See #387 before trusting a leak result here** |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, no `DB_PW_CHANGED`, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other three containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1, 12.2 and 19c are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
 follows. All three images are already on the machine and reach healthy in about a
@@ -238,6 +238,47 @@ shells into a container by name — SQL\*Plus is a *client*, and the only one th
 suite can rely on is inside the container — and it defaults to the tier-1 one. Left
 unset, that module reports on 26ai while everything else reports on 21c, and
 nothing says so.
+
+### Seeing 11.2 keep your password, on purpose
+
+Worth twenty minutes if you run 11.2 anywhere, because it is the one place this
+tool's own statement is retained where you can read it. Rotate normally against
+`xe11` first — §10.3 — then read the password back out of the vault and go looking
+for it. It is in `V$SQLSTATS` and nowhere else:
+
+```
+V$SQLSTATS.sql_text           *** LEAK *** 1
+V$SQL.sql_text                clean        0
+V$SQLAREA.sql_text            clean        0
+GV$SQL.sql_fulltext           clean        0
+V$DB_OBJECT_CACHE.name        clean        0
+DBA_AUDIT_TRAIL.sql_text      clean        0
+--- V$SQLSTATS row, password masked by this script:
+    ALTER USER "ACME_APP_USER" IDENTIFIED BY "<the password sopuli generated>"
+```
+
+Three things to check while you are there, all of which the same session answered
+on 2026-09-09:
+
+- **your service account cannot see it.** Connect as `SOPULI_SVC` and the same
+  query is `ORA-00942: table or view does not exist`, from `V$SQL` too. The
+  exposure needs a dictionary grant somebody else holds.
+- **`ALTER SYSTEM FLUSH SHARED_POOL` clears it**, immediately and completely. That
+  is the remedy, and it is yours rather than the tool's — sopuli is not granted
+  `ALTER SYSTEM`, and flushing a production shared pool is not something a password
+  change should do to you.
+- **do the same thing on 18c or 21c and find nothing**, which is the comparison
+  that makes the result mean something rather than looking like a property of
+  Oracle in general.
+
+Write the search so it cannot match itself: assemble the password from two halves
+inside PL/SQL (`pat := '%' || 'firsthalf' || 'secondhalf' || '%'`), or your own
+query's text is the leak you find. `02_password_leak_probe.sql` does the same
+thing for the same reason, and its §7 explains what it cost to learn.
+
+The decision this fed into is #387 — documented, not warned about and not refused.
+[`security-model.md`](security-model.md) §5 is the short version for an
+operator; `design/02-oracle-privileges.md` §4 and §8 P8 have the measurements.
 
 **Auditing is off in the XE images, and silently.** They ship
 `AUDIT_TRAIL = NONE`, on which nothing is captured at all — not even the
@@ -1627,8 +1668,10 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
   (#380), 18c (#381) and 11g (#382) — and §5's *Running all of this against a
   different Oracle version* is the map. 19c is tier 3, needs a real OCI tenancy
   or a built 19c, and is now what two open questions turn on: the password byte
-  limit (#383) and whether the `ALTER USER` text survives in `V$SQLSTATS`
-  (#387, measured true on 11.2 and false on 18c and later).
+  limit (#383) and whether the `ALTER USER` text survives in `V$SQLSTATS` —
+  measured true on 11.2 and false on 18c and later, with 12.1, 12.2 and 19c
+  unmeasured in between, so #387 decided what to do about 11.2 and left the
+  boundary open.
 
 When those land, this document should grow with them — it is meant to stay a
 complete map of what can be exercised by hand, and a stale one is worse than none.

@@ -102,10 +102,52 @@
 --
 --   So the *conclusion* "issuing the DDL directly keeps the password out of the
 --   shared pool" holds on 18c, 21c and 26ai and NOT on 11.2. Invariant 13's
---   reasoning is untouched -- C3 is worse everywhere -- but #387 is open on what
---   the tool should do about it. Do not quote a leak result from 11.2 without
---   reading that issue. The service account cannot read V$SQLSTATS (ORA-00942,
---   measured); a dictionary reader can.
+--   reasoning is untouched -- C3 is worse everywhere. The service account cannot
+--   read V$SQLSTATS (ORA-00942, measured); a dictionary reader can.
+--
+--   DECIDED in #387, 2026-09-09: the tool documents this and does not warn or
+--   refuse. 02-oracle-privileges.md sec.8 P8 has the decision and the two
+--   declined alternatives; sec.4 has the table; docs/security-model.md sec.5 is
+--   what an operator on 11.2 is told. Do not quote a leak result from 11.2
+--   without reading that row.
+--
+--   2026-09-09, same image, RETENTION -- the two questions #387 had to answer
+--   before it could be decided. Neither is part of the sweep above; both were
+--   run by hand and are written out here so they can be repeated on 12.x and
+--   19c, which is where the boundary below 18c is still unmeasured.
+--
+--     method: as SYS, create SOPULI_SVC with CREATE SESSION + ALTER USER only;
+--             as SOPULI_SVC issue `ALTER USER sopulitest IDENTIFIED BY
+--             "<canary>"`; then, as SYS, count
+--                 select count(*) from v$sqlstats where sql_text like :p
+--             with :p assembled inside PL/SQL from two halves, so the counting
+--             statement's own text can never match itself.
+--
+--     ages out?      YES. With V$SQLSTATS at its cap on this instance (~5,590
+--                    rows) the canary survived 2,000 further DISTINCT statements
+--                    -- `select /* sopulifine<i> */ count(*) from dual` in a
+--                    loop -- and was gone by 3,000. Planted into a pool freshly
+--                    emptied it lasted longer; 20,000 evicted it.
+--     flush clears?  YES, immediately. Canary present before `ALTER SYSTEM FLUSH
+--                    SHARED_POOL`, absent after, rows 5,575 -> 18. Run three
+--                    times, the third with a password sopuli itself generated.
+--     reaches AWR?   UNANSWERABLE ON XE. Two CREATE_SNAPSHOT calls succeeded and
+--                    DBA_HIST_SQLTEXT *and* DBA_HIST_SQLSTAT stayed empty of
+--                    everything -- control_management_pack_access is NONE on XE,
+--                    so nothing is captured at all and the clean result measures
+--                    the image. Needs a licensed EE with the Diagnostics Pack.
+--
+--   And it is not only the probe's canary. A real `sopuli creds apply` was run
+--   against this image the ordinary way -- Instant Client, SOPULI_SVC holding
+--   exactly 02-oracle-privileges.md sec.2's grants -- and the password it
+--   generated, read back out of the vault to search for it, was there:
+--
+--       V$SQLSTATS.sql_text           *** LEAK *** 1
+--       V$SQL.sql_text                clean        0
+--       ALTER USER "ACME_APP_USER" IDENTIFIED BY "<the password sopuli generated>"
+--
+--   So the exposure on 11.2 is a window rather than a record, and one statement
+--   removes it. That is what the decision rests on.
 --
 --   Two things about the container itself, both of which cost a run before they
 --   were understood -- see the PROMPTs in §1 and §7:

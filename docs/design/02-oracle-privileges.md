@@ -776,20 +776,66 @@ agree on every row they reached, and add the two they can answer and 26ai cannot
 
 **11.2 disagrees on one row, and it is the most important one.** `V$SQLSTATS`
 retains the `ALTER USER` text there, so the first row below holds on 18c, 21c and
-26ai and *not* on 11.2 — see #387, which is open on what the tool should do about
-it. Everything else on 11.2 matched, including the off-database greps, which were
-clean across 835 audit files.
+26ai and *not* on 11.2. Everything else on 11.2 matched, including the
+off-database greps, which were clean across 835 audit files.
 
-19c has still not been run, and it is now the version two open questions turn on
-(#383, #387). The README's gate-2 table records what is open. A row that names
-only 26ai means only 26ai.
+**What the tool does about it: nothing, and says so** — decided in #387,
+2026-09-09, and recorded as P8 in §8. The two alternatives were a runtime warning
+on 11.2 and refusing to rotate there at all; both were declined, and the reasons
+are in P8 because the second one would have reversed
+[`00-principles.md`](00-principles.md) D7. What the decision rests on was measured
+on the day it was taken, and it is the part worth carrying: **the retained text is
+a window, not a record.**
+
+**It is sopuli's own statement, not just the probe's.** #387 was filed off a
+canary planted by `02_password_leak_probe.sql`; before deciding it, a real
+`creds apply` was run against 11g XE through the ordinary path — Instant Client,
+`SOPULI_SVC` holding exactly §2's grants, a password sopuli generated and wrote to
+Vault and never showed anybody. Reading it back out of the vault and looking for it
+in the dictionary finds this, with the password masked here by the sweep rather
+than by Oracle:
+
+```
+V$SQLSTATS.sql_text           *** LEAK *** 1
+V$SQL.sql_text                clean        0
+V$SQLAREA.sql_text            clean        0
+GV$SQL.sql_fulltext           clean        0
+V$DB_OBJECT_CACHE.name        clean        0
+DBA_AUDIT_TRAIL.sql_text      clean        0
+--- V$SQLSTATS row, password masked by this script:
+    ALTER USER "ACME_APP_USER" IDENTIFIED BY "<the password sopuli generated>"
+```
+
+The same session then confirmed both halves of the mitigation: `SOPULI_SVC` gets
+`ORA-00942` from `V$SQLSTATS` and `V$SQL` alike, and one
+`ALTER SYSTEM FLUSH SHARED_POOL` takes the row to `clean 0`.
+
+| Question #387 asked | Measured, 11g XE 11.2.0.2.0, 2026-09-09 |
+|---|---|
+| Does `V$SQLSTATS` age the row out? | **Yes.** With `V$SQLSTATS` at its cap on this instance (~5,590 rows), a planted canary survived 2,000 further distinct statements and was gone by 3,000. Planted into a nearly empty pool it survived longer, and 20,000 evicted it |
+| Does `ALTER SYSTEM FLUSH SHARED_POOL` clear it? | **Yes, immediately** — canary present before, absent after, both times it was run. That is the operator's remedy, and it is the operator's rather than the tool's: `ALTER SYSTEM` is a privilege §3 refuses, and flushing a production shared pool is a performance event nobody should get as a side effect of a rotation |
+| Does it reach AWR? | **Still untested, and now attributably so.** Two snapshots were taken and `DBA_HIST_SQLTEXT` *and* `DBA_HIST_SQLSTAT` came back empty of everything — XE ships `control_management_pack_access = NONE`, so nothing was captured at all. The clean result is the image, not the release. Answering it needs a licensed EE with the Diagnostics Pack |
+
+So on 11.2 the exposure is: readable by anyone who can read the dictionary, for as
+long as the shared pool keeps the entry, and removable in one statement. It is
+smaller than "the password is on disk" and larger than nothing, which is why it is
+documented rather than warned about or refused.
+
+**The boundary is unmeasured.** 11.2 retains and 18.4 does not; where between them
+the behaviour changed is not known, because there is no freely pullable image for
+12.1, 12.2 or 19c and none of the three has been run. Read this as *11.2 retains*
+and not as *everything before 18c retains* — the second is plausible and
+unevidenced. 19c is the one that matters, being what an OCI estate runs, and it
+carries the other open version question too — the password byte limit (#383). The
+README's gate-2 table records what is open. A row that names only 26ai means only
+26ai.
 
 | Surface | 26ai 23.26.2.0.0, `CDB$ROOT` and PDB; 21c 21.3 and 18c 18.4 in a PDB; 11g 11.2 non-CDB | Action |
 |---|---|---|
-| `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` — the `CREATE/ALTER USER` statement itself | **no cursor for the DDL exists at all** on 26ai, 21c and 18c. Not masked — absent. Holds for client-issued DDL and for DDL run via `EXECUTE IMMEDIATE` alike. **On 11.2 it does not hold**: `V$SQL` still has no cursor for the DDL, but `V$SQLSTATS` keeps its own copy and that copy outlives it, so the plain `ALTER USER … IDENTIFIED BY` sopuli issues is readable verbatim (measured 2026-09-08, #382). The service account cannot read the view (`ORA-00942`); a dictionary reader can | **#387 is open on what to do about 11.2** and must be read before quoting this row. Elsewhere: nothing to do, and re-run the probe on every version claimed as supported — this is a retention behaviour and not a documented guarantee, which is exactly how 11.2 came to differ |
+| `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` — the `CREATE/ALTER USER` statement itself | **no cursor for the DDL exists at all** on 26ai, 21c and 18c. Not masked — absent. Holds for client-issued DDL and for DDL run via `EXECUTE IMMEDIATE` alike. **On 11.2 it does not hold**: `V$SQL` still has no cursor for the DDL, but `V$SQLSTATS` keeps its own copy and that copy outlives it, so the plain `ALTER USER … IDENTIFIED BY` sopuli issues is readable verbatim (measured 2026-09-08, #382). The service account cannot read the view (`ORA-00942`); a dictionary reader can. It ages out under ordinary shared-pool turnover and `ALTER SYSTEM FLUSH SHARED_POOL` clears it at once (2026-09-09, #387). **Unmeasured on 12.1, 12.2 and 19c** | 11.2: documented, not warned about and not refused — P8 in §8, and `../security-model.md` §5 is what an operator is told. Elsewhere: nothing to do, and re-run the probe on every version claimed as supported — this is a retention behaviour and not a documented guarantee, which is exactly how 11.2 came to differ |
 | **An anonymous PL/SQL block carrying the password as a literal** | **leaks in full** into `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` and `V$DB_OBJECT_CACHE`. Oracle's protection is keyed to the `CREATE/ALTER USER` statement; a block that merely *contains* one is an ordinary block, and the block's own text is retained verbatim | **the tool never builds one.** Issue `ALTER USER` directly — invariant 13 |
 | Unified audit `SQL_TEXT` | **masked to `IDENTIFIED BY *`, at write time.** Confirmed in the base table `AUDSYS.AUD$UNIFIED` as well as in `UNIFIED_AUDIT_TRAIL` | keep verifying the base table rather than the view: view-level redaction alone would be bypassable by anyone holding `SELECT ANY DICTIONARY` |
-| AWR — `DBA_HIST_SQLTEXT` | **untested.** It reported `pop=y` in one FREEPDB1 run and `pop=n` in the next, and no snapshot was taken before the sweep, so "clean" here is an absence of evidence | take an AWR snapshot, then re-run the sweep. Needs the Diagnostics Pack. Stays untested until then — not clean |
+| AWR — `DBA_HIST_SQLTEXT` | **untested.** It reported `pop=y` in one FREEPDB1 run and `pop=n` in the next, and no snapshot was taken before the sweep, so "clean" here is an absence of evidence. Snapshots *were* taken on 11g XE for #387 and captured nothing whatsoever, `control_management_pack_access` being `NONE` on XE — which measures the image and leaves the question exactly where it was | take an AWR snapshot on a database where the pack is enabled, then re-run the sweep. Needs the Diagnostics Pack, and therefore a licensed EE rather than any XE image. Stays untested until then — not clean |
 | `V$SQL_BIND_CAPTURE` — bind values in SQL *predicates* | sampled at hard parse and retained in clear. Does not apply to rotation, since DDL cannot take binds | constrains `check --method hash` if verifier comparison ever moves server-side: **never bind a password or a verifier into a predicate** — invariant 14 |
 | SQL trace / 10046 | **untested.** The probe's §7 emits the `grep` commands; they have not been run | run them. Until then assume not redacted: the tool never enables trace on its own sessions, and a DBA who traces this session captures the password |
 | OS audit files (`audit_file_dest`) — the SYSDBA path | **clean on 21c, 18c and 11.2.** §7's greps were run for the first time on 2026-09-08 (#380, #381, #382), on all three with `AUDIT_SYS_OPERATIONS = TRUE`, and on 11.2 across 835 files — which is the release this row said it mattered most on: no canary value appears in `audit_file_dest`, the trace directory, the listener log or the client history. Note what it took to get a trustworthy answer — the grep as written matched the canary *prefix*, which the probe's own SQL text contains, so it reported a leak in the one place a leak would matter most. Fixed to match the numbered canaries; a run before 2026-09-08 that reported a hit here was reading the probe | answered. What remains is 19c, and running the probe once with `svc_user = sys` |
@@ -912,3 +958,4 @@ All scripts are idempotent and report what they did.
 | ~~P5~~ | ~~Does `doctor` fail or warn on over-granted privileges?~~ | **decided: warn** (#213). Failing would block the person who ran it, mid-incident, over a condition they did not create and cannot fix from this side — and the over-grant is somebody else's decision. So `--check-privileges` populates `scope.over_granted` and prints a line naming what to `REVOKE`, and leaves the exit code alone. A flag to gate on it (`--fail-on-over-grant`) was considered and not added: P3 already rejected a growing flag surface for rare cases, and adding one later is cheap where removing one is not |
 | P6 | 11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases? | keep for now, drop if it starts costing real complexity |
 | ~~P7~~ | ~~Do the 23-codebase schema privileges cover `ALTER USER`?~~ (§2.1) | **decided: no — tested 2026-08-17 on 26ai 23.26.2.0.0.** `GRANT ALTER USER ON SCHEMA` gives `ORA-00990: missing or invalid privilege`, while `GRANT SELECT ANY TABLE ON SCHEMA` succeeds in the same session — so the feature works and the refusal is specific to `ALTER USER`, not an artefact of the environment. Nothing lands in `DBA_SCHEMA_PRIVS`. The direct grant in §1 is the model on every supported release, the scoped-grant alternative does not exist, and ADR-001's P7 trigger is closed |
+| ~~P8~~ | ~~On 11.2 the `ALTER USER` text survives in `V$SQLSTATS` (§4). Document it, warn at runtime, or refuse to rotate there?~~ | **decided: document it** (#387, 2026-09-09). The exposure needs a dictionary grant — the service account itself gets `ORA-00942` from the view, so it is not self-inflicted and §2's grant set does not narrow — and it is a *window*: it ages out with the shared pool and `ALTER SYSTEM FLUSH SHARED_POOL` removes it at once, both measured. **A runtime warning was the close call and was declined on what it would cost**: nothing can probe this. "Does this release retain DDL text?" is not answerable from a session holding §2's grants, so the warning would have to branch on `V$INSTANCE.VERSION` — a version branch, which is the shape invariant 3 exists to prevent, taken in the one place the tool cannot check its own answer. Buying a diagnostic with a rule that exists because version branches go stale is a bad trade for a fact that does not change per database. **Refusing was rejected outright**: it reverses D7 over a bounded, clearable exposure on a release the project deliberately supports, and it would leave the operator rotating in SQL\*Plus, which retains the same text and records nothing. What is owed instead is that the operator be told — `../security-model.md` §5 — and that the boundary below 18c stop being asserted from one measurement |

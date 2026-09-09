@@ -206,7 +206,14 @@ does `doctor` fail or warn on over-granted privileges (P5), keep 11.2 support
 (P6). *(~~P7 — do the 23-codebase schema privileges cover `ALTER USER`~~ — is
 answered: **no**, `ORA-00990`, tested on 26ai 23.26.2.0.0 with a succeeding
 `SELECT ANY TABLE ON SCHEMA` as the control. The direct grant is the permanent
-model and ADR-001's P7 revisit trigger is closed.)*
+model and ADR-001's P7 revisit trigger is closed. ~~P8 — 11.2 retains the
+`ALTER USER` text in `V$SQLSTATS`; document it, warn, or refuse~~ — is answered
+in #387: **document it**. The exposure needs a dictionary grant the service
+account does not have, and it is a window rather than a record — it ages out with
+the shared pool and one `FLUSH SHARED_POOL` clears it. A runtime warning would
+have had to branch on a version number, since nothing can probe the fact; refusing
+would have reversed D7 and moved the rotation to SQL\*Plus, which retains the same
+text. The boundary between 11.2 and 18.4 stays unmeasured.)*
 
 **JSON output (03):** buffering policy for `--output json` (J1), always emit
 `plan` (J2), warning code registry (J3), host/pid in output (J4), OpenTelemetry

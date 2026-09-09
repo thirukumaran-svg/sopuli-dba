@@ -14,6 +14,13 @@ enforced by a test against the text this module produces rather than left to
 review: a later refactor that batches two rotations into one block would look
 tidier and would leak.
 
+The rule holds everywhere; the "nothing in ``V$SQL`` to mask" half of it does
+not. On 11.2 the plain DDL is retained as well -- not in ``V$SQL``, which has no
+cursor for it there either, but in ``V$SQLSTATS``, which keeps its own copy
+(#387; ``docs/design/02-oracle-privileges.md`` §4). Wrapping is still strictly
+worse there, so nothing this module does changes, and nothing it could do would
+help: a release that retains the statement retains what the statement contains.
+
 **Never bind the password** (invariant 14). DDL cannot take binds anyway, so on
 this statement the rule costs nothing; it is stated here because
 `V$SQL_BIND_CAPTURE` samples bind values at hard parse and keeps them in clear,

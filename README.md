@@ -274,6 +274,34 @@ The two leaks are what the tool is built around: invariants 13 and 14 in
 `CLAUDE.md` forbid a PL/SQL wrapper and a bound password respectively, and tier 0
 asserts both against the generated statement text.
 
+**21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0** agree with it row for row (#380,
+#381), and add the half 26ai cannot answer at all: traditional auditing masks the
+password too — `DBA_AUDIT_TRAIL`, `SYS.AUD$` and `DBA_COMMON_AUDIT_TRAIL` all
+clean, with `SQL_TEXT` populated, so the clean is a result rather than an empty
+column. The off-database greps in the probe's §7 were run for the first time on
+both, with `AUDIT_SYS_OPERATIONS = TRUE`: no canary in `audit_file_dest`, the
+trace directory, the listener log or the client history.
+
+### 11g XE 11.2.0.2.0 — the one that differs
+
+Non-CDB, rotations issued by a service account holding `ALTER USER` and nothing
+else (#382, 2026-09-08). Traditional auditing is clean exactly as on 18c and 21c,
+and the off-database greps are clean across 835 `adump` files. One row is not.
+
+| Surface | Result |
+|---|---|
+| `V$SQLSTATS` — the `ALTER USER` statement itself | **LEAK.** Retained verbatim: `ALTER USER … IDENTIFIED BY "<password>"`, the plain client-issued statement, no wrapper. `V$SQL`, `V$SQLAREA` and `GV$SQL` hold no cursor for it, as on every other release — `V$SQLSTATS` keeps its own copy and it outlives the cursor. **Confirmed with the tool rather than only the probe**: a real `sopuli creds apply` on 2026-09-09 put its own generated password there, read back out of the vault to find it |
+| Who can read it | a dictionary reader (`SELECT ANY DICTIONARY`, `SELECT_CATALOG_ROLE`, `DBA`). **Not the tool's own service account**, which gets `ORA-00942` holding exactly the documented grants |
+| How long it lasts | a window, not a record. It ages out with the shared pool — at a full `V$SQLSTATS` a canary survived 2,000 further distinct statements and was gone by 3,000 — and `ALTER SYSTEM FLUSH SHARED_POOL` clears it at once (measured twice, 2026-09-09, #387) |
+| AWR on 11.2 | **unanswerable on XE.** Two snapshots taken, `DBA_HIST_SQLTEXT` and `DBA_HIST_SQLSTAT` both empty of everything: XE ships `control_management_pack_access = NONE`. Untested, not clean |
+
+Invariant 13's *reasoning* is untouched — wrapping the DDL is worse everywhere —
+but its conclusion, that issuing the DDL directly keeps the password out of the
+shared pool, is release-dependent. **The tool documents this and does not warn or
+refuse**, decided in #387: `docs/design/02-oracle-privileges.md` §8 P8 has the
+decision and the two declined alternatives, and
+[`docs/security-model.md`](docs/security-model.md) §5 is what an operator is told.
+
 ### What this table does not cover
 
 Read the scope before treating the result as broad. It is one version, one
@@ -281,11 +309,11 @@ mechanism, and the on-disk surfaces are entirely unchecked.
 
 | Open | Why it matters |
 |---|---|
-| **19c** unrun | the version most sites actually run, and not redistributable as a container — needs a hand-built image or real OCI |
-| **11.2** unrun | **the one where a different answer is genuinely plausible rather than surprising.** It predates most of Oracle's redaction work and has no unified auditing at all, so both the masking result and the "no cursor retained" result have to be re-established from scratch |
+| **19c** unrun | the version most sites actually run, and not redistributable as a container — needs a hand-built image or real OCI. It is now what two open questions turn on: the password byte limit (#383) and whether 11.2's `V$SQLSTATS` retention reaches it (#387) |
+| **12.1 and 12.2** unrun, and 19c above | so **the boundary is unknown**. 11.2 retains the DDL text and 18.4 does not; nothing measures where between them that changed, and no freely pullable image exists for any release in the gap. Read the 11.2 result as *11.2 does*, never as *everything older does* |
 | **Trace files** — `grep` of `Diag Trace` unreported | the probe emits the command (§7); nobody has run it. Assume not redacted |
-| **OS audit files** — `grep` of `audit_file_dest` unreported | the SYSDBA path. Matters most on 11.2, where `AUDIT_SYS_OPERATIONS` writes statement text to files no query reaches |
-| **AWR / `DBA_HIST_SQLTEXT`** untested | reported `pop=y` in one run and `pop=n` in the next, and no snapshot was taken before the sweep. Untested, not clean |
+| **OS audit files** — `grep` of `audit_file_dest`, run on 21c, 18c and 11.2 only | clean on all three, including 835 files on 11.2, which is the release it mattered most on. Not yet run on 26ai, and not yet run once with `svc_user = sys` |
+| **AWR / `DBA_HIST_SQLTEXT`** untested | on 26ai it reported `pop=y` in one run and `pop=n` in the next with no snapshot taken; on 11g XE snapshots *were* taken and captured nothing at all, the Diagnostics Pack being off in XE. Needs a licensed EE. Untested, not clean |
 | **Self-rotation** (`IDENTIFIED BY … REPLACE …`, probe §6a) not exercised | exercises no privilege, so privilege auditing can miss it while statement auditing catches it — worth knowing before the docs claim rotations are audited |
 | **`IDENTIFIED BY VALUES`** (probe §6b) not exercised | would be the restore-from-verifier path if one is ever added. Oracle masks a password; whether it masks a verifier is a separate question |
 

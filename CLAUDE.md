@@ -109,6 +109,11 @@ something specific.
     wrapping does not hide the literal — it is the only thing that exposes it.
     This is easy to violate by accident, because a wrapper looks like the more
     careful option. Tier 0 asserts it against the generated statement text.
+    **The rule is universal; the second half of that measurement is not.** On
+    11.2 the direct DDL is retained too, in `V$SQLSTATS` (#387) — wrapping is
+    still strictly worse there, so nothing about this invariant changes, but do
+    not restate "issuing it directly keeps the password out of the shared pool"
+    without naming the release.
 14. **The password is never bound into a SQL predicate.** `V$SQL_BIND_CAPTURE`
     samples bind values at hard parse and keeps them in clear. Rotation is
     unaffected — DDL cannot take binds — so this binds on `check --method hash`:
@@ -132,16 +137,22 @@ than reasoning:
 - the `T:` (12C) verifier layout in `SYS.USER$.SPARE4` — `--method hash` depends
   on it and it is not confirmed
 - whether `ALTER USER` text leaks the password into `V$SQL` or
-  `UNIFIED_AUDIT_TRAIL`, per version — **answered on 26ai 23.26.2.0.0 only, and
-  still open on every other version.** `02_password_leak_probe.sql` was run in
-  all three documented positions on 2026-08-26: unified audit masks the statement
-  at write time, no `V$SQL` cursor for the DDL exists at all, and the sole leak is
-  an anonymous PL/SQL block carrying the password as a literal — which is
-  invariant 13, now measured rather than assumed. Two of the three runs were as a
-  service account holding `ALTER USER` and nothing else (`isdba=FALSE`), so the
-  capture is attributable to the audit policy rather than to mandatory `SYSDBA`
-  auditing; the earlier SYS-only runs could not establish that
-  (`docs/design/02-oracle-privileges.md` §4)
+  `UNIFIED_AUDIT_TRAIL`, per version — **answered on 26ai 23.26.2.0.0, 21c
+  21.3.0.0.0, 18c 18.4.0.0.0 and 11g 11.2.0.2.0; unmeasured on 12.1, 12.2 and
+  19c.** `02_password_leak_probe.sql` was run in all three documented positions on
+  2026-08-26: unified audit masks the statement at write time, no `V$SQL` cursor
+  for the DDL exists at all, and the sole leak is an anonymous PL/SQL block
+  carrying the password as a literal — which is invariant 13, now measured rather
+  than assumed. Two of the three runs were as a service account holding
+  `ALTER USER` and nothing else (`isdba=FALSE`), so the capture is attributable to
+  the audit policy rather than to mandatory `SYSDBA` auditing; the earlier SYS-only
+  runs could not establish that. 21c and 18c agree with 26ai row for row and add
+  that traditional auditing masks it too. **11.2 does not agree**: `V$SQLSTATS`
+  retains the plain `ALTER USER` text there, readable by a dictionary reader
+  though not by the service account. Decided in #387 — documented, not warned
+  about and not refused, because it ages out with the shared pool and one
+  `FLUSH SHARED_POOL` clears it. Do not quote a leak result without its version
+  (`docs/design/02-oracle-privileges.md` §4 and §8 P8)
 - ~~whether the 23-codebase schema privileges cover `ALTER USER` (P7)~~ —
   **answered: no.** `GRANT ALTER USER ON SCHEMA` gives `ORA-00990`, tested on 26ai
   23.26.2.0.0 with a succeeding `SELECT ANY TABLE ON SCHEMA` as the control. The

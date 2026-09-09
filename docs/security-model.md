@@ -336,6 +336,48 @@ query (bind values are captured in clear). The full results, including the
 versions and surfaces still unchecked, are in the
 [project README](../README.md#release-gate-2--does-a-rotation-leak-the-password-into-oracle).
 
+**On Oracle 11.2, one of those results does not hold, and you should know it
+before you rotate there.** The same test on 11g XE 11.2.0.2.0 found the plain
+`ALTER USER … IDENTIFIED BY "<password>"` — the statement this tool issues, not a
+wrapper — retained verbatim in `V$SQLSTATS`. `V$SQL` holds no cursor for it there
+either, exactly as on every other release; `V$SQLSTATS` keeps its own copy, and
+that copy outlives the cursor. 18c, 21c and 26ai retain nothing. Where 12.1, 12.2
+and 19c fall has not been measured, so read this as *11.2 does* rather than
+*everything older does*.
+
+This is not an artefact of the test. A real `sopuli creds apply` was run against
+11.2 the ordinary way, and the password it generated — written to the vault and
+never shown to anybody — was then readable in `V$SQLSTATS`, inside the tool's own
+`ALTER USER "ACME_APP_USER" IDENTIFIED BY "…"`.
+
+What it means in practice, all of it measured rather than reasoned:
+
+- **Who can read it.** Anyone who can read the dictionary — `SELECT ANY
+  DICTIONARY`, `SELECT_CATALOG_ROLE` or `DBA`, which on most estates is the DBAs
+  and the monitoring accounts. The tool's own service account **cannot**: holding
+  exactly the grants this project documents, it gets `ORA-00942` from the view. So
+  this is not something the tool's installation creates, and no grant needs
+  narrowing to fix it.
+- **How long.** Until the entry ages out of the shared pool, which happens under
+  ordinary traffic — on an idle test instance with a full `V$SQLSTATS` a planted
+  value survived 2,000 further distinct statements and was gone by 3,000. On a
+  quiet database it can sit there considerably longer.
+- **How to clear it now.** `ALTER SYSTEM FLUSH SHARED_POOL` removes it
+  immediately. **The tool will not do this for you.** It needs `ALTER SYSTEM`, a
+  privilege the service account is deliberately not granted, and flushing a
+  production shared pool is a performance event that should be somebody's decision
+  rather than a side effect of a password change.
+- **What is still unknown.** Whether the text reaches AWR (`DBA_HIST_SQLTEXT`) on
+  a licensed 11.2. It could not be tested on XE, which ships with the Diagnostics
+  Pack turned off and captured nothing at all. Treat it as unanswered, not as
+  clean.
+
+Rotating the same password by hand in SQL\*Plus on 11.2 leaves the identical text
+in the identical view, so this is a property of the release rather than of the
+tool — which is why the tool documents it and carries on rather than refusing to
+run. The decision, and the two alternatives that were declined, are recorded in
+[`docs/design/02-oracle-privileges.md`](design/02-oracle-privileges.md) §8 as P8.
+
 ---
 
 ## 6. Reporting a problem
