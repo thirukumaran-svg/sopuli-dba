@@ -44,7 +44,7 @@ which paths ran and which are still untried.
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
 | `../sql/oracle/01_audit_policy.sql` | Unified audit policies and correlation queries |
-| `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: canary probe for password text retained anywhere queryable. Run on 26ai; results in the top-level README |
+| `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: canary probe for password text retained anywhere queryable. Run on 26ai, 21c, 18c and 11.2; findings in `design/02-oracle-privileges.md` §4, what is still open in `design/04-testing.md` §6 gate 2 |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
 | [decisions/adr-001-privilege-model.md](decisions/adr-001-privilege-model.md) | Why direct `ALTER USER`, what was rejected, and the two triggers for revisiting |
 | [decisions/adr-003-text-tables.md](decisions/adr-003-text-tables.md) | No table library: columns formatted with click and the standard library, and why output must not depend on the terminal |
@@ -327,10 +327,12 @@ below.)*
   cursor for the DDL at all and unified audit masks it at write time in
   `AUDSYS.AUD$UNIFIED` as well as the view. The probe found one leak by
   measurement that reasoning had missed: an anonymous PL/SQL block carrying the
-  password as a literal is retained verbatim, which is now invariant 13. Still
-  open: 19c and 11.2, and the trace-file and `audit_file_dest` greps on every
-  version. The probe is `sql/oracle/02_password_leak_probe.sql`; results are in the
-  top-level README's gate-2 table.
+  password as a literal is retained verbatim, which is now invariant 13. 21c, 18c
+  and 11.2 were run afterwards (#380, #381, #382): the first two agree, and 11.2
+  does not — `V$SQLSTATS` retains the `ALTER USER` text there (#387). Still open:
+  19c, 12.1 and 12.2, and the trace-file greps. The probe is
+  `sql/oracle/02_password_leak_probe.sql`; results are in
+  `design/02-oracle-privileges.md` §4 and `design/04-testing.md` §6 gate 2.
 - **Which view supplies `status`'s `DB_PW_CHANGED` column, per version** (#87)
   — `DBA_USERS.PASSWORD_CHANGE_DATE` is absent on 11.2, where the same value
   means reading `SYS.USER$.PTIME` instead, behind the same optional grant Q1/P2

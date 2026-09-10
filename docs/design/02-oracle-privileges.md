@@ -827,8 +827,8 @@ the behaviour changed is not known, because there is no freely pullable image fo
 and not as *everything before 18c retains* — the second is plausible and
 unevidenced. 19c is the one that matters, being what an OCI estate runs, and it
 carries the other open version question too — the password byte limit (#383). The
-README's gate-2 table records what is open. A row that names only 26ai means only
-26ai.
+`04-testing.md` §6 gate 2 records what is open. A row that names only 26ai
+means only 26ai.
 
 | Surface | 26ai 23.26.2.0.0, `CDB$ROOT` and PDB; 21c 21.3 and 18c 18.4 in a PDB; 11g 11.2 non-CDB | Action |
 |---|---|---|
@@ -844,7 +844,7 @@ README's gate-2 table records what is open. A row that names only 26ai means onl
 
 The probe is `sql/oracle/02_password_leak_probe.sql`. Run it in the three positions
 its header describes — PDB with a non-SYSDBA service account, PDB as SYSDBA, and
-`CDB$ROOT` — and record the outcome in the README's gate-2 table. The
+`CDB$ROOT` — and record the outcome in `04-testing.md` §6 gate 2. The
 service-account position is the only one that proves anything about the audit
 policy; see `04-testing.md` §6 gate 2.
 

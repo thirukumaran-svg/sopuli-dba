@@ -425,8 +425,9 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    client-issued `CREATE USER`, client-issued `ALTER USER`, `EXECUTE IMMEDIATE`
    with the password as a literal in the block, and `EXECUTE IMMEDIATE` with it
    assembled at runtime — then sweeps every source a statement's text can come to
-   rest in. Whatever it finds goes in the README's gate-2 table. This is the
-   empirical check that `02-oracle-privileges.md` §4 refuses to assume.
+   rest in. Whatever it finds is written up in `02-oracle-privileges.md` §4, and
+   what is still outstanding is recorded below. This is the empirical check that
+   §4 refuses to assume.
 
    **Three positions per version, and they are not interchangeable:**
 
@@ -449,8 +450,24 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    `INCONCLUSIVE`; and `DBA_HIST_SQLTEXT` needs an AWR snapshot taken *before* the
    sweep, so it stays untested until one is.
 
-   Position 1 has been run on 26ai Free 23.26.2.0.0 (PDB and `CDB$ROOT`). Every
-   other version and both off-database greps are outstanding.
+   **Where it stands.** Position 1 has been run on 26ai Free 23.26.2.0.0 (PDB
+   and `CDB$ROOT`), 21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0 (PDB), and 11g XE
+   11.2.0.2.0 (non-CDB) — #380, #381, #382. The off-database greps of §7 were
+   run on 21c, 18c and 11.2. The findings and their scope are
+   `02-oracle-privileges.md` §4; the one release that disagrees is 11.2, whose
+   `V$SQLSTATS` retains the `ALTER USER` text (#387).
+
+   Outstanding, and none of it is a pass:
+
+   | Open | Why it blocks a claim |
+   |---|---|
+   | **19c** unrun | what an OCI estate runs, and not redistributable as a container. Two open questions turn on it: the password byte limit (#383) and whether 11.2's `V$SQLSTATS` retention reaches it (#387) |
+   | **12.1 and 12.2** unrun | so **the boundary is unknown.** 11.2 retains the DDL text and 18.4 does not, and nothing measures where between them that changed. Read the 11.2 result as *11.2 does*, never as *everything older does* |
+   | **AWR / `DBA_HIST_SQLTEXT`** untested | needs a snapshot taken before the sweep, on a database where the Diagnostics Pack is enabled — so a licensed EE, not any XE image. Untested, not clean |
+   | **Trace files** — the `grep` of `Diag Trace` | the probe emits the command in §7; nobody has run it. Assume not redacted |
+   | **OS audit files** on 26ai, and any version with `svc_user = sys` | clean on 21c, 18c and 11.2, which is where it mattered most. Position 2 has not been run anywhere |
+   | **Self-rotation** (`IDENTIFIED BY … REPLACE …`, probe §6a) not exercised | it exercises no privilege, so privilege auditing can miss it where statement auditing catches it. Worth knowing before the docs claim rotations are audited. The path itself is UC-1b, not this build |
+   | **`IDENTIFIED BY VALUES`** (probe §6b) not exercised | the restore-from-verifier path, if one is ever added. Oracle masks a password; whether it masks a *verifier* is a separate question |
 3. **Schema conformance.** Every sample and recorded output validates against the
    published JSON Schema. Already wired: the schemas and example in
    `docs/schemas/` validate today, the config schema is asserted to be what the

@@ -332,9 +332,11 @@ rest. On Oracle 26ai the statement itself is not retained anywhere queryable, an
 the unified audit trail masks it at write time. Two things do leak, and both are
 now forbidden in the tool's own code: wrapping the statement in a PL/SQL block
 (the block *is* retained, verbatim), and sending a password as a bind value in a
-query (bind values are captured in clear). The full results, including the
-versions and surfaces still unchecked, are in the
-[project README](../README.md#release-gate-2--does-a-rotation-leak-the-password-into-oracle).
+query (bind values are captured in clear). The full results, per version and
+with their scope, are in
+[`design/02-oracle-privileges.md`](design/02-oracle-privileges.md) §4; the
+versions and surfaces still unchecked are in
+[`design/04-testing.md`](design/04-testing.md) §6 gate 2.
 
 **On Oracle 11.2, one of those results does not hold, and you should know it
 before you rotate there.** The same test on 11g XE 11.2.0.2.0 found the plain

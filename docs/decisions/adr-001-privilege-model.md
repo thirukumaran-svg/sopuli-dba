@@ -123,10 +123,13 @@ equally. One is now partially closed:
   the view. The probe also found one real leak that neither model would have
   caught by reasoning: an anonymous PL/SQL block whose own text carries the
   password as a literal is retained verbatim, because Oracle's protection is keyed
-  to the `CREATE/ALTER USER` statement rather than to the password. 19c and 11.2
-  are unrun, and SQL trace and the OS audit files are unchecked on every version.
-  The probe is `sql/oracle/02_password_leak_probe.sql`; findings are recorded in
-  `../design/02-oracle-privileges.md` §4 and the README's gate-2 table.
+  to the `CREATE/ALTER USER` statement rather than to the password. 21c, 18c and
+  11.2 have since been run (#380, #381, #382) and 11.2 disagrees on one row —
+  `V$SQLSTATS` retains the `ALTER USER` text there. 19c, 12.1 and 12.2 are unrun,
+  and SQL trace is unchecked on every version. The probe is
+  `sql/oracle/02_password_leak_probe.sql`; findings are recorded in
+  `../design/02-oracle-privileges.md` §4, and what is still open in
+  `../design/04-testing.md` §6 gate 2.
 - **The `T:` (12C) verifier layout in `SYS.USER$.SPARE4`** — untouched, and still
   fully open. `--method hash` depends on it. Prototype it against a throwaway 19c
   before committing hash mode to the CLI.
