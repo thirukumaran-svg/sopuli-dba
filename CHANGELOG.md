@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.60.0](https://github.com/villebase/sopuli-dba/compare/v0.59.0...v0.60.0) (2026-09-10)
+
+
+### Features
+
+* paint the five views that had no colour at all ([#398](https://github.com/villebase/sopuli-dba/issues/398)) ([13bef22](https://github.com/villebase/sopuli-dba/commit/13bef22df8e9d326ef60ad4dc4db34a91bf9fe9a))
+
 ## [0.59.0](https://github.com/villebase/sopuli-dba/compare/v0.58.0...v0.59.0) (2026-09-09)
 
 
