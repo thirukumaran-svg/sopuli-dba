@@ -9,6 +9,7 @@ drift from the schema without anyone noticing.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,11 @@ from sopuli.output.document import (
     to_rfc3339,
     utc_now,
 )
+
+#: The smallest file the loader accepts, as `tests/conftest.py` spells it.
+#: Duplicated rather than imported: `tests` is not a package, and importing
+#: the conftest by name gives mypy the same file under two module names.
+MINIMAL_CONFIG = "version: 1\n"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 #: Derived from the producer's own version. The published file is renamed on
@@ -168,6 +174,94 @@ def test_optional_sections_are_omitted_not_nulled() -> None:
     document = RunDocument.start("config.show").finish(ExitCode.SUCCESS).to_dict()
     for optional in ("plan", "results", "diagnostics"):
         assert optional not in document
+
+
+# ------------------------------------------- invocation.config_files (#402) ---
+
+
+def test_a_real_run_names_the_config_file_it_read(config_file: Path) -> None:
+    """The field was in the schema and in the committed example for months and
+    no run wrote it (#402), so this asserts the producer rather than the shape.
+
+    Through the CLI on purpose: the gap was between what the document *could*
+    carry and what the wiring filled in, and a test that built a
+    :class:`RunDocument` by hand would have passed throughout.
+    """
+    result = CliRunner().invoke(
+        cli, ["target", "list", "--config", str(config_file), "--output", "json"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert json.loads(result.output)["invocation"]["config_files"] == [str(config_file)]
+
+
+def test_config_files_is_absent_when_no_layer_was_loaded() -> None:
+    """Absent and not empty, which is this document's rule everywhere.
+
+    Not "a command that needs no config": there is no such verb, since
+    `_pass_invocation` loads one before any command body runs (found in review
+    on #402 -- an earlier version of this named `doctor` and `policy sample`,
+    both of which exit 9 without a file). What absence means is that the run got
+    no further than trying, which is why the empty array would be the wrong
+    shape: it would say the run looked and found nothing.
+    """
+    document = RunDocument.start("policy.sample").finish(ExitCode.CONFIG_INVALID).to_dict()
+    assert "config_files" not in document["invocation"]
+
+
+def test_config_files_keeps_layering_order(tmp_path: Path) -> None:
+    """Through repeated `--config`, because the order is the contract.
+
+    `01-configuration.md` §5 layers later files over earlier ones, so a document
+    that sorted or reversed these would describe a precedence the run did not
+    use. Two names that sort the other way round, so a producer that sorted
+    would fail here rather than pass by luck.
+
+    End to end rather than by assigning ``config_files`` directly (found in
+    review on #402): the claim under test is about the *wiring* reading
+    ``Invocation.sources`` in order, and a test that set the field itself would
+    have exercised only the serialiser and passed through any regression there.
+    """
+    site = tmp_path / "z-site.yaml"
+    team = tmp_path / "a-team.yaml"
+    for path in (site, team):
+        path.write_text(MINIMAL_CONFIG, encoding="utf-8")
+        if sys.platform != "win32":
+            path.chmod(0o600)
+
+    result = CliRunner().invoke(
+        cli,
+        ["target", "list", "--config", str(site), "--config", str(team), "--output", "json"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert json.loads(result.output)["invocation"]["config_files"] == [str(site), str(team)]
+
+
+def test_the_committed_example_carries_no_field_the_producer_cannot_write() -> None:
+    """What let `config_files` sit unproduced for months (#402).
+
+    ``tests/test_schemas.py`` validates the example against the schema, and it
+    passed the whole time -- conformance is not the claim *a run produces this*.
+    The example is hand-written and cited from the design documents, so a key in
+    it that no run can emit is a documented lie about the tool's output.
+
+    Checked as a subset rather than an equality: an example showing a narrower
+    run than the maximum is exactly what an example is for.
+    """
+    every_field = RunDocument.start("creds.check")
+    every_field.profile = "scheduled"
+    every_field.config_files = ("/etc/sopuli/config.yaml",)
+    every_field.selection = {"applications": ["orders-app"]}
+    every_field.options = {"output": Option(value="json", source="cli")}
+    producible = set(every_field.finish(ExitCode.SUCCESS).to_dict()["invocation"])
+
+    example = json.loads(
+        (REPO_ROOT / "docs" / "schemas" / "example-creds-check-drift.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert set(example["invocation"]) <= producible
 
 
 def test_timestamps_are_rfc3339_utc_with_trailing_z() -> None:

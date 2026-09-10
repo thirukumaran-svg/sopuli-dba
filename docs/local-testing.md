@@ -9,6 +9,11 @@ stack. Where something was **not** verified it says so. Working paths in the
 samples are shortened to `C:\tmp\sopuli-guide\` — that is the only edit made to
 any output here.
 
+§15's run document was re-captured on 2026-09-10 on the same stack, when
+`invocation.config_files` started being emitted (#402). A sample carrying a field
+the tool has since gained is the failure this guide is most prone to, so the date
+moves per sample rather than for the file.
+
 Related: [`../test/README.md`](../test/README.md) for the container stack itself,
 [`design/04-testing.md`](design/04-testing.md) for the automated tiers,
 [`use-cases/uc-01-app-credential-sync.md`](use-cases/uc-01-app-credential-sync.md)
@@ -1743,11 +1748,12 @@ trimmed to its shape:
   "tool": { "name": "sopuli", "version": "0.58.0" },
   "command": "creds.check",
   "invocation": {
-    "correlation_id": "f1757186-be28-4a09-84dc-b107dffc35d5",
-    "started_at": "2026-09-06T18:39:48.625270Z",
-    "duration_ms": 940,
+    "correlation_id": "d7acdc73-e5cc-4fb5-af56-f5645b909093",
+    "started_at": "2026-09-10T11:06:45.724878Z",
+    "duration_ms": 766,
     "actor": { "os_user": "ville", "host": "Awesominator" },
     "dry_run": false,
+    "config_files": ["C:\\tmp\\sopuli-guide\\sopuli.yaml"],
     "options": {
       "output": { "value": "json", "source": "cli", "source_detail": "--output (group)" }
     }
@@ -1764,12 +1770,12 @@ trimmed to its shape:
     {
       "account": "acme_app_user", "target": "free-pdb", "state": "IN_SYNC", "changed": false,
       "secret": { "vault": "vault-dev", "path": "acme/dev/acme", "field": "acme_app_user",
-                  "version": 9, "stage": "current" },
-      "actions": [ { "kind": "verify", "applied": true, "detail": "vault v9 verified by login" } ],
+                  "version": 2, "stage": "current" },
+      "actions": [ { "kind": "verify", "applied": true, "detail": "vault v2 verified by login" } ],
       "verification": { "method": "login", "result": "pass", "lcount": 0,
                         "failed_login_attempts_limit": "UNLIMITED", "lockout_margin_hit": false,
                         "previous_password_accepted": null },
-      "password_age_days": 0.0, "duration_ms": 123
+      "password_age_days": 0.0, "duration_ms": 117
     }
   ]
 }

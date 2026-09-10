@@ -293,6 +293,29 @@ class RunDocument:
     #: reports and what the run filtered on are the same object rather than two
     #: descriptions of it.
     selection: dict[str, Any] | None = None
+    #: ``invocation.config_files`` -- the files this run read, in layering order
+    #: (#402).
+    #:
+    #: The schema has declared this since it was written and nothing filled it
+    #: in, so every document said which *settings* a file changed
+    #: (``options.source_detail``) and none said which files were read at all.
+    #: Those are different questions: a run whose config supplied no setting
+    #: worth reporting named no file anywhere in its document.
+    #:
+    #: Paths and not content, deliberately. What a consumer asks of this is
+    #: *which estate is this document about*, and two runs over the same paths
+    #: are the same estate for that question -- a file edited in between is a
+    #: staleness question, which belongs to whatever is comparing the documents
+    #: rather than to their identity.
+    #:
+    #: Absent, not empty, on a run that never loaded a configuration layer --
+    #: the file was missing, unreadable or rejected, so the run has none to
+    #: name and its ``error`` names the path instead. **Every verb needs a
+    #: config**: ``_pass_invocation`` loads one before any command body runs, so
+    #: there is no command for which absence here is the ordinary case. An empty
+    #: array would claim a run looked and found nothing, which is a different
+    #: statement from having got no further than looking.
+    config_files: tuple[str, ...] = ()
     #: The ``config`` section, when the command produces one. Its shape belongs
     #: to the command that builds it (:mod:`sopuli.output.config_view`) rather
     #: than here, and is pinned by the schema and by
@@ -434,7 +457,7 @@ class RunDocument:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Render to the shape ``sopuli-run-1.16.schema.json`` describes."""
+        """Render to the shape ``sopuli-run-<SCHEMA_VERSION>.schema.json`` describes."""
         finished_at = self.finished_at or utc_now()
         duration_ms = int((finished_at - self.started_at).total_seconds() * 1000)
         invocation: dict[str, Any] = {
@@ -447,6 +470,8 @@ class RunDocument:
         }
         if self.profile is not None:
             invocation["profile"] = self.profile
+        if self.config_files:
+            invocation["config_files"] = list(self.config_files)
         if self.selection:
             invocation["selection"] = self.selection
         if self.options:

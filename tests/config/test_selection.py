@@ -18,6 +18,7 @@ from sopuli.config.model import Config, TargetSelector
 from sopuli.config.selection import (
     Selection,
     filter_estate,
+    filter_to_pairs,
     matches,
     parse_selector,
     refuse_unknown,
@@ -307,6 +308,145 @@ def test_the_rest_of_the_config_is_untouched() -> None:
     assert filtered.targets == config.targets
     assert filtered.target_sets == config.target_sets
     assert filtered.groups == config.groups
+
+
+# ------------------------------------------------------- filter_to_pairs ---
+
+
+BOUND: dict[str, Any] = {
+    "version": 1,
+    "vaults": {"vault-dev": {"type": "hashicorp"}},
+    "target_sets": {
+        "appdb": {
+            "type": "oracle",
+            "name": "appdb-{env}-{tenant}",
+            "dsn": "{host}:1521/{tenant}.pdb.example.com",
+            "environment": "{env}",
+            "vault": "vault-dev",
+            "for_each": {
+                "env": {"dev": {"host": "db-dev.example.com", "tenant": ["alpha", "beta"]}}
+            },
+        }
+    },
+    "applications": [
+        {
+            "name": "acme",
+            "accounts": ["acme_web_user", "acme_batch_user"],
+            "secret_template": "acme/{env}/{account}#password",
+        }
+    ],
+}
+
+
+def bound() -> Config:
+    """Two accounts across two targets, so a pair set is not a cross product.
+
+    Four bindings from two accounts and two targets is the whole reason this
+    function exists: any selection built from independent dimensions can only
+    ask for all four.
+    """
+    return build_config(BOUND)
+
+
+def pairs_of(config: Config) -> set[tuple[str, str]]:
+    return {(binding.account, binding.target) for binding in config.bindings}
+
+
+def test_a_pair_set_is_not_a_cross_product() -> None:
+    """The reason `Selection` cannot do this (#402, #391).
+
+    One account on one target and the other on the other. `--account a --account
+    b --target x --target y` selects all four; this selects the two asked for,
+    and the two it leaves out are the logins `--repair` exists to save.
+    """
+    config = filter_to_pairs(
+        bound(),
+        [("acme_web_user", "appdb-dev-alpha"), ("acme_batch_user", "appdb-dev-beta")],
+    )
+
+    assert pairs_of(config) == {
+        ("acme_web_user", "appdb-dev-alpha"),
+        ("acme_batch_user", "appdb-dev-beta"),
+    }
+    assert len(bound().bindings) == 4
+
+
+def test_an_account_is_matched_case_folded() -> None:
+    """A pair set that has been through a database carries Oracle's spelling.
+    `--account` already folds for this reason and a pair must not differ."""
+    config = filter_to_pairs(bound(), [("ACME_WEB_USER", "appdb-dev-alpha")])
+
+    assert pairs_of(config) == {("acme_web_user", "appdb-dev-alpha")}
+
+
+def test_a_pair_the_config_no_longer_declares_is_dropped() -> None:  # invariant 5
+    """Dropped and not refused, which is the opposite of `refuse_unknown`.
+
+    A document describes a run that already happened, so a pair since removed
+    from the config is drift somebody dealt with -- and refusing would make the
+    document unusable for the accounts it is still right about.
+    """
+    config = filter_to_pairs(
+        bound(),
+        [("acme_web_user", "appdb-dev-alpha"), ("gone_user", "appdb-dev-alpha")],
+    )
+
+    assert pairs_of(config) == {("acme_web_user", "appdb-dev-alpha")}
+
+
+def test_a_pair_naming_an_undeclared_target_is_dropped() -> None:  # invariant 5
+    """The other half of the same rule. A target the file no longer declares
+    cannot be reached by naming it in a document."""
+    config = filter_to_pairs(bound(), [("acme_web_user", "appdb-prod-alpha")])
+
+    assert config.bindings == ()
+    assert config.expanded_targets == ()
+
+
+def test_filtering_to_pairs_cannot_introduce_anything() -> None:  # invariant 5
+    """Every survivor is an object that was already in the estate, which is how
+    invariant 5 holds structurally here rather than by inspection."""
+    config = bound()
+    filtered = filter_to_pairs(config, [("acme_web_user", "appdb-dev-alpha")])
+
+    assert all(binding in config.bindings for binding in filtered.bindings)
+    assert all(expanded in config.expanded_targets for expanded in filtered.expanded_targets)
+
+
+def test_a_target_left_with_no_bindings_is_pruned() -> None:
+    """What keeps the blast radius honest: a repair of two pairs on one target
+    is a run reaching one target, and `max_targets` must answer about that."""
+    config = filter_to_pairs(
+        bound(),
+        [("acme_web_user", "appdb-dev-alpha"), ("acme_batch_user", "appdb-dev-alpha")],
+    )
+
+    assert [expanded.name for expanded in config.expanded_targets] == ["appdb-dev-alpha"]
+
+
+def test_an_empty_pair_set_selects_nothing() -> None:
+    """Not "everything", which is `filter_estate`'s rule for an empty
+    `Selection` and would be exactly wrong here: an empty repair set means the
+    run being repaired left nothing unconfirmed."""
+    config = filter_to_pairs(bound(), [])
+
+    assert config.bindings == ()
+    assert config.expanded_targets == ()
+
+
+def test_filtering_to_pairs_leaves_the_rest_of_the_config_untouched() -> None:
+    """Filtering narrows what a run acts on, not what the file says.
+
+    Named apart from `filter_estate`'s version of this above: two module-level
+    functions with one name is the later one silently replacing the earlier, and
+    a test that never runs is worse than one that fails.
+    """
+    config = bound()
+    filtered = filter_to_pairs(config, [("acme_web_user", "appdb-dev-alpha")])
+
+    assert filtered.targets == config.targets
+    assert filtered.target_sets == config.target_sets
+    assert filtered.applications == config.applications
 
 
 # ------------------------------------------ what "named" means (#297) ---

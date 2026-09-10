@@ -369,9 +369,16 @@ def refresh_document(document: RunDocument, invocation: Invocation) -> RunDocume
     appended, because the second call resolves the same settings again and would
     otherwise say each one twice. Nothing else has written a diagnostic yet: this
     runs before the verb does.
+
+    ``config_files`` is filled on the second call and only then (#402), which is
+    what the two-call arrangement is for: the first happens before a file has
+    been read, so there is nothing to name, and a run that never loads one keeps
+    the field absent rather than empty.
     """
     document.dry_run = invocation.dry_run
     document.profile = invocation.profile
+    if invocation.loaded is not None:
+        document.config_files = tuple(str(path) for path in invocation.sources)
     document.options = {
         name: option
         for name, option in all_options(invocation).items()

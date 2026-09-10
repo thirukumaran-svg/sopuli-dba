@@ -22,11 +22,19 @@ which is what makes plan output comparable between them.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 
 from sopuli.config.errors import ROOT, ArgumentError
 from sopuli.config.model import Config, ExpandedTarget, Pairs, Target, TargetSelector, as_dict
+
+#: One (account, target) pair, which is the row :class:`Config.bindings` is keyed
+#: by and the unit a repair set is written in (#402, #391).
+#:
+#: Not called ``Pair``: this module already spends that word on a label pair, and
+#: two things called a pair in one file is the sort of collision that survives
+#: review and confuses the next reader.
+AccountTarget = tuple[str, str]
 
 #: What a `--select` pair is written with. Not configurable: a separator that
 #: could be something else is one more thing to get wrong in a shell.
@@ -278,6 +286,52 @@ def filter_estate(config: Config, selection: Selection) -> Config:
         kept = {binding.target for binding in bindings}
         targets = tuple(expanded for expanded in targets if expanded.name in kept)
 
+    return replace(config, expanded_targets=targets, bindings=bindings)
+
+
+def filter_to_pairs(config: Config, pairs: Iterable[AccountTarget]) -> Config:
+    """The estate reduced to a named set of (account, target) pairs (#402).
+
+    What :class:`Selection` cannot express. Its members are independent
+    dimensions combined as *and*, so the nearest thing to a pair set --
+    ``accounts={a, b}`` with ``targets={x, y}`` -- is their **cross product**,
+    which is strictly wider. For ``{a@x, b@y}`` that is four pairs where two were
+    wanted, and the two extra are exactly the logins ``creds apply --repair``
+    exists to save (#391, UC-1 §``--repair``).
+
+    Invariant 5 holds the same structural way :func:`filter_estate` does: this
+    only ever *removes* from ``bindings`` and ``expanded_targets``, so no pair
+    can introduce an account or a target the file does not declare.
+
+    **A pair the configuration does not declare is dropped, not refused** -- the
+    opposite of :func:`refuse_unknown`, and the difference is what the caller is
+    holding. ``--target nosuch`` is a claim about the estate *now*, so a name
+    that resolves to nothing is a typo worth stopping for. A pair set comes from
+    a document describing a run that already happened, and a pair since removed
+    from the config is drift somebody has already dealt with. Refusing there
+    would make a document unusable for the accounts it is still right about,
+    which is the whole of what it was read for.
+
+    Accounts are compared case-folded, for the reason ``--account`` already is:
+    the file writes ``acme_web_user`` where Oracle stores ``ACME_WEB_USER``, and
+    a pair set that has been through a database carries the second spelling.
+    Target names are the tool's own vocabulary and are compared as written.
+
+    Targets left with no bindings are pruned, which is
+    :func:`filter_estate`'s rule for a binding-level selector and is what keeps
+    the blast radius honest: a repair of two pairs on one target is a run
+    reaching *one* target, and a plan counting the other twenty would make
+    ``max_targets`` and ``confirm_environments`` answer about work this run is
+    not going to do.
+    """
+    wanted = {(account.casefold(), target) for account, target in pairs}
+    bindings = tuple(
+        binding
+        for binding in config.bindings
+        if (binding.account.casefold(), binding.target) in wanted
+    )
+    kept = {binding.target for binding in bindings}
+    targets = tuple(expanded for expanded in config.expanded_targets if expanded.name in kept)
     return replace(config, expanded_targets=targets, bindings=bindings)
 
 

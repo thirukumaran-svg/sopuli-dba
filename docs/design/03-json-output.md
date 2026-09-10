@@ -380,6 +380,38 @@ name came from, and this says what it resolved to. The two differ in exactly one
 case worth being exact about: nobody asked and the file's default did not either,
 so `options` has no `profile` row and this is absent.
 
+### `invocation.config_files`
+
+The files this run read, in layering order (`01-configuration.md` §5, #402).
+
+**Declared here from the beginning and emitted by nothing until #402**, which is
+worth recording rather than quietly fixing: the schema described it, the
+committed sample showed it populated, and no run had ever written it. The sample
+validated against the schema throughout — conformance is not the claim *a run
+produces this* — so nothing was red. `tests/test_run_document.py` now asserts the
+example carries no `invocation` key the producer cannot write, which is the
+assertion that was missing rather than the field.
+
+Until then a document said which *settings* a file changed, through
+`options.source_detail`, and never which files were read: a run whose config
+supplied nothing worth reporting named no file anywhere.
+
+**Order is contract, the set is not.** Later files layer over earlier ones, so a
+producer that sorted these would describe a precedence the run did not use.
+
+**Paths, not content.** What a consumer asks of this is *which estate is this
+document about* — which is what `creds apply --repair` reads it for (#391) — and
+two runs over the same paths are the same estate for that question. A file edited
+between them is a staleness question, and belongs to whatever compares the
+documents rather than to their identity.
+
+**Absent, not empty, on a run that never loaded a configuration layer** — the
+file was missing, unreadable or rejected. There is no verb for which that is the
+ordinary case: every command loads a config before its body runs, so absence
+here always means the run got no further than trying, and the `error` on exit 9
+names the path. An empty array would say the run looked and found nothing, which
+is a different statement.
+
 ### `invocation.correlation_id`
 
 A UUID per run. The tool also:
