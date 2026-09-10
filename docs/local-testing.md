@@ -1176,6 +1176,168 @@ acme_app_user  free-pdb  IN_SYNC  changed and verified by login
 1 changed
 ```
 
+### 10.4a `apply --repair` — spend one login instead of twenty
+
+`apply` is already safe to re-run, so the plain re-run repairs a partial run
+correctly. What it costs is a login per account per target, against the
+failed-login counter §7 exists to protect. `--repair` narrows that to the pairs
+a previous run left unconfirmed.
+
+**It needs the previous run's document on disk**, which means that run has to
+have been captured. Under `--output text` there is nothing to point it at — the
+tool prints the document or the text, never both:
+
+```bash
+sopuli --config sopuli.yaml --output json creds check > drift.json ; echo "exit $?"
+```
+
+```
+exit 3
+```
+
+Two accounts, one drifted. `--dry-run` first, which is where you see the
+narrowing — a plan of **1 account x 1 target** where the estate has two:
+
+```
+Plan: 1 account x 1 target = 1 apply   [dev]
+
+ACCOUNT          TARGET    INTENT                               SECRET
+acme_batch_user  free-pdb  verify, password_set, vault_promote  vault-dev:acme/dev/acme
+
+ACCOUNT          TARGET    SECRET                   SOURCE
+acme_batch_user  free-pdb  vault-dev:acme/dev/acme  current
+
+nothing was applied (--dry-run)
+```
+
+Then for real:
+
+```bash
+sopuli --config sopuli.yaml creds apply --repair drift.json
+```
+
+```
+ACCOUNT          TARGET    SECRET                   SOURCE
+acme_batch_user  free-pdb  vault-dev:acme/dev/acme  current
+
+ACCOUNT          TARGET    STATE    DETAIL
+acme_batch_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 changed
+```
+
+`acme_app_user` was never dialled. That is the whole feature.
+
+#### The exit-4 loop, which is what it is for
+
+Stage a rotation, lock one account so it cannot confirm, and apply:
+
+```sql
+ALTER USER acme_batch_user ACCOUNT LOCK;
+```
+
+```
+ACCOUNT          TARGET    STATE    DETAIL
+acme_app_user    free-pdb  IN_SYNC  changed and verified by login
+acme_batch_user  free-pdb  LOCKED   account is locked; the password was not changed, because a locked account cannot confirm one -- declare `account: { unlock_if_locked: true }` on this account's policy to have `apply` unlock it first
+
+1 changed, 1 not confirmed
+repair with: sopuli creds apply --config C:\tmp\sopuli-guide\sopuli.yaml --select tier=sandbox
+         or: --repair FILE, if you captured this run with --output json
+```
+
+Exit 4 — but that run was text mode, so it captured nothing. **Re-run it as JSON
+while the account is still locked**, which is the document you actually repair
+from:
+
+```bash
+sopuli --config sopuli.yaml --output json creds apply --select tier=sandbox > partial.json
+echo "exit $?"      # 4
+```
+
+*Then* unlock the account and repair from that document:
+
+```sql
+ALTER USER acme_batch_user ACCOUNT UNLOCK;
+```
+
+```bash
+sopuli --config sopuli.yaml creds apply --repair partial.json
+```
+
+```
+ACCOUNT          TARGET    SECRET                   SOURCE
+acme_batch_user  free-pdb  vault-dev:acme/dev/acme  pending
+
+ACCOUNT          TARGET    STATE    DETAIL
+acme_batch_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+```
+
+The pending is applied to the one account that missed it and *then* promoted,
+which is invariant 7's ordering surviving the narrowing. Getting the order wrong
+is worth doing once: unlock first and the locked run's document is the one you
+already fixed, so the repair set is empty and you get `nothing to apply`.
+
+#### The refusals, which are most of the value
+
+Every one of these exits **2** with nothing on stdout — the same treatment
+`--target nosuch` gets, because `--repair` feeds a filter and a filter that does
+not resolve is an invocation that did not resolve.
+
+A document from a different configuration, which is the one mistake the
+narrowing does not make harmless:
+
+```
+sopuli: --repair: C:\tmp\sopuli-guide\foreign.json: was produced over a different configuration
+  hint: produced over C:\tmp\sopuli-guide\other.yaml; this run resolves C:\tmp\sopuli-guide\sopuli.yaml
+```
+
+Note what that compares: the *paths*, not their content. A config file copied
+somewhere else is a different estate to this check.
+
+A document from a command that reports no repair set:
+
+```
+sopuli: --repair: C:\tmp\sopuli-guide\notaproducer.json: was produced by `target.list`, which reports no repair set
+  hint: pass a document from `creds.apply` or `creds.check` -- an apply that exited 4, or a check that exited 3
+```
+
+Something that is not a run document at all, and a path that is not there:
+
+```
+sopuli: --repair: C:\tmp\sopuli-guide\garbage.json: is not JSON (line 1)
+  hint: this flag reads a run document, which is what `--output json` writes
+
+sopuli: --repair: C:\tmp\sopuli-guide\nosuch.json: cannot be read (No such file or directory)
+  hint: pass the path to a `creds apply` or `creds check` run document
+```
+
+A document produced by sopuli 0.60 or earlier carries no
+`invocation.config_files` (#402), so the estate cannot be checked and it is
+refused rather than trusted. Cause it on purpose by deleting that key from a
+captured document:
+
+```
+sopuli: --repair: C:\tmp\sopuli-guide\old.json: names no config files, so it cannot be shown to describe this estate
+  hint: `invocation.config_files` arrived in #402 -- re-run the command that produced this document to get one that carries it
+```
+
+#### Staleness warns and proceeds
+
+Edit `invocation.finished_at` in a captured document to something old. The run
+does the work and says how old its instructions were:
+
+```
+1 note:
+  C:\tmp\sopuli-guide\stale.json: this document is 13 days old, so the run it describes may not be the estate's current state -- a pair since repaired costs one login and reports changed: false
+```
+
+`SOPULI-W020` in `diagnostics[]` under `--output json`. Deliberately not a gate:
+the set can only narrow, and a pair since repaired costs one login and reports
+`changed: false`, so a stale document is wasteful rather than dangerous.
+
 ### 10.5 `check` and the lockout guard
 
 `check` authenticates, so a loop over a drifted account is a loop that can lock it
@@ -1823,7 +1985,6 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
 - **`--method hash`**, verification without a login attempt. It depends on the `T:`
   verifier layout in `SYS.USER$.SPARE4`, which is unconfirmed — `verify.method`
   parses in a profile and reaches no consumer.
-- **`--repair`**, which will act on the DRIFT list `check` produces.
 - **The `file`, `keyring` and `oci` stores.** Only `hashicorp` exists.
 - **A real wallet without a full Oracle install**, per §12.
 - **19c, and anything above tier 2.** The whole tier-2 matrix is done — 21c

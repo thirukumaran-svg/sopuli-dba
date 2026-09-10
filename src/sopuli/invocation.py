@@ -374,11 +374,20 @@ def refresh_document(document: RunDocument, invocation: Invocation) -> RunDocume
     what the two-call arrangement is for: the first happens before a file has
     been read, so there is nothing to name, and a run that never loads one keeps
     the field absent rather than empty.
+
+    **Resolved, not as given** (#391, found in review). ``discover`` keeps an
+    explicit ``--config estate.yaml`` relative, and a relative path is only
+    meaningful beside the working directory that produced it -- which no later
+    reader has. `creds apply --repair` compares this list against its own run's
+    to refuse a document from another estate, and two *different* files both
+    called ``estate.yaml`` would have compared equal. Resolving here rather than
+    there is what makes the comparison sound at all: the reader cannot recover a
+    working directory the writer did not record.
     """
     document.dry_run = invocation.dry_run
     document.profile = invocation.profile
     if invocation.loaded is not None:
-        document.config_files = tuple(str(path) for path in invocation.sources)
+        document.config_files = tuple(str(path.resolve()) for path in invocation.sources)
     document.options = {
         name: option
         for name, option in all_options(invocation).items()

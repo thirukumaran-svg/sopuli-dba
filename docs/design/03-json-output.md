@@ -1350,11 +1350,12 @@ is not contract and may improve.
 | `SOPULI-W012` | A rotation promoted a secret document and then read a different password back out of it (#284, UC-1 §8 step 8). Every database took the new password and the promotion was acknowledged, so nothing needs undoing and `apply` converges what is left — but until the vault serves what it accepted, an application fetching `current` may get the old password. Its own code for the reason `SOPULI-W011` has one: the run exits 4, and so does a run with half its targets failed, and those two want opposite responses. Here the *databases* are the converged half and the vault is not, so the reader goes and looks at the store — replication lag on a mount with read replicas is the ordinary cause |
 | `SOPULI-W018` | One of `02-oracle-privileges.md` §4's account guardrails could not be run against a target, because the fact it checks could not be read (#296). The run **proceeded** and the other four checks were applied. Today this is always check 3, the password file: `V$PWFILE_USERS` is outside §2's default grant set on purpose, so the code appears on a correctly installed estate and the optional grant is what removes it — which is what makes it a warning worth leaving on rather than one a reader learns to filter. It exists for #216's rule: the run exits 0 with every account applied, and nothing in the exit code, the states or `results[].overridden` says that one of five checks contributed nothing to that answer. **Not a refusal**, because the estate that cannot answer is the correct one and refusing would mutate nothing anywhere; **one per (target, check)**, because a missing grant is a property of the database and forty accounts on it is one fact; and **printed as well as serialised**, on #309's rule that a warning nobody can see in the default output is not surfaced |
 | `SOPULI-W019` | A lock path was created without `cas_required`, because this run's store credential may not write path metadata (#390). The run's own lock was still taken under a compare-and-set and its fence held, so nothing in the result is wrong — what is missing is the store refusing an un-CAS'd write from **anybody else**, an operator with a vault CLI included. Its own code for #216's rule: the run exits 0 and the condition it describes is a property of the path that will still be there on the next run, which is the shape of thing a reader goes and fixes in the vault. **One per path**, not per store — the opposite of `SOPULI-W001`, and deliberately: advisory locking is one fact however many locks are held on it, while this names a path to repair. **Emitted only by the run that creates the path**; every later run finds the metadata, finds `cas_required` unset, and is refused at exit 5 instead |
+| `SOPULI-W020` | The document `creds apply --repair` was handed is old enough to say so (#391). A **warning and never a gate**: a threshold that refused would have to be wrong for somebody, and the run it stopped would have been safe -- the set can only narrow (invariant 5) and a pair since repaired costs one login and reports `changed: false`, so a stale document is wasteful rather than dangerous. It **names the age** rather than quoting the threshold, because what the reader does with "eleven days" is decide whether that is still the estate they are looking at. Its own code on #216's rule: the run exits 0 having done less than the operator may have expected, and nothing else in the document says the narrowing came from something written last week. **Printed as well as serialised** (#309): the emitter writes the document or the text and never both, and the person who typed the flag is exactly who this is for |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
 answered**: what is settled is the spelling this document already used as its
-example and that these thirteen warnings have codes. Whether *every* warning gets one
+example and that these warnings have codes. Whether *every* warning gets one
 — the config layer's §10 findings still do not — and how numbers are allocated
 across categories is the part still open. Every one was allocated by hand at the
 moment something needed it, which is the evidence rather than the answer.
@@ -1606,9 +1607,14 @@ useful: "the passwords disagree" and "the tool is broken" need different pagers.
 # which accounts drifted, and where
 jq -r '.results[] | select(.state=="DRIFT") | "\(.account)@\(.target)"' result.json
 
-# what a partial apply left unconfirmed: the repair set `--repair` will read (#264)
+# what a partial apply left unconfirmed: the repair set `--repair` reads (#264, #391)
+# -- the same filter the flag applies, kept in step with it deliberately
 jq -r '.results[] | select(.state != "IN_SYNC" and .state != "ROLLOVER_ACTIVE")
        | "\(.account)@\(.target)"' result.json
+
+# and the flag itself, which needs the document on disk rather than on a pipe
+sopuli creds apply --config estate.yaml --output json > result.json
+sopuli creds apply --config estate.yaml --repair result.json
 
 # anything the tool actually changed, for the change record
 jq '[.results[] | select(.changed)] | map({account,target,actions:[.actions[]|.kind]})' result.json

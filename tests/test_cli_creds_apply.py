@@ -30,9 +30,10 @@ from jsonschema import Draft202012Validator
 
 from sopuli import apply, check
 from sopuli.cli import cli
-from sopuli.clock import utc_now
+from sopuli.clock import to_rfc3339, utc_now
+from sopuli.config.errors import ArgumentError
 from sopuli.config.model import Vault
-from sopuli.diagnostics import LOCK_TAKEN_OVER
+from sopuli.diagnostics import LOCK_TAKEN_OVER, REPAIR_DOCUMENT_STALE
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.oracle.errors import classify
 from sopuli.driver.protocol import (
@@ -2659,3 +2660,235 @@ def test_an_account_with_no_policy_reports_rather_than_raising(
         if one["code"] == "password_not_redrawn"
     ]
     assert "no password policy" in declined[0]["message"]
+
+
+# ------------------------------------------------------ --repair (#391) ---
+
+
+def _run_document(config: Path, results: list[dict[str, Any]]) -> dict[str, Any]:
+    """A `creds check` document over `config`, carrying `results`.
+
+    Built rather than captured, because what is under test is the *filter* and a
+    captured document would tie these tests to whatever the estate happened to
+    report. The one field that has to be real is `invocation.config_files`: the
+    estate check compares it against what this run loaded (#402).
+    """
+    return {
+        "schema_version": "1.20",
+        "command": "creds.check",
+        "invocation": {"correlation_id": "x", "dry_run": False, "config_files": [str(config)]},
+        "results": results,
+        "exit_code": 3,
+    }
+
+
+def _repair_file(tmp_path: Path, config: Path, results: list[dict[str, Any]]) -> Path:
+    path = tmp_path / "previous.json"
+    path.write_text(json.dumps(_run_document(config, results)), encoding="utf-8")
+    return path
+
+
+def test_repair_narrows_to_the_pairs_that_did_not_confirm(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
+) -> None:
+    """The whole point of the flag: one login instead of two.
+
+    `SHARED_CONFIG` puts two accounts in one document, and the previous run
+    confirmed one of them. Asserted on what the session was asked to change,
+    not on the summary -- a command can report the right count and still have
+    dialled the target it was supposed to skip.
+    """
+    harness = estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+    config = write_config(SHARED_CONFIG)
+    previous = _repair_file(
+        tmp_path,
+        config,
+        [
+            {"account": "acme_web_user", "target": "appdb-alpha", "state": "IN_SYNC"},
+            {"account": "acme_batch_user", "target": "appdb-alpha", "state": "DRIFT"},
+        ],
+    )
+
+    result = run(runner, config, "--repair", str(previous))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    changed = [name for session in harness["sessions"] for name, _ in session.changed]
+    assert changed == ["ACME_BATCH_USER"]
+
+
+def test_repair_cannot_extend_the_declared_set(  # invariant 5
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
+) -> None:
+    """A pair the document names and the config does not is dropped, not acted
+    on -- and `--force` has nothing to say about it, because the whitelist is
+    the one guardrail it never overrides."""
+    estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+    config = write_config(SHARED_CONFIG)
+    previous = _repair_file(
+        tmp_path,
+        config,
+        [{"account": "gone_user", "target": "appdb-alpha", "state": "DRIFT"}],
+    )
+
+    result = run(runner, config, "--repair", str(previous), "--force")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "nothing to apply" in result.output
+
+
+def test_repair_combines_with_the_other_selectors_as_and(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
+) -> None:
+    """Every selector narrows and none extends, so a pair the document names on
+    a target `--select` excluded is not reached."""
+    estate()
+    config = write_config(CONFIG)
+    previous = _repair_file(
+        tmp_path,
+        config,
+        [{"account": "acme_web_user", "target": "appdb-beta", "state": "DRIFT"}],
+    )
+
+    result = run(runner, config, "--repair", str(previous), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "nothing to apply" in result.output
+
+
+def test_a_document_from_another_estate_is_refused_before_any_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
+) -> None:
+    """Exit 2 and no document, like every other selector that does not resolve.
+
+    Asserted on the sessions as well as the exit code: "before a target is
+    dialled" is the property #264 asked for, and an exit code alone does not
+    show it.
+    """
+    harness = estate()
+    config = write_config(CONFIG)
+    previous = _repair_file(
+        tmp_path,
+        tmp_path / "somewhere-else.yaml",
+        [{"account": "acme_web_user", "target": "appdb-alpha", "state": "DRIFT"}],
+    )
+
+    result = run(runner, config, "--repair", str(previous))
+
+    assert isinstance(result.exception, ArgumentError)
+    assert result.exception.exit_code == ExitCode.USAGE
+    assert "different configuration" in str(result.exception)
+    assert harness["sessions"] == []
+
+
+def test_a_refused_repair_writes_no_document(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
+) -> None:
+    """J7's rule: exit 2 is the only code that never produces one, and it stays
+    usable as a consumer rule only if nothing puts a document on it."""
+    estate()
+    config = write_config(CONFIG)
+    previous = _repair_file(tmp_path, tmp_path / "elsewhere.yaml", [])
+
+    result = run(runner, config, "--repair", str(previous), "--output", "json")
+
+    assert isinstance(result.exception, ArgumentError)
+    assert result.exception.exit_code == ExitCode.USAGE
+    assert result.stdout == ""
+
+
+def test_a_stale_document_warns_and_proceeds(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
+) -> None:
+    """Not a gate. The run does the work and says how old its instructions were
+    -- printed as well as serialised, on #309's rule."""
+    estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+    config = write_config(SHARED_CONFIG)
+    body = _run_document(
+        config, [{"account": "acme_batch_user", "target": "appdb-alpha", "state": "DRIFT"}]
+    )
+    body["invocation"]["finished_at"] = to_rfc3339(utc_now() - timedelta(days=9))
+    previous = tmp_path / "old.json"
+    previous.write_text(json.dumps(body), encoding="utf-8")
+
+    result = run(runner, config, "--repair", str(previous))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "9 days old" in result.output
+
+
+def test_a_stale_document_carries_its_code_into_the_document(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+    tmp_path: Path,
+) -> None:
+    estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+    config = write_config(SHARED_CONFIG)
+    body = _run_document(
+        config, [{"account": "acme_batch_user", "target": "appdb-alpha", "state": "DRIFT"}]
+    )
+    body["invocation"]["finished_at"] = to_rfc3339(utc_now() - timedelta(days=9))
+    previous = tmp_path / "old.json"
+    previous.write_text(json.dumps(body), encoding="utf-8")
+
+    result = run(runner, config, "--repair", str(previous), "--output", "json")
+
+    found = document(result)
+    assert not list(validator.iter_errors(found))
+    assert [one["code"] for one in found["diagnostics"]] == [REPAIR_DOCUMENT_STALE]
+
+
+def test_the_blast_radius_counts_the_narrowed_run(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
+) -> None:
+    """`max_targets` and `confirm_environments` read the plan, so the filter has
+    to run before it -- a repair of one pair that asked for confirmation of the
+    whole estate would be asking about work it is not going to do."""
+    estate()
+    config = write_config(CONFIG)
+    previous = _repair_file(
+        tmp_path,
+        config,
+        [{"account": "acme_web_user", "target": "appdb-alpha", "state": "DRIFT"}],
+    )
+
+    result = run(runner, config, "--repair", str(previous), "--output", "json")
+
+    assert document(result)["plan"]["blast_radius"]["targets"] == 1

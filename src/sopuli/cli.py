@@ -68,6 +68,7 @@ from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli import preflight
+from sopuli import repair as repair_module
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
@@ -86,6 +87,7 @@ from sopuli.config import (
     binding_stores,
     dangling,
     filter_estate,
+    filter_to_pairs,
     parse_selector,
     refuse_unknown,
 )
@@ -2748,6 +2750,18 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     help="Refuse to attempt a login within this many tries of the lockout limit.",
 )
 @click.option(
+    "--repair",
+    "repair_document",
+    metavar="FILE",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "Act only on what a previous run left unconfirmed. Takes a run document "
+        "-- an apply that exited 4, or a check that exited 3. Narrows the run; "
+        "it cannot extend it."
+    ),
+)
+@click.option(
     "--force",
     is_flag=True,
     default=False,
@@ -2770,6 +2784,7 @@ def creds_apply(
     strategy: str | None,
     preflight_all: bool,
     lockout_margin: int,
+    repair_document: Path | None,
     force: bool,
     run: Invocation,
 ) -> str:
@@ -2839,6 +2854,21 @@ def creds_apply(
     promotion lands they are fetching a password part of the estate no longer
     has. Re-running is the remedy and is safe.
 
+    **`--repair FILE` narrows that re-run to what the last one left behind.**
+    It reads a previous run's document -- an apply that exited 4, or a check
+    that exited 3 -- and acts only on the (account, target) pairs it reported as
+    not confirmed. What it buys is logins, not capability: an unnarrowed repair
+    converges the estate correctly and expensively, at one login per account per
+    target against the failed-login counter section 7 exists to protect.
+
+    It **narrows and cannot extend** (invariant 5): a pair the document names
+    and the config no longer declares is dropped, not acted on. It combines with
+    the other selectors as *and*, like every one of them. A document produced
+    over a different configuration is refused before a target is dialled, which
+    is the one mistake the narrowing does not make harmless; a document merely
+    *old* warns and proceeds, because a pair since repaired costs one login and
+    reports no change.
+
     Help text stays ASCII throughout, which is P4's rule.
     """
     document = run.document
@@ -2848,6 +2878,26 @@ def creds_apply(
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
     config = filter_estate(run.config, selection)
+    # After the selectors, so the two compose as *and* the way every pair of
+    # selectors does, and so `refuse_unknown` still judges names against the
+    # unfiltered estate. Before the plan, because `max_targets` and
+    # `confirm_environments` must answer about the work this run will actually
+    # do -- a blast radius counting the whole estate on a two-pair repair would
+    # ask for a confirmation the run does not warrant.
+    repair_notes: list[str] = []
+    if repair_document is not None:
+        repair_set = repair_module.read(repair_document, sources=run.sources)
+        config = filter_to_pairs(config, repair_set.pairs)
+        stale = repair_module.staleness(repair_set)
+        if stale is not None:
+            document.diagnostics.append(stale)
+            # Printed as well as serialised, on #309's rule: the emitter writes
+            # the document or the text and never both, so a diagnostic alone is
+            # invisible to the person who ran this by hand -- and they are
+            # exactly who a staleness warning is for. Carried on every return
+            # path below, including the two that do nothing: "nothing to apply"
+            # from a stale document is the case most worth explaining.
+            repair_notes.append(stale.message)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -2868,7 +2918,12 @@ def creds_apply(
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
         document.finish(ExitCode.SUCCESS, Summary())
-        return render_plan(plan, noun="apply") + "\n\nnothing to apply"
+        return "\n".join(
+            [
+                render_plan(plan, noun="apply") + "\n\nnothing to apply",
+                *render_notices(repair_notes),
+            ]
+        )
 
     keys = _document_keys(bindings)
     stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
@@ -2889,9 +2944,16 @@ def creds_apply(
         )
         document.diagnostics.extend(_preflight_diagnostics(findings))
         if preflight.refusal(findings) is not None:
-            return _refuse_preflight(findings, document, header=_header(plan, sources))
+            return _refuse_preflight(
+                findings, document, header=_header(plan, sources), notes=repair_notes
+            )
         document.finish(ExitCode.SUCCESS, Summary(total=len(sources)))
-        return f"{_header(plan, sources)}\n\nnothing was applied (--dry-run)"
+        return "\n".join(
+            [
+                f"{_header(plan, sources)}\n\nnothing was applied (--dry-run)",
+                *render_notices(repair_notes),
+            ]
+        )
 
     manager = LockManager(
         stores={name: _lockable(name, config, stores) for name in {key.store for key in keys}},
@@ -2918,7 +2980,9 @@ def creds_apply(
                 # cannot change between the survey and the run it was surveying
                 # for. Releasing happens on the way out of `holding`, as it does
                 # on every other path.
-                return _refuse_preflight(findings, document, header=_header(plan, sources))
+                return _refuse_preflight(
+                    findings, document, header=_header(plan, sources), notes=repair_notes
+                )
             applied, stolen = _apply_estate(
                 sources,
                 run,
@@ -3027,7 +3091,9 @@ def creds_apply(
     # document, so a run-level warning is invisible to somebody reading a
     # terminal -- and a guardrail that did not run, reported only in JSON, is
     # reported to nobody who ran this by hand.
-    notes = render_notices([one.message for one in unchecked] + _lock_notices(manager))
+    notes = render_notices(
+        repair_notes + [one.message for one in unchecked] + _lock_notices(manager)
+    )
     return "\n".join([f"{_header(plan, sources)}\n\n{table}", *notes])
 
 
@@ -4089,7 +4155,9 @@ def _preflight_diagnostics(findings: Sequence[Finding]) -> list[Diagnostic]:
     ]
 
 
-def _refuse_preflight(findings: Sequence[Finding], document: Any, *, header: str) -> str:
+def _refuse_preflight(
+    findings: Sequence[Finding], document: Any, *, header: str, notes: Sequence[str] = ()
+) -> str:
     """Report the refusal, and change nothing.
 
     Exit 1, which is what "nothing changed anywhere" already means for this verb
@@ -4097,6 +4165,13 @@ def _refuse_preflight(findings: Sequence[Finding], document: Any, *, header: str
     as a file that could not be read, and `config validate` would pass on every
     one of these. Not exit 5 either -- that is invariant 4's capability code, and
     the capability refusal never reaches here because it raises.
+
+    ``notes`` carries the run-level notices the ordinary return paths render, so
+    a refusal does not silently drop them (found in review on #391). A stale
+    ``--repair`` document under ``--preflight`` was serialised into
+    ``diagnostics[]`` and printed nowhere, which is exactly the invisibility
+    #309's rule exists to prevent -- and a refusal is a worse place to lose a
+    warning than a success, because it is where somebody is already reading.
     """
     first = preflight.refusal(findings)
     if first is None:  # pragma: no cover - the caller asks before calling

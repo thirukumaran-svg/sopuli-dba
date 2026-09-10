@@ -417,11 +417,19 @@ def repair_invocation(
     No other stage gets it: `--confirm` being on that operation alone is the
     point of having it.
 
-    **Not a `--repair FILE` invocation yet.** #264 decided that flag reads a
-    previous run's document; until it ships, the invocation that actually repairs
-    a partial run is this one -- safe to re-run (invariant 9) and merely more
-    expensive than the flag will be. Naming a flag this build has not got would
-    send an operator holding a half-applied estate to a usage error.
+    **Still the plain re-run, now that `--repair FILE` exists** (#391), and the
+    reason is one UC-1 could not have known when it said the flag would replace
+    this line. :meth:`~sopuli.output.emit.Emitter.emit` writes "the JSON
+    document, or the human text, never both" -- so this line is only ever read
+    by somebody in **text** mode, and a text-mode run leaves no document on disk
+    for ``--repair`` to be pointed at. Replacing the line would hand a half-
+    applied estate an invocation that cannot run, which is the trap the
+    paragraph above already refused once.
+
+    The flag is named on a second line instead, conditional on nothing and
+    promising nothing: it says what it needs. A JSON consumer needs no line at
+    all -- it has ``results[]``, and ``03-json-output.md`` §7's recipe is the
+    same filter this flag applies.
     """
     words = ["sopuli", "creds", "apply"]
     for path in config_paths:
@@ -575,12 +583,14 @@ def _verdict(
         line = ", ".join(parts)
         if not (changed and not promoted):
             line = paint(line, Role.HEADING)
-        return _with_remedy(line, repair, stopped)
+        return _with_remedy(line, repair, stopped, flag=False)
     parts.append(f"{unconfirmed} not confirmed")
-    return _with_remedy(", ".join(parts), repair, stopped)
+    return _with_remedy(", ".join(parts), repair, stopped, flag=True)
 
 
-def _with_remedy(line: str, repair: str | None, stopped: str | None = None) -> str:
+def _with_remedy(
+    line: str, repair: str | None, stopped: str | None = None, *, flag: bool = False
+) -> str:
     """The verdict, and under it either why the run stopped or what to type next.
 
     Never both, and ``stopped`` wins. A run whose lock was taken over has an
@@ -593,7 +603,27 @@ def _with_remedy(line: str, repair: str | None, stopped: str | None = None) -> s
     remedy nor a reason is a field the document carries. The remedy is also the
     line somebody copies, which is a second reason to keep escape sequences out
     of it.
+
+    ``--repair`` gets the third line and the conditional wording, because this
+    text is only ever read in text mode and a text-mode run captured no document
+    (see :func:`repair_invocation`). It is worth saying anyway: an operator
+    meeting exit 4 twice is exactly who should know the cheaper route exists,
+    and *what it costs to have one* is the part they can act on before the next
+    run rather than after it.
+
+    ``flag`` is that third line's own condition, and it is not the same as
+    ``repair``'s (found in review on #391). Exit 4 has two shapes and the plain
+    re-run fixes both, but ``--repair`` only fixes one: on UC-1 §8 case 7 --
+    every target confirmed and the vault not promoted -- there is no unconfirmed
+    row for a repair set to be built from, so the flag would filter the estate
+    to nothing and report ``nothing to apply``. Advertising it there sends the
+    reader to a command that does nothing about the case they are in.
     """
     if stopped is not None:
         return f"{line}\n{stopped}"
-    return line if repair is None else f"{line}\nrepair with: {repair}"
+    if repair is None:
+        return line
+    remedy = f"{line}\nrepair with: {repair}"
+    if not flag:
+        return remedy
+    return f"{remedy}\n         or: --repair FILE, if you captured this run with --output json"

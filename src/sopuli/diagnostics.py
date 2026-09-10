@@ -274,6 +274,24 @@ ROTATION_UNCONFIRMED = "SOPULI-W012"
 #: without a fence" wants the first and would be paged wrongly by the second.
 LOCK_PATH_UNGUARDED = "SOPULI-W019"
 
+#: The document ``creds apply --repair`` was handed is old enough to be worth
+#: saying so (#391, UC-1 §``--repair``).
+#:
+#: A warning and never a refusal, which is the decision this code exists to
+#: carry: a threshold that stopped the run would have to be wrong for somebody,
+#: and the run it refused would have been safe. Two properties make it safe --
+#: the set can only narrow (invariant 5), and a pair since repaired costs one
+#: login and reports ``changed: false`` -- so a stale document is wasteful
+#: rather than dangerous.
+#:
+#: It names the age rather than quoting the threshold, because what the reader
+#: does with "eleven days" is decide whether that is still the estate they are
+#: looking at, and no constant here can decide it for them. The condition the
+#: exit code cannot report (#216's rule): the run exits 0 having done less than
+#: the operator may have expected, and nothing else in the document says the
+#: narrowing came from something written last week.
+REPAIR_DOCUMENT_STALE = "SOPULI-W020"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -375,6 +393,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "refusing an un-CAS'd write from anybody else, an operator with a vault CLI "
             "included. Grant `update` on the mount's metadata path, or set it once by "
             "hand; the message names the path."
+        ),
+        REPAIR_DOCUMENT_STALE: (
+            "The document `creds apply --repair` was given is old enough that the run it "
+            "describes may not be the estate's current state. The run proceeds: the set "
+            "can only narrow, and a pair since repaired costs one login and reports "
+            "changed: false. The message names the age, because whether that is still "
+            "the estate you are looking at is not something a threshold can decide."
         ),
         STORE_DEGRADED: (
             "A configured store answered and cannot serve this run: sealed, standing by, "

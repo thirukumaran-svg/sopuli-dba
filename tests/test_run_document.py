@@ -9,6 +9,7 @@ drift from the schema without anyone noticing.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -236,6 +237,33 @@ def test_config_files_keeps_layering_order(tmp_path: Path) -> None:
 
     assert result.exit_code == ExitCode.SUCCESS
     assert json.loads(result.output)["invocation"]["config_files"] == [str(site), str(team)]
+
+
+def test_config_files_are_resolved_not_stored_as_typed(tmp_path: Path) -> None:
+    """A relative `--config` is only meaningful beside the directory that
+    produced it, which no later reader has (found in review on #391).
+
+    `creds apply --repair` compares this list against its own run's to refuse a
+    document from another estate; two different files both called `estate.yaml`
+    compared equal and were accepted. Resolving belongs here rather than there,
+    because the reader cannot recover a working directory the writer did not
+    record.
+    """
+    path = tmp_path / "estate.yaml"
+    path.write_text(MINIMAL_CONFIG, encoding="utf-8")
+    if sys.platform != "win32":
+        path.chmod(0o600)
+
+    with CliRunner().isolated_filesystem(temp_dir=tmp_path) as here:
+        relative = os.path.relpath(path, here)
+        result = CliRunner().invoke(
+            cli, ["target", "list", "--config", relative, "--output", "json"]
+        )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    found = json.loads(result.output)["invocation"]["config_files"]
+    assert found == [str(path.resolve())]
+    assert Path(found[0]).is_absolute()
 
 
 def test_the_committed_example_carries_no_field_the_producer_cannot_write() -> None:

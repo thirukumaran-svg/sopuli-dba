@@ -386,6 +386,49 @@ def test_the_verdict_names_the_repair_where_the_vault_was_not_promoted() -> None
     assert "repair with: sopuli creds apply" in rendered
 
 
+def test_the_remedy_also_names_the_flag_and_what_it_needs() -> None:
+    """`--repair` is the cheaper route and this line is the only place a
+    text-mode operator meets it (#391).
+
+    It is a second line rather than a replacement, because the emitter writes
+    the JSON document or the text and never both -- so whoever reads this ran
+    in text mode and captured nothing for `--repair` to be pointed at. Naming
+    it unconditionally would send a half-applied estate to an invocation that
+    cannot run.
+    """
+    rows = [
+        (binding(), outcome(), True),
+        (binding("acme_batch_user"), outcome(check.ERROR, "ORA-01017"), True),
+    ]
+
+    rendered = apply_view.render_apply(rows, repair="sopuli creds apply")
+
+    assert "or: --repair FILE, if you captured this run with --output json" in rendered
+
+
+def test_a_run_with_no_remedy_names_no_flag_either() -> None:
+    """The second line rides on the first, so a successful run gains neither."""
+    rows = [(binding(), outcome(), True)]
+
+    assert "--repair" not in apply_view.render_apply(rows, promoted=1)
+
+
+def test_the_flag_is_not_offered_where_it_would_do_nothing() -> None:
+    """Exit 4's other shape: every target confirmed, the vault not promoted
+    (UC-1 §8 case 7). Found in review on #391.
+
+    The plain re-run fixes it; `--repair` cannot, because there is no
+    unconfirmed row for a repair set to be built from -- the flag would filter
+    the estate to nothing and report `nothing to apply`.
+    """
+    rows = [(binding(), outcome(), True)]
+
+    rendered = apply_view.render_apply(rows, promoted=0, repair="sopuli creds apply")
+
+    assert "repair with: sopuli creds apply" in rendered
+    assert "--repair FILE" not in rendered
+
+
 def test_a_run_that_did_not_exit_four_offers_no_remedy() -> None:
     """The renderer never decides this. Offering a remedy on a run the exit code
     called successful would be the two describing one run differently."""
