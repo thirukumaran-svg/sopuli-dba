@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.61.0](https://github.com/villebase/sopuli-dba/compare/v0.60.0...v0.61.0) (2026-09-11)
+
+
+### Features
+
+* creds apply --repair FILE, acting only on a run's unconfirmed set ([#405](https://github.com/villebase/sopuli-dba/issues/405)) ([4b0f922](https://github.com/villebase/sopuli-dba/commit/4b0f9225396dda2e0b032e993f02490e7d39db7c))
+* emit invocation.config_files, and add an (account, target) filter ([#403](https://github.com/villebase/sopuli-dba/issues/403)) ([55b602d](https://github.com/villebase/sopuli-dba/commit/55b602ddf601f4a421ccc86424a461de050172bd))
+* remove `creds.promote` from the run schema, and strike the flags that never existed ([#392](https://github.com/villebase/sopuli-dba/issues/392)) ([#408](https://github.com/villebase/sopuli-dba/issues/408)) ([56ab566](https://github.com/villebase/sopuli-dba/commit/56ab56692d8dc52b2ba3dc33db7c5d59aad215d3))
+
 ## [0.60.0](https://github.com/villebase/sopuli-dba/compare/v0.59.0...v0.60.0) (2026-09-10)
 
 
