@@ -1068,10 +1068,17 @@ Points that matter:
     mask. Unified audit does retain the statement, masked to `IDENTIFIED BY *` at
     write time, in `AUDSYS.AUD$UNIFIED` as well as the view. Neither result is a
     general Oracle guarantee — re-verify per version with
-    `sql/oracle/02_password_leak_probe.sql`. **SQL trace remains untested** (the
-    greps in the probe's §7 have not been run), as do trace-consuming 3rd-party
-    monitors. The tool: never enables trace on its own sessions, keeps the
-    statement out of its own logs, and documents the residual risk.
+    `sql/oracle/02_password_leak_probe.sql`. **SQL trace has now been measured and
+    does not capture the password** (#407, 2026-09-11, 26ai 23.26.2.0.0 and 21c
+    21.3.0.0.0): a session traced at 10046 level 12 writes the cursor truncated,
+    `ALTER USER sopulitest IDE`, stopping one character into `IDENTIFIED`. This
+    paragraph said "remains untested — the greps have not been run" until then,
+    and the assumption it carried was the pessimistic one, so retiring it is a
+    correction in the tool's favour rather than a new risk.
+    **Trace-consuming 3rd-party monitors are still untested**, and are a
+    different question: what they retain is theirs, not Oracle's. The tool:
+    never enables trace on its own sessions, keeps the statement out of its own
+    logs, and documents the residual risk.
   - **Never wrap the statement in an anonymous PL/SQL block.** Issue `ALTER USER`
     directly. Wrapping does not move the DDL literal into the shared pool — the
     DDL literal never reaches it either way — it *adds* an exposure, because the

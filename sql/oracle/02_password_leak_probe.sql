@@ -162,6 +162,58 @@
 --   binds, in clear, from its own sweep queries. Nothing to do with rotation --
 --   and a live demonstration of why invariant 14 exists.
 --
+--   2026-09-11, POSITION 2 WITH AUDIT_SYS_OPERATIONS = TRUE, and section 7 run
+--   on 26ai for the first time (#407). The position 2 line in the table above
+--   was run on 2026-08-26 for the canary sweep only; what it exists for -- the
+--   audit_file_dest greps that nothing else populates -- had never been run
+--   anywhere.
+--
+--     21c XE 21.3.0.0.0, XEPDB1, svc_user = sys, isdba=TRUE, AUDIT_TRAIL =
+--     DB,EXTENDED and AUDIT_SYS_OPERATIONS = TRUE:
+--
+--       UNIFIED_AUDIT_TRAIL   events=4  with sql_text=4   clean
+--       DBA_AUDIT_TRAIL       events=0                    <- see below
+--       sweep                 C3 only, as position 1
+--       audit_file_dest       *** C3 *** and nothing else, in 1 file
+--
+--     DBA_AUDIT_TRAIL going EMPTY is the point of the position, not a fault.
+--     With AUDIT_SYS_OPERATIONS = TRUE, SYS's statements are routed to the OS
+--     files instead of to the database trail -- so this is the only position in
+--     which the adump greps have anything to grep. In them the DDL appears
+--     masked, exactly as in every database trail:
+--
+--       ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'
+--
+--     and the sole verbatim canary among 646 ACTION lines is C3, the PL/SQL
+--     block. Invariant 13, on the OS audit trail.
+--
+--     26ai Free 23.26.2.0.0, FREEPDB1, positions 1 and 2, section 7 greps run
+--     for the first time on this release: trace directory (116 files), listener
+--     log, client history and the whole of /opt/oracle/diag all clean.
+--     audit_file_dest is clean too AND THAT RESULT MEANS NOTHING: it holds 5
+--     files, each a session header plus one ACTION line, all five the same
+--     internal call, and no file mentions SOPULITEST. Traditional auditing is
+--     desupported on 23ai+, so AUDIT_SYS_OPERATIONS is accepted and inert.
+--     This is the `pop=n` rule in OS-file form -- record it as ABSENT, not as
+--     clean. 21c is the release that shows what a populated one looks like.
+--
+--   The three checks section 6 and section 7 left manual are now
+--   04_password_leak_extensions.sql, and all three are answered there: a traced
+--   session does NOT capture the password, self-rotation is audited and masks
+--   both secrets, and IDENTIFIED BY VALUES masks the verifier. They sat unrun
+--   from the first version of this file until #407 because they were comments.
+--   If a future check belongs in this gate, write it as code.
+--
+--   ONE ORDERING TRAP, and it cost a run on each version. Section 8 below drops
+--   SOPULI_PROBE_POL and issues NOAUDIT USER, so anything run after this script
+--   records nothing. On 26ai that failure announced itself -- the trail came
+--   back empty. On 21c it did not: ORA_SECURECONFIG is enabled by default there
+--   and covers ALTER USER, so the trail looked populated and the masking result
+--   would have been attributed to the wrong policy. The second is the dangerous
+--   shape, and it is the argument for section 0's isdba=FALSE check applied one
+--   level up: always read WHICH policy captured the row, never only that a row
+--   exists.
+--
 --
 -- HOW TO RUN
 --   Set the DEFINEs in §0. The script connects three times: as SYSDBA to set
@@ -813,29 +865,23 @@ SELECT TO_CHAR(timestamp, 'HH24:MI:SS') AS ts,
  ORDER BY timestamp;
 
 --------------------------------------------------------------------------------
--- 6. Optional extensions, left manual
+-- 6. Extensions -- MOVED, and run (#407)
 --
--- 6a. Self-rotation (UC-1 Q6). The path where the account changes its OWN
---     password and therefore does not exercise the ALTER USER privilege.
---     Privilege auditing can miss this while statement auditing catches it --
---     worth knowing before the docs claim "rotations are audited".
+-- 6a (self-rotation), 6b (IDENTIFIED BY VALUES) and §7's trace grep were
+-- described here in comments and left for somebody to do by hand. Nobody did,
+-- from the first version of this file until 2026-09-11. They are now
 --
---       CONNECT sopulitest/"S0puliCanary4Dq7x"@&tns
---       ALTER USER sopulitest IDENTIFIED BY "S0puliCanary5Eq7x"
---                             REPLACE "S0puliCanary4Dq7x";
+--     04_password_leak_extensions.sql
 --
---     Then re-run §4b with a C5 suffix added.
+-- which runs all three and records what they found. Run it AFTER this script
+-- and BEFORE §8's cleanup, or re-enable the policies by hand first: §8 drops
+-- SOPULI_PROBE_POL and issues NOAUDIT USER, and the extensions then measure an
+-- empty trail rather than a masked one.
 --
--- 6b. IDENTIFIED BY VALUES. Not a sopuli code path today, but it would be the
---     restore-from-verifier path if one is ever added, and the redaction
---     question is separate: Oracle masks a password, but does it mask a
---     verifier? Offline-crackable either way.
---
---       SELECT spare4 FROM sys.user$ WHERE name = 'SOPULITEST';
---       ALTER USER sopulitest IDENTIFIED BY VALUES '<that string>';
---       SELECT sql_text FROM v$sql WHERE UPPER(sql_text) LIKE '%SOPULITEST%';
---
---     Needs SELECT ON SYS.USER$, itself an open question (ADR-001).
+-- The answers, so a reader here does not have to go and look: a traced session
+-- does NOT capture the password (the cursor is truncated at `... IDE`),
+-- self-rotation IS audited and masks the old password as well as the new, and
+-- IDENTIFIED BY VALUES masks the verifier. All three on 26ai and 21c.
 --
 -- Note that CONNECT puts the password on the SQL*Plus command line, so it is in
 -- ps output on a shared host. So are the DEFINEs in §0 of this script. Both are

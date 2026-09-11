@@ -125,9 +125,12 @@ equally. One is now partially closed:
   password as a literal is retained verbatim, because Oracle's protection is keyed
   to the `CREATE/ALTER USER` statement rather than to the password. 21c, 18c and
   11.2 have since been run (#380, #381, #382) and 11.2 disagrees on one row —
-  `V$SQLSTATS` retains the `ALTER USER` text there. 19c, 12.1 and 12.2 are unrun,
-  and SQL trace is unchecked on every version. The probe is
-  `sql/oracle/02_password_leak_probe.sql`; findings are recorded in
+  `V$SQLSTATS` retains the `ALTER USER` text there. 19c, 12.1 and 12.2 are unrun.
+  **SQL trace was unchecked on every version until #407** (2026-09-11) and is now
+  measured on 26ai and 21c: a traced session does *not* capture the password, the
+  cursor being written truncated. The probe is
+  `sql/oracle/02_password_leak_probe.sql`, its extensions are
+  `sql/oracle/04_password_leak_extensions.sql`; findings are recorded in
   `../design/02-oracle-privileges.md` §4, and what is still open in
   `../design/04-testing.md` §6 gate 2.
 - **The `T:` (12C) verifier layout in `SYS.USER$.SPARE4`** — untouched, and still

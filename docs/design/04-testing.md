@@ -452,10 +452,23 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 
    **Where it stands.** Position 1 has been run on 26ai Free 23.26.2.0.0 (PDB
    and `CDB$ROOT`), 21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0 (PDB), and 11g XE
-   11.2.0.2.0 (non-CDB) — #380, #381, #382. The off-database greps of §7 were
-   run on 21c, 18c and 11.2. The findings and their scope are
-   `02-oracle-privileges.md` §4; the one release that disagrees is 11.2, whose
-   `V$SQLSTATS` retains the `ALTER USER` text (#387).
+   11.2.0.2.0 (non-CDB) — #380, #381, #382. **Position 2 with
+   `AUDIT_SYS_OPERATIONS = TRUE` was run on 21c and 26ai on 2026-09-11** (#407),
+   which is what the `audit_file_dest` greps needed to mean anything, together
+   with §7's greps on 26ai and the three checks the probe left manual. The
+   findings and their scope are `02-oracle-privileges.md` §4; the one release
+   that disagrees is 11.2, whose `V$SQLSTATS` retains the `ALTER USER` text
+   (#387).
+
+   **This entry said "position 2 has not been run anywhere" until #407, and that
+   was wrong in a way worth recording** rather than quietly fixing. The probe's
+   own header records a position 2 run on 26ai on 2026-08-26, in the table of
+   three positions. What had never been run was the half position 2 *exists*
+   for — the `audit_file_dest` greps that only `AUDIT_SYS_OPERATIONS` populates
+   — and this list compressed that into a claim about the position. Two
+   documents describing the same run at different resolutions is how a gate
+   loses track of itself, and the fix is to say which *surface* is unrun rather
+   than which position.
 
    Outstanding, and none of it is a pass:
 
@@ -463,11 +476,23 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    |---|---|
    | **19c** unrun | what an OCI estate runs, and not redistributable as a container. Two open questions turn on it: the password byte limit (#383) and whether 11.2's `V$SQLSTATS` retention reaches it (#387) |
    | **12.1 and 12.2** unrun | so **the boundary is unknown.** 11.2 retains the DDL text and 18.4 does not, and nothing measures where between them that changed. Read the 11.2 result as *11.2 does*, never as *everything older does* |
-   | **AWR / `DBA_HIST_SQLTEXT`** untested | needs a snapshot taken before the sweep, on a database where the Diagnostics Pack is enabled — so a licensed EE, not any XE image. Untested, not clean |
-   | **Trace files** — the `grep` of `Diag Trace` | the probe emits the command in §7; nobody has run it. Assume not redacted |
-   | **OS audit files** on 26ai, and any version with `svc_user = sys` | clean on 21c, 18c and 11.2, which is where it mattered most. Position 2 has not been run anywhere |
-   | **Self-rotation** (`IDENTIFIED BY … REPLACE …`, probe §6a) not exercised | it exercises no privilege, so privilege auditing can miss it where statement auditing catches it. Worth knowing before the docs claim rotations are audited. The path itself is UC-1b, not this build |
-   | **`IDENTIFIED BY VALUES`** (probe §6b) not exercised | the restore-from-verifier path, if one is ever added. Oracle masks a password; whether it masks a *verifier* is a separate question |
+   | **AWR / `DBA_HIST_SQLTEXT`** untested | needs a snapshot taken before the sweep, on a database where the Diagnostics Pack is enabled — so a licensed EE, not any XE image. Untested, not clean. **The only row here that #407 could not close**, and the reason is the one that keeps it open: every image in this stack ships `control_management_pack_access = NONE` |
+
+   Closed by #407 on 2026-09-11, on 26ai 23.26.2.0.0 and 21c 21.3.0.0.0, and
+   recorded in `02-oracle-privileges.md` §4 with the version on every row:
+
+   | Was open | Answer |
+   |---|---|
+   | **Trace files** — the `grep` of `Diag Trace` | **does not capture the password**, which retires an assumption rather than confirming it. Level 12 writes the cursor truncated — `ALTER USER sopulitest IDE` — across five traced sessions on two releases. The wrapped form leaks in full, so this is invariant 13 on a fifth surface |
+   | **OS audit files**, `svc_user = sys` | 21c writes the DDL **masked** to the OS file, one verbatim canary in 646 `ACTION` lines and it is the PL/SQL wrapper. **26ai writes no user-management DDL there at all**, so its clean grep is `pop=n` in OS-file form and is recorded as absent rather than clean |
+   | **Self-rotation** (probe §6a) | **audited and masked on both secrets** — `IDENTIFIED BY * REPLACE *`, attributed to the account itself. Privilege auditing does not miss it, so "rotations are audited" holds for this path too |
+   | **`IDENTIFIED BY VALUES`** (probe §6b) | **the verifier is masked** — `IDENTIFIED BY VALUES *` — and appears in no OS audit file and no trace file |
+
+   The last three were comments in the probe rather than code, which is why they
+   sat unrun from the first version of the gate to #407. They are
+   `sql/oracle/04_password_leak_extensions.sql` now, and that is the general
+   lesson rather than a filing decision: **a check that is a comment is a check
+   that does not run.**
 3. **Schema conformance.** Every sample and recorded output validates against the
    published JSON Schema. Already wired: the schemas and example in
    `docs/schemas/` validate today, the config schema is asserted to be what the
