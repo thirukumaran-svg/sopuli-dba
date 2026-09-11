@@ -96,7 +96,8 @@ def build_result(
 def _database_age(user: UserState | None) -> float | None:
     """The database's own age, in the field the schema has for it.
 
-    ``None`` where the database did not say. The source is version-dependent and
+    ``None`` where the database did not say. The source is version-dependent
+    (unverified: pw-changed-source) and
     unconfirmed on 11.2 (#87), and this verb displays it rather than acting on
     it, so an absence costs nothing.
     """

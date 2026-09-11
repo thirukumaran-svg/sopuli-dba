@@ -72,8 +72,9 @@ expects numbers in, resolved through :data:`PROFILE_QUERY`'s ``DEFAULT`` join
 like every other resource.
 
 **``PASSWORD_CHANGE_DATE`` does track a rotation** on this release — two
-rotations two minutes apart moved it — which is worth stating because #87 is open
-about *where the value comes from on 11.2*, not about whether it means anything
+rotations two minutes apart moved it — which is worth stating because #87 is
+open (unverified: pw-changed-source) about *where the value comes from on
+11.2*, not about whether it means anything
 here. Where the column is absent the answer is ``None`` and never a substitute:
 nothing gates on it (Q9 put `--max-age-days` on the vault's ``rotated_at`` and
 only that), so guessing would be all cost.

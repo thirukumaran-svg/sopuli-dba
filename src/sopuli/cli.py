@@ -1622,6 +1622,12 @@ def creds_check(
 
     Help text stays ASCII throughout, which is P4's rule.
     """
+    # The "still unverified (issue #90)" sentence above is a register entry
+    # (unverified: t-verifier), and the marker sits here rather than in the
+    # docstring because this docstring IS `creds check --help`. A marker is an
+    # internal bookkeeping token; putting one in front of an operator would be
+    # the same mistake as a debug string in a user-facing message. If hash mode
+    # is ever settled, the help text three paragraphs up changes with it.
     document = run.document
 
     selection = selected(selectors, targets, accounts, groups, applications)

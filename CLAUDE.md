@@ -137,8 +137,9 @@ than reasoning:
 - the `T:` (12C) verifier layout in `SYS.USER$.SPARE4` — `--method hash` depends
   on it and it is not confirmed
 - whether `ALTER USER` text leaks the password into `V$SQL` or
-  `UNIFIED_AUDIT_TRAIL`, per version — **answered on 26ai 23.26.2.0.0, 21c
-  21.3.0.0.0, 18c 18.4.0.0.0 and 11g 11.2.0.2.0; unmeasured on 12.1, 12.2 and
+  `UNIFIED_AUDIT_TRAIL`, per version (unverified: ddl-text-versions) —
+  **answered on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and 11g
+  11.2.0.2.0; unmeasured on 12.1, 12.2 and
   19c.** `02_password_leak_probe.sql` was run in all three documented positions on
   2026-08-26: unified audit masks the statement at write time, no `V$SQL` cursor
   for the DDL exists at all, and the sole leak is an anonymous PL/SQL block

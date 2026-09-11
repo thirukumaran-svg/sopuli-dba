@@ -80,6 +80,27 @@ cross-key rules, whose errors have to name the offending key — is listed in
 - CLI grammar is noun-verb: `sopuli creds rotate`, `sopuli config validate` (D2)
 - Anything marked **open decision** or **open question** is a real fork in the
   road, not a placeholder — decide it before writing the code that depends on it
+- **A claim this project has not measured carries a marker naming its register
+  entry**, wherever it is asserted — `(unverified: <slug>)` — and
+  §*Verify before implementing* below is the register.
+  `tests/test_verification_register.py` fails when an entry becomes `verified`
+  and a document still carries its marker, naming every file.
+
+  **The marker goes at every site, not only where the question was raised.** That
+  is the whole point of it: the register already recorded these questions, and
+  twice in two PRs a measured result reached one document and left others
+  asserting the opposite (#408, #411). A marker is a join key for a checker that
+  cannot read prose — "SQL trace remains untested" and "SQL trace is unchecked on
+  every version" share no token with the table that answers them, and the obvious
+  greps drown in *unknown config keys* and *macOS is untested*.
+
+  Removing a marker is part of settling the question, not tidying afterwards, and
+  the test is what makes that difference enforceable rather than remembered.
+
+  **Never inside user-visible text.** A click verb's docstring is its `--help`
+  output, so a marker in one reaches every operator who asks for help. Where the
+  claim is in help text the marker goes in a comment beside it, naming the
+  sentence it belongs to — `sopuli/cli.py`'s `creds_check` is the example.
 
 ## Consolidated open decisions
 
@@ -311,44 +332,91 @@ below.)*
 
 ## Verify before implementing
 
-- **The `T:` (12C) verifier layout in `SYS.USER$.SPARE4`** (#90) — field order,
+**Each entry carries a status and a slug**, and the slug is how the rest of the
+tree points back here — see §Conventions. `tests/test_verification_register.py`
+reads this section, so the two code spans at the head of each bullet are
+structure rather than decoration; the prose after them is for people.
+
+**The status is this register's, not GitHub's.** #383, #387 and #87 are closed
+issues whose verification is still outstanding: the decision was taken and the
+measurement was not. A reader who resolves these against the issue tracker gets
+three wrong answers.
+
+- `unverified` `t-verifier` (#90) — **The `T:` (12C) verifier layout in `SYS.USER$.SPARE4`** — field order,
   salt length, iteration count, and whether a client library can reproduce the
   derivation. Fully open, cheap to settle against a throwaway 19c. Blocks
   `--method hash|both` only — `check`'s default (`login`) no longer waits on
-  this (#86). If it does not reproduce reliably, `--method hash` is dropped
-  from the CLI entirely.
-- **Whether `SELECT_CATALOG_ROLE` via `SYS.KU$_USER_VIEW` exposes `LCOUNT`
-  without `SPARE4`** (#124) — a narrower alternative to `SELECT ON SYS.USER$`
+  this (#86). If it does not reproduce reliably, **both non-login modes go**:
+  `both` is login *plus* the verifier comparison, so it cannot survive a
+  negative result either, and a mode that silently degraded to `login` would
+  report a stronger check than it performed.
+- `unverified` `lcount-grant` (#124) — **Whether `SELECT_CATALOG_ROLE` via
+  `SYS.KU$_USER_VIEW` exposes `LCOUNT` without `SPARE4`** — a narrower alternative to `SELECT ON SYS.USER$`
   for the `LCOUNT` guard, from a blog post rather than Oracle documentation.
   Affects what `sql/oracle/00_install.sql` recommends to sites that want the
   guard; nothing in the default path depends on it.
-- **Whether `ALTER USER` text leaks the password** into `V$SQL`,
-  `UNIFIED_AUDIT_TRAIL`, or trace files, per Oracle version — **partially
-  answered.** On 26ai Free 23.26.2.0.0, in `CDB$ROOT` and a PDB, `V$SQL` retains no
-  cursor for the DDL at all and unified audit masks it at write time in
-  `AUDSYS.AUD$UNIFIED` as well as the view. The probe found one leak by
-  measurement that reasoning had missed: an anonymous PL/SQL block carrying the
-  password as a literal is retained verbatim, which is now invariant 13. 21c, 18c
-  and 11.2 were run afterwards (#380, #381, #382): the first two agree, and 11.2
-  does not — `V$SQLSTATS` retains the `ALTER USER` text there (#387). **The
-  trace-file greps were run on 2026-09-11** (#407) and answer the question the
-  other way from the assumption: a session traced at level 12 does *not* capture
-  the password, because the cursor is written truncated. The same run added
-  position 2 with `AUDIT_SYS_OPERATIONS = TRUE`, self-rotation and
-  `IDENTIFIED BY VALUES` — all masked. Still open: **19c, 12.1 and 12.2**, and
-  AWR, which needs a licensed EE. The probe is
-  `sql/oracle/02_password_leak_probe.sql` and its extensions are
-  `sql/oracle/04_password_leak_extensions.sql`; results are in
-  `design/02-oracle-privileges.md` §4 and `design/04-testing.md` §6 gate 2.
-- **Which view supplies `status`'s `DB_PW_CHANGED` column, per version** (#87)
-  — `DBA_USERS.PASSWORD_CHANGE_DATE` is absent on 11.2, where the same value
+**Password text retained by Oracle** is three entries rather than one, and the
+split is #412's doing. It was a single `partial` entry, and a partial entry is a
+loophole: the SQL-trace surface is settled while the version matrix is not, so a
+stale marker on a *trace* claim would have been allowed to sit there
+indefinitely — which is the #410 failure this register exists to catch, still
+uncaught. **There is no `partial` status any more.** A question whose surfaces
+settle separately splits into entries that each settle whole. Shared context for
+all three: the probe is `sql/oracle/02_password_leak_probe.sql`, its extensions
+are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
+`design/02-oracle-privileges.md` §4 and `design/04-testing.md` §6 gate 2.
+
+- `unverified` `ddl-text-versions` (#387) — **Whether `ALTER USER` text leaks the
+  password into the shared pool, on the releases nobody has run.** Measured on
+  26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and 11g 11.2.0.2.0 (#380,
+  #381, #382): `V$SQL` holds no cursor for the DDL at all on the first three, and
+  the one leak everywhere is an anonymous PL/SQL block carrying the password as a
+  literal — which is now invariant 13, measured rather than reasoned. **11.2
+  disagrees**: `V$SQLSTATS` keeps its own copy there, so the *conclusion* is
+  release-dependent even though the reasoning is not (#387). **12.1, 12.2 and 19c
+  are unrun, so the boundary below 18c is unknown** — read the 11.2 result as
+  *11.2 does*, never as *everything older does*.
+- `unverified` `ddl-text-awr` (#387) — **Whether the retained text reaches AWR.**
+  `DBA_HIST_SQLTEXT` needs a snapshot taken *before* the sweep, on a database
+  where the Diagnostics Pack is enabled. Every image in this stack ships
+  `control_management_pack_access = NONE`, so two snapshots taken on 11g XE
+  captured nothing whatsoever and the clean result measured the image rather than
+  the release. Needs a licensed EE. **Untested, not clean** — the one row #407
+  could not close.
+- `verified` `ddl-text-trace` (#407) — **Whether a traced session captures the
+  password.** Answered 2026-09-11 on 26ai and 21c, and it retires the pessimistic
+  assumption rather than confirming it: at 10046 level 12 the cursor is written
+  truncated, `ALTER USER sopulitest IDE`, stopping one character into
+  `IDENTIFIED`. Five traced sessions, both releases, identical. The wrapped form
+  leaks in full, which is invariant 13 on a fifth surface. The OS audit trail was
+  answered in the same run (masked on 21c; no user-management DDL reaches it at
+  all on 23ai+), as were self-rotation and `IDENTIFIED BY VALUES` — both masked.
+- `unverified` `password-byte-limit` (#383) — **What the maximum password length
+  actually is, on every release between 12.2 and 23ai.** `limits.py` derives the
+  limit from the probed server version against `LONG_IDENTIFIER_FLOOR = (12, 2)`,
+  and **the premise is wrong**: 12.2 raised *identifiers* from 30 bytes to 128
+  and passwords did not move with them. #383 measured it — 31 bytes is
+  `ORA-00972` on 21c, 18c and 11.2, and accepted on 26ai — so the floor is
+  somewhere in `(18.4, 23.26]` and `(12, 2)` is below every version ever tested
+  against it.
+
+  **This is a live bug, not a latent one**, and saying so is the point of the
+  entry: on 21c a policy asking for 40 bytes plans clean, reports
+  `constraints: 128 bytes`, and fails with `ORA-00972` mid-`apply` — which is
+  invariant 4 violated, the exact thing plan-time refusal exists to prevent.
+  #383 closed **without fixing it** because the constant cannot be corrected
+  safely without measuring 19c, and 19c is the release it matters most on. An
+  earlier draft of this entry said "nothing is broken today"; that was wrong, and
+  #412's review caught it.
+- `unverified` `pw-changed-source` (#87) — **Which view supplies `status`'s
+  `DB_PW_CHANGED` column, per version** — `DBA_USERS.PASSWORD_CHANGE_DATE` is absent on 11.2, where the same value
   means reading `SYS.USER$.PTIME` instead, behind the same optional grant Q1/P2
   (#86) already made capability-probed rather than assumed. Purely a display
   question — Q9 decided `rotate --max-age-days` reads only the vault, so
   nothing gates on this — but `status` has no source for the column without it.
   Worth confirming on the 11g XE and 19c images alongside #90.
-- **What a real Vault's compare-and-set conflict looks like on the wire** (#103,
-  #104) — **answered.** Against `hashicorp/vault:2.0.4` dev mode: every lost
+- `verified` `vault-cas-conflict` (#103, #104) — **What a real Vault's
+  compare-and-set conflict looks like on the wire** — **answered.** Against `hashicorp/vault:2.0.4` dev mode: every lost
   compare-and-set, whatever caused it (a stale `cas: 0`, a stale nonzero `cas`,
   or `cas: 0` against a path whose latest version was soft-deleted but whose
   version counter survived), is a 400 with the identical body
@@ -368,7 +436,7 @@ below.)*
   capability-skipped regression test in `tests/store/test_hashicorp_cas_conflict.py`,
   which runs as part of the ordinary suite and skips cleanly (not a failure)
   when Vault is unreachable.
-- **Which HashiCorp Vault client** (#103) — **decided in
+- `verified` `vault-client` (#103) — **Which HashiCorp Vault client** — **decided in
   [ADR-005](decisions/adr-005-vault-client.md): the HTTP API directly, over
   `httpx`. No `hvac`.** The case for `hvac` rested on auth being where a
   library "earns its keep" (renewal, OIDC, Kubernetes). Against the real

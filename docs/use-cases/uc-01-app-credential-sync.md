@@ -1539,6 +1539,7 @@ Trade-offs to document honestly if it does ship:
   (`02-oracle-privileges.md` §2), which some sites will not grant; the tool
   must degrade to `login` mode cleanly. #124 is investigating whether a
   narrower grant can expose just enough to avoid this trade-off
+  (unverified: lcount-grant)
 - confirms the *stored verifier*, not that a login would succeed — an expired
   password, a locked account, or a failed listener still means the application
   cannot connect. Hence `--method both` for the strongest answer. Lock/expiry
@@ -1971,7 +1972,8 @@ past 90 days. `ORDERS_APP`'s `cdb1-pdb-billing` row shares that exact
 which clock is asked, and only the vault's is acted on. The column's source is
 version-dependent (`DBA_USERS.PASSWORD_CHANGE_DATE`, or `SYS.USER$.PTIME` on
 11.2, behind the grant `02-oracle-privileges.md` P2 makes optional) and
-unconfirmed — see `docs/README.md`'s "Verify before implementing".
+unconfirmed (unverified: pw-changed-source) — see `docs/README.md`'s "Verify
+before implementing".
 
 ---
 

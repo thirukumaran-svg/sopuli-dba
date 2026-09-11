@@ -328,7 +328,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | **30-byte password limit** — a policy asking for more must be refused at *plan* time, not by `ORA-00972` mid-`apply`. Measured 2026-09-08 (#380): 31 bytes is refused on 11g XE, 18c XE **and 21c XE**, and accepted on 26ai. The two halves of the old wording do not travel together — see the next row — and `sopuli/driver/oracle/limits.py` keys the limit to 12.2, which is wrong on every line below 23ai (#383) | 21c XE / 18c XE / 11g XE |
 | 10G/11G verifiers, and no `T:` — so `--method hash` must refuse rather than guess. Measured 2026-09-08: `SYS.USER$.SPARE4` carries `S:` alone on 11g and `S:` plus `T:` on 18c, 21c and 26ai (#382, #90) | 11g XE |
 | **The non-CDB shape**, which is not a missing capability but a different set of questions Oracle will answer. `SYS_CONTEXT('USERENV','CON_NAME')` *raises* (`ORA-02003`) rather than answering NULL; `DBA_USERS` has no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or `COMMON`; `USER_SYS_PRIVS` has no `COMMON`; there are no audit policies. Each of those took something down that had nothing to do with containers — the privilege audit blanked a whole target row while exiting 0 (#382) | 11g XE |
-| **DDL text retention is not uniform.** `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and not on 18c, 21c or 26ai, so invariant 13's *conclusion* is release-dependent even though its reasoning is not. Decided in #387: documented, not warned about and not refused — which is only defensible while the table saying so is accurate, so a release claimed as supported gets `02_password_leak_probe.sql` run against it. 12.1, 12.2 and 19c are unmeasured, and the boundary below 18c is therefore unknown | every version claimed |
+| **DDL text retention is not uniform** (unverified: ddl-text-versions). `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and not on 18c, 21c or 26ai, so invariant 13's *conclusion* is release-dependent even though its reasoning is not. Decided in #387: documented, not warned about and not refused — which is only defensible while the table saying so is accurate, so a release claimed as supported gets `02_password_leak_probe.sql` run against it. 12.1, 12.2 and 19c are unmeasured, and the boundary below 18c is therefore unknown | every version claimed |
 | Common user + `CONTAINER=ALL`, and refusal outside `CDB$ROOT` | any CDB |
 | Rollover: both passwords valid during the window; `finish-rollover` ends it | 23ai Free, real 19.12+ |
 | Rollover *absent*: `--strategy rollover` fails at plan time, not execution. **Measured on 18c 2026-09-08 (#381), and it had never run anywhere before that** — `test_a_release_without_rollover_refuses_at_plan_time` carries `@requires_no_capability(password_rollover)`, so on 26ai, the only server the suite had ever met, it skipped every time. Exit 5 under `--dry-run`, `error.category` `capability`, `error.target_capability` `password_rollover`, the `plan` emitted beside the refusal, and `doctor` reporting 5 capabilities rather than 6 one command earlier | 18c XE, 11g XE |
@@ -448,7 +448,7 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    Two more reading rules, both of which turn an apparent pass into a non-result:
    a `clean` on a `pop=n` column is an absence of evidence and the sweep labels it
    `INCONCLUSIVE`; and `DBA_HIST_SQLTEXT` needs an AWR snapshot taken *before* the
-   sweep, so it stays untested until one is.
+   sweep, so it stays untested until one is (unverified: ddl-text-awr).
 
    **Where it stands.** Position 1 has been run on 26ai Free 23.26.2.0.0 (PDB
    and `CDB$ROOT`), 21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0 (PDB), and 11g XE
@@ -475,8 +475,8 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    | Open | Why it blocks a claim |
    |---|---|
    | **19c** unrun | what an OCI estate runs, and not redistributable as a container. Two open questions turn on it: the password byte limit (#383) and whether 11.2's `V$SQLSTATS` retention reaches it (#387) |
-   | **12.1 and 12.2** unrun | so **the boundary is unknown.** 11.2 retains the DDL text and 18.4 does not, and nothing measures where between them that changed. Read the 11.2 result as *11.2 does*, never as *everything older does* |
-   | **AWR / `DBA_HIST_SQLTEXT`** untested | needs a snapshot taken before the sweep, on a database where the Diagnostics Pack is enabled — so a licensed EE, not any XE image. Untested, not clean. **The only row here that #407 could not close**, and the reason is the one that keeps it open: every image in this stack ships `control_management_pack_access = NONE` |
+   | **12.1 and 12.2** unrun (unverified: ddl-text-versions) | so **the boundary is unknown.** 11.2 retains the DDL text and 18.4 does not, and nothing measures where between them that changed. Read the 11.2 result as *11.2 does*, never as *everything older does* |
+   | **AWR / `DBA_HIST_SQLTEXT`** untested (unverified: ddl-text-awr) | needs a snapshot taken before the sweep, on a database where the Diagnostics Pack is enabled — so a licensed EE, not any XE image. Untested, not clean. **The only row here that #407 could not close**, and the reason is the one that keeps it open: every image in this stack ships `control_management_pack_access = NONE` |
 
    Closed by #407 on 2026-09-11, on 26ai 23.26.2.0.0 and 21c 21.3.0.0.0, and
    recorded in `02-oracle-privileges.md` §4 with the version on every row:

@@ -125,7 +125,8 @@ equally. One is now partially closed:
   password as a literal is retained verbatim, because Oracle's protection is keyed
   to the `CREATE/ALTER USER` statement rather than to the password. 21c, 18c and
   11.2 have since been run (#380, #381, #382) and 11.2 disagrees on one row —
-  `V$SQLSTATS` retains the `ALTER USER` text there. 19c, 12.1 and 12.2 are unrun.
+  `V$SQLSTATS` retains the `ALTER USER` text there. 19c, 12.1 and 12.2 are unrun
+  (unverified: ddl-text-versions).
   **SQL trace was unchecked on every version until #407** (2026-09-11) and is now
   measured on 26ai and 21c: a traced session does *not* capture the password, the
   cursor being written truncated. The probe is
