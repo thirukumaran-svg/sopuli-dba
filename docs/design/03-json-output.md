@@ -1,23 +1,29 @@
 # sopuli-dba — JSON output contract
 
 Status: draft / sketch, **partly implemented**. The run document, `--output
-text|json`, colour resolution, the `config` section, `diagnostics` and
-`invocation.selection.select` are real and validated against the schema in CI
-(`sopuli/output/`). `--output jsonl`, `plan` and `results` are not written yet,
-so everything about them here is still a sketch, and so are the other members of
-`invocation.selection`.
+text|json`, colour resolution, the `config` section, `diagnostics`, `plan`,
+`results` and four of `invocation.selection`'s six members are real and validated
+against the schema in CI (`sopuli/output/`). **`--output jsonl` is the one output
+mode that does not exist** — `--output` takes `text` and `json`, and asking for
+`jsonl` is a usage error — so §5 and everything else said about streaming here is
+still a sketch. This paragraph called `plan` and `results` unwritten until #392;
+they have been emitted by every `creds` verb for many releases.
 
-**`lock` is emitted by the two `lock` verbs, and by nothing else yet** (#105,
-#149). `sopuli/output/lock_view.py` produces the whole section, and
-`tests/test_lock_view.py` validates every shape it can produce against the
+**`lock` is emitted by the two `lock` verbs and by the three mutating `creds`
+verbs** (#105, #149). `sopuli/output/lock_view.py` produces the whole section,
+and `tests/test_lock_view.py` validates every shape it can produce against the
 published schema. `lock status` fills in `found[]` — records it read at paths it
 does not hold, whether or not the config declares them (#150). `lock break`
-fills in `broken[]`, and `denied` when it is refused a live lock. `held[]` still
-waits on a command that *takes* a lock for itself, and the first of those is
-`creds generate`, which does not exist.
-The `lock.*` events are the other half of the same wait: they need
-`--output jsonl` (#9), which has no emitter, so their payloads are specified in
-§5 and not yet produced by anything.
+fills in `broken[]`, and `denied` when it is refused a live lock. `held[]` is
+filled by whatever *takes* a lock for itself, which is `creds generate`,
+`creds apply` and `creds rotate`; `_record_locks` in `sopuli/cli.py` is the one
+place all three go through, and it is called after release so that `released`
+reports the store record rather than the moment (#348). This paragraph said
+`held[]` was still waiting on `creds generate`, "which does not exist", until
+#392 — it had shipped, with a lock, three releases earlier.
+The `lock.*` events are the remaining wait: they need `--output jsonl` (#9),
+which has no emitter, so their payloads are specified in §5 and not yet produced
+by anything.
 
 **`invocation.selection` is now filled in** (#297). The object has carried
 slots for `applications`, `accounts`, `targets`, `groups`, `all` and `limit`
@@ -35,7 +41,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.18.schema.json`](../schemas/sopuli-run-1.18.schema.json),
+Schemas: [`../schemas/sopuli-run-1.21.schema.json`](../schemas/sopuli-run-1.21.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -592,11 +598,16 @@ about the guarantee rather than the mechanism:
 ```json
 "lock": {
   "mode": "cas",
-  "held": [ { "vault": "vault-prod", "path": "apps/acme/db",
-              "fence": 41, "acquired_at": "…", "expires_at": "…",
+  "held": [ { "vault": "vault-dev", "path": "acme/dev/acme",
+              "fence": 1,
+              "acquired_at": "2026-09-11T10:20:52.999171Z",
+              "expires_at": "2026-09-11T10:35:52.999171Z",
               "released": true } ]
 }
 ```
+
+Captured from `creds generate --output json` against the tier-1 stack on
+2026-09-11, not written by hand.
 
 **`mode` is `cas` or `none`**, not `kv2` or `flock`. A consumer needs to know
 whether the run was actually protected; it should not have to know what KV v1 is
@@ -1766,6 +1777,45 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.20 became 1.21 when a verb that will never exist left the `command` enum**
+(#392): `creds.promote` removed. The list above calls removing an enum value a
+**major** change, and this one is minor, so the exception gets stated rather than
+waved at:
+
+> **A value no released build has ever emitted was never part of what a document
+> could say**, so removing it cannot break a reader of one. The test is the
+> *emitter*, not the schema.
+
+It is a claim about evidence, and the evidence is checkable rather than argued:
+`creds.promote` has been in this enum since the schema was written, and
+`git log -S"creds.promote" -- src tests` returns no commit in the repository's
+history. Nothing has ever produced the value, so no document carries it and no
+`case` over `command` has ever taken that branch except by writing it blind.
+
+**The exception is narrow in three directions**, and a later removal that cites
+it has to meet all three. It does not cover a value some released build *did*
+emit and this one no longer does — that changes what a document can say, and
+stays major with the overlap release. It does not cover properties: `plan` and
+`results` sat published and unfilled from 1.0, and a consumer that wrote a reader
+against either would have been right to — an unfilled property is a shape
+promised, where an enum value is a name. And it does not cover a value merely
+unimplemented *yet*: `admin.install` stays
+in the enum on exactly that ground, because the verb is planned
+(`../local-testing.md`) and §8 has tolerated a name published ahead of its code
+since `plan`, `results` and `lock`. What made `creds.promote` different is that
+the verb was **declined**, not deferred — `uc-01-app-credential-sync.md` §4 says
+"there is no `creds promote`, and there is not going to be" (#276, #284). A slot
+for something that might arrive is honest; a branch nothing can ever reach is
+not, and it is worse here than elsewhere because this enum is what this section
+points at as the definition of what the tool can produce.
+
+**The bump is still paid**, for a change that makes no document different,
+because `schema_version` answers *which build is capable of what* — the argument
+1.15 → 1.16 made for a file that was byte-identical apart from its `$id`. The
+1.20 file stays published: a build emitting `schema_version: "1.20"` has to be
+able to fetch the schema it validates against, which is 1.16 → 1.17's rule and
+the reason that one was added rather than renamed.
 
 **1.19 became 1.20 when a password could be written straight to `current`**
 (#257): `state` gains `VAULT_ONLY`, which §3's own first line makes a **minor**

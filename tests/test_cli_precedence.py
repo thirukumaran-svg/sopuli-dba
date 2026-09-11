@@ -523,6 +523,46 @@ def test_every_verb_names_a_command_the_schema_allows(path: str, command: click.
     assert dotted in schema["properties"]["command"]["enum"], path
 
 
+#: Enum values published ahead of the code that will emit them. `03-json-output.md`
+#: §8 tolerates that -- `plan`, `results` and `lock` were all specified before
+#: anything filled them -- but it tolerates it for verbs that are *planned*, and
+#: nothing distinguishes one of those from a leftover except a list somebody has
+#: to keep. This is that list, and the test below is why keeping it is cheap:
+#: `creds.promote` sat in the enum from the first draft until #392, for a verb
+#: `uc-01-app-credential-sync.md` §4 had already declined, and no test could see
+#: the difference because no test looked in this direction at all.
+#:
+#: `admin.install` is planned: `docs/local-testing.md` describes the command that
+#: will run the SQL in `sql/oracle/` for you.
+RESERVED_COMMANDS = frozenset({"admin.install"})
+
+
+def test_the_command_enum_names_nothing_that_is_not_coming() -> None:
+    """The other direction of the test above, which is the one #392 found missing.
+
+    A value nothing emits is a branch a consumer can write and never reach. It is
+    allowed only while it is a promise -- so every enum value either belongs to a
+    verb in the tree or is named in `RESERVED_COMMANDS`, where declining it later
+    means deleting a line here as well as one in the schema.
+    """
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    published = set(schema["properties"]["command"]["enum"])
+    built = {".".join(path.split()[1:]) for path, _ in commands()}
+
+    assert published - built == RESERVED_COMMANDS
+
+
+def test_nothing_reserved_has_quietly_been_built() -> None:
+    """The list above stops being documentation the moment a verb arrives.
+
+    Without this, `admin install` could ship and leave a comment claiming it is
+    still planned -- which is the defect in #392 with the sign flipped.
+    """
+    built = {".".join(path.split()[1:]) for path, _ in commands()}
+
+    assert RESERVED_COMMANDS.isdisjoint(built)
+
+
 @pytest.mark.parametrize(("path", "command"), list(commands()), ids=lambda one: str(one))
 def test_every_verb_receives_the_resolved_invocation(path: str, command: click.Command) -> None:
     """Reading a flag off a click parameter is reading a value that skipped the

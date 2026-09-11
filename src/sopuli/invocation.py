@@ -15,14 +15,18 @@ and both positions resolve as ``cli``: it is the same person, in the same comman
 line, at the same moment, so there is no authority to rank (P3, "Layer 1 is one
 layer"). Position is recorded in ``source_detail`` and nowhere else.
 
-**Except for the safety set, which is trailing-only.** ``--dry-run`` and the flags
-that will follow it (``--confirm``, ``--max-targets``, and ``--force``, which P3
-decided in #89 does exist) are declared on the group as hidden *traps* that refuse
-rather than resolve. ``--force`` belongs to that set by *position* though not by
-merge policy: it overrides account guardrails rather than ratcheting a safety
-setting (``02-oracle-privileges.md`` §4), but group position and verb position
-express the same intent for it as for the others, so there is nothing to merge
-there either. Group position and verb position express identical intent for a safety
+**Except for the safety set, which is trailing-only.** ``--dry-run`` is declared
+on the group as a hidden *trap* that refuses rather than resolves, and the rule
+is written for the set rather than for that one flag: ``--confirm`` and
+``--force``, which P3 decided in #89 does exist, belong to it too and are
+declared on the verbs that take them. This note named ``--max-targets`` in that
+set until #392 -- there is no such flag, ``safety.max_targets`` does not declare
+``Layer.CLI``, and ``00-principles.md`` P5 says why it is a setting rather than a
+flag. ``--force`` belongs by *position* though not by merge policy: it overrides
+account guardrails rather than ratcheting a safety setting
+(``02-oracle-privileges.md`` §4), but group position and verb position express
+the same intent for it as for the others, so there is nothing to merge there
+either. Group position and verb position express identical intent for a safety
 flag, so accepting both would buy typing tolerance and nothing else -- and it
 would buy it at the price of a merge policy in the smallest, least visible layer
 there is. :func:`trailing_only` gives the typing tolerance anyway, as a message

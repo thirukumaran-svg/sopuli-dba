@@ -95,10 +95,15 @@ def refuse_if_over_limit(
 ) -> None:
     """Stop a run that reaches more targets than any layer allowed.
 
-    P5's "`--limit`/`--max-targets` prevents a wildcard from hitting 200 PDBs by
-    accident", finally asked of something. The setting has been parsed since the
-    config model was written and ratcheted since the resolver was, and until now
-    nothing read the answer.
+    P5's "prevents a wildcard from hitting 200 PDBs by accident", finally asked of
+    something. The setting has been parsed since the config model was written and
+    ratcheted since the resolver was, and until now nothing read the answer.
+
+    **The bullet used to say `--limit`/`--max-targets`** and this docstring quoted
+    it. #392 struck the flag from P5: ``Setting.layers`` does not include
+    ``Layer.CLI`` for this setting, so the flag would be refused by the resolver
+    rather than merely missing. The quotation is trimmed to the half that is still
+    true.
 
     **Counts targets, not units.** :class:`~sopuli.plan.BlastRadius` says why: six
     accounts in one PDB is one target's worth of reach, and refusing it under

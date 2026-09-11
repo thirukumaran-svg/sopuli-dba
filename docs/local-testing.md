@@ -9,10 +9,11 @@ stack. Where something was **not** verified it says so. Working paths in the
 samples are shortened to `C:\tmp\sopuli-guide\` — that is the only edit made to
 any output here.
 
-§15's run document was re-captured on 2026-09-10 on the same stack, when
-`invocation.config_files` started being emitted (#402). A sample carrying a field
-the tool has since gained is the failure this guide is most prone to, so the date
-moves per sample rather than for the file.
+§15's run document was re-captured on 2026-09-11 on the same stack, against
+sopuli 0.60.0, when the run schema became 1.21 (#392). A sample carrying a field
+the tool has since gained -- or a `schema_version` it no longer emits -- is the
+failure this guide is most prone to, so the date moves per sample rather than for
+the file.
 
 Related: [`../test/README.md`](../test/README.md) for the container stack itself,
 [`design/04-testing.md`](design/04-testing.md) for the automated tiers,
@@ -1901,18 +1902,18 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.20.schema.json`](schemas/sopuli-run-1.20.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.21.schema.json`](schemas/sopuli-run-1.21.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json
 {
-  "schema_version": "1.20",
-  "tool": { "name": "sopuli", "version": "0.58.0" },
+  "schema_version": "1.21",
+  "tool": { "name": "sopuli", "version": "0.60.0" },
   "command": "creds.check",
   "invocation": {
-    "correlation_id": "d7acdc73-e5cc-4fb5-af56-f5645b909093",
-    "started_at": "2026-09-10T11:06:45.724878Z",
-    "duration_ms": 766,
+    "correlation_id": "f8aa9373-77ca-456d-b5a4-5272a0ccf873",
+    "started_at": "2026-09-11T10:21:17.576520Z",
+    "duration_ms": 750,
     "actor": { "os_user": "ville", "host": "Awesominator" },
     "dry_run": false,
     "config_files": ["C:\\tmp\\sopuli-guide\\sopuli.yaml"],
@@ -1937,7 +1938,7 @@ trimmed to its shape:
       "verification": { "method": "login", "result": "pass", "lcount": 0,
                         "failed_login_attempts_limit": "UNLIMITED", "lockout_margin_hit": false,
                         "previous_password_accepted": null },
-      "password_age_days": 0.0, "duration_ms": 117
+      "password_age_days": 0.0, "duration_ms": 118
     }
   ]
 }

@@ -34,6 +34,7 @@ from sopuli.check import (
     UNVERIFIABLE,
 )
 from sopuli.generate import VAULT_ONLY
+from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.palette import (
     Role,
     absent_cell,
@@ -46,7 +47,10 @@ from sopuli.output.table import Cell
 from sopuli.store.protocol import DEGRADED, OK, UNREACHABLE
 
 RUN_SCHEMA = (
-    Path(__file__).resolve().parents[1] / "docs" / "schemas" / "sopuli-run-1.20.schema.json"
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "schemas"
+    / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
 )
 
 
