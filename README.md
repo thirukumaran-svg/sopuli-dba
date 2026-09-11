@@ -26,7 +26,7 @@ products can be added later.
 | **Version** | 0.58.0, and nothing is published to PyPI yet — you install from a git checkout |
 | **Databases** | Oracle only. Tested against Oracle AI Database 26ai Free 23.26.2.0.0 |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
-| **What works** | Thirteen commands, including a full password rotation from end to end. [`docs/local-testing.md`](docs/local-testing.md) is the by-hand map of exactly what this build can be made to do |
+| **What works** | Fourteen commands, including a full password rotation from end to end. [`docs/local-testing.md`](docs/local-testing.md) is the by-hand map of exactly what this build can be made to do |
 
 If you want the full design picture — every decision, and every question that is
 still open — start at [`docs/README.md`](docs/README.md).

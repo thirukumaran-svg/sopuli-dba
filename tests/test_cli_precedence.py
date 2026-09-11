@@ -491,12 +491,63 @@ def commands() -> Iterator[tuple[str, click.Command]]:
             yield path, command
 
 
+#: Commands that are not runs, and so are outside every rule below (#413).
+#:
+#: `about` prints compiled-in text: no configuration, no settings, no estate, no
+#: socket, and no `--output json` form for the three checks below to be about.
+#: It stands where `--version` and `--help` stand, and the difference is that a
+#: command *can* silently drift into the machinery -- so the exemption is a
+#: line somebody has to write, held from both directions by the two tests under
+#: it. A verb that merely forgot `global_options` is still caught: it is caught
+#: unless its name is here.
+NOT_A_RUN = frozenset({"about"})
+
+
+def runs() -> Iterator[tuple[str, click.Command]]:
+    """Every verb that *is* a run -- the tree minus :data:`NOT_A_RUN`."""
+    return (
+        (path, command)
+        for path, command in commands()
+        if ".".join(path.split()[1:]) not in NOT_A_RUN
+    )
+
+
 def test_there_are_commands_to_check() -> None:
     """Guards the walk: an empty tree would make the test below vacuous."""
     assert len(list(commands())) >= 4
 
 
-@pytest.mark.parametrize(("path", "command"), list(commands()), ids=lambda one: str(one))
+def test_nothing_is_exempt_that_is_not_in_the_tree() -> None:
+    """The exemption may not outlive the command it excuses.
+
+    Same failure mode as `SECRET_LIKE_EXCEPTIONS` in `tests/test_cli_smoke.py`:
+    a name left behind here would silently excuse a *future* verb that happened
+    to be called the same thing.
+    """
+    built = {".".join(path.split()[1:]) for path, _ in commands()}
+
+    assert built >= NOT_A_RUN
+
+
+@pytest.mark.parametrize("dotted", sorted(NOT_A_RUN))
+def test_an_exempt_command_is_wholly_outside_the_machinery(dotted: str) -> None:
+    """Exempt means exempt, not "half in".
+
+    A command that took `--output` and then had no document to emit, or that
+    carried a `command` value in the schema's enum and never emitted one, would
+    be worse than either a verb or a flag: it would look wired from both ends
+    and be joined in the middle by nothing. So the exemption asserts the whole
+    shape -- none of the global options, and no place in the JSON contract.
+    """
+    command = dict(commands())[f"sopuli {dotted}"]
+    names = {param.name for param in command.params}
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+
+    assert names.isdisjoint(GLOBAL_PARAMS)
+    assert dotted not in schema["properties"]["command"]["enum"]
+
+
+@pytest.mark.parametrize(("path", "command"), list(runs()), ids=lambda one: str(one))
 def test_every_verb_takes_the_global_options(path: str, command: click.Command) -> None:
     """A verb that forgets the decorator silently loses `--output` and `--dry-run`.
 
@@ -507,7 +558,7 @@ def test_every_verb_takes_the_global_options(path: str, command: click.Command) 
     assert set(GLOBAL_PARAMS) <= names, path
 
 
-@pytest.mark.parametrize(("path", "command"), list(commands()), ids=lambda one: str(one))
+@pytest.mark.parametrize(("path", "command"), list(runs()), ids=lambda one: str(one))
 def test_every_verb_names_a_command_the_schema_allows(path: str, command: click.Command) -> None:
     """The document's `command` is derived from the tree, so the tree must fit it.
 
@@ -563,7 +614,7 @@ def test_nothing_reserved_has_quietly_been_built() -> None:
     assert RESERVED_COMMANDS.isdisjoint(built)
 
 
-@pytest.mark.parametrize(("path", "command"), list(commands()), ids=lambda one: str(one))
+@pytest.mark.parametrize(("path", "command"), list(runs()), ids=lambda one: str(one))
 def test_every_verb_receives_the_resolved_invocation(path: str, command: click.Command) -> None:
     """Reading a flag off a click parameter is reading a value that skipped the
     resolver. The decorator removes the opportunity; this pins that it is applied."""

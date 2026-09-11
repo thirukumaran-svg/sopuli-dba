@@ -1528,6 +1528,33 @@ contract-weakening dressed as contract-completing. `additionalProperties: false`
 and a closed `command` enum are only worth their strictness because every
 document describes a real run.
 
+**With one command outside the rule rather than an exception to it: `sopuli
+about` (#413).** It exits 0 and emits no document, and that is not a second seam
+in J7 — it is a screen that is not a run. It takes no options, reads no
+configuration, resolves no settings, touches no estate and prints compiled-in
+text, so there is no invocation for a document to describe and nothing a
+consumer could branch on. It is the same footing `--version` and `--help` stand
+on, and the reason it is a verb rather than a flag is D2's grammar: a bare
+top-level command fits it, a root-level `--about` would not.
+
+**Asking it for JSON is a usage error, not a quiet text answer.** `--output`
+belongs to the group's parser, so `sopuli --output json about` is accepted
+*there* whatever the command does — and a command that then printed human text
+and exited 0 would be the silent-ignore this document's §2 refuses everywhere
+else: the run looks like it did what was asked. So `about` refuses `--output`,
+`--config`, `--profile` and `--vault-token-file` in that position by name, and
+exits 2 with no document, which is J7 unchanged.
+
+The consequence for this contract is that **`about` is not in the `command`
+enum and must not be added to it.** An enum value nothing emits is a branch a
+consumer can write and never reach, which is the defect #392 was opened about;
+`tests/test_cli_precedence.py` holds both halves — the command is named in
+`NOT_A_RUN`, and that list is asserted to be absent from the enum and to take
+none of the global options. A later change that gave `about` `--output json`
+would be a change to what the command is, not a field addition, and it would
+need the enum entry, a schema bump under §8's minor rule, and a reason why the
+tool now answers one question in two places.
+
 And `--output json` is itself an option that has to parse. `sopuli config show
 --output jsom` is a usage error *in the request for JSON*; the tool cannot honour
 a request it failed to read. A rule of "emit one if the parse got far enough to

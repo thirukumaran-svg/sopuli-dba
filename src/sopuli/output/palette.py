@@ -70,6 +70,19 @@ class Role(StrEnum):
     HEADING = "heading"
     """A section name or a column heading. Structure, not data."""
 
+    BANNER = "banner"
+    """The project's own name, drawn large. Neither structure nor data (#413).
+
+    The only role here that decorates something a reader never has to interpret,
+    which is why it is allowed to reuse cyan without weakening what cyan means in
+    a result table: it appears on exactly one screen, ``sopuli about``, and that
+    screen contains no table, no state and no target. Nothing on it could be
+    mistaken for :attr:`GOOD`, because nothing on it is a row.
+
+    It is a role rather than a ``click.style`` call at the call site for the
+    reason this module exists at all -- a view that picked its own colour would
+    be a second authority on what colours mean."""
+
     MUTED = "muted"
     """A value that is not there. The placeholder is already visible; this stops
     a column of them from competing with the values around it."""
@@ -122,6 +135,7 @@ class Role(StrEnum):
 #: a palette a reader has to learn is a palette that has stopped helping.
 _STYLES: dict[Role, dict[str, Any]] = {
     Role.HEADING: {"bold": True},
+    Role.BANNER: {"fg": "cyan", "bold": True},
     Role.MUTED: {"dim": True},
     Role.NOTABLE: {"fg": "yellow"},
     Role.PRODUCTION: {"fg": "red", "bold": True},

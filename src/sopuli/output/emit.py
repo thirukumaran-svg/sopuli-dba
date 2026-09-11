@@ -11,8 +11,9 @@ Two rules are enforced structurally here rather than by convention:
 * **Colour is asked for, not decided.** :meth:`Emitter.use_color` is the single
   answer for a run, so no command works out for itself whether ``NO_COLOR`` is
   set, and the machine-readable stream cannot acquire escape sequences. When the
-  answer is no, :meth:`Emitter.emit` strips ANSI rather than trusting callers to
-  have avoided it.
+  answer is no, :meth:`Emitter.emit_text` strips ANSI rather than trusting
+  callers to have avoided it -- for a run's text half and for ``sopuli about``,
+  which is not a run at all (#413).
 
 ``jsonl`` is deliberately not offered yet: no command streams anything, and an
 output mode that silently behaves like ``json`` would be a lie in the contract.
@@ -123,20 +124,38 @@ class Emitter:
     def emit(self, document: RunDocument, text: str) -> None:
         """Write the run: the JSON document, or the human text, never both.
 
-        When colour is off, escape sequences are stripped here rather than
-        avoided upstream. That is the same shape as redaction: a guarantee held
-        at the serialiser cannot be lost by a call site that forgot. ``NO_COLOR``
-        promises that no ANSI reaches the stream, and this is what makes that
-        true of anything the renderer produces -- and of a vendor message that
-        arrives already decorated.
+        The text half goes through :meth:`emit_text`, which is where colour is
+        stripped when it is off -- rather than avoided upstream. That is the same
+        shape as redaction: a guarantee held at the serialiser cannot be lost by
+        a call site that forgot. ``NO_COLOR`` promises that no ANSI reaches the
+        stream, and that is what makes the promise true of anything the renderer
+        produces -- and of a vendor message that arrives already decorated.
+        """
+        if self.is_json:
+            print(render_json(document), file=self._out())
+            return
+        self.emit_text(text)
+
+    def emit_text(self, text: str) -> None:
+        """Write human text through the colour gate, with no document behind it.
+
+        :meth:`emit` is the whole of a run: a document, or the text that stands
+        in for it. ``sopuli about`` is the one command that is not a run at all
+        (#413) -- it takes no options, reads nothing, resolves no settings and
+        has no ``--output json`` form to be the machine half of. It still must
+        not put escape sequences on a stream that ``NO_COLOR`` has spoken for,
+        and that promise is kept here rather than by a second ``unstyle`` call in
+        a command body.
+
+        Splitting this out rather than handing `about` a document is what keeps
+        the document honest: every ``RunDocument`` describes something the tool
+        did to an estate, and one carrying a `command` that acts on nothing would
+        be a JSON contract entry for a screen that has no JSON form.
 
         Stripping only ever removes, so it commits to nothing that ADR-003 has
         to decide. ``click.unstyle`` is the existing CLI dependency's own
         function for it, not a display-library choice.
         """
-        if self.is_json:
-            print(render_json(document), file=self._out())
-            return
         if not self.use_color():
             text = click.unstyle(text)
         print(text.rstrip("\n"), file=self._out())

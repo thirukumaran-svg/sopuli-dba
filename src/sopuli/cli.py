@@ -7,7 +7,7 @@ status`` is the first verb that opens a socket and ``lock break`` the first that
 writes through one, and both seams are worth keeping visible rather than letting
 them blur one command at a time.
 
-Five things about the structure are deliberate:
+Six things about the structure are deliberate:
 
 **The configuration is read by the boundary, not by the verbs.** A profile is
 precedence layer 3 and can supply ``output``, so the file has to be read before a
@@ -37,6 +37,18 @@ invariant 2's third exception, because a sample is not a credential: nothing
 authenticates with it and it is never stored. What keeps that narrow lives in
 :mod:`sopuli.output.policy_view`; what lives here is the refusal to combine it
 with ``--output json``.
+
+**One command is not a run at all** (#413). ``about`` prints compiled-in text:
+no options, no configuration, no settings, no estate, no socket, and no
+``--output json`` form. So it is the one command in this file without
+:func:`~sopuli.invocation.global_options`, the one that receives no
+:class:`~sopuli.invocation.Invocation`, and the one absent from the JSON
+contract's ``command`` enum. That is the footing ``--version`` and ``--help``
+stand on; what makes it a verb rather than a flag is that ``--version`` has to
+stay one greppable line, and that a bare top-level command is D2's grammar
+rather than an exception to it -- ``doctor`` is already that shape.
+``tests/test_cli_precedence.py`` names it in ``NOT_A_RUN`` and then holds the
+whole shape, so it cannot half-rejoin the machinery by accident.
 
 **One command mutates, and the gates it goes through are not its own** (#149).
 ``lock break`` asks :func:`sopuli.safety.refuse_if_readonly` before it opens a
@@ -139,6 +151,7 @@ from sopuli.invocation import (
     GlobalOptions,
     Invocation,
     all_options,
+    check_vault_token,
     global_options,
     group_options,
 )
@@ -157,10 +170,12 @@ from sopuli.lock.takeover import (
     plan_break,
 )
 from sopuli.material import strip_one_newline
+from sopuli.output.about_view import render as render_about
 from sopuli.output.apply_view import build_result as build_apply_result
 from sopuli.output.apply_view import render_apply, render_source_table, repair_invocation
 from sopuli.output.apply_view import summarise as summarise_apply
 from sopuli.output.check_view import build_result, render_check, summarise
+from sopuli.output.color import ColorChoice
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -171,6 +186,7 @@ from sopuli.output.constraints_view import build_constraints, render_constraints
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, RunDocument, Summary
+from sopuli.output.emit import Emitter
 from sopuli.output.finish_rollover_view import build_result as build_finish_result
 from sopuli.output.finish_rollover_view import render_finish, render_window_table
 from sopuli.output.finish_rollover_view import summarise as summarise_finish
@@ -388,6 +404,88 @@ def cli(
         vault_token_file=vault_token_file,
         vault_token_given=vault_token_given,
     )
+
+
+def about_refusals(given: GlobalOptions) -> list[str]:
+    """Which group-level options were written that ``about`` cannot honour.
+
+    `about` takes no options of its own, but the group's parser accepts the
+    global ones before any subcommand -- so they arrive on
+    :class:`~sopuli.invocation.GlobalOptions` whether or not the command has any
+    use for them. Dropping them would be the failure `config show` refuses for a
+    selector it cannot apply, and for the same reason: the run looks like it did
+    what was asked. So they are refused instead, by name.
+
+    ``--color`` is absent because it is the one this command honours.
+    ``--dry-run`` is absent because the group's copy refuses for itself
+    (:func:`~sopuli.invocation.trailing_only`) before this runs, and
+    ``--vault-token`` because :func:`~sopuli.invocation.check_vault_token` owns
+    a better message for it than a list of flag names -- ADR-007's, naming every
+    source that does work.
+    """
+    written = []
+    if given.config_paths:
+        written.append("--config")
+    if given.output_mode is not None:
+        written.append("--output")
+    if given.profile_name is not None:
+        written.append("--profile")
+    if given.vault_token_file is not None:
+        written.append("--vault-token-file")
+    return written
+
+
+@cli.command("about")
+@click.pass_obj
+def about(options: GlobalOptions | None) -> None:
+    """Show the sopuli-dba banner, tagline, and project links.
+
+    Static, compiled-in text and nothing else: the same output on every machine,
+    on every run. It reads no configuration, opens no socket and reports nothing
+    about the installation it is running from -- backends, drivers, versions and
+    reachability are `doctor`'s, and two commands answering overlapping
+    questions is how they come to disagree.
+
+    `--color` is read from the position before the verb, which is the one this
+    command's parser can see: `sopuli --color never about`. Every other global
+    option is refused there rather than ignored, including `--output json`:
+    there is no machine-readable form of this screen, and exiting 0 with human
+    text after being asked for JSON is the silent-ignore this tool refuses
+    everywhere else.
+    """
+    # Not a run, so not decorated with `global_options` and given no
+    # `Invocation` (#413). It resolves no settings, has nothing to report and no
+    # `--output json` form to be the machine half of -- the same footing
+    # `--version` and `--help` stand on. `tests/test_cli_precedence.py` names it
+    # there rather than exempting it silently.
+    #
+    # A verb rather than a flag, twice over. `--version` must stay one greppable
+    # line a script can parse, so the banner could not go there; and a
+    # root-level `--about` would be an exception to D2's noun-verb grammar for
+    # no gain, where a bare top-level command is not one -- `doctor` is already
+    # that shape.
+    #
+    # `--color` is read off the group's `GlobalOptions` rather than declared
+    # here, because the verb takes no options at all. Ignoring it instead would
+    # leave a documented flag silently inert on the one screen in the tool that
+    # is mostly colour. `options` is `None` only for a caller that invoked this
+    # command outside the group, which no real run does.
+    given = options or GlobalOptions()
+    # Invariant 1 does not stop being true because the command is trivial: the
+    # token is in `argv` and visible in `ps` either way, and exiting 0 over it
+    # would be ADR-007's worst case -- accepting the flag and doing nothing.
+    # The group's position is the only one there is here, so the verb's is empty.
+    check_vault_token(given, GlobalOptions())
+    if written := about_refusals(given):
+        raise click.UsageError(
+            f"{', '.join(written)} cannot be honoured by `about`, which is not a run:\n"
+            "       about prints compiled-in text: no configuration, no "
+            "settings, no machine-readable form\n"
+            "       --color is the one exception, and it is read in this same "
+            "position"
+        )
+    choice = ColorChoice(given.color_choice or ColorChoice.AUTO)
+    Emitter(color_choice=choice).emit_text(render_about())
 
 
 @cli.group("config")
