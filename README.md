@@ -23,7 +23,7 @@ products can be added later.
 
 | | |
 |---|---|
-| **Version** | 0.58.0, and nothing is published to PyPI yet — you install from a git checkout |
+| **Install** | Nothing is published to PyPI yet — you install from a git checkout. `sopuli --version` and `sopuli about` report the installed distribution's version |
 | **Databases** | Oracle only. Tested against Oracle AI Database 26ai Free 23.26.2.0.0 |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
 | **What works** | Fourteen commands, including a full password rotation from end to end. [`docs/local-testing.md`](docs/local-testing.md) is the by-hand map of exactly what this build can be made to do |
