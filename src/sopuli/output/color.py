@@ -39,6 +39,8 @@ from collections.abc import Mapping
 from enum import StrEnum
 from typing import TextIO
 
+from sopuli.output.tty import is_a_terminal
+
 #: Either of these disables colour, with the meaning no-color.org gives the
 #: informal standard: set *and not empty*, whatever the value. `SOPULI_NO_COLOR`
 #: outranks the bare `NO_COLOR` under the 01-configuration.md rule that
@@ -86,26 +88,9 @@ def resolve_color(
         return False
     if env.get("TERM") == DUMB_TERMINAL:
         return False
-    if not _is_a_terminal(stream):
+    if not is_a_terminal(stream):
         return False
     return enable_virtual_terminal(stream)
-
-
-def _is_a_terminal(stream: TextIO) -> bool:
-    """``stream.isatty()``, tolerating streams that cannot answer.
-
-    A closed or detached stream raises rather than returning ``False``, and a
-    substitute stream may not implement the method at all. Either way the answer
-    we want is "no": if we cannot establish that a human is watching, do not
-    decorate.
-    """
-    isatty = getattr(stream, "isatty", None)
-    if isatty is None:
-        return False
-    try:
-        return bool(isatty())
-    except (ValueError, OSError):
-        return False
 
 
 def enable_virtual_terminal(stream: TextIO) -> bool:

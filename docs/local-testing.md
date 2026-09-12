@@ -1076,6 +1076,91 @@ ordinary row is `UNVERIFIABLE` — it spends no logins, so most rows say the
 password was not checked. The whole column goes dim, and the one row that is not
 `UNVERIFIABLE` is the only thing on the screen with a colour.
 
+### The spinner, and why you will probably never see it
+
+*Captured on 2026-09-12 against sopuli 0.61.0 and the `tier1` stack (#419).*
+
+While a verb is reading a document out of Vault, a spinner runs on **stderr**:
+
+```
+| Reading `vault-dev:acme/dev/acme`
+```
+
+The leading character cycles through `|`, `/`, `-`, `\`. Against the tier-1
+Vault on `127.0.0.1` that read takes a few milliseconds, so what you actually see
+is a single frame and then nothing -- the run above emitted exactly one, 73 bytes
+including the blanking. **That is the intended outcome** -- the spinner exists for the case where the wait is real, and the only
+way to test it deliberately is to cause one.
+
+Add a vault at an address that goes nowhere. `192.0.2.0/24` is TEST-NET-1 and is
+guaranteed unroutable, so this hangs rather than failing fast:
+
+```yaml
+vaults:
+  vault-blackhole:
+    type: hashicorp
+    addr: http://192.0.2.7:8200
+    mount: kv
+    kv_version: 2
+    timeout_s: 8
+    auth: { method: token }
+```
+
+Point the application's `secret_template` at it and run `sopuli creds status`.
+For eight seconds the line animates, naming the path it is waiting on, and then
+the line is blanked and the error takes its place:
+
+```
+sopuli: the store did not answer within the timeout: timed out
+  hint: raise `timeout_s` on the store, or check that `addr` reaches it
+```
+
+Exit 1. The blanking matters: the error starts at column zero on a clean line
+rather than after the wreckage of a half-drawn frame.
+
+**Four things it deliberately will not do**, each worth causing on purpose:
+
+- **It does not run when stderr is not a terminal.** Redirect **stderr**
+  specifically -- `sopuli creds status 2>frames.txt`, or `2>/dev/null` -- and
+  there are **no frames at all**, not even stripped ones.
+
+  Check the file for carriage returns rather than for size, because stderr is
+  also where the tool's own error messages go: on a run that succeeds the file is
+  genuinely empty (measured: 0 bytes against the local vault), but on the timeout
+  run below it holds the `sopuli:` message and its hint, and **no `\r`**. The
+  frames are what has to be absent, not the bytes.
+
+  **`| cat` does not demonstrate this, and it is the mistake to make on
+  purpose.** A pipe redirects stdout; stderr stays attached to the terminal, so
+  `sopuli creds status | cat` animates exactly as it did before. That is correct
+  behaviour -- the spinner is keeping a human company, and piping the *result*
+  somewhere does not mean nobody is watching -- but it means the obvious way to
+  test the gate tests nothing. Measured, same command: 73 bytes of frames with
+  stdout piped, and not one carriage return with stderr redirected.
+
+  There is no `--spinner` flag and no `SOPULI_SPINNER` to force it on, because
+  carriage-return-separated frames in a log file are worse than silence for every
+  reader. (Measured in #416: at one frame per 100ms that is about 12,000
+  characters over a 30-second vault timeout.)
+- **It does not run under `--output json`.** Verified on a terminal, which is the
+  only place it could have: `sopuli creds status --output json` writes **not one
+  frame** to stderr, where the same run in text mode wrote 74. stdout is the
+  contract (invariant 12), and a consumer capturing `2>&1` would otherwise find
+  frames ahead of the document.
+- **It ignores `NO_COLOR`.** Not an oversight -- there is nothing to turn off.
+  The frames are four ASCII characters and a carriage return, with no ANSI
+  anywhere, so a `NO_COLOR=1` run animates identically. Try it.
+- **It never fails your command.** If the stream it is writing to closes
+  underneath it, the animation stops and the rotation carries on. Decoration must
+  not be able to break a credential change.
+
+**It is on the vault read, not on opening the vault** -- which is the opposite of
+where it was first put, and measuring is what moved it. With
+`auth: { method: token }` nothing about opening a store touches the network:
+`connect` reads the token and builds an HTTP client, all of it local. In the
+eight-second run above, opening the store accounted for 0.7s and the read
+accounted for the other eight.
+
 **`doctor` uses the same four roles for two more vocabularies**, and a healthy
 run is deliberately quiet — the only colour on it is `ok`:
 

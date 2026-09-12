@@ -221,6 +221,7 @@ from sopuli.output.status_view import build_result as build_status_result
 from sopuli.output.status_view import render_status_table
 from sopuli.output.status_view import summarise as summarise_status
 from sopuli.output.stream import configure_streams
+from sopuli.output.tty import is_a_terminal
 from sopuli.output.vault_view import build as build_vault
 from sopuli.output.vault_view import render as render_vaults
 from sopuli.output.wallet_view import build as build_wallet
@@ -1466,8 +1467,16 @@ def _can_prompt() -> bool:
     been asked, which is what `invocation.actor.unattended` already says in the
     document (`01-configuration.md` §5). A profile's `confirm:` is parsed and
     waiting for a consumer; wiring it into the resolver is its own change.
+
+    Asks :func:`~sopuli.output.tty.is_a_terminal` rather than `isatty()` directly
+    (#419). The bare call raises `ValueError` on a closed or detached stdin, and
+    that is exactly the run this question is being asked about: a scheduler or a
+    service manager hands a command no stdin at all. Raising there replaced a
+    clean refusal naming the environment with a traceback from inside the code
+    that was trying to find out whether anyone was watching. Both answers refuse
+    the unconfirmed run -- the difference is which one the operator can act on.
     """
-    return sys.stdin is not None and sys.stdin.isatty()
+    return is_a_terminal(sys.stdin)
 
 
 def _lockable_store(
@@ -3037,7 +3046,7 @@ def creds_apply(
         # are still *read*, because which stage an account would be applied from
         # is the thing worth reviewing and a read needs no lock -- `check` runs
         # its whole survey without one.
-        sources = _sources(bindings, _read_documents(keys, stores), stage=source_stage)
+        sources = _sources(bindings, _read_documents(keys, stores, run=run), stage=source_stage)
         # The pre-flight runs here too, and it is the combination worth having:
         # `--dry-run --preflight` is "show me the plan, and tell me whether it
         # would work". Skipping it under a dry run would make the flag silently
@@ -3073,7 +3082,7 @@ def creds_apply(
             # afterwards is one a concurrent `creds generate` may have staged into
             # in between -- and this run would then apply one password and promote
             # a different one.
-            documents = _read_documents(keys, stores)
+            documents = _read_documents(keys, stores, run=run)
             sources = _sources(bindings, documents, stage=source_stage)
             findings = _preflight(
                 _surveyable(sources), run, config, strategy=strategy, full=preflight_all
@@ -3427,7 +3436,7 @@ def _lock_key(binding: Binding) -> LockKey:
 
 
 def _read_documents(
-    keys: Sequence[LockKey], stores: Mapping[str, SecretStore]
+    keys: Sequence[LockKey], stores: Mapping[str, SecretStore], *, run: Invocation
 ) -> dict[LockKey, Any]:
     """Each document once, whole.
 
@@ -3436,8 +3445,31 @@ def _read_documents(
     it into ``previous``, so the read has to see more than the value being
     applied; and a document shared by six accounts read six times could return
     six different versions, which is a compare-and-set nobody could reason about.
+
+    **The tool's one spinner lives here (#419)**, and it is here rather than at
+    `_stores_for` because that is what measuring said. `_stores_for` looked like
+    the slow step and is not: with `auth: { method: token }` nothing on that path
+    opens a socket at all -- `connect` reads the token and constructs an
+    `httpx.Client`, which is local work. Against a vault at an unroutable address
+    with `timeout_s: 8`, opening the store took 0.7s and *this* function took the
+    remaining eight. The round trip is here, on every auth method rather than on
+    some of them, which is also why one spinner here covers what two would have.
+
+    One per document rather than one for the loop: they are sequential, and
+    naming the path is the difference between "something is happening" and
+    "*this* is what is not answering".
+
+    Nothing on this path prompts or prints -- the store layer writes to no
+    stream -- which is what keeps the spinner clear of `sopuli.output.spinner`'s
+    rule about never being live across a prompt. A confirmation, where there is
+    one, is already past by the time a verb reads a document.
     """
-    return {key: stores[key.store].read(key.path) for key in keys}
+    emitter = run.emitter()
+    documents: dict[LockKey, Any] = {}
+    for key in keys:
+        with emitter.spinner(f"Reading `{key.store}:{key.path}`"):
+            documents[key] = stores[key.store].read(key.path)
+    return documents
 
 
 def _sources(
@@ -4975,7 +5007,7 @@ def creds_finish_rollover(
     # No lock: this verb writes to no store. The documents are read for one
     # reason -- to know whether a `pending` is staged, and to have something to
     # verify with -- and a read has never needed one.
-    sources = _sources(bindings, _read_documents(keys, stores))
+    sources = _sources(bindings, _read_documents(keys, stores, run=run))
 
     finished = _finish_estate(sources, run, config, margin=lockout_margin, preview=run.dry_run)
 
@@ -5389,7 +5421,7 @@ def creds_rotate(
             run,
             config,
             plan=plan,
-            documents=_read_documents(keys, stores),
+            documents=_read_documents(keys, stores, run=run),
             strategy=strategy,
             max_age_days=max_age_days,
         )
@@ -5577,7 +5609,7 @@ def _rotate_estate(
     of it acquires one.
     """
     document = run.document
-    documents = _read_documents(keys, stores)
+    documents = _read_documents(keys, stores, run=run)
     into.selections = rotation.select(
         [(binding, _document_data(binding, documents)) for binding in bindings],
         max_age_days=max_age_days,
@@ -5628,7 +5660,7 @@ def _rotate_estate(
 
     # Re-read: staging bumped every version this run wrote, and the promotion at
     # step 7 compare-and-sets against the version it is promoting from.
-    documents = _read_documents(keys, stores)
+    documents = _read_documents(keys, stores, run=run)
     sources = _sources(rotating, documents, stage=None)
 
     # Steps 5 and 6.
@@ -5653,7 +5685,7 @@ def _rotate_estate(
         return None
 
     # Step 8, on the documents this run actually promoted.
-    promoted = _read_documents(keys, stores)
+    promoted = _read_documents(keys, stores, run=run)
     into.disagreed = _read_back(into.applied, into.promotions, promoted)
 
     if finish_windows:
@@ -5982,7 +6014,7 @@ def creds_status(
 
     keys = _document_keys(bindings)
     stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
-    documents = _read_documents(keys, stores)
+    documents = _read_documents(keys, stores, run=run)
 
     rows: list[_Surveyed] = []
     for name, work in _grouped(bindings).items():

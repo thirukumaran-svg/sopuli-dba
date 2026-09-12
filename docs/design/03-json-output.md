@@ -119,6 +119,60 @@ than avoided upstream — the same shape as redaction, and for the same reason. 
 guarantee held in one place cannot be lost by a call site that forgot, and a
 vendor message may arrive already decorated.
 
+### Progress, and the one thing on stderr that is not a message
+
+A verb reading a document out of a vault animates a spinner on **stderr** while
+it waits (#419, assessed in #416). It is the only progress indicator in the tool,
+and it is opt-in at exactly one call site: `sopuli/cli.py`'s `_read_documents`,
+which `creds apply`, `creds rotate`, `creds finish-rollover` and `creds status`
+all read through.
+
+**That is not every read of the vault, and the difference is deliberate.**
+`creds check` reads through `_stored_credential`, and `creds generate` calls
+`store.read` directly where it needs a document's current version for a
+compare-and-set; neither animates. #419 scoped this to one call site rather than
+a sweep, so that which operations are considered slow stays a decision somebody
+made in a diff. Extending it is another one.
+
+Gated the same way colour is, and in the same place, for the same reason:
+`Emitter.spinner()` is the single answer, so no call site works it out for
+itself.
+
+| # | Rule | Result |
+|---|---|---|
+| 1 | `--output json` | never, whatever else says |
+| 2 | stderr is not a TTY | never |
+| 3 | otherwise | animate |
+
+Three things about that table are decisions.
+
+**There is no rule 3 for a flag**, and there will not be one. `--color always`
+exists because a CI log viewer with no TTY can still render ANSI; nothing renders
+a carriage-return animation usefully into a log file, so a `--spinner` flag would
+exist only to let somebody write about 12,000 characters of `|/-\` into 30
+seconds of nightly log. Measured in #416. The absence is the design: no flag, no
+`SOPULI_SPINNER`, no precedence rule, and nothing for the settings registry.
+
+**`--output json` is refused even though the spinner never touches stdout.**
+Rule 1 is not redundant with rule 2. stdout is the contract (invariant 12), and a
+consumer capturing `2>&1` -- which is ordinary in a scheduler -- would otherwise
+find frames ahead of the document. The animation is turned off at the source
+rather than defended by which stream it went to.
+
+**Colour is not consulted, and `NO_COLOR` does not apply.** The frames are four
+ASCII characters and a carriage return, with no escape sequence anywhere, so
+there is nothing for the stripping rule above to strip and nothing `NO_COLOR`
+promises that the spinner could break. Verified on a terminal: a `NO_COLOR=1` run
+emits byte-for-byte what an ordinary one does.
+
+**It must never be live across anything else that writes to stderr.** The plan
+preview and `click.confirm` are both on stderr deliberately (§*Exit codes*
+below, and `00-principles.md` P3), and a frame written over a prompt leaves the
+operator reading a spinner while the process blocks on an answer to a question
+no longer on screen -- measured in #416. That is why a spinner wraps one call
+rather than decorating a verb, and why the call it wraps is one the store layer
+services without printing anything.
+
 ### What colour is allowed to mean
 
 Two rules, both binding on the renderer that ADR-003 selects:

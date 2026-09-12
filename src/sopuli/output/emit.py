@@ -35,6 +35,9 @@ import click
 
 from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.document import to_rfc3339
+from sopuli.output.spinner import Spinner
+from sopuli.output.spinner import disabled as spinner_disabled
+from sopuli.output.spinner import make as make_spinner
 from sopuli.secrets import REDACTED, Secret
 
 if TYPE_CHECKING:
@@ -86,6 +89,12 @@ class Emitter:
 
     mode: OutputMode = OutputMode.TEXT
     stream: TextIO | None = None
+    #: Where a spinner animates (#419). Separate from :attr:`stream` because the
+    #: two are not interchangeable: stdout is the contract and stderr is the
+    #: side channel, and a test that redirects one must not silently move the
+    #: other. ``None`` means the process's own, resolved at write time like
+    #: :attr:`stream`.
+    err_stream: TextIO | None = None
     color_choice: ColorChoice = ColorChoice.AUTO
     env: Mapping[str, str] | None = None
     _color: bool | None = field(default=None, init=False, repr=False)
@@ -120,6 +129,31 @@ class Emitter:
         else:
             self._color = resolve_color(self.color_choice, stream=self._out(), env=self._env())
         return self._color
+
+    def spinner(self, message: str) -> Spinner:
+        """A spinner for one slow call, already gated (#419).
+
+        The gate lives here for the reason :meth:`use_color` does, and the
+        docstring there is the whole argument: a command asks the emitter
+        whether it may decorate, and never works it out for itself, so there is
+        no code path where a new call site forgets to check. A free-standing
+        helper that read the output mode and probed the stream at each call site
+        would rebuild exactly the decision this class exists to centralise.
+
+        ``--output json`` is refused outright rather than left to the stream
+        check. stdout is the contract (invariant 12), and although a spinner
+        never writes there, a consumer capturing ``2>&1`` would still find
+        frames ahead of the document -- so the machine contract turns the
+        animation off rather than relying on which stream it went to. Unlike
+        colour, this is not something ``--color always``'s equivalent could
+        override, because no such flag exists and #416's non-goals say why.
+
+        Returns a working context manager either way: a disabled spinner starts
+        no thread and writes nothing, so no call site needs a branch.
+        """
+        if self.is_json:
+            return spinner_disabled(message)
+        return make_spinner(message, stream=self.err_stream)
 
     def emit(self, document: RunDocument, text: str) -> None:
         """Write the run: the JSON document, or the human text, never both.
