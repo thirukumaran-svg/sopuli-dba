@@ -220,6 +220,8 @@ goes unguarded.
 ## Follow-ups
 
 - `--vault-token-stdin`, if anything ever needs it, against P5's one-stream rule.
-- The remaining CLI hoists of `vaults.*` reach settings — `--vault-addr` and the
-  `SOPULI_VAULT__<NAME>__*` half of C13's addressing — are #154, and they *are*
-  settings, so they go through the resolver rather than beside it.
+- The remaining CLI hoists of `vaults.*` reach settings, so they go through the
+  resolver rather than beside it. #154 delivered the `SOPULI_VAULT__<NAME>__*`
+  half of C13's addressing and closed without `--vault-addr`, which is now #422
+  — including whether it should exist at all. The analogy in *Decision* above is
+  to a flag that has not been built.

@@ -1888,38 +1888,55 @@ rest need the target's limits and so cannot be known until a command runs.
 Order (highest first): **CLI → `SOPULI_*` env → third-party env → profile →
 named object → `defaults` → built-in**.
 
-```
-$ export VAULT_ADDR=https://vault-a:8200
-$ export SOPULI_VAULT_ADDR=https://vault-b:8200
-$ sopuli creds check --vault-addr https://vault-c:8200
-→ vault-c   [cli]
-
-$ sopuli creds check
-→ vault-b   [env SOPULI_VAULT_ADDR]
-
-$ unset SOPULI_VAULT_ADDR
-$ sopuli creds check
-→ vault-a   [env VAULT_ADDR, third-party]
-```
-
-A profile sits below both, so a flag still wins over it:
+`output` is the setting that shows the most of it at once: it is the one with a
+flag, an environment variable *and* a profile layer. Against a config whose `ci`
+profile sets `output: json`, climbing one layer per command:
 
 ```
-$ sopuli creds check --profile scheduled              # profile sets verify.method: hash
-→ hash    [profile scheduled]
+$ sopuli config show --explain
+  output               = text   [built-in default]
 
-$ sopuli creds check --profile scheduled --method login
-→ login   [cli]      ← the operator at the keyboard is the more specific intent
+$ sopuli config show --explain --profile ci
+"output": { "value": "json", "source": "profile", "source_detail": "profiles.ci.output" }
+
+$ SOPULI_OUTPUT=text sopuli config show --explain --profile ci
+  output               = text   [env SOPULI_OUTPUT]
+
+$ SOPULI_OUTPUT=json sopuli config show --explain --profile ci --output text
+  output               = text   [cli --output (verb)]
 ```
 
-Safety ratchet:
+The second command answers in JSON because the profile it selected says to, which
+is the layer being demonstrated; its line above is abridged from that document's
+`invocation.options`. In the last, the flag wins over both the environment and
+the profile beneath it — the operator at the keyboard is the more specific intent.
+
+The third-party layer does not appear, because `output` has none: `VAULT_ADDR`
+ranking below `SOPULI_VAULT_ADDR` is §6's to show, and it is a vault setting with
+no flag.
+
+**These examples are pasted, not written** (#409). They were once drawn on
+`--vault-addr` and `--method`, and neither flag exists — `sopuli` rejected both
+before any precedence was consulted, so the documented outcomes were predictions.
+`output` was chosen over marking the old blocks illustrative because it has a
+real layer at every level shown, which leaves nothing in this section excused
+from running.
+
+Safety ratchet — `defaults.safety.readonly: true`, and a `ci` profile that tries
+to undo it with `safety: { readonly: false }`:
 
 ```
-$ sopuli creds apply --no-dry-run          # config has readonly: true
-error: target group "prod-pdbs" is readonly (config safety.readonly);
-       safety settings cannot be relaxed from the command line
-exit 2
+$ sopuli creds apply --application acme --profile ci --output text
+sopuli: applying a password is a mutation, and `safety.readonly` is set
+  hint: set at defaults.safety.readonly; no layer can relax it (invariant 10) -- `sopuli lock status` reads without writing
 ```
+
+Exit 8. The profile is the higher layer and loses anyway, and the refusal names
+`defaults`, the layer that has to be edited — ties and ratchets resolve toward the
+config key, not toward the layer that asked to relax it. `readonly` has no flag, so
+there is nothing on the command line to try; `--dry-run` is refused the same way.
+This example used to be written on `--no-dry-run`, which does not exist, and
+printed a refusal no run could reach (#409).
 
 Multiple `--config` files layer left to right (deep merge for maps, replace for
 lists). The asymmetry is deliberate: a mapping is a set of named settings, so an
