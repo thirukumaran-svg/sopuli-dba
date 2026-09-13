@@ -27,7 +27,7 @@ from oracle_harness import Environment
 from sopuli.check import grace_warning
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.guardrails import ADMIN_ROLES
-from sopuli.driver.protocol import PASS, PASSWORD_ROLLOVER, Credential
+from sopuli.driver.protocol import OFFLINE_VERIFY, PASS, PASSWORD_ROLLOVER, Credential
 from sopuli.secrets import Secret
 
 USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
@@ -264,10 +264,10 @@ def test_password_change_date_tracks_a_rotation(account: Any) -> None:
     `None` here can only mean the column is absent, which makes this a reading
     and not a version test.
 
-    There is deliberately no capability for it. The list in P1 is a design
-    decision and adding an eighth entry is not this issue's to make -- and
-    nothing branches on the value, so an absent change date costs `creds status`
-    its `DB_PW_CHANGED` column and nothing else.
+    There is deliberately no capability for it, and #386 decided there will not
+    be: the query is its own probe. Where the column is absent the driver reads
+    ``SYS.USER$.PTIME`` instead, if the grant exists, which the tests after this
+    one pin.
     """
     before = account.describe_user(ACCOUNT)
     assert before is not None
@@ -281,6 +281,95 @@ def test_password_change_date_tracks_a_rotation(account: Any) -> None:
     assert after is not None
     assert after.password_changed_at is not None
     assert after.password_changed_at > before.password_changed_at
+
+
+# ------------------------------------------------ the PTIME fallback (#386) ---
+
+
+def _has_change_date_column(session: Any) -> bool:
+    """Whether this release has `DBA_USERS.PASSWORD_CHANGE_DATE`, asked of the
+    server -- `ORA-00904` is the answer, exactly as the driver reads it."""
+    capabilities = pytest.importorskip("sopuli.driver.oracle.capabilities")
+    with session.connection.cursor() as cursor:
+        found = capabilities.read(
+            cursor, "select password_change_date from dba_users where rownum = 1"
+        )
+    return found is not None
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_ptime_is_the_same_clock_as_password_change_date(account: Any) -> None:
+    """**The measurement #386 rests on, pinned** -- and the guard against the
+    fallback becoming #383's second opinion.
+
+    Only meaningful where both sources exist, so it skips on 18c and 11.2 on the
+    server's own answer. On every release that has both it asserts equality to
+    the second, after a rotation, so a release where the two part fails here
+    rather than reporting a wrong date on the releases below it.
+    """
+    if not _has_change_date_column(account):
+        pytest.skip("this release has no DBA_USERS.PASSWORD_CHANGE_DATE to compare PTIME with")
+
+    time.sleep(1.1)
+    _run(account, f'alter user {ACCOUNT} identified by "{SECOND}"')
+
+    with account.connection.cursor() as cursor:
+        cursor.execute(
+            "select u.password_change_date, s.ptime from dba_users u "
+            "join sys.user$ s on s.name = u.username where u.username = :name",
+            {"name": ACCOUNT.upper()},
+        )
+        column, ptime = cursor.fetchone()
+
+    assert column is not None
+    assert ptime == column
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_without_the_column_the_fallback_tracks_a_rotation(account: Any) -> None:
+    """#386's acceptance: 18c reports what 21c reports natively.
+
+    The same strict ``>`` and the same sleep as the test above it, for the same
+    reason. Skipped where the column exists, because there the fallback is never
+    consulted and this would be re-running that test under another name.
+    """
+    if _has_change_date_column(account):
+        pytest.skip("this release has DBA_USERS.PASSWORD_CHANGE_DATE; PTIME is never read")
+
+    before = account.describe_user(ACCOUNT)
+    assert before is not None
+    assert before.password_changed_at is not None, before.password_changed_unknown
+    assert before.password_changed_unknown is None
+
+    time.sleep(1.1)
+    _run(account, f'alter user {ACCOUNT} identified by "{SECOND}"')
+
+    after = account.describe_user(ACCOUNT)
+    assert after is not None
+    assert after.password_changed_at is not None
+    assert after.password_changed_at > before.password_changed_at
+
+
+def test_without_the_column_or_the_grant_the_date_is_absent_and_says_why(account: Any) -> None:
+    """#386's other acceptance test: the fallback stays ``None`` without the grant.
+
+    The suite's own account holds the grant (the init script makes it), so the
+    absence is taken the way the session takes it: ``user_dollar`` is what the
+    capability probe hands the driver, and ``False`` is what a session without
+    the grant passes. Revoking it here instead would race release gate 4 in the
+    same run.
+    """
+    if _has_change_date_column(account):
+        pytest.skip("this release has DBA_USERS.PASSWORD_CHANGE_DATE; no grant is involved")
+    accounts_module = pytest.importorskip("sopuli.driver.oracle.accounts")
+
+    with account.connection.cursor() as cursor:
+        state = accounts_module.login_state(cursor, ACCOUNT, user_dollar=False)
+
+    assert state is not None
+    assert state.password_changed_at is None
+    assert state.password_changed_unknown is not None
+    assert "SELECT ON SYS.USER$" in state.password_changed_unknown
 
 
 def test_a_role_held_through_another_role_is_still_found(account: Any) -> None:

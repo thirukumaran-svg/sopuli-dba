@@ -1969,11 +1969,41 @@ which is why the ⚠ above marks only `ORDERS_BATCH`'s row, on its vault age
 past 90 days. `ORDERS_APP`'s `cdb1-pdb-billing` row shares that exact
 `DB_PW_CHANGED` date with `ORDERS_BATCH`, yet its vault age is 12d rather than
 94d: the same database-side history, two very different answers depending on
-which clock is asked, and only the vault's is acted on. The column's source is
-version-dependent (`DBA_USERS.PASSWORD_CHANGE_DATE`, or `SYS.USER$.PTIME` on
-11.2, behind the grant `02-oracle-privileges.md` P2 makes optional) and
-unconfirmed (unverified: pw-changed-source) — see `docs/README.md`'s "Verify
-before implementing".
+which clock is asked, and only the vault's is acted on.
+
+### Where `DB_PW_CHANGED` comes from without `PASSWORD_CHANGE_DATE` (#386, decided)
+
+`DBA_USERS.PASSWORD_CHANGE_DATE` does not exist on every supported release.
+Measured 2026-09-08, it is present on 26ai and 21c and `ORA-00904` on **18c and
+11.2** — so 18c, a supported tier-2 target, had been silently in the same bucket
+as 11.2. Below it the column reads `-` and `password_age_days` is omitted from
+the run document.
+
+Three options were on the table: leave it absent and say so, fall back to
+`SYS.USER$.PTIME`, or make it an eighth capability in P1's list. **Decided: the
+first two together.**
+
+- **Fall back to `SYS.USER$.PTIME` where the optional grant exists.** Measured on
+  all four releases: `PTIME` moves on `ALTER USER ... IDENTIFIED BY`, equals the
+  column to the second where both exist, and `CTIME` beside it does not move — so
+  it is the same clock rather than an approximation. It costs no new privilege:
+  it is the grant `02-oracle-privileges.md` §2 already offers for the `LCOUNT`
+  guard, gated on the same `offline_verify` probe. **One source per release**:
+  the column answering is what selects it, so `PTIME` is never read where the
+  column exists, not even to fill a `NULL`. That rule is what keeps a second
+  source from becoming the second opinion #383 warns about, and a tier-1 test pins
+  the equality on every release that has both.
+- **Say why when neither answers.** `SOPULI-W021`, on each affected
+  `results[].warnings[]` beside the missing field, carrying the driver's reason:
+  no such column and no grant (which the grant fixes), or a value that could not
+  be read (which is worth investigating). `creds status` prints the same reason
+  once per target under the table.
+- **Not a capability.** The query is its own probe — `ORA-00904` *is* the answer
+  — and adding to P1's binding list would have changed the driver protocol,
+  `doctor`, the schema and the skip vocabulary to report a display column.
+
+12.1 and 12.2 would take the fallback and are unmeasured (unverified:
+pw-changed-source) — see `docs/README.md`'s "Verify before implementing".
 
 ---
 

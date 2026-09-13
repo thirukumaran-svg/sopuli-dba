@@ -28,7 +28,7 @@ from sopuli.check import (
     is_failure,
     password_age_days,
 )
-from sopuli.diagnostics import PASSWORD_GRACE_PERIOD
+from sopuli.diagnostics import PASSWORD_CHANGE_DATE_UNKNOWN, PASSWORD_GRACE_PERIOD
 from sopuli.driver.oracle.rollover import days as rollover_days
 from sopuli.driver.protocol import UserState
 from sopuli.output.document import Diagnostic, Error, Summary
@@ -96,10 +96,9 @@ def build_result(
 def _database_age(user: UserState | None) -> float | None:
     """The database's own age, in the field the schema has for it.
 
-    ``None`` where the database did not say. The source is version-dependent
-    (unverified: pw-changed-source) and
-    unconfirmed on 11.2 (#87), and this verb displays it rather than acting on
-    it, so an absence costs nothing.
+    ``None`` where the database did not say, and :func:`_warnings` says why
+    (#386). This verb displays it rather than acting on it, so an absence costs
+    nothing -- except the explanation, which is why there is one.
     """
     return None if user is None else password_age_days(user.password_changed_at)
 
@@ -156,6 +155,18 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
                 level="warning",
                 code=PASSWORD_GRACE_PERIOD,
                 message=grace,
+                account=row.binding.account,
+                target=row.binding.target,
+            )
+        )
+    unknown = None if row.user is None else row.user.password_changed_unknown
+    if unknown is not None:
+        # Beside the `password_age_days` it explains, one per result (#386).
+        found.append(
+            Diagnostic(
+                level="warning",
+                code=PASSWORD_CHANGE_DATE_UNKNOWN,
+                message=unknown,
                 account=row.binding.account,
                 target=row.binding.target,
             )
@@ -259,18 +270,33 @@ def render_status_table(rows: Sequence[Row]) -> str:
 
 
 def _notices(rows: Sequence[Row]) -> list[str]:
-    """The grace period, named by the row it belongs to.
+    """The grace period, named by the row it belongs to -- and why a
+    ``DB_PW_CHANGED`` is empty, named by the target.
 
-    Only the grace period, and not the age warning beside it in
-    :func:`_warnings`: the age is already a column in this table, and printing
-    ``AGE`` twice would be noise rather than emphasis. What has no column is the
-    window and when it closes.
+    Not the age warning beside them in :func:`_warnings`: the age is already a
+    column in this table, and printing ``AGE`` twice would be noise rather than
+    emphasis. What has no column is the window and when it closes, and the
+    reason behind a ``-``.
+
+    **The reason is grouped per target and reason**, where the document carries
+    it per result (#386). An 18c target with forty accounts on it has one
+    missing column, and forty identical lines under a table teach the reader to
+    skip the notes block -- including the grace period above them.
     """
     found = []
     for row in rows:
         grace = grace_warning(row.user)
         if grace is not None:
             found.append(f"{row.binding.account} on {row.binding.target}: {grace}")
+
+    unknown: dict[tuple[str, str], list[str]] = {}
+    for row in rows:
+        reason = None if row.user is None else row.user.password_changed_unknown
+        if reason is not None:
+            unknown.setdefault((row.binding.target, reason), []).append(row.binding.account)
+    for (target, reason), accounts in unknown.items():
+        who = accounts[0] if len(accounts) == 1 else f"{len(accounts)} accounts"
+        found.append(f"{target}: DB_PW_CHANGED is empty for {who}: {reason}")
     return found
 
 
@@ -305,8 +331,10 @@ def _age(row: Row) -> Cell | str:
 def _changed_at(user: UserState | None) -> Cell | str:
     """The database's own date, for display and nothing else (Q9).
 
-    ``-`` where the version does not expose it, which on 11.2 is the ordinary
-    case and behind an optional grant elsewhere (#87).
+    ``-`` where the database would not say. On a release with no
+    ``PASSWORD_CHANGE_DATE`` -- 18c and 11.2 among those measured -- the date is
+    behind the optional ``SYS.USER$`` grant (#386), and the notes under the table say which
+    of the reasons applies -- a dash on its own used to mean all of them.
     """
     if user is None or user.password_changed_at is None:
         return Cell("-", Role.MUTED)

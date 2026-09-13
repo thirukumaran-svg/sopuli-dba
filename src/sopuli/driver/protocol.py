@@ -67,7 +67,8 @@ it. So the
 vocabulary is representable -- it is the run document's, and the document was
 written before the doubt -- while
 :data:`OFFLINE_VERIFY` exists in this build to gate UC-1 §7's ``LCOUNT`` guard
-and nothing else.
+and the ``PTIME`` fallback for :attr:`UserState.password_changed_at` (#386) --
+two reads of ``SYS.USER$``, and no verification.
 """
 
 from __future__ import annotations
@@ -509,7 +510,9 @@ class UserState:
     ``password_file_member``          ``V$PWFILE_USERS``
     ``failed_logins``                 ``SYS.USER$.LCOUNT``
     ``failed_login_limit``            the profile's ``FAILED_LOGIN_ATTEMPTS``
-    ``password_changed_at``           ``DBA_USERS.PASSWORD_CHANGE_DATE``
+    ``password_changed_at``           ``DBA_USERS.PASSWORD_CHANGE_DATE``, or
+                                      ``SYS.USER$.PTIME`` where that column
+                                      does not exist (#386)
     ================================  ==========================================
 
     **``name`` is the spelling the database gave back**, and it is the only
@@ -519,13 +522,15 @@ class UserState:
     Three fields are ``None``-when-unknown rather than defaulted, and the
     distinction is load-bearing in each case:
 
-    * ``password_changed_at`` -- its source is version-dependent and
-      **unconfirmed** (#87) (unverified: pw-changed-source): absent from
-      ``DBA_USERS`` on 11.2, where the same value means reading
-      ``SYS.USER$.PTIME`` behind the optional grant. Nothing
-      gates on it (Q9 made `--max-age-days` read the vault's ``rotated_at`` and
-      only that), so reporting nothing costs nothing and guessing would be all
-      cost.
+    * ``password_changed_at`` -- its source depends on the release. The
+      column is absent from ``DBA_USERS`` on **18c and 11.2** alike, and
+      present on 21c and 26ai (measured 2026-09-08, #386); below it the value
+      is ``SYS.USER$.PTIME``, behind the optional grant, and ``None`` without
+      it. 12.1, 12.2 and 19c are unmeasured (unverified: pw-changed-source).
+      Nothing gates on it (Q9 made `--max-age-days` read the vault's
+      ``rotated_at`` and only that), so reporting nothing costs nothing and
+      guessing would be all cost -- but *saying* nothing did cost something,
+      which is :attr:`password_changed_unknown`.
     * ``failed_logins`` -- ``None`` where ``SELECT ON SYS.USER$`` was not
       granted, which is the default (#86). The ``LCOUNT`` guard is then
       unavailable and `check` must say so plainly rather than run a weaker
@@ -568,6 +573,16 @@ class UserState:
     password_reuse_time: str | None = None
     password_versions: tuple[str, ...] = ()
     password_changed_at: datetime | None = None
+    #: Why :attr:`password_changed_at` is ``None``, in the driver's words, and
+    #: ``None`` whenever it is not (#386). A sentence rather than an enum because
+    #: the useful part is product-specific -- *which* view is missing and *which*
+    #: grant supplies the value -- and this object is not allowed to know that.
+    #:
+    #: It exists because the absence was reported identically whatever caused it:
+    #: ``-`` in `creds status`, and a ``password_age_days`` simply left out of the
+    #: run document, whether the release has no such column or something could
+    #: not be read. Only one of those is worth investigating.
+    password_changed_unknown: str | None = None
     #: When the password stops working, from ``DBA_USERS.EXPIRY_DATE``. During a
     #: grace period this is the **end of the grace window**, which is what makes
     #: it the deadline worth reporting: "in sync, and expiring on Friday" is the

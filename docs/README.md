@@ -408,13 +408,18 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   safely without measuring 19c, and 19c is the release it matters most on. An
   earlier draft of this entry said "nothing is broken today"; that was wrong, and
   #412's review caught it.
-- `unverified` `pw-changed-source` (#87) — **Which view supplies `status`'s
-  `DB_PW_CHANGED` column, per version** — `DBA_USERS.PASSWORD_CHANGE_DATE` is absent on 11.2, where the same value
-  means reading `SYS.USER$.PTIME` instead, behind the same optional grant Q1/P2
-  (#86) already made capability-probed rather than assumed. Purely a display
-  question — Q9 decided `rotate --max-age-days` reads only the vault, so
-  nothing gates on this — but `status` has no source for the column without it.
-  Worth confirming on the 11g XE and 19c images alongside #90.
+- `unverified` `pw-changed-source` (#87, #386) — **Whether `SYS.USER$.PTIME` is
+  the password change date on the releases nobody has run.** Measured 2026-09-08:
+  `DBA_USERS.PASSWORD_CHANGE_DATE` is present on 26ai and 21c and `ORA-00904` on
+  **18c and 11.2 alike** — the column arrived after 18c, not in 12.1 as this entry
+  used to imply. On all four `PTIME` moved with `ALTER USER ... IDENTIFIED BY`,
+  equalled the column to the second where both exist, and `CTIME` did not move.
+  #386 decided to fall back to `PTIME` behind the optional grant, and to say why
+  when neither answers (`SOPULI-W021`). **12.1 and 12.2 would take the fallback
+  and are unmeasured**; 19c is expected to have the column and is unmeasured too.
+  Purely a display question — Q9 decided `--max-age-days` reads only the vault —
+  and the tier-1 test pinning `PTIME` equal to the column fails on any release
+  where the two part, so running the suite there settles it.
 - `verified` `vault-cas-conflict` (#103, #104) — **What a real Vault's
   compare-and-set conflict looks like on the wire** — **answered.** Against `hashicorp/vault:2.0.4` dev mode: every lost
   compare-and-set, whatever caused it (a stale `cas: 0`, a stale nonzero `cas`,

@@ -70,8 +70,9 @@ class Row:
 
     Every field is ``None``-when-unknown rather than defaulted, because an
     inventory's whole job is to distinguish "this is so" from "nobody could
-    say". A `DB_PW_CHANGED` of ``None`` is a database whose version does not
-    expose it (#87), not an account that has never had its password set.
+    say". A `DB_PW_CHANGED` of ``None`` is a database that would not say, not an
+    account that has never had its password set -- and ``user`` carries why
+    (#386).
     """
 
     binding: Binding

@@ -292,6 +292,25 @@ LOCK_PATH_UNGUARDED = "SOPULI-W019"
 #: narrowing came from something written last week.
 REPAIR_DOCUMENT_STALE = "SOPULI-W020"
 
+#: The database would not say when an account's password was last set, and the
+#: message says why (#386).
+#:
+#: **It exists to make an omission legible.** `results[].password_age_days` is a
+#: documented field that is simply absent when the date is unknown, and `creds
+#: status` prints ``-`` -- the same answer on a release that has no such column
+#: as on one where something could not be read. A consumer cannot see a dash,
+#: and an operator cannot tell the two apart without reading the source.
+#:
+#: **On `results[].warnings[]`, one per account**, beside the field it explains
+#: -- unlike :data:`GUARDRAIL_UNCHECKED`, which is grouped per target. The field
+#: that is missing is per result, and a consumer reading one result should not
+#: have to join it to a run-level array to learn why that result has a hole. The
+#: text output groups it per target instead, because a person reading forty
+#: identical lines under a table learns to stop reading notes.
+#:
+#: Reported and never acted on, like the date itself: nothing gates on it (Q9).
+PASSWORD_CHANGE_DATE_UNKNOWN = "SOPULI-W021"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -400,6 +419,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "can only narrow, and a pair since repaired costs one login and reports "
             "changed: false. The message names the age, because whether that is still "
             "the estate you are looking at is not something a threshold can decide."
+        ),
+        PASSWORD_CHANGE_DATE_UNKNOWN: (
+            "The database would not say when this account's password was last set, so "
+            "`password_age_days` is absent from the result and `creds status` shows `-` "
+            "under DB_PW_CHANGED. The message says why -- a release with no such column "
+            "and no grant to read it elsewhere, or a value that could not be read -- "
+            "because those want different responses. Informational: nothing gates on the "
+            "database's date, and `--max-age-days` reads the vault's."
         ),
         STORE_DEGRADED: (
             "A configured store answered and cannot serve this run: sealed, standing by, "

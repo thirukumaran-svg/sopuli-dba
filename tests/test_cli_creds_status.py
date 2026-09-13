@@ -256,6 +256,61 @@ def test_the_age_is_the_vault_s(
     assert "400" not in found
 
 
+#: What the Oracle driver says on 18c without the `SYS.USER$` grant (#386).
+NO_COLUMN = (
+    "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON "
+    "SYS.USER$ to the service account to read the same date from SYS.USER$.PTIME"
+)
+
+
+def test_an_empty_db_pw_changed_says_why_in_the_document(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """#386: a consumer cannot see a dash. The field stays absent -- it is the
+    honest answer -- and the result says why, under a code."""
+    estate(
+        users={
+            "ACME_WEB_USER": account("ACME_WEB_USER", password_changed_unknown=NO_COLUMN),
+            "ACME_BATCH_USER": account(
+                "ACME_BATCH_USER", password_changed_at=datetime.now(UTC) - timedelta(days=3)
+            ),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--output", "json")
+    found = document(result)
+
+    web = next(one for one in found["results"] if one["account"] == "acme_web_user")
+    assert "password_age_days" not in web
+    assert [one["code"] for one in web["warnings"]] == ["SOPULI-W021"]
+    assert web["warnings"][0]["message"] == NO_COLUMN
+
+    batch = next(one for one in found["results"] if one["account"] == "acme_batch_user")
+    assert "password_age_days" in batch
+    assert "warnings" not in batch, "a date that was read needs no explanation"
+    assert not list(validator.iter_errors(found))
+
+
+def test_an_empty_db_pw_changed_says_why_once_per_target_in_the_table(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """One missing column on one target is one note, however many accounts sit
+    on it -- forty identical lines would teach the reader to skip the block."""
+    estate(
+        users={
+            "ACME_WEB_USER": account("ACME_WEB_USER", password_changed_unknown=NO_COLUMN),
+            "ACME_BATCH_USER": account("ACME_BATCH_USER", password_changed_unknown=NO_COLUMN),
+        }
+    )
+    result = run(runner, write_config(CONFIG))
+
+    assert "-" in row(result, "acme_web_user")
+    assert result.output.count("GRANT SELECT ON SYS.USER$") == 1
+    assert "appdb-alpha: DB_PW_CHANGED is empty for 2 accounts" in result.output
+
+
 def test_a_quiet_estate_says_so(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

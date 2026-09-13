@@ -17,6 +17,7 @@ import pytest
 from sopuli.constraints import NAMED, NONE, UNKNOWN
 from sopuli.driver.oracle.accounts import (
     PROFILE_QUERY,
+    PTIME_QUERY,
     PWFILE_QUERY,
     ROLES_QUERY,
     USER_QUERY,
@@ -324,6 +325,9 @@ def test_a_release_without_password_change_date_falls_back(  # noqa: D401
     assert state.vendor_maintained is False, (
         "18c has ORACLE_MAINTAINED; only the change date is missing"
     )
+    assert PTIME_QUERY not in cursor.asked, "no grant was declared, so SYS.USER$ is not read"
+    assert state.password_changed_unknown is not None
+    assert "SELECT ON SYS.USER$" in state.password_changed_unknown, "the reason names the remedy"
 
 
 def test_a_missing_oracle_maintained_column_is_none_and_not_false() -> None:
@@ -362,12 +366,130 @@ def test_oracle_maintained_is_read_where_the_column_exists(flag: str, expected: 
 
 def test_a_password_change_date_is_carried_where_the_release_has_one() -> None:
     """Measured: two rotations two minutes apart moved the column, so it does
-    track a rotation on a release that has it. #87 is open about 11.2's source,
-    not about this."""
+    track a rotation on a release that has it."""
     state = describe(_cursor(changed=CHANGED), "acme_orders_user")
 
     assert state is not None
     assert state.password_changed_at == CHANGED
+    assert state.password_changed_unknown is None
+
+
+# ------------------------------------------------ the PTIME fallback (#386) ---
+
+#: What `SYS.USER$.PTIME` answers, deliberately a different moment from
+#: :data:`CHANGED` so a test can tell which source a value came from.
+PTIME = datetime(2026, 9, 8, 17, 7, 16)
+
+
+def _no_change_date(**answers: Any) -> _Cursor:
+    """18c's shape: the column is refused, `ORACLE_MAINTAINED` is not."""
+    return _Cursor(
+        {
+            USER_QUERY: _ora("ORA-00904", '"PASSWORD_CHANGE_DATE": invalid identifier'),
+            USER_QUERY_NO_CHANGE_DATE: (
+                "ACME_ORDERS_USER",
+                "OPEN",
+                "DEFAULT",
+                "11G 12C",
+                "N",
+                None,
+                EXPIRES,
+            ),
+            PROFILE_QUERY: [],
+            ROLES_QUERY: [],
+            **answers,
+        }
+    )
+
+
+def test_a_release_without_the_column_reads_ptime_where_the_grant_exists() -> None:
+    """#386, option 2: 18c and 11.2 report what 19c+ report, when they can."""
+    cursor = _no_change_date(**{PTIME_QUERY: (PTIME,)})
+
+    state = describe(cursor, "acme_orders_user", user_dollar=True)
+
+    assert state is not None
+    assert state.password_changed_at == PTIME
+    assert state.password_changed_unknown is None
+
+
+def test_the_legacy_shape_falls_back_too() -> None:
+    """11.2 answers neither column, and its date is behind the same grant."""
+    cursor = _Cursor(
+        {
+            USER_QUERY: _ora("ORA-00904"),
+            USER_QUERY_NO_CHANGE_DATE: _ora("ORA-00904"),
+            USER_QUERY_LEGACY: ("ACME_ORDERS_USER", "OPEN", "DEFAULT", "10G 11G", None, None, None),
+            PROFILE_QUERY: [],
+            ROLES_QUERY: [],
+            PTIME_QUERY: (PTIME,),
+        }
+    )
+
+    state = describe(cursor, "acme_orders_user", user_dollar=True)
+
+    assert state is not None
+    assert state.password_changed_at == PTIME
+
+
+def test_ptime_is_never_read_where_the_column_exists() -> None:
+    """**One source per release**, which is what keeps a second source from
+    becoming a second opinion (#383's lesson). Asserted with the grant declared,
+    because that is the case where reading both would be possible."""
+    cursor = _cursor(changed=CHANGED)
+    cursor.answers[PTIME_QUERY] = (PTIME,)
+
+    state = describe(cursor, "acme_orders_user", user_dollar=True)
+
+    assert state is not None
+    assert state.password_changed_at == CHANGED
+    assert PTIME_QUERY not in cursor.asked
+
+
+def test_an_empty_column_is_reported_as_empty_rather_than_retried() -> None:
+    """A `NULL` in a column the release has is that release's answer. Retrying
+    it against `PTIME` is exactly how one release would come to have two sources."""
+    cursor = _cursor(changed=None)
+    cursor.answers[PTIME_QUERY] = (PTIME,)
+
+    state = describe(cursor, "acme_orders_user", user_dollar=True)
+
+    assert state is not None
+    assert state.password_changed_at is None
+    assert PTIME_QUERY not in cursor.asked
+    assert state.password_changed_unknown is not None
+    assert "empty" in state.password_changed_unknown
+
+
+def test_an_unreadable_sys_user_dollar_says_so_rather_than_naming_the_grant() -> None:
+    """The capability said yes and the read said no -- a grant revoked mid-run.
+    Telling the operator to grant what the probe found would send them in a
+    circle, so the reason is a different sentence."""
+    cursor = _no_change_date(**{PTIME_QUERY: _ora("ORA-01031")})
+
+    state = describe(cursor, "acme_orders_user", user_dollar=True)
+
+    assert state is not None
+    assert state.password_changed_at is None
+    assert state.password_changed_unknown is not None
+    assert "could not be read" in state.password_changed_unknown
+
+
+def test_a_ptime_read_that_is_not_an_enumerated_negative_raises() -> None:
+    """`capabilities.read`'s rule, one level down: only the codes that mean *no*
+    become `None`. Anything else is a question that should not have been asked,
+    and a plausible "unknown" in its place is #195's failure."""
+    cursor = _no_change_date(**{PTIME_QUERY: _ora("ORA-00600", "internal error")})
+
+    with pytest.raises(Exception, match="ORA-00600"):
+        describe(cursor, "acme_orders_user", user_dollar=True)
+
+
+def test_the_fallback_is_bound_to_the_spelling_the_database_gave_back() -> None:
+    """`failed_logins`' reason: `SYS.USER$.NAME` preserves a quoted lower-case
+    spelling, so upper-casing here would find no row and read as unknown."""
+    assert ":name" in PTIME_QUERY
+    assert "upper(" not in PTIME_QUERY.lower()
 
 
 # ------------------------------------------------------------------- roles ---

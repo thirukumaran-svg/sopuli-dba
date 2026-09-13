@@ -299,8 +299,8 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 |---|---|---|---|
 | 26ai Free | `sopuli-test-oracle-free-1` | `127.0.0.1:1521/FREEPDB1` | CDB + PDB |
 | 21c XE | `sopuli-test-oracle-xe21-1` | `127.0.0.1:1522/XEPDB1`, root `.../XE` | CDB + PDB |
-| 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` so `status` leaves `DB_PW_CHANGED` empty |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, no `DB_PW_CHANGED`, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other three containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1, 12.2 and 19c are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
+| 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` — `DB_PW_CHANGED` is read from `SYS.USER$.PTIME` where the grant exists, and is empty with a `SOPULI-W021` note saying why where it does not (#386) |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other three containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1, 12.2 and 19c are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
 follows. All three images are already on the machine and reach healthy in about a
@@ -1229,6 +1229,53 @@ acme_app_user  free-pdb  UNVERIFIABLE  -        -    2026-09-06     DEFAULT  not
 vault at all. `DB_PW_CHANGED` comes from the dictionary, so it is populated even
 now — the database has a password, the vault has never heard of it, and nothing
 has been compared.
+
+#### An empty `DB_PW_CHANGED`, and the note that says why
+
+`DBA_USERS.PASSWORD_CHANGE_DATE` does not exist on 18c or 11g. There the date is
+read from `SYS.USER$.PTIME` instead, which needs the optional `SELECT ON
+SYS.USER$` grant (#386). The test containers make that grant to `SYSTEM`, so an
+18c target reads exactly like 21c. Add `xe21-pdb` and `xe18-pdb` from
+[§5's table](#running-all-of-this-against-a-different-oracle-version) as extra
+targets beside `free-pdb`, then take the grant away on 18c to see the other
+half — on purpose:
+
+```bash
+printf '\nrevoke select on sys.user$ from system container=all;\nexit\n' \
+  | docker exec -i sopuli-test-oracle-xe18-1 sqlplus -S "/ as sysdba"
+```
+
+```
+ACCOUNT        TARGET    STATE         VAULT_V  AGE  DB_PW_CHANGED  PROFILE  ROLLOVER
+acme_app_user  free-pdb  UNVERIFIABLE  -        -    2026-09-13     DEFAULT  not configured
+acme_app_user  xe21-pdb  UNVERIFIABLE  -        -    2026-09-13     DEFAULT  not configured
+acme_app_user  xe18-pdb  UNVERIFIABLE  -        -    -              DEFAULT  not configured
+
+3 accounts, nothing to act on
+
+1 note:
+  xe18-pdb: DB_PW_CHANGED is empty for acme_app_user: this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON SYS.USER$ to the service account to read the same date from SYS.USER$.PTIME
+```
+
+Exit 0: nothing gates on the database's date. The note is grouped per target, so
+forty accounts on one 18c database print one line naming "40 accounts". In
+`--output json` the same reason is on each affected result instead, next to the
+`password_age_days` that is now missing from it — `creds check` does the same:
+
+```json
+"warnings": [
+  {
+    "level": "warning",
+    "message": "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON SYS.USER$ to the service account to read the same date from SYS.USER$.PTIME",
+    "code": "SOPULI-W021",
+    "target": "xe18-pdb",
+    "account": "acme_app_user"
+  }
+]
+```
+
+Put the grant back (`grant select on sys.user$ to system container=all`), and the
+`-` becomes a date and the note goes. The lockout guard tests need it too.
 
 ### 10.2 `generate` — stage a password, touch no database
 

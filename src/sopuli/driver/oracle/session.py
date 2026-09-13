@@ -252,9 +252,14 @@ class OracleSession:
         ``None`` is UC-1's ``ACCOUNT_MISSING`` and not an error -- the tool does
         not create accounts (Q8). The reads are all on the baseline grant set,
         so `check` needs no site-specific privilege to run (#86).
+
+        One read goes further where the optional grant was made: on a release
+        with no ``DBA_USERS.PASSWORD_CHANGE_DATE``, the date comes from
+        ``SYS.USER$.PTIME`` (#386). Asked of the capability probe, which is
+        cached, so a session without the grant never issues the read at all.
         """
         with self.connection.cursor() as cursor:
-            return describe(cursor, account)
+            return describe(cursor, account, user_dollar=self.scope().supports(OFFLINE_VERIFY))
 
     def password_constraints(self, account: str) -> AccountConstraints | None:
         """What this target says about a password for one account (#317).

@@ -232,9 +232,10 @@ def password_age_days(changed_at: datetime | None, *, now: datetime | None = Non
     that, so one age per secret path answers it regardless of how many targets
     share the path.
 
-    ``None`` where the database did not say -- the source is version-dependent
-    and unconfirmed on 11.2, and nothing gates on it, so guessing would be all
-    cost (:class:`~sopuli.driver.protocol.UserState`).
+    ``None`` where the database did not say -- which the driver explains in
+    :attr:`~sopuli.driver.protocol.UserState.password_changed_unknown`, and the
+    run carries as ``SOPULI-W021`` (#386). Nothing gates on it, so guessing
+    would be all cost.
 
     **A naive timestamp is read as UTC**, because Oracle's ``PASSWORD_CHANGE_DATE``
     is a ``DATE`` and a ``DATE`` carries no zone: ``oracledb`` hands back a naive
