@@ -103,6 +103,7 @@ from sopuli.config import (
     parse_selector,
     refuse_unknown,
 )
+from sopuli.config.vault_env import ADDR_FLAG
 from sopuli.constraints import AccountConstraints, Constraints
 from sopuli.diagnostics import (
     CONSTRAINTS_UNREAD,
@@ -391,6 +392,7 @@ def cli(
     profile_name: str | None,
     vault_token_file: Path | None,
     vault_token_given: bool,
+    vault_addr: str | None,
 ) -> None:
     """Manage database account credentials with a vault as the master record."""
     # The group's copies of the global options are hidden and do nothing on their
@@ -406,6 +408,7 @@ def cli(
         profile_name=profile_name,
         vault_token_file=vault_token_file,
         vault_token_given=vault_token_given,
+        vault_addr=vault_addr,
     )
 
 
@@ -435,6 +438,8 @@ def about_refusals(given: GlobalOptions) -> list[str]:
         written.append("--profile")
     if given.vault_token_file is not None:
         written.append("--vault-token-file")
+    if given.vault_addr is not None:
+        written.append(ADDR_FLAG)
     return written
 
 

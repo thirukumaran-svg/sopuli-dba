@@ -568,6 +568,42 @@ variables reach a setting this way — `SOPULI_OUTPUT`, `SOPULI_DRY_RUN` and
 is ignored rather than refused, so a run you believe is guarded by an environment
 variable is not guarded at all. Those live in the file (§11).
 
+### `--vault-addr`, the one flag that redirects a store
+
+One vault key has a flag, and it is the address (#422). Point a command at a
+different Vault without touching the file or exporting anything:
+
+```
+$ sopuli --config sopuli.yaml config show --vault-addr http://127.0.0.1:8201
+vaults
+NAME       TYPE       ADDRESS                NOTE
+vault-dev  hashicorp  http://127.0.0.1:8201  layered: addr
+```
+
+`layered: addr` is the store reporting that something above the file wrote that
+key. It is not cosmetic — nothing is listening on 8201, and a command that
+actually opens a socket says so:
+
+```
+$ sopuli --config sopuli.yaml lock status --vault-addr http://127.0.0.1:8201
+sopuli: could not reach the store: [WinError 10061] No connection could be made because the target machine actively refused it
+  hint: check `addr`, and `tls.ca_file` if the certificate is your own CA
+```
+
+Exit 1. Three things to know before you reach for it:
+
+- **It applies to the *default* store** — whichever one `SOPULI_VAULT` or
+  `defaults.vault` names. With a file that names neither, it is refused rather
+  than guessed at (§11).
+- **There is no named form.** For a file with two stores, use
+  `SOPULI_VAULT__<NAME>__ADDR`.
+- **It is the only one.** There is no `--vault-mount` and no
+  `--vault-namespace`; those are the file's, or the `SOPULI_VAULT__*` forms'.
+
+It takes either position, like `--output` and `--profile`:
+`sopuli --vault-addr URL config show …` and `sopuli config show … --vault-addr URL`
+are the same layer and the same result.
+
 ### Profiles
 
 A profile changes how a run behaves, never what it acts on. Add one:
@@ -1880,6 +1916,21 @@ consulted.
 `max_targets` is the third key, and `readonly: true` is the way to block
 everything — `max_targets: 0` is far more likely to be a slip that then blocks every
 run.
+
+### `--vault-addr` with nothing to apply it to
+
+Delete `vault: vault-dev` from `defaults:` and try to redirect the store anyway:
+
+```
+$ sopuli --config no-default.yaml config show --vault-addr https://vault-standby.example.com:8200
+sopuli: no-default.yaml: --vault-addr names no store, and this run has no default one to apply it to
+  hint: it applies to the store `defaults.vault` names -- write one, export SOPULI_VAULT=<store>, or address a store directly with SOPULI_VAULT__<STORE>__<KEY>
+```
+
+Exit 9. `SOPULI_VAULT_ADDR` is refused in the same words for the same reason: it
+was written for this tool, so silently doing nothing is worse than either
+honouring it or refusing. `VAULT_ADDR` only warns, because that one is not this
+tool's to fail a run over.
 
 ### The same block, on a target or a group
 

@@ -310,6 +310,10 @@ defaults:
   vault: vault-dev
 """
 
+#: The same file with nothing naming a default store, which is what the unnamed
+#: forms -- the variable and the flag alike -- have no home in (§6).
+VAULT_CONFIG_NO_DEFAULT = VAULT_CONFIG.replace("defaults:\n  vault: vault-dev\n", "")
+
 
 @pytest.fixture
 def vault_config(write_config: WriteConfig) -> list[str]:
@@ -367,6 +371,83 @@ def test_a_sopuli_variable_outranks_the_third_party_one(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert "https://active.example.com" in result.output
+
+
+# ---------------------------------------------------- `--vault-addr` (#422) ---
+#
+# Layer 1 of `vaults.*.addr`, and the only flag that hoists a store's setting
+# onto the command line. The merge is asserted in
+# `tests/config/test_vault_addr_flag.py`; what these add is the parser -- both
+# click positions, and the value actually arriving through `load_config_layers`
+# rather than through the boundary resolver every other global option uses.
+
+
+def test_the_flag_reaches_the_default_store(runner: CliRunner, vault_config: list[str]) -> None:
+    result = runner.invoke(cli, [*vault_config, "--vault-addr", "https://flag.example.com"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "https://flag.example.com" in result.output
+    assert "https://declared.example.com" not in result.output
+
+
+def test_the_flag_outranks_every_variable(
+    runner: CliRunner, vault_config: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Layer 1 over 2 over 3, all the way down. The named variable is in here
+    because it is the most *specific* request and still loses: specificity ranks
+    within a layer, and between layers P3's order does."""
+    monkeypatch.setenv("VAULT_ADDR", "https://third-party.example.com")
+    monkeypatch.setenv("SOPULI_VAULT_ADDR", "https://active.example.com")
+    monkeypatch.setenv("SOPULI_VAULT__VAULT_DEV__ADDR", "https://named.example.com")
+    result = runner.invoke(cli, [*vault_config, "--vault-addr", "https://flag.example.com"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "https://flag.example.com" in result.output
+
+
+def test_the_flag_is_accepted_in_the_group_position_too(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """P3: both positions are layer 1 -- the same person, the same command line,
+    the same moment -- so neither outranks the other. Unlike a safety flag, this
+    one is not trailing-only: there is nothing to relax by writing it early."""
+    path = str(write_config(VAULT_CONFIG))
+    result = runner.invoke(
+        cli, ["--vault-addr", "https://flag.example.com", "config", "show", "--config", path]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "https://flag.example.com" in result.output
+
+
+def test_an_unwritten_flag_supplies_nothing(runner: CliRunner, vault_config: list[str]) -> None:
+    """The regression this file exists to catch a second time: the flag was first
+    settled with colour's helper, which falls back to `auto` rather than to
+    nothing -- so every run that wrote no flag arrived carrying the string
+    `"auto"` as an address, and any file without a default store was refused."""
+    result = runner.invoke(cli, vault_config)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "https://declared.example.com" in result.output
+
+
+def test_it_is_refused_where_no_store_is_the_default(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """§6's rule, reached from a real command line. Exit 9 and a message naming
+    the flag: it was typed for this tool, so doing nothing silently is worse than
+    either honouring it or refusing."""
+    path = str(write_config(VAULT_CONFIG_NO_DEFAULT))
+    result = runner.invoke(
+        cli, ["config", "show", "--config", path, "--vault-addr", "https://flag.example.com"]
+    )
+
+    assert isinstance(result.exception, ConfigError)
+    # The exception's own code rather than `result.exit_code`: `CliRunner` lets a
+    # raised exception through and reports 1, and the mapping to a process status
+    # is `tests/test_error_contract.py`'s subject rather than this file's.
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert "--vault-addr names no store" in str(result.exception)
 
 
 def test_a_source_cannot_wire_a_setting_by_producing_it(

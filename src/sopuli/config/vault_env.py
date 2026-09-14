@@ -90,6 +90,16 @@ SEPARATOR = "__"
 DEFAULT_STORE_VARIABLE = "SOPULI_VAULT"
 DEFAULT_STORE_SETTING = "vault"
 
+#: The one flag that hoists a store's setting onto the command line (#422), and
+#: layer 1 of ``vaults.*.addr``. Spelled once, here rather than in
+#: :mod:`sopuli.cli`, because the string is both the option click parses and the
+#: ``source_detail`` a refusal names -- and :data:`~sopuli.material.TOKEN_FLAG`
+#: already set that precedent for the same reason.
+#:
+#: There is no ``--vault-mount`` beside it and no named ``--vault-addr NAME=URL``.
+#: See :func:`vault_cli_contributions`.
+ADDR_FLAG = "--vault-addr"
+
 #: What the named form may address, as the variable spells it, mapped to the
 #: setting key :mod:`sopuli.config.vault_layers` merges. One entry, matching §6's
 #: table; a second one is a line here and a row there.
@@ -281,6 +291,41 @@ def _refuse_unrecognised(env: Mapping[str, str], *, known: set[str], stores: Seq
         )
 
 
+def vault_cli_contributions(
+    addr: str | None, *, stores: Sequence[str], active: Resolved | None
+) -> dict[str, dict[str, list[Contribution]]]:
+    """``--vault-addr``, placed on the default store (#422). Layer 1.
+
+    In this module rather than beside the flag, and that is the decision rather
+    than convenience. §6 already answers "which store does an unnamed setting
+    address" -- the one ``SOPULI_VAULT`` or ``defaults.vault`` names, refusing
+    where neither does, never the store the current binding happened to resolve
+    to (C13's rejected `vault_settings:`, #154). A flag resolving that question
+    its own way would be a *second definition of the default store*, one layer
+    above the first, and the two would agree until the day they did not. So it
+    goes through :func:`_place`, which is the same code the variables use.
+
+    **There is no named form**, decided with the flag itself. The environment has
+    ``SOPULI_VAULT__<NAME>__ADDR`` for a run that touches two stores, and adding
+    ``--vault-addr NAME=URL`` would put a third ``K=V`` grammar on a command line
+    that has one. The analogy that settled it is ``--vault-token-file``, which is
+    unnamed for the same reason -- with one crack worth knowing about: a token is
+    plausibly the same across the stores one run touches and an address is
+    definitionally per-store, so the multi-store case here really does fall back
+    to the environment rather than merely preferring it.
+
+    Returns the same shape :func:`vault_env_contributions` does, and no warnings:
+    a flag the operator typed is never quietly dropped.
+    """
+    if not addr:
+        return {}
+    placed, _ = _place([(ADDR_FLAG, "addr", Layer.CLI, addr)], stores=stores, active=active)
+    found: dict[str, dict[str, list[Contribution]]] = {}
+    for store, key, contribution in placed:
+        found.setdefault(store, {}).setdefault(key, []).append(contribution)
+    return found
+
+
 def _unnamed(
     env: Mapping[str, str], *, stores: Sequence[str], active: Resolved | None
 ) -> tuple[list[tuple[str, str, Contribution]], tuple[ConfigWarning, ...]]:
@@ -292,47 +337,73 @@ def _unnamed(
     """
     asked = sorted(
         [
-            (variable, key, Layer.ENV)
+            (variable, key, Layer.ENV, env[variable])
             for variable, key in ACTIVE_VARIABLES.items()
             if env.get(variable)
         ]
         + [
-            (variable, key, Layer.ENV_THIRDPARTY)
+            (variable, key, Layer.ENV_THIRDPARTY, env[variable])
             for variable, key in THIRDPARTY_VARIABLES.items()
             if env.get(variable)
         ]
     )
+    return _place(asked, stores=stores, active=active)
+
+
+def _place(
+    asked: Sequence[tuple[str, str, Layer, str]],
+    *,
+    stores: Sequence[str],
+    active: Resolved | None,
+) -> tuple[list[tuple[str, str, Contribution]], tuple[ConfigWarning, ...]]:
+    """Put every source that names no store onto the default one, or say why not.
+
+    One function for the variables and the flag (#422), so that "which store is
+    the active one" has exactly one answer however it was asked. ``asked`` is
+    ``(where it was written, setting key, layer, value)``.
+
+    **Everything this tool owns refuses; only a third-party variable warns.** The
+    split is §6's and it is about whose environment it is: ``SOPULI_VAULT_ADDR``
+    and ``--vault-addr`` were written for this tool, so doing nothing silently is
+    worse than either honouring or refusing, while ``VAULT_ADDR`` is exported in
+    every shell that has run `vault` and failing a run over somebody else's
+    variable would be taking a position on an environment the tool does not own.
+    """
     if not asked:
         return [], ()
 
     store = None if active is None else str(active.value)
     if store is not None and store in stores:
         return [
-            (store, key, Contribution(layer=layer, value=env[variable], detail=variable))
-            for variable, key, layer in asked
+            (store, key, Contribution(layer=layer, value=value, detail=where))
+            for where, key, layer, value in asked
         ], ()
 
     warnings = []
-    for variable, _, layer in asked:
-        if layer is Layer.ENV:
-            _refuse_unplaceable(variable, store=store, active=active, stores=stores)
+    for where, _, layer, _value in asked:
+        if layer is not Layer.ENV_THIRDPARTY:
+            _refuse_unplaceable(where, store=store, active=active, stores=stores)
         if store is not None and active is not None and active.layer is not Layer.ENV:
             # A dangling `defaults.vault` is `check_references`' finding, and it
             # runs a few lines after this one with the message every other
             # dangling name in the file gets. Saying it here as well would be one
             # mistake reported twice, in two phrasings.
             continue
-        warnings.append(_unplaceable_warning(variable, store=store, active=active))
+        warnings.append(_unplaceable_warning(where, store=store, active=active))
     return [], tuple(warnings)
 
 
 def _refuse_unplaceable(
-    variable: str, *, store: str | None, active: Resolved | None, stores: Sequence[str]
+    where: str, *, store: str | None, active: Resolved | None, stores: Sequence[str]
 ) -> None:
-    """A ``SOPULI_*`` variable with no store to apply to. See the module note."""
+    """A ``SOPULI_*`` variable or ``--vault-addr`` with no store to apply to.
+
+    ``where`` is the variable name or the flag, which is what the operator has to
+    go and change; the three fixes in the hint are the same either way.
+    """
     if store is None:
         raise ConfigError(
-            f"{variable} names no store, and this run has no default one to apply it to",
+            f"{where} names no store, and this run has no default one to apply it to",
             at=ROOT,
             hint=(
                 f"it applies to the store `defaults.vault` names -- write one, export "
@@ -341,16 +412,18 @@ def _refuse_unplaceable(
             ),
         )
     known = ", ".join(f"`{one}`" for one in sorted(stores)) if stores else "none"
-    where = "the environment" if active is None else active.location
+    # Not `where`: the two are different halves of the sentence -- what the
+    # operator wrote, and what named the store it could not be placed on.
+    named_by = "the environment" if active is None else active.location
     raise ConfigError(
-        f"{variable} applies to the default store {store!r}, which is not declared",
+        f"{where} applies to the default store {store!r}, which is not declared",
         at=ROOT,
-        hint=f"{where} names it; declared vaults: {known}",
+        hint=f"{named_by} names it; declared vaults: {known}",
     )
 
 
 def _unplaceable_warning(
-    variable: str, *, store: str | None, active: Resolved | None
+    where: str, *, store: str | None, active: Resolved | None
 ) -> ConfigWarning:
     """A third-party variable this run had nowhere to put.
 
@@ -362,7 +435,7 @@ def _unplaceable_warning(
     if store is None:
         return ConfigWarning(
             message=(
-                f"{variable} is set and was not applied: this run has no default store, "
+                f"{where} is set and was not applied: this run has no default store, "
                 f"and a third-party variable names none"
             ),
             at="",
@@ -372,11 +445,11 @@ def _unplaceable_warning(
                 f"the variable belongs to something else on this machine"
             ),
         )
-    where = "the environment" if active is None else active.location
+    named_by = "the environment" if active is None else active.location
     return ConfigWarning(
         message=(
-            f"{variable} is set and was not applied: the default store {store!r} "
-            f"({where}) is not declared"
+            f"{where} is set and was not applied: the default store {store!r} "
+            f"({named_by}) is not declared"
         ),
         at="",
         hint="declare it under `vaults:`, or correct the name",

@@ -323,6 +323,7 @@ def _vault_setting(
     *,
     type: type,  # noqa: A002 - see `_setting`
     env: tuple[Layer, ...] = (),
+    cli: bool = False,
 ) -> Setting:
     """One per-store vault key, at the three layers the file gives it and any the
     environment does.
@@ -338,11 +339,24 @@ def _vault_setting(
     variable that does not exist. :mod:`sopuli.config.vault_env` is the producer,
     and the enforcement in :func:`~sopuli.settings.resolver._checked` is what
     keeps the two in agreement.
+
+    ``cli`` is layer 1, and it is per key for the same reason and true of exactly
+    one of them (#422): ``--vault-addr`` is the only flag that hoists a store's
+    setting onto the command line. There is deliberately no ``--vault-mount`` or
+    ``--vault-namespace`` -- a flag per reach key would be six spellings of what
+    ``vaults:`` already says once, and the case for this one is that an address is
+    the thing an operator redirects for a single run.
     """
     return _setting(
         f"vaults.*.{key}",
         type=type,
-        layers=(*env, Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
+        layers=(
+            *((Layer.CLI,) if cli else ()),
+            *env,
+            Layer.PROFILE,
+            Layer.OBJECT,
+            Layer.DEFAULTS,
+        ),
         policy=MergePolicy.OVERRIDE,
     )
 
@@ -464,7 +478,7 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             # both the named form and the unnamed one are layer 2 -- while
             # `namespace` and `tls.ca_file` are reachable only through Vault's
             # own `VAULT_NAMESPACE` and `VAULT_CACERT`, which P3 ranks below it.
-            _vault_setting("addr", type=str, env=(Layer.ENV, Layer.ENV_THIRDPARTY)),
+            _vault_setting("addr", type=str, env=(Layer.ENV, Layer.ENV_THIRDPARTY), cli=True),
             _vault_setting("mount", type=str),
             _vault_setting("kv_version", type=int),
             _vault_setting("namespace", type=str, env=(Layer.ENV_THIRDPARTY,)),

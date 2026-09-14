@@ -154,7 +154,11 @@ def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_config(
-    path: Path, *, profile: str | None = None, env: Mapping[str, str] = NO_ENV
+    path: Path,
+    *,
+    profile: str | None = None,
+    env: Mapping[str, str] = NO_ENV,
+    vault_addr: str | None = None,
 ) -> Config:
     """Read one config file and validate it into typed objects.
 
@@ -166,11 +170,17 @@ def load_config(
     ``profile`` is the name ``--profile`` or ``SOPULI_PROFILE`` supplied, or
     ``None``. See :func:`build_config`.
     """
-    return _validate(load_document(path), source=path, profile=profile, env=env)
+    return _validate(
+        load_document(path), source=path, profile=profile, env=env, vault_addr=vault_addr
+    )
 
 
 def load_config_from(
-    paths: Sequence[Path], *, profile: str | None = None, env: Mapping[str, str] = NO_ENV
+    paths: Sequence[Path],
+    *,
+    profile: str | None = None,
+    env: Mapping[str, str] = NO_ENV,
+    vault_addr: str | None = None,
 ) -> Config:
     """Read one or more layered config files and validate the result.
 
@@ -181,11 +191,15 @@ def load_config_from(
     about a *file* -- unreadable, unparseable, unversioned -- are raised before
     the merge and still say which one.
     """
-    return load_layers(paths, profile=profile, env=env)[1]
+    return load_layers(paths, profile=profile, env=env, vault_addr=vault_addr)[1]
 
 
 def load_layers(
-    paths: Sequence[Path], *, profile: str | None = None, env: Mapping[str, str] = NO_ENV
+    paths: Sequence[Path],
+    *,
+    profile: str | None = None,
+    env: Mapping[str, str] = NO_ENV,
+    vault_addr: str | None = None,
 ) -> tuple[dict[str, Any], Config]:
     """The merged document *and* the config built from it.
 
@@ -207,7 +221,9 @@ def load_layers(
     # With one file a validation error can name it. With several it cannot: the
     # offending value may have been written in one and overridden in another.
     source = paths[0] if len(paths) == 1 else None
-    return document, _validate(document, source=source, profile=profile, env=env)
+    return document, _validate(
+        document, source=source, profile=profile, env=env, vault_addr=vault_addr
+    )
 
 
 def _validate(
@@ -216,10 +232,11 @@ def _validate(
     source: Path | None,
     profile: str | None,
     env: Mapping[str, str],
+    vault_addr: str | None = None,
 ) -> Config:
     try:
         reject_unknown_keys(document, allowed=TOP_LEVEL_KEYS, at=ROOT)
-        config = build_config(document, profile=profile, env=env)
+        config = build_config(document, profile=profile, env=env, vault_addr=vault_addr)
     except ConfigError as error:
         # The builders work on raw data and have never seen a filename. Filling
         # it in here means every message says which file, without threading a
@@ -231,7 +248,11 @@ def _validate(
 
 
 def build_config(
-    document: dict[str, Any], *, profile: str | None = None, env: Mapping[str, str] = NO_ENV
+    document: dict[str, Any],
+    *,
+    profile: str | None = None,
+    env: Mapping[str, str] = NO_ENV,
+    vault_addr: str | None = None,
 ) -> Config:
     """Validate raw data into a :class:`Config`, with no filesystem involved.
 
@@ -284,7 +305,7 @@ def build_config(
     # unverified-transport warning asks a store whether it verifies its
     # certificate -- and the answer has to be the effective one, or a
     # `defaults:` block could turn verification off without warning.
-    vaults, layered = apply_vault_layers(config, env=env)
+    vaults, layered = apply_vault_layers(config, env=env, vault_addr=vault_addr)
     config = replace(config, vaults=vaults)
     config = replace(config, expanded_targets=expand_targets(config))
     # References are resolved before bindings are built, not after: an

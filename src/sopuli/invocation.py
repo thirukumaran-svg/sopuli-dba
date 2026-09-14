@@ -83,6 +83,7 @@ from sopuli.config.discovery import discover
 from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.config.loading import load_layers
 from sopuli.config.model import Config
+from sopuli.config.vault_env import ADDR_FLAG
 from sopuli.driver.protocol import DriverError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockError
@@ -117,6 +118,7 @@ GLOBAL_PARAMS = (
     "dry_run",
     "vault_token_file",
     "vault_token_given",
+    "vault_addr",
 )
 
 #: The settings every run consults, whether or not any layer mentioned them.
@@ -189,6 +191,12 @@ class GlobalOptions:
     profile_name: str | None = None
     dry_run: bool = False
     vault_token_file: Path | None = None
+    #: ``--vault-addr``'s value, or ``None`` (#422). Layer 1 of
+    #: ``vaults.*.addr``, and unlike every other global option it is consumed
+    #: while the *file* is being built rather than at this boundary -- a store's
+    #: settings belong to the store, so they are merged in
+    #: :mod:`sopuli.config.vault_layers` and never reach ``RESOLVED_SETTINGS``.
+    vault_addr: str | None = None
     #: Whether ``--vault-token`` was written, and **never what it carried**. The
     #: parser callback throws the value away, so there is no field on this class,
     #: on :class:`Invocation`, or anywhere between them that a token could sit in.
@@ -204,6 +212,7 @@ class GlobalOptions:
             profile_name=params.get("profile_name"),
             dry_run=bool(params.get("dry_run", False)),
             vault_token_file=params.get("vault_token_file"),
+            vault_addr=params.get("vault_addr"),
             vault_token_given=bool(params.get("vault_token_given", False)),
         )
 
@@ -246,6 +255,11 @@ class Invocation:
     #: store, by :func:`sopuli.material.resolve_token`, so a command that opens
     #: no socket never reads it and no invocation ever holds a credential.
     vault_token_file: Path | None = None
+    #: ``--vault-addr``'s value, or ``None`` (#422). Held rather than resolved
+    #: here: it is a setting of a *store*, so it joins the merge inside the file
+    #: (:func:`sopuli.config.vault_layers.apply_vault_layers`), which is why
+    #: :func:`load_config_layers` is the one place that reads it.
+    vault_addr: str | None = None
     resolved: Mapping[str, Resolved] = field(default_factory=dict)
     #: The configuration, read by the boundary before the verb ran (#153).
     #:
@@ -591,6 +605,7 @@ def resolve_invocation(
         config_paths=(*group.config_paths, *verb.config_paths),
         color_choice=ColorChoice(_first_given(verb.color_choice, group.color_choice)),
         vault_token_file=_first_path(verb.vault_token_file, group.vault_token_file),
+        vault_addr=_first_written(verb.vault_addr, group.vault_addr),
         resolved=resolve_all(contributions),
         loaded=loaded,
     )
@@ -612,7 +627,17 @@ def load_config_layers(invocation: Invocation, *, env: Mapping[str, str]) -> Loa
     deferred to the verb -- see the module note.
     """
     paths = discover(invocation.config_paths, env=env)
-    declared, config = load_layers(paths, profile=invocation.value("profile"), env=env)
+    declared, config = load_layers(
+        paths,
+        profile=invocation.value("profile"),
+        env=env,
+        # Layer 1 of `vaults.*.addr`, and the one global option that has to arrive
+        # here rather than at the resolver above (#422): a store's settings are
+        # merged inside the file, because they describe the store rather than the
+        # run. `--profile` already reaches this function for its own version of
+        # that reason, so this is the shape rather than a new one.
+        vault_addr=invocation.vault_addr,
+    )
     return LoadedConfig(paths=paths, declared=declared, config=config)
 
 
@@ -713,6 +738,15 @@ def _options(func: F, *, hidden: bool) -> F:
         help="Run under a profile declared in `profiles:`. Not a selector: it"
         " changes how the run behaves, never what it acts on.",
     )
+    vault_addr = click.option(
+        ADDR_FLAG,
+        "vault_addr",
+        metavar="URL",
+        default=None,
+        hidden=hidden,
+        help="Address of the default vault -- whichever store `SOPULI_VAULT` or"
+        " `defaults.vault` names. Refused when neither does.",
+    )
     vault_token_file = click.option(
         TOKEN_FLAG,
         "vault_token_file",
@@ -751,7 +785,7 @@ def _options(func: F, *, hidden: bool) -> F:
             help="Print the plan and make no changes.",
         )
     )
-    return color(profile(output(vault_token(vault_token_file(dry_run(config(func)))))))
+    return color(profile(output(vault_addr(vault_token(vault_token_file(dry_run(config(func))))))))
 
 
 def _pass_invocation(func: F) -> F:
@@ -1002,6 +1036,26 @@ def _first_path(verb: Path | None, group: Path | None) -> Path | None:
     resolver: §3a's token chain *is* its merge, and registering half of that
     chain here would leave the tool with two of them. It still accepts both
     parser positions, and settles them the way everything else does.
+    """
+    for value in (verb, group):
+        if value is not None:
+            return value
+    return None
+
+
+def _first_written(verb: str | None, group: str | None) -> str | None:
+    """The same rule once more, for the one global option that carries a URL.
+
+    ``--vault-addr`` is a setting -- layer 1 of ``vaults.*.addr`` -- but not one
+    *this* resolver merges: a store's settings belong to the store, so the merge
+    happens inside the file (:mod:`sopuli.config.vault_layers`). What is settled
+    here is only which parser position wrote it.
+
+    Distinct from :func:`_first_given`, which is colour's and falls back to
+    ``auto``. Reusing that one here made an unwritten flag arrive as the string
+    ``"auto"``, which then refused every run that had no default store -- found
+    by the suite rather than by reading, because the two signatures differ only
+    in a return type mypy was happy with.
     """
     for value in (verb, group):
         if value is not None:

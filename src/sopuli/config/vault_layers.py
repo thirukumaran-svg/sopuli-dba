@@ -11,9 +11,11 @@ six layers reach a store:
     5. Top-level defaults in config     defaults.vaults.hcv-prod.addr
 
 with the third-party variables of layer 3 -- ``VAULT_ADDR`` and friends -- ranked
-between 2 and 3, as P3's second exception says. Layer 1 is the one that is
-missing: there is no ``--vault-addr`` flag yet, and when there is, it joins this
-merge the way the environment just did.
+between 2 and 3, as P3's second exception says. **Layer 1 arrived in #422**, and
+it is one key wide: ``--vault-addr`` hoists ``vaults.*.addr`` onto the command
+line and nothing else does, so there is no ``--vault-mount`` beside it.
+:func:`sopuli.config.vault_env.vault_cli_contributions` places it, on purpose --
+which store an unnamed setting addresses is §6's question and it has one answer.
 
 **The environment is collected next door**, in :mod:`sopuli.config.vault_env`,
 which owns §6's spellings and the question the unnamed variables raise -- which
@@ -66,7 +68,12 @@ from typing import Any
 
 from sopuli.config.errors import ROOT, KeyPath
 from sopuli.config.model import Config, ConfigWarning, Vault, VaultPatch, VaultTls
-from sopuli.config.vault_env import NO_ENV, default_store, vault_env_contributions
+from sopuli.config.vault_env import (
+    NO_ENV,
+    default_store,
+    vault_cli_contributions,
+    vault_env_contributions,
+)
 from sopuli.settings import Contribution, Layer, Resolved, ratchet_note, resolve
 
 #: One store's environment contributions, keyed by setting key -- what
@@ -103,7 +110,7 @@ def setting_name(key: str) -> str:
 
 
 def apply_vault_layers(
-    config: Config, *, env: Mapping[str, str] = NO_ENV
+    config: Config, *, env: Mapping[str, str] = NO_ENV, vault_addr: str | None = None
 ) -> tuple[tuple[Vault, ...], tuple[ConfigWarning, ...]]:
     """Every declared store with its layers merged in, and what was refused.
 
@@ -115,12 +122,14 @@ def apply_vault_layers(
 
     ``env`` defaults to empty rather than to ``os.environ``: this layer does no
     I/O and reads no ambient state, so a caller that wants the process's own
-    environment says so (``04-testing.md`` §4).
+    environment says so (``04-testing.md`` §4). ``vault_addr`` is
+    ``--vault-addr``'s value and defaults to ``None`` for the same reason -- the
+    command line is the caller's to supply, not this layer's to find.
     """
+    stores = [vault.name for vault in config.vaults]
     active = default_store(env, config.defaults.vault)
-    from_env, env_warnings = vault_env_contributions(
-        env, stores=[vault.name for vault in config.vaults], active=active
-    )
+    from_env, env_warnings = vault_env_contributions(env, stores=stores, active=active)
+    from_cli = vault_cli_contributions(vault_addr, stores=stores, active=active)
 
     by_name: dict[str, list[tuple[Layer, KeyPath, VaultPatch]]] = {}
     # Highest authority first, because `_highest` reads `auth:` off the front of
@@ -139,7 +148,16 @@ def apply_vault_layers(
     merged = []
     warnings: list[ConfigWarning] = list(env_warnings)
     for vault in config.vaults:
-        one, found = _merge(vault, by_name.get(vault.name, []), from_env.get(vault.name, {}))
+        # Layer 1 in front of layer 2, which is all the resolver needs: the two
+        # are different layers, so it ranks them itself, and within a key the
+        # list order only decides a tie that cannot happen between them.
+        supplied = {
+            key: [*from_cli.get(vault.name, {}).get(key, []), *contributions]
+            for key, contributions in from_env.get(vault.name, {}).items()
+        }
+        for key, contributions in from_cli.get(vault.name, {}).items():
+            supplied.setdefault(key, contributions)
+        one, found = _merge(vault, by_name.get(vault.name, []), supplied)
         merged.append(one)
         warnings.extend(found)
     return tuple(merged), tuple(warnings)

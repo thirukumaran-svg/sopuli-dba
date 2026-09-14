@@ -517,7 +517,7 @@ precedence order applies everywhere**, and the tool can print it.
 ### Precedence (highest wins)
 
 ```
-1. Command-line option              --vault-addr https://…   (not built -- #422)
+1. Command-line option              --vault-addr https://…
 2. Environment variable             SOPULI_VAULT_ADDR
 3. Profile block in config          profiles.ci.vaults.hcv-prod.addr
 4. Target/vault-level setting       vaults.hcv-prod.addr
@@ -543,8 +543,15 @@ worth reading off the table rather than off the word "patch"**: `defaults:` is
 *below* the declaration and fills gaps; only a profile and the environment are
 above it.
 
-Layer 1 is the one still missing: there is no `--vault-addr` flag, and if there
-is one, it joins the same merge — whether there should be is #422. Layer 2 comes in two spellings, decided in #154 —
+Layer 1 arrived in #422 and is **one key wide**: `--vault-addr` hoists
+`vaults.*.addr` onto the command line and no flag hoists any other reach key. It
+addresses the store `SOPULI_VAULT` or `defaults.vault` names — §6's rule, shared
+with the variables rather than restated, so the command line cannot become a
+second definition of "the default store" — and is refused where neither names
+one. There is no named `--vault-addr NAME=URL`: a run touching two stores uses
+`SOPULI_VAULT__<NAME>__ADDR`. `01-configuration.md` §6 has the reasoning,
+including why an *address* earns a flag when `mount` does not.
+Layer 2 comes in two spellings, decided in #154 —
 `SOPULI_VAULT__HCV_PROD__ADDR` names a store, and the unnamed `SOPULI_VAULT_ADDR`
 applies to whichever store `SOPULI_VAULT` or `defaults.vault` names, refusing
 rather than guessing when neither does. `01-configuration.md` §6 is the

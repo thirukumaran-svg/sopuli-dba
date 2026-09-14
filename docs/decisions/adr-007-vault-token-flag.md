@@ -55,7 +55,8 @@ thought.
 
 **`--vault-token-file PATH`.** It hoists the `token: { file: … }` shape
 `01-configuration.md` §3a already documents onto the command line, the same way
-`--vault-addr` hoists `vaults.*.addr`. No new grammar, no new concept, and the
+`--vault-addr` hoists `vaults.*.addr` (which was written as an analogy to a flag
+that did not exist, and became a true one in #422). No new grammar, no new concept, and the
 auth-methods list in P2 already said "token (`VAULT_TOKEN`, token file, token
 helper)".
 
@@ -220,8 +221,12 @@ goes unguarded.
 ## Follow-ups
 
 - `--vault-token-stdin`, if anything ever needs it, against P5's one-stream rule.
-- The remaining CLI hoists of `vaults.*` reach settings, so they go through the
-  resolver rather than beside it. #154 delivered the `SOPULI_VAULT__<NAME>__*`
-  half of C13's addressing and closed without `--vault-addr`, which is now #422
-  — including whether it should exist at all. The analogy in *Decision* above is
-  to a flag that has not been built.
+- ~~The remaining CLI hoists of `vaults.*`~~ — **closed by #422, and closed
+  narrowly.** `--vault-addr` exists and goes through the same merge, placed by
+  `01-configuration.md` §6's rule rather than by one of its own. The other reach
+  keys got no flag and are not going to: one per key would be six spellings of
+  what `vaults:` says once, and the argument that earned this one is specific to
+  an address. There is no named form either — the multi-store case is
+  `SOPULI_VAULT__<NAME>__ADDR`, which is where this ADR's own unnamed
+  `--vault-token-file` differs from it, a token being plausibly one per run and
+  an address never.

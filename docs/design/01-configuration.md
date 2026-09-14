@@ -1491,7 +1491,7 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 | `SOPULI_CONFIG` | config file path |
 | `SOPULI_PROFILE` | active profile (§5) — the usual way a CI job or scheduler selects one |
 | `SOPULI_VAULT` | default vault name — layer 2 of the same setting `defaults.vault` writes |
-| `SOPULI_VAULT_ADDR` | address of the **default** store: whichever one `SOPULI_VAULT` or `defaults.vault` names. Refused when neither does — see *Which store is "the active" one* below |
+| `SOPULI_VAULT_ADDR` | address of the **default** store: whichever one `SOPULI_VAULT` or `defaults.vault` names. Refused when neither does — see *Which store is "the active" one* below. `--vault-addr` is the same setting one layer up (#422) |
 | `SOPULI_VAULT_TOKEN` | token for the active vault. Outranked by `--vault-token-file` and by a store's own `token:` (§3a); there is deliberately no flag carrying a token value, so this is the answer where writing one to disk is awkward |
 | `SOPULI_VAULT__VAULT_DEV__ADDR` | address of a *specific* named vault. `ADDR` is the only key addressable this way today; any other spelling under `SOPULI_VAULT__` is refused, naming what is available |
 | `SOPULI_DB_ADMIN_USER` / `SOPULI_DB_ADMIN_PASSWORD` | admin credentials (password is low-assurance, flagged in output). The password pair is the default for `admin.auth: { method: env }`; a target may name its own variable with `password_env:` (§3a) |
@@ -1523,10 +1523,11 @@ turn verification off.
 
 ### Which store is "the active" one
 
-`SOPULI_VAULT__VAULT_DEV__ADDR` says which store it means. `SOPULI_VAULT_ADDR`
-and `VAULT_ADDR` do not, and a run touching two vaults has two active stores and
-one variable. **They apply to the store `defaults.vault` names** — with
-`SOPULI_VAULT` above it, being layer 2 of the same setting — and to no other.
+`SOPULI_VAULT__VAULT_DEV__ADDR` says which store it means. `SOPULI_VAULT_ADDR`,
+`VAULT_ADDR` and `--vault-addr` do not, and a run touching two vaults has two
+active stores and one of each. **They apply to the store `defaults.vault` names**
+— with `SOPULI_VAULT` above it, being layer 2 of the same setting — and to no
+other.
 
 The alternative, following whichever store the current binding resolved to, is
 the `vault_settings:` block C13 rejected, spelled as a variable: it lets a
@@ -1534,14 +1535,69 @@ setting written for dev follow a changed `vault:` into prod. Decided in #154.
 
 Where nothing names a default store, the two halves answer differently:
 
-- **A `SOPULI_*` variable is refused** with a config error naming the three ways
-  to fix it. It was set for this tool, and §6's own argument about
-  `VAULT_SKIP_VERIFY` applies — silently doing nothing is worse than either
-  honouring or refusing.
+- **A `SOPULI_*` variable or `--vault-addr` is refused** with a config error
+  naming the three ways to fix it. It was written for this tool, and §6's own
+  argument about `VAULT_SKIP_VERIFY` applies — silently doing nothing is worse
+  than either honouring or refusing.
 - **A third-party variable warns** and is not applied. `VAULT_ADDR` is exported
   in every shell that has run `vault`, and it was not set for this tool at all;
   failing a run over somebody else's variable would be taking a position on an
   environment the tool does not own. The warning appears in `diagnostics[]`.
+
+### `--vault-addr` — layer 1, and the only flag of its kind (#422)
+
+```
+$ sopuli config show --vault-addr https://vault-standby.example.com:8200
+vaults
+NAME       TYPE       ADDRESS                                 NOTE
+vault-dev  hashicorp  https://vault-standby.example.com:8200  layered: addr
+```
+
+It reaches `addr` and nothing else: the store keeps the `mount`, `kv_version`
+and `auth:` the file wrote. Where nothing names a default store it is refused,
+in the words `SOPULI_VAULT_ADDR` is already refused in:
+
+```
+$ sopuli config show --vault-addr https://vault-standby.example.com:8200
+sopuli: no-default.yaml: --vault-addr names no store, and this run has no default one to apply it to
+  hint: it applies to the store `defaults.vault` names -- write one, export SOPULI_VAULT=<store>, or address a store directly with SOPULI_VAULT__<STORE>__<KEY>
+```
+
+Exit 9. The `NOTE` column says which key was layered and not which layer did it,
+which is true of every one of them — see #426.
+
+Three things were decided with it, and the third is the one that keeps it small.
+
+**It addresses the store this section already defines as the active one** — what
+`SOPULI_VAULT` or `defaults.vault` names — and is refused where neither does. It
+does not follow whichever store the current binding resolved to; that is C13's
+rejected `vault_settings:` block spelled as a flag, and it lets an address typed
+for dev follow a changed `vault:` into prod. A command line resolving "the
+default store" its own way would be a *second definition* of it, one layer above
+the first, and the two would agree until the day somebody changed one. It shares
+the placement code with the variables so they cannot.
+
+**There is no named form.** A run touching two stores uses
+`SOPULI_VAULT__<NAME>__ADDR`; `--vault-addr NAME=URL` would put a third `K=V`
+grammar on a command line that has one (`--select`). `--vault-token-file` is the
+precedent and is unnamed for the same reason — with one difference worth stating
+rather than discovering: a token is plausibly the same across the stores one run
+touches and an address is definitionally per-store, so the multi-store case here
+really does fall back to the environment rather than merely preferring it.
+
+**There is no `--vault-mount`, `--vault-namespace` or anything else.** One flag
+per reach key would be six spellings of what `vaults:` already says once. The
+case for this one is specific: an **address** is the thing an operator redirects
+for a single run — a standby, a test instance, a port-forward — and every other
+way to do that outlives the command. `env VAR=… sopuli …` is a clean one-shot on
+Linux; PowerShell has no inline prefix, so the same thing is two statements and a
+session that remembers it, and P4 makes Windows a supported tier rather than a
+best-effort one. That asymmetry is the argument, and it does not generalise to
+`mount`, which nobody redirects for one command.
+
+It takes both parser positions, like every global option that is not a safety
+flag: both are layer 1, the same person in the same command line, so neither
+outranks the other (P3).
 
 ### Naming a store in a variable
 
@@ -2012,15 +2068,19 @@ is the layer being demonstrated; its line above is abridged from that document's
 the profile beneath it — the operator at the keyboard is the more specific intent.
 
 The third-party layer does not appear, because `output` has none: `VAULT_ADDR`
-ranking below `SOPULI_VAULT_ADDR` is §6's to show, and it is a vault setting with
-no flag.
+ranking below `SOPULI_VAULT_ADDR` and below `--vault-addr` is §6's to show, being
+a setting of a store rather than of the run.
 
 **These examples are pasted, not written** (#409). They were once drawn on
-`--vault-addr` and `--method`, and neither flag exists — `sopuli` rejected both
-before any precedence was consulted, so the documented outcomes were predictions.
-`output` was chosen over marking the old blocks illustrative because it has a
-real layer at every level shown, which leaves nothing in this section excused
-from running.
+`--vault-addr` and `--method`, and at the time neither flag existed — `sopuli`
+rejected both before any precedence was consulted, so the documented outcomes
+were predictions. `output` was chosen over marking the old blocks illustrative
+because it has a real layer at every level shown, which leaves nothing in this
+section excused from running. **`--vault-addr` has since been built** (#422) and
+these examples were still not moved back onto it: it demonstrates one layer fewer
+here — a store's settings are merged inside the file, so they never appear in the
+`settings` table this section is showing — and §6 is where its own chain is worked
+through.
 
 Safety ratchet — `defaults.safety.readonly: true`, and a `ci` profile that tries
 to undo it with `safety: { readonly: false }`:
