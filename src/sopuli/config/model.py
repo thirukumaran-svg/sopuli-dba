@@ -574,6 +574,19 @@ class ExpandedTarget:
     #: in an override reported against the template sends the reader to the one
     #: place the name is spelled correctly.
     patched: tuple[str, ...] = ()
+    #: The ``safety:`` block the **template** wrote, where an ``overrides:``
+    #: entry patched it -- ``None`` everywhere else, the patched value being the
+    #: only one there is (#424).
+    #:
+    #: Kept because a patch merges key by key, so the flattened
+    #: :attr:`Target.safety` can hold an override's ``readonly: false`` over a
+    #: template's ``true`` and the safer of the two is gone before anything can
+    #: ratchet them. That was harmless while nothing enforced a target's block
+    #: and is not now: both reach
+    #: :func:`~sopuli.settings.sources.estate_contributions` as separate
+    #: contributions, and the one resolver takes the safest -- which is what
+    #: ``_patch_target`` has always claimed happens (invariant 10, §9).
+    template_safety: Safety | None = None
 
     @property
     def name(self) -> str:

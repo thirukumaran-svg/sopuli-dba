@@ -1990,6 +1990,100 @@ def test_readonly_refuses_before_anything_connects(
     assert harness["sessions"] == []
 
 
+def test_readonly_on_a_target_refuses_before_anything_connects(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The same guard, from the layer that was parsed and read by nothing (#424).
+
+    `appdb-alpha` carried `safety: { readonly: true }` and the run applied a
+    password to it -- the plan printed, the store was read, the database was
+    reached. The refusal has to arrive at *plan* time, which is why the session
+    list is asserted: a readonly target discovered while the estate is being
+    walked is exactly the generic mid-execution failure invariant 4 forbids.
+    """
+    harness = estate()
+    result = run(
+        runner,
+        write_config(
+            CONFIG.replace(
+                "    labels: { env: prod, tenant: alpha }",
+                "    labels: { env: prod, tenant: alpha }\n    safety: { readonly: true }",
+            )
+        ),
+    )
+
+    assert isinstance(result.exception, RefusedError)
+    assert "1 of the 2 targets it reaches" in str(result.exception)
+    assert "appdb-alpha (targets[0].safety.readonly)" in (result.exception.hint or "")
+    assert harness["sessions"] == []
+
+
+def test_a_run_narrowed_past_a_readonly_target_proceeds(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#424 refuses the whole run rather than skipping the marked targets, so the
+    narrowing the message offers has to actually work. If it did not, the refusal
+    would be handing the operator advice the tool cannot honour."""
+    estate(documents={"apps/acme/appdb-beta": {"pending": {"acme_web_user": STAGED}}})
+    result = run(
+        runner,
+        write_config(
+            CONFIG.replace(
+                "    labels: { env: prod, tenant: alpha }",
+                "    labels: { env: prod, tenant: alpha }\n    safety: { readonly: true }",
+            )
+        ),
+        "--select",
+        "tenant=beta",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "appdb-beta" in result.output
+
+
+def test_readonly_on_a_group_refuses_and_names_the_key(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A whole population marked in one place, which is what §3a says a group's
+    block is for. A group has no key of its own to point a target at, so the
+    message pairs the target with the group's key."""
+    harness = estate()
+    result = run(
+        runner,
+        write_config(
+            CONFIG + "groups:\n  prod-pdbs:\n    match: { env: prod }\n"
+            "    safety: { readonly: true }\n"
+        ),
+    )
+
+    assert isinstance(result.exception, RefusedError)
+    assert "every target it reaches" in str(result.exception)
+    assert "groups.prod-pdbs.safety.readonly" in (result.exception.hint or "")
+    assert harness["sessions"] == []
+
+
+def test_max_targets_on_a_target_bounds_the_run(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The ceiling was inert at this layer for the same reason `readonly` was, and
+    #424 asked that it be measured rather than assumed."""
+    harness = estate()
+    result = run(
+        runner,
+        write_config(
+            CONFIG.replace(
+                "    labels: { env: prod, tenant: alpha }",
+                "    labels: { env: prod, tenant: alpha }\n    safety: { max_targets: 1 }",
+            )
+        ),
+    )
+
+    assert isinstance(result.exception, RefusedError)
+    assert "would reach 2 targets" in str(result.exception)
+    assert "targets[0].safety.max_targets" in (result.exception.hint or "")
+    assert harness["sessions"] == []
+
+
 # ------------------------------------------------------- the lockout budget ---
 
 

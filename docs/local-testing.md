@@ -1881,6 +1881,99 @@ consulted.
 everything — `max_targets: 0` is far more likely to be a slip that then blocks every
 run.
 
+### The same block, on a target or a group
+
+All three keys also work on a target, on a group, and on a target set's template
+or `overrides:` entry — **since #424, and not before it.** Until then they parsed,
+validated, showed up in `config show` and refused nothing, so this is the part of
+§11 most worth causing on purpose if you are checking a build.
+
+Put the block on the target instead of under `defaults:`:
+
+```yaml
+targets:
+  - name: free-pdb
+    type: oracle
+    environment: dev
+    vault: vault-dev
+    dsn: "127.0.0.1:1521/FREEPDB1"
+    admin: { username: SYSTEM, auth: { method: env } }
+    oracle: { scope: pdb, container: FREEPDB1 }
+    labels: { tier: sandbox }
+    safety: { readonly: true }
+```
+
+```
+$ sopuli --config sopuli.yaml creds apply --application acme --dry-run
+sopuli: applying a password is a mutation, and `safety.readonly` is set on the target it reaches
+  hint: readonly: free-pdb (targets[0].safety.readonly); no layer can relax it (invariant 10) -- no narrowing of this run can avoid it, so read instead with `sopuli creds check` or `sopuli creds status`
+```
+
+Exit 8, and `--dry-run` is refused with everything else. `creds generate`,
+`creds rotate` and `creds finish-rollover` refuse the same way; `creds check` and
+`creds status` still run and exit as they would have.
+
+**`lock break` does not**, from a target or a group — it names a vault document
+and takes no selector, so there is no estate for the block to come from, and
+every verb that would use that lock to change the target is already refused.
+Under `defaults:` or a profile it is refused like everything else. §3a of
+`01-configuration.md` has the reasoning.
+
+Move the block to a group and the refusal points at the group's key instead. A
+group is a label match, so nothing has to select *by* it — it applies because a
+target it matches is in the run:
+
+```yaml
+groups:
+  sandbox-pdbs:
+    match: { tier: sandbox }
+    safety: { readonly: true }
+```
+
+```
+$ sopuli --config sopuli.yaml creds apply --application acme --dry-run
+sopuli: applying a password is a mutation, and `safety.readonly` is set on the target it reaches
+  hint: readonly: free-pdb (groups.sandbox-pdbs.safety.readonly); no layer can relax it (invariant 10) -- no narrowing of this run can avoid it, so read instead with `sopuli creds check` or `sopuli creds status`
+```
+
+The case worth seeing needs a **second target**. Copy the `free-pdb` block, call
+the copy `free-pdb-b`, leave the DSN pointing at the same database, and mark only
+the first one `readonly`. The run is refused whole rather than applying to the
+one that is writable, and the message says how much of the plan is affected and
+what would narrow past it:
+
+```
+$ sopuli --config sopuli.yaml creds apply --application acme --dry-run
+sopuli: applying a password is a mutation, and `safety.readonly` is set on 1 of the 2 targets it reaches
+  hint: readonly: free-pdb (targets[0].safety.readonly); no layer can relax it (invariant 10) -- narrow the run with --target, --group or --select so it does not reach it, or read instead with `sopuli creds check` or `sopuli creds status`
+```
+
+Take the narrowing and the run goes ahead:
+
+```
+$ sopuli --config sopuli.yaml creds apply --application acme --target free-pdb-b --dry-run
+Plan: 1 account x 1 target = 1 apply   [dev]
+
+ACCOUNT        TARGET      INTENT                               SECRET
+acme_app_user  free-pdb-b  verify, password_set, vault_promote  vault-dev:acme/dev/acme
+
+nothing was applied (--dry-run)
+```
+
+Swap the target's block for `safety: { max_targets: 1 }` on the same two-target
+estate and the ceiling fires instead. It is compared against the targets the
+**plan** reaches, so narrowing satisfies it as well:
+
+```
+$ sopuli --config sopuli.yaml creds apply --application acme --dry-run
+sopuli: applying a password would reach 2 targets, and `safety.max_targets` is 1
+  hint: set at targets[0].safety.max_targets; no layer can raise it (invariant 10) -- narrow the run with --select, --target or --group, or raise the ceiling where it is written
+```
+
+`confirm_environments` on a target behaves exactly as it does under `defaults:` —
+the prompt above, or the unattended refusal — because all three keys go through
+one resolver and one ratchet whichever layer wrote them.
+
 ---
 
 ## 12. Oracle wallets and `auth: external`

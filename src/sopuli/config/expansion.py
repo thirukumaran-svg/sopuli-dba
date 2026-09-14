@@ -197,12 +197,21 @@ def _expand(target_set: TargetSet) -> list[ExpandedTarget]:
             )
         generated[target.name] = (target, combination)
 
+    # Read before the overrides are applied, because that is the only moment the
+    # template's own block still exists per target: `_patch_safety` merges key by
+    # key, so a patch's `readonly: false` replaces a template's `true` and the
+    # safer of the two is gone (#424). Rendered rather than raw -- a
+    # `confirm_environments` entry may carry a placeholder, and an unrendered one
+    # reaching a setting would be the one string in the estate with its braces
+    # intact.
+    template_safety = {name: target.safety for name, (target, _) in generated.items()}
     patched = _apply_overrides(target_set, generated, at=at)
     return [
         ExpandedTarget(
             target=target,
             target_set=target_set.name,
             patched=patched.get(name, ()),
+            template_safety=(template_safety[name] if "safety" in patched.get(name, ()) else None),
         )
         for name, (target, _) in generated.items()
     ]
@@ -429,6 +438,16 @@ def _patch_target(
     relaxation written here still cannot relax what the run ends up with. That
     resolution belongs to the precedence work; this only decides what the target
     layer says.
+
+    **That last paragraph was load-bearing and very nearly stopped being true**
+    (#424, found in review). It holds only while the template and the override
+    are two things the ratchet can see. Merged here they become one target-layer
+    value, and a run narrowed to the patched target has nothing left to be safest
+    *of* -- a `readonly: false` in an override would simply win. So the
+    template's block is kept on
+    :attr:`~sopuli.config.model.ExpandedTarget.template_safety` and both reach
+    the resolver, which is what makes the claim structural rather than merely
+    stated.
     """
     variables = combination.variables
     return Target(

@@ -979,7 +979,7 @@ keeps its own guardrail (UC-1 §6.2) and belongs to an application, not here.
 | Key | Meaning |
 |---|---|
 | `match` | **required** — the labels a target must carry. May not be empty: a group matching everything is `--all` with a name that hides what it does |
-| `safety` | a `safety:` block, so a whole population can be marked `readonly` in one place |
+| `safety` | a `safety:` block, so a whole population can be marked `readonly` in one place. It applies to a run that reaches any target the group matches — nothing has to select *by* the group (#424) |
 
 ### `safety:`, wherever it appears
 
@@ -989,10 +989,110 @@ keeps its own guardrail (UC-1 §6.2) and belongs to an application, not here.
 | `confirm_environments` | environments a mutation may not enter without an explicit yes |
 | `readonly` | refuse every mutation |
 
+A block may be written under `defaults`, a profile, a target, a target set's
+template or `overrides:` entry, or a group. §9 resolves the lot by taking the
+safest of them.
+
 Every field is optional, and an unset one stays unset rather than taking the
 built-in default. §9 resolves safety by taking the *safest* of all layers rather
 than the last one, and "safest of all layers" needs to know which layers said
 nothing.
+
+#### Where a block may be written, and when each one is merged (#424)
+
+`defaults` and a profile are properties of the **run**, so they are resolved at
+the boundary before a verb starts. A target's and a group's are not: which of
+them applies depends on which targets the run is about to reach, and at the
+boundary no selector has been applied yet. So they are merged a second time, once
+a verb has narrowed its estate and before it builds its plan —
+`sopuli/safety.py`'s `for_estate`, through the same resolver and on the same
+contributions, so the ratchet stays one mechanism rather than two that have to
+agree.
+
+**A target speaks when the plan names it**, which is the set
+`plan.blast_radius` counts. A declared target this run touches nothing on is not
+reached, and a block on it says nothing about this run. A group speaks when it
+matches a target that is in the plan.
+
+This was parsed and enforced by nothing until #424. `readonly: true` on a target
+did not stop a mutation, a `max_targets` on one bounded no run, and a
+`confirm_environments` on one asked nobody anything — the keys validated cleanly,
+appeared in `config show`, and refused nothing. A config that reads like
+protection and is not is worse than no setting, and this is the one direction
+invariant 10 must not fail in.
+
+#### What `readonly` does when it fires
+
+**It refuses the whole run, at plan time** (#424). A run that reaches one
+readonly target does not apply to the others and report the first as skipped.
+Three readings were on the table and this is the decided one:
+
+- **Skipping the marked targets** would make `readonly` mean two different things
+  depending on where it was written — a refusal under `defaults`, a filter on a
+  target — and it does not generalise to the rest of the block: there is no
+  per-target reading of `max_targets` that skips its way under a ceiling, and a
+  `safety:` block is resolved as a unit. It also turns an incomplete rotation
+  into an exit code somebody has to notice.
+- **Refusing without saying what to do** is the same refusal with less in it. The
+  cost of refusing is real — one readonly PDB in a selection of two hundred stops
+  the other hundred and ninety-nine — so the message names the marked targets,
+  the key that marked each one, and the selectors that would leave them out.
+  Narrowing is the mechanism the tool already has for "operate on less than
+  this", and handing it back is what makes the operator's call theirs rather than
+  the tool's.
+
+At **plan time** rather than on the way past, which is invariant 4: a readonly
+target discovered while the estate is being walked is exactly the generic
+mid-execution failure that invariant forbids. Exit 8, `category: policy`, like
+every other refusal in the block.
+
+The message names a target and the key, and the key is where it was *written* —
+a generated target's block lives in its set's template, or in the `overrides:`
+entry that patched it, and pointing at the template when an override is the
+reason would send the reader to the one place the value is spelled the way they
+expected. A group has no key of its own to point a target at, so the refusal
+pairs the two: which database is protected, and which line protects it.
+
+```
+$ sopuli creds apply --application acme --dry-run
+sopuli: applying a password is a mutation, and `safety.readonly` is set on 1 of the 2 targets it reaches
+  hint: readonly: free-pdb (targets[0].safety.readonly); no layer can relax it (invariant 10) -- narrow the run with --target, --group or --select so it does not reach it, or read instead with `sopuli creds check` or `sopuli creds status`
+```
+
+Where every target in the plan is marked there is no narrowing to offer, and
+saying "narrow the run" would be advice that cannot work, so the message says so
+instead:
+
+```
+$ sopuli creds apply --application acme --dry-run
+sopuli: applying a password is a mutation, and `safety.readonly` is set on the target it reaches
+  hint: readonly: free-pdb (groups.sandbox-pdbs.safety.readonly); no layer can relax it (invariant 10) -- no narrowing of this run can avoid it, so read instead with `sopuli creds check` or `sopuli creds status`
+```
+
+`--dry-run` is refused with the rest, for the reason `defaults` already refuses
+it: under `readonly` the mutating verbs are unavailable, and the read-only verb
+is how you ask.
+
+**`lock break` is the one mutating verb a target's or a group's block does not
+reach**, and that is a decision rather than a verb that was missed (#424, raised
+in review on #425). Three reasons, and the third is the one that settles it:
+
+- It addresses a **vault document by path** and takes no selector, so there is no
+  estate for layer 4 to arrive from. It acts on the lock named whether or not the
+  configuration declares a binding for it, which is #150's decision and the whole
+  reason the verb can clear a leftover at a path the file no longer names.
+- `readonly` on a *target* is a statement about that database. The lock is not
+  the database, and breaking it changes no credential — it takes an advisory lock
+  and fences its holder.
+- **It protects nothing that is not already protected.** Every verb that would
+  use the lock to change that target — `rotate`, `apply`, `generate`,
+  `finish-rollover` — is refused by the same block. So gating `lock break` here
+  would block a harmless cleanup and guard nothing, and the operator left holding
+  a stuck lock on a readonly population would have to edit their config to clear
+  a record that could not have been used against them.
+
+`defaults` and a profile still refuse it, and there the statement is a different
+one and coherent: *this file may not write anything*, lock store included.
 
 #### What `confirm_environments` does when it fires (#292)
 
@@ -1954,6 +2054,16 @@ A `safety:` block may appear under `defaults`, a target, a group, or a
 profile, and unlike everything else these do **not** follow last-one-wins: the
 resolved value is the *safest* of all layers — lowest `max_targets`, union of
 `confirm_environments`, `readonly: true` if any layer sets it.
+
+**A target's and a group's are merged later than the rest** (#424). They are
+layer 4 and they go through this same resolver, but they cannot be resolved at
+the boundary with the others: which of them applies depends on which targets the
+run is about to reach, and no selector has run yet. So a verb merges them once it
+has narrowed its estate and before it builds its plan. §3a says which blocks
+speak and what `readonly` does when one fires; the merge itself is the ordinary
+one, and the reported location is the lowest-authority contributor as it is
+everywhere else. Until #424 this second merge did not exist, and the three keys
+refused nothing wherever a target or a group wrote them.
 
 ### The unit that gets resolved is a setting, not an option
 

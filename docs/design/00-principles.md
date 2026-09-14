@@ -596,6 +596,26 @@ Two deliberate exceptions, documented as such:
   and the read-only verb is how you ask" is a rule that holds without being
   reasoned about per flag.
 
+**Layer 4 of the safety settings is merged later than layers 3 and 5** (#424).
+A `safety:` block under `defaults` or a profile is a property of the run and is
+resolved at the boundary with everything else; one on a target or a group is not,
+because which of them applies depends on which targets the run is about to reach
+and no selector has been applied yet. So a verb merges those once it has narrowed
+its estate and before it builds its plan — the same resolver, the same ratchet,
+one pass over prior and new contributions together, for the reason the `vaults.*`
+layers are merged in one pass: resolving two layers first and folding the rest in
+afterwards reports the winner of the first pass rather than the layer somebody has
+to edit.
+
+This is written here because for most of the project it was true of the
+documents and false of the tool. The keys parsed, validated, ratcheted and
+appeared in `config show`, and nothing read the answer: `readonly: true` on a
+target stopped no mutation. A site that marked its production population
+`readonly` had been getting no protection and nothing said so. **The refusal is
+whole-run**, at plan time, naming the marked targets and the selectors that would
+leave them out — `01-configuration.md` §3a has the decision and what the other two
+readings cost.
+
 ### Making precedence debuggable
 
 `sopuli config show --explain` prints every effective setting with the layer it

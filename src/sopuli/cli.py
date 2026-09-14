@@ -233,6 +233,7 @@ from sopuli.preflight import Finding
 from sopuli.safety import (
     RefusedError,
     confirmation_demanded,
+    for_estate,
     refuse_if_over_limit,
     refuse_if_readonly,
     refuse_unconfirmed,
@@ -1314,6 +1315,14 @@ def lock_break(
         # resolve to a valid request, and nothing about any file is wrong.
         raise click.UsageError(str(exc)) from exc
 
+    # No `estate=`, and that is a decision rather than the one verb that was
+    # missed when layer 4 was wired up (#424, raised in review on #425).
+    # `01-configuration.md` §3a records it; the short form is that this verb
+    # addresses a **vault document** by path and takes no selector at all, so
+    # there is no estate for a target's or a group's block to arrive from -- and
+    # gating it here would guard nothing, because every verb that would use this
+    # lock to change that target is already refused by the same block.
+    # `defaults` and a profile still refuse it, as they always did.
     refuse_if_readonly(run.resolved, action=f"breaking the lock on {key}")
 
     paths = run.sources
@@ -1459,6 +1468,28 @@ def _confirm_environments(
         refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
     click.echo(render_plan(plan, noun=noun), err=True)
     click.confirm(f"{action} in `{demand.named}`?", abort=True, err=True)
+
+
+def _with_estate_safety(run: Invocation, config: Config) -> Invocation:
+    """``run`` with the ``safety:`` blocks of the estate it selected merged in.
+
+    P3's layer 4 for the safety settings, which until #424 was parsed and read by
+    nothing: a ``readonly: true`` on a target refused no mutation, a
+    ``max_targets`` on one bounded no run, and a ``confirm_environments`` on one
+    asked nobody anything. :func:`~sopuli.safety.for_estate` is the merge and
+    :mod:`sopuli.settings.sources` decides what contributes; this is only where
+    the answer is put back so that every gate downstream reads it.
+
+    Called once per verb, after every selector has narrowed ``config`` and before
+    the plan is built -- which is invariant 4's requirement rather than a
+    convenience. A readonly target discovered while the estate is being walked is
+    exactly the generic mid-execution failure that invariant forbids.
+
+    A new :class:`~sopuli.invocation.Invocation` rather than a mutation, because
+    it is frozen, and it keeps the same run document: the object is shared, so
+    everything a verb has already written to it stays written.
+    """
+    return replace(run, resolved=for_estate(run.resolved, config))
 
 
 def _can_prompt() -> bool:
@@ -1752,6 +1783,7 @@ def creds_check(
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="checking credentials")
 
+    run = _with_estate_safety(run, config)
     plan = plan_builder.build(config, intent=["verify"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="checking credentials")
     document.plan = plan.as_json()
@@ -2263,6 +2295,8 @@ def creds_generate(
     )
 
     action = "promoting a password" if promote else "staging a password"
+    run = _with_estate_safety(run, config)
+    refuse_if_readonly(run.resolved, action=action, estate=config)
     plan = plan_builder.build(
         config, intent=["generate", "vault_promote" if promote else "vault_write_pending"]
     )
@@ -3047,6 +3081,8 @@ def creds_apply(
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="applying a password")
 
+    run = _with_estate_safety(run, config)
+    refuse_if_readonly(run.resolved, action="applying a password", estate=config)
     plan = plan_builder.build(
         config, intent=[*_attribute_intent(config), "verify", "password_set", "vault_promote"]
     )
@@ -5017,6 +5053,8 @@ def creds_finish_rollover(
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="ending a rollover window")
 
+    run = _with_estate_safety(run, config)
+    refuse_if_readonly(run.resolved, action="ending a rollover window", estate=config)
     plan = plan_builder.build(config, intent=["verify", "rollover_finish"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="ending a rollover window")
     document.plan = plan.as_json()
@@ -5419,6 +5457,8 @@ def creds_rotate(
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="rotating a password")
 
+    run = _with_estate_safety(run, config)
+    refuse_if_readonly(run.resolved, action="rotating a password", estate=config)
     plan = plan_builder.build(
         config,
         intent=[
@@ -6033,6 +6073,7 @@ def creds_status(
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="taking an inventory")
 
+    run = _with_estate_safety(run, config)
     plan = plan_builder.build(config, intent=["none"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="taking an inventory")
     document.plan = plan.as_json()

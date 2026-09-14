@@ -32,9 +32,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from sopuli.config.errors import ConfigError
+from sopuli.config.expansion import declared_at
+from sopuli.config.model import Config, ExpandedTarget
+from sopuli.config.selection import matches
 from sopuli.exit_codes import ExitCode
 from sopuli.plan import BlastRadius
-from sopuli.settings.resolver import Resolved
+from sopuli.settings.registry import Layer
+from sopuli.settings.resolver import Contribution, Resolved, resolve
+from sopuli.settings.sources import estate_contributions
 
 #: The setting that refuses every mutation, wherever it was written.
 READONLY = "safety.readonly"
@@ -44,6 +49,13 @@ MAX_TARGETS = "safety.max_targets"
 
 #: The environments a mutation may not enter without an explicit yes (P5, #292).
 CONFIRM_ENVIRONMENTS = "safety.confirm_environments"
+
+#: How many readonly targets a refusal names before it stops listing them.
+#:
+#: A ceiling rather than a paragraph: the message exists so somebody can find the
+#: key they have to edit, and the first few names do that as well as two hundred
+#: would. The count is always exact, so nothing is hidden -- only abbreviated.
+NAMED_TARGETS = 5
 
 
 class RefusedError(ConfigError):
@@ -58,7 +70,122 @@ class RefusedError(ConfigError):
     category = "policy"
 
 
-def refuse_if_readonly(resolved: Mapping[str, Resolved], *, action: str) -> None:
+@dataclass(frozen=True)
+class ReadonlyTarget:
+    """One target this run reaches whose ``safety:`` block refuses mutation."""
+
+    #: The rendered target name -- what ``--target`` selects on.
+    name: str
+    #: The key that has to be edited, e.g. ``targets[0].safety.readonly``.
+    location: str
+
+
+def for_estate(resolved: Mapping[str, Resolved], config: Config) -> dict[str, Resolved]:
+    """``resolved``, re-merged with the ``safety:`` blocks of the estate (#424).
+
+    Layer 4 of P3's table, asked at the only moment it can be answered. The
+    invocation resolves at the boundary, before any selector has run, so a block
+    on a target or a group cannot join it there -- which is what
+    :mod:`sopuli.settings.registry` used to describe as a merge happening
+    somewhere else, and what nothing built. ``readonly`` on a target parsed,
+    validated, appeared in ``config show`` and refused nothing.
+
+    ``config`` is the **already-selected** estate.
+    :func:`~sopuli.settings.sources.estate_contributions` decides which of its
+    targets count and why; this half is only the re-merge.
+
+    **Through the same resolver, on the same contributions.** The prior layers
+    are taken off :attr:`~sopuli.settings.resolver.Resolved.contributions` and
+    handed back with the new ones, rather than the object layer being folded into
+    an answer that has already been merged. Merging twice would report the winner
+    of the first pass -- P3 says so about the ``vaults.*`` layers, in the same
+    words, and it is the same mistake here: the location an operator has to go
+    and edit is the lowest-authority contributor to the *final* value, which a
+    two-stage merge cannot see.
+
+    The built-in is dropped before re-merging because :func:`resolve` puts it
+    back. Keeping it would make layer 6 a *contributor* rather than a fallback,
+    which under a ratchet is the difference between a working one and a stuck one.
+
+    A setting no layer supplied is absent from ``resolved`` and starts from
+    nothing, and one no object wrote is returned untouched.
+    """
+    extra = estate_contributions(config)
+    if not extra:
+        return dict(resolved)
+    merged = dict(resolved)
+    for name, contributions in extra.items():
+        prior = _prior(resolved.get(name))
+        answer = resolve(name, [*prior, *contributions])
+        if answer is not None:
+            merged[name] = answer
+    return merged
+
+
+def _prior(answer: Resolved | None) -> tuple[Contribution, ...]:
+    """The layers that already spoke, minus the built-in fallback."""
+    if answer is None:
+        return ()
+    return tuple(one for one in answer.contributions if one.layer is not Layer.BUILTIN)
+
+
+def readonly_targets(config: Config) -> tuple[ReadonlyTarget, ...]:
+    """The targets in ``config`` that some ``safety:`` block marks ``readonly``.
+
+    **Reported per target, whichever kind of block did the marking.** A group is
+    a label match rather than a place a target is written, so a run refused by
+    ``groups.prod-pdbs.safety.readonly`` has no key of its own to point at -- and
+    pairing the target with the group's key is what makes the refusal actionable
+    anyway: the operator learns both which database is protected and which line
+    protects it. The alternative was a second message shape for the group case,
+    which meant the same refusal read two ways depending on where somebody had
+    written one word.
+
+    **A target's own block wins where both mark it.** The two sit at the same
+    layer, so §9's "ties resolve downward" has nothing to separate them; the
+    target's is the more specific place and the one an operator looking at that
+    target would find first.
+
+    In estate order, so two runs over one file name them in the same order.
+    """
+    reached = {binding.target for binding in config.bindings}
+    marked = []
+    for expanded in config.expanded_targets:
+        if expanded.name not in reached:
+            continue
+        location = _readonly_at(expanded, config)
+        if location is not None:
+            marked.append(ReadonlyTarget(name=expanded.name, location=location))
+    return tuple(marked)
+
+
+def _readonly_at(expanded: ExpandedTarget, config: Config) -> str | None:
+    """The key that marks this target ``readonly``, or ``None`` if none does.
+
+    The template's block is consulted **before** the flattened one, because a
+    patch that tried to relax it lost the ratchet and the line that holds is the
+    template's (#424, found in review). Reading only the flattened value would
+    drop the target out of the message entirely while the refusal still fired --
+    the right refusal with a worse message, which is the failure that is hardest
+    to notice.
+    """
+    if expanded.template_safety is not None and expanded.template_safety.readonly:
+        return f"target_sets.{expanded.target_set}.safety.readonly"
+    if expanded.target.safety is not None and expanded.target.safety.readonly:
+        return str(declared_at(expanded, "safety").key("readonly"))
+    for group in config.groups:
+        if (
+            group.safety is not None
+            and group.safety.readonly
+            and matches(expanded.target, group.match)
+        ):
+            return f"groups.{group.name}.safety.readonly"
+    return None
+
+
+def refuse_if_readonly(
+    resolved: Mapping[str, Resolved], *, action: str, estate: Config | None = None
+) -> None:
     """Stop a mutating command when any layer asked for ``readonly``.
 
     ``action`` is what would have happened, in words, because "refused by
@@ -77,10 +204,36 @@ def refuse_if_readonly(resolved: Mapping[str, Resolved], *, action: str) -> None
     ``readonly`` the mutating verbs are unavailable, and the read-only verb is how
     you ask. For a lock that verb is ``sopuli lock status``, which answers the
     same question and takes no lock doing it.
+
+    **``estate`` is the selected config, and giving it changes only the message**
+    (#424). Every verb asks this twice: once on the invocation, before a selector
+    has been validated, and again on the estate the selection produced, against a
+    ``resolved`` that :func:`for_estate` has re-merged. The second call is where a
+    target's or a group's block can refuse at all, and the message it wants is a
+    different one -- *these* targets, and the key on each. Asking twice rather
+    than moving the gate is what keeps a ``defaults``-level ``readonly`` refusing
+    before a bad ``--target`` is judged: exit 8 for a run that was never going to
+    write, rather than exit 2 for a typo in it.
+
+    **Refusing the whole run is the decision, not skipping the readonly targets**
+    (#424, option 3). Skipping would make ``readonly`` mean two different things
+    depending on where it was written -- a refusal under ``defaults``, a filter on
+    a target -- and it does not generalise: there is no per-target reading of
+    ``max_targets`` that skips its way under a ceiling, and a ``safety:`` block is
+    resolved as a unit. So the run stops, and the message names a narrowing
+    instead, because a selector is the mechanism the tool already has for
+    "operate on less than this".
     """
     answer = resolved.get(READONLY)
     if answer is None or not answer.value:
         return
+    marked = readonly_targets(estate) if estate is not None else ()
+    if marked and estate is not None:
+        reached = len({binding.target for binding in estate.bindings})
+        raise RefusedError(
+            _marked_message(marked, estate, action=action),
+            hint=_marked_hint(marked, escapable=len(marked) < reached),
+        )
     raise RefusedError(
         f"{action} is a mutation, and `{READONLY}` is set",
         hint=(
@@ -88,6 +241,47 @@ def refuse_if_readonly(resolved: Mapping[str, Resolved], *, action: str) -> None
             f"`sopuli lock status` reads without writing"
         ),
     )
+
+
+def _marked_message(marked: tuple[ReadonlyTarget, ...], estate: Config, *, action: str) -> str:
+    """The first line of a refusal a target's own block caused.
+
+    Says how much of the run is refused as well as that it is, because those are
+    two different situations and the operator's next move differs: some of the
+    plan is reachable by narrowing, and none of it is not.
+    """
+    reached = len({binding.target for binding in estate.bindings})
+    if len(marked) < reached:
+        scope = f"{len(marked)} of the {reached} targets it reaches"
+    elif reached == 1:
+        scope = "the target it reaches"
+    else:
+        scope = "every target it reaches"
+    return f"{action} is a mutation, and `{READONLY}` is set on {scope}"
+
+
+def _marked_hint(marked: tuple[ReadonlyTarget, ...], *, escapable: bool) -> str:
+    """Where each readonly target was marked, and what to do about it.
+
+    ``escapable`` is whether any of the plan survives a narrowing. Where it does,
+    a selector is the answer and the message says which ones exist -- narrowing is
+    the mechanism the tool already has for "operate on less than this", and #424
+    chose a refusal over a partial run precisely so that the operator makes that
+    call rather than the tool making it silently. Where it does not, saying
+    "narrow the run" would be advice that cannot work, so the message says so and
+    names the verbs that read instead.
+    """
+    named = ", ".join(f"{one.name} ({one.location})" for one in marked[:NAMED_TARGETS])
+    if len(marked) > NAMED_TARGETS:
+        named += f", and {len(marked) - NAMED_TARGETS} more"
+    them = "it" if len(marked) == 1 else "them"
+    reads = "read instead with `sopuli creds check` or `sopuli creds status`"
+    escape = (
+        f"narrow the run with --target, --group or --select so it does not reach {them}, or {reads}"
+        if escapable
+        else f"no narrowing of this run can avoid {them}, so {reads}"
+    )
+    return f"readonly: {named}; no layer can relax it (invariant 10) -- {escape}"
 
 
 def refuse_if_over_limit(

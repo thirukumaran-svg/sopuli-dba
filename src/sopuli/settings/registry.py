@@ -363,12 +363,21 @@ def _vault_setting(
 #: supplied as of #153, in the same single pass, which is what makes a profile
 #: able to say "token from a laptop, AppRole from CI" about one store.
 #:
-#: :attr:`Layer.OBJECT` is still unsupplied for the ``safety.*`` settings, and
-#: will stay that way here: a ``safety:`` block on a target or a group is not a
-#: property of the run, so it is merged when a command reaches that target rather
-#: than when the invocation resolves. The enforcement in
-#: :func:`~sopuli.settings.resolver._checked` runs the other way in any case: it
-#: refuses a layer a setting does not declare, and never requires one.
+#: :attr:`Layer.OBJECT` for the ``safety.*`` settings is supplied by
+#: :func:`~sopuli.settings.sources.estate_contributions` rather than by
+#: :func:`~sopuli.settings.sources.config_contributions`, and that split is the
+#: point: a ``safety:`` block on a target or a group is not a property of the run,
+#: so it can only be merged once a verb knows which targets it is about to reach.
+#: :func:`sopuli.safety.for_estate` does that second merge, through this same
+#: resolver and on the same contributions, so the ratchet stays one mechanism.
+#:
+#: **This comment used to say the merge happened elsewhere, and it did not**
+#: (#424). For as long as it said so, ``readonly: true`` on a target parsed,
+#: validated, appeared in ``config show`` and refused nothing -- a guard failing
+#: in the one direction it must not fail in, described in a docstring as though
+#: it worked. The enforcement in :func:`~sopuli.settings.resolver._checked` could
+#: not catch it: it refuses a layer a setting does not declare, and never
+#: requires one to arrive.
 SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
     {
         setting.name: setting

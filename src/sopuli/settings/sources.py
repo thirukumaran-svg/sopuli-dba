@@ -30,12 +30,20 @@ contributions is one job with one shape, and splitting it across two packages
 would mean two places to look when a layer stops arriving. It stays as pure as
 the rest -- a :class:`~sopuli.config.model.Config` in, contributions out.
 
-**Layers 3 and 5 only.** Layer 4 is "target/vault-level setting", and a
-``safety:`` block on a target or a group is not a property of the *run*: which
-one applies depends on which target is being worked on, so it is merged when a
-command reaches one, against the answer resolved here. The per-store half of
-layer 4 already works this way in :mod:`sopuli.config.vault_layers`, which
-resolves ``vaults.*`` inside the file rather than through the invocation.
+:func:`config_contributions` is **layers 3 and 5 only**, because layer 4 is
+"target/vault-level setting" and a ``safety:`` block on a target or a group is
+not a property of the *run*: which one applies depends on which targets a command
+is about to reach, and at the boundary no selector has run yet. The per-store half
+of layer 4 works the same way in :mod:`sopuli.config.vault_layers`, which resolves
+``vaults.*`` inside the file rather than through the invocation.
+
+:func:`estate_contributions` is that layer, and it is here rather than somewhere
+of its own so that both halves of one merge are read together (#424). It is asked
+later -- once a verb has selected its estate -- and the answer goes back through
+the same resolver, which is what keeps the ratchet one mechanism instead of two
+that have to agree. Until #424 nothing asked it at all: the keys parsed,
+validated, appeared in ``config show`` and refused nothing, which is a config that
+reads like protection and is not.
 """
 
 from __future__ import annotations
@@ -43,7 +51,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from sopuli.config.errors import ROOT, ConfigError
-from sopuli.config.model import Config, Locking, ProfileDb, Safety
+from sopuli.config.expansion import declared_at
+from sopuli.config.model import Config, ExpandedTarget, Locking, ProfileDb, Safety
+from sopuli.config.selection import matches
 from sopuli.config.vault_env import DEFAULT_STORE_SETTING, DEFAULT_STORE_VARIABLE
 from sopuli.settings.registry import Layer
 from sopuli.settings.resolver import Contribution
@@ -176,17 +186,53 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
     found.extend(_safety(config.defaults.safety, at="defaults", layer=Layer.DEFAULTS))
     found.extend(_locking(config.defaults.locking, at="defaults", layer=Layer.DEFAULTS))
 
-    contributions: dict[str, list[Contribution]] = {}
-    for name, value, detail, layer in found:
-        # A key the layer did not write says nothing, which is not the same as
-        # writing the built-in default -- the distinction the whole config model
-        # keeps so that "safest of all layers" can be computed at all.
-        if value is None:
+    return _collected(found)
+
+
+def estate_contributions(config: Config) -> dict[str, list[Contribution]]:
+    """Layer 4 of the ``safety:`` settings -- the blocks on the targets a run
+    reaches, and on the groups that match them (#424).
+
+    ``config`` is the **already-selected** estate: `filter_estate` has run, and
+    what is left is what the verb is about to act on. That is what makes this
+    answerable at all -- a `safety:` block on a target says nothing about a run
+    that never reaches that target, so the question cannot be asked at the
+    boundary where :func:`config_contributions` is.
+
+    **The targets are the ones the plan names**, which is the ones bindings name
+    rather than everything still in ``expanded_targets``. A declared target this
+    run touches nothing on is not reached, and it has to be read that way:
+    ``max_targets`` is compared against :class:`~sopuli.plan.BlastRadius`, which
+    counts the same set. Two different answers to "which targets does this run
+    reach" is the shape of bug that makes a ceiling fire on a run it was never
+    aimed at.
+
+    **A group contributes when it matches a target in the plan.** A group is a
+    named label match (§4) and nothing has to select by it for its block to
+    apply -- the file writes it as a `safety:` block over a population, and a
+    population this run enters is a population this run is governed by.
+
+    Several contributions arrive at one layer, which the resolver already allows
+    and orders stably: each target's own block first, in estate order, then the
+    groups in the order the file declares them. Under the ratchet the order
+    decides nothing about the *value* -- only which location is reported when
+    several layers tie -- and "ties resolve downward" (§9) makes the reported one
+    the lowest-authority contributor in any case.
+    """
+    reached = {binding.target for binding in config.bindings}
+    found: list[tuple[str, object, str, Layer]] = []
+    for expanded in config.expanded_targets:
+        if expanded.name not in reached:
             continue
-        contributions.setdefault(name, []).append(
-            Contribution(layer=layer, value=value, detail=detail)
+        found.extend(_target_safety(expanded))
+    matched = [expanded.target for expanded in config.expanded_targets if expanded.name in reached]
+    for group in config.groups:
+        if group.safety is None or not any(matches(target, group.match) for target in matched):
+            continue
+        found.extend(
+            safety_block(group.safety, at=f"groups.{group.name}.safety", layer=Layer.OBJECT)
         )
-    return contributions
+    return _collected(found)
 
 
 def _db(db: ProfileDb, *, at: str, layer: Layer) -> list[tuple[str, object, str, Layer]]:
@@ -225,16 +271,87 @@ def _safety(
     """
     if safety is None:
         return []
+    return safety_block(safety, at=f"{at}.safety", layer=layer)
+
+
+def _target_safety(expanded: ExpandedTarget) -> list[tuple[str, object, str, Layer]]:
+    """One target's ``safety:`` keys, and the line each was written on.
+
+    Usually one block. **Two, where an ``overrides:`` entry patched it** (#424,
+    found in review): `_patch_target` merges a patch into the template key by
+    key, so a patch's ``readonly: false`` replaces a template's ``true`` and the
+    safer of the two is gone before anything can ratchet them. A run narrowed to
+    the patched target would then have nothing left to be safest *of*, and the
+    override would simply win -- which invariant 10 forbids and which
+    `_patch_target`'s own docstring has always said cannot happen.
+
+    So both reach the resolver. The template's block goes first, and the patched
+    one contributes **only the keys whose value it changed**: a key the patch did
+    not write holds the template's answer, which is already contributed at the
+    template's line, and repeating it here would do nothing but win the
+    location tie and send the reader to a block that does not mention the key.
+    """
+    block = expanded.target.safety
+    if expanded.template_safety is None:
+        return (
+            []
+            if block is None
+            else safety_block(block, at=str(declared_at(expanded, "safety")), layer=Layer.OBJECT)
+        )
+    template = safety_block(
+        expanded.template_safety,
+        at=f"target_sets.{expanded.target_set}.safety",
+        layer=Layer.OBJECT,
+    )
+    written = {name: value for name, value, _, _ in template}
+    patched = (
+        []
+        if block is None
+        else safety_block(block, at=str(declared_at(expanded, "safety")), layer=Layer.OBJECT)
+    )
+    return [*template, *(row for row in patched if row[1] != written.get(row[0]))]
+
+
+def safety_block(safety: Safety, *, at: str, layer: Layer) -> list[tuple[str, object, str, Layer]]:
+    """The same three keys, given the path of the **block** rather than of what
+    contains it.
+
+    Split out for the one caller that cannot compute the first from the second
+    (#424): a generated target's block may have been written in an ``overrides:``
+    entry rather than in the template, and
+    :func:`~sopuli.config.expansion.declared_at` is the function that knows which.
+    Reporting an override against the template would point the reader at the one
+    place the value is spelled the way they expected.
+    """
     return [
-        ("safety.readonly", safety.readonly, f"{at}.safety.readonly", layer),
-        ("safety.max_targets", safety.max_targets, f"{at}.safety.max_targets", layer),
+        ("safety.readonly", safety.readonly, f"{at}.readonly", layer),
+        ("safety.max_targets", safety.max_targets, f"{at}.max_targets", layer),
         (
             "safety.confirm_environments",
             safety.confirm_environments or None,
-            f"{at}.safety.confirm_environments",
+            f"{at}.confirm_environments",
             layer,
         ),
     ]
+
+
+def _collected(
+    found: list[tuple[str, object, str, Layer]],
+) -> dict[str, list[Contribution]]:
+    """Contributions by setting name, dropping the keys nobody wrote.
+
+    A key the layer did not write says nothing, which is not the same as writing
+    the built-in default -- the distinction the whole config model keeps so that
+    "safest of all layers" can be computed at all.
+    """
+    contributions: dict[str, list[Contribution]] = {}
+    for name, value, detail, layer in found:
+        if value is None:
+            continue
+        contributions.setdefault(name, []).append(
+            Contribution(layer=layer, value=value, detail=detail)
+        )
+    return contributions
 
 
 def _locking(
