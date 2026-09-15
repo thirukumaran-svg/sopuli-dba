@@ -1529,9 +1529,10 @@ Oracle stores a salted PBKDF2-SHA512 verifier (the `12C` verifier in
 `SYS.USER$.SPARE4`). Given read access to that column, the tool could derive
 the verifier from the vault password and compare — **no authentication
 attempt, no failed-login counter, no lockout risk** — and it would work even
-for locked accounts. Whether the `T:` layout can actually be reproduced
-client-side is #90's open question; if it can't, this whole method is dropped
-from the CLI.
+for locked accounts. Whether the `T:` verifier can actually be reproduced
+client-side is #90's open question — its layout has been read (#431,
+`02-oracle-privileges.md` §2), the derivation has not (#432); if it can't, this
+whole method is dropped from the CLI.
 
 Trade-offs to document honestly if it does ship:
 

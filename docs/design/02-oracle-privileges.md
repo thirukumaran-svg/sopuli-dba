@@ -292,15 +292,35 @@ post, not Oracle documentation, and needs the same measure-don't-trust
 treatment #124 gives it before it goes anywhere near the install script.
 
 **`--method hash` remains unresolved, independent of the grant question:** the
-`T:` (12C, PBKDF2-SHA512) verifier layout in `SPARE4` must be reproduced
-client-side for hash mode to work at all (#90). Prototype it against a
-throwaway 19c before committing `--method hash` to the CLI. If it does not
-reproduce reliably (unverified: t-verifier), drop **both non-login modes** from
-the CLI surface entirely — `both` is login plus that same verifier comparison,
-so a negative result takes it with `hash`, and a `both` that quietly degraded to
-`login` would report a stronger check than it performed. `login` with the
-optional `LCOUNT` guard is already the complete default path, so nothing else
-depends on the outcome.
+`T:` (12C, PBKDF2-SHA512) verifier in `SPARE4` must be regenerated client-side
+for hash mode to work at all (#90). What is *stored* has been read; whether a
+client can *regenerate* it has not. #90 is three parts:
+
+- **The layout — read on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and
+  11g 11.2.0.2.0 (#431), 2026-09-15; unread on 19c, 12.1 and 12.2.** `SPARE4`
+  is `S:<60 hex>;T:<160 hex>` on the three 12.2+ releases and `S:<60 hex>` alone
+  on 11g. There is no `H:` in `SPARE4` on any of them; 11g's 10G value is
+  `USER$.PASSWORD`. `T:` is a 64-byte digest followed by a 16-byte salt, `S:` a
+  20-byte digest followed by a 10-byte salt. The salt offsets are measured
+  rather than assumed: the `AUTH_VFR_DATA` a traced logon receives equals those
+  trailing bytes, twice on every release. **The iteration count is not stored**
+  — the server sends `AUTH_PBKDF2_VGEN_COUNT` = 4096 at logon, on all three
+  12.2+ releases. Every `ALTER USER` draws a fresh salt, including one to the
+  same password, so a stored verifier can only ever be compared by regenerating
+  from *its* salt. Field table, normalisation notes and the probe:
+  `sql/oracle/05_verifier_layout_probe.sql`.
+- **Reproduction (#432)** — the blocker, and still fully open. Prototype it
+  against a throwaway 19c before committing `--method hash` to the CLI. If it
+  does not reproduce reliably (unverified: t-verifier), drop **both non-login
+  modes** from the CLI surface entirely — `both` is login plus that same
+  verifier comparison, so a negative result takes it with `hash`, and a `both`
+  that quietly degraded to `login` would report a stronger check than it
+  performed.
+- **An account without `T:` (#433)** — 11g, measured above, has none, so hash
+  mode must degrade there rather than error.
+
+`login` with the optional `LCOUNT` guard is already the complete default path,
+so nothing else depends on the outcome.
 
 ### §4 check 3, and the optional `V$PWFILE_USERS` grant
 
@@ -972,6 +992,7 @@ is not worth recovering.
 | `sql/oracle/00_install.sql` | create the service account and grant it, with non-CDB / common-user / per-PDB variants |
 | `sql/oracle/01_audit_policy.sql` | unified audit policy and correlation queries |
 | `sql/oracle/02_password_leak_probe.sql` | release gate 2: canary probe for password text retained anywhere queryable |
+| `sql/oracle/05_verifier_layout_probe.sql` | #431: reads the `SPARE4` verifier layout and locates the salt from a traced logon; derives nothing |
 | `sql/oracle/99_uninstall.sql` | remove the account and policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to revisit |
 

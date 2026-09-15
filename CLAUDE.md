@@ -134,8 +134,12 @@ in a diff. Say which question is blocking and what the options cost.
 Several are marked "verify before implementing" and need a real database rather
 than reasoning:
 
-- the `T:` (12C) verifier layout in `SYS.USER$.SPARE4` — `--method hash` depends
-  on it and it is not confirmed
+- whether the `T:` (12C) verifier in `SYS.USER$.SPARE4` can be regenerated
+  client-side — `--method hash` depends on it and it is not confirmed (#432).
+  **The layout is read** on 26ai, 21c, 18c and 11g (#431): a 64-byte digest then
+  a 16-byte salt, with the iteration count sent at logon rather than stored.
+  Unread on 19c. Do not treat a layout as a derivation
+  (`sql/oracle/05_verifier_layout_probe.sql`)
 - whether `ALTER USER` text leaks the password into `V$SQL` or
   `UNIFIED_AUDIT_TRAIL`, per version (unverified: ddl-text-versions) —
   **answered on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and 11g
