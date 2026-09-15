@@ -291,10 +291,14 @@ That claim comes from a blog
 post, not Oracle documentation, and needs the same measure-don't-trust
 treatment #124 gives it before it goes anywhere near the install script.
 
-**`--method hash` is independent of the grant question**, and the `T:` (12C,
-PBKDF2-SHA512) verifier in `SPARE4` must be regenerated client-side for it to
-work at all (#90). The layout is read and the derivation reproduces; what is
-left is one degradation case. #90 is three parts:
+**The reproduction question (#90) is independent of whether to *recommend* the
+grant (#124) — but hash mode itself is not independent of the grant.** The `T:`
+(12C, PBKDF2-SHA512) verifier must be regenerated client-side, which the grant
+does not touch, *and* read from `SPARE4`, which needs `SELECT ON SYS.USER$`. So
+`hash` mode requires the grant even though the derivation does not. The layout is
+read, the derivation reproduces, and the degradation rule is settled — all on the
+tier-2 releases; 19c is the pre-release target of interest (an OCI estate runs
+it) and 12.1/12.2 are also unread. #90 is three parts:
 
 - **The layout — read on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and
   11g 11.2.0.2.0 (#431), 2026-09-15; unread on 19c, 12.1 and 12.2.** `SPARE4`
@@ -336,19 +340,55 @@ left is one degradation case. #90 is three parts:
   `--include-previous` tells current from previous by which prefix the vault
   value reproduces — never by drift. Confirming this on real 19.12+ stays a
   maintainer-tier item, as every rollover finding does.
-- **An account without `T:` (#433)** — 11g, measured under the layout bullet,
-  has none, so hash mode must degrade there rather than error. Still open, and
-  the one part left before the (unverified: t-verifier) marker can go.
+- **Multi-verifier accounts and degradation when `T:` is absent — measured on
+  11g and 18c (#433), 2026-09-15.** The comparison uses the **12C `T:` verifier
+  and only it**; the older verifiers are neither compared nor in the way:
+    - A genuine three-verifier account (`PASSWORD_VERSIONS = 10G 11G 12C`, forced
+      on 18c with `SQLNET.ALLOWED_LOGON_VERSION_SERVER = 8` — see below) puts the
+      **10G verifier in `SYS.USER$.PASSWORD`, a different column**, and leaves
+      `SPARE4` as the same `S:;T:` pair. `T:` sits at the same offset and
+      reproduces byte-for-byte with 10G and 11G both present. So the presence of
+      older verifiers changes nothing about reading or deriving `T:`.
+    - 10G and 11G must **never** be a silent fallback: 10G is unsalted,
+      case-insensitive DES and 11G is `S:` (SHA-1); comparing either would report
+      a weaker check than `--method login` already gives. `T:` is the only
+      verifier `hash` mode trusts.
+    - **When no `T:` is present** — 11g (`PASSWORD_VERSIONS = 10G 11G`, `SPARE4`
+      is `S:` alone), or any account whose `PASSWORD_VERSIONS` lacks `12C` —
+      `hash` mode has nothing to compare and **fails at plan time naming the
+      capability and the target** (invariant 4), never a generic mid-run error
+      and never a quiet fall-through to a weaker verifier. `both` cannot degrade
+      to `login` silently for the same reason it cannot elsewhere.
+    - **The gate is a capability, not a version** (invariant 3 / P1): *a readable
+      `T:` verifier is present for this account*, which is `SPARE4` carrying a
+      `T:`/`t:` token, mirrored by `DBA_USERS.PASSWORD_VERSIONS` containing
+      `12C`. It is two conditions in one: the session-level `SELECT ON SYS.USER$`
+      grant (`OFFLINE_VERIFY`) makes `SPARE4` readable at all, and the
+      account-level `PASSWORD_VERSIONS` says whether this account has a `12C` to
+      read. Both are queried, never inferred from the server release — a 12.1+
+      server can still hold an account with no `12C` verifier.
+    - Aside, measured in passing: **23ai has dropped the 10G verifier entirely.**
+      Even at `ALLOWED_LOGON_VERSION_SERVER = 8` a fresh 26ai account is
+      `11G 12C`, so 10G and 12C co-occur only on 12.1–19c. Nothing depends on
+      this; it is recorded so a future `10G`-handling assumption is not made
+      about the newest target.
 
-Since the derivation reproduces, `--method hash|both` is a mechanical
-implementation once #433 settles degradation. Were it ever to fail on a release
-that matters (19c), both non-login modes would leave the CLI entirely — `both`
-is login plus this same comparison, and a `both` that silently degraded to
-`login` would report a stronger check than it performed. Either way `login` with
-the optional `LCOUNT` guard is already the complete default path (#86), so no
-default depends on the outcome. **Invariant 14** governs any future server-side
-form: the verifier is never bound into a SQL predicate — the reproduction here
-is entirely client-side.
+  How the three-verifier account was produced, for a maintainer re-run (not a
+  repeatable public probe — it needs a server config change and a restart):
+  append `SQLNET.ALLOWED_LOGON_VERSION_SERVER = 8` to the server `sqlnet.ora`
+  (`$ORACLE_HOME/network/admin/sqlnet.ora`), restart the instance, then
+  `CREATE USER … IDENTIFIED BY …`; `PASSWORD_VERSIONS` reads `10G 11G 12C`.
+  Restore the file and restart afterwards. It worked on 18c and not on 26ai.
+
+Since the derivation reproduces and degradation is settled, `--method hash|both`
+is now a mechanical implementation on the tier-2 releases. Were it ever to fail
+on the one unread target that matters (19c), both non-login modes would leave the
+CLI entirely — `both` is login plus this same comparison, and a `both` that
+silently degraded to `login` would report a stronger check than it performed.
+Either way `login` with the optional `LCOUNT` guard is already the complete
+default path (#86), so no default depends on the outcome. **Invariant 14**
+governs any future server-side form: the verifier is never bound into a SQL
+predicate — the reproduction here is entirely client-side.
 
 ### §4 check 3, and the optional `V$PWFILE_USERS` grant
 

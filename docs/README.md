@@ -348,10 +348,14 @@ three wrong answers.
   "AUTH_PBKDF2_SPEEDY_KEY", 4096, 64) ‖ salt)`, and a rollover window's two
   verifiers (`T:` previous, `t:` current) are told apart the same way —
   `sql/oracle/05_verifier_layout_probe.sql` and `06_verifier_reproduce.{sql,py}`.
-  It stays open on 19c, 12.1 and 12.2 (unread), and the entry stays `unverified`
-  for **the one part left: how an account with no `T:` degrades (#433).** Blocks
+  Degradation is settled too (#433): the comparison uses `T:` only, an account
+  with no `12C` fails at plan time (invariant 4), and the gate is a per-account
+  capability (`SPARE4` carries a `T:`), never a version. **All three parts are
+  answered on the tier-2 releases; the entry stays `unverified` because 19c — the
+  release an OCI estate runs, and so the target of interest — is unread, as are
+  12.1 and 12.2, none of them pullable.** Blocks
   `--method hash|both` only — `check`'s default (`login`) no longer waits on
-  this (#86). If it does not reproduce reliably, **both non-login modes go**:
+  this (#86). If it does not reproduce on 19c, **both non-login modes go**:
   `both` is login *plus* the verifier comparison, so it cannot survive a
   negative result either, and a mode that silently degraded to `login` would
   report a stronger check than it performed.
