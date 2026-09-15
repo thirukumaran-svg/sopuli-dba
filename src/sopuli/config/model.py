@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sopuli.config.secret_refs import SecretRef
+from sopuli.settings import Resolved
 
 #: Label matches and vendor options, kept as sorted pairs. See the module note.
 Pairs = tuple[tuple[str, str], ...]
@@ -341,10 +342,31 @@ class Vault:
     #: so -- would answer "did my YAML say what I think it says" with a value from
     #: a different part of the file.
     #:
-    #: Key names, not layers. Which layer won is the resolver's answer and belongs
-    #: in ``--explain`` beside every other setting (#153); what belongs here is the
-    #: one bit a reader of this table needs, which is *this was not written here*.
+    #: Key names, not layers. Which layer won is :attr:`settings`' answer and
+    #: belongs in ``--explain`` beside every other setting (#153); what belongs
+    #: here is the one bit a reader of this table needs, which is *this was not
+    #: written here*.
     patched: tuple[str, ...] = ()
+    #: Every merged key with the layer that supplied it (#428), as sorted pairs.
+    #:
+    #: The rest of :attr:`patched`'s sentence, kept rather than thrown away.
+    #: :mod:`sopuli.config.vault_layers` resolves each reach key through
+    #: :mod:`sopuli.settings` and had the :class:`~sopuli.settings.Resolved` in
+    #: hand already; for as long as only the key *name* survived, three different
+    #: layers writing ``addr`` produced one indistinguishable ``layered: addr``
+    #: and no view could tell an address an operator redirected on purpose from
+    #: one a colleague's exported ``VAULT_ADDR`` supplied.
+    #:
+    #: **Every key that has a value, not only the layered ones.** A store whose
+    #: ``mount`` came from its own ``vaults:`` entry gets a pair too, because
+    #: otherwise an absent key means either *nobody wrote it* or *only the
+    #: declaration did*, and a provenance view that cannot separate those answers
+    #: the question it exists for with a shrug. ``auth:`` is the one exclusion: it
+    #: is replaced whole rather than resolved key by key, so there is no
+    #: ``Resolved`` for it -- :attr:`patched` still names it.
+    #:
+    #: Sorted pairs rather than a mapping, for the reason the module note gives.
+    settings: tuple[tuple[str, Resolved], ...] = ()
 
 
 @dataclass(frozen=True)

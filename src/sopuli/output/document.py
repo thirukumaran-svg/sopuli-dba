@@ -27,7 +27,7 @@ from typing import Any, Literal
 # format (#83), and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.22"
+SCHEMA_VERSION = "1.23"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -192,6 +192,14 @@ class Option:
     Kept deliberately dumb -- no import of the resolver -- so the run document
     stays a description of output rather than a second consumer of the
     precedence rules. The three-line conversion lives at the CLI boundary.
+
+    **Two sections carry this shape** as of #428: ``config.vaults[].settings``
+    reports a store's merged keys the same way, and the schema has one
+    ``$defs/resolved_setting`` both point at. A store's settings are not admitted
+    *into* ``invocation.options`` -- that section is what changed the behaviour of
+    the run, and ``RESOLVED_SETTINGS`` excludes a store's keys on the documented
+    grounds that they describe a store. Sharing the shape is not sharing the
+    section.
     """
 
     value: Any

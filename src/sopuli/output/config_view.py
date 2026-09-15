@@ -30,6 +30,7 @@ from sopuli.config.locking import LOCK_REQUIRED
 from sopuli.config.model import Pairs, Safety, Vault
 from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
+from sopuli.output.document import Option
 from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
@@ -64,11 +65,20 @@ def render_text(
     appended rather than replacing anything: the subject of ``config show`` is
     still the configuration, and where a setting came from is a third question
     beside the file and the estate (:mod:`sopuli.output.explain_view`).
+
+    **The stores' own settings join that table when it is asked for** (#428), as
+    ``vaults.<name>.<key>`` rows beneath the run's. They are resolved inside the
+    file rather than at the boundary, so they never arrive in ``settings`` -- but
+    they are settings of the same chain, merged by the same resolver, and P3's own
+    worked example of this view is a vault key. An empty ``settings`` is what says
+    ``--explain`` was not asked for, so there is no second argument for it.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
     if match:
         lines.append(f"select: {_pairs(match)}")
+
+    explained = {**settings, **_vault_settings(config)} if settings else {}
 
     if resolved and match and not config.expanded_targets:
         # Not an error: a selector that matches nothing is a legitimate question
@@ -78,7 +88,7 @@ def render_text(
         lines.extend(["", f"no targets carry {_pairs(match)}"])
         # `--explain` still answers its own question: a selector that matched
         # nothing says nothing about where `output` came from.
-        lines.extend(explain_section(settings))
+        lines.extend(explain_section(explained))
         lines.extend(_warnings(config))
         return "\n".join(lines)
 
@@ -89,7 +99,7 @@ def render_text(
         lines.extend(["", paint(heading, Role.HEADING)])
         lines.extend(body)
 
-    lines.extend(explain_section(settings))
+    lines.extend(explain_section(explained))
     lines.extend(_warnings(config))
     return "\n".join(lines)
 
@@ -204,10 +214,31 @@ def build_section(
     The question it answers is what the YAML says after layering, and any
     normalisation on the way out would be a second answer to that question --
     one that could drift from the first.
+
+    ``vaults`` is in **both** shapes, and it is the one thing here that neither
+    of them carried (#428). ``declared`` is the address the *file wrote*, and
+    ``--resolved`` dropped stores entirely, so no mode of this command told a
+    JSON consumer which vault a run would actually talk to -- true since the
+    layers were built rather than since ``--vault-addr`` was. Which forces the
+    ordering: you cannot report where ``addr`` came from before reporting what
+    ``addr`` is, so the value is the substantive half and the provenance rides
+    along with it.
+
+    Always present, empty array included, for the reason ``doctor``'s own
+    ``vaults[]`` is: every estate that does anything has stores, so ``[]`` is a
+    real answer here rather than the negative finding an absent
+    ``shared_secrets`` would be.
+
+    It carries the provenance in both output modes and whether or not
+    ``--explain`` was passed, unlike the text table. There is nothing to filter:
+    no ``vaults.*`` setting has a built-in default, so every key reported is one
+    some layer actually wrote -- which is the filter ``invocation.options``
+    applies and ``--explain`` lifts.
     """
     section: dict[str, Any] = {
         "sources": [str(path) for path in paths],
         "resolved": resolved,
+        "vaults": [_vault_json(vault) for vault in config.vaults],
     }
     if not resolved:
         section["declared"] = document
@@ -444,6 +475,70 @@ def _vault_rows(config: Config) -> list[str]:
     )
 
 
+def _vault_settings(config: Config) -> dict[str, Resolved]:
+    """Every store's merged keys, spelled the way the settings table names them.
+
+    ``vaults.vault-dev.addr``, the concrete store where the registry writes
+    ``vaults.*.addr`` -- which is the spelling P3's own example of this view uses
+    and the one an operator would grep their file for. The ``*`` form is a
+    registry key and stands for every store at once (``sopuli/settings/registry.py``);
+    it is not an address anybody can act on.
+
+    The :class:`~sopuli.settings.Resolved` objects come straight off the store,
+    where :mod:`sopuli.config.vault_layers` put them. Nothing is re-resolved here:
+    a second merge in a renderer is the shape that lets a view and an enforcement
+    disagree.
+
+    **Every source of ``addr`` is distinguishable, the four outside the file
+    included** (#428): ``--vault-addr`` renders ``[cli --vault-addr]``,
+    ``SOPULI_VAULT__VAULT_DEV__ADDR`` and ``SOPULI_VAULT_ADDR`` render
+    ``[env <VARIABLE>]``, ``VAULT_ADDR`` renders ``[env_thirdparty VAULT_ADDR]``,
+    and a profile, the declaration and ``defaults.vaults:`` each render their own
+    key path -- seven in all, across P3's six layers. Before this they were one
+    indistinguishable ``layered: addr`` in the store's ``NOTE`` column, which said
+    *that* a layer wrote the key and never which -- and "why is this run talking to
+    that vault" is the first question when a rotation lands somewhere unexpected.
+    """
+    return {
+        f"vaults.{vault.name}.{key}": answer
+        for vault in config.vaults
+        for key, answer in vault.settings
+    }
+
+
+def _vault_json(vault: Vault) -> dict[str, Any]:
+    """One store, as ``config.vaults[]`` carries it.
+
+    ``settings`` reuses :class:`~sopuli.output.document.Option` -- the same
+    ``value`` / ``source`` / ``source_detail`` triple ``invocation.options``
+    carries -- because it is the same question about the same resolver, and a
+    second grammar for it would be two shapes a consumer has to learn for one
+    fact. It is **not** put *in* ``invocation.options``, which was the rejected
+    option (b) of #428: that section is what changed the behaviour of the *run*,
+    and ``RESOLVED_SETTINGS`` excludes a store's keys on the documented grounds
+    that they describe a store rather than a run.
+
+    ``name`` and ``type`` are the store's identity and neither can be layered --
+    a store that is HashiCorp from a laptop and OCI from CI is two stores (C13).
+    ``non_production`` and ``locking`` are deliberately absent: both are
+    declaration-only guardrails, ``config.declared`` carries them as written, and
+    ``doctor`` reports the second as ``lock.mode``. Adding either later is
+    additive.
+    """
+    return {
+        "name": vault.name,
+        "type": vault.type,
+        "settings": {
+            key: Option(
+                value=answer.value,
+                source=str(answer.layer),
+                source_detail=answer.detail,
+            ).to_dict()
+            for key, answer in vault.settings
+        },
+    }
+
+
 def _vault_note(vault: Vault) -> Cell | str:
     """What is worth saying about a store beyond its type and address.
 
@@ -461,6 +556,15 @@ def _vault_note(vault: Vault) -> Cell | str:
     which is the one question this view exists for. Which layer supplied it is
     ``--explain``'s answer and not this column's -- what belongs here is that it
     was not written on the entry.
+
+    **``--explain`` now answers it**, which until #428 it did not: this docstring
+    deferred to a view that had never been built, so three different layers
+    writing ``addr`` produced one ``layered: addr`` here and nothing anywhere
+    else. The deferral was the right split and is unchanged; what
+    changed is that the other half exists. A ``SOURCE`` column here was the
+    alternative and loses to the reason ``explain_view`` lays its table out by
+    hand: a truncated ``SOPULI_VAULT__...`` is useless in exactly the moment it is
+    wanted.
     """
     notes = []
     if vault.non_production:

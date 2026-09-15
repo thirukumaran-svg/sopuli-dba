@@ -1620,7 +1620,8 @@ sopuli: no-default.yaml: --vault-addr names no store, and this run has no defaul
 ```
 
 Exit 9. The `NOTE` column says which key was layered and not which layer did it,
-which is true of every one of them — see #426.
+which is true of every one of them. Which layer did it is
+`config show --explain`'s answer — see *Which layer wrote it* below.
 
 Three things were decided with it, and the third is the one that keeps it small.
 
@@ -1654,6 +1655,91 @@ best-effort one. That asymmetry is the argument, and it does not generalise to
 It takes both parser positions, like every global option that is not a safety
 flag: both are layer 1, the same person in the same command line, so neither
 outranks the other (P3).
+
+### Which layer wrote it (#428)
+
+`addr` is the one key seven different sources can write, and for as long as the
+`NOTE` column was the only report of it, all seven produced the same line. A
+store whose address came from a colleague's exported `VAULT_ADDR` looked
+identical to one an operator redirected on purpose, and *why is this run talking
+to that vault* is the first question when a rotation lands somewhere unexpected.
+
+`config show --explain` answers it, as rows in the same `settings` table the
+run's own settings appear in:
+
+```
+$ sopuli --config layers.yaml --profile standby config show --explain
+vaults
+NAME       TYPE       ADDRESS                                 NOTE
+vault-dev  hashicorp  https://vault-standby.example.com:8200  layered: addr, namespace, timeout_s
+
+settings
+  db.connect_timeout_s        = 30                                      [built-in default]
+  db.query_timeout_s          = 0                                       [built-in default]
+  output                      = text                                    [built-in default]
+  profile                     = standby                                 [cli --profile (group)]
+  safety.dry_run              = false                                   [built-in default]
+  safety.readonly             = false                                   [built-in default]
+  vault                       = vault-dev                               [defaults.vault]
+  vaults.vault-dev.addr       = https://vault-standby.example.com:8200  [profiles.standby.vaults.vault-dev.addr]
+  vaults.vault-dev.kv_version = 2                                       [vaults.vault-dev.kv_version]
+  vaults.vault-dev.mount      = kv                                      [vaults.vault-dev.mount]
+  vaults.vault-dev.namespace  = acme-dev                                [defaults.vaults.vault-dev.namespace]
+  vaults.vault-dev.timeout_s  = 10                                      [defaults.vaults.vault-dev.timeout_s]
+```
+
+with `defaults.vaults.vault-dev` writing the namespace and the timeout, the
+declaration writing the mount and the KV version, and the active profile
+redirecting the address. The other sections of that run's output are elided; the
+table is not.
+
+The seven sources render as `[cli --vault-addr]`,
+`[env SOPULI_VAULT__VAULT_DEV__ADDR]`, `[env SOPULI_VAULT_ADDR]`,
+`[env_thirdparty VAULT_ADDR]`, `[profiles.<name>.vaults.<store>.addr]`,
+`[vaults.<store>.addr]` and `[defaults.vaults.<store>.addr]`. Four decisions are
+in that table rather than in its layout.
+
+**The rows join the run's table rather than getting a section.** They are
+settings of the same chain, merged by the same resolver — and P3's own worked
+example of this view is a vault key. A `SOURCE` column on the `vaults` table was
+the alternative and loses to the reason `--explain` is laid out by hand: a
+truncated `SOPULI_VAULT__…` is useless in exactly the moment the view exists for.
+Keeping `NOTE` and appending the layer to it was the third option, and it keeps
+the layer while losing the location, which is the half that says what to edit.
+
+**Every key that has a value, not only the layered ones.** `vaults.vault-dev.mount`
+gets a row reading `[vaults.vault-dev.mount]` — the file wrote it, there. The
+bracket repeats the row name exactly in that one case, which is what that sentence
+looks like rather than noise: without it, an absent row would mean either *nobody
+wrote this key* or *only the declaration did*, and a provenance view that cannot
+separate those two answers the question it exists for with a shrug.
+
+**The store is concrete.** The registry's key is `vaults.*.addr`, with `*`
+standing for every store at once, and that is not something anybody can act on.
+The row names the store, which makes it character-for-character the config key to
+grep for.
+
+**`auth:` gets no row.** It is replaced whole rather than resolved key by key
+(`sopuli/config/vault_layers.py`), so no layer *won* a key and there is no
+provenance to report; `NOTE` still says `layered: auth`. It is also the one part
+of a store entry that addresses credentials, and a section whose every value is a
+setting is not where those belong.
+
+One knock-on, found in review of #428: `vaults.*.<key>` is the name the resolver
+is **asked** with — §9's registry is a literal, so a store's settings are one
+entry with `*` where the name goes — and it is not a name anybody can be told.
+Nothing quoted it back until this view existed; now the ratchet note under a
+defeated `tls.verify` does, and so does the warning every command that loads the
+file emits. Both name the concrete store, and they are renamed once where the
+merge happens rather than in either view — one sentence spelled two ways, three
+lines apart, is the defect §9's single resolver exists to make impossible.
+
+`config show --output json` carries the same answer for a consumer, as
+`config.vaults[]` — see `03-json-output.md`. It is there in **both** shapes,
+which is the part of this that was not a provenance question at all: `--explain`
+emitted `config.declared`, the address the *file* wrote, and `--resolved` dropped
+stores entirely, so no mode of the command told a script which vault a run would
+talk to.
 
 ### Naming a store in a variable
 
@@ -2125,7 +2211,10 @@ the profile beneath it — the operator at the keyboard is the more specific int
 
 The third-party layer does not appear, because `output` has none: `VAULT_ADDR`
 ranking below `SOPULI_VAULT_ADDR` and below `--vault-addr` is §6's to show, being
-a setting of a store rather than of the run.
+a setting of a store rather than of the run. A store's keys are nonetheless *in*
+this table — as `vaults.<store>.<key>` rows beneath the run's, since #428 — and
+the reason to work `output` rather than `addr` through here is that this section
+is about the chain and §6 is about the store.
 
 **These examples are pasted, not written** (#409). They were once drawn on
 `--vault-addr` and `--method`, and at the time neither flag existed — `sopuli`
@@ -2133,10 +2222,13 @@ rejected both before any precedence was consulted, so the documented outcomes
 were predictions. `output` was chosen over marking the old blocks illustrative
 because it has a real layer at every level shown, which leaves nothing in this
 section excused from running. **`--vault-addr` has since been built** (#422) and
-these examples were still not moved back onto it: it demonstrates one layer fewer
-here — a store's settings are merged inside the file, so they never appear in the
-`settings` table this section is showing — and §6 is where its own chain is worked
-through.
+these examples were still not moved back onto it: §6 is where its own chain is
+worked through, and it is the longer one — seven sources across six layers, with
+a third-party variable ranked between two of them. That paragraph used to add
+that a store's settings "never appear in the `settings` table this section is
+showing", which was true when it was written and stopped being true in #428.
+Fixing the sentence rather than the example on the strength of it: `output` is
+still the setting with one clean layer at every level.
 
 Safety ratchet — `defaults.safety.readonly: true`, and a `ci` profile that tries
 to undo it with `safety: { readonly: false }`:
@@ -2617,7 +2709,7 @@ notices until a rotation.
 | C10 | ~~What are profiles for?~~ | **decided: run context, not target selection** (§5). Closed key whitelist; `policies.*.verify.scheduled_method` removed in favour of a profile overriding `verify.method` |
 | C11 | Should `--profile` be composable (several at once)? | no — one active profile, no inheritance. Revisit only if a real config duplicates three or more profiles |
 | C12 | Ship a built-in `interactive` profile as the implicit default? | leaning no: an absent profile means "just `defaults`", and an invisible built-in would be one more thing to explain when output surprises someone |
-| C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. **Implemented in #136** for the layers the file supplies, with one correction to the sentence above: `defaults.vaults:` is layer 5 and therefore *outranked* by the declaration, so it fills gaps rather than patching — only a profile's block, at layer 3, patches in the direction the word suggests. The `addr` / `mount` / `kv_version` / `auth` restriction became the complement of the three unpatchable keys, since #135 added three more reach settings the original list could not have named. **Applying a profile's block landed in #153**, in the same pass as the other two. **The environment's half landed in #154**: `SOPULI_VAULT__VAULT_DEV__ADDR` at layer 2, `VAULT_ADDR` / `VAULT_NAMESPACE` / `VAULT_CACERT` at layer 3, in the same single pass, with the name-to-variable mapping refusing a collision rather than picking one of two stores. It also had to answer what the *unnamed* `SOPULI_VAULT_ADDR` addresses, and the answer is C13's own: the store `defaults.vault` names, with `SOPULI_VAULT` above it — refused where nothing names one, because a variable that followed whichever store was active would be the rejected `vault_settings:` block spelled differently |
+| C13 | ~~Is `vault:` under `defaults:` and in a profile a store *name* or a block?~~ | **decided: a name, everywhere** (§3a), in #31. Settings *of* a store are reached by naming it under `vaults:`, which `defaults:` and a profile may each carry as **partial** entries patching a top-level declaration. Settled once C9 closed and the `auth:` grammar stopped being the unknown: what was left was only where the file writes it, and §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair had already chosen that shape on the environment side. P3's precedence table is amended to `defaults.vaults.hcv-prod.addr`; §5's `vault.auth` row becomes `vaults.<name>.*`, restricted to `addr` / `mount` / `kv_version` / `auth` — not `type`, and not the two guardrails `non_production` and `locking`, which invariant 10 keeps out of the invocation context. The rejected alternative was a `vault_settings:` applying to whichever store is active: shorter, but it lets auth written for dev follow a changed `vault:` into prod. **Implemented in #136** for the layers the file supplies, with one correction to the sentence above: `defaults.vaults:` is layer 5 and therefore *outranked* by the declaration, so it fills gaps rather than patching — only a profile's block, at layer 3, patches in the direction the word suggests. The `addr` / `mount` / `kv_version` / `auth` restriction became the complement of the three unpatchable keys, since #135 added three more reach settings the original list could not have named. **Applying a profile's block landed in #153**, in the same pass as the other two. **The environment's half landed in #154**: `SOPULI_VAULT__VAULT_DEV__ADDR` at layer 2, `VAULT_ADDR` / `VAULT_NAMESPACE` / `VAULT_CACERT` at layer 3, in the same single pass, with the name-to-variable mapping refusing a collision rather than picking one of two stores. It also had to answer what the *unnamed* `SOPULI_VAULT_ADDR` addresses, and the answer is C13's own: the store `defaults.vault` names, with `SOPULI_VAULT` above it — refused where nothing names one, because a variable that followed whichever store was active would be the rejected `vault_settings:` block spelled differently. **The reporting landed last, in #428**, and its absence had outlived every layer above: each of them was visible only as `layered: <key>` in one `NOTE` column, so a store redirected by a colleague's exported `VAULT_ADDR` read identically to one an operator had pointed somewhere on purpose, and `--output json` carried the address the *file* wrote or no store at all. `config show --explain` now spells each merged key as `vaults.<store>.<key>` beside the run's own settings, and `config.vaults[]` carries the same answer for a consumer (§6, `03-json-output.md`) |
 | C14 | ~~What are the `@version=` and `@stage=` vocabularies, and who owns them?~~ | **decided: the tool owns both** (§7), in #40. `stage` is the closed set `current` / `pending` / `previous`, matched in any case and normalised to lower case; `version` is a whole number from 1; neither may hold a `{token}`. Settled by Oracle's own documentation: OCI's rotation states are a fixed set (`CURRENT`, `PENDING`, `LATEST`, `PREVIOUS`, `DEPRECATED`) rather than user-definable labels, and versions are integers — so there was no backend vocabulary to defer to, and passing a value through would only have moved a typo to rotation time. The run schema is thereby ratified rather than changed, including `vault` staying required on an emitted `secret_ref`: §7 describes the ref as written, the schema describes it after resolution. Knock-on: this settles Q3 (#84) at one `previous`. |
 | C15 | ~~A binding names a secret and no store, anywhere — refuse, warn, or leave it to plan time?~~ | **decided in #118: mostly plan time, refused only when nothing could ever complete it.** `_vault_for`'s chain resolving to `None` is not always a mistake — a profile's `vault:` or `SOPULI_VAULT` may still supply one, and neither is consulted while bindings are built (§5, §9), so the null can be a real, temporary state rather than an error. Left alone: `config show --resolved` renders it as `-` (§10), and the command that actually needs a store fails there, once a run's profile is known and the answer is exact. Refused at load only for the narrower, genuinely unrecoverable case — `vaults:` declaring nothing at all, so there is no name even a profile or `SOPULI_VAULT` could point at (§10). The naive rule — refuse whenever a binding's store is unnamed — was rejected first: it rejects the legitimate config where one profile sets `vault:` and a run selects a different one that inherits `defaults.vault` instead |
 | C16 | ~~What does `--vault-token` take? Every document treated it as a step in a chain and none said what an operator types after it~~ | **decided: nothing — it takes a path under a different name.** `--vault-token-file PATH` is the command line's position in `method: token`'s chain (§3a), and a bare `--vault-token` is **refused** with a message naming invariant 1 and all four working sources. A token as an option *value* is visible in `ps` and in the Windows process list, and P5's "or a vault ref" escape cannot apply to vault auth itself, since a ref is resolved *by* an authenticated store — the same bootstrap shape P2 already describes for the database admin credential, one layer earlier. `--vault-token-stdin` is deferred rather than rejected, because `--from-stdin` (UC-1 §5) already claims the pipe; the constraint it will have to satisfy is banked in P5 today. Reusing the MaterialRef grammar (`--vault-token env:NAME`) was rejected outright: `env:` / `file:` in a SecretRef means "resolve this via an already-authenticated store", so two identical-looking grammars would have opposite resolution order. Filed as #145 and recorded in [ADR-007](../decisions/adr-007-vault-token-flag.md), which also confirms `vault login` plus `~/.vault-token` as the intended bootstrap for a human at a terminal, and gives the flag's file P4's permission check |

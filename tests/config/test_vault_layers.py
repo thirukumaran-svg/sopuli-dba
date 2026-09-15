@@ -24,7 +24,7 @@ import pytest
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Vault
-from sopuli.settings import SAFETY_SETTINGS, setting
+from sopuli.settings import SAFETY_SETTINGS, Layer, setting
 
 STORE = "vault-prod"
 
@@ -462,6 +462,12 @@ def test_the_defeated_relaxation_is_reported_from_layer_three() -> None:
     message = config.warnings[0].message
     assert "profiles.ci.vaults.vault-prod.tls.verify asked for false" in message
     assert "vaults.vault-prod.tls.verify" in message
+    # And never the registry's `vaults.*.tls.verify`, which is the name the
+    # resolver has to be *asked* with and not one an operator can edit (#428,
+    # found in review). This warning said it for as long as it has existed; it
+    # became visible when `--explain` started quoting the same sentence under a
+    # row that spells the store out.
+    assert "vaults.*" not in message
 
 
 @pytest.mark.parametrize(
@@ -478,3 +484,108 @@ def test_the_three_unpatchable_keys_stay_unpatchable_from_a_profile(key: str, va
         build_config(document(**under_profile(**{key: value})), profile=PROFILE)
 
     assert f"`{key}:`" in str(caught.value)
+
+
+# -------------------------------------------------------------- the provenance ---
+#
+# `patched` names the keys some other layer wrote; `settings` names the layer
+# (#428). For as long as only the first survived, three different layers writing
+# `addr` produced one indistinguishable `layered: addr` -- and the `Resolved` that
+# would have answered it was in hand and dropped on the floor.
+
+
+def sources(vault: Vault) -> dict[str, str]:
+    """Each merged key mapped to the location that supplied it."""
+    return {key: answer.location for key, answer in vault.settings}
+
+
+def test_a_store_nobody_layered_still_reports_where_its_keys_came_from() -> None:
+    """The common case, and the one an early return used to skip.
+
+    It is also the case that makes the view honest: without a pair here, an
+    absent key means either *nobody wrote it* or *only the declaration did*, and
+    a provenance view that cannot separate those answers nothing.
+    """
+    vault = merged({"addr": "https://vault.example.com", "mount": "secret"})
+
+    assert vault.patched == ()
+    assert sources(vault) == {
+        "addr": "vaults.vault-prod.addr",
+        "mount": "vaults.vault-prod.mount",
+    }
+    assert [answer.layer for _, answer in vault.settings] == [Layer.OBJECT, Layer.OBJECT]
+
+
+def test_a_key_no_layer_wrote_gets_no_pair() -> None:
+    """Absent rather than `None`: a store with no namespace has no provenance for
+    one, and a row saying so would be a row about nothing."""
+    vault = merged({"addr": "https://vault.example.com"})
+
+    assert set(sources(vault)) == {"addr"}
+
+
+def test_each_layer_is_distinguishable_on_one_key() -> None:
+    """The acceptance item of #428, in the only place all of them can be built.
+
+    One store, `addr` written by each of the seven sources that can write it --
+    six layers, the environment spelling two of them -- one at a time. The `NOTE`
+    column says `layered: addr` for six of the seven and nothing at all for the
+    declaration; this is where they stop being one answer.
+    """
+    declared = {"addr": "https://declared.example.com"}
+    cases: dict[str, dict[str, Any]] = {
+        "--vault-addr": {"vault_addr": "https://cli.example.com"},
+        "SOPULI_VAULT__VAULT_PROD__ADDR": {
+            "env": {"SOPULI_VAULT__VAULT_PROD__ADDR": "https://named.example.com"}
+        },
+        "SOPULI_VAULT_ADDR": {"env": {"SOPULI_VAULT_ADDR": "https://active.example.com"}},
+        "VAULT_ADDR": {"env": {"VAULT_ADDR": "https://thirdparty.example.com"}},
+        "profiles.ci.vaults.vault-prod.addr": {"profile": PROFILE},
+        "vaults.vault-prod.addr": {},
+        "defaults.vaults.vault-prod.addr": {},
+    }
+
+    found = {}
+    for expected, how in cases.items():
+        sections: dict[str, Any] = {"defaults": {"vault": STORE}}
+        if expected.startswith("profiles."):
+            sections["profiles"] = {PROFILE: {"vaults": {STORE: {"addr": "https://p.example.com"}}}}
+        if expected.startswith("defaults.vaults"):
+            # The one case with nothing on the declaration to outrank it.
+            sections["defaults"]["vaults"] = {STORE: {"addr": "https://d.example.com"}}
+            entry = {}
+        else:
+            entry = declared
+        config = build_config(document(entry, **sections), **how)
+        found[expected] = sources(config.vaults[0])["addr"]
+
+    assert found == {name: name for name in cases}
+
+
+def test_the_ratcheted_key_carries_the_layer_that_held_it() -> None:
+    """`tls.verify` is the one key where the winner is not the highest layer, and
+    the pair reports the floor -- the thing somebody has to go and edit."""
+    vault = merged({"tls": {"verify": True}}, **under_defaults(tls={"verify": False}))
+
+    assert vault.tls is not None
+    assert vault.tls.verify is True
+    assert sources(vault)["tls.verify"] == "vaults.vault-prod.tls.verify"
+
+
+def test_auth_is_named_by_patched_and_has_no_pair() -> None:
+    """It is replaced whole rather than resolved key by key, so no layer *won* a
+    key and there is no `Resolved` to report. `patched` still names it, which is
+    what the store's own `NOTE` column reads."""
+    vault = merged(
+        {"auth": {"method": "token"}},
+        **under_defaults(
+            auth={
+                "method": "approle",
+                "role_id": {"env": "ROLE_ID"},
+                "secret_id": {"env": "SECRET_ID"},
+            }
+        ),
+    )
+
+    assert "auth" in vault.patched
+    assert "auth" not in sources(vault)

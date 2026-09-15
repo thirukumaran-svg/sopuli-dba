@@ -38,18 +38,27 @@ SCHEMA = (
 
 
 def test_layer_values_match_the_published_source_enum() -> None:
-    """``Layer`` is serialised straight into ``invocation.options[].source``.
+    """``Layer`` is serialised straight into every ``source`` the schema carries.
 
     The schema is the contract (invariant 12) and this enum is what the tool will
     write into it, so a layer renamed here without a schema bump has to fail
     somewhere. This is that somewhere -- read from the committed schema rather
     than from a copy of its values, which would only assert the copy.
+
+    Read from ``$defs/resolved_setting``, which is where the triple moved in 1.23
+    when ``config.vaults[].settings`` became a second consumer of it (#428). One
+    definition of the layer enum rather than one per section, for the reason this
+    test exists at all: a second copy is a copy that can disagree.
     """
     document: Any = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    published = document["$defs"]["invocation"]["properties"]["options"]["additionalProperties"][
-        "properties"
-    ]["source"]["enum"]
+    published = document["$defs"]["resolved_setting"]["properties"]["source"]["enum"]
     assert [str(layer) for layer in Layer] == published
+
+    # Both consumers point at that one definition rather than restating it.
+    ref = {"$ref": "#/$defs/resolved_setting"}
+    assert document["$defs"]["invocation"]["properties"]["options"]["additionalProperties"] == ref
+    vaults = document["$defs"]["config_view"]["properties"]["vaults"]
+    assert vaults["items"]["properties"]["settings"]["additionalProperties"] == ref
 
 
 def test_authority_follows_declaration_order() -> None:

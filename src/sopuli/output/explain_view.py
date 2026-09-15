@@ -119,6 +119,14 @@ def _source(answer: Resolved) -> str:
         # source names itself -- and the layer is still a better answer than an
         # empty bracket if one ever does.
         return str(answer.layer)
+    if answer.layer is Layer.OBJECT:
+        # The same rule as below and it cannot be reached by matching, because
+        # the section a named object lives in is not named after the layer:
+        # `vaults.vault-dev.addr` is a key path into the file and "object" is
+        # this chain's word for its rank, which appears in nobody's YAML. P3
+        # calls the layer "target/vault-level setting", and the path already says
+        # which one and where.
+        return answer.detail
     if answer.detail.split(".", 1)[0].startswith(str(answer.layer)):
         # `defaults defaults.safety.readonly` says it twice. A config key path
         # already begins with the section it lives in, so the layer word adds

@@ -166,16 +166,23 @@ def apply_vault_layers(
 def _merge(
     vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], from_env: EnvKeys
 ) -> tuple[Vault, list[ConfigWarning]]:
-    """One store, resolved key by key. Returns it and any defeated relaxation."""
-    if not patches and not from_env:
-        # Nothing to merge, and skipping the resolver here is not an optimisation:
-        # a single contribution resolves to itself, so the two paths agree. What
-        # it avoids is inventing a `patched` provenance for a store nobody
-        # patched.
-        return vault, []
+    """One store, resolved key by key. Returns it and any defeated relaxation.
 
+    **Every store goes through the resolver, including one nobody patched**
+    (#428). This used to return early for that case, on the grounds that a single
+    contribution resolves to itself and the two paths therefore agree -- which is
+    true of the *value* and was the whole of what this function kept. It now keeps
+    the provenance too, and a store with no layers has provenance worth reporting:
+    ``[vaults.vault-dev.addr]`` is the answer "the file wrote it, here", and it is
+    only distinguishable from "nobody wrote it" because the pair exists.
+
+    :attr:`~sopuli.config.model.Vault.patched` is unaffected either way. It names
+    the keys some *other* layer supplied, which is the ``layer is not OBJECT``
+    test below rather than anything the early return was guarding.
+    """
     values: dict[str, Any] = {}
     patched: list[str] = []
+    settings: dict[str, Resolved] = {}
     warnings: list[ConfigWarning] = []
 
     for key in REACH_KEYS:
@@ -183,13 +190,15 @@ def _merge(
         if answer is None:
             continue
         values[key] = answer.value
+        settings[key] = answer
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
 
-    tls, tls_patched, tls_warnings = _merge_tls(vault, patches, from_env)
+    tls, tls_patched, tls_settings, tls_warnings = _merge_tls(vault, patches, from_env)
     if tls is not None:
         values["tls"] = tls
     patched.extend(tls_patched)
+    settings.update(tls_settings)
     warnings.extend(tls_warnings)
 
     auth = _highest(patch.auth for _, _, patch in patches)
@@ -197,15 +206,27 @@ def _merge(
         # Whole-block replacement, so there is nothing to merge and nothing to
         # keep from the declaration. `replace` leaves the declaration's own block
         # in place when no layer wrote one.
+        #
+        # No `settings` entry, for the same reason: there is no `Resolved` to
+        # report, one block having replaced another rather than a key having won.
+        # `patched` names it, which is what the store's own table column reads.
         values["auth"] = auth
         patched.append("auth")
 
-    return replace(vault, patched=tuple(sorted(patched)), **values), warnings
+    return (
+        replace(
+            vault,
+            patched=tuple(sorted(patched)),
+            settings=tuple(sorted(settings.items())),
+            **values,
+        ),
+        warnings,
+    )
 
 
 def _merge_tls(
     vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], from_env: EnvKeys
-) -> tuple[VaultTls | None, list[str], list[ConfigWarning]]:
+) -> tuple[VaultTls | None, list[str], dict[str, Resolved], list[ConfigWarning]]:
     """``tls:`` one member at a time, so ``verify`` can ratchet.
 
     ``None`` when no layer wrote a ``tls:`` block at all, which keeps "no block"
@@ -217,10 +238,11 @@ def _merge_tls(
     """
     wrote_tls = any(key.startswith("tls.") for key in from_env)
     if vault.tls is None and not wrote_tls and all(patch.tls is None for _, _, patch in patches):
-        return None, [], []
+        return None, [], {}, []
 
     values: dict[str, Any] = {}
     patched: list[str] = []
+    settings: dict[str, Resolved] = {}
     warnings: list[ConfigWarning] = []
     for key in TLS_KEYS:
         answer = _resolve_key(
@@ -229,6 +251,7 @@ def _merge_tls(
         if answer is None:
             continue
         values[key] = answer.value
+        settings[f"tls.{key}"] = answer
         if answer.layer is not Layer.OBJECT:
             patched.append(f"tls.{key}")
         note = ratchet_note(answer)
@@ -251,7 +274,7 @@ def _merge_tls(
                     hint="invariant 10: a safety setting cannot be relaxed by any layer",
                 )
             )
-    return VaultTls(**values), patched, warnings
+    return VaultTls(**values), patched, settings, warnings
 
 
 def _resolve_key(
@@ -269,6 +292,24 @@ def _resolve_key(
     layer 5. The environment contributes at layer 2 or 3, already addressed to
     this store by :mod:`sopuli.config.vault_env`. Which is higher is the
     resolver's business and not restated here.
+
+    **The answer is renamed to the concrete store on the way out** (#428, found
+    in review). :func:`setting_name` is what the registry has to be asked with --
+    ``vaults.*.tls.verify``, for the reason its own docstring gives -- and it is
+    not what a reader can be told: the ``*`` stands for every store at once and is
+    not a key anybody can edit. That distinction had nowhere to be made until
+    something quoted the name back, and two things now do.
+    :func:`~sopuli.settings.ratchet_note` puts it in the sentence a defeated
+    ``tls.verify`` produces -- which reaches an operator twice, as a warning on
+    every command that loads the file and as the continuation line under this
+    store's row in ``config show --explain``, where ``vaults.*.tls.verify stays
+    true`` sat directly beneath a row named ``vaults.vault-dev.tls.verify``.
+
+    Renamed **here** rather than in either view, because there are two of them and
+    they must not spell one sentence two ways -- the argument
+    :func:`~sopuli.settings.render_value` makes about a value appearing in a table
+    and in a note three lines below it. The registry lookup is unaffected; only
+    the label the answer carries changes.
     """
     contributions = list(from_env.get(key, ()))
     declared = _read(vault, key)
@@ -282,7 +323,8 @@ def _resolve_key(
             contributions.append(
                 Contribution(layer=layer, value=value, detail=str(_at(where, key)))
             )
-    return resolve(setting_name(key), contributions)
+    answer = resolve(setting_name(key), contributions)
+    return None if answer is None else replace(answer, setting=str(_at(at, key)))
 
 
 def _read(entry: Vault | VaultPatch, key: str) -> Any:

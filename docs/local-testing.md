@@ -9,8 +9,8 @@ stack. Where something was **not** verified it says so. Working paths in the
 samples are shortened to `C:\tmp\sopuli-guide\` — that is the only edit made to
 any output here.
 
-§15's run document was re-captured on 2026-09-14 on the same stack, against
-sopuli 0.61.0, when the run schema became 1.22 (#426), and §3's `sopuli about`
+§15's run document was re-captured on 2026-09-15 on the same stack, against
+sopuli 0.61.0, when the run schema became 1.23 (#428), and §3's `sopuli about`
 on 2026-09-11 against the same release, the one that added the command (#413). A
 sample carrying a field the tool has since gained -- or a `schema_version` it no
 longer emits -- is the failure this guide is most prone to, so the date moves
@@ -399,6 +399,7 @@ version: 1
 
 defaults:
   policy: standard
+  vault: vault-dev
 
 vaults:
   vault-dev:
@@ -498,10 +499,16 @@ Each of these is a real error message worth seeing once:
 
 All four cost me time while writing this guide, which is why they are here.
 
-### The one warning you will see without asking for it
+### `defaults.vault` is the line that makes three other things work
 
-If `VAULT_ADDR` is set in your shell — and it will be, because §8 tells you to set
-it — a config with no `defaults.vault` says so:
+`vault: vault-dev` under `defaults:` is not decoration. It names the **default
+store**, which is what `--vault-addr`, `SOPULI_VAULT_ADDR` and `VAULT_ADDR` all
+address — none of them names a store, and a run touching two vaults has two. Drop
+the line and all three stop working, in two different ways (§11 causes both on
+purpose).
+
+Drop it and `VAULT_ADDR` — which *will* be set in your shell, because §8 tells you
+to set it — warns instead of applying:
 
 ```
 ok: 1 target, 1 binding, 1 warning
@@ -514,8 +521,9 @@ ok: 1 target, 1 binding, 1 warning
           this machine
 ```
 
-That is correct behaviour and not a problem to fix: the store's `addr:` is in the
-file, so nothing is missing. It is here so you recognise it rather than chase it.
+Keep it and the variable is honoured silently instead, at P3's layer 3 — which
+means an exported `VAULT_ADDR` you forgot about is redirecting every run. §7 is
+how you see that; it is the case `config show --explain` exists for.
 
 ---
 
@@ -554,11 +562,15 @@ which is the fastest way to understand the precedence chain.
 
 ```
 settings
-  db.connect_timeout_s = 30     [built-in default]
-  db.query_timeout_s   = 0      [built-in default]
-  output               = text   [built-in default]
-  safety.dry_run       = false  [built-in default]
-  safety.readonly      = false  [built-in default]
+  db.connect_timeout_s        = 30                     [built-in default]
+  db.query_timeout_s          = 0                      [built-in default]
+  output                      = text                   [built-in default]
+  safety.dry_run              = false                  [built-in default]
+  safety.readonly             = false                  [built-in default]
+  vault                       = vault-dev              [defaults.vault]
+  vaults.vault-dev.addr       = http://127.0.0.1:8200  [vaults.vault-dev.addr]
+  vaults.vault-dev.kv_version = 2                      [vaults.vault-dev.kv_version]
+  vaults.vault-dev.mount      = kv                     [vaults.vault-dev.mount]
 ```
 
 Set `SOPULI_OUTPUT=json` and run it again to watch a layer change. Only three
@@ -567,6 +579,93 @@ variables reach a setting this way — `SOPULI_OUTPUT`, `SOPULI_DRY_RUN` and
 **There is no `SOPULI_READONLY` and no `SOPULI_MAX_TARGETS`**, and an invented one
 is ignored rather than refused, so a run you believe is guarded by an environment
 variable is not guarded at all. Those live in the file (§11).
+
+The `vaults.vault-dev.*` rows are the store's own settings (#428). A store's keys
+go through the same chain as the run's, so they get rows in the same table — and
+those three say `[vaults.vault-dev.…]`, meaning the file wrote them, right there.
+The next subsection is where that stops being the answer.
+
+### Where the store's address actually came from
+
+Export `VAULT_ADDR` at a different port and run the same command:
+
+```bash
+VAULT_ADDR=http://127.0.0.1:8202 sopuli --config sopuli.yaml config show --explain
+```
+```
+vaults
+NAME       TYPE       ADDRESS                NOTE
+vault-dev  hashicorp  http://127.0.0.1:8202  layered: addr
+
+...
+
+settings
+  ...
+  vaults.vault-dev.addr       = http://127.0.0.1:8202  [env_thirdparty VAULT_ADDR]
+  vaults.vault-dev.kv_version = 2                      [vaults.vault-dev.kv_version]
+  vaults.vault-dev.mount      = kv                     [vaults.vault-dev.mount]
+```
+
+Nothing is listening on 8202, the file says 8200, and the table is reporting the
+address the run will actually use — `layered: addr` in `NOTE` says a layer wrote
+it and the `settings` row says **which**. Seven sources can write that one key:
+
+| Source | Renders as |
+|---|---|
+| `--vault-addr URL` | `[cli --vault-addr]` |
+| `SOPULI_VAULT__VAULT_DEV__ADDR` | `[env SOPULI_VAULT__VAULT_DEV__ADDR]` |
+| `SOPULI_VAULT_ADDR` | `[env SOPULI_VAULT_ADDR]` |
+| `VAULT_ADDR` | `[env_thirdparty VAULT_ADDR]` |
+| a profile's `vaults:` block | `[profiles.<name>.vaults.vault-dev.addr]` |
+| the `vaults:` entry itself | `[vaults.vault-dev.addr]` |
+| `defaults.vaults:` | `[defaults.vaults.vault-dev.addr]` |
+
+Try any of them; they are all one command. **This is the question to ask first**
+when a command reaches a vault you did not expect — the `NOTE` column says
+`layered: addr` for six of those seven and nothing at all for the last, so until
+#428 they were one indistinguishable answer, and "a colleague's exported
+`VAULT_ADDR`" looked exactly like "I redirected this on purpose".
+
+`auth:` gets no row even when a layer replaced it. It is swapped whole rather
+than merged key by key, so no layer *won* a key — `NOTE` says `layered: auth` and
+that is the whole of it.
+
+`--output json` carries the same answer as `config.vaults[]`, in both views and
+whether or not you pass `--explain`:
+
+```bash
+sopuli --config sopuli.yaml config show --output json --vault-addr https://standby.example.com:8200
+```
+```json
+"vaults": [
+  {
+    "name": "vault-dev",
+    "type": "hashicorp",
+    "settings": {
+      "addr": {
+        "value": "https://standby.example.com:8200",
+        "source": "cli",
+        "source_detail": "--vault-addr"
+      },
+      "kv_version": {
+        "value": 2,
+        "source": "object",
+        "source_detail": "vaults.vault-dev.kv_version"
+      },
+      "mount": {
+        "value": "kv",
+        "source": "object",
+        "source_detail": "vaults.vault-dev.mount"
+      }
+    }
+  }
+]
+```
+
+An excerpt of the `config` section; the rest of the run document sits around it.
+Before this, **no** mode of `config show` reported a store's effective settings in
+JSON at all: `--explain` emitted `config.declared`, the address the *file* wrote,
+and `--resolved` dropped stores and emitted targets and bindings.
 
 ### Finding every `safety:` block in a file
 
@@ -640,15 +739,23 @@ One vault key has a flag, and it is the address (#422). Point a command at a
 different Vault without touching the file or exporting anything:
 
 ```
-$ sopuli --config sopuli.yaml config show --vault-addr http://127.0.0.1:8201
+$ sopuli --config sopuli.yaml config show --explain --vault-addr http://127.0.0.1:8201
 vaults
 NAME       TYPE       ADDRESS                NOTE
 vault-dev  hashicorp  http://127.0.0.1:8201  layered: addr
+
+...
+
+settings
+  ...
+  vaults.vault-dev.addr       = http://127.0.0.1:8201  [cli --vault-addr]
+  vaults.vault-dev.kv_version = 2                      [vaults.vault-dev.kv_version]
+  vaults.vault-dev.mount      = kv                     [vaults.vault-dev.mount]
 ```
 
 `layered: addr` is the store reporting that something above the file wrote that
-key. It is not cosmetic — nothing is listening on 8201, and a command that
-actually opens a socket says so:
+key, and `[cli --vault-addr]` is which. It is not cosmetic — nothing is listening
+on 8201, and a command that actually opens a socket says so:
 
 ```
 $ sopuli --config sopuli.yaml lock status --vault-addr http://127.0.0.1:8201
@@ -699,13 +806,17 @@ unattended
 ...
 
 settings
-  db.connect_timeout_s  = 60          [profiles.unattended.db.connect_timeout_s]
-  db.query_timeout_s    = 0           [built-in default]
-  locking.break_expired = true        [profiles.unattended.locking.break_expired]
-  output                = text        [cli --output (verb)]
-  profile               = unattended  [cli --profile (group)]
-  safety.dry_run        = false       [built-in default]
-  safety.readonly       = false       [built-in default]
+  db.connect_timeout_s        = 60                     [profiles.unattended.db.connect_timeout_s]
+  db.query_timeout_s          = 0                      [built-in default]
+  locking.break_expired       = true                   [profiles.unattended.locking.break_expired]
+  output                      = text                   [cli --output (verb)]
+  profile                     = unattended             [cli --profile (group)]
+  safety.dry_run              = false                  [built-in default]
+  safety.readonly             = false                  [built-in default]
+  vault                       = vault-dev              [defaults.vault]
+  vaults.vault-dev.addr       = http://127.0.0.1:8200  [vaults.vault-dev.addr]
+  vaults.vault-dev.kv_version = 2                      [vaults.vault-dev.kv_version]
+  vaults.vault-dev.mount      = kv                     [vaults.vault-dev.mount]
 ```
 
 Two things to read out of that. `--output text` on the command line beat the
@@ -2330,24 +2441,25 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.22.schema.json`](schemas/sopuli-run-1.22.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.23.schema.json`](schemas/sopuli-run-1.23.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json
 {
-  "schema_version": "1.22",
+  "schema_version": "1.23",
   "tool": { "name": "sopuli", "version": "0.61.0" },
   "command": "creds.check",
   "invocation": {
-    "correlation_id": "e6b18ffb-8fba-4ada-ab5c-1c04a2e69b7e",
-    "started_at": "2026-09-14T19:39:48.197867Z",
-    "duration_ms": 778,
+    "correlation_id": "ca133135-8721-4a4a-97e6-8a76f09323d4",
+    "started_at": "2026-09-15T05:38:04.219978Z",
+    "duration_ms": 916,
     "actor": { "os_user": "ville", "host": "Awesominator" },
     "dry_run": false,
     "config_files": ["C:\\tmp\\sopuli-guide\\sopuli.yaml"],
     "selection": { "applications": ["acme"] },
     "options": {
-      "output": { "value": "json", "source": "cli", "source_detail": "--output (group)" }
+      "output": { "value": "json", "source": "cli", "source_detail": "--output (group)" },
+      "vault": { "value": "vault-dev", "source": "defaults", "source_detail": "defaults.vault" }
     }
   },
   "summary": { "total": 1, "ok": 1, "changed": 0, "unchanged": 1, "drift": 0, "by_state": { "IN_SYNC": 1 } },
@@ -2367,7 +2479,7 @@ trimmed to its shape:
       "verification": { "method": "login", "result": "pass", "lcount": 0,
                         "failed_login_attempts_limit": "UNLIMITED", "lockout_margin_hit": false,
                         "previous_password_accepted": null },
-      "password_age_days": 0.0, "duration_ms": 91
+      "password_age_days": 0.0, "duration_ms": 150
     }
   ]
 }
@@ -2376,6 +2488,11 @@ trimmed to its shape:
 `invocation.options` is `--explain` in machine form, `plan.blast_radius` is what
 `max_targets` and `confirm_environments` read, and no field anywhere holds a
 password. Grepping a captured document for one is a reasonable thing to do once.
+
+`config show` adds `config.vaults[]` to that, which is where a *store's* settings
+and their layers are reported (#428) -- `invocation.options` deliberately carries
+only the run's, which is why `vault` is in the block above and
+`vaults.vault-dev.addr` is not.
 
 ---
 

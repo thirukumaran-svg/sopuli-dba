@@ -41,7 +41,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.22.schema.json`](../schemas/sopuli-run-1.22.schema.json),
+Schemas: [`../schemas/sopuli-run-1.23.schema.json`](../schemas/sopuli-run-1.23.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -327,6 +327,85 @@ A binding's `secret` is the ref **as written**, a string that round-trips
 structured form is `plan.units[].secret`, which is a different job: that one
 addresses a specific version at a specific moment, and this one records what the
 file says. Neither ever carries a value.
+
+#### `config.vaults[]` — which store, at which address, from which layer (#428)
+
+Present in **both** views, and the reason it is not a rider on either is that
+neither carried it: `declared` is the address the *file wrote*, and `resolved`
+dropped stores entirely to report targets and bindings. `doctor`'s own `vaults[]`
+has no `addr` either. So a consumer could not answer *which vault will this run
+talk to*, for any layer — true since the store layers were built rather than
+since `--vault-addr` was.
+
+```json
+"vaults": [
+  {
+    "name": "vault-dev",
+    "type": "hashicorp",
+    "settings": {
+      "addr": {
+        "value": "https://standby.example.com:8200",
+        "source": "cli",
+        "source_detail": "--vault-addr"
+      },
+      "kv_version": {
+        "value": 2,
+        "source": "object",
+        "source_detail": "vaults.vault-dev.kv_version"
+      },
+      "mount": {
+        "value": "kv",
+        "source": "object",
+        "source_detail": "vaults.vault-dev.mount"
+      }
+    }
+  }
+]
+```
+
+That forces an ordering worth stating: **you cannot report where `addr` came from
+before reporting what `addr` is.** The value is the substantive half and the
+provenance rides along with it — which also means this section answers the
+broader question *should `config show --resolved` report the stores a run will
+use*, and the answer is yes.
+
+A `settings` entry is the **same shape** `invocation.options` carries, and the
+schema has one `$defs/resolved_setting` both point at: it is one question about
+one resolver, and a second grammar for it would be two shapes a consumer has to
+learn for one fact. `source_detail` is a location and never a value, by that
+definition's own contract.
+
+**Not admitted into `invocation.options`**, which was the alternative and would
+contradict what that section means: `RESOLVED_SETTINGS` excludes a store's keys
+on the documented grounds that they "describe a store rather than a run", and
+`sopuli/invocation.py: _wired()` *raises* on a name that is not listed. The guard
+is right; the fix should not be to defeat it. Sharing the shape is not sharing
+the section.
+
+Four properties of the object:
+
+- **Always emitted, `[]` included**, following `install`'s always-present rule
+  rather than `shared_secrets`' sometimes-absent one — and for `vaults[]`' own
+  reason under `doctor`: every estate that does anything has stores, so an empty
+  array is a real answer here.
+- **`name` and `type` only, beside `settings`.** Both are the store's identity
+  and neither is layerable — a store that is HashiCorp from a laptop and OCI from
+  CI is two stores (C13). `non_production` and `locking` are deliberately absent:
+  both are declaration-only guardrails, `declared` carries them as written, and
+  `doctor` reports the second as `lock.mode`. Adding either later is additive.
+- **A key no layer wrote is absent**, not `null`. A store with no namespace has
+  no provenance for one, and a `null` would invite a consumer to branch on a
+  field that is empty almost always.
+- **`auth:` is not in `settings` at all.** It is replaced whole rather than
+  resolved key by key, so no layer *won* a key and there is no
+  `resolved_setting` to emit. It is also the one part of a store entry that
+  addresses credentials, and §4's redaction rule is easier to hold structurally
+  than by remembering: there is nowhere here for it to sit.
+
+Unlike the text table, the provenance is carried whether or not `--explain` was
+passed. There is nothing to filter — no `vaults.*` setting has a built-in
+default, so every key reported is one some layer actually wrote, which is the
+filter `invocation.options` applies and `--explain` lifts.
 
 ### `policy`, emitted by `policy sample`
 
@@ -1859,6 +1938,24 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.22 became 1.23 when `config show` learned to report the stores** (#428):
+`config.vaults[]`, additive, and a minor bump by the ordinary rule.
+
+It is the one entry in this list that fixes an *absence* rather than adding a
+fact. `config.declared` carried the address the file wrote and `config.resolved`
+carried no store at all, so "which vault will this run talk to" had no answer in
+either shape — and the text view had been answering it, from effective values,
+since the store layers were built. Two views of one command disagreeing about the
+same store is the defect; adding the provenance without the value would have been
+a smaller version of it.
+
+The same release lifted `invocation.options`' entry shape into
+`$defs/resolved_setting` and pointed both consumers at it. **That is not a
+contract change**: the definition is byte-for-byte what `options` inlined, so
+every document that validated before validates now. It is here because the layer
+enum lives in it, and two copies of an enum are two things that can disagree —
+which `tests/settings/test_registry.py` reads the schema specifically to prevent.
 
 **1.21 became 1.22 when the expanded estate gained a `safety:` block** (#426):
 `config.targets[].safety`, additive, and a minor bump by the ordinary rule rather
