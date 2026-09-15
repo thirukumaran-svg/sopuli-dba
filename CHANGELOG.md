@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.62.0](https://github.com/villebase/sopuli-dba/compare/v0.61.0...v0.62.0) (2026-09-15)
+
+
+### Features
+
+* add `--vault-addr`, layer 1 of `vaults.*.addr` ([#427](https://github.com/villebase/sopuli-dba/issues/427)) ([2224787](https://github.com/villebase/sopuli-dba/commit/22247872473a4aa4ded51bf086eac24525b6dcdb))
+* add `sopuli about`, the one command that is not a run ([#413](https://github.com/villebase/sopuli-dba/issues/413)) ([#414](https://github.com/villebase/sopuli-dba/issues/414)) ([9979a6c](https://github.com/villebase/sopuli-dba/commit/9979a6c59a5f76ac478912ca805406bde5cfe93d))
+* add a stderr spinner, on the one call that actually waits ([#419](https://github.com/villebase/sopuli-dba/issues/419)) ([#420](https://github.com/villebase/sopuli-dba/issues/420)) ([20be635](https://github.com/villebase/sopuli-dba/commit/20be6354821d1bb17749e70b2c66039937e7d073))
+* enforce a `safety:` block written on a target, a group or a target set ([#425](https://github.com/villebase/sopuli-dba/issues/425)) ([fc85d89](https://github.com/villebase/sopuli-dba/commit/fc85d89d336be46a42aa5bd15ec91185504d43a5))
+* read the password change date from SYS.USER$.PTIME where DBA_USERS lacks it, and say why when it is absent ([#386](https://github.com/villebase/sopuli-dba/issues/386)) ([#421](https://github.com/villebase/sopuli-dba/issues/421)) ([9887d7d](https://github.com/villebase/sopuli-dba/commit/9887d7d7a8a2eb2896fc97b1f5e50c06dcd2bf82))
+* report every `safety:` block in `config show`, and per target in JSON ([#429](https://github.com/villebase/sopuli-dba/issues/429)) ([8692bb0](https://github.com/villebase/sopuli-dba/commit/8692bb0a061d2b277135750c9af28f960653b516))
+* report which layer supplied each of a store's settings ([#428](https://github.com/villebase/sopuli-dba/issues/428)) ([#430](https://github.com/villebase/sopuli-dba/issues/430)) ([85f67bf](https://github.com/villebase/sopuli-dba/commit/85f67bffea406914a932d6ad7761d0bb26cd72ff))
+
 ## [0.61.0](https://github.com/villebase/sopuli-dba/compare/v0.60.0...v0.61.0) (2026-09-11)
 
 
