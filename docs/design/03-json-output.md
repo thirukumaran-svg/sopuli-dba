@@ -41,7 +41,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.21.schema.json`](../schemas/sopuli-run-1.21.schema.json),
+Schemas: [`../schemas/sopuli-run-1.22.schema.json`](../schemas/sopuli-run-1.22.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -1859,6 +1859,24 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.21 became 1.22 when the expanded estate gained a `safety:` block** (#426):
+`config.targets[].safety`, additive, and a minor bump by the ordinary rule rather
+than by any exception.
+
+What it reports is **the block in force for that target**, after a target set's
+template and its `overrides:` entry have been ratcheted together — not the
+flattened value the config model carries. The two differ exactly where an override
+asks for less than its template, and there the flattened one is the target layer's
+literal statement rather than what any run reads (#425). A contract that carried
+`readonly: false` for a target the tool then refuses to mutate would be the
+precise failure this property was added to remove.
+
+What it does **not** fold in is `defaults`, a profile, or a group. None of those is
+a property of a target, and folding them would make one object's answer depend on
+four while hiding which — `config.declared` already carries every block as
+written, and `config show`'s own `safety` section lists each by the key that
+writes it.
 
 **1.20 became 1.21 when a verb that will never exist left the `command` enum**
 (#392): `creds.promote` removed. The list above calls removing an enum value a

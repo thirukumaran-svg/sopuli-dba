@@ -1094,6 +1094,62 @@ in review on #425). Three reasons, and the third is the one that settles it:
 `defaults` and a profile still refuse it, and there the statement is a different
 one and coherent: *this file may not write anything*, lock store included.
 
+#### Seeing what a file guards (#426)
+
+A block's effect is enforced; **where it is written** is a separate question, and
+until #426 nothing answered it. `config show --explain` reports the *run's*
+settings, and `config show` applies no selector and builds no plan, so
+`safety.readonly = false [built-in default]` is the correct answer there for a
+file whose target sets it — §9 defines that phrase as *nothing else spoke*, and
+about the run, nothing did. The row was never the defect. The defect was that
+nothing else in the command said a block existed.
+
+`config show` now carries a **`safety` section**: one row per key, by the key that
+writes it, over every place a block may appear.
+
+```
+safety
+KEY                                                         VALUE      NOTE
+defaults.safety.confirm_environments                        prod
+groups.legacy.safety.confirm_environments                   prod, uat
+profiles.audit.safety.readonly                              true
+target_sets.appdb.overrides.appdb-dev-beta.safety.readonly  true
+target_sets.appdb.safety.max_targets                        4
+targets[0].safety.max_targets                               1
+targets[0].safety.readonly                                  true
+```
+
+Four things about it are decisions:
+
+- **Every block, not only the object layer.** `defaults` and a profile are already
+  visible in `--explain`'s table, and omitting them here would make this section
+  its own half-truth — a map of a file's guards with two of the six kinds of place
+  missing. The two views answer different questions and both are worth having.
+- **One row per key, not per block**, because a key path is what gets edited and a
+  block writes up to three of them. Deduplicated by that path, which collapses a
+  target set's template to one row however many targets it generates — the
+  template is one line in the file.
+- **An `overrides:` entry is its own line.** Reporting a patched key against the
+  template would point at the place the value is spelled the way the reader
+  expected. Keys the override did **not** write stay on the template's line, which
+  is the same rule the enforcement uses (`sopuli/settings/sources.py`).
+- **A defeated relaxation is marked, not hidden.** An override asking for less than
+  its template loses the ratchet, and its row says `defeated by the ratchet`.
+  Dropping it would leave somebody who wrote `readonly: false` with no sign of it
+  anywhere — this section's own failure in miniature — and showing it unmarked
+  beside rows that are in force would read as an effective value. A row is marked
+  only where nothing it applies to ever reads it, so a template lowered by one
+  generated target's override is not called defeated while it governs the rest.
+
+The section is absent from a file that writes no block.
+
+**`--resolved` answers it per target instead**, and the JSON contract with it:
+`config.targets[].safety` is the block in force for that target after the template
+and any `overrides:` entry have been ratcheted together, or `null`. `defaults`, a
+profile and a group are not folded in — none is a property of a target, and
+folding them would make one object's answer depend on four while hiding which.
+Schema 1.22, additive (`03-json-output.md`).
+
 #### What `confirm_environments` does when it fires (#292)
 
 Parsed since this document was written and **enforced since #292**, which is

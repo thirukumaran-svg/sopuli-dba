@@ -9,9 +9,9 @@ stack. Where something was **not** verified it says so. Working paths in the
 samples are shortened to `C:\tmp\sopuli-guide\` — that is the only edit made to
 any output here.
 
-§15's run document was re-captured on 2026-09-11 on the same stack, against
-sopuli 0.60.0, when the run schema became 1.21 (#392), and §3's `sopuli about`
-on the same day against 0.61.0, the release that added the command (#413). A
+§15's run document was re-captured on 2026-09-14 on the same stack, against
+sopuli 0.61.0, when the run schema became 1.22 (#426), and §3's `sopuli about`
+on 2026-09-11 against the same release, the one that added the command (#413). A
 sample carrying a field the tool has since gained -- or a `schema_version` it no
 longer emits -- is the failure this guide is most prone to, so the date moves
 per sample rather than for the file.
@@ -567,6 +567,72 @@ variables reach a setting this way — `SOPULI_OUTPUT`, `SOPULI_DRY_RUN` and
 **There is no `SOPULI_READONLY` and no `SOPULI_MAX_TARGETS`**, and an invented one
 is ignored rather than refused, so a run you believe is guarded by an environment
 variable is not guarded at all. Those live in the file (§11).
+
+### Finding every `safety:` block in a file
+
+The settings table above answers *what did this run resolve to*, and a
+`safety:` block on a target or a group is not a property of the run — so
+`safety.readonly = false [built-in default]` is the right answer there even for a
+file whose target sets it. The **`safety` section** answers the other question:
+what does this file guard, and where is it written.
+
+```
+$ sopuli --config estate.yaml config show
+...
+safety
+KEY                                                         VALUE      NOTE
+defaults.safety.confirm_environments                        prod
+groups.legacy.safety.confirm_environments                   prod, uat
+profiles.audit.safety.readonly                              true
+target_sets.appdb.overrides.appdb-dev-beta.safety.readonly  true
+target_sets.appdb.safety.max_targets                        4
+targets[0].safety.max_targets                               1
+targets[0].safety.readonly                                  true
+```
+
+One row per key, by the key that writes it — which is what you edit. A target
+set's template is one row however many targets it generates, and a block written
+in an `overrides:` entry is reported against the override rather than the
+template.
+
+The `NOTE` column fires in one case: an override asking for **less** than its
+template. Change `appdb-dev-beta`'s to `safety: { readonly: false }` and the row
+stays, marked, because the value is in your file and is not what any run reads:
+
+```
+target_sets.appdb.overrides.appdb-dev-beta.safety.readonly     false      defeated by the ratchet
+target_sets.appdb.safety.readonly                              true
+```
+
+The section is absent entirely from a file that writes no block, which is most of
+them.
+
+`--resolved` answers it per target instead, with the template and any override
+already ratcheted together:
+
+```
+$ sopuli --config estate.yaml config show --resolved --output json
+```
+```json
+{
+  "config": {
+    "targets": [
+      { "name": "legacy-pdb",      "safety": { "max_targets": 1, "readonly": true } },
+      { "name": "appdb-dev-alpha", "safety": { "max_targets": 4 } },
+      { "name": "appdb-dev-beta",  "safety": { "max_targets": 4, "readonly": true } }
+    ]
+  }
+}
+```
+
+One document per run, so that is an excerpt: every target carries the other
+fields of §15's `config.targets[]` beside `safety`, and the run document's own
+sections sit above it.
+
+`null` where nothing constrains the target — it writes no block, or writes an
+empty one, which guards the same. `defaults`, a profile and a group are **not**
+folded in: none of them is a property of a target, and `config.declared` carries
+every block as written.
 
 ### `--vault-addr`, the one flag that redirects a store
 
@@ -2264,26 +2330,27 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.21.schema.json`](schemas/sopuli-run-1.21.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.22.schema.json`](schemas/sopuli-run-1.22.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json
 {
-  "schema_version": "1.21",
-  "tool": { "name": "sopuli", "version": "0.60.0" },
+  "schema_version": "1.22",
+  "tool": { "name": "sopuli", "version": "0.61.0" },
   "command": "creds.check",
   "invocation": {
-    "correlation_id": "f8aa9373-77ca-456d-b5a4-5272a0ccf873",
-    "started_at": "2026-09-11T10:21:17.576520Z",
-    "duration_ms": 750,
+    "correlation_id": "e6b18ffb-8fba-4ada-ab5c-1c04a2e69b7e",
+    "started_at": "2026-09-14T19:39:48.197867Z",
+    "duration_ms": 778,
     "actor": { "os_user": "ville", "host": "Awesominator" },
     "dry_run": false,
     "config_files": ["C:\\tmp\\sopuli-guide\\sopuli.yaml"],
+    "selection": { "applications": ["acme"] },
     "options": {
       "output": { "value": "json", "source": "cli", "source_detail": "--output (group)" }
     }
   },
-  "summary": { "total": 1, "ok": 1, "changed": 0, "drift": 0, "by_state": { "IN_SYNC": 1 } },
+  "summary": { "total": 1, "ok": 1, "changed": 0, "unchanged": 1, "drift": 0, "by_state": { "IN_SYNC": 1 } },
   "exit_code": 0,
   "plan": {
     "units": [ { "account": "acme_app_user", "target": "free-pdb", "intent": ["verify"],
@@ -2300,7 +2367,7 @@ trimmed to its shape:
       "verification": { "method": "login", "result": "pass", "lcount": 0,
                         "failed_login_attempts_limit": "UNLIMITED", "lockout_margin_hit": false,
                         "previous_password_accepted": null },
-      "password_age_days": 0.0, "duration_ms": 118
+      "password_age_days": 0.0, "duration_ms": 91
     }
   ]
 }

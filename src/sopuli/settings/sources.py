@@ -224,7 +224,7 @@ def estate_contributions(config: Config) -> dict[str, list[Contribution]]:
     for expanded in config.expanded_targets:
         if expanded.name not in reached:
             continue
-        found.extend(_target_safety(expanded))
+        found.extend(target_safety(expanded))
     matched = [expanded.target for expanded in config.expanded_targets if expanded.name in reached]
     for group in config.groups:
         if group.safety is None or not any(matches(target, group.match) for target in matched):
@@ -274,8 +274,13 @@ def _safety(
     return safety_block(safety, at=f"{at}.safety", layer=layer)
 
 
-def _target_safety(expanded: ExpandedTarget) -> list[tuple[str, object, str, Layer]]:
+def target_safety(expanded: ExpandedTarget) -> list[tuple[str, object, str, Layer]]:
     """One target's ``safety:`` keys, and the line each was written on.
+
+    Public because :mod:`sopuli.output.config_view` needs the identical answer
+    (#426): a view that listed a generated target's keys by a rule of its own
+    would report an ``overrides:`` entry as the source of keys it never wrote,
+    which is the defect this function exists to avoid one layer down.
 
     Usually one block. **Two, where an ``overrides:`` entry patched it** (#424,
     found in review): `_patch_target` merges a patch into the template key by
