@@ -135,11 +135,12 @@ equally. One is now partially closed:
   `../design/02-oracle-privileges.md` §4, and what is still open in
   `../design/04-testing.md` §6 gate 2.
 - **The `T:` (12C) verifier in `SYS.USER$.SPARE4`** — its *layout* was read in
-  #431 (26ai, 21c, 18c and 11g; not 19c), recorded in
-  `../design/02-oracle-privileges.md` §2. Whether it can be *regenerated*
-  client-side is still fully open (#432), and `--method hash` depends on that,
-  not on the layout. Prototype it against a throwaway 19c before committing hash
-  mode to the CLI.
+  #431 and the client-side *derivation* reproduces it byte-for-byte in #432
+  (both on 26ai, 21c and 18c; not 19c), recorded in
+  `../design/02-oracle-privileges.md` §2. `--method hash` depends on this, and it
+  now holds; the one part still open is how an account with no `T:` degrades
+  (#433). Confirm the derivation on a throwaway 19c before committing hash mode
+  to the CLI.
 
 If this decision is ever reversed, write the package fresh against the design as
 it stands then, rather than recovering the draft from git history.

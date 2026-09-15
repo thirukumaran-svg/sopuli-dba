@@ -1529,10 +1529,13 @@ Oracle stores a salted PBKDF2-SHA512 verifier (the `12C` verifier in
 `SYS.USER$.SPARE4`). Given read access to that column, the tool could derive
 the verifier from the vault password and compare — **no authentication
 attempt, no failed-login counter, no lockout risk** — and it would work even
-for locked accounts. Whether the `T:` verifier can actually be reproduced
-client-side is #90's open question — its layout has been read (#431,
-`02-oracle-privileges.md` §2), the derivation has not (#432); if it can't, this
-whole method is dropped from the CLI.
+for locked accounts. The `T:` verifier can be reproduced client-side — measured
+in #432 on 26ai, 21c and 18c (`02-oracle-privileges.md` §2), which is what makes
+this method possible at all; a rollover window's two verifiers (`T:` previous,
+`t:` current) are told apart the same way, so this reports `ROLLOVER_ACTIVE`
+rather than drift. Unconfirmed on 19c, and #433 still owns the no-`T:`
+degradation case; if either goes wrong on a release that matters, the method is
+dropped from the CLI.
 
 Trade-offs to document honestly if it does ship:
 

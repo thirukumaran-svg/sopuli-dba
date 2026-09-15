@@ -343,12 +343,13 @@ measurement was not. A reader who resolves these against the issue tracker gets
 three wrong answers.
 
 - `unverified` `t-verifier` (#90) — **Whether a client can regenerate the `T:` (12C) verifier in `SYS.USER$.SPARE4`.**
-  The layout half is read (#431) on 26ai, 21c, 18c and 11g: `T:` is a 64-byte
-  digest then a 16-byte salt, the iteration count (4096) is sent at logon rather
-  than stored, and every set draws a fresh salt —
-  `sql/oracle/05_verifier_layout_probe.sql` has the field table. It is unread on
-  19c, 12.1 and 12.2. **Still open:** whether a client library reproduces the
-  derivation (#432), and how an account with no `T:` degrades (#433). Blocks
+  The layout is read (#431) and the derivation reproduces byte-for-byte (#432),
+  both on 26ai, 21c and 18c: `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt ‖
+  "AUTH_PBKDF2_SPEEDY_KEY", 4096, 64) ‖ salt)`, and a rollover window's two
+  verifiers (`T:` previous, `t:` current) are told apart the same way —
+  `sql/oracle/05_verifier_layout_probe.sql` and `06_verifier_reproduce.{sql,py}`.
+  It stays open on 19c, 12.1 and 12.2 (unread), and the entry stays `unverified`
+  for **the one part left: how an account with no `T:` degrades (#433).** Blocks
   `--method hash|both` only — `check`'s default (`login`) no longer waits on
   this (#86). If it does not reproduce reliably, **both non-login modes go**:
   `both` is login *plus* the verifier comparison, so it cannot survive a

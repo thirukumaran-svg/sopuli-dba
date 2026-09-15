@@ -291,10 +291,10 @@ That claim comes from a blog
 post, not Oracle documentation, and needs the same measure-don't-trust
 treatment #124 gives it before it goes anywhere near the install script.
 
-**`--method hash` remains unresolved, independent of the grant question:** the
-`T:` (12C, PBKDF2-SHA512) verifier in `SPARE4` must be regenerated client-side
-for hash mode to work at all (#90). What is *stored* has been read; whether a
-client can *regenerate* it has not. #90 is three parts:
+**`--method hash` is independent of the grant question**, and the `T:` (12C,
+PBKDF2-SHA512) verifier in `SPARE4` must be regenerated client-side for it to
+work at all (#90). The layout is read and the derivation reproduces; what is
+left is one degradation case. #90 is three parts:
 
 - **The layout — read on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and
   11g 11.2.0.2.0 (#431), 2026-09-15; unread on 19c, 12.1 and 12.2.** `SPARE4`
@@ -309,18 +309,46 @@ client can *regenerate* it has not. #90 is three parts:
   same password, so a stored verifier can only ever be compared by regenerating
   from *its* salt. Field table, normalisation notes and the probe:
   `sql/oracle/05_verifier_layout_probe.sql`.
-- **Reproduction (#432)** — the blocker, and still fully open. Prototype it
-  against a throwaway 19c before committing `--method hash` to the CLI. If it
-  does not reproduce reliably (unverified: t-verifier), drop **both non-login
-  modes** from the CLI surface entirely — `both` is login plus that same
-  verifier comparison, so a negative result takes it with `hash`, and a `both`
-  that quietly degraded to `login` would report a stronger check than it
-  performed.
-- **An account without `T:` (#433)** — 11g, measured above, has none, so hash
-  mode must degrade there rather than error.
+- **Reproduction — confirmed on 26ai, 21c and 18c (#432), 2026-09-15; not on
+  19c.** The stored `T:` digest regenerates byte-for-byte from the password:
 
-`login` with the optional `LCOUNT` guard is already the complete default path,
-so nothing else depends on the outcome.
+  ```
+  salt   = the last 16 bytes of the T: blob (its 32 trailing hex characters)
+  inter  = PBKDF2-HMAC-SHA512(password_utf8, salt || b"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)
+  digest = SHA-512(inter || salt)                # the 64-byte / 128-hex head of the blob
+  ```
+
+  The password is fed as raw UTF-8 with no case folding and no normalisation —
+  the non-ASCII case reproduces on the multibyte input unchanged, and a 128-byte
+  password reproduces on 26ai (it is rejected at DDL below 23ai, the 30-byte
+  limit of #383, which the probe reads from the server rather than a version).
+  4096 is the count the
+  server sends at logon (the layout bullet), not a value in `SPARE4`, so a
+  release sending a different one would not reproduce and must be measured, not
+  assumed — which is why 19c is still marked (unverified: t-verifier). The
+  reference derivation and the probe are `sql/oracle/06_verifier_reproduce.py`
+  and `.sql`.
+- **The rollover window carries two 12C verifiers, distinguishable client-side
+  (#432).** During a gradual rollover (measured on 26ai and 21c; 18c has no such
+  feature), `SPARE4` holds `T:` = the *previous* password and `t:` = the
+  *current* one, sharing one salt, alongside a non-verifier `V:` marker. So
+  `check` reports `ROLLOVER_ACTIVE` from the presence of two 12C verifiers, and
+  `--include-previous` tells current from previous by which prefix the vault
+  value reproduces — never by drift. Confirming this on real 19.12+ stays a
+  maintainer-tier item, as every rollover finding does.
+- **An account without `T:` (#433)** — 11g, measured under the layout bullet,
+  has none, so hash mode must degrade there rather than error. Still open, and
+  the one part left before the (unverified: t-verifier) marker can go.
+
+Since the derivation reproduces, `--method hash|both` is a mechanical
+implementation once #433 settles degradation. Were it ever to fail on a release
+that matters (19c), both non-login modes would leave the CLI entirely — `both`
+is login plus this same comparison, and a `both` that silently degraded to
+`login` would report a stronger check than it performed. Either way `login` with
+the optional `LCOUNT` guard is already the complete default path (#86), so no
+default depends on the outcome. **Invariant 14** governs any future server-side
+form: the verifier is never bound into a SQL predicate — the reproduction here
+is entirely client-side.
 
 ### §4 check 3, and the optional `V$PWFILE_USERS` grant
 
@@ -993,6 +1021,7 @@ is not worth recovering.
 | `sql/oracle/01_audit_policy.sql` | unified audit policy and correlation queries |
 | `sql/oracle/02_password_leak_probe.sql` | release gate 2: canary probe for password text retained anywhere queryable |
 | `sql/oracle/05_verifier_layout_probe.sql` | #431: reads the `SPARE4` verifier layout and locates the salt from a traced logon; derives nothing |
+| `sql/oracle/06_verifier_reproduce.{sql,py}` | #432: regenerates each stored `T:`/`t:` digest client-side and compares byte-for-byte, static passwords and a rollover window |
 | `sql/oracle/99_uninstall.sql` | remove the account and policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to revisit |
 

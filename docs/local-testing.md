@@ -2529,10 +2529,11 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
   scripts by hand for now.
 - **`--output jsonl`** and the streaming event contract. Nothing streams yet, so the
   format is deliberately not offered.
-- **`--method hash`**, verification without a login attempt. It depends on regenerating
-  the `T:` verifier in `SYS.USER$.SPARE4` client-side, which is unconfirmed — the
-  layout has been read (#431), the derivation has not (#432) — `verify.method`
-  parses in a profile and reaches no consumer.
+- **`--method hash`**, verification without a login attempt. The spike behind it
+  is done — the layout is read (#431) and the derivation reproduces (#432) — but
+  no product code ships it yet, and it stays out until #433 settles what happens
+  on an account with no `T:`. `verify.method` parses in a profile and reaches no
+  consumer.
 - **The `file`, `keyring` and `oci` stores.** Only `hashicorp` exists.
 - **A real wallet without a full Oracle install**, per §12.
 - **19c, and anything above tier 2.** The whole tier-2 matrix is done — 21c

@@ -60,10 +60,12 @@ detail.
 What is **not** deferred, and is worth saying because it looks like an omission:
 there is no ``offline_verify`` path in :meth:`Session.verify_password` beyond a
 method name. Whether the ``T:`` verifier in ``SYS.USER$.SPARE4`` can be
-reproduced client-side is #90, unanswered (unverified: t-verifier), and if it
-cannot then ``--method hash`` **and ``--method both``** are dropped from the CLI
-entirely -- ``both`` is login plus that same comparison, so it cannot outlive
-it. So the
+reproduced client-side is #90: it reproduces byte-for-byte on the releases
+measured (26ai, 21c, 18c -- #432), and stays open (unverified: t-verifier) until
+19c is confirmed and the no-``T:`` degradation case is settled (#433). Should it
+fail on a release that matters then ``--method hash`` **and ``--method both``**
+are dropped from the CLI entirely -- ``both`` is login plus that same
+comparison, so it cannot outlive it. So the
 vocabulary is representable -- it is the run document's, and the document was
 written before the doubt -- while
 :data:`OFFLINE_VERIFY` exists in this build to gate UC-1 §7's ``LCOUNT`` guard
