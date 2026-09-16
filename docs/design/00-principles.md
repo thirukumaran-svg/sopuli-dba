@@ -803,7 +803,11 @@ question is where their test database lives.
 
   Two gates confirm without consulting the setting, and are unaffected: `creds
   rotate` confirms unconditionally under UC-1 §8 step 1, and `lock break` always
-  has. `--confirm` is the yes given in advance for all three; a profile's
+  has. **A third is specified and not built**: UC-2's seen (`manual`) reset, where
+  the DBA sees a working password, confirms every time — decided on review of
+  #457, `../use-cases/uc-02-personal-account-passwords.md` §2. Whether `--confirm`
+  answers that one in advance is open, in #439; for the other gates and the
+  setting, `--confirm` is the yes given in advance; a profile's
   `confirm: false` says nobody could be asked, which makes a gated run *refuse*
   (exit 8) rather than proceed.
 

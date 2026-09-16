@@ -306,6 +306,27 @@ as fresh as the vault says, and nothing currently reads that column to decide
 anything, which is the cost this option accepts over option 3's thresholded
 `diagnostics[]` warning).
 
+**UC-2 (personal account passwords).** Two paths: an **unseen** default, where the
+DBA never sees the password, the tool writes it to a store meant for its owner
+alone, and nothing is expired — owner-only by the store's access control on an
+identity-scoped path (#447), and only as far as its delivery on a wrapping token,
+which is a bearer credential (#444, #456) — and a **seen** `manual` path, which is
+a deliberate exposure until the owner's first logon: non-default, confirmed,
+always expired. Decided on review of #457. ~~Is self-service in scope~~ (H5, #452 — **closed:**
+self-service means the owner fetching the password from a secure store, not
+resetting through the tool). Open: where a personal account is declared, so that
+invariant 5 still whitelists it (H1, #449); what is recorded about a reset with no
+vault as master (H2, #450); the noun and verbs (H3, #451); whether a reset
+verifies the password, unlocks, or ends a rollover window (H4, #455); how an
+estate restricts delivery methods — an `allowed_methods` intersection, which is a
+new ratchet shape, or a `forbidden_methods` union, which is the existing one (H6,
+#453); a reset never converges, so it needs either a second invariant-9 exemption
+or a convergent verb (H7, #454); and on the unseen path, what happens to the
+stored copy and how the DBA is shown unable to read it (H8, #459). The delivery
+section, and with it H6's amendment to invariant 10, is #456; how the seen path's
+one plaintext emission is narrowed is #439. See
+[use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) §9.
+
 ### Settled
 
 **The privilege model is direct `ALTER USER`.** The definer-rights package was
@@ -429,6 +450,24 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   Purely a display question — Q9 decided `--max-age-days` reads only the vault —
   and the tier-1 test pinning `PTIME` equal to the column fails on any release
   where the two part, so running the suite there settles it.
+- `unverified` `expire-rollover` (#438) — **What `ALTER USER … IDENTIFIED BY …
+  PASSWORD EXPIRE` does to an account whose profile sets `PASSWORD_ROLLOVER_TIME`.**
+  UC-2's **seen** (`manual`) reset is that one statement; its default, unseen reset
+  issues no expiry and is unaffected. On a rollover-capable release the old
+  password keeps authenticating after `IDENTIFIED BY` until the window closes.
+  Not run: whether the expiry also ends the old password's window, and whether the
+  statement is accepted during an open window at all. Needs 26ai and 21c, tier 1
+  and 2. Until it is measured, `use-cases/uc-02-personal-account-passwords.md` §4.3
+  refuses a seen reset on a rollover profile at plan time.
+- `unverified` `expire-ddl-text` (#438, #457) — **Whether `ALTER USER … IDENTIFIED BY
+  … PASSWORD EXPIRE` is retained or masked the way the bare `IDENTIFIED BY` form
+  is.** Gate 2's probe (`sql/oracle/02_password_leak_probe.sql`) issues the bare
+  form only, so every retention result in `design/02-oracle-privileges.md` §4 is a
+  result for that statement. Oracle's protection is keyed to the statement type,
+  which gives no reason to expect the suffix to change it and is not a measurement
+  that it does not. UC-2's **seen** (`manual`) reset is the suffixed form, so the
+  probe needs extending to it, on 26ai and 21c first; the default, unseen reset
+  issues the bare form and is covered by `ddl-text-versions`.
 - `verified` `vault-cas-conflict` (#103, #104) — **What a real Vault's
   compare-and-set conflict looks like on the wire** — **answered.** Against `hashicorp/vault:2.0.4` dev mode: every lost
   compare-and-set, whatever caused it (a stale `cas: 0`, a stale nonzero `cas`,
@@ -508,6 +547,15 @@ cannot be a mode of UC-1:
   point is that no human is in the loop at 03:00.
 
 *Defers to it today:* UC-1 §5 (deliberate expiry, #302).
+
+**Now drafted** as [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md)
+(#438) — part 1, with delivery to follow in #456. The paragraphs above are the
+argument for the use case existing; the document is where it is specified, and
+its questions are H1–H8. One correction to the paragraphs above: expiring
+deliberately is the point only on the **seen** path, where the DBA knows the
+password — a deliberate exposure that the owner's first logon ends. The default,
+unseen path writes it to a store meant for its owner alone and expires nothing;
+how far "alone" holds depends on the store form and its delivery (UC-2 §6, #456).
 
 ### UC-3 — run a statement across many targets
 

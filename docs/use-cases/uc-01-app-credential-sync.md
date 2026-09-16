@@ -1061,8 +1061,10 @@ Points that matter:
 
 - **Passwords cannot be bind variables.** DDL is literal text, so the password
   appears in the statement. Consequences to handle and document:
-  - quote the password and escape embedded `"` — or avoid `"` entirely via the
-    `alnum_safe` charset default
+  - quote the password, and **reject** a password containing `"` rather than
+    escape it — an Oracle quoted identifier has no escape for it (invariant 11).
+    The `alnum_safe` charset default never draws one. This bullet said "escape
+    embedded `"`" until #457, which contradicted the invariant it now cites
   - **not in `V$SQL`, on 26ai.** Measured on 26ai Free 23.26.2.0.0 in `CDB$ROOT`
     and a PDB: no cursor for the DDL is retained at all, so there is nothing to
     mask. Unified audit does retain the statement, masked to `IDENTIFIED BY *` at

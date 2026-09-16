@@ -123,7 +123,9 @@ Four things are worth knowing about it:
   `--confirm` and `--dry-run` as the two ways forward.
 
 Two commands confirm every time regardless of this setting: `creds rotate` and
-`lock break`.
+`lock break`. A third is designed but not built yet: resetting a person's own
+account password in the mode where the DBA sees the new password
+(`docs/use-cases/uc-02-personal-account-passwords.md`).
 
 ### The safety ratchet: settings can only get stricter
 
