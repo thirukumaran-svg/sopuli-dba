@@ -316,13 +316,16 @@ always expired. Decided on review of #457. ~~Is self-service in scope~~ (H5, #45
 self-service means the owner fetching the password from a secure store, not
 resetting through the tool). Open: where a personal account is declared, so that
 invariant 5 still whitelists it (H1, #449); what is recorded about a reset with no
-vault as master (H2, #450); the noun and verbs (H3, #451); whether a reset
-verifies the password, unlocks, or ends a rollover window (H4, #455); how an
+vault as master (H2, #450); the noun and verbs (H3, #451); how an
 estate restricts delivery methods — an `allowed_methods` intersection, which is a
 new ratchet shape, or a `forbidden_methods` union, which is the existing one (H6,
 #453); a reset never converges, so it needs either a second invariant-9 exemption
 or a convergent verb (H7, #454); and on the unseen path, what happens to the
-stored copy and how the DBA is shown unable to read it (H8, #459). The delivery
+stored copy and how the DBA is shown unable to read it (H8, #459). **H4 is
+decided** (#455): a reset never verifies a delivered password and reports
+`ACCOUNT_STATUS` instead, unlocks `LOCKED(TIMED)` by default while refusing a
+deliberate `LOCKED` at plan time, and ends an open rollover window by default with
+a flag to keep it — each measured on 26ai before it was decided. The delivery
 section, and with it H6's amendment to invariant 10, is #456; how the seen path's
 one plaintext emission is narrowed is #439. See
 [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) §9.
@@ -455,10 +458,16 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   UC-2's **seen** (`manual`) reset is that one statement; its default, unseen reset
   issues no expiry and is unaffected. On a rollover-capable release the old
   password keeps authenticating after `IDENTIFIED BY` until the window closes.
-  Not run: whether the expiry also ends the old password's window, and whether the
-  statement is accepted during an open window at all. Needs 26ai and 21c, tier 1
-  and 2. Until it is measured, `use-cases/uc-02-personal-account-passwords.md` §4.3
-  refuses a seen reset on a rollover profile at plan time.
+  **Measured on 26ai 23.26.2.0.0, 2026-09-16** (#455,
+  `sql/oracle/07_lock_and_rollover_probe.sql` Q7), and the answer is worse than the
+  guess was: the statement **is** accepted on a rollover profile, the resulting
+  status is `EXPIRED & IN ROLLOVER` — both at once — and **the expiry does not end
+  the old password's window.** The old password answers `ORA-28001`, not
+  `ORA-01017`, so it still authenticates and is merely expired, which leaves it a
+  way to set the new one. **21c is unmeasured, so this stays open**: needs 21c,
+  tier 2. Until it has one, `use-cases/uc-02-personal-account-passwords.md` §4.3
+  still refuses a seen reset on a rollover profile at plan time — now for a
+  measured reason rather than an absent one.
 - `unverified` `expire-ddl-text` (#438, #457) — **Whether `ALTER USER … IDENTIFIED BY
   … PASSWORD EXPIRE` is retained or masked the way the bare `IDENTIFIED BY` form
   is.** Gate 2's probe (`sql/oracle/02_password_leak_probe.sql`) issues the bare

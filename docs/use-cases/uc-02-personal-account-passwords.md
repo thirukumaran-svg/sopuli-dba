@@ -132,20 +132,37 @@ UC-1's vault payload answers three questions at once: when a password last chang
 
 ### 4.1 The statement
 
-One direct statement on each path. The seen path adds the expiry to it. The account
-is the quoted identifier in the spelling the dictionary gives back, as for UC-1 —
+**One statement sets the password; the reset may issue up to three.** H4 (#455)
+added the other two, and each is separate and conditional rather than a clause on
+the first — §5 has the reasons, and they are not tidiness. The account is the
+quoted identifier in the spelling the dictionary gives back, as for UC-1 —
 `account.quoted()` in `sopuli/driver/oracle/statements.py`:
 
 ```sql
--- unseen (default)
+-- 1. only where the account is LOCKED(TIMED); a deliberate LOCKED is refused (§5)
+ALTER USER "<ACCOUNT>" ACCOUNT UNLOCK
+
+-- 2. the reset itself
+--    unseen (default)
 ALTER USER "<ACCOUNT>" IDENTIFIED BY "<password>"
--- seen (manual)
+--    seen (manual)
 ALTER USER "<ACCOUNT>" IDENTIFIED BY "<password>" PASSWORD EXPIRE
+
+-- 3. only where a rollover window is open, and unless the flag keeps it (§4.3)
+ALTER USER "<ACCOUNT>" EXPIRE PASSWORD ROLLOVER PERIOD
 ```
+
+Statements 1 and 3 are each issued only where the state calls for them, so the
+ordinary reset of an unlocked account on a profile with no rollover time is still
+the single statement this section used to describe.
 
 Setting a password clears an existing `EXPIRED` state — Oracle's behaviour, which
 UC-1 §5 already relies on — so the unseen statement is the whole fix for an account
-that expired and whose owner no longer knows the password.
+that expired and whose owner no longer knows the password. **It is not the whole
+fix for one that is locked**, and that asymmetry is measured rather than assumed:
+`IDENTIFIED BY` leaves `LOCKED(TIMED)` exactly as it found it, down to the
+`LOCK_DATE`, and a logon with the *new* password is `ORA-28000` (§5, Q3). An
+expired account is fixed by the password; a locked one needs statement 1.
 
 What UC-1 §6.1 and `02-oracle-privileges.md` §4 settle about issuing `ALTER USER`
 binds on both paths, with **invariant 11 authoritative** wherever older wording
@@ -196,20 +213,58 @@ sets `PASSWORD_ROLLOVER_TIME` keeps accepting its **old** password after
 exposure.** Anyone who knows the old password can still authenticate until the
 window closes. In the usual case that is nobody — the owner forgot it — but that is
 a likelihood, not a guarantee, and a reset after a suspected disclosure is exactly
-the case where it is not nobody. Closing the window early is the
-`EXPIRE PASSWORD ROLLOVER PERIOD` statement `creds finish-rollover` issues (#263),
-and UC-1 §6.3 refuses to choose it for anyone, because it is destructive to whoever
-still holds the old password. Whether a UC-2 reset closes it by default, offers it,
-or never does is part of H4 (#455).
+the case where it is not nobody.
 
-**On the seen path it is unmeasured.** How `PASSWORD EXPIRE` combines with an open
-window — whether expiring the new password also ends the old one's, and whether
-the statement is accepted at all during one — has not been run
-(unverified: expire-rollover). Until it has, **a seen reset of an account whose
-profile sets a non-zero rollover time is refused at plan time**, naming the account
-and the profile, before any DDL is issued. That is invariant 4, and it is the
-project's standing rule for an unmeasured answer: refuse rather than guess. The
-unseen path remains available for the same account.
+**The reset ends the window, by default** — decided in H4 (#455). Closing it early
+is the `EXPIRE PASSWORD ROLLOVER PERIOD` statement `creds finish-rollover` issues
+(#263), and this is the one place UC-2 deliberately defaults the opposite way to
+UC-1. **UC-1 §6.3's argument does not transfer, and that is why this is not a
+contradiction.** `--strategy direct` is never chosen for somebody there because the
+old password's holders are applications that have not restarted yet — a blast radius
+the operator cannot see. Here the old password's only holder is the person being
+reset, and the premise of the reset is that they no longer have it. *A reset means
+the new password is the only one that works*; a reset that left the old one
+authenticating for an hour would not be one.
+
+Three things follow, and the first two are measured
+(`sql/oracle/07_lock_and_rollover_probe.sql`, Q6, on 26ai 23.26.2.0.0):
+
+- **It is a second statement, not a suffix.** `IDENTIFIED BY` then
+  `EXPIRE PASSWORD ROLLOVER PERIOD`, back to back in one session, which is the
+  shape `--strategy direct` already uses. Measured: after the first, status is
+  `OPEN & IN ROLLOVER` and **both** passwords authenticate; after the second,
+  status is `OPEN`, the old password is `ORA-01017` and the new one works. Issued
+  with no window open it is accepted silently and changes nothing, so an account
+  whose profile grants no window costs an extra statement and nothing else.
+- **It closes on an unverified change**, which UC-1 §6.3 refuses to do — it closes
+  only after the change is verified. UC-2 verifies nothing (§5), so the
+  precondition is dropped rather than inherited. That is safe here for the same
+  reason the default is: there is nobody holding the old password to strand.
+- **An explicit flag keeps the window**, for the reset where the person *does*
+  still know their old password and a grace period is a convenience. The
+  asymmetry is worth stating: **a reset after a suspected disclosure is exactly
+  the case that must not use it**, because there the old password is known to
+  somebody who should not have it. The flag's name is H3's (#451), with the rest
+  of the verb surface.
+
+**On the seen path it is measured on one release and the refusal stands anyway**
+(unverified: expire-rollover). #455's probe ran it on 26ai 23.26.2.0.0 (Q7), and
+the answer is worse than the guess: `IDENTIFIED BY … PASSWORD EXPIRE` **is**
+accepted on a rollover profile, the resulting `ACCOUNT_STATUS` is
+`EXPIRED & IN ROLLOVER` — both at once — and **expiring does not end the old
+password's window**. The old password answers `ORA-28001`, not `ORA-01017`: it
+still authenticates, and it is itself a way to set the new one. So on this path
+the expiry that is supposed to end the DBA's exposure leaves a second live
+password behind it for the length of the window.
+
+**A seen reset of an account whose profile sets a non-zero rollover time is
+therefore still refused at plan time**, naming the account and the profile, before
+any DDL is issued — invariant 4, and now for a measured reason rather than an
+absent one. The register entry needs 21c before it is settled, and a refusal
+lifted on one release is a refusal lifted on a guess about the others. Whether it
+lifts at all, and whether the answer is instead to close the window on this path
+too, belongs with #438/#457 rather than here. The unseen path remains available
+for the same account.
 
 ### 4.4 Guardrails
 
@@ -228,24 +283,82 @@ routine in a way #89 did not intend. Neither reading is taken here.
 ## 5. Lockout, unlocking, and self-service
 
 **A reset attempts no login**, so most of UC-1 §7 has nothing to guard: its six
-mitigations exist to stop a scheduled *check* from locking an account. What
-survives is H4 (#455):
+mitigations exist to stop a scheduled *check* from locking an account. H4 (#455)
+is what survived it, and it is now answered in three parts — each of them measured
+on a real database before it was decided, because every one turned on what Oracle
+actually does rather than on what the statement looks like.
 
-- **Does UC-2 ever verify a delivered password?** On the seen path a login with it
-  would consume the `EXPIRED` state the reset exists to create, so verifying by
-  login is wrong by construction there. The unseen path has no expiry to consume,
-  so the question is open on its own terms — a failed attempt still counts against
-  `FAILED_LOGIN_ATTEMPTS`. Verifying by hash depends on #437 and #90, and never by
-  a bound value (invariant 14).
-- **Does a reset unlock, or end a rollover window?** People ask for a reset because
-  they are locked out. But 01-configuration §8 makes every account attribute opt-in
-  *as a rule, not a default*, and `unlock_if_locked` is `false` (#300). That rule
-  was argued for a rotation nobody asked to change anything else; a person's reset
-  is arguably asked for. **`LOCKED(TIMED)` is part of the same question, not a
-  variant of `LOCKED`**: Oracle clears it when `PASSWORD_LOCK_TIME` passes, so a
-  reset that does not unlock leaves the owner waiting on that timer rather than
-  locked indefinitely. Whether setting a password affects the timer has not been
-  run, and nothing here assumes it does.
+**A reset never verifies the password it delivered** (H4, #455). Not by login and
+not by hash, on either path. The seen path has the argument that was always
+obvious — a login would consume the `EXPIRED` state the reset exists to create —
+but the reason that covers both paths is stronger and is about the tool rather
+than the account: **verification is the one thing that would put the password
+somewhere other than the store.** A login means the tool holds and uses a value
+the unseen path otherwise only writes; a hash comparison needs the optional
+`SELECT ON SYS.USER$` grant and a derivation still unconfirmed on 19c (#433, #90),
+and never a bound value (invariant 14). Both spend the unseen path's own
+guarantee to learn something nobody asked for.
+
+**Reporting `ACCOUNT_STATUS` is not verification, and the reset always does it** —
+before and after. UC-1 §7's mitigation 6 is the single piece of that apparatus
+UC-2 keeps; mitigations 1–5 have nothing to guard.
+
+**The two reads are not the same cost, and only the first is free.** The
+*before* status is already in hand: `describe_user` reads it as the input to the
+unlock decision below, to §4.3's window decision and to §4.4's guardrails, so
+reporting it adds nothing. The *after* status is **a second dictionary read**, and
+it has to be — `ALTER USER` returns no status, so nothing about the DDL's success
+tells the tool what state the account ended in. An implementation that reported
+the pre-reset status as the outcome would be reporting stale state on exactly the
+runs where it matters: the reset that unlocked an account, or the one that did
+not. The status afterwards is what shows the reset did what it said — the
+`EXPIRED` component on the seen path, its absence on the unseen one.
+
+**A reset unlocks `LOCKED(TIMED)` by default, and refuses a deliberate `LOCKED`.**
+This is the one place UC-2 departs from 01-configuration §8's rule that every
+account attribute is opt-in, and it needs the justification that rule asks for.
+Measured on 26ai 23.26.2.0.0 (`sql/oracle/07_lock_and_rollover_probe.sql`, Q3 and
+Q4):
+
+- **`ALTER USER … IDENTIFIED BY` does not clear either lock.** Status, `LOCK_DATE`
+  and `LCOUNT` are all unchanged, and a login with the **new** password is
+  `ORA-28000`. So a reset that does not unlock does not let the person in — it
+  fixes the thing they did not ask about and leaves the thing they did. §8's rule
+  was argued for a rotation nobody asked to change anything else; this is the
+  opposite case, and the change is the one that was asked for.
+- **The two locks are different asks, and Oracle tells them apart.**
+  `LOCKED(TIMED)` is what a failed-login limit produced — a lock nobody chose,
+  which `PASSWORD_LOCK_TIME` clears on its own — and it is the state a person who
+  asks for a reset is actually in. Plain `LOCKED` is one a DBA issued, and on a
+  *personal* account that usually means offboarding or suspension. A reset that
+  silently cleared it would re-enable an account somebody disabled on purpose, and
+  the DBA running the reset need not be the one who disabled it. H1 (#449) does not
+  remove that risk: a departed person's account stays declared until somebody
+  removes it.
+- So plain `LOCKED` **fails at plan time**, naming the account and the lock, and
+  `--force` or the explicit unlock flag is what proceeds. The unseen path has no
+  confirmation prompt to catch it — only the seen path confirms (§2) — so the plan
+  is the only place it can surface.
+
+**The unlock is its own statement, issued first**, in UC-1 §5's order: guardrails,
+unlock, then the password. Not folded into one `ALTER USER … ACCOUNT UNLOCK
+IDENTIFIED BY …`, although Q5 measured that both clause orders are accepted. Two
+reasons, and neither is style. `protocol.py` requires each attribute to be reported
+as its own change, and a combined statement would be one result describing two
+mutations; and the combined form is a statement shape **no leak probe has been run
+against** — every retention result in `02-oracle-privileges.md` §4 is for the bare
+`IDENTIFIED BY` form. Two already-measured statements beat one unmeasured one that
+buys only atomicity.
+
+**The unlock is read-then-issue, never issued unconditionally**, and that is a
+measurement rather than a preference. Q1: `ACCOUNT UNLOCK` against an account that
+is *not* locked is accepted silently but **resets `SYS.USER$.LCOUNT`** — 2 before,
+0 after — while `IDENTIFIED BY` does not (Q2). "It does no harm even if the account
+is not locked" is false on that axis: it clears the failed-login counter UC-1 §7's
+`--lockout-margin` reads. So the driver reads the lock state and issues nothing
+where there is no lock, reporting `applied: false`, exactly as #300 already does.
+That also makes the unlock and the window-close the two *convergent* steps of an
+otherwise non-convergent verb, which is H7's (#454) to use.
 
 **Self-service here means fetching, not resetting.** An owner who knows their
 password changes it themselves, without the tool: before expiry with
@@ -309,7 +422,7 @@ restricts the set of methods is H6 (#453).
 | 1 | no secret in `argv` | binds unchanged, including every store credential |
 | 2 | redaction at the serialiser | binds. A **Vault** write is already a permitted plaintext path, so the Vault forms of the unseen path need no widening; the other stores (#445, #446, `smtp_encrypted`) are not automatically one, and #456 says how each keeps the invariant. The seen path's display is not a permitted path, and is #439 |
 | 3 | branch on capability, not version | binds — rollover (§4.3) is a capability |
-| 4 | unavailable capability fails at plan time | binds — §4.3's seen-path refusal, §4.4's guardrails, and possibly H8's store check |
+| 4 | unavailable capability fails at plan time | binds — §4.3's seen-path refusal, §5's refusal of a deliberate `LOCKED`, §4.4's guardrails, and possibly H8's store check |
 | 5 | the config is the whitelist | binds; *where* the account is declared is H1 |
 | 6 | vault is master | nothing to govern — no master (§1) |
 | 7 | never promote before confirmation | nothing to govern — no promotion (§1) |
@@ -319,7 +432,7 @@ restricts the set of methods is H6 (#453).
 | 11 | no `"` in a password | binds, by generation; authoritative over UC-1 §6.1's older wording |
 | 12 | JSON output is versioned | binds — new verbs and events are schema bumps |
 | 13 | no password literal in a PL/SQL block | binds on both statements (§4.1) |
-| 14 | no password bound into a predicate | binds — relevant only if H4 verifies by hash |
+| 14 | no password bound into a predicate | binds, and nothing here reaches it: H4 decided a reset never verifies, by hash or by anything else (§5) |
 
 Invariants 6 and 7 not governing is a property of this use case, not an exemption
 from them: a store here holds a value for one person to fetch, never a value to be
@@ -339,13 +452,29 @@ What a test must show, once there is something to test:
 - **unseen:** after a reset the account is not `EXPIRED`; the value is retrievable
   by the owner's identity or wrapping token and by nothing the DBA holds (H8); the
   statement sent carries no `PASSWORD EXPIRE`; the password appears in no output of
-  the tool's at all;
+  the tool at all;
 - **seen:** the reset does not run without confirmation; afterwards
   `DBA_USERS.ACCOUNT_STATUS` carries the `EXPIRED` component — `EXPIRED`, or
-  `EXPIRED & LOCKED` for an account that stays locked under whatever H4 decides —
+  `EXPIRED & IN ROLLOVER` on a rollover profile, which is the combination §4.3
+  refuses at plan time and which #455's probe measured rather than predicted —
   and, for an account that is not locked, a logon with the password is forced to
   change it; a rollover profile is refused at plan time (§4.3); the password is
   emitted exactly once, by the path #439 decides, and nowhere else;
+- **the H4 behaviours (§5, §4.3)**, and each of these is a tier-1 assertion
+  because each was a measurement first. **The unlock assertion differs by path,
+  and saying so is the point**: on the **unseen** path a reset of a
+  `LOCKED(TIMED)` account leaves it `OPEN` and the owner able to log in with the
+  new password *and nothing else*; on the **seen** path the same reset leaves
+  `EXPIRED`, so what is asserted there is that the first logon is **forced to
+  change the password**, never a plain login — the expiry that path exists for is
+  not an obstacle the unlock removes. Then, on both: a reset of a deliberately
+  `LOCKED` account is refused at plan time and issues no DDL; an account that is
+  not locked gets no `ACCOUNT UNLOCK` statement at all, which is checked by
+  reading `SYS.USER$.LCOUNT` across the reset and finding it unmoved — the
+  assertion that would have caught the Q1 behaviour had anyone thought to write
+  it; and a reset on a rollover profile leaves the old password answering
+  `ORA-01017`, with the window-keeping flag the one way to see
+  `OPEN & IN ROLLOVER` afterwards;
 - **both:** the password appears in no run document, diagnostic or log sink, and in
   no jsonl event once that stream exists. The seen path's one deliberate emission
   is the only exception, and it is what that path's confirmation guards;
@@ -367,7 +496,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 | H1 | Where is a personal account declared, so invariant 5 still whitelists it? | #449 |
 | H2 | With no vault as master, what is recorded about a reset, and where? | #450 |
 | H3 | The noun and the verbs | #451 |
-| H4 | Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window? | #455 |
+| ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
 | H6 | Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union? | #453 |
 | H7 | A reset never converges: a second invariant-9 exemption, or a convergent verb? | #454 |
@@ -378,5 +507,9 @@ Deliberately not a question with an issue: §4.4's collision between guardrail
 check 4 and DBA accounts in scope, which is decided #89 applied to a population it
 was not written for, and is stated so that H1 and part 2 meet it rather than
 rediscover it. The seen path's default for ending a rollover window is not one
-either: the refusal stands until `expire-rollover` is measured, and the register
-entry is where that is tracked.
+either: the refusal stands until `expire-rollover` is settled, and the register
+entry is where that is tracked. **It is now measured on 26ai and still not
+settled** (#455) — the statement is accepted, the status is `EXPIRED & IN
+ROLLOVER`, and the expiry leaves the old password authenticating; what is missing
+is 21c, so what the refusal waits on is a second release rather than a first
+measurement (§4.3).
