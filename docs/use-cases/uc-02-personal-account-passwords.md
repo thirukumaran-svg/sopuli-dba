@@ -113,11 +113,22 @@ delivery method. As a flag it would leave the reset's delivery arguments
 meaningless in half its invocations, which is how a verb acquires options that are
 errors in most combinations.
 
-**Two verbs are deliberately absent, and for different reasons.** Locking an
-account — the offboarding case — is **#463**, split out because `lock` already
-means something else in this CLI (`lock status` and `lock break`, on vault paths),
-and a second sense of the word has to be settled before a verb name reaches the
-JSON contract, where renaming it is a major bump (invariant 12). A **listing**
+**Two more verbs, and neither is specified here.** Disabling an account — the
+offboarding case — is **`sopuli account suspend`**. It is *named* rather than
+merely deferred, because the name had to be settled before it reached the JSON
+contract, where renaming a verb is a major bump (invariant 12): `lock` already
+means something else in this CLI — `lock status` and `lock break`, the advisory
+locks on vault paths — and a second sense of that word would have been two
+meanings in one surface. Of the three ways out, living with the collision,
+renaming this verb, or renaming the advisory-lock noun, the middle one costs
+nothing and reads better for the case that motivates it.
+
+**The rename is of the verb, not of the state.** `suspend` is what a DBA does to
+a person's account when they leave; `LOCKED` is what `ACCOUNT_STATUS` then says,
+and §5 already depends on that word meaning Oracle's fact rather than ours. The
+statement is still `ALTER USER … ACCOUNT LOCK`, and **#463** specifies the verb.
+
+A **listing**
 verb is not decided here at all, because whether one is needed depends on H1
 (#449): if personal accounts are enumerated in `accounts:` then `creds status`
 already surveys them, and if they are identified by a predicate — a profile, a
@@ -525,7 +536,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 |---|---|---|
 | H1 | Where is a personal account declared, so invariant 5 still whitelists it — and, following from that, does UC-2 need a listing verb of its own or does `creds status` already survey them (§2)? | #449 |
 | H2 | With no vault as master, what is recorded about a reset, and where? | #450 |
-| ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, because the config declares `accounts:`; the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; locking is split out to #463 over the `lock` collision, and listing folds into H1 (§2) · #451 |
+| ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, because the config declares `accounts:`; the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; suspending an account is `account suspend`, named that way to avoid a second sense of `lock` and specified in #463; and listing folds into H1 (§2) · #451 |
 | ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
 | H6 | Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union? | #453 |

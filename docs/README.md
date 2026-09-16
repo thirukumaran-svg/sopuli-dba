@@ -329,9 +329,10 @@ a flag to keep it — each measured on 26ai before it was decided. **H3 is decid
 (#451): the noun is `account` — the configuration's own word for what is being
 managed, which settles the vocabulary and not the file, since where a personal
 account is declared is still H1's — and the verbs are `reset-password` and
-`expire-password`; locking is split out to #463 over the collision with
-`lock break`, and whether a listing verb is needed at all follows from H1 rather
-than being settled twice. The delivery
+`expire-password`; suspending an account is `account suspend` — named that way to
+avoid a second sense of `lock`, which already means the advisory locks `lock break`
+takes, and specified in #463 — and whether a listing verb is needed at all follows
+from H1 rather than being settled twice. The delivery
 section, and with it H6's amendment to invariant 10, is #456; how the seen path's
 one plaintext emission is narrowed is #439. See
 [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) §9.
