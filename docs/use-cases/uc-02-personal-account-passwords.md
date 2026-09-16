@@ -76,16 +76,26 @@ password as a record of it.
 
 ## 2. Commands
 
-**Not named yet** — H3 (#451) is the noun and the verbs, and D2's noun-verb
-grammar is the only constraint already binding. What the use case needs, whatever
-it ends up being called:
+**The noun is `account`** — H3 (#451), decided. Not `user`, although Oracle says
+user and the driver agrees with it (`describe_user`, `UserState`): *account* is
+the word the configuration already uses for the thing being managed, and every
+other noun in this CLI mirrors the file an operator edits rather than the
+database — `target`, `policy`, `lock`, `creds`. D2's noun-verb grammar is
+satisfied either way, so the tie goes to the configuration's own vocabulary.
 
-| Operation | What it does | Mutates |
+**That settles the word and nothing about the file.** Whether a personal account
+is declared in today's `accounts:` list, in a shape of its own, or by a predicate
+over a profile or a role is H1 (#449), and it is open — so this deliberately does
+not rest on invariant 5 pointing at any particular key. The argument is only that
+somebody who reads `accounts:` in a configuration file should not have to type
+`user` at a prompt, and it holds whichever shape H1 chooses.
+
+| Command | What it does | Mutates |
 |---|---|---|
-| reset, unseen (default) | generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody | yes |
-| reset, seen (`manual`) | generate a password, set it **with expiry**, show it once — after confirmation | yes |
-| plan | either of the above under `--dry-run`, printing the plan and never a password (invariant 8) | no |
-| expire only | `PASSWORD EXPIRE` with no new password — "make them change it" | yes |
+| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody | yes |
+| `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, show it once — after confirmation | yes |
+| `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password — "make them change it" | yes |
+| either, under `--dry-run` | prints the plan and never a password (invariant 8) | no |
 
 **The seen reset asks for confirmation every time** — decided on review of #457,
 and recorded in P5 beside the two gates that already do, `creds rotate` and
@@ -95,7 +105,26 @@ it does those two, is not decided here: it is the one reset where the prompt is 
 point, and it belongs with the rest of how the seen path's one plaintext emission
 is narrowed, in #439.
 
-Whether *expire only* is its own verb, a flag, or out of scope is part of H3.
+**`expire-password` is its own verb rather than a flag on the reset**, which is
+the half of H3 this section used to leave open. The two operations differ in what
+they take, not only in what they do: a reset draws a password and therefore needs
+somewhere to deliver it, while expiring one needs neither a password nor a
+delivery method. As a flag it would leave the reset's delivery arguments
+meaningless in half its invocations, which is how a verb acquires options that are
+errors in most combinations.
+
+**Two verbs are deliberately absent, and for different reasons.** Locking an
+account — the offboarding case — is **#463**, split out because `lock` already
+means something else in this CLI (`lock status` and `lock break`, on vault paths),
+and a second sense of the word has to be settled before a verb name reaches the
+JSON contract, where renaming it is a major bump (invariant 12). A **listing**
+verb is not decided here at all, because whether one is needed depends on H1
+(#449): if personal accounts are enumerated in `accounts:` then `creds status`
+already surveys them, and if they are identified by a predicate — a profile, a
+role — then something has to resolve that predicate and show what it matched.
+That is the same question as *where a personal account is declared*, so it is
+answered there rather than in two places with two answers.
+
 Whether there is a read verb — "when was this person last reset" — depends on H2.
 
 Every operation is limited to declared accounts. **Where a personal account is
@@ -244,8 +273,9 @@ Three things follow, and the first two are measured
   still know their old password and a grace period is a convenience. The
   asymmetry is worth stating: **a reset after a suspected disclosure is exactly
   the case that must not use it**, because there the old password is known to
-  somebody who should not have it. The flag's name is H3's (#451), with the rest
-  of the verb surface.
+  somebody who should not have it. The flag is named when the verb is built: H3
+  (#451) settled the noun and the verbs, and deliberately invented no flags for an
+  operation nobody has implemented yet.
 
 **On the seen path it is measured on one release and the refusal stands anyway**
 (unverified: expire-rollover). #455's probe ran it on 26ai 23.26.2.0.0 (Q7), and
@@ -493,9 +523,9 @@ Tests declare the capabilities they need and skip with a reason when absent
 
 | # | Question | Issue |
 |---|---|---|
-| H1 | Where is a personal account declared, so invariant 5 still whitelists it? | #449 |
+| H1 | Where is a personal account declared, so invariant 5 still whitelists it — and, following from that, does UC-2 need a listing verb of its own or does `creds status` already survey them (§2)? | #449 |
 | H2 | With no vault as master, what is recorded about a reset, and where? | #450 |
-| H3 | The noun and the verbs | #451 |
+| ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, because the config declares `accounts:`; the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; locking is split out to #463 over the `lock` collision, and listing folds into H1 (§2) · #451 |
 | ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
 | H6 | Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union? | #453 |

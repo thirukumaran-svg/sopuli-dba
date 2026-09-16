@@ -316,7 +316,7 @@ always expired. Decided on review of #457. ~~Is self-service in scope~~ (H5, #45
 self-service means the owner fetching the password from a secure store, not
 resetting through the tool). Open: where a personal account is declared, so that
 invariant 5 still whitelists it (H1, #449); what is recorded about a reset with no
-vault as master (H2, #450); the noun and verbs (H3, #451); how an
+vault as master (H2, #450); how an
 estate restricts delivery methods — an `allowed_methods` intersection, which is a
 new ratchet shape, or a `forbidden_methods` union, which is the existing one (H6,
 #453); a reset never converges, so it needs either a second invariant-9 exemption
@@ -325,7 +325,13 @@ stored copy and how the DBA is shown unable to read it (H8, #459). **H4 is
 decided** (#455): a reset never verifies a delivered password and reports
 `ACCOUNT_STATUS` instead, unlocks `LOCKED(TIMED)` by default while refusing a
 deliberate `LOCKED` at plan time, and ends an open rollover window by default with
-a flag to keep it — each measured on 26ai before it was decided. The delivery
+a flag to keep it — each measured on 26ai before it was decided. **H3 is decided**
+(#451): the noun is `account` — the configuration's own word for what is being
+managed, which settles the vocabulary and not the file, since where a personal
+account is declared is still H1's — and the verbs are `reset-password` and
+`expire-password`; locking is split out to #463 over the collision with
+`lock break`, and whether a listing verb is needed at all follows from H1 rather
+than being settled twice. The delivery
 section, and with it H6's amendment to invariant 10, is #456; how the seen path's
 one plaintext emission is narrowed is #439. See
 [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) §9.
