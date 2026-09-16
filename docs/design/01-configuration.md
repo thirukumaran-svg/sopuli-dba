@@ -66,6 +66,19 @@ purpose — the worked example in §2 has a CDB root for common-user maintenance
 cannot be bound by the inline form at all, because "all targets" would include
 the ones this application has nothing to do with. §2 shows what that looks like.
 
+**A third declaration is decided and is not written here yet.** UC-2's personal
+accounts are declared in `personal_accounts:` — by name, or by a predicate over a
+profile or a role — decided in H1 (#449) and specified in
+[`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §2.
+It is deliberately *not* an application binding, for the reason the next paragraph
+gives: nothing masters a personal account's password, so none of the three things
+an application entry exists for applies to one.
+
+The keys, the generated schema, the validators, and the rule that **a name may not
+be declared both ways**, are **#467**. Until that lands, this reference documents
+what is built — the two forms above — and the heading is a statement about
+application bindings rather than about the whole configuration.
+
 ### What an application entry actually is
 
 It is the statement: *these accounts, in these targets, are mastered by these

@@ -314,8 +314,7 @@ which is a bearer credential (#444, #456) — and a **seen** `manual` path, whic
 a deliberate exposure until the owner's first logon: non-default, confirmed,
 always expired. Decided on review of #457. ~~Is self-service in scope~~ (H5, #452 — **closed:**
 self-service means the owner fetching the password from a secure store, not
-resetting through the tool). Open: where a personal account is declared, so that
-invariant 5 still whitelists it (H1, #449); what is recorded about a reset with no
+resetting through the tool). Open: what is recorded about a reset with no
 vault as master (H2, #450); how an
 estate restricts delivery methods — an `allowed_methods` intersection, which is a
 new ratchet shape, or a `forbidden_methods` union, which is the existing one (H6,
@@ -327,12 +326,19 @@ decided** (#455): a reset never verifies a delivered password and reports
 deliberate `LOCKED` at plan time, and ends an open rollover window by default with
 a flag to keep it — each measured on 26ai before it was decided. **H3 is decided**
 (#451): the noun is `account` — the configuration's own word for what is being
-managed, which settles the vocabulary and not the file, since where a personal
-account is declared is still H1's — and the verbs are `reset-password` and
+managed, which settled the vocabulary and not the file; the file is
+`personal_accounts:`, decided in H1 below — and the verbs are `reset-password` and
 `expire-password`; suspending an account is `account suspend` — named that way to
 avoid a second sense of `lock`, which already means the advisory locks `lock break`
-takes, and specified in #463 — and whether a listing verb is needed at all follows
-from H1 rather than being settled twice. The delivery
+takes, and specified in #463 — and the listing verb is `account list`, which H1 earns.
+**H1 is decided** (#449): a personal account is declared in a `personal_accounts:`
+section of its own, by name or by a **predicate** over a profile or a role. The
+predicate amends invariant 5's first sentence — what counts as *declared* — and
+leaves the second intact, because it never widens what a mutating verb may touch:
+`account list` resolves it, while a reset names its account and refuses any name
+the predicate does not admit. The cost is that predicate membership is controlled
+by whoever assigns the profile or grants the role, rather than by whoever reviews
+the file. The delivery
 section, and with it H6's amendment to invariant 10, is #456; how the seen path's
 one plaintext emission is narrowed is #439. See
 [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) §9.

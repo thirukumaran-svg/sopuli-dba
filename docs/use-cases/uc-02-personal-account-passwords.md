@@ -83,19 +83,19 @@ other noun in this CLI mirrors the file an operator edits rather than the
 database — `target`, `policy`, `lock`, `creds`. D2's noun-verb grammar is
 satisfied either way, so the tie goes to the configuration's own vocabulary.
 
-**That settles the word and nothing about the file.** Whether a personal account
-is declared in today's `accounts:` list, in a shape of its own, or by a predicate
-over a profile or a role is H1 (#449), and it is open — so this deliberately does
-not rest on invariant 5 pointing at any particular key. The argument is only that
-somebody who reads `accounts:` in a configuration file should not have to type
-`user` at a prompt, and it holds whichever shape H1 chooses.
+**That settled the word and nothing about the file**, and H1 (#449) has since
+settled the file: a `personal_accounts:` section of its own, holding names or a
+predicate. The noun never rested on which — the argument was only that somebody
+who reads `accounts:` in a configuration file should not have to type `user` at a
+prompt — and it holds unchanged now that the answer is a different key.
 
 | Command | What it does | Mutates |
 |---|---|---|
 | `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody | yes |
 | `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, show it once — after confirmation | yes |
 | `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password — "make them change it" | yes |
-| either, under `--dry-run` | prints the plan and never a password (invariant 8) | no |
+| `sopuli account list` | resolve the declaration — names, or a predicate over a profile or role — and report what it matched, with each account's state. Reads no password and writes none (H1, #449) | no |
+| any of the mutating verbs, under `--dry-run` | prints the plan and never a password (invariant 8, which binds on every one of them — not the resets alone) | no |
 
 **The seen reset asks for confirmation every time** — decided on review of #457,
 and recorded in P5 beside the two gates that already do, `creds rotate` and
@@ -129,19 +129,55 @@ and §5 already depends on that word meaning Oracle's fact rather than ours. The
 statement is still `ALTER USER … ACCOUNT LOCK`, and **#463** specifies the verb.
 
 A **listing**
-verb is not decided here at all, because whether one is needed depends on H1
-(#449): if personal accounts are enumerated in `accounts:` then `creds status`
-already surveys them, and if they are identified by a predicate — a profile, a
-role — then something has to resolve that predicate and show what it matched.
-That is the same question as *where a personal account is declared*, so it is
-answered there rather than in two places with two answers.
+verb is `account list`, and H1 (#449) is what earns it rather than H3. Under a
+predicate something has to resolve the rule and show what it matched, and
+`creds status` would answer with empty vault-version and age columns for accounts
+nothing masters. Where the declaration is a list of names instead, it is the same
+command answering a shorter question — which is why it is one verb and not two.
 
 Whether there is a read verb — "when was this person last reset" — depends on H2.
 
-Every operation is limited to declared accounts. **Where a personal account is
-declared is H1 (#449)** — the application binding that declares UC-1's accounts
-means *these accounts are mastered by these secrets*, which is not true of any
-account here.
+Every operation is limited to declared accounts, and **H1 (#449) settled what
+declares one: a `personal_accounts:` section**, holding either names or a
+**predicate** over a profile or a role. Not an application binding, because §1 of
+`01-configuration.md` defines that as *these accounts are mastered by these
+secrets* and names three things that depend on it existing — `check`'s desired
+state, the account→secret mapping, and fan-out. A personal account has none of
+the three, so an application entry marked personal would satisfy no purpose the
+concept exists for.
+
+**A predicate never widens what a mutating verb may touch**, which is how this
+keeps invariant 5's second sentence exactly as written while amending its first.
+`account list` resolves the predicate; `reset-password` and `expire-password`
+additionally require the account named on the command line and refuse any name the
+predicate does not admit. So one run touches exactly one account — and refusing a
+selection that resolves to more than one is not a limit bolted onto the verb, it
+is what the verb is.
+
+**A name may not be declared twice.** An account that is both an application
+account and a personal one makes the whitelist ambiguous about which guarantee
+applies — mastered by a secret, or handed over — so the validator rejects the
+duplicate rather than picking one. The concrete rule lands with the config
+section (#467), together with §1's "two shapes" ceasing to be true.
+
+**The cost, stated rather than buried:** predicate membership is controlled in the
+database, by whoever **assigns the profile** or **grants the role**, and not by
+whoever reviews the file. The two are different operations —
+`ALTER USER … PROFILE` against `GRANT … TO`, which is why UC-1 §5 calls profile
+assignment an *attribute* — and the predicate inherits whichever governs it.
+Adding an account to an enumerated whitelist is a commit somebody reads; adding
+one to a predicate is a profile change or a grant. `02-oracle-privileges.md` §4's checks
+narrow that without closing it — check 2 still refuses `ORACLE_MAINTAINED` and
+check 4 still refuses `DBA`, `PDB_DBA`, `CDB_DBA` and `AUDIT_ADMIN`, whatever
+profile an account carries — and the blast radius is one named account, so a bad
+predicate is a wrong *offer* rather than a wrong *action*. Against that: a list of
+four hundred developers is not meaningfully reviewed either, and a predicate is a
+policy statement somebody can actually read.
+
+**Refusals follow §2 of `01-configuration.md`'s own asymmetry.** A predicate naming
+a profile or role that **does not exist** is refused — that is a misspelling. One
+that exists and **matches no accounts** is not an error, because that is a true
+answer about today's estate.
 
 ---
 
@@ -373,9 +409,14 @@ Q4):
   asks for a reset is actually in. Plain `LOCKED` is one a DBA issued, and on a
   *personal* account that usually means offboarding or suspension. A reset that
   silently cleared it would re-enable an account somebody disabled on purpose, and
-  the DBA running the reset need not be the one who disabled it. H1 (#449) does not
-  remove that risk: a departed person's account stays declared until somebody
-  removes it.
+  the DBA running the reset need not be the one who disabled it. H1 (#449) narrows
+  this without closing it: under a **predicate** a departed person leaves the
+  declared set when they are moved to another profile, or their role is revoked —
+  profiles are assigned and roles are granted, so the two exits are different
+  statements — and that is usually the same offboarding step that locked the
+  account. But an enumerated `personal_accounts:` entry stays declared until
+  somebody edits the file, and an offboarding nobody completed leaves the predicate
+  admitting them either way.
 - So plain `LOCKED` **fails at plan time**, naming the account and the lock, and
   `--force` or the explicit unlock flag is what proceeds. The unseen path has no
   confirmation prompt to catch it — only the seen path confirms (§2) — so the plan
@@ -464,7 +505,7 @@ restricts the set of methods is H6 (#453).
 | 2 | redaction at the serialiser | binds. A **Vault** write is already a permitted plaintext path, so the Vault forms of the unseen path need no widening; the other stores (#445, #446, `smtp_encrypted`) are not automatically one, and #456 says how each keeps the invariant. The seen path's display is not a permitted path, and is #439 |
 | 3 | branch on capability, not version | binds — rollover (§4.3) is a capability |
 | 4 | unavailable capability fails at plan time | binds — §4.3's seen-path refusal, §5's refusal of a deliberate `LOCKED`, §4.4's guardrails, and possibly H8's store check |
-| 5 | the config is the whitelist | binds; *where* the account is declared is H1 |
+| 5 | the config is the whitelist | binds, with H1's amendment (#449): a personal account is declared in `personal_accounts:` by name or by predicate, and a predicate never widens what a mutating verb may touch — the second sentence, that selectors cannot extend the declared set, is untouched (§2) |
 | 6 | vault is master | nothing to govern — no master (§1) |
 | 7 | never promote before confirmation | nothing to govern — no promotion (§1) |
 | 8 | `--dry-run` and a plan first | binds, on both paths; the seen path also confirms (§2) |
@@ -534,9 +575,9 @@ Tests declare the capabilities they need and skip with a reason when absent
 
 | # | Question | Issue |
 |---|---|---|
-| H1 | Where is a personal account declared, so invariant 5 still whitelists it — and, following from that, does UC-2 need a listing verb of its own or does `creds status` already survey them (§2)? | #449 |
+| ~~H1~~ | ~~Where is a personal account declared, so invariant 5 still whitelists it?~~ | **closed** — a `personal_accounts:` section, holding names or a predicate over a profile or role. The predicate amends invariant 5's first sentence and leaves its second intact, because it never widens what a mutating verb may touch: a reset names its account and `account list` resolves the rule. The stated cost is that membership is a profile assignment or a role grant rather than a commit somebody reads; the keys and validators are #467 (§2) · #449 |
 | H2 | With no vault as master, what is recorded about a reset, and where? | #450 |
-| ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, because the config declares `accounts:`; the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; suspending an account is `account suspend`, named that way to avoid a second sense of `lock` and specified in #463; and listing folds into H1 (§2) · #451 |
+| ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, the configuration's own word for what is being managed, whichever key declares it (`accounts:`, an `applications:` entry, or H1's `personal_accounts:`); the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; suspending an account is `account suspend`, named that way to avoid a second sense of `lock` and specified in #463; and listing is `account list`, which H1 earned (§2) · #451 |
 | ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
 | H6 | Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union? | #453 |

@@ -64,10 +64,31 @@ something specific.
 4. **A command that needs an unavailable capability fails at plan time**, with a
    distinct exit code and a message naming the capability and the target — never
    a generic error mid-execution.
-5. **The config is the whitelist.** The tool never touches an account that is not
-   declared in `accounts:` or an `applications:` entry. Selectors filter the
-   declared set; they cannot extend it. `--force` overrides other guardrails,
-   never this one.
+5. **The config is the whitelist.** The tool never touches an account the config
+   does not declare. Selectors filter the declared set; they cannot extend it.
+   `--force` overrides other guardrails, never this one.
+
+   **What counts as *declared* has two forms** (H1, decided in #449). UC-1's
+   accounts are enumerated by name, in `accounts:` or an `applications:` entry. A
+   **personal account** is declared in `personal_accounts:`, by name *or* by a
+   **predicate** over a profile or a role, resolved against the database at run
+   time — because enumerating four hundred developers is transcription rather than
+   review. The predicate amends this invariant's first sentence and leaves the
+   second intact: `--account` filters the resolved set, it does not widen it.
+
+   **A name may not be declared twice.** An account that is both an application
+   account and a personal one makes the whitelist ambiguous about which guarantee
+   applies — mastered by a secret, or handed over — so the validator rejects it
+   rather than picking. Enforced across `accounts:`, `applications:` and
+   `personal_accounts:` alike.
+
+   **A predicate never widens what a mutating verb may touch.** A listing verb
+   resolves it and shows what it matched; a mutating verb additionally requires the
+   account named on the command line and refuses any name the predicate does not
+   admit — so one run touches exactly one account, which the operator typed and the
+   configuration admits. The cost is real and is stated in UC-2 §2 rather than
+   buried: predicate membership is controlled by whoever grants the profile or
+   role, not by whoever reviews the file.
 6. **Vault is master; direction is vault → database, always.** The database is
    never the source of truth.
 7. **Never promote in the vault before every target has confirmed.** The
