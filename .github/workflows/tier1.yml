@@ -43,8 +43,13 @@ on:
     #   python test/paths_ignore_probe.py       # from the repository root
     #
     # It runs the suite under an audit hook, prints every file under `docs/`,
-    # `sql/` or `examples/` that was opened, and exits non-zero if a pattern
-    # below covers one of them. **The one-liner this comment used to carry
+    # `sql/` or `examples/` -- and the root `README.md` and `CLAUDE.md` -- that
+    # was opened, and exits non-zero if a pattern below covers one of them.
+    #
+    # **It deselects the two modules `ci.yml`'s `docs` job runs** (#458), so what
+    # it measures is what a *skipped* lane reads. A file only those two open is
+    # covered by that job and is not a hole in this list; a conflict reported here
+    # is a file nothing would check on a prose-only pull request. **The one-liner this comment used to carry
     # under-reported** -- the hook printed to `sys.stdout`, which pytest's
     # capture and Click's `CliRunner` both replace, so it found 1 of 19 files
     # (#375). That is the most likely reason seven patterns from #370 and #373

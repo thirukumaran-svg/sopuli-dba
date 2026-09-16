@@ -1,5 +1,13 @@
-"""Probe: which files under `docs/`, `sql/` and `examples/` does the suite
-actually open, and does either workflow's `paths-ignore` list one of them?
+"""Probe: which files under `docs/`, `sql/` and `examples/` -- and the root
+`README.md` and `CLAUDE.md` -- does a **skipped lane** open, and does either
+workflow's `paths-ignore` list one of them?
+
+**"A skipped lane", not "the suite", and the distinction is #458's.** `ci.yml`'s
+`docs` job runs :data:`DOCS_LANE` on exactly the pull requests where the other
+lanes are skipped, so what those two modules read is covered by CI and is not a
+hole in the list. They are deselected below, and a conflict reported here is
+therefore a file that *nothing* would check on a prose-only pull request. Before
+that job existed the two questions had the same answer; they do not any more.
 
 Written for issue #375, where the list had drifted seven patterns behind the
 tree and every documentation pull request was starting both lanes. The
@@ -41,8 +49,11 @@ script says which it was, and refuses to call the answer complete without them::
     docker compose --profile tier1 up -d   # from test/
     python test/paths_ignore_probe.py       # from the repository root
 
-Exit status is 0 when nothing the suite opens is ignored by either workflow, and
-1 when something is -- so it can be read by a human or by a shell.
+Exit status is 0 when nothing the **non-docs-lane** suite opens is ignored by
+either workflow, and 1 when something is -- so it can be read by a human or by a
+shell. A green run says the prose list is safe *given* that `ci.yml`'s `docs` job
+still runs :data:`DOCS_LANE`; `tests/test_workflow_prose_list.py` is what holds
+that second half, since this script cannot see whether the job exists.
 """
 
 from __future__ import annotations
@@ -56,9 +67,46 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: The directories the question is about. Everything else in the tree either is
-#: code, or is not a candidate for either allowlist.
-WATCHED = ("docs", "sql", "examples")
+#: The paths the question is about. Everything else in the tree either is code,
+#: or is not a candidate for either allowlist.
+#:
+#: **`README.md` and `CLAUDE.md` are in here, and their absence was a second bug**
+#: (#458). Both are on the prose list, and `tests/test_verification_register.py`
+#: scans both for `(unverified: <slug>)` markers -- but this tuple used to hold
+#: directories only, so `relative.parts[0]` never matched them and no drift
+#: involving either could ever be reported. A probe with a blind spot over two of
+#: the twenty patterns it checks is worse than a shorter list honestly described.
+#:
+#: Matched against `relative.parts[0]`, which for a root file is the file name.
+#:
+#: **Today this catches nothing, and that is the correct state**, measured on the
+#: run that added it: the only tests reading either root file are the `DOCS_LANE`
+#: pair below, which are deselected, so the measured suite opens neither. It is a
+#: guard against the *next* test that reads one -- which the old tuple could not
+#: have reported however far the list drifted.
+#:
+#: Split in two because they print differently, not because they match
+#: differently: a directory is shown with a trailing slash and a file without one,
+#: and joining the whole tuple with `/` produced `README.md/`.
+WATCHED_DIRS = ("docs", "sql", "examples")
+WATCHED_FILES = ("README.md", "CLAUDE.md")
+WATCHED = WATCHED_DIRS + WATCHED_FILES
+
+#: The modules `ci.yml`'s `docs` job runs on a prose-only pull request (#458).
+#:
+#: **Deselected, and that is the point of the job.** The question this probe asks
+#: is not "does the suite read an ignored file" but "does a *skipped lane* read
+#: one" -- those became different questions when the `docs` job arrived. These two
+#: modules read most of `docs/` by globbing, and they now run on exactly the pull
+#: requests where the other lanes do not, so counting them here would report 21
+#: conflicts that the workflow already covers and leave the list unfixable.
+#:
+#: Adding a test that reads prose means adding it here *and* to the `docs` job, or
+#: this probe goes quiet about whatever it reads.
+DOCS_LANE = (
+    "tests/test_verification_register.py",
+    "tests/test_doc_command_lines.py",
+)
 
 WORKFLOWS = (
     ROOT / ".github" / "workflows" / "ci.yml",
@@ -76,6 +124,10 @@ def measure() -> tuple[set[str], str]:
     """
     fd, path = tempfile.mkstemp(prefix="sopuli-opens-", suffix=".txt")
     os.close(fd)
+    # Built out here rather than inside the f-string below: nesting an f-string
+    # that uses the same quote style is a syntax error before 3.12 (PEP 701), and
+    # `requires-python` allows 3.11 -- which is also a cell in the CI matrix.
+    ignores = [f"--ignore={module}" for module in DOCS_LANE]
     hook = f"""
 import os, sys, pytest
 out = os.open({path!r}, os.O_WRONLY | os.O_TRUNC)
@@ -90,7 +142,7 @@ def audit(event, args):
 
 
 sys.addaudithook(audit)
-sys.exit(pytest.main(["tests/"]))
+sys.exit(pytest.main(["tests/"] + {ignores!r}))
 """
     run = subprocess.run(
         [sys.executable, "-c", hook],
@@ -161,7 +213,8 @@ def main() -> int:
             print(f"suite: {line.strip()}\n")
             break
 
-    print(f"opened under {'/, '.join(WATCHED)}/ ({len(opened)} files):\n")
+    watched = ", ".join([f"{name}/" for name in WATCHED_DIRS] + list(WATCHED_FILES))
+    print(f"opened under {watched} ({len(opened)} files):\n")
     for path in sorted(opened):
         print(f"  {path}")
 

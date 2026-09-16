@@ -347,6 +347,58 @@ jobs:
           print("base carries no backend client")
           PY
 
+  # The lane a prose-only pull request still has to pass, and what makes the
+  # skipping above safe (#458).
+  #
+  # `changes` switches off `lint`, `test` and `install shape` for prose. But two
+  # tier-0 tests read exactly the files the prose list ignores:
+  #
+  # * `tests/test_verification_register.py` reads its register out of
+  #   `docs/README.md` and scans every `docs/**/*.md` -- plus `README.md`,
+  #   `CLAUDE.md`, `src/**/*.py` and `sql/**/*.sql` -- for `(unverified: <slug>)`
+  #   markers;
+  # * `tests/test_doc_command_lines.py` parses every fenced `sopuli` command line
+  #   under `docs/` against the real CLI.
+  #
+  # So a prose-only pull request could break either -- a typo'd slug, a register
+  # entry flipped to `verified` with a marker left behind, a documented flag the
+  # CLI has not got -- and CI reported green. Found on #457, which was docs-only,
+  # skipped every lane, and was green only because the suite was run by hand.
+  #
+  # **Measured before this was written** (#458): those two modules account for
+  # *all* 21 ignored files the suite opens, and they run in 0.75 s. The other fix
+  # direction -- deleting from the prose list every path they read, which is
+  # effectively all of `docs/**` -- buys the same safety for about twenty billed
+  # minutes here plus ten of tier 1 on every documentation pull request, which is
+  # the whole cost the list exists to avoid.
+  #
+  # It runs *only* when the heavy lanes do not. On a code pull request the `test`
+  # matrix already runs both modules, so a second copy would be duplication
+  # rather than coverage.
+  docs:
+    name: docs
+    needs: changes
+    if: needs.changes.outputs.code == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # `[dev]` alone, not `[dev,all]`: both modules are tier 0. One imports
+      # `sopuli.cli` to walk the real command tree, so the package has to be
+      # installed -- but neither opens a socket, so no extra is needed and the
+      # lane stays cheap, which is the entire argument for having it.
+      - run: pip install -e ".[dev]"
+
+      - name: the tier-0 tests that read prose
+        run: pytest tests/test_verification_register.py tests/test_doc_command_lines.py
+
   # The one check to require, and the reason it exists rather than requiring the
   # jobs above directly.
   #
@@ -374,7 +426,7 @@ jobs:
   # for the wrong one.
   ci-ok:
     name: ci ok
-    needs: [changes, lint, test, install-shape]
+    needs: [changes, lint, test, install-shape, docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
