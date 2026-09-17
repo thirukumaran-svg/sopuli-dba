@@ -333,6 +333,35 @@ EXPIRED = "EXPIRED"
 EXPIRED_GRACE = "EXPIRED(GRACE)"
 
 
+#: What a **failed-login limit** produced, which is not the same event as a lock
+#: somebody chose. ``PASSWORD_LOCK_TIME`` clears this one on its own.
+LOCKED_TIMED = "LOCKED(TIMED)"
+
+#: How Oracle joins the components of a compound ``ACCOUNT_STATUS``.
+STATUS_SEPARATOR = " & "
+
+
+def deliberately_locked(status: str) -> bool:
+    """Whether ``status`` says a **person** locked this account (#463).
+
+    Not the same question as :attr:`~sopuli.driver.protocol.UserState.locked`,
+    which is true of every locked form, and the difference is what UC-2 turns on:
+    a reset clears ``LOCKED(TIMED)`` by default and refuses a deliberate
+    ``LOCKED`` (H4, #455), and `account suspend` is the verb that sets the second
+    one.
+
+    **Parsed by component rather than by substring**, and that is the whole
+    reason this is a function. ``LOCKED(TIMED)`` *contains* ``LOCKED``, so
+    ``LOCKED in status`` is true of a timed lock, and equality against the whole
+    string is wrong the other way -- the status compounds, so a deliberately
+    locked account can read ``EXPIRED & LOCKED``, ``LOCKED & IN ROLLOVER`` or
+    ``EXPIRED & LOCKED & IN ROLLOVER``. Splitting on the separator answers both,
+    which is #309's lesson applied before it had a chance to cost anything: that
+    bug was ``EXPIRED(GRACE)`` read as a hard expiry by a substring test.
+    """
+    return LOCKED in {part.strip().upper() for part in status.split(STATUS_SEPARATOR)}
+
+
 class RolesUnreadableError(DriverError):
     """``DBA_ROLE_PRIVS`` could not be read, so guardrail 4 has no input.
 

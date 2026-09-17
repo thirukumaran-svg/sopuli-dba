@@ -28,6 +28,7 @@ from sopuli.driver.oracle.statements import (
     alter_user_password,
     alter_user_profile,
     container_clause,
+    lock_account,
     unlock_account,
 )
 from sopuli.driver.protocol import Scope
@@ -376,6 +377,39 @@ def test_an_identifier_is_quoted_and_printable() -> None:
     which is exactly why it must be safe to put in quotes."""
     assert ACCOUNT.quoted() == '"ACME_WEB_USER"'
     assert str(ACCOUNT) == "ACME_WEB_USER"
+
+
+# ------------------------------------------------------------------ locking ---
+
+
+def test_the_lock_is_the_ddl_and_nothing_else() -> None:
+    """UC-2's offboarding verb (#463), and the write half of `unlock_account`."""
+    assert lock_account(ACCOUNT, scope=PDB).reveal() == 'ALTER USER "ACME_WEB_USER" ACCOUNT LOCK'
+
+
+def test_the_lock_is_never_a_plsql_block() -> None:
+    """Invariant 13 on a statement with nothing to hide -- the habit, again."""
+    sql = lock_account(ACCOUNT, scope=PDB).reveal()
+
+    assert sql.startswith("ALTER USER ")
+    assert not WRAPPERS.search(structure(sql))
+    assert not BINDS.search(structure(sql))
+
+
+def test_the_lock_has_nothing_to_redact() -> None:
+    statement = lock_account(ACCOUNT, scope=PDB)
+
+    assert statement.redacted == statement.reveal()
+    assert REDACTED not in str(statement)
+
+
+def test_the_lock_takes_the_same_container_clause_as_the_password() -> None:
+    """A common user is one account across the CDB, so locking it from a PDB
+    would lock something other than what the estate meant."""
+    assert lock_account(COMMON, scope=ROOT).reveal().endswith(CONTAINER_ALL)
+
+    with pytest.raises(ContainerScopeError):
+        lock_account(COMMON, scope=PDB)
 
 
 # ----------------------------------------------------------------- unlocking ---

@@ -443,6 +443,37 @@ def unlock_account(account: Identifier, *, scope: Scope) -> Statement:
     return Statement(text, redacted=text)
 
 
+def lock_account(account: Identifier, *, scope: Scope) -> Statement:
+    """``ALTER USER "…" ACCOUNT LOCK`` -- the offboarding half of the pair (#463).
+
+    The write counterpart of :func:`unlock_account`, and of the refusal H4 (#455)
+    introduced: a personal reset refuses an account in this state, because on a
+    personal account somebody chose it. It is coherent for one use case to refuse
+    to clear the state and to offer the verb that sets it.
+
+    **The state this produces is `LOCKED`, and that is a different string from
+    the `LOCKED(TIMED)` a failed-login limit produces** -- measured on 26ai Free
+    23.26.2.0.0 in #455 (``sql/oracle/07_lock_and_rollover_probe.sql`` Q4). The
+    distinction is the whole reason a plan can tell a lock somebody chose from
+    one Oracle applied, so it is a fact this statement depends on rather than a
+    detail about it. Also measured there: ``ALTER USER … IDENTIFIED BY`` does not
+    clear it, and a login with the new password is ``ORA-28000``.
+
+    Nothing secret is in it, so invariants 11 and 14 have nothing to say -- and
+    invariant 13 still does, for :func:`unlock_account`'s reason. It is issued
+    directly, and there is nothing here to expose, and it is written that way all
+    the same because the habit is what keeps the next one safe.
+
+    The container clause is the same one the password statement gets, for the
+    same reason: a ``C##`` account is one account across the CDB, so locking it
+    from a PDB would either fail or lock something other than what the estate
+    meant.
+    """
+    clause = container_clause(account, scope)
+    text = f"ALTER USER {account.quoted()} ACCOUNT LOCK{clause}"
+    return Statement(text, redacted=text)
+
+
 def finish_rollover(account: Identifier, *, scope: Scope) -> Statement:
     """``ALTER USER "…" EXPIRE PASSWORD ROLLOVER PERIOD`` -- end the window now.
 

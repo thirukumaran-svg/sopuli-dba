@@ -42,6 +42,7 @@ import oracledb
 from sopuli.config.model import ExpandedTarget
 from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.accounts import (
+    deliberately_locked,
     describe,
     failed_logins,
     login_state,
@@ -66,6 +67,7 @@ from sopuli.driver.oracle.statements import (
     alter_user_password,
     alter_user_profile,
     finish_rollover,
+    lock_account,
     unlock_account,
 )
 from sopuli.driver.oracle.verification import (
@@ -77,6 +79,7 @@ from sopuli.driver.oracle.verification import (
     warning_detail,
 )
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK,
     ACCOUNT_LOCK_STATE,
     ACCOUNT_UNLOCK,
     ATTRIBUTE_SET,
@@ -87,6 +90,7 @@ from sopuli.driver.protocol import (
     UNAVAILABLE,
     VERIFY_LOGIN,
     AccountAttributes,
+    AccountChange,
     AttributeChange,
     ChangeResult,
     Credential,
@@ -451,6 +455,64 @@ class OracleSession:
                 raise from_error(error).as_error() from error
 
         return AttributeChange(ATTRIBUTE_SET, changed=True, detail=f"profile {was} -> {spelling}")
+
+    def suspend_account(self, account: str) -> AccountChange:
+        """``ALTER USER … ACCOUNT LOCK``, or report that it was already locked.
+
+        **The state is read first** (invariant 9), for :meth:`_unlock`'s reason
+        in the other direction: measured on 26ai Free 23.26.2.0.0, a second
+        ``ACCOUNT LOCK`` against an already-``LOCKED`` account is accepted
+        silently and leaves it ``LOCKED``, so a driver that issued
+        unconditionally would report a change every run.
+
+        **`LOCKED(TIMED)` is not already suspended, and the transition is real.**
+        Measured on the same release, twice: an account locked by a failed-login
+        limit reads ``LOCKED(TIMED)``, and ``ACCOUNT LOCK`` takes it to
+        ``LOCKED``. That is a change worth reporting rather than a no-op on a
+        technicality -- the timed lock expires on its own under
+        ``PASSWORD_LOCK_TIME`` and this one does not, and a personal reset
+        refuses a deliberate ``LOCKED`` (H4, #455) while it clears a timed one.
+        So the two states differ in exactly what this verb is for.
+
+        The capability is checked for the reason :meth:`_unlock` gives: it is
+        structural on Oracle, and what makes it structural is a fact recorded in
+        one place rather than something a caller should have to know.
+
+        **The read-only check comes first**, as it does in :meth:`set_password`
+        and :meth:`apply_attributes`: a physical standby answers
+        :meth:`describe_user` perfectly well, so without it the refusal would
+        arrive from the cursor after the run had already decided to mutate.
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        require_capability(self.scope(), ACCOUNT_LOCK_STATE, target=self.target.name)
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'account "{account}" does not exist on this target',
+                hint=(
+                    "the tool does not create accounts (Q8); nothing is suspended, and "
+                    "the account name is worth checking against the estate"
+                ),
+            )
+        if deliberately_locked(state.status):
+            return AccountChange(
+                ACCOUNT_LOCK,
+                changed=False,
+                status=state.status,
+                detail="the account is already locked",
+            )
+
+        was = state.status.lower()
+        statement = lock_account(Identifier(state.name), scope=self.scope())
+        with self.connection.cursor() as cursor:
+            try:
+                cursor.execute(statement.reveal())
+            except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+                raise from_error(error).as_error() from error
+
+        return AccountChange(
+            ACCOUNT_LOCK, changed=True, status=state.status, detail=f"account was {was}; locked"
+        )
 
     def _unlock(self, account: str) -> AttributeChange:
         """``ALTER USER … ACCOUNT UNLOCK``, or report that there was no lock.

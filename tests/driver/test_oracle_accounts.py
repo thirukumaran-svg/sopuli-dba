@@ -27,6 +27,7 @@ from oracle_harness import Environment
 from sopuli.check import grace_warning
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.guardrails import ADMIN_ROLES
+from sopuli.driver.oracle.accounts import deliberately_locked
 from sopuli.driver.protocol import OFFLINE_VERIFY, PASS, PASSWORD_ROLLOVER, Credential
 from sopuli.secrets import Secret
 
@@ -718,3 +719,47 @@ def test_an_ordinary_login_carries_no_warning(account: Any) -> None:
 
     assert result.result == PASS
     assert result.warning is None
+
+
+# ----------------------------------------------------- deliberately locked ---
+#
+# Tier 0: string parsing, no server. The compound forms below are the ones the
+# module docstring measured on 26ai; what is asserted here is which of them mean
+# *somebody locked this account* -- the question `account suspend` and H4's
+# refusal both turn on (#463).
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "LOCKED",
+        "EXPIRED & LOCKED",
+        "LOCKED & IN ROLLOVER",
+        "EXPIRED & LOCKED & IN ROLLOVER",
+        "EXPIRED(GRACE) & LOCKED",
+        "locked",
+    ],
+)
+def test_a_deliberate_lock_is_recognised_in_every_compound_form(status: str) -> None:
+    """Equality against the whole string would miss all but the first."""
+    assert deliberately_locked(status)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "LOCKED(TIMED)",
+        "EXPIRED(GRACE) & LOCKED(TIMED)",
+        "EXPIRED & LOCKED(TIMED)",
+        "OPEN",
+        "EXPIRED",
+        "EXPIRED(GRACE)",
+        "OPEN & IN ROLLOVER",
+        "",
+    ],
+)
+def test_a_timed_lock_is_not_a_deliberate_one(status: str) -> None:
+    """`LOCKED(TIMED)` contains `LOCKED`, so a substring test gets every one of
+    the first three wrong -- which is #309's `EXPIRED(GRACE)` bug in the other
+    field. A failed-login lock is not an offboarding."""
+    assert not deliberately_locked(status)

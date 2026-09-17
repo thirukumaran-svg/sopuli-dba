@@ -263,6 +263,14 @@ class _Session:
     def resolve_profile(self, profile: str) -> str | None:
         return self.profile if profile.upper() == self.profile else None
 
+    def suspend_account(self, account: str) -> protocol.AccountChange:
+        return protocol.AccountChange(
+            protocol.ACCOUNT_LOCK,
+            changed=True,
+            status="OPEN",
+            detail="account was open; locked",
+        )
+
     def apply_attributes(
         self, account: str, attributes: protocol.AccountAttributes
     ) -> tuple[protocol.AttributeChange, ...]:
