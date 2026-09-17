@@ -79,7 +79,7 @@ from sopuli import constraints as constraint_source
 from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
-from sopuli import preflight
+from sopuli import preflight, suspend
 from sopuli import repair as repair_module
 from sopuli import rotate as rotation
 from sopuli import status as status_states
@@ -223,6 +223,9 @@ from sopuli.output.status_view import build_result as build_status_result
 from sopuli.output.status_view import render_status_table
 from sopuli.output.status_view import summarise as summarise_status
 from sopuli.output.stream import configure_streams
+from sopuli.output.suspend_view import build_result as build_suspend_result
+from sopuli.output.suspend_view import render as render_suspend
+from sopuli.output.suspend_view import summarise as summarise_suspend
 from sopuli.output.tty import is_a_terminal
 from sopuli.output.vault_view import build as build_vault
 from sopuli.output.vault_view import render as render_vaults
@@ -1147,6 +1150,292 @@ def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPo
         at=ROOT.key("defaults").key("policy") if name is None else ROOT,
     )
     return chosen, next(policy for policy in config.policies if policy.name == chosen).password
+
+
+@cli.group("account")
+def account_group() -> None:
+    """Act on an account a person owns, rather than one an application uses."""
+
+
+@account_group.command("suspend")
+@click.option(
+    "--account",
+    "account",
+    required=True,
+    metavar="NAME",
+    help="The one account to suspend. Required: this verb acts on exactly one.",
+)
+@click.option(
+    "--select",
+    "selectors",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Limit to targets carrying this label. Repeatable.",
+)
+@click.option(
+    "--target", "targets", multiple=True, metavar="NAME", help="Limit to this target. Repeatable."
+)
+@click.option(
+    "--group", "groups", multiple=True, metavar="NAME", help="Limit to this group. Repeatable."
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Proceed without asking. Required where `safety.confirm_environments` applies.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Waive guardrails 2 to 5. Never the whitelist, which nothing waives.",
+)
+@global_options
+def account_suspend(
+    account: str,
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    confirm: bool,
+    force: bool,
+    run: Invocation,
+) -> str:
+    """Lock a person's account -- the offboarding state a reset refuses to clear.
+
+    `ALTER USER ... ACCOUNT LOCK`, against an account `personal_accounts:`
+    declares. The state it produces is `LOCKED`, which is a different thing from
+    the `LOCKED(TIMED)` a failed-login limit produces: that one expires on its
+    own under `PASSWORD_LOCK_TIME`, and this one does not until somebody unlocks
+    it.
+
+    **One account, named on the command line.** `--account` is required and takes
+    one name, because an offboarding is one person leaving and UC-2 section 2
+    requires a mutating verb to name its account rather than resolve a set. The
+    target selectors narrow where it is suspended, not who is.
+
+    **A predicate does not widen this.** Where `personal_accounts:` declares by
+    profile or role rather than by name, the rule is resolved against each target
+    and the account is refused wherever the rule does not admit it -- so a
+    declaration can never turn one named account into several.
+
+    **The guardrails are the ones every mutating verb uses.** Suspending DBSNMP
+    refuses exactly as rotating it would, and `--force` waives checks 2 to 5 and
+    never the whitelist, which is invariant 5's own sentence.
+
+    **Idempotent.** An account that is already locked reports no change and
+    issues nothing -- the driver reads the state first, because Oracle accepts
+    the statement against a locked account silently.
+
+    **It changes no password and touches no store.** There is nothing here for
+    the advisory lock to protect, and nothing that could emit a secret.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+    action = "suspending an account"
+    refuse_if_readonly(run.resolved, action=action)
+
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    run = _with_estate_safety(run, config)
+    refuse_if_readonly(run.resolved, action=action, estate=config)
+
+    reached = config.expanded_targets
+    plan = plan_builder.build_for_accounts(
+        config, [(account, target.name) for target in reached], intent=["account_lock"]
+    )
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
+    document.plan = plan.as_json()
+    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
+
+    if not reached:
+        document.finish(ExitCode.SUCCESS, Summary())
+        return render_plan(plan, noun="account") + "\n\nnothing to suspend"
+
+    found = _suspend_estate(reached, account, run, config, force=force, preview=run.dry_run)
+
+    document.results = [record.as_json() for record in found]
+    states = [record.state for record in found]
+    changed = sum(1 for record in found if record.changed)
+    document.finish(_suspend_exit(states), summarise_suspend(states, changed=changed))
+
+    header = render_plan(plan, noun="account")
+    body = render_suspend(
+        [
+            (record.account, record.target, record.state, record.status, record.detail)
+            for record in found
+        ],
+        changed=changed,
+        preview=run.dry_run,
+        would_suspend=sum(1 for one in found if one.would_suspend) if run.dry_run else None,
+    )
+    return f"{header}\n\n{body}"
+
+
+@dataclass(frozen=True)
+class _Suspended:
+    """One (account, target) after `account suspend` has looked at it."""
+
+    account: str
+    target: str
+    state: str
+    changed: bool
+    detail: str | None = None
+    #: ``ACCOUNT_STATUS`` as it was **read**, before anything was issued.
+    status: str | None = None
+    overridden: tuple[guardrails.Refusal, ...] = ()
+    #: Under ``--dry-run``, whether this row cleared every gate and would have
+    #: been suspended. Always ``False`` on a real run, where ``changed`` is the
+    #: answer -- one field serving both would make "would have" and "did"
+    #: indistinguishable in the one place it matters.
+    would_suspend: bool = False
+    duration_ms: int | None = None
+    error: Error | None = None
+
+    def as_json(self) -> dict[str, Any]:
+        return build_suspend_result(
+            self.account,
+            self.target,
+            state=self.state,
+            changed=self.changed,
+            detail=self.detail,
+            status=self.status,
+            overridden=self.overridden,
+            duration_ms=self.duration_ms,
+            error=self.error,
+        )
+
+
+def _suspend_exit(states: Sequence[str]) -> ExitCode:
+    """Exit 4 where a target could not be reached, 0 otherwise.
+
+    A refusal is not a failure: ``SKIPPED`` is the guardrails doing their job and
+    ``ACCOUNT_MISSING`` is an ordinary fact about an estate where somebody has an
+    account on four of nine targets. Neither is a reason for a scheduled caller to
+    page anyone, and an exit code that said otherwise would make this verb
+    unusable from a script.
+    """
+    failed = set(states) - {suspend.LOCKED, suspend.SKIPPED, suspend.ACCOUNT_MISSING}
+    return ExitCode.PARTIAL if failed else ExitCode.SUCCESS
+
+
+def _suspend_estate(
+    targets: Sequence[ExpandedTarget],
+    account: str,
+    run: Invocation,
+    config: Config,
+    *,
+    force: bool,
+    preview: bool,
+) -> list[_Suspended]:
+    """The named account, target by target, one connection each."""
+    return [
+        _suspend_one(target, account, run, config, force=force, preview=preview)
+        for target in targets
+    ]
+
+
+def _suspend_one(
+    target: ExpandedTarget,
+    account: str,
+    run: Invocation,
+    config: Config,
+    *,
+    force: bool,
+    preview: bool,
+) -> _Suspended:
+    """One target: read the account, decide, and lock it or say why not.
+
+    **The state is read before anything is decided**, because both gates need it:
+    a predicate in ``personal_accounts:`` is resolved from the profile and the
+    roles on it, and §4's guardrails run on the spelling the database gave back.
+
+    Under ``--dry-run`` the read still happens and the statement does not. A
+    preview that skipped the read would have nothing to preview -- which account
+    is declared here, what state it is in, and which guardrail would stop it are
+    the answers somebody runs one for.
+    """
+    started = time.monotonic()
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+            state = session.describe_user(account)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            return _Suspended(
+                account=account,
+                target=target.name,
+                state=check_states.ERROR,
+                changed=False,
+                detail=reported.message,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
+
+        decision = suspend.decide(
+            state, config=config, account=account, target=target.name, force=force
+        )
+        status = state.status if state is not None else None
+        overridden = decision.review.overridden if decision.review is not None else ()
+        if not decision.proceed:
+            return _Suspended(
+                account=account,
+                target=target.name,
+                state=decision.state,
+                changed=False,
+                detail=decision.detail,
+                status=status,
+                overridden=overridden,
+                duration_ms=_elapsed(started),
+            )
+
+        if preview:
+            return _Suspended(
+                account=account,
+                target=target.name,
+                state=decision.state,
+                changed=False,
+                detail=f"{decision.detail}; would be suspended",
+                status=status,
+                overridden=overridden,
+                would_suspend=True,
+                duration_ms=_elapsed(started),
+            )
+
+        try:
+            change = session.suspend_account(account)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            return _Suspended(
+                account=account,
+                target=target.name,
+                state=check_states.ERROR,
+                changed=False,
+                detail=reported.message,
+                status=status,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
+
+        return _Suspended(
+            account=account,
+            target=target.name,
+            state=suspend.LOCKED,
+            changed=change.changed,
+            detail=change.detail,
+            status=change.status,
+            overridden=overridden,
+            duration_ms=_elapsed(started),
+        )
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
 
 
 @cli.group("lock")

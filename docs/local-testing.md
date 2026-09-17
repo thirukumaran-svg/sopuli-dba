@@ -2040,6 +2040,137 @@ out: **`CAPABILITIES` reads 5 on 18c and 6 on 21c and 26ai.** The missing one is
 
 ---
 
+## 10a. `account suspend` — the one UC-2 verb that exists
+
+UC-2 is not built. There is no `reset-password`, no `expire-password` and no
+`account list`; if that is what you sat down to test, this section is the whole of
+what you can run, and the rest of UC-2 is still design documents.
+
+**What this verb does** is `ALTER USER "…" ACCOUNT LOCK` against an account
+`personal_accounts:` declares — the offboarding case. The state it produces is
+`LOCKED`, which is **not** the `LOCKED(TIMED)` a failed-login limit produces: that
+one clears itself under `PASSWORD_LOCK_TIME` and this one does not.
+
+Add a personal account to the file from §6, and make one in the database:
+
+```sql
+CREATE USER acme_suspend_demo IDENTIFIED BY "Aa1-demo-pw-00001";
+GRANT CREATE SESSION TO acme_suspend_demo;
+```
+
+```yaml
+personal_accounts:
+  - accounts: [acme_suspend_demo]
+    policy: personal-standard
+```
+
+### The preview, which reaches the database
+
+```
+$ sopuli account suspend --account acme_suspend_demo --dry-run
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT            TARGET        INTENT        SECRET
+acme_suspend_demo  tier1-oracle  account_lock  -
+
+ACCOUNT            TARGET        STATE   STATUS  DETAIL
+acme_suspend_demo  tier1-oracle  LOCKED  OPEN    declared by accounts 'acme_suspend_demo'; would be suspended
+
+would suspend acme_suspend_demo on 1 of 1 targets
+```
+
+**`SECRET` is `-` and that is the point**: nothing masters a personal account's
+password, so the plan has no document to name. Every other verb in this guide
+fills that column.
+
+**A preview still connects.** Which account is declared here, what state it is in,
+and which guardrail would stop it are the answers you ran a preview for, and none
+of them can be had from the file.
+
+### Doing it, then doing it again
+
+```
+ACCOUNT            TARGET        STATE   STATUS  DETAIL
+acme_suspend_demo  tier1-oracle  LOCKED  OPEN    account was open; locked
+
+suspended acme_suspend_demo on 1 of 1 targets
+```
+
+Run the identical command again:
+
+```
+ACCOUNT            TARGET        STATE   STATUS  DETAIL
+acme_suspend_demo  tier1-oracle  LOCKED  LOCKED  the account is already locked
+
+acme_suspend_demo was already locked on 1 of 1
+```
+
+**That second line is invariant 9, and it is worth causing on purpose**, because
+the first version of this verb got it wrong in a way only running it twice
+revealed: the closing line counted rows in state `LOCKED` rather than rows this
+run changed, so a no-op re-run reported having suspended an account it had not
+touched. A `LOCKED` row cannot say which of the two it is — `STATUS` is what does.
+
+The JSON says it more precisely:
+
+```json
+{
+  "account": "acme_suspend_demo",
+  "target": "tier1-oracle",
+  "state": "LOCKED",
+  "changed": true,
+  "actions": [
+    { "kind": "account_lock", "applied": true, "detail": "account was open; locked" }
+  ],
+  "account_status": "OPEN",
+  "duration_ms": 299
+}
+```
+
+`account_status` is what the database said **before** anything was issued, which
+is why the row above reads `OPEN` on the run that locked it.
+
+### Failures worth causing
+
+| Try | What you get |
+|---|---|
+| omit `--account` | usage error, exit **2**: this verb acts on exactly one account and will not resolve a set |
+| `--account system` | exit **0**, state `SKIPPED` — see below |
+| an account the file does not declare | the same `SKIPPED`, naming the whitelist |
+| `--select env=nosuch` | `Plan: 0 accounts x 0 targets = 0 accounts`, then `nothing to suspend`, exit **0** |
+
+`--account system` is the one to run, because it fires three guardrails at once
+and prints all three:
+
+```
+ACCOUNT  TARGET        STATE    STATUS  DETAIL
+system   tier1-oracle  SKIPPED  OPEN    the config does not declare this account, and no flag extends the whitelist; the database reports this account as its own; the account holds DBA
+
+system was not suspended on any of 1
+```
+
+**Exit 0, not a failure**, and that is deliberate: `SKIPPED` is the guardrails
+doing their job, and a scheduled caller should not be paged because somebody asked
+a reasonable question and got a correct refusal. Only an unreachable target sets
+exit 4.
+
+**`--force` waives the last two and never the first**, which is worth running
+because it is invariant 5's own sentence and you can watch it hold. Add `--force`
+to the same command and two of the three refusals disappear:
+
+```
+ACCOUNT  TARGET        STATE    STATUS  DETAIL
+system   tier1-oracle  SKIPPED  OPEN    the config does not declare this account, and no flag extends the whitelist
+
+system was not suspended on any of 1
+```
+
+`SYSTEM` is still `OPEN` afterwards — check it. A waived check is recorded in
+`results[].overridden`, so a document can say somebody did it on purpose; the
+whitelist is not waivable and so never appears there.
+
+---
+
 ## 11. Getting refused on purpose
 
 Everything in §10 succeeded. These are the paths that must not.
@@ -2488,7 +2619,7 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.23.schema.json`](schemas/sopuli-run-1.23.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.24.schema.json`](schemas/sopuli-run-1.24.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json

@@ -41,7 +41,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.23.schema.json`](../schemas/sopuli-run-1.23.schema.json),
+Schemas: [`../schemas/sopuli-run-1.24.schema.json`](../schemas/sopuli-run-1.24.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -1938,6 +1938,26 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.23 became 1.24 with `sopuli account suspend`** (#463), UC-2's offboarding verb.
+Three additive changes, each a minor bump by the ordinary rule:
+
+- `account_lock` joins the `action_kind` enum, beside the `account_unlock` that
+  was already there — the two are one pair, and this is the write half;
+- `account.suspend` joins the `command` enum;
+- **`results[].account_status`**, which is Oracle's own `ACCOUNT_STATUS` as it was
+  read *before* anything was issued. It is emitted for a row the verb refused as
+  well as one it changed, because "I left it alone and here is the state it is in"
+  is the whole answer for those. Compound values are ordinary and a consumer must
+  expect them: `EXPIRED & LOCKED` is real, and `LOCKED(TIMED)` is a failed-login
+  lock rather than a deliberate one — a substring test for `LOCKED` cannot tell
+  those apart, which is the mistake the driver's own parse exists to avoid.
+
+**Why `state: LOCKED` is not enough on its own**, and this is the thing to know
+before consuming it: a row can read `LOCKED` with `changed: false` because the
+account was *already* locked, and under `--dry-run` because it *would be*. The
+document's `dry_run` distinguishes them, and `account_status` is what says which
+state the database was actually in.
 
 **1.22 became 1.23 when `config show` learned to report the stores** (#428):
 `config.vaults[]`, additive, and a minor bump by the ordinary rule.

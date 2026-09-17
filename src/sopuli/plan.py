@@ -49,7 +49,7 @@ from typing import Any
 from sopuli.config.model import Binding, Config
 from sopuli.config.sharing import SharedSecret, shared_secrets
 
-__all__ = ["ACTION_KINDS", "BlastRadius", "Plan", "PlanUnit", "build"]
+__all__ = ["ACTION_KINDS", "BlastRadius", "Plan", "PlanUnit", "build", "build_for_accounts"]
 
 
 #: The run schema's ``action_kind`` enum, as a literal.
@@ -70,6 +70,7 @@ ACTION_KINDS = frozenset(
         "rollover_start",
         "rollover_finish",
         "account_unlock",
+        "account_lock",
         "attribute_set",
         "verify",
     )
@@ -207,6 +208,36 @@ def build(config: Config, *, intent: Sequence[str]) -> Plan:
     )
 
 
+def build_for_accounts(
+    config: Config, pairs: Sequence[tuple[str, str]], *, intent: Sequence[str]
+) -> Plan:
+    """The plan for running ``intent`` over ``pairs`` of (account, target).
+
+    :func:`build` reads its units from ``config.bindings``, which is right for
+    every verb whose unit of work is *an account mastered by a secret*. UC-2's
+    accounts are mastered by nothing (H1, #449), so they produce no binding and
+    that function would plan an empty run over them.
+
+    **The pairs are the caller's, and invariant 5 is therefore the caller's too.**
+    That is the real difference from :func:`build`, where the config *is* the
+    argument and no selector can reach an account the file does not name. Here
+    the caller has already answered "is this account declared" -- with
+    :func:`sopuli.personal.declared_on`, which needs a database for a predicate --
+    and this function trusts the answer. It is the one place in the plan layer
+    where the whitelist is upstream rather than structural, so a caller that
+    skipped that step would plan work on an undeclared account.
+
+    ``shared`` is empty rather than computed: a shared secret is two bindings
+    landing in one document, and these units address no document at all.
+    """
+    kinds = _checked_intent(intent)
+    environments = _environments(config)
+    units = tuple(
+        PlanUnit(account=account, target=target, intent=kinds) for account, target in pairs
+    )
+    return Plan(units=units, blast_radius=_radius(pairs, environments))
+
+
 def _checked_intent(intent: Sequence[str]) -> tuple[str, ...]:
     """The intent as a tuple, refusing anything outside the schema's enum.
 
@@ -311,13 +342,26 @@ def _blast_radius(
     config -- bindings are built *from* the estate -- and a guard against it here
     would be one this function cannot test honestly.
     """
+    return _radius([(binding.account, binding.target) for binding in bindings], environments)
+
+
+def _radius(
+    pairs: Iterable[tuple[str, str]], environments: Mapping[str, str | None]
+) -> BlastRadius:
+    """The same count over bare (account, target) pairs.
+
+    Split out so :func:`build_for_accounts` shares it rather than reimplementing
+    it: a blast radius counted two ways is the number `max_targets` and
+    `confirm_environments` read, and two implementations of it would eventually
+    disagree about how big a run is.
+    """
     targets: dict[str, None] = {}
     accounts: dict[str, None] = {}
     seen: dict[str, None] = {}
-    for binding in bindings:
-        targets[binding.target] = None
-        accounts[binding.account] = None
-        environment = environments.get(binding.target)
+    for account, target in pairs:
+        targets[target] = None
+        accounts[account] = None
+        environment = environments.get(target)
         if environment is not None:
             seen[environment] = None
     return BlastRadius(targets=len(targets), accounts=len(accounts), environments=tuple(seen))

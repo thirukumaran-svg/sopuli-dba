@@ -1,7 +1,10 @@
 # UC-2 — Personal account passwords: reset and hand over
 
-Status: draft / sketch. **Nothing here is built, and much of it is not decided** —
-§9 lists what is open, and each open question is a `decision` issue.
+Status: draft / sketch. **Almost nothing here is built, and much of it is not
+decided** — §9 lists what is open, and each open question is a `decision` issue.
+The exceptions, and they are the whole of what an operator can run today:
+`personal_accounts:` (#467) and **`sopuli account suspend`** (#463). No reset, no
+`expire-password`, no `account list`.
 Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
@@ -130,8 +133,20 @@ a person's account when they leave; `LOCKED` is what `ACCOUNT_STATUS` then says,
 and §5 already depends on that word meaning Oracle's fact rather than ours. The
 statement is still `ALTER USER … ACCOUNT LOCK`, and **#463** specifies the verb.
 
-**The statement and its idempotency are built** (#463, first half); the verb is
-not yet. Two things were measured on 26ai Free 23.26.2.0.0 on 2026-09-17, each
+**The verb is built** (#463): `sopuli account suspend --account NAME`, with the
+target selectors narrowing where rather than who. `--account` is required and
+takes one name, which is §2's rule for a mutating verb applied to this one -- an
+offboarding is one person leaving, and a declaration that resolved a set would be
+a predicate widening what a mutating verb may touch.
+
+The guardrails are the ones every mutating verb uses, so suspending `DBSNMP`
+refuses exactly as rotating it would; `--force` waives checks 2 to 5 and never the
+whitelist. A refusal exits **0** rather than failing: `SKIPPED` is the guardrails
+working, and only an unreachable target sets exit 4. The action kind is
+`account_lock` and the run document carries `results[].account_status` -- the state
+the database was in *before* anything was issued -- because `state: LOCKED` with
+`changed: false` cannot by itself say whether the account was already locked or
+would be under `--dry-run`. Two things were measured on 26ai Free 23.26.2.0.0 on 2026-09-17, each
 twice, and the driver rests on both:
 
 - a second `ACCOUNT LOCK` against an already-`LOCKED` account is **accepted
