@@ -461,11 +461,20 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   used to imply. On all four `PTIME` moved with `ALTER USER ... IDENTIFIED BY`,
   equalled the column to the second where both exist, and `CTIME` did not move.
   #386 decided to fall back to `PTIME` behind the optional grant, and to say why
-  when neither answers (`SOPULI-W021`). **12.1 and 12.2 would take the fallback
-  and are unmeasured**; 19c is expected to have the column and is unmeasured too.
-  Purely a display question — Q9 decided `--max-age-days` reads only the vault —
-  and the tier-1 test pinning `PTIME` equal to the column fails on any release
-  where the two part, so running the suite there settles it.
+  when neither answers (`SOPULI-W021`).
+
+  **19c has the column** — measured 2026-09-17 on **Oracle Database 19c EE High
+  Performance 19.0.0.0.0, version 19.24.0.0.0**, which this entry had only expected.
+  So the release an OCI estate runs takes the column path and never the fallback,
+  and it is off this entry's list. **What was measured there is the column's
+  presence**, by hand and not by running the suite: whether its value moves with
+  `ALTER USER … IDENTIFIED BY` on 19c is inferred from 26ai and 21c rather than
+  seen, and the tier-1 test that would pin it has not run on that release.
+
+  **12.1 and 12.2 would take the fallback and are unmeasured**, and that is what
+  keeps this entry open. Purely a display question — Q9 decided `--max-age-days`
+  reads only the vault — and the tier-1 test pinning `PTIME` equal to the column
+  fails on any release where the two part, so running the suite there settles it.
 - `unverified` `expire-rollover` (#438) — **What `ALTER USER … IDENTIFIED BY …
   PASSWORD EXPIRE` does to an account whose profile sets `PASSWORD_ROLLOVER_TIME`.**
   UC-2's **seen** (`manual`) reset is that one statement; its default, unseen reset

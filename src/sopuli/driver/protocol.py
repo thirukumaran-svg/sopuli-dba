@@ -528,9 +528,10 @@ class UserState:
 
     * ``password_changed_at`` -- its source depends on the release. The
       column is absent from ``DBA_USERS`` on **18c and 11.2** alike, and
-      present on 21c and 26ai (measured 2026-09-08, #386); below it the value
-      is ``SYS.USER$.PTIME``, behind the optional grant, and ``None`` without
-      it. 12.1, 12.2 and 19c are unmeasured (unverified: pw-changed-source).
+      present on 21c and 26ai (measured 2026-09-08, #386) and on 19c
+      (19.24.0.0.0, measured 2026-09-17); below it the value is
+      ``SYS.USER$.PTIME``, behind the optional grant, and ``None`` without
+      it. 12.1 and 12.2 are unmeasured (unverified: pw-changed-source).
       Nothing gates on it (Q9 made `--max-age-days` read the vault's
       ``rotated_at`` and only that), so reporting nothing costs nothing and
       guessing would be all cost -- but *saying* nothing did cost something,

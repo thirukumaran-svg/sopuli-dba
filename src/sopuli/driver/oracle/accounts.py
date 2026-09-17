@@ -72,8 +72,9 @@ expects numbers in, resolved through :data:`PROFILE_QUERY`'s ``DEFAULT`` join
 like every other resource.
 
 **``PASSWORD_CHANGE_DATE`` does track a rotation** on this release — two
-rotations two minutes apart moved it. On 18c and 11.2 the column does not exist
-(19c is unmeasured; the server's ``ORA-00904`` decides, not a version), and
+rotations two minutes apart moved it. On 18c and 11.2 the column does not exist,
+and on 19c it does (19.24.0.0.0, measured 2026-09-17) — though the server's
+``ORA-00904`` is what decides, not a version — and
 #386 decided the value comes from ``SYS.USER$.PTIME`` there, behind the optional
 grant, rather than going missing. That is a second source for one field, and it
 is admitted only because it is **the same clock** rather than an estimate of it —
