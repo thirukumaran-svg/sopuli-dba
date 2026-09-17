@@ -38,7 +38,7 @@ which paths ran and which are still untried.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-1.3.schema.json](schemas/sopuli-config-1.3.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-config-1.4.schema.json](schemas/sopuli-config-1.4.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
 | [schemas/sopuli-run-1.23.schema.json](schemas/sopuli-run-1.23.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
@@ -63,7 +63,7 @@ run schema. That is no longer an assertion in prose: `tests/test_schemas.py`
 checks it, and CI runs it on every push and pull request (invariant 12).
 
 To get completion and inline errors while editing a config, put
-`# yaml-language-server: $schema=./sopuli-config-1.3.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-1.4.schema.json` on the file's
 first line — see [design/01-configuration.md](design/01-configuration.md) §9b,
 which also explains why the schema's `$id` is not a URL to paste there.
 

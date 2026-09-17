@@ -43,6 +43,7 @@ from sopuli.config.fields import describe, reject_unknown_keys
 from sopuli.config.groups import build_groups
 from sopuli.config.model import Config
 from sopuli.config.permissions import check_permissions
+from sopuli.config.personal_accounts import build_personal_accounts, reject_cross_declaration
 from sopuli.config.policies import build_policies
 from sopuli.config.profiles import build_profiles, select_profile
 from sopuli.config.references import check_references
@@ -84,6 +85,10 @@ TOP_LEVEL_KEYS = (
     "secret_template",
     "policy",
     "overrides",
+    # UC-2's personal accounts, which are a declaration and not a binding (H1,
+    # #449). Beside the application keys rather than among them: nothing masters
+    # one, so it shares no key with the form above.
+    "personal_accounts",
 )
 
 
@@ -290,7 +295,13 @@ def build_config(
         defaults=build_defaults(document),
         runtime=build_runtime(document),
         applications=build_applications(document),
+        personal_accounts=build_personal_accounts(document),
     )
+    # Before anything else looks at either section: a name in both makes the
+    # whitelist ambiguous about which guarantee applies, and every later step --
+    # expansion, references, bindings -- would be reasoning about an account
+    # that means two things (H1, #449).
+    reject_cross_declaration(config.applications, config.personal_accounts)
     # Exactly one profile is active (§5 rule 1), and it has to be settled before
     # the vault layers are merged: layer 3 *is* the active profile's `vaults:`
     # block, and a merge that ran first would have nothing to put there.

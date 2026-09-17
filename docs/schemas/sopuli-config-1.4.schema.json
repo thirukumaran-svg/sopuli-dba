@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-1.3.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-1.4.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
@@ -92,6 +92,14 @@
     },
     "overrides": {
       "$ref": "#/$defs/overrides"
+    },
+    "personal_accounts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/personal_account"
+      },
+      "description": "Accounts belonging to people, for UC-2's reset (H1, #449).",
+      "minItems": 1
     }
   },
   "$defs": {
@@ -665,6 +673,34 @@
         },
         "safety": {
           "$ref": "#/$defs/safety"
+        }
+      }
+    },
+    "personal_account": {
+      "type": "object",
+      "description": "Accounts belonging to people, which a DBA resets and hands over (UC-2). Declared by name or by a predicate over a profile or a role; nothing masters the password, so there is no secret to bind.",
+      "additionalProperties": false,
+      "properties": {
+        "accounts": {
+          "$ref": "#/$defs/accounts"
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A predicate: every account carrying this database profile. Resolved against the database at run time, never from the file."
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A predicate: every account granted this database role. Resolved against the database at run time, never from the file."
+        },
+        "targets": {
+          "$ref": "#/$defs/application_targets"
+        },
+        "policy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `policies:`."
         }
       }
     },

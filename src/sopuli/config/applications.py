@@ -145,7 +145,7 @@ def _build_entry(raw: Any, *, at: KeyPath, named: bool) -> Application:
     application = Application(
         name=name,
         accounts=accounts,
-        targets=_build_targets(entry.get("targets"), at=at.key("targets")),
+        targets=build_target_selector(entry.get("targets"), at=at.key("targets")),
         vault=optional_string(entry, "vault", at=at),
         secret=secret,
         secret_template=secret_template,
@@ -247,8 +247,14 @@ def _require_distinguishable_accounts(application: Application, *, at: KeyPath) 
     )
 
 
-def _build_targets(raw: Any, *, at: KeyPath) -> TargetSelector:
-    """`targets:` is a list of names, `{group: NAME}` or `{match: {...}}` (§3)."""
+def build_target_selector(raw: Any, *, at: KeyPath) -> TargetSelector:
+    """`targets:` is a list of names, `{group: NAME}` or `{match: {...}}` (§3).
+
+    Public because `personal_accounts:` takes the same key with the same three
+    forms (H1, #449). It is documented as an application-entry key and it is not
+    one exclusively, so the builder is shared rather than written twice -- two
+    copies of a selector are two things to keep in step with `groups:`.
+    """
     if raw is None:
         return TargetSelector()
     if isinstance(raw, list):

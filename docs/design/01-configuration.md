@@ -5,14 +5,14 @@ Depends on: `00-principles.md` (P3 defines precedence)
 
 ---
 
-## 1. Two shapes, and you start with the simpler one
+## 1. Two shapes for an application, and a third declaration beside them
 
 **One application, and every target is its own → no `applications:` section.**
 Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.3.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.4.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -66,26 +66,77 @@ purpose — the worked example in §2 has a CDB root for common-user maintenance
 cannot be bound by the inline form at all, because "all targets" would include
 the ones this application has nothing to do with. §2 shows what that looks like.
 
-**A third declaration is decided and is not written here yet.** UC-2's personal
-accounts are declared in `personal_accounts:` — by name, or by a predicate over a
-profile or a role — decided in H1 (#449) and specified in
-[`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §2.
-It is deliberately *not* an application binding, for the reason the next paragraph
-gives: nothing masters a personal account's password, so none of the three things
-an application entry exists for applies to one.
+**The two shapes above are two shapes of one thing — an application binding —
+and they are not the whole file.** A third declaration sits beside them:
 
-**A second block is decided and unwritten for the same reason.** UC-2's reset
+```yaml
+personal_accounts:
+  # By name: a short list somebody reviews.
+  - accounts: [jdoe, asmith]
+    targets: [appdb-dev-alpha]
+    policy: personal-standard
+
+  # Or by a predicate, resolved against the database at run time.
+  - profile: DEV_USERS
+    policy: personal-standard
+```
+
+**`personal_accounts:` is UC-2's**, decided in H1 (#449) and specified in
+[`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §2.
+It is deliberately *not* an application binding, for the reason the next section
+gives: nothing masters a personal account's password, so none of the three things
+an application entry exists for applies to one. What it carries:
+
+| Key | Meaning |
+|---|---|
+| `accounts` | the accounts this entry declares, by name |
+| `profile` | **a predicate**: every account carrying this database profile |
+| `role` | **a predicate**: every account granted this database role |
+| `targets` | the same selector an application entry takes — names, `group:` or `match:`; absent means all targets |
+| `policy` | the name of an entry in `policies:` |
+
+**Exactly one of `accounts`, `profile` and `role`**, and writing two is refused
+rather than read as a union or an intersection — neither reading is the obvious
+one, and an ambiguous whitelist is what invariant 5 exists to prevent. Two entries
+say the union unambiguously; the section is a list.
+
+**A predicate exists because enumerating four hundred developers is transcription
+rather than review**, and it amends invariant 5's first sentence — what counts as
+*declared* — while leaving its second exactly as written. `account list` resolves
+it and reports what it matched; a reset names its account on the command line and
+refuses any name the predicate does not admit. The cost is stated in UC-2 §2
+rather than buried: predicate membership is controlled by whoever assigns the
+profile or grants the role, not by whoever reviews this file.
+
+**Resolution is not a load-time question**, so nothing here checks it. Whether
+`profile: DEV_USERS` names a profile that exists is asked of a database by the
+verb that resolves it, and §2's asymmetry is what it answers with: a profile that
+does not exist is a misspelling and is refused, while one that exists and matches
+no accounts is a true answer about today's estate and is not an error.
+
+**A name may not be declared twice** — not twice in this section, and not once
+here and once as an application account. The two carry different guarantees, one
+mastered by a secret and one handed to a person, so a name in both leaves the
+whitelist ambiguous about which applies and the validator refuses rather than
+picking (§10). Compared case-insensitively, because that is how a selector
+matches: `--account jdoe` reaches a declared `JDOE`. **The enumerated form is all
+a file can check** — an account that a *predicate* admits and an application
+declares is a collision only a database can see, which is the cost H1 accepted,
+and the verb that resolves the predicate is where it has to be caught.
+
+**No `secret` and no `secret_template`**, and their absence is the point rather
+than an omission: there is nothing to bind an account to when nothing masters its
+password.
+
+**One UC-2 block is decided and not written here yet.** UC-2's reset
 record — where the tool journals *who* reset a personal account, by which path and
 where it was delivered, and never the password — is decided in H2 (#450) and
 specified in [`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §3.
 Its store, prefix, keys and schema are **#468**. It is written only where an estate
 configures a store, and a reset without one warns and runs, so it is a block whose
-absence is a documented mode rather than an error.
-
-The keys, the generated schema, the validators, and the rule that **a name may not
-be declared both ways**, are **#467**. Until that lands, this reference documents
-what is built — the two forms above — and the heading is a statement about
-application bindings rather than about the whole configuration.
+absence is a documented mode rather than an error. The `delivery:` block is **#440**
+and is not written here either, for the same reason: this reference documents
+configuration that is **built**.
 
 ### What an application entry actually is
 
@@ -112,7 +163,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.3.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.4.schema.json
 version: 1
 
 runtime:
@@ -2392,7 +2443,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-1.3.schema.json`](../schemas/sopuli-config-1.3.schema.json),
+[`docs/schemas/sopuli-config-1.4.schema.json`](../schemas/sopuli-config-1.4.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -2403,7 +2454,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-1.3.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.4.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -2453,7 +2504,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.3.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.4.schema.json
 version: 1
 ```
 
@@ -2464,7 +2515,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.3.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.4.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -2568,6 +2619,22 @@ notices until a rotation.
   *accounts*, not scopes — one account sharing a password across eleven PDBs is
   legal and often intended (§7), and is surfaced in plan output rather than
   refused
+- a `personal_accounts:` entry naming none of `accounts:`, `profile:` and `role:`,
+  or more than one of them → error. None declares nothing, which invariant 5 says
+  is the default anyway and is not worth an entry; two would mean either the union
+  or the intersection, and picking one silently is how a whitelist stops being
+  readable. Two entries are the union, written down
+- a name declared **both** as an application account and a personal one → error
+  naming both sections (H1, #449). The two carry different guarantees — mastered
+  by a secret, or handed to a person — so a name in both is ambiguous about which
+  applies, and the tool refuses rather than choosing. Compared
+  case-insensitively, because `sopuli/config/selection.py` casefolds and one
+  `--account` would otherwise reach two "distinct" spellings. **Only the
+  enumerated form is checkable here**: an account a predicate admits and an
+  application declares collides where no file can see it, and the verb that
+  resolves the predicate is where that is caught
+- a duplicate account name inside `personal_accounts:` → error, on the same
+  comparison and for the same reason
 - an `overrides` entry patching `accounts` → error. Invariant 5 says selectors
   filter the declared set and cannot extend it, not even under `--force`. A
   patchable `accounts` would be a label match buried in a long file that adds to

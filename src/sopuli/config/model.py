@@ -815,11 +815,59 @@ class ConfigWarning:
 
 
 @dataclass(frozen=True)
+class PersonalAccountRule:
+    """One rule in `personal_accounts:` -- accounts belonging to people (H1, #449).
+
+    Named for the **rule** rather than the accounts because one entry is not one
+    account: it is a list of names, or a predicate that stands for however many
+    accounts a database says carry a profile. The rest of the model is singular
+    per entry (:class:`Application`, :class:`Policy`, :class:`Profile`) and this
+    follows it.
+
+    Exactly one of ``accounts``, ``profile`` and ``role`` says *which*: a list of
+    names, or a **predicate** over a profile or a role that a database resolves at
+    run time. The predicate exists because enumerating four hundred developers is
+    transcription rather than review, and it amends invariant 5's first sentence
+    without touching its second -- `account list` resolves it, while a reset names
+    its account and refuses any name the predicate does not admit.
+
+    Notably absent: ``secret`` and ``secret_template``. Nothing masters a personal
+    account's password, which is the whole reason this is not an
+    :class:`Application` (UC-2 §1).
+    """
+
+    accounts: tuple[str, ...] = ()
+    profile: str | None = None
+    role: str | None = None
+    targets: TargetSelector = field(default_factory=TargetSelector)
+    policy: str | None = None
+
+    @property
+    def is_predicate(self) -> bool:
+        """Whether this entry is resolved against a database rather than read."""
+        return not self.accounts
+
+    @property
+    def label(self) -> str:
+        """How to refer to this entry in a message."""
+        if self.profile is not None:
+            return f"profile {self.profile!r}"
+        if self.role is not None:
+            return f"role {self.role!r}"
+        return "accounts " + ", ".join(repr(account) for account in self.accounts)
+
+
+@dataclass(frozen=True)
 class Config:
     """One validated config file."""
 
     version: int
     applications: tuple[Application, ...] = ()
+    #: UC-2's personal accounts, by name or by predicate (H1, #449). Separate
+    #: from `applications` because the two carry different guarantees, and a
+    #: name may not appear in both -- see
+    #: :func:`~sopuli.config.personal_accounts.reject_cross_declaration`.
+    personal_accounts: tuple[PersonalAccountRule, ...] = ()
     vaults: tuple[Vault, ...] = ()
     targets: tuple[Target, ...] = ()
     target_sets: tuple[TargetSet, ...] = ()

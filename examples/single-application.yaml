@@ -9,7 +9,7 @@
 
 # The editor hint below gives you completion and inline errors in VS Code and
 # anything else that speaks the YAML language server. It is optional.
-# yaml-language-server: $schema=../docs/schemas/sopuli-config-1.3.schema.json
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-1.4.schema.json
 
 version: 1
 

@@ -499,6 +499,53 @@ Each of these is a real error message worth seeing once:
 
 All four cost me time while writing this guide, which is why they are here.
 
+### Personal accounts, which nothing masters
+
+UC-2 is not built — there is no `account` verb to run — but the **declaration** is
+(#467), and `config show` reports it like any other section. Add this to the file
+from §6:
+
+```yaml
+personal_accounts:
+  - accounts: [jdoe, asmith]
+    targets: [appdb-dev-alpha]
+    policy: personal-standard
+  - profile: DEV_USERS
+    policy: personal-standard
+```
+
+```
+personal_accounts
+DECLARED BY          ACCOUNTS  TARGETS          POLICY
+names                2         appdb-dev-alpha  personal-standard
+profile 'DEV_USERS'  -         all              personal-standard
+```
+
+**The dash is the point of the second row.** A `profile:` or `role:` entry is a
+**predicate**, resolved against the database by the verb that reads it, so how
+many accounts it covers is not something the file knows — and `config show`
+describes the file. A count there would be a guess.
+
+Three failures worth causing, all of them at load, all of them exit **9**:
+
+| Change | What you get |
+|---|---|
+| put an application's account in `personal_accounts:` too | `personal_accounts[0].accounts[0]: account 'acme_web_user' is declared both as a personal account and by acme` |
+| write `accounts:` and `profile:` in one entry | ``personal_accounts[1]: must declare exactly one of `accounts:`, `profile:` or `role:` (found `accounts:`, `profile:`)`` |
+| misspell the `policy:` | `personal_accounts[0].policy: no policy named 'personal-standrd' is declared` |
+
+The first is the one worth understanding rather than just seeing. An account that
+is both an application's and a person's is ambiguous about **which guarantee
+applies** — mastered by a secret and synced from it, or handed over once and
+mastered by nothing — so the tool refuses instead of picking. It compares
+case-insensitively: `ACME_WEB_USER` and `acme_web_user` collide, because one
+`--account` reaches both.
+
+What a file **cannot** catch is the same collision through a predicate: if
+`DEV_USERS` happens to admit `acme_web_user`, nothing here can know it. That is
+stated rather than hidden — it is the cost H1 (#449) accepted when it allowed a
+predicate at all, and the verb that resolves one is where it has to be caught.
+
 ### `defaults.vault` is the line that makes three other things work
 
 `vault: vault-dev` under `defaults:` is not decoration. It names the **default

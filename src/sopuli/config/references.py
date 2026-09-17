@@ -82,6 +82,11 @@ def _admin_at(expanded: ExpandedTarget, *parts: str) -> KeyPath:
     return at
 
 
+def _personal_at(index: int) -> KeyPath:
+    """Where a `personal_accounts:` entry lives, for a message to point at."""
+    return ROOT.key("personal_accounts").index(index)
+
+
 def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     """Resolve every name in the file against what the file declares.
 
@@ -183,6 +188,10 @@ def _check_policies(config: Config) -> None:
                 path = where.key("overrides").index(position).key("policy")
                 found.append(_Reference(override.policy, path))
 
+    for index, entry in enumerate(config.personal_accounts):
+        if entry.policy is not None:
+            found.append(_Reference(entry.policy, _personal_at(index).key("policy")))
+
     if config.defaults.policy is not None:
         found.append(_Reference(config.defaults.policy, ROOT.key("defaults").key("policy")))
 
@@ -199,6 +208,12 @@ def _check_groups(config: Config) -> None:
         group = application.targets.group
         if group is not None:
             found.append(_Reference(group, where.key("targets").key("group")))
+
+    for index, entry in enumerate(config.personal_accounts):
+        if entry.targets.group is not None:
+            found.append(
+                _Reference(entry.targets.group, _personal_at(index).key("targets").key("group"))
+            )
 
     _resolve(found, declared, noun="group", section="groups")
 
@@ -219,6 +234,11 @@ def _check_targets(config: Config) -> None:
         where = ROOT if application.is_inline else ROOT.key("applications").index(index)
         for position, name in enumerate(application.targets.names):
             found.append(_Reference(name, where.key("targets").index(position)))
+
+    for index, entry in enumerate(config.personal_accounts):
+        at = _personal_at(index).key("targets")
+        for position, name in enumerate(entry.targets.names):
+            found.append(_Reference(name, at.index(position)))
 
     _resolve(found, declared, noun="target", section="targets")
 

@@ -280,6 +280,7 @@ def _declared_sections(config: Config) -> list[tuple[str, list[str]]]:
         ("policies", _named(policy.name for policy in config.policies)),
         ("profiles", _named(profile.name for profile in config.profiles)),
         ("applications", _application_rows(config)),
+        ("personal_accounts", _personal_account_rows(config)),
         ("safety", _safety_rows(config)),
     ]
 
@@ -635,6 +636,33 @@ def _application_rows(config: Config) -> list[str]:
                 _or_dash(application.secret_ref),
             ]
             for application in config.applications
+        ],
+    )
+
+
+def _personal_account_rows(config: Config) -> list[str]:
+    """UC-2's section (H1, #449). One row per rule, not per account.
+
+    ``ACCOUNTS`` is a count for an enumerated entry and ``-`` for a predicate,
+    and the dash is the honest answer rather than a gap: how many accounts carry
+    a profile is a fact about a database, and this command describes the file.
+    `account list` is the verb that asks.
+    """
+    return render_table(
+        [
+            Column("DECLARED BY", _NAME),
+            Column("ACCOUNTS"),
+            Column("TARGETS", _NAME),
+            Column("POLICY", _NAME),
+        ],
+        [
+            [
+                "names" if not entry.is_predicate else entry.label,
+                "-" if entry.is_predicate else str(len(entry.accounts)),
+                _selector(entry),
+                _or_dash(entry.policy),
+            ]
+            for entry in config.personal_accounts
         ],
     )
 

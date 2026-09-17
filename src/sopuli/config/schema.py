@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.3.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.4.schema.json
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ from sopuli.config import (
     groups,
     loading,
     locking,
+    personal_accounts,
     policies,
     profiles,
     safety,
@@ -74,7 +75,15 @@ from sopuli.config import (
 #: rather than declare one. Minor for the same reason once more -- and the
 #: interesting half is what the new shape *refuses*, since `type`,
 #: `non_production` and `locking` are absent from it by construction.
-SCHEMA_VERSION = "1.3"
+#: 1.3 became 1.4 with UC-2's `personal_accounts:` (H1, #449, #467): a top-level
+#: list of accounts that belong to people, by name or by a predicate over a
+#: profile or a role. Optional like every bump before it, so a file that declares
+#: only applications means exactly what it did. What the shape *refuses* is again
+#: the interesting half -- there is no `secret`, no `secret_template`, and exactly
+#: one of `accounts`, `profile` and `role` may be written, because nothing masters
+#: a personal account's password and two ways of saying which accounts would leave
+#: the whitelist ambiguous.
+SCHEMA_VERSION = "1.4"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -875,6 +884,45 @@ _APPLICATION_TYPES: dict[str, Schema] = {
 }
 
 
+def _personal_account() -> Schema:
+    """One `personal_accounts:` entry (H1, #449).
+
+    ``minProperties`` is not the rule here and would be the wrong one: an entry
+    must name **exactly one** of ``accounts``, ``profile`` and ``role``, which is
+    a relation between three keys rather than a count, so it stays with the
+    builder where the message can say which two were found. What the artefact
+    does carry is the absence of ``secret`` and ``secret_template`` -- an editor
+    offering them here would be offering mastery over a password nothing masters.
+    """
+    return _object(
+        keys=personal_accounts.PERSONAL_ACCOUNT_KEYS,
+        types={
+            "accounts": _ref("accounts"),
+            "profile": {
+                **STRING,
+                "description": (
+                    "A predicate: every account carrying this database profile. "
+                    "Resolved against the database at run time, never from the file."
+                ),
+            },
+            "role": {
+                **STRING,
+                "description": (
+                    "A predicate: every account granted this database role. "
+                    "Resolved against the database at run time, never from the file."
+                ),
+            },
+            "targets": _ref("application_targets"),
+            "policy": {**STRING, "description": "The name of an entry in `policies:`."},
+        },
+        description=(
+            "Accounts belonging to people, which a DBA resets and hands over (UC-2). "
+            "Declared by name or by a predicate over a profile or a role; nothing "
+            "masters the password, so there is no secret to bind."
+        ),
+    )
+
+
 def _application() -> Schema:
     return _object(
         keys=applications.APPLICATION_KEYS,
@@ -1013,6 +1061,11 @@ def _root() -> Schema:
             minItems=1,
             description="The binding, for one or more applications (§3).",
         ),
+        "personal_accounts": _array(
+            _ref("personal_account"),
+            minItems=1,
+            description="Accounts belonging to people, for UC-2's reset (H1, #449).",
+        ),
     }
     # The inline form is one unnamed application entry hoisted to the top level,
     # so its keys take the entry's own subschemas rather than copies of them.
@@ -1053,6 +1106,7 @@ def build_schema() -> Schema:
             "target_patch": _target_patch(),
             "for_each": _for_each(),
             "group": _group(),
+            "personal_account": _personal_account(),
             "policy": _policy(),
             "password_policy": _password_policy(),
             "require": _require(),
