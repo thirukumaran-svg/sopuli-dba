@@ -52,7 +52,9 @@ the unseen path a store does hold it for the person to fetch, and that is
 transport, not mastery; what happens to that copy afterwards is H8 (#459).
 Invariants 6 and 7 therefore have nothing to govern here (§7). **That does not
 make the database a source of truth either**: the tool reads account state from
-it, as UC-1 does, and never a password.
+it, as UC-1 does, and never a password. §3.2 makes that boundary precise, because
+H2 (#450) puts the database on the authoritative side of one question — *when* the
+password last changed — and nowhere near the value.
 
 **Why this cannot be a mode of UC-1**, from the roadmap, each point being a place
 UC-1's design would do the wrong thing:
@@ -135,7 +137,18 @@ predicate something has to resolve the rule and show what it matched, and
 nothing masters. Where the declaration is a list of names instead, it is the same
 command answering a shorter question — which is why it is one verb and not two.
 
-Whether there is a read verb — "when was this person last reset" — depends on H2.
+**There is no separate read verb**, which is the half of this section H2 (#450)
+was holding. "When was this person last reset" is answered by `account list`, which
+already resolves the declaration and reports each account's state: H2 gives it two
+more columns — the database's password-change date and the metadata record's
+`reset_at` — and §3.2 says why both are shown rather than folded into one number.
+
+**Either column can be empty, and an empty one is not an error.** Where no store is
+configured there is no `reset_at` to report, and `SOPULI-W021`'s own rule applies to
+the pair: a documented column that vanishes with nothing saying why is a hole in the
+contract, so `account list` prints `-` and carries the §3.4 warning that says which
+absence it is. It is the listing verb reporting what exists, not a verb that fails
+because history does not.
 
 Every operation is limited to declared accounts, and **H1 (#449) settled what
 declares one: a `personal_accounts:` section**, holding either names or a
@@ -186,21 +199,181 @@ answer about today's estate.
 UC-1's vault payload answers three questions at once: when a password last changed
 (Q9's `rotated_at`), what to roll back to (`previous`), and where the lock lives
 (Q2, keyed on the secret path). UC-2 has no payload, so each needs its own answer.
-**H2 (#450) is those answers**; what is already true regardless:
+**H2 (#450) is those answers, and they are three different places** — the database,
+a metadata record, and nowhere at all:
 
-- **Rollback is not a UC-2 operation.** The recovery for a lost personal password
-  is another reset. Nothing keeps an old value to go back to.
+| Question | Answered by | Why there |
+|---|---|---|
+| **when** the password last changed | the **database** — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant otherwise (#386), and 12.1 and 12.2 unmeasured on the fallback (unverified: pw-changed-source) | it is the only thing that knows about a change the tool did not make, and on the seen path there is *always* one (§3.2) |
+| **who** reset it, by **which path**, and **where** it was delivered | a **metadata record** in a store, written where an estate configures one (§3.1) | the database cannot know any of it, and the run document answers only for whoever kept that run's output |
+| **what to roll back to** | **nothing** | rollback is not a UC-2 operation: the recovery for a lost personal password is another reset |
+| **where the lock lives** | the metadata record's own path (§3.3) | it is the one location that exists on the seen path and the unseen one alike, and in both of the unseen path's delivery forms |
+
+**The record never holds the password**, in any form — not the value, not a hash,
+not a verifier. That is invariant 2, and it is also the point: a record that could
+leak the thing it records would be worse than no record. What lets `rotated_at`
+live in UC-1's payload is that the payload is already the secret; this one is not,
+so it can be read by anyone who may know *that* a reset happened without thereby
+being able to use it.
+
+### 3.1 The metadata record
+
+**Written wherever a store is configured, and where none is, a reset still runs.** The unseen
+path already needs a store — it is the delivery target — so on the default path the
+record costs nothing that was not already there. The seen (`manual`) path may have
+no store at all, and that is exactly the site `manual` exists for, so requiring one
+would take the fallback away from the estates that have nothing else. A reset with
+no store configured is therefore **not refused**; it warns (§3.4).
+
+One record per **(target, account)**, under a prefix of its own. The unit is not
+the one UC-1 locks on, and the difference is the whole reason it needs saying: UC-1
+keys on the vault document because the document is what gets mutated, while here
+the mutated resource is **the database account**. One person's account on
+`appdb-dev-alpha` and on `appdb-qa-alpha` is two accounts with two passwords,
+which two DBAs can reset independently.
+
+It carries what happened, and nothing that happened *to*:
+
+```json
+{"account": "jdoe",
+ "target": "appdb-dev-alpha",
+ "reset_at": "2026-09-17T09:14:22Z",
+ "seen": false,
+ "expired": false,
+ "delivery": {"method": "vault_wrapped", "to": "cubbyhole/response"},
+ "by": {"host": "dba-ws-4.example.com", "os_user": "dba01"},
+ "correlation_id": "01J..."}
+```
+
+**`delivery.to` is present only where delivery has a location.** A store path or a
+cubbyhole reference is one; the seen path's destination is a person, by a route the
+tool did not carry, so `manual` records the method and omits `to` rather than
+inventing a value for stdout. What makes that unambiguous is `seen`, which is the
+field a reader is actually asking about there. #468 has the key optional for this
+reason and no other.
+
+`by` is the lock record's `holder` shape (`sopuli/lock/record.py`) rather than a
+second spelling of the same fact, and `correlation_id` is what joins this row to
+the run document that produced it. **`seen` is the field worth writing down**: a
+seen reset is a deliberate, time-limited exposure (§1), and six months later the
+question somebody actually asks is not *when was this reset* but *did a DBA hold a
+working password for this account, and which DBA*.
+
+**The concrete keys, the generated schema and the validators are not here.** They
+are **#468**, split out in the shape H1's were (#467): this section decides *that*
+there is a record, *what it answers* and *what it may never contain*, and
+`01-configuration.md` documents configuration that is built.
+
+### 3.2 Why the database is authoritative for *when*, and Q9 is not the precedent
+
+Q9 (#87) decided the opposite for UC-1 — the vault's `rotated_at`, unconditionally,
+with the database's own timestamp shown beside it — and UC-2 diverging from a
+settled question needs a better reason than taste. It has one, and it is not a
+preference about trust:
+
+- **On the seen path the owner is required to change the password**, at first
+  logon, by the `PASSWORD EXPIRE` that path always issues (§1). The record's
+  `reset_at` is not stale by accident there: it is **designed** to be overtaken,
+  usually within a day, by a change the tool will never see. A record that was
+  authoritative about when the password last changed would be authoritatively
+  wrong about the normal case.
+- **The record only knows about resets this tool performed.** A password changed by
+  hand at a SQL prompt, by a DBA who did not use sopuli, exists only in the
+  database.
+- **Q9's reason does not carry over.** The vault is authoritative in UC-1 *because
+  it is master*: the value there is the one the applications are using, so its
+  timestamp is the fact. Nothing is master here (§1), which removes that argument
+  rather than reversing it.
+
+**Reading a timestamp out of the database is not a breach of invariant 6.**
+Invariant 6 governs the *value* — vault is master of the password, and the
+direction of a write is vault → database, always. UC-2 syncs no value in either
+direction and reads no password from anywhere, so what is left is the tool reading
+account state from the database, which it already does in UC-1 (§1, and UC-1 §5's
+attributes). The distinction to keep hold of: **the database is a source of truth
+about the account, and never about the password.**
+
+**Both are shown, and a disagreement is information.** `account list` reports the
+database's change date and the record's `reset_at` as two columns rather than one
+folded number, for the reason Q9 gave and which this section does not change. What
+the pair says:
+
+| The two dates | Meaning |
+|---|---|
+| database **later** than `reset_at`, **seen** path | expected — the owner logged in and set their own password, which is what that path is for |
+| database **later** than `reset_at`, **unseen** path | **a finding.** Somebody changed the password after the tool delivered it, so the copy the person was told to fetch no longer works |
+| database **earlier** than `reset_at`, by more than the skew allowance | the reset did not take, or this release does not answer by the column the run read (§3.4) |
+| database **earlier** than `reset_at`, within it | says nothing, and is not reported as anything. The two timestamps come off two clocks — `reset_at` off the host that ran `sopuli`, the change date off the database — so a few seconds' disagreement is ordinary drift rather than evidence. The allowance is `sopuli/lock/record.py`'s `CLOCK_SKEW`, which exists for the same reason against the same pair of clocks, and reusing it keeps one number rather than two |
+| no database date | §3.4 — the release or the grant, and `SOPULI-W021` already says which |
+
+Whether the unseen-path disagreement gets a `diagnostics[]` code of its own or is
+a column an operator reads, is left to the verb that displays it: that is a
+presentation question about a fact this section establishes, not another H.
+
+### 3.3 The lock, and why the record's path is its key
+
+Q2 (#83) keyed the advisory lock on the **store and secret path**, one CAS-guarded
+record per path under a `locks/` prefix, with the store's version counter as the
+fencing token. UC-2 has no secret path: the wrapping-token form (#444) never writes
+one, and `manual` writes nothing at all. So the collision #450 raised — two DBAs
+resetting the same person at once, the second password overwriting the first before
+the person has fetched either — had nothing to key on.
+
+**The metadata record's path is that key.** It exists on the seen path and the
+unseen one alike, and in both of the unseen path's delivery forms; it is one per
+(target, account); and it is the unit two concurrent resets actually collide on. Nothing about the lock machinery changes: same `locks/`
+prefix, same CAS, same fencing token, same `lock status` and `lock break`. The key
+is the only new thing, and it is a key of the shape that layer already takes.
+
+**Where there is no store there is no lock**, which is the other half of §3.1's
+cost and the reason §3.4's warning says so rather than mentioning only the record.
+A store configured `locking: advisory-only`, or one without `cas`, behaves here as
+it does in UC-1 (`01-configuration.md` §9).
+
+### 3.4 When something is missing, say which thing
+
+Three absences, and they are not the same absence:
+
+- **No store configured.** No record is written and no lock is taken; the run
+  document and the database are the record for that reset. **A warning with a code
+  of its own**, at plan time rather than after the fact, because an operator who did
+  not mean to run this way should find out before the password changes rather than
+  after. The number is allocated when it is built and is deliberately not reserved
+  here — how codes are allocated is J3, still open (`03-json-output.md` §9).
+- **The record write fails, after the reset succeeded.** A warning on a successful
+  run — never a rollback, never a non-zero exit. The password has already changed
+  and the person still needs it, so failing the run would report a false negative
+  about the part that mattered. The record is written **after** the database
+  confirms and after delivery, so what it holds is a fact rather than an intention,
+  and its absence is the case above reached by a different route.
+- **The database will not say when.** `SOPULI-W021` exists for exactly this and
+  already distinguishes the causes: a release with no
+  `DBA_USERS.PASSWORD_CHANGE_DATE` and no `SELECT ON SYS.USER$` to read `PTIME`
+  instead, which a grant fixes, or a value that could not be read, which is worth
+  investigating (`03-json-output.md`). 12.1 and 12.2 would take the fallback and
+  are unmeasured (unverified: pw-changed-source).
+
+**None of the three is a refusal**, and that is a deliberate departure from this
+codebase's usual reflex. Invariant 4 refuses at plan time when a command needs a
+capability it cannot have; a reset needs none of these to do what it is for. A
+person who cannot log in is still locked out whether or not the estate keeps
+history, and a tool that refused to help them because it could not write a journal
+entry would have its priorities backwards.
+
+### 3.5 What is deliberately not recorded
+
+- **No password, in any representation** (invariant 2, §3).
+- **No previous value.** There is nothing to roll back to, because rollback is not
+  a UC-2 operation — the recovery for a lost personal password is another reset.
+  Stated rather than implied, which is what #450 asked for.
 - **The unseen path's store copy is not a record.** It exists for the person to
-  fetch; whether it outlives the fetch is H8 (#459), and it is never read back by
-  the tool as history.
+  fetch; whether it outlives the fetch is H8 (#459), and the tool never reads it
+  back as history. A record and a handover in the same store are two objects with
+  two lifetimes, and conflating them is how the handover copy would end up living
+  as long as the audit trail.
 - **The run document is always a record**, and it never carries a password
   (invariant 2). So will the jsonl stream be, once there is one — `--output jsonl`
-  is a usage error in this build (`03-json-output.md`). Whether anything more
-  durable exists is H2.
-- **The database can report when a password changed**, but not on every release by
-  the same route: `DBA_USERS.PASSWORD_CHANGE_DATE` where it exists, `SYS.USER$.PTIME`
-  behind the optional grant otherwise (#386), and 12.1, 12.2 and 19c unmeasured
-  (unverified: pw-changed-source).
+  is a usage error in this build (`03-json-output.md`).
 
 ---
 
@@ -502,14 +675,14 @@ restricts the set of methods is H6 (#453).
 | # | Invariant | Here |
 |---|---|---|
 | 1 | no secret in `argv` | binds unchanged, including every store credential |
-| 2 | redaction at the serialiser | binds. A **Vault** write is already a permitted plaintext path, so the Vault forms of the unseen path need no widening; the other stores (#445, #446, `smtp_encrypted`) are not automatically one, and #456 says how each keeps the invariant. The seen path's display is not a permitted path, and is #439 |
+| 2 | redaction at the serialiser | binds, and §3's metadata record is inside it rather than an exception to it: it holds no password in any representation, not a hash and not a verifier. A **Vault** write is already a permitted plaintext path, so the Vault forms of the unseen path need no widening; the other stores (#445, #446, `smtp_encrypted`) are not automatically one, and #456 says how each keeps the invariant. The seen path's display is not a permitted path, and is #439 |
 | 3 | branch on capability, not version | binds — rollover (§4.3) is a capability |
-| 4 | unavailable capability fails at plan time | binds — §4.3's seen-path refusal, §5's refusal of a deliberate `LOCKED`, §4.4's guardrails, and possibly H8's store check |
+| 4 | unavailable capability fails at plan time | binds — §4.3's seen-path refusal, §5's refusal of a deliberate `LOCKED`, §4.4's guardrails, and possibly H8's store check. §3.4's three absences are deliberately **not** on that list, and it says why: a reset needs none of them to do what it is for |
 | 5 | the config is the whitelist | binds, with H1's amendment (#449): a personal account is declared in `personal_accounts:` by name or by predicate, and a predicate never widens what a mutating verb may touch — the second sentence, that selectors cannot extend the declared set, is untouched (§2) |
-| 6 | vault is master | nothing to govern — no master (§1) |
+| 6 | vault is master | nothing to govern — no master (§1). H2 (#450) makes the database authoritative for **when** a password last changed, which is not a breach of this: invariant 6 governs the value, and a timestamp about the account is not one (§3.2) |
 | 7 | never promote before confirmation | nothing to govern — no promotion (§1) |
 | 8 | `--dry-run` and a plan first | binds, on both paths; the seen path also confirms (§2) |
-| 9 | idempotency | **open** — a reset as sketched draws a new password on every run; H7 (#454) decides between an exemption and a convergent verb |
+| 9 | idempotency | **open** — a reset as sketched draws a new password on every run; H7 (#454) decides between an exemption and a convergent verb. H2 is what unblocked it rather than what answers it: §3's record is somewhere a request identity or a previous reset could be remembered, where H7's options 2 and 3 previously had nowhere |
 | 10 | safety settings only ratchet | binds; H6 (#453) would add an axis, written in #456 |
 | 11 | no `"` in a password | binds, by generation; authoritative over UC-1 §6.1's older wording |
 | 12 | JSON output is versioned | binds — new verbs and events are schema bumps |
@@ -518,7 +691,9 @@ restricts the set of methods is H6 (#453).
 
 Invariants 6 and 7 not governing is a property of this use case, not an exemption
 from them: a store here holds a value for one person to fetch, never a value to be
-synced from.
+synced from. The metadata record is not a third thing to read that sentence
+against — nothing fetches a value from it either, because there is none in it
+(§3.1).
 
 ---
 
@@ -557,6 +732,12 @@ What a test must show, once there is something to test:
   it; and a reset on a rollover profile leaves the old password answering
   `ORA-01017`, with the window-keeping flag the one way to see
   `OPEN & IN ROLLOVER` afterwards;
+- **the record (§3):** it is written after the database confirms and not before; it
+  contains no password in any representation, which is a tier-0 assertion on the
+  serialised document rather than a tier-1 one on what the store received; a reset
+  with no store configured still succeeds and warns at plan time; and two
+  concurrent resets of one (target, account) collide on the lock its path keys,
+  where before H2 they collided on nothing;
 - **both:** the password appears in no run document, diagnostic or log sink, and in
   no jsonl event once that stream exists. The seen path's one deliberate emission
   is the only exception, and it is what that path's confirmation guards;
@@ -576,7 +757,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 | # | Question | Issue |
 |---|---|---|
 | ~~H1~~ | ~~Where is a personal account declared, so invariant 5 still whitelists it?~~ | **closed** — a `personal_accounts:` section, holding names or a predicate over a profile or role. The predicate amends invariant 5's first sentence and leaves its second intact, because it never widens what a mutating verb may touch: a reset names its account and `account list` resolves the rule. The stated cost is that membership is a profile assignment or a role grant rather than a commit somebody reads; the keys and validators are #467 (§2) · #449 |
-| H2 | With no vault as master, what is recorded about a reset, and where? | #450 |
+| ~~H2~~ | ~~With no vault as master, what is recorded about a reset, and where?~~ | **closed** — three places, not one. The **database** answers *when* (`PASSWORD_CHANGE_DATE`, `PTIME` behind the grant, with 12.1 and 12.2 unmeasured on that fallback (unverified: pw-changed-source)), which is a divergence from Q9 and §3.2 says why: on the seen path the owner is required to change the password, so a record's own timestamp is designed to go stale. A **metadata record**, written wherever a store is configured, answers *who*, *which path* and *where it was delivered*, never a value — and its path is what Q2's lock finally has to key on. **Nothing** answers *what to roll back to*, because rollback is not a UC-2 operation. A reset with no store configured warns and runs; the keys, schema and validators are #468 (§3) · #450 |
 | ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, the configuration's own word for what is being managed, whichever key declares it (`accounts:`, an `applications:` entry, or H1's `personal_accounts:`); the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; suspending an account is `account suspend`, named that way to avoid a second sense of `lock` and specified in #463; and listing is `account list`, which H1 earned (§2) · #451 |
 | ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |

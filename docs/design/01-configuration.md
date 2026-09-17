@@ -74,6 +74,14 @@ It is deliberately *not* an application binding, for the reason the next paragra
 gives: nothing masters a personal account's password, so none of the three things
 an application entry exists for applies to one.
 
+**A second block is decided and unwritten for the same reason.** UC-2's reset
+record — where the tool journals *who* reset a personal account, by which path and
+where it was delivered, and never the password — is decided in H2 (#450) and
+specified in [`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §3.
+Its store, prefix, keys and schema are **#468**. It is written only where an estate
+configures a store, and a reset without one warns and runs, so it is a block whose
+absence is a documented mode rather than an error.
+
 The keys, the generated schema, the validators, and the rule that **a name may not
 be declared both ways**, are **#467**. Until that lands, this reference documents
 what is built — the two forms above — and the heading is a statement about
