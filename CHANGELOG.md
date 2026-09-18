@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.63.0](https://github.com/villebase/sopuli-dba/compare/v0.62.0...v0.63.0) (2026-09-18)
+
+
+### Features
+
+* `sopuli account suspend`, UC-2's offboarding verb ([#463](https://github.com/villebase/sopuli-dba/issues/463)) ([#480](https://github.com/villebase/sopuli-dba/issues/480)) ([68e5264](https://github.com/villebase/sopuli-dba/commit/68e52648dc2b329a41bce1871371dc492005b10f))
+* **config:** the `personal_accounts:` block, by name or by predicate ([#467](https://github.com/villebase/sopuli-dba/issues/467)) ([#473](https://github.com/villebase/sopuli-dba/issues/473)) ([52baa5d](https://github.com/villebase/sopuli-dba/commit/52baa5dd449bd9f85d03ee2d59c3715fd8c66f9d))
+* **driver:** ALTER USER ACCOUNT LOCK, and who a personal account is declared by ([#463](https://github.com/villebase/sopuli-dba/issues/463)) ([#475](https://github.com/villebase/sopuli-dba/issues/475)) ([e6de5ee](https://github.com/villebase/sopuli-dba/commit/e6de5ee0e4a02fb893aa0b7a23b42718f3681700))
+* **output:** flag the low-assurance admin source, SOPULI-W022 ([#477](https://github.com/villebase/sopuli-dba/issues/477)) ([#487](https://github.com/villebase/sopuli-dba/issues/487)) ([a3c97f6](https://github.com/villebase/sopuli-dba/commit/a3c97f642df8c42b601842aab92a9497f1a8ace7))
+
+
+### Bug Fixes
+
+* **cli:** build a prompter, so `auth: prompt` can prompt ([#476](https://github.com/villebase/sopuli-dba/issues/476)) ([#482](https://github.com/villebase/sopuli-dba/issues/482)) ([c555e22](https://github.com/villebase/sopuli-dba/commit/c555e22e7af9ced6cf1d884bc891f97f4bc0789c))
+* **cli:** supply the store, so `auth: { method: vault }` resolves ([#483](https://github.com/villebase/sopuli-dba/issues/483)) ([#488](https://github.com/villebase/sopuli-dba/issues/488)) ([84effb2](https://github.com/villebase/sopuli-dba/commit/84effb2cef63d8008edcb06f4a77d94e876de28d))
+
 ## [0.62.0](https://github.com/villebase/sopuli-dba/compare/v0.61.0...v0.62.0) (2026-09-15)
 
 
