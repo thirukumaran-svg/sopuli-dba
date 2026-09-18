@@ -863,6 +863,35 @@ prefix it resolves in the target's own `vault:`. It is required — there is no
 default admin path to fall back on, and a credential tool guessing at one is how a
 run authenticates as something nobody chose.
 
+**Which store serves it** is `bindings._vault_for`'s chain with one link removed
+(#483). An admin credential belongs to a *target* rather than to an application,
+so an `applications:` entry's `vault:` and an `overrides:` patch's have nothing
+to say about it, and what is left is: the ref's own prefix, the target's
+`vault:`, `defaults.vault`, then the run's own layers — `SOPULI_VAULT` and a
+profile's `vault:`.
+
+**The run's layers come last, and that is not a precedence violation.** It is
+what `binding_stores.complete` already does, for the reason its module note
+gives: those layers *fill holes and do not repoint arrows*. A target naming its
+own store is a statement about that database, and an exported `SOPULI_VAULT` —
+a property of whichever shell a run started in — must not silently redirect the
+credential that reaches a production database to a different vault. P3's
+ordering holds because the run layers are consulted only where the file said
+nothing at all.
+
+A target declaring `method: vault` with no store anywhere is refused when the
+credential is read, naming all four places one could be written. Not at load:
+`SOPULI_VAULT` and a profile are properties of a run, so a file that is fine
+under tomorrow's environment must not be rejected today — which is C15's
+reasoning for bindings, applied unchanged.
+
+**The store is opened only if this method is used, and once per run.** A run
+authenticating from a wallet builds no store client, because the `vault` branch
+is the only caller and the supplier is a function; an estate of thirty-four
+targets sharing one vault authenticates once rather than thirty-four times,
+which is also the difference between one entry in that vault's audit log and
+thirty-four.
+
 A `{placeholder}` in that ref is rendered from a **target set's** dimensions, like
 every other string a template writes. On an explicit target it is an error, because
 nothing renders it: §7's tokens are expanded per account and target for an

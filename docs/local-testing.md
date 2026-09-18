@@ -1233,6 +1233,71 @@ ones that have.
 Then `--output json` for the same run — `targets[].scope.capabilities` names the
 six the driver probed for, which is what `--strategy rollover` branches on in §10.
 
+### 9a. `auth: { method: vault }` — the unattended admin source
+
+`method: env` above is the low-assurance one and `auth: prompt` needs a human.
+This is the one P2 ranks highest of the three, and the one a scheduled run wants.
+Put the password in the vault first:
+
+```bash
+docker exec -i -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=sopuli-test-root   sopuli-test-vault-1 vault kv put kv/ops/dba password=sopuli-test
+```
+
+Then point the target's admin block at it, and **unset**
+`SOPULI_DB_ADMIN_PASSWORD` so you can tell which source actually worked:
+
+```yaml
+targets:
+  - name: free-pdb
+    type: oracle
+    environment: dev
+    vault: vault-dev
+    dsn: "127.0.0.1:1521/FREEPDB1"
+    admin:
+      username: SYSTEM
+      auth: { method: vault, secret: "ops/dba#password" }
+    oracle: { scope: pdb, container: FREEPDB1 }
+```
+
+```
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+```
+
+Exit 0, and **no `SOPULI-W022` note** — which is the cheapest way to see what
+that flag in §9 actually means. The ref has no `vault-dev:` prefix here, so it
+resolved through the target's own `vault:`; a prefix would override that, and
+`defaults.vault` or `$SOPULI_VAULT` would fill in if neither were written.
+
+The store is opened only if this method is used, and once per run however many
+targets share it — so an estate of thirty-four PDBs in one vault authenticates
+once.
+
+#### Failures worth causing
+
+- **A path with nothing at it**: change the ref to `ops/nothing-here#password`.
+
+  ```
+  free-pdb  no         -      -          -          -
+    free-pdb: target 'free-pdb' authenticates from 'vault-dev', and there is nothing at 'ops/nothing-here#password'
+  ```
+
+  The store *answered*; the path is empty. Deliberately worded to distinguish
+  that from a vault nobody could reach, because they send you to different
+  places.
+
+- **No store named anywhere**: delete the target's `vault:` line, with no
+  `defaults.vault` and no `$SOPULI_VAULT`.
+
+  ```
+  free-pdb  no         -      -          -          -
+    free-pdb: target 'free-pdb' authenticates from a vault, and nothing says which one
+  ```
+
+  Exit 1 in both cases, as a per-target finding rather than a whole-run refusal
+  — `doctor` surveys the estate, so one target with a bad ref does not stop the
+  next being tried.
+
 ### Failures worth causing
 
 - **Stop the container** (`docker compose --profile tier1 stop oracle-free`) →

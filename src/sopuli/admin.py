@@ -47,9 +47,10 @@ from dataclasses import dataclass, field
 
 from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import AdminAuth, ExpandedTarget, MaterialRef
+from sopuli.config.model import AdminAuth, Config, ExpandedTarget, MaterialRef
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.targets import ADMIN_METHODS, ADMIN_PASSWORD_ENV, EXTERNAL
+from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE
 from sopuli.driver.protocol import Credential
 from sopuli.exit_codes import ExitCode
 from sopuli.material import MaterialError
@@ -247,6 +248,54 @@ class PasswordPrompt:
         """
         who = username or "the admin account"
         return f"password for {who} on {target.name}: "
+
+
+def store_name(
+    target: ExpandedTarget, ref: SecretRef, *, config: Config, env: Mapping[str, str]
+) -> str | None:
+    """Which store holds a target's admin credential, or ``None`` (#483).
+
+    Pure, and here rather than in the CLI for the reason the rest of this module
+    is here: *which* store is a question about the file, and *opening* one is
+    I/O. The caller does the second.
+
+    **The chain is `bindings._vault_for`'s, one link shorter**, and deliberately
+    the same order. An admin credential belongs to a target rather than to an
+    application, so the two middle links -- an ``applications:`` entry's
+    ``vault:`` and an ``overrides:`` patch's -- have nothing to say about it:
+
+    1. the ref's own prefix, ``vault-prod:ops/dba#password``. First because §7
+       calls that an *explicit* vault, and because a resolved store contradicting
+       the ref a reader can see is the worst of the available answers;
+    2. the target's ``vault:``;
+    3. ``defaults.vault``;
+    4. the run's own -- ``SOPULI_VAULT``, then a profile's ``vault:``.
+
+    **The run's layers come last, not first**, which looks like a precedence
+    violation and is not. It is exactly what
+    :func:`sopuli.config.binding_stores.complete` does for a binding, and for the
+    reason its module note gives at length: those layers *fill holes and do not
+    repoint arrows*. A target naming its own store is a statement about that
+    database, and an exported ``SOPULI_VAULT`` -- a property of the shell a run
+    started in -- must not silently redirect the credential that reaches a
+    production database to a different vault. P3's ordering is satisfied because
+    the run layers are only ever consulted where the file said nothing at all.
+
+    ``None`` when no link answers, which is the operator's mistake the caller
+    turns into a refusal: a target declaring ``method: vault`` with no store
+    anywhere has named a credential nobody can fetch.
+    """
+    if ref.vault is not None:
+        return ref.vault
+    if target.target.vault is not None:
+        return target.target.vault
+    if config.defaults.vault is not None:
+        return config.defaults.vault
+    asked = env.get(DEFAULT_STORE_VARIABLE, "")
+    if asked:
+        return asked
+    profile = config.active_profile
+    return None if profile is None else profile.vault
 
 
 def needs_prompt(target: ExpandedTarget) -> bool:

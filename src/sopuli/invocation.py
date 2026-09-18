@@ -77,7 +77,7 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, TextIO, TypeVar
+from typing import TYPE_CHECKING, Any, TextIO, TypeVar
 
 import click
 
@@ -99,6 +99,10 @@ from sopuli.output.tty import is_a_terminal
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import config_contributions, env_contributions
 from sopuli.store.protocol import StoreError
+
+if TYPE_CHECKING:  # a type only -- importing the registry here would widen the
+    # boundary's import graph for a field that is otherwise just a dict.
+    from sopuli.store.protocol import SecretStore
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -283,6 +287,23 @@ class Invocation:
     #: carrying a piped password -- so ``--from-stdin`` and this can never be
     #: two readers of one stream.
     prompt: Prompter | None = None
+    #: Every secret store this run has opened, by name (#483).
+    #:
+    #: **The run's client cache**, filled by ``cli._stores_for`` -- so the lock
+    #: stores, an application's binding stores and a target's ``method: vault``
+    #: admin credential all share one client per name. That is the whole of what
+    #: it is for: those are opened by different calls at different moments, and
+    #: without somewhere per-run to put them a config keeping its admin
+    #: credential and its application documents in one vault authenticated to it
+    #: twice (Copilot's review of #488).
+    #:
+    #: A client per *name* is safe because every one is built the same way, from
+    #: the ``vaults:`` entry and this run's token file, and nothing ever closes
+    #: one. Empty on a run that opens no store at all.
+    #:
+    #: It holds no secret: a client knows how to fetch one, and what it fetches
+    #: is wrapped on the way out.
+    stores: dict[str, SecretStore] = field(default_factory=dict)
     #: The configuration, read by the boundary before the verb ran (#153).
     #:
     #: ``None`` only where no file has been read: an :class:`Invocation` built

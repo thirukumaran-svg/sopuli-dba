@@ -84,8 +84,10 @@ from sopuli import repair as repair_module
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
+from sopuli.admin import AdminCredentialError, RefReader
 from sopuli.admin import Resolved as AdminResolved
 from sopuli.admin import resolve as admin_resolve
+from sopuli.admin import store_name as admin_store_name
 from sopuli.apply import SOURCES, Source
 from sopuli.clock import as_utc, to_rfc3339, utc_now
 from sopuli.config import (
@@ -104,7 +106,9 @@ from sopuli.config import (
     parse_selector,
     refuse_unknown,
 )
-from sopuli.config.vault_env import ADDR_FLAG
+from sopuli.config.expansion import declared_at
+from sopuli.config.secret_refs import SecretRef
+from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints
 from sopuli.diagnostics import (
     CONSTRAINTS_UNREAD,
@@ -1519,7 +1523,9 @@ def lock_status(
     everything = resolvable_locks(config)
     keys = declared_locks(filter_estate(config, selection))
 
-    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
+    stores = _stores_for(
+        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    )
     leftovers = discover_locks(everything, stores=stores)
     states = survey(
         acquisition_order([*keys, *leftovers.keys]), stores=stores, declared=set(everything)
@@ -1825,12 +1831,30 @@ def _lockable_store(
 
 
 def _stores_for(
-    names: set[str], config: Config, *, token_file: Path | None = None
+    names: set[str],
+    config: Config,
+    *,
+    token_file: Path | None = None,
+    cache: dict[str, SecretStore] | None = None,
 ) -> Mapping[str, SecretStore]:
     """Open every store a survey needs, and only those.
 
     One connection per store rather than one per path: a store is a client, and
     an estate with forty paths in one vault should authenticate once.
+
+    ``cache`` is the run's own client map (:attr:`Invocation.stores`), and it is
+    what makes that sentence true **across** the calls as well as within one
+    (#483, Copilot's review of #488). This function used to be called several
+    times in a run -- for the lock stores, for the binding stores, and now for an
+    admin credential's -- and each call opened its own clients, so a config whose
+    admin ref and application documents live in one vault authenticated to it
+    twice. Passed a cache, a name already opened is reused and only the rest are
+    dialled.
+
+    Every client here is built the same way, from the ``vaults:`` entry and the
+    run's token file, so a same-named one is not merely similar but identical in
+    construction -- which is what makes reuse safe rather than merely cheap.
+    Nothing closes a store, so a shared client has no lifecycle to get wrong.
 
     ``token_file`` is ``--vault-token-file``'s path, forwarded as a location: it
     reaches ``method: token`` stores and is read there, on §3a's chain, so this
@@ -1846,10 +1870,14 @@ def _stores_for(
     declared = {vault.name: vault for vault in config.vaults}
     for name in sorted(names):
         dangling(name, set(declared), noun="vault", section="vaults", at=ROOT.key("vaults"))
-    return {
-        name: connect(declared[name], env=os.environ, token_file=token_file)
-        for name in sorted(names)
-    }
+    # The name is checked above before the cache is consulted, so a dangling one
+    # is refused whether or not some earlier call in this run happened to open a
+    # store of that name -- the message is about the file, not about this cache.
+    opened = {} if cache is None else cache
+    for name in sorted(names):
+        if name not in opened:
+            opened[name] = connect(declared[name], env=os.environ, token_file=token_file)
+    return {name: opened[name] for name in sorted(names)}
 
 
 @config_group.command("validate")
@@ -2091,6 +2119,7 @@ def creds_check(
         {binding.vault for binding in config.bindings if binding.vault is not None},
         config,
         token_file=run.vault_token_file,
+        cache=run.stores,
     )
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
 
@@ -2160,7 +2189,7 @@ def _check_target(
     try:
         try:
             module = resolve_driver(target.target)
-            credential = _admin_credential(target, run)
+            credential = _admin_credential(target, run, config)
             driver = module.OracleDriver(
                 env=os.environ,
                 correlation_id=run.document.correlation_id,
@@ -2634,7 +2663,7 @@ def creds_generate(
     # that could not tell those apart would be a preview of the wrong question.
     # An ordinary `--dry-run` still opens nothing.
     stores = (
-        _stores_for(names, config, token_file=run.vault_token_file)
+        _stores_for(names, config, token_file=run.vault_token_file, cache=run.stores)
         if promote or not run.dry_run
         else {}
     )
@@ -3404,7 +3433,9 @@ def creds_apply(
         )
 
     keys = _document_keys(bindings)
-    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
+    stores = _stores_for(
+        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    )
 
     if run.dry_run:
         # Invariant 8: print the plan, take no lock, write nothing. The documents
@@ -3965,7 +3996,7 @@ def _apply_target(
     try:
         try:
             module = resolve_driver(target.target)
-            credential = _admin_credential(target, run)
+            credential = _admin_credential(target, run, config)
             driver = module.OracleDriver(
                 env=os.environ,
                 correlation_id=run.document.correlation_id,
@@ -4368,7 +4399,84 @@ def _rollover_json(user: UserState) -> dict[str, Any]:
     return found
 
 
-def _admin_credential(target: ExpandedTarget, run: Invocation) -> AdminResolved:
+def _admin_reader(target: ExpandedTarget, run: Invocation, config: Config) -> RefReader:
+    """Read a target's `method: vault` admin credential through its store (#483).
+
+    `admin.resolve` has taken a `read_ref` supplier since #175 and no call site
+    ever passed one, so `_read_ref`'s "no store was available here" -- the branch
+    its own hint calls *a caller that supplied no reader* -- was the only
+    reachable one, and `method: vault` failed on every run of every verb. This is
+    the supplier. It is the same gap #476 fixed for `prompt`, in the source P2
+    ranks highest of the three that need something from this machine.
+
+    **Everything happens inside the closure, and that is the design.**
+    :func:`sopuli.admin.resolve` calls this only on the ``vault`` branch, so a
+    target authenticating by wallet, prompt or variable never resolves a store
+    name and never opens a socket -- which is the first consequence that module's
+    docstring claims for taking its sources as suppliers, and it would stop being
+    true the moment this function did any work eagerly. ADR-006's "base opens no
+    sockets" is the same property one layer down.
+
+    **One client per store per run**, through :attr:`Invocation.stores`. An
+    estate of thirty-four targets sharing one vault authenticates once, which is
+    the rule :func:`_stores_for` states -- and thirty-four authentications would
+    also be thirty-four entries in that vault's audit log for one scheduled run.
+
+    That cache is the **run's**, not this function's, and the distinction is
+    Copilot's correction on #488. A per-admin cache made the rule true within
+    this reader and false across the run: a config keeping its admin credential
+    and its application documents in one vault -- the ordinary arrangement --
+    opened that vault twice, once here and once for the bindings. Sharing one map
+    keyed on the store name is what makes the sentence above hold, and it is safe
+    because every client is built identically from the ``vaults:`` entry and the
+    run's token file.
+
+    **Which store** is still resolved through the admin ref's own chain, and that
+    is the half worth keeping separate: a run may authenticate to a database from
+    one vault while mastering its accounts in another. What is shared is the
+    client for a name, never the decision about which name.
+    """
+
+    def read(ref: SecretRef) -> Secret:
+        name = admin_store_name(target, ref, config=config, env=os.environ)
+        if name is None:
+            raise AdminCredentialError(
+                f"target {target.name!r} authenticates from a vault, and nothing says which one",
+                at=declared_at(target, "admin").key("auth").key("secret"),
+                # Every link of `admin.store_name`'s chain, including the
+                # profile: an operator who supplies the store through `--profile`
+                # is doing something the chain allows, and a hint that omitted it
+                # would send them to change something else instead.
+                hint=(
+                    f"put a prefix on the ref (`{ref}` -> `vault-dev:{ref}`), or name a "
+                    f"store on the target's `vault:`, or set `defaults.vault`, "
+                    f"${DEFAULT_STORE_VARIABLE}, or the active profile's `vault:`"
+                ),
+            )
+        store = _stores_for({name}, config, token_file=run.vault_token_file, cache=run.stores)[name]
+        stored = read_secret(store, ref)
+        if stored is None:
+            # An empty path is the operator's mistake rather than a store
+            # failure, so it is worded as one: the store answered, and what it
+            # answered was that there is nothing there. `read_secret` returns
+            # `None` for every way of finding nothing (#183) -- no document, no
+            # field, no key -- and they have one remedy here, which is to go and
+            # look at the path.
+            raise AdminCredentialError(
+                f"target {target.name!r} authenticates from {name!r}, and there is "
+                f"nothing at {str(ref)!r}",
+                at=declared_at(target, "admin").key("auth").key("secret"),
+                hint=(
+                    "the store answered and the path is empty -- check the ref's path, "
+                    "its field, and that this run's token may read it"
+                ),
+            )
+        return stored.value
+
+    return read
+
+
+def _admin_credential(target: ExpandedTarget, run: Invocation, config: Config) -> AdminResolved:
     """Resolve one target's admin credential, and record where it came from (#477).
 
     The one place either happens, so that the reporting cannot be forgotten at a
@@ -4388,7 +4496,12 @@ def _admin_credential(target: ExpandedTarget, run: Invocation) -> AdminResolved:
     have to be per run, and the run already has one thing that is per run and
     holds diagnostics.
     """
-    credential = admin_resolve(target, env=os.environ, prompt=run.prompt)
+    credential = admin_resolve(
+        target,
+        env=os.environ,
+        prompt=run.prompt,
+        read_ref=_admin_reader(target, run, config),
+    )
     already = {(one.code, one.target) for one in run.document.diagnostics if one.code is not None}
     run.document.diagnostics.extend(
         one
@@ -4436,7 +4549,7 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
     different thing from the one that runs.
     """
     module = resolve_driver(target.target)
-    credential = _admin_credential(target, run)
+    credential = _admin_credential(target, run, config)
     driver = module.OracleDriver(
         env=os.environ,
         correlation_id=run.document.correlation_id,
@@ -5429,7 +5542,9 @@ def creds_finish_rollover(
         return render_plan(plan, noun="window") + "\n\nnothing to end"
 
     keys = _document_keys(bindings)
-    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
+    stores = _stores_for(
+        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    )
     # No lock: this verb writes to no store. The documents are read for one
     # reason -- to know whether a `pending` is staged, and to have something to
     # verify with -- and a read has never needed one.
@@ -5837,7 +5952,9 @@ def creds_rotate(
         return render_plan(plan, noun="rotation") + "\n\nnothing to rotate"
 
     keys = _document_keys(bindings)
-    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
+    stores = _stores_for(
+        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    )
 
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The
@@ -6442,7 +6559,9 @@ def creds_status(
         return render_plan(plan, noun="account") + "\n\nnothing to inventory"
 
     keys = _document_keys(bindings)
-    stores = _stores_for({key.store for key in keys}, config, token_file=run.vault_token_file)
+    stores = _stores_for(
+        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    )
     documents = _read_documents(keys, stores, run=run)
 
     rows: list[_Surveyed] = []
