@@ -36,6 +36,7 @@ from sopuli.config import (
     applications,
     auth,
     defaults,
+    delivery,
     groups,
     loading,
     locking,
@@ -95,6 +96,7 @@ KEY_SETS: dict[str, tuple[str, ...]] = {
     "oracle_options": applications.ORACLE_KEYS,
     "personal_account": personal_accounts.PERSONAL_ACCOUNT_KEYS,
     "reset_records": reset_records.RESET_RECORDS_KEYS,
+    "delivery": delivery.DELIVERY_KEYS,
 }
 
 #: Every closed set, beside the tuple :func:`~sopuli.config.fields.choice` is

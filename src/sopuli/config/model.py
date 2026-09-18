@@ -881,6 +881,43 @@ class ResetRecords:
 
 
 @dataclass(frozen=True)
+class Delivery:
+    """How a personal account's new password reaches its owner (UC-2 §6, #440).
+
+    ``method`` is one of :data:`~sopuli.config.delivery.DELIVERY_METHODS`, and it
+    is the whole type on purpose.
+
+    **The per-method sub-block is validated and not retained**, which is #440's
+    boundary made structural rather than remembered. That issue builds the block
+    and the check that the selected method brought settings; *which* keys a method
+    takes is its own issue, because the answer is a fact about the service behind
+    it -- a response-wrapping token is single-use by construction, so `num_uses`
+    is a config error rather than a key with a default (#444), and nothing in a
+    config layer can know that. A field holding the sub-block as opaque pairs
+    would carry unvalidated content through the model and invite a consumer to
+    read it, which is the shape of the mistake `01-configuration.md` §1 calls the
+    one with the worst consequences. Each method's issue adds its own typed field.
+
+    The same applies to `notify:` (#442), which nests under delivery because it is
+    a property of a delivery rather than of a run -- and which may never carry the
+    secret or anything that retrieves it (UC-2 §6.1), a rule its own builder must
+    enforce because it needs the template grammar.
+    """
+
+    method: str
+
+    @property
+    def is_seen(self) -> bool:
+        """Whether this method shows a working password to the DBA (#439).
+
+        The one property of a delivery the rest of the tool branches on, and it is
+        a method comparison rather than a flag somebody sets: a path is seen
+        because of what it does, not because a file said so.
+        """
+        return self.method == "manual"
+
+
+@dataclass(frozen=True)
 class Config:
     """One validated config file."""
 
@@ -897,6 +934,12 @@ class Config:
     #: because the seen path may have no store at all and refusing would take
     #: the fallback away from the estates it exists for (UC-2 §3.1, §3.4).
     reset_records: ResetRecords | None = None
+    #: How UC-2 hands a password over, or `None` where the file says nothing
+    #: (#440). `None` is not `vault_wrapped`: an estate that configured no
+    #: delivery has not silently chosen one, and a reset with nowhere to deliver
+    #: is a refusal for the verb to make rather than a default to materialise
+    #: here.
+    delivery: Delivery | None = None
     vaults: tuple[Vault, ...] = ()
     targets: tuple[Target, ...] = ()
     target_sets: tuple[TargetSet, ...] = ()

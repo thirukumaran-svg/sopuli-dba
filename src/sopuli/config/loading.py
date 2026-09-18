@@ -36,12 +36,13 @@ from typing import Any
 from sopuli.config.applications import build_applications
 from sopuli.config.bindings import build_bindings
 from sopuli.config.defaults import build_defaults, build_runtime
+from sopuli.config.delivery import build_delivery, unserviceable
 from sopuli.config.discovery import CONFIG_ENV
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.expansion import expand_targets
 from sopuli.config.fields import describe, reject_unknown_keys
 from sopuli.config.groups import build_groups
-from sopuli.config.model import Config
+from sopuli.config.model import Config, ConfigWarning
 from sopuli.config.permissions import check_permissions
 from sopuli.config.personal_accounts import build_personal_accounts, reject_cross_declaration
 from sopuli.config.policies import build_policies
@@ -92,6 +93,8 @@ TOP_LEVEL_KEYS = (
     "personal_accounts",
     # UC-2's reset journal: where a reset is recorded, never what it set (#468).
     "reset_records",
+    # UC-2's delivery: how the new password reaches the person (#440).
+    "delivery",
 )
 
 
@@ -300,6 +303,7 @@ def build_config(
         applications=build_applications(document),
         personal_accounts=build_personal_accounts(document),
         reset_records=build_reset_records(document),
+        delivery=build_delivery(document),
     )
     # Before anything else looks at either section: a name in both makes the
     # whitelist ambiguous about which guarantee applies, and every later step --
@@ -328,7 +332,35 @@ def build_config(
     # silently selecting nothing and producing no bindings at all.
     warnings = check_references(config)
     config = replace(config, bindings=build_bindings(config))
-    return replace(config, warnings=(*layered, *warnings))
+    return replace(config, warnings=(*layered, *warnings, *_delivery_warnings(config)))
+
+
+def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
+    """Say that a configured delivery method cannot deliver yet (#440).
+
+    A load-time warning rather than a check inside one verb, so every command
+    reports it the same way -- `config validate` in text, and `diagnostics[]` for
+    the schedulers that never see the text. A file that parses clean must not read
+    as a file that would hand somebody a password, and until #441 or #444-#447
+    lands, none would.
+
+    No code yet. J3 -- how codes are allocated across categories -- is still open,
+    and this follows established practice rather than settling it: the §10
+    warnings this joins carry none either, and a number reserved for a message
+    that exists for one release is worse than prose.
+    """
+    notice = unserviceable(config.delivery)
+    if notice is None:
+        return ()
+    return (
+        ConfigWarning(
+            message=notice,
+            at=str(ROOT.key("delivery").key("method")),
+            hint=(
+                "the block is valid and this build cannot act on it; nothing is wrong with the file"
+            ),
+        ),
+    )
 
 
 def _read(path: Path) -> str:

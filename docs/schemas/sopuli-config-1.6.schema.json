@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-1.5.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-1.6.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
@@ -103,6 +103,9 @@
     },
     "reset_records": {
       "$ref": "#/$defs/reset_records"
+    },
+    "delivery": {
+      "$ref": "#/$defs/delivery"
     }
   },
   "$defs": {
@@ -725,6 +728,53 @@
           "type": "string",
           "minLength": 1,
           "description": "The path records are written under. One record per (target, account) is built beneath it."
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "description": "How a personal account's new password reaches its owner (UC-2 6). One method, and the sub-block of the same name carries its settings. Absent means no delivery is configured, which is not the same as choosing the default.",
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "vault_wrapped",
+            "vault_path",
+            "one_time_link",
+            "onepassword_share",
+            "manual",
+            "smtp_encrypted"
+          ],
+          "description": "How the password reaches the person (UC-2 6.2). All but `manual` are unseen -- the tool puts the value where only the owner can fetch it. `manual` prints it to the DBA's terminal and is the one method that shows a working password to somebody who is not its owner. Absent means `vault_wrapped`, which is the default because it works against a stock Vault."
+        },
+        "notify": {
+          "type": "object",
+          "description": "The low-trust channel that says a password is ready (#442). It may never carry the password or anything that retrieves it -- a wrapping token and a one-time link are both refused in a template (UC-2 6.1)."
+        },
+        "vault_wrapped": {
+          "type": "object",
+          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+        },
+        "vault_path": {
+          "type": "object",
+          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+        },
+        "one_time_link": {
+          "type": "object",
+          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+        },
+        "onepassword_share": {
+          "type": "object",
+          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+        },
+        "manual": {
+          "type": "object",
+          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+        },
+        "smtp_encrypted": {
+          "type": "object",
+          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
         }
       }
     },

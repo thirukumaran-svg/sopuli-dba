@@ -12,7 +12,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.5.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.6.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -171,9 +171,81 @@ store at all — that is the site `manual` exists for — so a reset with nothin
 declared here writes no record, takes no lock, warns at plan time and runs (§3.1,
 §3.4). Refusing would take the fallback away from the estates it exists for.
 
-**The `delivery:` block is #440 and is not written here yet**, for the reason this
-reference always gives: it documents configuration that is **built**. `docs/README.md`
-maps the whole UC-2 config surface, including what each unbuilt block waits on.
+**A fifth declaration, and the last of UC-2's.**
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+  notify:
+    method: webhook
+    webhook:
+      url: { env: SOPULI_NOTIFY_WEBHOOK }
+```
+
+**`delivery:` is how a personal account's new password reaches its owner**,
+specified in
+[`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §6
+and built in #440.
+
+| Key | Meaning |
+|---|---|
+| `method` | one of six, below. Absent means `vault_wrapped` |
+| `<method>` | a sub-block of the same name, carrying that method's own settings |
+| `notify` | the low-trust channel that says a password is ready (#442) |
+
+The methods are `vault_wrapped`, `vault_path`, `one_time_link`,
+`onepassword_share`, `manual` and `smtp_encrypted`. **Five are *unseen*** — the
+tool puts the value where only the person can fetch it, and nobody else sees it.
+**`manual` is the one *seen* method**, printing a working password to the DBA's
+terminal; it is `CLAUDE.md` invariant 2's fourth permitted plaintext path, and
+UC-2 §6.5 has the five guards that keep it narrow.
+
+**`vault_wrapped` is the default because it works against a stock Vault.** Every
+other unseen method needs infrastructure the tool does not create — identity auth
+and a templated policy, a Yopass deployment, a password-manager account — and a
+default an estate could not use would fall back to `manual`, which is the path
+that shows somebody a live password. Availability rather than preference.
+
+**The selected method's sub-block must exist**, and is refused at load when it
+does not (§9b). Every method needs something: a wrapping token needs a TTL, a link
+needs a backend, `manual` needs `force_expire: true`. A block that could be
+omitted would make "delivery is configured" mean "a word was typed", and the
+failure would arrive once a password had already been drawn.
+
+**A sub-block for a method that is *not* selected is left alone**, which is the
+opposite of §1's rule for the inline application keys — and the difference is real
+rather than an inconsistency. A leftover top-level `secret_template:` silently
+*governs*; an unselected `vault_wrapped:` block silently does nothing, and keeping
+one is how somebody switches between configurations.
+
+**"Left alone" means its presence is not refused and its keys are not judged — not
+that it is unread.** Every method block that is written must be an object, selected
+or not, because the published schema says so and the tool must never be the looser
+of the two (§9b's whole division is that the schema is the incomplete check). So
+`vault_wrapped: 15m` is refused and `vault_wrapped: { tt1: 15m }` is not: the first
+is a claim about the file's grammar, and the second is a claim about a method's
+settings, which belongs to that method's issue.
+
+**What is inside a sub-block is not validated yet.** Which keys a method takes is
+that method's own issue, because the answer is a fact about the service behind it:
+a response-wrapping token is single-use by construction, so `num_uses` is a config
+*error* rather than a key with a default (#444), and nothing in a config layer can
+know that. Until those land, a typo inside a sub-block is accepted — which is why
+**`config validate` warns that no delivery method is implemented in this build**
+rather than letting a clean parse read as a working delivery.
+
+**`notify:` nests here** rather than beside `delivery:`, because it is a property
+of a delivery rather than of a run. Its keys are #442's. One rule about it is
+binding already and is UC-2 §6.1's: the channel that notifies may be low-trust and
+the channel that carries the secret may not, so a template referencing a wrapping
+token or a one-time link is refused rather than rendered.
+
+**`safety.delivery.allowed_methods` restricts the set an estate may use**, and it
+is not a key of this block: it is a safety axis, ratcheting by intersection under
+§9's merge-policy table. A reader who filed it here would look for it in the wrong
+place.
 
 ### What an application entry actually is
 
@@ -200,7 +272,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.5.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.6.schema.json
 version: 1
 
 runtime:
@@ -2587,7 +2659,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-1.5.schema.json`](../schemas/sopuli-config-1.5.schema.json),
+[`docs/schemas/sopuli-config-1.6.schema.json`](../schemas/sopuli-config-1.6.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -2598,7 +2670,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-1.5.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.6.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -2637,6 +2709,7 @@ match instead:
 | a profile may not set a key that changes scope | §5 |
 | `locking.break_expired` beside an `advisory-only` store | yes |
 | an application's ref must have somewhere to stage into, where the store emulates staging | §7 |
+| the selected `delivery.method` must have a sub-block of the same name | §6 of UC-2 |
 
 So a file the schema accepts may still be refused by `sopuli config validate`,
 and that is the intended division rather than a gap. The schema is the fast,
@@ -2648,7 +2721,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.5.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.6.schema.json
 version: 1
 ```
 
@@ -2659,7 +2732,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.5.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.6.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

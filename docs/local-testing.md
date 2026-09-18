@@ -2480,6 +2480,106 @@ store that is not declared is refused at load, while a prefix that is not the on
 you meant is accepted and looks entirely correct. Showing the pair is what lets the
 second be noticed.
 
+### `delivery:` — a block that validates and cannot deliver
+
+Same shape as `reset_records:` above, and the same warning attached: **#440 builds
+the block and no method is implemented**, so a file naming one parses and cannot
+hand anybody a password. `config validate` says so rather than letting a clean
+parse read as a working delivery.
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+  notify:
+    method: webhook
+    webhook:
+      url: { env: SOPULI_NOTIFY_WEBHOOK }
+```
+
+```bash
+sopuli --config sopuli.yaml config validate
+```
+```
+config: C:\Users\ville\AppData\Local\Temp\sopuli-440\ok.yaml
+
+ok: 1 target, 0 bindings, 1 warning
+
+1 warning:
+  delivery.method: `delivery.method: vault_wrapped` is configured and no delivery method is implemented in this build, so nothing can hand a password over yet
+    hint: the block is valid and this build cannot act on it; nothing is wrong with the file
+```
+
+**Exit 0 with a warning**, not a refusal: the file is valid and the build is
+incomplete, which is E4/E5's shape for a configured backend this build cannot
+serve.
+
+Six methods, five of them unseen. `manual` is the one that prints a working
+password to your terminal — UC-2 §6.5 has the five guards on it, none of which is
+built either.
+
+#### Three failures worth causing
+
+All exit **9**.
+
+```bash
+sopuli --config unknown-method.yaml config validate
+```
+```
+sopuli: ...\unknown-method.yaml: delivery.method: unknown delivery method 'carrier_pigeon'
+  hint: known: vault_wrapped, vault_path, one_time_link, onepassword_share, manual, smtp_encrypted
+```
+
+The method is checked **before** unknown keys are, and that ordering is the message
+rather than a detail: a file saying `method: carrier_pigeon` usually has a
+`carrier_pigeon:` block under it, so it is an unknown *key* as well — and reporting
+the key would answer a question you did not ask while burying the one you did.
+
+```bash
+sopuli --config no-subblock.yaml config validate
+```
+```
+sopuli: ...\no-subblock.yaml: delivery.one_time_link: delivery method 'one_time_link' is selected and has no `one_time_link:` block
+  hint: every method needs settings of its own -- a wrapping token needs a ttl, a link needs a backend; write the block, or select a different method
+```
+
+Leave `method:` out entirely and you get the same refusal naming `vault_wrapped` —
+the default still needs its block, because a default is not an excuse to skip the
+settings it needs.
+
+```bash
+sopuli --config unknown-key.yaml config validate
+```
+```
+sopuli: ...\unknown-key.yaml: delivery: unknown key 'retries'
+  hint: known keys here: manual, method, notify, one_time_link, onepassword_share, smtp_encrypted, vault_path, vault_wrapped
+```
+
+**What will not be refused**, and is worth trying so the boundary is clear: a typo
+*inside* a sub-block. `vault_wrapped: { tt1: 15m }` validates cleanly. Which keys a
+method takes belongs to that method's own issue, because the answer is a fact about
+the service behind it — and the warning above is what stops a clean parse being
+mistaken for approval.
+
+A sub-block for a method you did **not** select is also left alone — keeping a
+`vault_wrapped:` block beside `method: manual` is how you switch between them, and
+its keys are unjudged too.
+
+But it must still be an *object*. `vault_wrapped: 15m` is refused wherever it
+appears:
+
+```
+sopuli: ...\loose.yaml: delivery.vault_wrapped: must be a mapping, not a string
+```
+
+That is the one thing checked about an unselected block, and it is checked because
+the published schema types all six method properties as objects — the tool must
+never accept a file the schema refuses, which is the wrong way round for §9b's
+division of labour.
+
+---
+
 #### Failures worth causing
 
 All four exit **9**, and each names the key:

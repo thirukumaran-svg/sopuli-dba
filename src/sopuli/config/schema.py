@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.5.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.6.schema.json
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ from sopuli.config import (
     applications,
     auth,
     defaults,
+    delivery,
     groups,
     loading,
     locking,
@@ -93,7 +94,17 @@ from sopuli.config import (
 #: the shape refuses is the interesting half again: there is no key for a password,
 #: a hash or a verifier, and none is coming, because a record that could leak the
 #: thing it records would be worse than no record.
-SCHEMA_VERSION = "1.5"
+#:
+#: 1.5 became 1.6 with UC-2's `delivery:` (§6, #440): a top-level block naming how
+#: a personal account's new password reaches its owner, with one sub-block per
+#: method. Optional like every bump before it. **The sub-blocks are open objects
+#: here, deliberately**: which keys `vault_wrapped:` takes is #444's and
+#: `one_time_link:`'s is #445's, so a closed set now would be a schema asserting a
+#: shape nobody has decided. Each method's issue closes its own, and until then an
+#: editor offers the method names and checks nothing inside them -- which is why
+#: `sopuli config validate` warns that no method is implemented rather than
+#: letting a clean parse read as a working delivery.
+SCHEMA_VERSION = "1.6"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -933,6 +944,63 @@ def _personal_account() -> Schema:
     )
 
 
+def _delivery() -> Schema:
+    """The `delivery:` block -- how UC-2 hands a password over (§6, #440).
+
+    ``method`` is the closed set and the sub-blocks are **open objects**, which is
+    the one thing about this schema worth explaining. A method's keys belong to
+    that method's issue, so closing them here would publish a shape nobody has
+    decided -- and the generator's own rule, that an object's properties come from
+    the constant its builder validates against, has no constant to read for a
+    section whose builder deliberately validates only the shape.
+
+    ``method`` is **not required**: absent means :data:`~sopuli.config.delivery.DEFAULT_METHOD`,
+    and §6.2 says why that default is `vault_wrapped` rather than the
+    strongest-sounding option. What *is* enforced, and what an editor cannot show,
+    is that the selected method's sub-block exists -- a cross-key rule, so it stays
+    with the builder where the message can name the method (§9b).
+    """
+    sub_block: Schema = {
+        "type": "object",
+        "description": (
+            "This method's own settings. The keys are the method's issue to define; "
+            "until then they are unchecked, and `config validate` warns that no "
+            "delivery method is implemented in this build."
+        ),
+    }
+    return _object(
+        keys=delivery.DELIVERY_KEYS,
+        types={
+            "method": _enum(
+                delivery.DELIVERY_METHODS,
+                description=(
+                    "How the password reaches the person (UC-2 6.2). All but `manual` are "
+                    "unseen -- the tool puts the value where only the owner can fetch it. "
+                    "`manual` prints it to the DBA's terminal and is the one method that "
+                    "shows a working password to somebody who is not its owner. Absent "
+                    "means `vault_wrapped`, which is the default because it works against "
+                    "a stock Vault."
+                ),
+            ),
+            "notify": {
+                "type": "object",
+                "description": (
+                    "The low-trust channel that says a password is ready (#442). It may "
+                    "never carry the password or anything that retrieves it -- a wrapping "
+                    "token and a one-time link are both refused in a template (UC-2 6.1)."
+                ),
+            },
+            **dict.fromkeys(delivery.DELIVERY_METHODS, sub_block),
+        },
+        description=(
+            "How a personal account's new password reaches its owner (UC-2 6). One "
+            "method, and the sub-block of the same name carries its settings. Absent "
+            "means no delivery is configured, which is not the same as choosing the "
+            "default."
+        ),
+    )
+
+
 def _reset_records() -> Schema:
     """The `reset_records:` block -- where UC-2 journals a reset (H2, #468).
 
@@ -1112,6 +1180,7 @@ def _root() -> Schema:
             description="Accounts belonging to people, for UC-2's reset (H1, #449).",
         ),
         "reset_records": _ref("reset_records"),
+        "delivery": _ref("delivery"),
     }
     # The inline form is one unnamed application entry hoisted to the top level,
     # so its keys take the entry's own subschemas rather than copies of them.
@@ -1154,6 +1223,7 @@ def build_schema() -> Schema:
             "group": _group(),
             "personal_account": _personal_account(),
             "reset_records": _reset_records(),
+            "delivery": _delivery(),
             "policy": _policy(),
             "password_policy": _password_policy(),
             "require": _require(),
