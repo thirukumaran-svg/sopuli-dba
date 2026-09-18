@@ -150,8 +150,32 @@ something specific.
    be discovered in a diff, and adding a second one is a decision, not an
    implementation detail.
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
-    `max_targets` and `confirm_environments` cannot be relaxed by a
-    higher-precedence source. See P3.
+    `max_targets`, `confirm_environments` and `safety.delivery.allowed_methods` cannot
+    be relaxed by a higher-precedence source. See P3.
+
+    **`safety.delivery.allowed_methods` ratchets by *intersection*, and it is the one
+    setting whose merge cannot be read off its type** (H6, decided in #453). The
+    other four take one of three shapes chosen by type — a bool to its declared
+    safe value, an int to the minimum, a list to the union — and this is a list
+    that must not union: each layer may only narrow the set of UC-2 delivery
+    methods, never restore one a lower layer removed. Since
+    `confirm_environments` is a list of strings too, the shape is **declared per
+    setting**, exactly as `safe_bool` already is for the booleans whose polarity
+    the type could not give.
+
+    It is fail-closed on purpose, which is the whole reason for the extra shape:
+    a method added in a later release is unusable until an estate names it. A
+    `forbidden_methods` union would have cost no new code and permitted every new
+    method everywhere on upgrade — silently widening a guard that stands in front
+    of putting a live credential on a wire.
+
+    Three rules come with it, and each exists because the union has no equivalent
+    problem: **unset means no constraint**, not the empty intersection, so a file
+    that declares nothing can still deliver; **two layers with disjoint lists are
+    a plan-time refusal** naming both, because an empty result is a configuration
+    nobody can have meant; and **there is no `forbidden_methods`**, now or later.
+    One key, so there is no evaluation order to document and no second spelling
+    of one guard. Adding the second key is a decision rather than an addition.
 11. **Passwords containing `"` are rejected, not escaped.** Oracle quoted
     identifiers have no escape for it.
 12. **JSON output is a versioned contract.** Adding a field is a minor bump;

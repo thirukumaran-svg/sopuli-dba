@@ -2143,9 +2143,10 @@ out: **`CAPABILITIES` reads 5 on 18c and 6 on 21c and 26ai.** The missing one is
 
 UC-2 is half built. There is **no `reset-password` and no `expire-password`** — the
 verbs that change a password — and if that is what you sat down to test, stop here;
-the delivery half is still design documents and one open decision (#453, H6's
-ratchet). #439 is settled — the seen path prints a working password, under five
-guards — but nothing implements it yet.
+the delivery half is still design documents. Both decisions that blocked it are
+settled now — #439 (the seen path prints, under five guards) and #453
+(`safety.delivery.allowed_methods`, ratcheting by intersection) — but nothing implements
+either yet.
 
 What you can run is `account suspend`, which locks an account, and `account list`,
 which reads the declaration and shows you what it matched.

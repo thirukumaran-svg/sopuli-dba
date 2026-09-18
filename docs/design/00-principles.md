@@ -590,10 +590,14 @@ Two deliberate exceptions, documented as such:
   `TNS_ADMIN`, `OCI_CLI_PROFILE`) are honoured but rank *below* the `SOPULI_*`
   equivalent, so `SOPULI_VAULT_ADDR` beats `VAULT_ADDR`.
 - **Safety settings only ratchet toward safe.** `--dry-run`, `--confirm`,
-  `safety.max_targets` and `readonly: true` cannot be relaxed by any source.
-  Two of those are flags and two are settings, and the spelling is not
+  `safety.max_targets`, `readonly: true` and `safety.delivery.allowed_methods`
+  cannot be relaxed by any source.
+  Two of those are flags and three are settings, and the spelling is not
   decoration: this bullet said `--max-targets` until #392, for a flag that has
-  never existed and that P5 below now explains will not. If config
+  never existed and that P5 below now explains will not. The newest of the three
+  is scoped `safety.delivery.*` for the same reason — it is a **safety axis**
+  restricting what UC-2 delivery may do, not a key of the `delivery:` block it
+  governs, and a reader who filed it there would look for it in the wrong file. If config
   says `readonly: true`, no command-line flag re-enables writes — including
   `--force`, which is not a setting and has no layer to arrive on. The first
   command to consume `readonly` is `lock break` (#149), which refuses on **exit
@@ -602,6 +606,22 @@ Two deliberate exceptions, documented as such:
   refused with it, because "under `readonly` the mutating verbs are unavailable
   and the read-only verb is how you ask" is a rule that holds without being
   reasoned about per flag.
+
+**`safety.delivery.allowed_methods` is the fifth ratcheted setting, and the
+first whose merge is not given by its type** (H6, #453). It restricts which UC-2
+delivery methods an estate may use, and it merges by **intersection**: a layer may
+narrow the set, never restore a method a lower layer removed. `01-configuration.md`
+§9 has the shape and the rules that come with it; what belongs here is why it is
+not a union like `confirm_environments`, which would have fitted the existing
+machinery without a line of new code.
+
+The answer is what the two do on **upgrade**. A `forbidden_methods` union names
+what is refused, so a method added in a later release is permitted by every estate
+that has not yet heard of it — the guard widens silently, and it is a guard in
+front of putting a live credential on a wire (UC-2 §6). An `allowed_methods`
+intersection names what is permitted, so the same new method is unusable until
+somebody writes it down. Fail-closed costs a shape in the registry; fail-open costs
+a guarantee on every upgrade, and this is not a setting to be wrong about cheaply.
 
 **Layer 4 of the safety settings is merged later than layers 3 and 5** (#424).
 A `safety:` block under `defaults` or a profile is a property of the run and is

@@ -2483,7 +2483,7 @@ Otherwise the table above describes intent rather than behaviour.
 | Policy | Rule | Applies to |
 |---|---|---|
 | `override` | the highest-authority layer wins | everything not below |
-| `ratchet` | the *safest* layer wins, whichever it is | `safety.dry_run`, `safety.readonly`, `safety.max_targets`, `safety.confirm_environments`, `locking.break_expired` |
+| `ratchet` | the *safest* layer wins, whichever it is | `safety.dry_run`, `safety.readonly`, `safety.max_targets`, `safety.confirm_environments`, `safety.delivery.allowed_methods`, `locking.break_expired` |
 
 The ratcheted set is invariant 10's, and it is one frozenset in
 `sopuli/settings/registry.py` so it can be reviewed at a glance. A setting
@@ -2494,9 +2494,39 @@ Merge policy is a **required** field with no default. The failure mode worth
 designing against is not a wrong policy; it is a safety setting added later that
 silently inherits `override` because nobody wrote one.
 
-One policy, three shapes, taken from the setting's type — exactly the three the
-safety paragraph above names: a boolean ratchets toward its safe value, an
-integer to the minimum, a list to the union.
+One policy, **four** shapes. Three are taken from the setting's type — a boolean
+ratchets toward its safe value, an integer to the minimum, a list to the union —
+and the fourth is declared, because the type could not give it.
+
+**The declared one is `safety.delivery.allowed_methods`, which ratchets by
+intersection** (H6, #453). It restricts which UC-2 delivery methods an estate may
+use, and each layer may only narrow the set: a higher-authority layer cannot
+restore a method a lower one removed, which is what makes it a ratchet rather than
+a list somebody can edit upward. It cannot be read off the type because
+`confirm_environments` is a list of strings as well, and the two must merge
+oppositely — so the shape is a field on the setting, exactly as `safe_bool`
+already is for the booleans whose polarity the type could not give either. That
+precedent is the reason this is a fourth shape rather than a second mechanism.
+
+**Why not a `forbidden_methods` union**, which would have needed no new code at
+all: it is fail-open on upgrade. A union names what is refused, so a delivery
+method added in a later release is permitted by every estate that has not yet
+heard of it. An intersection names what is permitted, so the same method is
+unusable until somebody writes it down. `00-principles.md` P3 carries that
+argument; what belongs here are the three rules the intersection needs and the
+union does not:
+
+- **Unset means no constraint, not the empty intersection.** §9's rule that a
+  layer which said nothing drops out already covers it, and for a union it falls
+  out for free — but here getting it wrong turns a file that configures nothing
+  into an estate that can deliver nothing, so it is stated rather than inherited.
+- **Two layers with disjoint lists are a plan-time refusal** (invariant 4) naming
+  both layers. A union has no such case; an empty intersection is a configuration
+  nobody can have meant, and guessing which layer to honour would be choosing
+  which guard to ignore.
+- **There is no `forbidden_methods`, now or later.** One key, so there is no
+  evaluation order to document and no second spelling of one guard. Adding the
+  second key is a decision rather than an addition.
 
 **Which boolean value is the safe one is declared per setting**, and it was not
 worth saying until `locking.break_expired` arrived (#83). `readonly: true`

@@ -792,8 +792,17 @@ reading.
   A wrapping token and a one-time link both retrieve the secret, so by this rule
   neither may travel by the notify channel; how each does travel is #456's.
 
-The shared notify channel is #442, the config block #440, and how an estate
-restricts the set of methods is H6 (#453).
+The shared notify channel is #442 and the config block is #440.
+
+**How an estate restricts the set of methods is decided** (H6, #453):
+`safety.delivery.allowed_methods`, ratcheting by **intersection**, so each layer may only
+narrow it and no higher-authority layer can restore a method a lower one removed.
+It is fail-closed on purpose — a method a later release adds is unusable until an
+estate names it — which is the opposite of what a `forbidden_methods` union would
+have done on upgrade, and this is a guard in front of putting a live credential on
+a wire. It is the fifth ratcheted setting and the first whose merge shape is
+declared rather than read off its type; `01-configuration.md` §9 has the rules,
+and #440 writes it into the block.
 
 ---
 
@@ -810,7 +819,7 @@ restricts the set of methods is H6 (#453).
 | 7 | never promote before confirmation | nothing to govern — no promotion (§1) |
 | 8 | `--dry-run` and a plan first | binds, on both paths; the seen path also confirms (§2) |
 | 9 | idempotency | **open** — a reset as sketched draws a new password on every run; H7 (#454) decides between an exemption and a convergent verb. H2 is what unblocked it rather than what answers it: §3's record is somewhere a request identity or a previous reset could be remembered, where H7's options 2 and 3 previously had nowhere |
-| 10 | safety settings only ratchet | binds; H6 (#453) would add an axis, written in #456 |
+| 10 | safety settings only ratchet | binds, and H6 (#453) has added the axis: `safety.delivery.allowed_methods`, ratcheting by **intersection** so a layer may only narrow which delivery methods an estate may use. The fifth ratcheted setting and the first whose merge is declared rather than read off its type — `01-configuration.md` §9 has the shape, P3 has why it is not a union. Written into the `delivery:` block by #440 |
 | 11 | no `"` in a password | binds, by generation; authoritative over UC-1 §6.1's older wording |
 | 12 | JSON output is versioned | binds — new verbs and events are schema bumps |
 | 13 | no password literal in a PL/SQL block | binds on both statements (§4.1) |
@@ -897,7 +906,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 | ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, the configuration's own word for what is being managed, whichever key declares it (`accounts:`, an `applications:` entry, or H1's `personal_accounts:`); the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; suspending an account is `account suspend`, named that way to avoid a second sense of `lock` and specified in #463; and listing is `account list`, which H1 earned (§2) · #451 |
 | ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
-| H6 | Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union? | #453 |
+| ~~H6~~ | ~~Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union?~~ | **closed** — `safety.delivery.allowed_methods`, ratcheting by **intersection**. Fail-closed: a method added in a later release is unusable until an estate names it, where a `forbidden_methods` union would have permitted it everywhere on upgrade. It costs a fourth ratchet shape, declared per setting as `safe_bool` already is, since both keys would be lists of strings and the type cannot say which merges how. Unset means no constraint; two layers with disjoint lists refuse at plan time naming both; and there is no `forbidden_methods`, now or later · #453 |
 | H7 | A reset never converges: a second invariant-9 exemption, or a convergent verb? | #454 |
 | H8 | On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it? | #459 |
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it, and `force_expire: true` required. `CLAUDE.md` invariant 2 gains a fourth exception, justified by the exposure being deliberate, witnessed and expired rather than harmless — so the narrowing is stricter than `--reveal`'s, not equal to it · #439 |

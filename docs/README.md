@@ -316,12 +316,16 @@ always expired. Decided on review of #457, and **how its one plaintext emission 
 narrowed is now decided too** (#439): five structural guards, invariant 2's fourth
 exception. ~~Is self-service in scope~~ (H5, #452 — **closed:**
 self-service means the owner fetching the password from a secure store, not
-resetting through the tool). Open: how an
-estate restricts delivery methods — an `allowed_methods` intersection, which is a
-new ratchet shape, or a `forbidden_methods` union, which is the existing one (H6,
-#453); a reset never converges, so it needs either a second invariant-9 exemption
-or a convergent verb (H7, #454); and on the unseen path, what happens to the
-stored copy and how the DBA is shown unable to read it (H8, #459).
+resetting through the tool). ~~How an estate
+restricts delivery methods~~ (H6, #453 — **closed:** `safety.delivery.allowed_methods`,
+ratcheting by **intersection**, so a layer may only narrow the set. Fail-closed:
+a method a later release adds is unusable until an estate names it, where the
+`forbidden_methods` union would have permitted it everywhere on upgrade. It costs
+a fourth ratchet shape, declared per setting the way `safe_bool` already is, and
+there is no `forbidden_methods` now or later). Open: a reset never converges, so
+it needs either a second invariant-9 exemption or a convergent verb (H7, #454);
+and on the unseen path, what happens to the stored copy and how the DBA is shown
+unable to read it (H8, #459).
 **H2 is decided** (#450): what a reset records lives in three places rather than
 one. The **database** answers *when* the password last changed
 — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant,
@@ -678,21 +682,28 @@ and the channel which carries the secret may not, and #444's wrapping token and
 #445's link both retrieve the secret. That is #456's.
 
 **The restriction axis is not a `delivery:` key**, which is the one thing in this
-map that is easy to file in the wrong place. H6 (#453) chooses between
-`delivery.forbidden_methods` ratcheting as a union — fitting the machinery that
-exists, at the cost of being fail-open for any method a later release adds — and
-`delivery.allowed_methods` ratcheting as an intersection, which is fail-closed and
-needs a fourth shape in `settings/registry.py`, since both are lists of strings and
-the shape cannot be read off the type. It lands in the safety ratchet, and it
-brings `CLAUDE.md` invariant 10, P3's safety bullet and `01-configuration.md` §9's
-merge-policy table with it.
+map that is easy to file in the wrong place. **H6 is decided** (#453):
+`safety.delivery.allowed_methods`, ratcheting by **intersection** so a layer may
+only narrow the set and no higher-authority layer can restore a method a lower one
+removed.
 
-**What blocks what.** Every `delivery:` issue waits on #440, which waits on #456.
-**#439 is now closed**, so **#453** (H6's ratchet) is the one remaining decision in
-this chain — and #456's own body says the rest of it can be written first, so the
-queue is no longer blocked on an answer in the way it was. `account list` (#490) is
-built, and it was the UC-2 work that needed neither a delivery method nor an open
-decision.
+It is fail-closed, and that is what the decision turned on. A
+`forbidden_methods` union would have fitted the existing machinery without a line
+of new code — and would have permitted every method a later release adds, in every
+estate that had not yet heard of it. An intersection makes the same method unusable
+until somebody names it. The cost is a **fourth ratchet shape**, declared per
+setting rather than read off the type, since `confirm_environments` is a list of
+strings too and the two must merge oppositely; `safe_bool` is the precedent, which
+is what makes it a fourth shape rather than a second mechanism. `CLAUDE.md`
+invariant 10, P3's safety bullet and `01-configuration.md` §9's merge-policy table
+all carry it now, and **#440 is what writes it into the block**.
+
+**What blocks what.** Every `delivery:` issue waits on #440, which waits on #456 —
+and **#456's own blockers are now both closed** (#439 and #453), so the delivery
+section can be written and the chain below it is implementation rather than
+decision. Two UC-2 decisions remain and neither blocks this table: H7 (#454),
+whether a reset needs a second invariant-9 exemption or a convergent verb, and H8
+(#459), the stored copy's lifetime.
 
 **Each block is a schema minor bump** — 1.4 became 1.5 with the record, and onward for
 `delivery:` and, unless they are batched, each method sub-block. Additive and
