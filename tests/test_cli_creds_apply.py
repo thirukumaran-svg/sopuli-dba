@@ -29,10 +29,12 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli import apply, check
+from sopuli.admin import Resolved
 from sopuli.cli import cli
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.errors import ArgumentError
 from sopuli.config.model import Vault
+from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import LOCK_TAKEN_OVER, REPAIR_DOCUMENT_STALE
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.oracle.errors import classify
@@ -48,6 +50,7 @@ from sopuli.driver.protocol import (
     AccountAttributes,
     AttributeChange,
     ChangeResult,
+    Credential,
     PrivilegeAudit,
     Scope,
     UnsupportedCapabilityError,
@@ -615,10 +618,20 @@ def _staged_two_targets() -> dict[str, dict[str, Any]]:
 
 
 def _credential() -> Any:
-    class Resolved:
-        credential = object()
+    """The admin credential the CLI would have resolved.
 
-    return Resolved()
+    A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
+    The command reads its *provenance* as well as its value now -- #477 reports
+    where an admin credential came from -- and a stub stops being enough the
+    moment anything but `.credential` is read. `external` because these estates
+    declare no `admin:` block at all, and it is the one source that carries
+    neither a username nor a secret.
+    """
+    return Resolved(
+        credential=Credential(external=True),
+        method=EXTERNAL,
+        source="an external password store",
+    )
 
 
 def run(runner: CliRunner, config: Path, *args: str) -> Result:

@@ -25,14 +25,18 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli import check
+from sopuli.admin import ENV, Resolved
 from sopuli.cli import cli
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
+from sopuli.config.targets import ADMIN_PASSWORD_ENV, EXTERNAL
+from sopuli.diagnostics import LOW_ASSURANCE_ADMIN
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
     SKIPPED,
     VERIFY_LOGIN,
+    Credential,
     Scope,
     UserState,
     VerifyResult,
@@ -187,10 +191,20 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
 
 
 def _credential() -> Any:
-    class Resolved:
-        credential = object()
+    """The admin credential the CLI would have resolved.
 
-    return Resolved()
+    A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
+    The command reads its *provenance* as well as its value now -- #477 reports
+    where an admin credential came from -- and a stub stops being enough the
+    moment anything but `.credential` is read. `external` because these estates
+    declare no `admin:` block at all, and it is the one source that carries
+    neither a username nor a secret.
+    """
+    return Resolved(
+        credential=Credential(external=True),
+        method=EXTERNAL,
+        source="an external password store",
+    )
 
 
 def run(runner: CliRunner, config: Path, *args: str) -> Result:
@@ -575,3 +589,38 @@ def test_an_unreachable_target_is_counted_as_failed(
     assert body["summary"]["failed"] == 2
     assert body["summary"]["unverifiable"] == 0
     assert body["exit_code"] == ExitCode.FAILURE
+
+
+def test_a_low_assurance_admin_source_is_recorded_but_not_printed(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#477's split: `diagnostics[]` on every verb, printed by `doctor` alone.
+
+    P2 asks for the `env` source to be flagged in output and this verb records
+    it -- but what is being reported is a property of the config file, the same
+    on every run until somebody edits it. Printed here it would be a line under
+    every check forever, which is a note a reader stops seeing. `doctor` is the
+    verb that reports on the setup and is where it is printed.
+    """
+    estate()
+    monkeypatch.setattr(
+        "sopuli.cli.admin_resolve",
+        lambda target, **_: Resolved(
+            credential=Credential(username="C##SOPULI_SVC", secret=Secret("Anchor-Marble-4")),
+            method=ENV,
+            source=f"the environment variable {ADMIN_PASSWORD_ENV}",
+        ),
+    )
+    config = write_config(CONFIG)
+
+    printed = run(runner, config)
+    body = document(run(runner, config, "--output", "json"))
+    flagged = [one for one in body["diagnostics"] if one["code"] == LOW_ASSURANCE_ADMIN]
+
+    assert sorted(one["target"] for one in flagged) == ["appdb-alpha", "appdb-beta"]
+    assert ADMIN_PASSWORD_ENV in flagged[0]["message"]
+    assert ADMIN_PASSWORD_ENV not in printed.output
+    assert "low assurance" not in printed.output

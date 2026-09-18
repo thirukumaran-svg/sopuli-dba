@@ -84,6 +84,7 @@ from sopuli import repair as repair_module
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
+from sopuli.admin import Resolved as AdminResolved
 from sopuli.admin import resolve as admin_resolve
 from sopuli.apply import SOURCES, Source
 from sopuli.clock import as_utc, to_rfc3339, utc_now
@@ -110,9 +111,11 @@ from sopuli.diagnostics import (
     LOCK_LOST,
     LOCK_PATH_UNGUARDED,
     LOGIN_WARNING,
+    LOW_ASSURANCE_ADMIN,
     PASSWORD_CHANGE_DATE_UNKNOWN,
     PASSWORD_GRACE_PERIOD,
     ROTATION_UNCONFIRMED,
+    admin_diagnostics,
     constraint_diagnostics,
     guardrail_diagnostics,
     install_diagnostics,
@@ -783,7 +786,9 @@ def doctor(
     if wallet is not None:
         sections.extend(render_wallet(wallet))
     sections.extend(render_vaults(list(vaults)))
-    return "\n".join([*sections, render_doctor(entries, client=client)])
+    return "\n".join(
+        [*sections, render_doctor(entries, client=client), *render_notices(_admin_notices(run))]
+    )
 
 
 def _vault_error(report: VaultReport) -> Error | None:
@@ -2155,7 +2160,7 @@ def _check_target(
     try:
         try:
             module = resolve_driver(target.target)
-            credential = admin_resolve(target, env=os.environ, prompt=run.prompt)
+            credential = _admin_credential(target, run)
             driver = module.OracleDriver(
                 env=os.environ,
                 correlation_id=run.document.correlation_id,
@@ -3960,7 +3965,7 @@ def _apply_target(
     try:
         try:
             module = resolve_driver(target.target)
-            credential = admin_resolve(target, env=os.environ, prompt=run.prompt)
+            credential = _admin_credential(target, run)
             driver = module.OracleDriver(
                 env=os.environ,
                 correlation_id=run.document.correlation_id,
@@ -4363,6 +4368,65 @@ def _rollover_json(user: UserState) -> dict[str, Any]:
     return found
 
 
+def _admin_credential(target: ExpandedTarget, run: Invocation) -> AdminResolved:
+    """Resolve one target's admin credential, and record where it came from (#477).
+
+    The one place either happens, so that the reporting cannot be forgotten at a
+    call site -- which is invariant 2's structural argument applied to
+    *provenance* rather than to the value. :class:`~sopuli.admin.Resolved`
+    classifies and does not decide; this is the caller its docstring names, and
+    there is one of it rather than three.
+
+    **At most one entry per target per run.** A target can be resolved twice in
+    one run -- ``creds apply --strategy`` pre-flights the estate and then applies
+    to it, over two connections -- and the fact being reported is a property of
+    the target's *configuration*, which did not change between them. Told twice,
+    a reader would reasonably wonder what was different about the second time.
+
+    Deduplicated against the document rather than by remembering here, because
+    the document is what actually gets emitted: a cache on this function would
+    have to be per run, and the run already has one thing that is per run and
+    holds diagnostics.
+    """
+    credential = admin_resolve(target, env=os.environ, prompt=run.prompt)
+    already = {(one.code, one.target) for one in run.document.diagnostics if one.code is not None}
+    run.document.diagnostics.extend(
+        one
+        for one in admin_diagnostics(target.name, credential)
+        if (one.code, one.target) not in already
+    )
+    return credential
+
+
+def _admin_notices(run: Invocation) -> list[str]:
+    """The low-assurance flag, for somebody reading a terminal (#477).
+
+    Read back off the document rather than collected alongside it, which is
+    `_doctor_exit`'s rule about "missing" applied to this: the text and the JSON
+    have to say the same thing, and two code paths working out what to say
+    separately is how they stop doing so.
+
+    **`doctor` prints it and the other verbs do not**, though all of them emit
+    the diagnostic. P2 asks for the source to be flagged *in output* and text is
+    the default output, so something has to print it -- but the thing being
+    reported is a property of the *configuration*, identical on every run until
+    somebody edits the file. Printed by `creds apply`, it would be a line under
+    every rotation forever, which is the warning-a-reader-learns-to-filter
+    failure that :data:`~sopuli.diagnostics.PASSWORD_REUSE_ENFORCED` and
+    :func:`~sopuli.diagnostics.admin_diagnostics` are both written to avoid.
+
+    That is the distinction the other printed notices already draw, rather than a
+    new one. :data:`~sopuli.diagnostics.REPAIR_DOCUMENT_STALE` is printed because
+    "the document *you* just passed is thirteen days old" is about this
+    invocation, and :data:`~sopuli.diagnostics.GUARDRAIL_UNCHECKED` because a
+    check that did not run is about this run's accounts. "Your file authenticates
+    from a variable" is about neither, and `doctor` is the verb whose whole job
+    is to report on the setup -- so it is where a person goes to be told, and
+    ``diagnostics[]`` is where anything alerting reads it from on every command.
+    """
+    return [one.message for one in run.document.diagnostics if one.code == LOW_ASSURANCE_ADMIN]
+
+
 def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> Any:
     """One connection to one target, with the admin credential P2 resolves.
 
@@ -4372,7 +4436,7 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
     different thing from the one that runs.
     """
     module = resolve_driver(target.target)
-    credential = admin_resolve(target, env=os.environ, prompt=run.prompt)
+    credential = _admin_credential(target, run)
     driver = module.OracleDriver(
         env=os.environ,
         correlation_id=run.document.correlation_id,

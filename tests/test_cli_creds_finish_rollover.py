@@ -25,8 +25,10 @@ from jsonschema import Draft202012Validator
 
 from sopuli import check
 from sopuli import finish_rollover as windows
+from sopuli.admin import Resolved
 from sopuli.cli import cli
 from sopuli.config.model import Vault
+from sopuli.config.targets import EXTERNAL
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
@@ -34,6 +36,7 @@ from sopuli.driver.protocol import (
     SKIPPED,
     VERIFY_LOGIN,
     ChangeResult,
+    Credential,
     Scope,
     UserState,
     VerifyResult,
@@ -239,10 +242,20 @@ def _unfinished() -> dict[str, dict[str, Any]]:
 
 
 def _credential() -> Any:
-    class Resolved:
-        credential = object()
+    """The admin credential the CLI would have resolved.
 
-    return Resolved()
+    A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
+    The command reads its *provenance* as well as its value now -- #477 reports
+    where an admin credential came from -- and a stub stops being enough the
+    moment anything but `.credential` is read. `external` because these estates
+    declare no `admin:` block at all, and it is the one source that carries
+    neither a username nor a secret.
+    """
+    return Resolved(
+        credential=Credential(external=True),
+        method=EXTERNAL,
+        source="an external password store",
+    )
 
 
 def run(runner: CliRunner, config: Path, *args: str) -> Result:

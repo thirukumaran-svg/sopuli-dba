@@ -876,6 +876,28 @@ does not scale past one admin credential, so `password_env:` says which variable
 holds this one; absent, it is that pair. Either way this source stays flagged
 low-assurance wherever it is reported.
 
+**And "flagged" means `SOPULI-W022`** (#477). Every command that connects emits
+one per target whose credential came from a low-assurance source; `doctor`
+prints it as well, and the others leave it in `diagnostics[]`. P2 asks for the
+flag *in output* and text is the default output, so something has to print it —
+but the fact is a property of the file rather than of the run, identical every
+time until somebody edits it, and a line under every rotation forever is one
+nobody would still be reading. `doctor` is the verb that reports on the setup.
+The message names the **variable** rather than the method, from
+`Resolved.source`, because looking at where that variable is set is the whole of
+what a reader does about it.
+
+It is a flag and never a refusal: P2 supports this source, and bootstrapping an
+estate that has no other way in is what it is for. What is owed is that the run
+says so — and until #477 nothing did. `Resolved.low_assurance` was computed on
+every run since #175 and read by nothing, which is the failure mode this
+document's own wording invites: the property existed, it was tested, and the
+sentence above was false of every run that had ever been made.
+
+The flag follows `admin.LOW_ASSURANCE`, the set, rather than `method == "env"`.
+A second low-assurance source joins the set and is flagged everywhere at once,
+instead of sending somebody to find every reporting site again.
+
 **`external` constrains the rest of the target**, and both halves are errors
 rather than warnings:
 

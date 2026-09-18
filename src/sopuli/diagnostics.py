@@ -40,6 +40,7 @@ from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from types import MappingProxyType
 
+from sopuli.admin import Resolved
 from sopuli.clock import Skew, to_rfc3339
 from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.constraints import NAMED, POLICY, UNKNOWN, AccountConstraints, Constraints
@@ -311,6 +312,34 @@ REPAIR_DOCUMENT_STALE = "SOPULI-W020"
 #: Reported and never acted on, like the date itself: nothing gates on it (Q9).
 PASSWORD_CHANGE_DATE_UNKNOWN = "SOPULI-W021"
 
+#: A target's admin credential came from the environment (#477). P2 says the
+#: ``env`` source is "supported, and flagged low-assurance in output", and
+#: ``01-configuration.md`` §3a says twice that it "stays flagged wherever it is
+#: reported". Until this code existed, :attr:`sopuli.admin.Resolved.low_assurance`
+#: was computed on every run and read by nothing.
+#:
+#: **It is #216's rule exactly**: a code exists for what the exit code cannot
+#: tell you. The run connects, succeeds and exits 0 -- the credential worked --
+#: and nothing else in the document says *how* the tool got hold of it. A reader
+#: cannot distinguish a run that authenticated from a wallet from one that
+#: authenticated from a variable some CI job exported, and those are different
+#: claims about how well guarded the estate is.
+#:
+#: **Keyed on assurance, not on the method.** :data:`sopuli.admin.LOW_ASSURANCE`
+#: is the set, so a second low-assurance source starts emitting this without
+#: finding every reporting site again -- which is the mistake the property's
+#: existing docstring was already written to avoid.
+#:
+#: **One per target per run**, and the message names the variable rather than
+#: the method: ``Resolved.source`` is the half an operator can act on, because
+#: what they do next is go and look at where that variable is set.
+#:
+#: A warning and never a refusal. P2 *supports* this source -- bootstrapping an
+#: estate that has no other way in is the case it exists for -- so a run that
+#: refused it would refuse the situation the source was added for. What is owed
+#: is that the run says so.
+LOW_ASSURANCE_ADMIN = "SOPULI-W022"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -465,6 +494,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "whatever an external system dictated. The two resource values are reported "
             "rather than interpreted -- they interact, and this run measured neither the "
             "interaction nor the history."
+        ),
+        LOW_ASSURANCE_ADMIN: (
+            "A target's admin credential was read from an environment variable. P2 "
+            "supports this source and requires it be flagged: a variable is readable by "
+            "anything in the process's environment, survives in shell history and CI job "
+            "definitions, and is not rotated by anything here. The run authenticated and "
+            "the message names the variable, because what to do about it is to look at "
+            "where that variable is set."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -693,6 +730,44 @@ def guardrail_diagnostics(caveats: Sequence[tuple[str, Caveat]]) -> list[Diagnos
             )
         )
     return notices
+
+
+def admin_diagnostics(target: str, credential: Resolved) -> list[Diagnostic]:
+    """What a run says about where a target's admin credential came from (#477).
+
+    Empty for every source but the low-assurance one, which is the whole design
+    of a warning somebody is meant to keep reading. `external`, `vault` and
+    `prompt` are the sources P2 prefers, and a diagnostic on each of them would
+    put a line on every run of every command -- at which point the one that
+    matters is indistinguishable from the three that do not.
+
+    **The decision is** :attr:`~sopuli.admin.Resolved.low_assurance`**'s, not
+    this function's.** That property asks whether the method is in
+    :data:`~sopuli.admin.LOW_ASSURANCE` rather than whether it is ``env``, so a
+    second such source is flagged by adding it to that set -- and this stays the
+    site that says what a flagged source *looks like* in a document, which is
+    the split :class:`~sopuli.admin.Resolved`'s docstring asks for: it
+    classifies and does not decide, and the command that connects is the one
+    that reports.
+
+    Here rather than in :mod:`sopuli.cli` for :func:`constraint_diagnostics`'
+    reason -- this is where a domain object becomes a
+    :class:`~sopuli.output.document.Diagnostic` -- and because a rule about what
+    a run must say is worth testing without a command-line runner.
+    """
+    if not credential.low_assurance:
+        return []
+    return [
+        Diagnostic(
+            level="warning",
+            code=LOW_ASSURANCE_ADMIN,
+            target=target,
+            message=(
+                f"{target}: the admin credential came from {credential.source}, "
+                f"which P2 supports and flags as low assurance"
+            ),
+        )
+    ]
 
 
 def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
