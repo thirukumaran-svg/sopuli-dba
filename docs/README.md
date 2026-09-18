@@ -312,7 +312,9 @@ alone, and nothing is expired — owner-only by the store's access control on an
 identity-scoped path (#447), and only as far as its delivery on a wrapping token,
 which is a bearer credential (#444, #456) — and a **seen** `manual` path, which is
 a deliberate exposure until the owner's first logon: non-default, confirmed,
-always expired. Decided on review of #457. ~~Is self-service in scope~~ (H5, #452 — **closed:**
+always expired. Decided on review of #457, and **how its one plaintext emission is
+narrowed is now decided too** (#439): five structural guards, invariant 2's fourth
+exception. ~~Is self-service in scope~~ (H5, #452 — **closed:**
 self-service means the owner fetching the password from a secure store, not
 resetting through the tool). Open: how an
 estate restricts delivery methods — an `allowed_methods` intersection, which is a
@@ -354,8 +356,13 @@ leaves the second intact, because it never widens what a mutating verb may touch
 the predicate does not admit. The cost is that predicate membership is controlled
 by whoever assigns the profile or grants the role, rather than by whoever reviews
 the file. The delivery
-section, and with it H6's amendment to invariant 10, is #456; how the seen path's
-one plaintext emission is narrowed is #439. See
+section, and with it H6's amendment to invariant 10, is #456. **How the seen path's
+one plaintext emission is narrowed is decided** (#439): it prints, under five
+structural guards — one reveal site, refused with `--output json`/`jsonl`, refused
+unless stdout is a terminal, confirmed every time with `--confirm` *not* answering
+it, and `force_expire: true` required. `CLAUDE.md` invariant 2 carries a fourth
+exception for it, and says why its justification is weaker than the third's and its
+narrowing therefore stricter. See
 [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) §9.
 
 ### Settled
@@ -654,7 +661,7 @@ method's own keys land with that method's issue.
 
 | Sub-block | Issue | What it adds, and what is unsettled |
 |---|---|---|
-| `manual` | #441 | **may not exist at all** — #439 decides between stdout, a file and nothing. Adds `force_expire: true`, refused at plan time when absent |
+| `manual` | #441 | **unblocked** — #439 decided it prints to stdout, under five guards (invariant 2's fourth exception). Adds `force_expire: true`, refused at plan time when absent |
 | `vault_wrapped` | #444 | `ttl` only. A response-wrapping token is single-use by construction, so `num_uses` is a **config error** rather than a key that is silently ignored |
 | the identity-scoped variant | #447 | `identity_scoped: true` and a path template. #447 says the key probably wants a name that does not say "wrapped", and flags it rather than renaming it quietly |
 | `one_time_link` | #445 | `backend: yopass`, `base_url`, and `ttl`/`one_time`. Needs an OpenPGP dependency, because Yopass encrypts client-side; may not be buildable as sketched |
@@ -680,13 +687,11 @@ the shape cannot be read off the type. It lands in the safety ratchet, and it
 brings `CLAUDE.md` invariant 10, P3's safety bullet and `01-configuration.md` §9's
 merge-policy table with it.
 
-**What blocks what.** With #468 built, no block in this table is free to be built
-next: every `delivery:` issue waits on #440, which waits on #456, which waits on
-**#439** and **#453**. Both of those are decisions rather than work, which is the
-ordinary meaning of this repository's `decision` label — the queue is not short of
-implementation, it is short of two answers. The UC-2 work that *was* unblocked was a
-verb rather than a block, and it is now built: `account list` (#490) resolves a
-predicate and shows what it matched, needing no delivery method and no open
+**What blocks what.** Every `delivery:` issue waits on #440, which waits on #456.
+**#439 is now closed**, so **#453** (H6's ratchet) is the one remaining decision in
+this chain — and #456's own body says the rest of it can be written first, so the
+queue is no longer blocked on an answer in the way it was. `account list` (#490) is
+built, and it was the UC-2 work that needed neither a delivery method nor an open
 decision.
 
 **Each block is a schema minor bump** — 1.4 became 1.5 with the record, and onward for

@@ -48,8 +48,8 @@ something specific.
 2. **Redaction happens at the output serialiser, not at each call site.** Secret
    values are wrapped in a type whose `str`, `repr` and JSON serialisation are
    `"***"`. There must be no code path that emits plaintext except the vault write,
-   the driver call, and `policy sample --reveal`. Do not "remember to mask" at a
-   log statement.
+   the driver call, `policy sample --reveal`, and UC-2's seen reset. Do not
+   "remember to mask" at a log statement.
 
    The third exception is allowed because **a sample is not a credential**:
    nothing authenticates with it, it is never stored, and it guards nothing —
@@ -59,6 +59,41 @@ something specific.
    `--reveal` is refused with `--output json`, and the run schema gives a sample no
    value property to put a password in. Widening it again is a decision, not an
    implementation detail.
+
+   **The fourth exception is `account reset-password` on the seen (`manual`) path,
+   decided in #439, and its justification is different from the third's** — which
+   is the thing to understand before touching it. A sample guards nothing; this
+   *is* a credential, and one somebody can log in with. What makes it allowed is
+   not that it is harmless but that it is **deliberate, witnessed and
+   time-limited**: an operator asked for the seen path by name, answered a prompt,
+   and the password is expired at the moment it is set, so the person's first logon
+   must change it. The exposure is the point of the path rather than a side effect
+   of it, and UC-2 §1 calls it that.
+
+   Because the justification is weaker, the narrowing is **stricter** than
+   `--reveal`'s, not merely equal to it. Five structural guards, and none of them
+   is a reminder:
+
+   - one reveal site, in the seen path's own view module, reachable only when the
+     configured delivery method is `manual`;
+   - refused with `--output json` and `--output jsonl`, as `--reveal` is, and the
+     run schema gives the result no property a password could occupy;
+   - **refused unless stdout is a terminal.** This has no counterpart in
+     `--reveal` and is the guard that carries the argument: a value redirected to a
+     file or captured in a CI log outlives the one logon it is good for, because a
+     log is read later and by other people, and expiry does not unpublish it. The
+     cost is real and accepted — `| clip` and `| pbcopy` stop working, and the
+     operator reads the value off the screen instead;
+   - **confirmed every time, and `--confirm` does not answer it in advance.** The
+     third unconditional gate in P5, and the strictest: `creds rotate` and `lock
+     break` both take the yes given ahead of time, and this one does not, because
+     if nobody is present to answer then nobody is present to receive the password
+     either. It is the same claim the terminal check makes, made twice on purpose;
+   - `force_expire: true` is required on the method, and a `manual` delivery
+     without it is refused at plan time rather than silently defaulted.
+
+   A fifth exception is a decision, not an implementation detail — and so is
+   loosening any of the five guards above.
 3. **Never branch on a version number from config.** Query the database for its
    capabilities, cache per session, and branch on the capability. See P1.
 4. **A command that needs an unavailable capability fails at plan time**, with a

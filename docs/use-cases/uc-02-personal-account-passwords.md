@@ -105,10 +105,18 @@ prompt — and it holds unchanged now that the answer is a different key.
 **The seen reset asks for confirmation every time** — decided on review of #457,
 and recorded in P5 beside the two gates that already do, `creds rotate` and
 `lock break`. Like them it does not consult `safety.confirm_environments`, and it
-is not a setting a layer could relax. Whether `--confirm` answers it in advance, as
-it does those two, is not decided here: it is the one reset where the prompt is the
-point, and it belongs with the rest of how the seen path's one plaintext emission
-is narrowed, in #439.
+is not a setting a layer could relax.
+
+**`--confirm` does not answer it** (#439, decided), which makes it the one gate in
+the tool that cannot be given a yes in advance. The reason is not that this
+operation is more dangerous than a rotation — it is that the prompt here is not a
+formality to be waived. The run is about to print a working password to a screen,
+and `--confirm` would assert that somebody is watching when establishing that
+somebody is watching is the entire purpose of the gate. A flag cannot testify to
+its own premise.
+
+It is the same claim the terminal check below makes, made twice deliberately: if
+nobody is present to answer, nobody is present to receive the password either.
 
 **`expire-password` is its own verb rather than a flag on the reset**, which is
 the half of H3 this section used to leave open. The two operations differ in what
@@ -755,8 +763,25 @@ reading.
   store token can read the person's path could read the password back, and the
   unseen path's reason for skipping expiry would be gone. Whether the tool checks
   that, and what it does if the token can read, is H8 (#459).
-- **`manual` is the seen path**: #441, non-default, confirmed, forced expiry — and
-  #439 for how its one plaintext emission is narrowed.
+- **`manual` is the seen path**: #441, non-default, confirmed, forced expiry. **How
+  its one plaintext emission is narrowed is decided** (#439): it prints, and it
+  prints under five structural guards rather than a promise to be careful. Written
+  out in `CLAUDE.md` invariant 2, which now carries a fourth exception, and
+  summarised here because the method's own issue is written against it:
+
+  | Guard | Why |
+  |---|---|
+  | one reveal site, in the seen path's view, reachable only when `delivery.method` is `manual` | the third exception stays narrow structurally rather than carefully, and so does this one |
+  | refused with `--output json` and `--output jsonl`; no schema property can hold the value | as `--reveal` already is — a machine-readable document must never be the thing that carries it |
+  | **refused unless stdout is a terminal** | the guard `--reveal` has no counterpart for, and the one that carries the argument: a value redirected to a file or captured in a CI log outlives the single logon it is good for, because a log is read later and by other people, and expiry does not unpublish it. `\| clip` stops working; that cost is accepted rather than worked around |
+  | confirmed every time, and `--confirm` does not answer it (§2) | a yes given in advance asserts the very thing the prompt exists to establish |
+  | `force_expire: true` required, refused at plan time when absent | the exposure is bounded by the person's next logon, or it is not bounded at all |
+
+  **The justification is different from `policy sample --reveal`'s, and weaker**,
+  which is why the narrowing is stricter. A sample guards nothing; this is a
+  credential somebody can log in with. What allows it is not that it is harmless
+  but that it is deliberate, witnessed and time-limited — the exposure is the point
+  of the path rather than a side effect of it (§1).
 - **One rule is binding now**, because #438 set it and every delivery issue is
   written against it:
 
@@ -777,7 +802,7 @@ restricts the set of methods is H6 (#453).
 | # | Invariant | Here |
 |---|---|---|
 | 1 | no secret in `argv` | binds unchanged, including every store credential |
-| 2 | redaction at the serialiser | binds, and §3's metadata record is inside it rather than an exception to it: it holds no password in any representation, not a hash and not a verifier. A **Vault** write is already a permitted plaintext path, so the Vault forms of the unseen path need no widening; the other stores (#445, #446, `smtp_encrypted`) are not automatically one, and #456 says how each keeps the invariant. The seen path's display is not a permitted path, and is #439 |
+| 2 | redaction at the serialiser | binds, and §3's metadata record is inside it rather than an exception to it: it holds no password in any representation, not a hash and not a verifier. A **Vault** write is already a permitted plaintext path, so the Vault forms of the unseen path need no widening; the other stores (#445, #446, `smtp_encrypted`) are not automatically one, and #456 says how each keeps the invariant. **The seen path's display is now the invariant's fourth permitted path** (#439), under the five guards in §6 — allowed because the exposure is deliberate, witnessed and expired, rather than because it is harmless, which is the third exception's argument and does not carry here |
 | 3 | branch on capability, not version | binds — rollover (§4.3) is a capability |
 | 4 | unavailable capability fails at plan time | binds — §4.3's seen-path refusal, §5's refusal of a deliberate `LOCKED`, §4.4's guardrails, and possibly H8's store check. §3.4's three absences are deliberately **not** on that list, and it says why: a reset needs none of them to do what it is for |
 | 5 | the config is the whitelist | binds, with H1's amendment (#449): a personal account is declared in `personal_accounts:` by name or by predicate, and a predicate never widens what a mutating verb may touch — the second sentence, that selectors cannot extend the declared set, is untouched (§2) |
@@ -818,7 +843,16 @@ What a test must show, once there is something to test:
   refuses at plan time and which #455's probe measured rather than predicted —
   and, for an account that is not locked, a logon with the password is forced to
   change it; a rollover profile is refused at plan time (§4.3); the password is
-  emitted exactly once, by the path #439 decides, and nowhere else;
+  emitted exactly once, to stdout, and nowhere else. **Each of §6's five guards is
+  its own assertion, and all five are tier 0** — none of them needs a database:
+  the reveal site is unreachable for any delivery method other than `manual`;
+  `--output json` and `--output jsonl` are refused; a non-terminal stdout is
+  refused; `--confirm` is refused as a usage error; and `manual` without
+  `force_expire: true` is refused at plan time. The schema restriction is **part of
+  the second guard rather than a sixth** — `--output json` is refused *and* no
+  property of a result could hold a password if it were not — and it is asserted
+  the way `policy sample`'s already is, against the published schema rather than
+  against a run;
 - **the H4 behaviours (§5, §4.3)**, and each of these is a tier-1 assertion
   because each was a measurement first. **The unlock assertion differs by path,
   and saying so is the point**: on the **unseen** path a reset of a
@@ -866,7 +900,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 | H6 | Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union? | #453 |
 | H7 | A reset never converges: a second invariant-9 exemption, or a convergent verb? | #454 |
 | H8 | On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it? | #459 |
-| — | How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance (invariant 2) — that it exists, non-default and confirmed, is decided | #439 |
+| ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it, and `force_expire: true` required. `CLAUDE.md` invariant 2 gains a fourth exception, justified by the exposure being deliberate, witnessed and expired rather than harmless — so the narrowing is stricter than `--reveal`'s, not equal to it · #439 |
 
 Deliberately not a question with an issue: §4.4's collision between guardrail
 check 4 and DBA accounts in scope, which is decided #89 applied to a population it

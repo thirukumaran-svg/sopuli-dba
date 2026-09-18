@@ -785,10 +785,12 @@ question is where their test database lives.
 **Safety**
 
 - Every mutating command supports `--dry-run` and prints the exact plan, redacted.
-- Every mutating command supports **`--confirm`**. **Interactive confirmation
-  is required where the configuration asks for it, and nowhere else** — decided in
-  #294, and this bullet is the rewrite that decision called for. It asked for
-  three triggers and only one survives:
+- Every mutating command supports **`--confirm`**, with **one exception named
+  below**: UC-2's seen reset refuses it as a usage error (exit 2), because there
+  the prompt is what establishes that a person is present (#439). **Interactive
+  confirmation is required where the configuration asks for it, and nowhere
+  else** — decided in #294, and this bullet is the rewrite that decision called
+  for. It asked for three triggers and only one survives:
 
   | trigger | status |
   |---|---|
@@ -805,11 +807,19 @@ question is where their test database lives.
   rotate` confirms unconditionally under UC-1 §8 step 1, and `lock break` always
   has. **A third is specified and not built**: UC-2's seen (`manual`) reset, where
   the DBA sees a working password, confirms every time — decided on review of
-  #457, `../use-cases/uc-02-personal-account-passwords.md` §2. Whether `--confirm`
-  answers that one in advance is open, in #439; for the other gates and the
-  setting, `--confirm` is the yes given in advance; a profile's
-  `confirm: false` says nobody could be asked, which makes a gated run *refuse*
-  (exit 8) rather than proceed.
+  #457, `../use-cases/uc-02-personal-account-passwords.md` §2.
+
+  **That third gate is the one `--confirm` does not answer** (#439), and it is the
+  only such gate in the tool. For the other two and for the setting, `--confirm` is
+  the yes given in advance. Here it is refused as a usage error, because the prompt
+  is not a formality to be waived: the run is about to print a working password to
+  a screen, and a yes given ahead of time asserts that somebody is watching when
+  the *point* of the gate is to establish that somebody is. It is the same claim
+  the seen path's terminal check makes, made twice deliberately — invariant 2 in
+  `CLAUDE.md` carries both.
+
+  A profile's `confirm: false` says nobody could be asked, which makes a gated run
+  *refuse* (exit 8) rather than proceed.
 
   **The flag is `--confirm`, and there is no `--yes` alias.** This bullet
   promised one from the first draft and nothing ever built it, which #294's

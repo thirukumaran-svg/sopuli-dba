@@ -1560,7 +1560,8 @@ each call site.** Every secret value the process holds is wrapped in a type whos
 serialisation is the literal string `"***"`, and whose `__str__`/`__repr__` is the
 same. Nothing in the codebase can accidentally emit one by forgetting a helper,
 because there is no code path that produces the plaintext except the vault write,
-the database driver call, and `policy sample --reveal`.
+the database driver call, `policy sample --reveal`, and UC-2's seen reset (#439,
+specified and not built).
 
 Consequences that show up in the schema:
 
@@ -1578,7 +1579,7 @@ Consequences that show up in the schema:
   exceptions are passed through a scrubber before they reach either.
 - `password.applied` events carry the vault version, never the value.
 
-### The one exception, and what keeps it narrow
+### The two exceptions, and what keeps each narrow
 
 `policy sample --reveal` prints generated passwords on purpose. It is allowed
 because **a sample is not a credential**: nothing authenticates with it, it is
@@ -1604,6 +1605,41 @@ no release. `policy sample --reveal` is excluded by name — it is the one comma
 whose output is *supposed* to contain one — and in exchange the gate asserts the
 narrower property above: no sample value in any JSON document, `--reveal` or not.
 See `04-testing.md` §6.
+
+#### The second exception: UC-2's seen reset (#439)
+
+**Decided and not built.** `account reset-password` on the `manual` delivery path
+prints a working password once. Written here because this section is the redaction
+contract, and a contract that named only the first exception would contradict the
+use case the moment #441 lands — the failure #411 was raised about, where a settled
+result reaches one document and leaves the others disagreeing.
+
+**Its justification is different, and weaker.** The first exception rests on a
+sample being no credential at all. This *is* one, and somebody can log in with it.
+What allows it is that the exposure is **deliberate, witnessed and time-limited**:
+the operator selected the seen path, answered a prompt, and the password is expired
+at the moment it is set, so the owner's first logon must change it.
+
+Because the justification is weaker, the structure is **stricter** than the first
+exception's — the same four guards plus a fifth that has no counterpart there:
+
+| | |
+|---|---|
+| it is opt-in | non-default; `delivery.method: manual` selects it, and the unseen path is what an estate gets without asking |
+| it is text-only | refused with `--output json` **and** `--output jsonl` |
+| JSON cannot carry it | no property of a `result` can hold a password, `--output` notwithstanding |
+| it is one call site | one `reveal()`, in the seen path's own view, reachable only when the method is `manual` |
+| **stdout must be a terminal** | the guard `--reveal` has none of, and the one the argument rests on: a value redirected to a file or captured in a CI log outlives the single logon it is good for, because a log is read later and by other people, and expiry does not unpublish it |
+
+Two more things bound it and are not redaction rules, so they live in `CLAUDE.md`
+invariant 2 and UC-2 §6 rather than here: it is confirmed every time with
+`--confirm` **not** answering the prompt, and `force_expire: true` is required on
+the method.
+
+**The release gate treats it as it treats `policy sample --reveal`**: excluded by
+name from the grep, since its output is supposed to contain a password, and in
+exchange it must satisfy the narrower assertion — no password in any JSON document,
+in any jsonl event, or in any log sink, whatever the delivery method.
 
 ---
 
