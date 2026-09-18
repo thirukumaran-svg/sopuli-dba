@@ -416,6 +416,18 @@ three wrong answers.
   for the `LCOUNT` guard, from a blog post rather than Oracle documentation.
   Affects what `sql/oracle/00_install.sql` recommends to sites that want the
   guard; nothing in the default path depends on it.
+- `unverified` `adb-external-auth` (#471) — **Whether `auth: external` can be
+  made to work against an OCI Autonomous Database, by adding a credential to the
+  downloaded wallet with `mkstore -createCredential`.** What *is* established is
+  the fact that made the entry necessary: the ADB wallet zip holds TLS
+  certificates and no credential, so `auth: external` against an unmodified one
+  has nothing to log in with — `docs/local-testing.md` §14 presented it as the
+  one path to a real wallet that skips `mkstore`, and an operator following that
+  got a login failure. What is untried is the repair. Nobody has run sopuli
+  against an ADB at all, so the `mkstore` line in §14 is Oracle's documented
+  syntax rather than a command anybody here has watched succeed. Nothing in the
+  default path depends on it: the password sources are unaffected, and §14's
+  example now uses one.
 **Password text retained by Oracle** is three entries rather than one, and the
 split is #412's doing. It was a single `partial` entry, and a partial entry is a
 loophole: the SQL-trace surface is settled while the version matrix is not, so a

@@ -73,7 +73,7 @@ OCI Vault as a secret store does not exist — see §14.
 | **Windows laptop** | the primary target. The ACL permission checks, the console encoding and the wallet report all behave differently here, and Windows is where the bugs have been |
 | **WSL** | the POSIX side of the same checks — file modes instead of ACLs. Cheap second opinion, and closer to where this would run scheduled |
 | **Docker** | Oracle and Vault. Neither needs installing on the host |
-| **OCI** | the only place Native Network Encryption and a real ADB wallet can be exercised |
+| **OCI** | the only place Native Network Encryption and a real ADB wallet can be exercised — and note that an ADB wallet is TLS certificates, not a credential store (§14) |
 
 Run through §§3–12 on Windows first, then repeat §§6–12 in WSL. The interesting
 differences are called out as they come.
@@ -2403,9 +2403,14 @@ To create a *real* wallet you need one of these, **none verified here**:
 
 - a full Oracle Database or Oracle Client installation (both bundle a JDK);
 - Oracle's own container image from `container-registry.oracle.com/database/free`,
-  which is the full product rather than a slimmed rebuild;
-- for OCI Autonomous Database, the wallet Oracle generates for you — download it
-  from the console and skip `mkstore` entirely (§14).
+  which is the full product rather than a slimmed rebuild.
+
+**The Autonomous Database wallet is not a third way**, and this guide used to
+say it was. "Wallet" means two different things in Oracle, and the ADB download
+is the other one — see §14. It holds TLS certificates; authenticating *from a
+wallet* needs a credential store, and the zip contains no credential.
+Downloading it gets you a directory `sqlplus` can connect *through*, not one it
+can log in *with*.
 
 For reference, the real commands are:
 
@@ -2564,14 +2569,62 @@ targets:
     environment: prod
     vault: vault-dev
     dsn: "myadb_high"
-    admin: { auth: external }
+    admin: { username: ADMIN, auth: prompt }
 ```
 
-For Autonomous Database, download the wallet zip from the OCI console, unzip it,
-and set `TNS_ADMIN` to that directory. It contains `cwallet.sso`, `tnsnames.ora`
-and `sqlnet.ora` already — which is the one path to a real wallet that does not need
-`mkstore` at all. The aliases (`_high`, `_medium`, `_low`) are in its
+### "Wallet" means two different things, and ADB uses both words for one zip
+
+This is the part that will cost you an afternoon if nobody says it, so:
+
+| | what it is | what needs it |
+|---|---|---|
+| **TLS certificates** | the client certificate and trust anchors that finish a mutual-TLS handshake | the *connection*, whatever login method you use |
+| **secure external password store** | a credential keyed on an alias, so `/@alias` can log in with no username or password | `auth: external` **when a wallet is what authenticates** |
+
+`auth: external` is wider than that second row: §3a's `external` is *a wallet or
+secure external password store, Kerberos, or OS auth*, and the Kerberos and OS
+paths need no password store at all. What follows is about the wallet path,
+because that is the one an ADB wallet looks like it satisfies.
+
+**The ADB wallet zip is the first row.** It contains `cwallet.sso`,
+`tnsnames.ora`, `sqlnet.ora` and the certificates, and it contains **no
+credential**. So `admin: { auth: external }` *authenticating from that wallet*
+has nothing to log in with — which is why the example above uses a password
+instead.
+
+Download the zip from the OCI console, unzip it, and set `TNS_ADMIN` to that
+directory. That is needed for the **TLS** half under mTLS, not for
+authentication. The aliases (`_high`, `_medium`, `_low`) are in its
 `tnsnames.ora`.
+
+`doctor` will not catch this for you: its wallet report checks that `cwallet.sso`
+is present and readable (§12), and a certificate-only `cwallet.sso` passes that
+happily. The failure surfaces as an Oracle *login* error, which is the most
+misleading way for it to appear — the exact thing §12 says the report exists to
+prevent, in the one case the report cannot see.
+
+### Using `auth: external` against ADB anyway
+
+It is a separate step, and it needs the `mkstore` that §12 says you probably do
+not have: you add a credential to the downloaded wallet.
+
+```bash
+mkstore -wrl /path/to/unzipped/wallet -createCredential myadb_high ADMIN
+```
+
+**Untried** (unverified: adb-external-auth). Nobody has run sopuli against an ADB
+this way, and the claim above is about what Oracle's zip contains rather than a
+measured sopuli failure. Treat a failure here as possibly the instructions.
+
+So for a laptop holding only Instant Client, ADB is **not** a way around
+`mkstore` — it is another case that needs it.
+
+### The mTLS-free case, which needs no wallet at all
+
+If the ADB is configured for **TLS only** — mutual TLS not required, access
+controlled by an ACL or a private endpoint — there is no wallet in the picture.
+Copy the connect descriptor out of the OCI console and put it straight in `dsn:`,
+and leave `TNS_ADMIN` unset.
 
 **Locally you can approximate the NNE constraint** without OCI:
 
