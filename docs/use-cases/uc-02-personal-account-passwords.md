@@ -8,8 +8,8 @@ The exceptions, and they are the whole of what an operator can run today:
 Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
-This is part 1 of the specification (#438). Delivery — the methods by which the
-new password reaches a person — is part 2, #456; §6 sets out what part 2 builds on.
+The whole specification (#438), in two parts as it was written: the reset in #457
+and delivery — the methods by which a new password reaches a person — in #456, §6.
 
 ---
 
@@ -23,13 +23,20 @@ a reset takes decides almost everything else in this document:
 
 | Path | The DBA sees the password | How the person gets it | Expired on reset |
 |---|---|---|---|
-| **unseen** — the default | no | fetches it from a store meant for them alone: a Vault path only their identity can read (#447), or a single-use wrapping token (#444) — a bearer credential, so owner-only only as far as its delivery is (#456); password managers later | **no** |
+| **unseen** — the default | no | fetches it from a store meant for them alone: a single-use wrapping token (#444, the default), a Vault path only their identity can read (#447), a one-time link (#445), a password manager (#446) or encrypted mail — §6 says what each actually promises | **no** |
 | **seen** — `manual` | yes | the DBA passes it on — encrypted email or similar — with instructions to change it | **yes, always** |
 
 **The unseen path is the default**, and it is what the tool exists to make possible:
 a DBA resets a password without ever seeing it, and the tool puts the value in none
 of its own output. Nothing needs expiring, because nobody but the person is meant
 ever to know it — §4.1 and H8 say where that intent meets its limits.
+
+**"Never sees it" and "cannot obtain it" are different promises**, and §6.8 (H9)
+is where the difference bites. On the default method the DBA holds a *wrapping
+token*, and a token is something that can be unwrapped. What the single use buys is
+that doing so is **detectable** — the person's fetch fails, and somebody knows —
+rather than prevented. This section claims the first promise and not the second,
+which is a narrower claim than the table above used to imply.
 
 **The seen path is the traditional one**, and it is not the default. The DBA
 generates the password, sees it, and sends it on. **That is a deliberate,
@@ -46,7 +53,7 @@ confirmation before it runs (§2).
 |---|---|
 | DBA | runs the reset, usually because somebody asked for one |
 | Account owner | fetches the password (unseen) or receives it (seen), and logs in |
-| Secure store | holds the password for the owner to fetch — a Vault first (#456) |
+| Secure store | holds the password for the owner to fetch — a Vault first (§6.2) |
 
 **Direction of truth.** There isn't one, and that is the first way this differs
 from UC-1. `docs/README.md` puts it as *a password is handed over, not synced*.
@@ -550,8 +557,10 @@ disagrees — UC-1 §6.1 said to escape an embedded `"` until #457 corrected it:
 password first and failing the write leaves an account nobody knows the password
 to; writing first and failing the DDL leaves a store holding a password that does
 not work. Both are recovered by another reset, which is what makes this smaller
-than UC-1 §3's ordering problem — but the order is still a choice, and it belongs
-to the delivery section (#456).
+than UC-1 §3's ordering problem. **§6.4 settles it**: the irreversible step goes
+last, which is *deliver then `ALTER USER`* on the unseen path and *`ALTER USER`
+then print* on the seen one — because what cannot be undone is the DDL on one path
+and the print on the other.
 
 ### 4.2 The password
 
@@ -741,68 +750,252 @@ reading.
 
 ## 6. Delivery
 
-**Part 2 of this specification, #456.** What it builds on:
+How the new password reaches the person. **This is part 2 of the specification
+(#456)**, and it closes #438.
 
-- **The unseen path is the default, and Vault is the first store.** Two forms, and
-  they are not the same guarantee:
-  - a **path only the person's identity can read** (#447) — owner-only by the store's
-    own access control, for as long as the path's policy says so;
-  - a **response-wrapping token** (#444) — single use, the unwrap is the last read.
-    This is what "the person fetches it from a cubbyhole" means in practice: a
-    cubbyhole belongs to the token that wrote it, so a DBA's own cubbyhole is
-    unreadable by anyone else, and the wrapping token's cubbyhole is the handover.
-    **But the wrapping token is a bearer credential**: whoever holds it can unwrap
-    it, whatever their identity. It is owner-only exactly as far as the channel it
-    travels by is, and that channel is #456's to decide.
+### 6.1 The one binding rule
 
-  Which form is the default, or whether that is configuration, is #456's.
-- **Then other stores**: password managers (#446), one-time links (#445), and
-  `smtp_encrypted` — encrypted email sent by the tool, which is unseen, unlike the
-  DBA sending it by hand. It has no issue of its own yet; #456 carries it.
-- **"The DBA never sees it" has to be true of the store, not asserted.** A DBA whose
-  store token can read the person's path could read the password back, and the
-  unseen path's reason for skipping expiry would be gone. Whether the tool checks
-  that, and what it does if the token can read, is H8 (#459).
-- **`manual` is the seen path**: #441, non-default, confirmed, forced expiry. **How
-  its one plaintext emission is narrowed is decided** (#439): it prints, and it
-  prints under five structural guards rather than a promise to be careful. Written
-  out in `CLAUDE.md` invariant 2, which now carries a fourth exception, and
-  summarised here because the method's own issue is written against it:
+Everything below is written against a single sentence, set by #438:
 
-  | Guard | Why |
-  |---|---|
-  | one reveal site, in the seen path's view, reachable only when `delivery.method` is `manual` | the third exception stays narrow structurally rather than carefully, and so does this one |
-  | refused with `--output json` and `--output jsonl`; no schema property can hold the value | as `--reveal` already is — a machine-readable document must never be the thing that carries it |
-  | **refused unless stdout is a terminal** | the guard `--reveal` has no counterpart for, and the one that carries the argument: a value redirected to a file or captured in a CI log outlives the single logon it is good for, because a log is read later and by other people, and expiry does not unpublish it. `\| clip` stops working; that cost is accepted rather than worked around |
-  | confirmed every time, and `--confirm` does not answer it (§2) | a yes given in advance asserts the very thing the prompt exists to establish |
-  | `force_expire: true` required, refused at plan time when absent | the exposure is bounded by the person's next logon, or it is not bounded at all |
+> **The channel that notifies may be low-trust. The channel that carries the
+> secret may not.** "Your new password is ready" may go anywhere; the password, or
+> anything that retrieves it, may not.
 
-  **The justification is different from `policy sample --reveal`'s, and weaker**,
-  which is why the narrowing is stricter. A sample guards nothing; this is a
-  credential somebody can log in with. What allows it is not that it is harmless
-  but that it is deliberate, witnessed and time-limited — the exposure is the point
-  of the path rather than a side effect of it (§1).
-- **One rule is binding now**, because #438 set it and every delivery issue is
-  written against it:
+**"Anything that retrieves it" is the clause that does the work**, and it is
+deliberately broader than "the password". A Vault wrapping token (#444) and a
+one-time link (#445) hold no password between them — and either one, in the wrong
+hands, produces one. Treating them as notifications because they are short-lived
+and single-use would be reading the rule as being about *value* when it is about
+*reach*.
 
-  > **The channel that notifies may be low-trust. The channel that carries the
-  > secret may not.** "Your new password is ready" may go anywhere; the password,
-  > or anything that retrieves it, may not.
+So the rule's consequence is settled here: **a retrieval credential is
+secret-bearing, and never travels the notify channel.** #442's webhook carries
+`{account}`, `{target}` and "it is ready"; it does not carry `{wrap_token}` or
+`{item_link}`, and a template that references one is refused rather than rendered.
 
-  A wrapping token and a one-time link both retrieve the secret, so by this rule
-  neither may travel by the notify channel; how each does travel is #456's.
+What that leaves open is the subject of H9 below.
 
-The shared notify channel is #442 and the config block is #440.
+### 6.2 The methods
+
+`delivery.method` is a closed set. Six values, and the sub-block for the selected
+method must exist — both refused at load, config-invalid (exit 9), by #440.
+
+| `method` | Path | The person gets | Issue |
+|---|---|---|---|
+| `vault_wrapped` | unseen | a Vault response-wrapping token, single use | #444 |
+| `vault_path` | unseen | a KV path only their own identity can read | #447 |
+| `one_time_link` | unseen | a URL that decrypts once | #445 |
+| `onepassword_share` | unseen | an item in a password manager | #446 |
+| `manual` | **seen** | the password, printed to the DBA's terminal | #441 |
+| `smtp_encrypted` | unseen | encrypted mail the tool sends | — |
+
+**`vault_wrapped` is the default**, and the reason is availability rather than
+preference: it works against a stock Vault, needing nothing but the mount the
+estate already has. Every other unseen method needs infrastructure the tool does
+not create — `vault_path` needs human-identity auth (LDAP, OIDC, userpass) and a
+templated policy, and #447 says plainly that sopuli sets up neither; `one_time_link`
+needs a Yopass deployment; `onepassword_share` needs an account. A default that
+required an estate to build something first would be a default nobody could use,
+and the fallback would silently become `manual`, which is the one path that shows a
+DBA a working password.
+
+**`vault_path` is the renaming #447 asked for.** That issue carried the variant as
+`vault_wrapped.identity_scoped: true` and noted the key "probably wants a name that
+doesn't say wrapped", raising it rather than renaming silently. It is not wrapping:
+nothing is single-use, the value sits at a path, and the guarantee comes from the
+path's policy rather than from a token. Two methods, because they are two different
+promises — and one of them, per §1, is a promise about a value that persists.
+
+**`smtp_encrypted` has no issue yet** and is specified no further here than this:
+it is *unseen*, because the tool encrypts and sends without a DBA reading anything,
+which is the property that distinguishes it from a DBA emailing a password by hand.
+The encryption is to a key the estate holds for the person, and choosing the
+mechanism — S/MIME, OpenPGP, a keyserver or a configured key — is its own issue
+when somebody needs it. It is listed in the enum now so that the enum is the whole
+set rather than the set that happened to have issues.
+
+### 6.3 Per-method configuration
+
+Each method's own keys land with its own issue; what belongs here is the shape and
+the rules that cross methods.
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+  notify:
+    method: webhook
+    webhook:
+      url: { env: SOPULI_NOTIFY_WEBHOOK }
+      template: "{account} on {target} has a new password waiting"
+```
+
+**Three constraints bind every method**, and each exists because the obvious
+implementation violates it:
+
+- **Secret-bearing keys are MaterialRefs** (C9), never plain strings. A webhook URL
+  routinely embeds its own token, a 1Password Connect token is a credential, and a
+  key written inline in a config file is a credential in a repository. `{ env: NAME }`
+  or `{ file: PATH }`, redacted wherever the config is shown.
+- **A method that opens a socket ships as an install extra** (ADR-006), and the base
+  install continues to open none. A configured-but-uninstalled method follows E4/E5:
+  `config validate` warns and exits 0, and using it fails with exit 9. `manual` is
+  the only method in the table that needs no extra, which is worth noticing — the
+  fallback for an estate that can install nothing is the path that shows the DBA the
+  password, and that is an argument for `smtp_encrypted` existing rather than a
+  comfort.
+- **Every delivery emits an event**, named `noun.verb` (`03-json-output.md` §5):
+  `password.delivered` on success, and `password.displayed` for the seen path's
+  exposure, which is its own fact and not a variant of the first (#441). Neither
+  event carries the password, and the run schema has no property that could.
+
+**`manual` requires `force_expire: true`** and is refused at plan time without it
+(§6.4). That is the runtime half of the seen path's guarantee: the exposure is
+bounded by the person's next logon or it is not bounded at all.
+
+### 6.4 The order of the two steps
+
+§4.1 leaves this here: a reset both **writes the password somewhere** and **issues
+the DDL**, neither order is free, and the order is a choice.
+
+**The rule is that the irreversible step goes last**, which resolves to a different
+order on each path — and that is the answer rather than an inconsistency, because
+what is irreversible differs.
+
+| Path | Order | The irreversible step |
+|---|---|---|
+| unseen | **deliver, then `ALTER USER`** | the DDL — it kills the old password |
+| seen (`manual`) | **`ALTER USER`, then print** | the print — nobody can unsee it |
+
+**On the unseen path, deliver first.** Compare the two failures:
+
+- **DDL first, delivery fails:** the account has a password nobody holds. The person
+  is *worse off than before the run* — they could not log in, and now nobody can.
+- **Delivery first, DDL fails:** the store holds a value that authenticates nothing,
+  and **the person's old password still works**, because the DDL never ran. Nobody
+  is worse off than they were.
+
+The second is strictly recoverable and the first is strictly not, so the order
+follows. The cost is a window in which the store holds a password the account does
+not have — a person who fetches during it gets a value that fails, and on
+`vault_wrapped` spends their single unwrap on it. That is confusing; the other order
+is a lockout. Both are cured by another reset (§3.5), and one of them needs curing
+by somebody other than the person who is already locked out.
+
+**On the seen path, issue the DDL first.** The reason is the same rule with the
+irreversible step in the other place: printing a password that was never set tells a
+DBA something false, and a DBA who has been told it will pass it on. There is no
+undo for either half of that. Setting it first means the value on the screen is the
+account's password by the time anybody reads it.
+
+**The record is written after both** (§3.1), and that is not a third ordering
+question: it holds what happened, so writing it earlier would make it hold an
+intention. §3.4's second absence — the record write failing after a successful reset
+— is a warning on a successful run for exactly this reason.
+
+**Nothing here is a two-phase commit, and the document should not imply one.** UC-1
+§3's `pending` → `current` ordering exists because something reads the vault at
+runtime and invariant 7 protects that window. Nothing reads this value at runtime:
+it is fetched once by a person. So the ordering is a choice about *which failure to
+prefer*, not a protocol, and the recovery for either is the same reset run again.
+
+### 6.5 The seen path, and what narrows it
+
+**`manual` is the one method that shows a working password to somebody who is not
+its owner**, and #439 decided both that it may and exactly how narrow that stays.
+`CLAUDE.md` invariant 2 carries it as a fourth permitted plaintext path; the five
+guards are:
+
+| Guard | Why |
+|---|---|
+| one reveal site, in the seen path's view, reachable only when `delivery.method` is `manual` | the third exception stays narrow structurally rather than carefully, and so does this one |
+| refused with `--output json` and `--output jsonl`; no schema property can hold the value | as `--reveal` already is — a machine-readable document must never be the thing that carries it |
+| **refused unless stdout is a terminal** | the guard `--reveal` has no counterpart for, and the one that carries the argument: a value redirected to a file or captured in a CI log outlives the single logon it is good for, because a log is read later and by other people, and expiry does not unpublish it. `\| clip` stops working; that cost is accepted rather than worked around |
+| confirmed every time, and `--confirm` does not answer it (§2) | a yes given in advance asserts the very thing the prompt exists to establish |
+| `force_expire: true` required, refused at plan time when absent | the exposure is bounded by the person's next logon, or it is not bounded at all |
+
+**The justification is different from `policy sample --reveal`'s, and weaker**,
+which is why the narrowing is stricter. A sample guards nothing; this is a
+credential somebody can log in with. What allows it is not that it is harmless but
+that it is deliberate, witnessed and time-limited — the exposure is the point of
+the path rather than a side effect of it (§1).
+
+### 6.6 The unseen paths, and what each actually promises
+
+They are not one guarantee with several implementations. Saying so is the point of
+this subsection, because the config key makes them look interchangeable.
+
+- **`vault_wrapped`** — single use. The unwrap is the last read, so a value fetched
+  twice is a value somebody else fetched first, and **interception is detectable
+  even where it is not preventable**. That is the strongest property in the table,
+  and it comes with the weakest: the token is a **bearer credential**, so whoever
+  holds it can unwrap it, whatever their identity.
+- **`vault_path`** — owner-only by the store's own access control, for as long as
+  the path's policy says so. Identity rather than bearer, which is the opposite
+  trade: interception needs the person's own credentials, and nothing makes the
+  read single-use, so **the value persists as a live credential** until something
+  removes it. What that something is, is H8 (#459).
+- **`one_time_link`** — one use, like the wrapping token, and a bearer credential
+  for the same reason: the URL carries its own decryption key in the fragment
+  (#445). It adds a third party to the trust story, which the two Vault forms do
+  not.
+- **`onepassword_share`** — whatever 1Password's API turns out to offer, which #446
+  is explicitly unsure of and refuses to guess at. If single-view has to be
+  simulated with a follow-up delete, the documentation must not claim single-view.
+- **`smtp_encrypted`** — as strong as the recipient's key management, and no
+  stronger.
+
+**"The DBA never sees it" has to be true of the store, not asserted.** A DBA whose
+store token can read the person's path could read the password back, and the unseen
+path's reason for skipping expiry would be gone. Whether the tool probes for that,
+and what it does when the answer is yes, is H8 (#459).
+
+### 6.7 Reusable by UC-4
+
+The abstraction is a **delivery method taking a value and a recipient**, and it is
+deliberately not a property of resetting a password. UC-4's onboarding hands a
+person a first credential, which is the same operation with a different reason —
+so `delivery:` is specified here, under UC-2, but it is not named for it, and
+nothing in the block refers to a reset. What a method needs is the value, the
+account, the target and a notify channel; what it must never need is *why*.
+
+That is a constraint on the implementation rather than an aspiration: a method that
+reached for the reset record (§3) or for `seen`/`expired` would not survive being
+called by a use case that does neither.
+
+### 6.8 What is still open
+
+**H9 is new, and this section raises it rather than settling it.** §6.1 settles that
+a retrieval credential never travels the notify channel. It does not settle where it
+*does* travel, and the honest answer today is: nowhere the tool carries. The
+wrapping token comes back to the DBA's terminal, and the handover to the person is
+out of band.
+
+That is not obviously wrong — a single-use token is a *detectable* interception, so
+a DBA who unwraps it is caught by the person's failed fetch rather than trusted not
+to. But it changes what §1 claims. "The DBA never sees the password" stays literally
+true, and "the DBA cannot obtain it" does not. Those are different promises, and the
+use case currently makes the second while describing the first.
+
+So: **H9 — on `vault_wrapped`, the DBA holds the token; what does "unseen"
+guarantee, and is there a channel the tool should carry it by instead?** It
+interacts with H8 (#459), since both are about the difference between a guarantee
+that is enforced and one that is asserted. Registered in §9 and tracked as **#496**;
+it blocks no delivery method, because every one of them can be built against the
+text above.
+
+The shared notify channel is #442, the config block and the ratchet are #440.
 
 **How an estate restricts the set of methods is decided** (H6, #453):
-`safety.delivery.allowed_methods`, ratcheting by **intersection**, so each layer may only
-narrow it and no higher-authority layer can restore a method a lower one removed.
-It is fail-closed on purpose — a method a later release adds is unusable until an
-estate names it — which is the opposite of what a `forbidden_methods` union would
-have done on upgrade, and this is a guard in front of putting a live credential on
-a wire. It is the fifth ratcheted setting and the first whose merge shape is
-declared rather than read off its type; `01-configuration.md` §9 has the rules,
-and #440 writes it into the block.
+`safety.delivery.allowed_methods`, ratcheting by **intersection**, so each layer may
+only narrow it and no higher-authority layer can restore a method a lower one
+removed. It is fail-closed on purpose — a method a later release adds is unusable
+until an estate names it — which is the opposite of what a `forbidden_methods` union
+would have done on upgrade, and this is a guard in front of putting a live
+credential on a wire. It is the fifth ratcheted setting and the first whose merge
+shape is declared rather than read off its type; `01-configuration.md` §9 has the
+rules, and #440 writes it into the block.
 
 ---
 
@@ -909,6 +1102,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 | ~~H6~~ | ~~Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union?~~ | **closed** — `safety.delivery.allowed_methods`, ratcheting by **intersection**. Fail-closed: a method added in a later release is unusable until an estate names it, where a `forbidden_methods` union would have permitted it everywhere on upgrade. It costs a fourth ratchet shape, declared per setting as `safe_bool` already is, since both keys would be lists of strings and the type cannot say which merges how. Unset means no constraint; two layers with disjoint lists refuse at plan time naming both; and there is no `forbidden_methods`, now or later · #453 |
 | H7 | A reset never converges: a second invariant-9 exemption, or a convergent verb? | #454 |
 | H8 | On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it? | #459 |
+| H9 | On `vault_wrapped`, the DBA holds the token — so what does "unseen" guarantee, and is there a channel the tool should carry a retrieval credential by instead? | #496, raised by §6.8 |
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it, and `force_expire: true` required. `CLAUDE.md` invariant 2 gains a fourth exception, justified by the exposure being deliberate, witnessed and expired rather than harmless — so the narrowing is stricter than `--reveal`'s, not equal to it · #439 |
 
 Deliberately not a question with an issue: §4.4's collision between guardrail

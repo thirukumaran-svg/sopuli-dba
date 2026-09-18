@@ -310,7 +310,7 @@ anything, which is the cost this option accepts over option 3's thresholded
 DBA never sees the password, the tool writes it to a store meant for its owner
 alone, and nothing is expired — owner-only by the store's access control on an
 identity-scoped path (#447), and only as far as its delivery on a wrapping token,
-which is a bearer credential (#444, #456) — and a **seen** `manual` path, which is
+which is a bearer credential (#444, UC-2 §6.6) — and a **seen** `manual` path, which is
 a deliberate exposure until the owner's first logon: non-default, confirmed,
 always expired. Decided on review of #457, and **how its one plaintext emission is
 narrowed is now decided too** (#439): five structural guards, invariant 2's fourth
@@ -324,8 +324,9 @@ a method a later release adds is unusable until an estate names it, where the
 a fourth ratchet shape, declared per setting the way `safe_bool` already is, and
 there is no `forbidden_methods` now or later). Open: a reset never converges, so
 it needs either a second invariant-9 exemption or a convergent verb (H7, #454);
-and on the unseen path, what happens to the stored copy and how the DBA is shown
-unable to read it (H8, #459).
+on the unseen path, what happens to the stored copy and how the DBA is shown
+unable to read it (H8, #459); and, raised by the delivery section itself, what
+"unseen" guarantees when the DBA holds the wrapping token (H9, #496).
 **H2 is decided** (#450): what a reset records lives in three places rather than
 one. The **database** answers *when* the password last changed
 — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant,
@@ -360,7 +361,7 @@ leaves the second intact, because it never widens what a mutating verb may touch
 the predicate does not admit. The cost is that predicate membership is controlled
 by whoever assigns the profile or grants the role, rather than by whoever reviews
 the file. The delivery
-section, and with it H6's amendment to invariant 10, is #456. **How the seen path's
+section is written (#456), and H6's amendment to invariant 10 landed with #453. **How the seen path's
 one plaintext emission is narrowed is decided** (#439): it prints, under five
 structural guards — one reveal site, refused with `--output json`/`jsonl`, refused
 unless stdout is a terminal, confirmed every time with `--confirm` *not* answering
@@ -617,10 +618,11 @@ cannot be a mode of UC-1:
 
 *Defers to it today:* UC-1 §5 (deliberate expiry, #302).
 
-**Now drafted** as [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md)
-(#438) — part 1, with delivery to follow in #456. The paragraphs above are the
+**Now specified** as [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md)
+(#438), both parts: the reset in #457 and delivery in #456. The paragraphs above are the
 argument for the use case existing; the document is where it is specified, and
-its questions are H1–H8. One correction to the paragraphs above: expiring
+its questions are H1–H9, the last of which the delivery section raised about
+itself. One correction to the paragraphs above: expiring
 deliberately is the point only on the **seen** path, where the DBA knows the
 password — a deliberate exposure that the owner's first logon ends. The default,
 unseen path writes it to a store meant for its owner alone and expires nothing;
@@ -667,19 +669,22 @@ method's own keys land with that method's issue.
 |---|---|---|
 | `manual` | #441 | **unblocked** — #439 decided it prints to stdout, under five guards (invariant 2's fourth exception). Adds `force_expire: true`, refused at plan time when absent |
 | `vault_wrapped` | #444 | `ttl` only. A response-wrapping token is single-use by construction, so `num_uses` is a **config error** rather than a key that is silently ignored |
-| the identity-scoped variant | #447 | `identity_scoped: true` and a path template. #447 says the key probably wants a name that does not say "wrapped", and flags it rather than renaming it quietly |
+| `vault_path` | #447 | a path template, and the **renaming** #447 asked for rather than a flag on `vault_wrapped`: it is not wrapping, nothing is single-use, and the guarantee comes from the path's policy. Needs human-identity auth and a templated policy that sopuli does not create, which is why it is not the default |
 | `one_time_link` | #445 | `backend: yopass`, `base_url`, and `ttl`/`one_time`. Needs an OpenPGP dependency, because Yopass encrypts client-side; may not be buildable as sketched |
 | `onepassword_share` | #446 | the API token as a MaterialRef (C9). **May not be buildable at all** — Connect may have no sharing, and #446 refuses to guess |
-| `smtp_encrypted` | — | no issue of its own; #456 carries it |
+| `smtp_encrypted` | — | no issue of its own; §6.2 puts it in the enum and specifies it no further than *unseen*, so the enum is the whole set rather than the set that happened to have issues |
 
-**`notify:`** (#442) is a channel three of those methods reuse rather than a fourth
+**`notify:`** (#442) is a channel the unseen methods reuse rather than a fourth
 method: `notify.method: webhook`, configured as `notify.webhook.{url, template}`,
 with `url` a MaterialRef because a webhook URL routinely embeds its own credential.
-Two things about it are open. Whether it nests under `delivery:` or sits beside it
-is #440's to settle. Whether a **retrieval** credential may travel it at all is
-bigger: UC-2 §6's binding rule is that the channel which notifies may be low-trust
-and the channel which carries the secret may not, and #444's wrapping token and
-#445's link both retrieve the secret. That is #456's.
+It nests **under `delivery:`** (§6.3).
+
+**Whether a retrieval credential may travel it is settled** (§6.1): no. "Anything
+that retrieves it" counts as secret-bearing, so a wrapping token and a one-time
+link are refused in a notify template rather than rendered — the rule is about
+*reach* rather than about *value*, and a token that holds no password still
+produces one. What that leaves open is where such a credential does travel, which
+is H9 (#496): today, nowhere the tool carries.
 
 **The restriction axis is not a `delivery:` key**, which is the one thing in this
 map that is easy to file in the wrong place. **H6 is decided** (#453):
@@ -698,12 +703,13 @@ is what makes it a fourth shape rather than a second mechanism. `CLAUDE.md`
 invariant 10, P3's safety bullet and `01-configuration.md` §9's merge-policy table
 all carry it now, and **#440 is what writes it into the block**.
 
-**What blocks what.** Every `delivery:` issue waits on #440, which waits on #456 —
-and **#456's own blockers are now both closed** (#439 and #453), so the delivery
-section can be written and the chain below it is implementation rather than
-decision. Two UC-2 decisions remain and neither blocks this table: H7 (#454),
-whether a reset needs a second invariant-9 exemption or a convergent verb, and H8
-(#459), the stored copy's lifetime.
+**What blocks what.** **#456 is written**, so every `delivery:` issue now waits on
+#440 alone — the config block and the ratchet — and everything below that is
+implementation rather than decision. Three UC-2 decisions remain and none of them
+blocks this table: H7 (#454), whether a reset needs a second invariant-9 exemption
+or a convergent verb; H8 (#459), the stored copy's lifetime; and H9 (#496), what
+"unseen" guarantees when the DBA holds the wrapping token — which the delivery
+section raised about itself.
 
 **Each block is a schema minor bump** — 1.4 became 1.5 with the record, and onward for
 `delivery:` and, unless they are batched, each method sub-block. Additive and
