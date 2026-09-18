@@ -12,7 +12,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.4.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.5.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -128,15 +128,52 @@ and the verb that resolves the predicate is where it has to be caught.
 than an omission: there is nothing to bind an account to when nothing masters its
 password.
 
-**One UC-2 block is decided and not written here yet.** UC-2's reset
-record — where the tool journals *who* reset a personal account, by which path and
-where it was delivered, and never the password — is decided in H2 (#450) and
-specified in [`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §3.
-Its store, prefix, keys and schema are **#468**. It is written only where an estate
-configures a store, and a reset without one warns and runs, so it is a block whose
-absence is a documented mode rather than an error. The `delivery:` block is **#440**
-and is not written here either, for the same reason: this reference documents
-configuration that is **built**.
+**A fourth declaration, and it declares a place rather than an account.**
+
+```yaml
+reset_records:
+  vault: kv
+  prefix: sopuli/personal-resets
+```
+
+**`reset_records:` is where UC-2 journals a reset** — *who* reset a personal
+account, by which path, and where it was delivered — decided in H2 (#450), built
+in #468, and specified in
+[`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §3.
+
+| Key | Meaning |
+|---|---|
+| `vault` | the name of an entry in `vaults:`, resolved like every other store reference |
+| `prefix` | the path records are written under |
+
+**One destination for the estate, not one per account.** A record's own path is
+*derived* — one per (target, account), built beneath the prefix — because that pair
+is what two concurrent resets collide on. What an operator chooses is where the
+journal lives; what a run chooses is which record in it. **The prefix has no
+default**, deliberately: a default would put records somewhere this file does not
+say, in a store this file does name, so nobody could tell where the journal is by
+reading the configuration.
+
+**It is not the delivery target, and the two must not be conflated.** On the unseen
+path the password is written where only the *person* can read it; this holds what
+happened. Two objects, two lifetimes, and a store that happens to be the same store
+does not make them one thing (§3.5). **The record never holds the password in any
+representation** — not the value, not a hash, not a verifier — which is invariant 2
+and is asserted against the serialised document rather than trusted to each writer.
+
+**Its path is also what UC-2's advisory lock keys on** (§3.3), which is why the
+block is a prerequisite of the reset verb rather than an accessory to it. Nothing
+else about locking changes: the same `locks/` prefix, the same CAS, the same
+fencing token, the same `lock status` and `lock break`.
+
+**Absent is a documented mode rather than an error.** The seen path may have no
+store at all — that is the site `manual` exists for — so a reset with nothing
+declared here writes no record, takes no lock, warns at plan time and runs (§3.1,
+§3.4). Refusing would take the fallback away from the estates it exists for.
+
+**The `delivery:` block is #440 and is not written here yet**, for the reason this
+reference always gives: it documents configuration that is **built**. `docs/README.md`
+maps the whole UC-2 config surface, including what each unbuilt block waits on.
 
 ### What an application entry actually is
 
@@ -163,7 +200,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.4.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.5.schema.json
 version: 1
 
 runtime:
@@ -2520,7 +2557,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-1.4.schema.json`](../schemas/sopuli-config-1.4.schema.json),
+[`docs/schemas/sopuli-config-1.5.schema.json`](../schemas/sopuli-config-1.5.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -2531,7 +2568,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-1.4.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.5.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -2581,7 +2618,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.4.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.5.schema.json
 version: 1
 ```
 
@@ -2592,7 +2629,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.4.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.5.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.4.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.5.schema.json
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ from sopuli.config import (
     personal_accounts,
     policies,
     profiles,
+    reset_records,
     safety,
     target_sets,
     targets,
@@ -83,7 +84,16 @@ from sopuli.config import (
 #: one of `accounts`, `profile` and `role` may be written, because nothing masters
 #: a personal account's password and two ways of saying which accounts would leave
 #: the whitelist ambiguous.
-SCHEMA_VERSION = "1.4"
+#:
+#: 1.4 became 1.5 with UC-2's `reset_records:` (H2, #450, #468): a top-level
+#: block naming the store and prefix a reset is journalled under. Optional like
+#: every bump before it, and here the optionality is the *specified* behaviour
+#: rather than a compatibility courtesy -- a reset with no destination configured
+#: warns and runs, because the seen path may have no store at all (UC-2 §3.4). What
+#: the shape refuses is the interesting half again: there is no key for a password,
+#: a hash or a verifier, and none is coming, because a record that could leak the
+#: thing it records would be worse than no record.
+SCHEMA_VERSION = "1.5"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -923,6 +933,41 @@ def _personal_account() -> Schema:
     )
 
 
+def _reset_records() -> Schema:
+    """The `reset_records:` block -- where UC-2 journals a reset (H2, #468).
+
+    Both keys are required, and ``prefix`` having no default is a decision rather
+    than an omission: a default would put records somewhere the file does not
+    say, in a store the file does name, so an operator could not tell where the
+    journal is by reading the configuration.
+
+    What the artefact cannot carry is the rule that matters most -- that no key
+    here may hold a password in any representation. That is a property of the
+    *record*, not of this block, and it is asserted against the serialised
+    document by :func:`sopuli.reset_record.assert_no_secret`. The structural half
+    of it is visible here all the same, in what the object does not offer.
+    """
+    return _object(
+        keys=reset_records.RESET_RECORDS_KEYS,
+        types={
+            "vault": {**STRING, "description": "The name of an entry in `vaults:`."},
+            "prefix": {
+                **STRING,
+                "description": (
+                    "The path records are written under. One record per (target, "
+                    "account) is built beneath it."
+                ),
+            },
+        },
+        required=("vault", "prefix"),
+        description=(
+            "Where a personal account's reset is recorded (UC-2 §3.1): who reset it, "
+            "by which path, and where it was delivered -- never the password. Not the "
+            "delivery target. Absent means no journal is kept, which warns and runs."
+        ),
+    )
+
+
 def _application() -> Schema:
     return _object(
         keys=applications.APPLICATION_KEYS,
@@ -1066,6 +1111,7 @@ def _root() -> Schema:
             minItems=1,
             description="Accounts belonging to people, for UC-2's reset (H1, #449).",
         ),
+        "reset_records": _ref("reset_records"),
     }
     # The inline form is one unnamed application entry hoisted to the top level,
     # so its keys take the entry's own subschemas rather than copies of them.
@@ -1107,6 +1153,7 @@ def build_schema() -> Schema:
             "for_each": _for_each(),
             "group": _group(),
             "personal_account": _personal_account(),
+            "reset_records": _reset_records(),
             "policy": _policy(),
             "password_policy": _password_policy(),
             "require": _require(),

@@ -305,10 +305,39 @@ seen reset is a deliberate, time-limited exposure (§1), and six months later th
 question somebody actually asks is not *when was this reset* but *did a DBA hold a
 working password for this account, and which DBA*.
 
-**The concrete keys, the generated schema and the validators are not here.** They
-are **#468**, split out in the shape H1's were (#467): this section decides *that*
-there is a record, *what it answers* and *what it may never contain*, and
-`01-configuration.md` documents configuration that is built.
+**The concrete keys, the generated schema and the validators are #468**, split out
+in the shape H1's were (#467): this section decides *that* there is a record,
+*what it answers* and *what it may never contain*, and `01-configuration.md`
+documents configuration that is built.
+
+**They are now built.** The destination is a `reset_records:` block — a `vault:`
+naming an entry in `vaults:`, and a `prefix:` with no default — documented in
+`01-configuration.md` §1, and the record's own path is derived beneath it,
+`<prefix>/<target>/<account>`. Three things about the build are worth reading back
+into this section rather than leaving in a diff:
+
+- **The store name is resolved at load**, with every other store reference, so a
+  misspelled `vault:` is refused while the file is open. Left to the verb, that
+  failure would arrive *after* a password had already changed — §3.4's second
+  absence reached by the worst possible route.
+- **The account is case-folded into the path and the target is not.** An Oracle
+  account name is matched case-insensitively everywhere else here, so a path that
+  did not fold would let one account own two records that never find each other,
+  which is two concurrent resets not colliding — the exact failure §3.3 keys the
+  lock to prevent. A target name is a `targets:` key, matched exactly, and folding
+  it would merge two targets an operator declared as distinct.
+- **Invariant 2 is asserted against the serialised document**, not trusted to the
+  writer. The type has no field a password could go in, which proves only that no
+  writer *in this build* puts one there; `assert_no_secret` walks what is about to
+  be written and refuses a password at any depth, in a key as well as a value. It
+  runs on the write path rather than in a test alone, which is the difference
+  between the invariant holding and the invariant having held once.
+
+**What #468 deliberately did not build is the warning.** §3.4's "no store
+configured" needs a code of its own, and nothing can emit it until
+`account reset-password` exists: a code with no emitter is the shape #477 found
+and fixed, where `Resolved.low_assurance` was computed on every run and read by
+nothing. It is allocated with the verb that raises it.
 
 ### 3.2 Why the database is authoritative for *when*, and Q9 is not the precedent
 

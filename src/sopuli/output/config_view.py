@@ -281,8 +281,31 @@ def _declared_sections(config: Config) -> list[tuple[str, list[str]]]:
         ("profiles", _named(profile.name for profile in config.profiles)),
         ("applications", _application_rows(config)),
         ("personal_accounts", _personal_account_rows(config)),
+        ("reset_records", _reset_record_rows(config)),
         ("safety", _safety_rows(config)),
     ]
+
+
+def _reset_record_rows(config: Config) -> list[str]:
+    """UC-2's reset journal (H2, #450, #468). One row, because it is one block.
+
+    Here for the reason ``safety`` is (#426): a block the file writes and no
+    command mentions is a block nobody can confirm took. An operator can validate
+    `reset_records:` successfully and still have no way to see *where* the journal
+    was configured, which is the same defect in a different section.
+
+    ``STORE`` and ``PREFIX`` rather than one rendered path, because the two come
+    from different places when something is wrong -- a store that is not declared
+    is refused at load, while a prefix that is not the one intended is accepted
+    and silently correct-looking. Showing the pair is what lets the second be
+    noticed.
+    """
+    if config.reset_records is None:
+        return []
+    return render_table(
+        [Column("STORE", _NAME), Column("PREFIX", _NAME)],
+        [[config.reset_records.vault, config.reset_records.prefix]],
+    )
 
 
 def _safety_rows(config: Config) -> list[str]:

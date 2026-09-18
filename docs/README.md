@@ -38,7 +38,7 @@ which paths ran and which are still untried.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-1.4.schema.json](schemas/sopuli-config-1.4.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-config-1.5.schema.json](schemas/sopuli-config-1.5.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
 | [schemas/sopuli-run-1.24.schema.json](schemas/sopuli-run-1.24.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
@@ -63,7 +63,7 @@ run schema. That is no longer an assertion in prose: `tests/test_schemas.py`
 checks it, and CI runs it on every push and pull request (invariant 12).
 
 To get completion and inline errors while editing a config, put
-`# yaml-language-server: $schema=./sopuli-config-1.4.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-1.5.schema.json` on the file's
 first line — see [design/01-configuration.md](design/01-configuration.md) §9b,
 which also explains why the schema's `$id` is not a URL to paste there.
 
@@ -614,6 +614,81 @@ deliberately is the point only on the **seen** path, where the DBA knows the
 password — a deliberate exposure that the owner's first logon ends. The default,
 unseen path writes it to a store meant for its owner alone and expires nothing;
 how far "alone" holds depends on the store form and its delivery (UC-2 §6, #456).
+
+#### What UC-2 adds to a config file
+
+**Three blocks, not ten.** The delivery work is split across eight issues because
+each method is its own dependency, its own extra and its own verification, and the
+issue count reads much heavier than the configuration surface actually is. This is
+that surface, gathered, so it does not have to be reconstructed from issues again.
+`01-configuration.md` documents each block when it is **built**; this says what is
+coming and what each one waits on.
+
+| Block | Issue | State |
+|---|---|---|
+| `personal_accounts:` | #467 | **built**, schema 1.4 |
+| `reset_records:` | #468 | **built**, schema 1.5 |
+| `delivery:`, with `notify:` beside or inside it | #440, #442 | blocked, and the rest of this table is inside it |
+
+**`personal_accounts:`** is a list, each entry declaring exactly one of
+`accounts:`, `profile:` or `role:`, plus optional `targets:` and `policy:`. What
+it *reuses* is worth as much as what it adds —
+`policy:` names an ordinary `policies:` entry, so **UC-2 introduces no policy block
+of its own**, and a personal account's password is generated under the same
+`policies:` machinery an application account's is.
+
+**`reset_records:`** is one block with two keys — a store and a prefix — declared
+once for the estate rather than per account. It is the DBA side's
+journal — *who* reset an account, by which path, where it was delivered, never the
+password (§3.1) — and it is not the delivery target, which on the unseen path is
+written where only the person can read it. The same path is what UC-2's advisory
+lock keys on (§3.3), which is why the block is a prerequisite of the reset verb
+rather than an accessory to it.
+
+**`delivery:`** is one enum plus a sub-block per method, and #440 builds only the
+skeleton: the `method` key, and a check that the matching sub-block exists. Each
+method's own keys land with that method's issue.
+
+| Sub-block | Issue | What it adds, and what is unsettled |
+|---|---|---|
+| `manual` | #441 | **may not exist at all** — #439 decides between stdout, a file and nothing. Adds `force_expire: true`, refused at plan time when absent |
+| `vault_wrapped` | #444 | `ttl` only. A response-wrapping token is single-use by construction, so `num_uses` is a **config error** rather than a key that is silently ignored |
+| the identity-scoped variant | #447 | `identity_scoped: true` and a path template. #447 says the key probably wants a name that does not say "wrapped", and flags it rather than renaming it quietly |
+| `one_time_link` | #445 | `backend: yopass`, `base_url`, and `ttl`/`one_time`. Needs an OpenPGP dependency, because Yopass encrypts client-side; may not be buildable as sketched |
+| `onepassword_share` | #446 | the API token as a MaterialRef (C9). **May not be buildable at all** — Connect may have no sharing, and #446 refuses to guess |
+| `smtp_encrypted` | — | no issue of its own; #456 carries it |
+
+**`notify:`** (#442) is a channel three of those methods reuse rather than a fourth
+method: `notify.method: webhook`, configured as `notify.webhook.{url, template}`,
+with `url` a MaterialRef because a webhook URL routinely embeds its own credential.
+Two things about it are open. Whether it nests under `delivery:` or sits beside it
+is #440's to settle. Whether a **retrieval** credential may travel it at all is
+bigger: UC-2 §6's binding rule is that the channel which notifies may be low-trust
+and the channel which carries the secret may not, and #444's wrapping token and
+#445's link both retrieve the secret. That is #456's.
+
+**The restriction axis is not a `delivery:` key**, which is the one thing in this
+map that is easy to file in the wrong place. H6 (#453) chooses between
+`delivery.forbidden_methods` ratcheting as a union — fitting the machinery that
+exists, at the cost of being fail-open for any method a later release adds — and
+`delivery.allowed_methods` ratcheting as an intersection, which is fail-closed and
+needs a fourth shape in `settings/registry.py`, since both are lists of strings and
+the shape cannot be read off the type. It lands in the safety ratchet, and it
+brings `CLAUDE.md` invariant 10, P3's safety bullet and `01-configuration.md` §9's
+merge-policy table with it.
+
+**What blocks what.** With #468 built, no block in this table is free to be built
+next: every `delivery:` issue waits on #440, which waits on #456, which waits on
+**#439** and **#453**. Both of those are decisions rather than work, which is the
+ordinary meaning of this repository's `decision` label — the queue is not short of
+implementation, it is short of two answers. The UC-2 work that *is* unblocked is a
+verb rather than a block: `account list` (#490), which resolves a predicate and
+shows what it matched, and which needs no delivery method and no open decision.
+
+**Each block is a schema minor bump** — 1.4 became 1.5 with the record, and onward for
+`delivery:` and, unless they are batched, each method sub-block. Additive and
+optional every time, so a file that declares none of them keeps meaning exactly
+what it did, which is the rule every bump so far has followed.
 
 ### UC-3 — run a statement across many targets
 

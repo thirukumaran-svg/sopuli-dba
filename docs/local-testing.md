@@ -2268,6 +2268,117 @@ system was not suspended on any of 1
 `results[].overridden`, so a document can say somebody did it on purpose; the
 whitelist is not waivable and so never appears there.
 
+### `reset_records:` — a block you can write, and nothing that reads it yet
+
+**Say this plainly, because the section above is the reason to be careful:** UC-2's
+reset journal is *configurable* as of #468 and is written by nothing, because the
+verb that would write one does not exist. `config validate` accepts the block and
+refuses a bad one; no run produces a record, and there is no record to go and look
+at afterwards. It is here so that the refusals are testable now rather than
+discovered later, alongside a verb.
+
+Add it to the file from §6:
+
+```yaml
+reset_records:
+  vault: vault-dev
+  prefix: sopuli/personal-resets
+```
+
+```bash
+sopuli --config sopuli.yaml config validate
+```
+```
+config: C:\Users\ville\AppData\Local\Temp\sopuli-468\ok.yaml
+
+ok: 1 target, 0 bindings, 0 warnings
+```
+
+The block names **where the journal lives**, once for the estate. A record's own
+path is derived under the prefix, one per (target, account) — that pair is what two
+concurrent resets collide on, and it is what UC-2's advisory lock will key on. It
+is **not** where a password is delivered: on the unseen path that goes somewhere
+only the person can read, and the record holds no password in any representation.
+
+`config show` says where it was configured, which is the only way to confirm the
+block took:
+
+```bash
+sopuli --config sopuli.yaml config show
+```
+```
+personal_accounts
+DECLARED BY  ACCOUNTS  TARGETS  POLICY
+names        1         all      personal-standard
+
+reset_records
+STORE      PREFIX
+vault-dev  sopuli/personal-resets
+```
+
+Two columns rather than one rendered path, because the two fail differently: a
+store that is not declared is refused at load, while a prefix that is not the one
+you meant is accepted and looks entirely correct. Showing the pair is what lets the
+second be noticed.
+
+#### Failures worth causing
+
+All four exit **9**, and each names the key:
+
+| Try | What you get |
+|---|---|
+| a `vault:` no `vaults:` entry declares | `no vault named 'vault-prd' is declared`, at load |
+| no `prefix:` | `must name the prefix records are written under` |
+| a `prefix:` with `..` in it | refused as a path segment, not silently rewritten |
+| any other key | `unknown key 'ttl'` |
+
+The first is the one worth understanding. It is resolved **while the file is
+open**, with every other store reference, rather than when a record is written:
+
+```bash
+sopuli --config typo.yaml config validate; echo "exit $?"
+```
+```
+sopuli: C:\Users\ville\AppData\Local\Temp\sopuli-468\typo.yaml: reset_records.vault: no vault named 'vault-prd' is declared
+  hint: declared vaults: vault-dev
+exit 9
+```
+
+Left to the verb, that failure would arrive *after* a password had already
+changed — the worst possible moment to learn a store name is misspelled.
+
+The `..` refusal is the same rule `lock break` got in #344, applied to the one
+other place a file names a store path:
+
+```bash
+sopuli --config traversal.yaml config validate; echo "exit $?"
+```
+```
+sopuli: C:\Users\ville\AppData\Local\Temp\sopuli-468\traversal.yaml: reset_records.prefix: prefix 'sopuli/../secrets' contains '..' as a path segment
+  hint: write the path records actually live at -- a relative segment resolves somewhere else on the way to the store, so records would be written outside the prefix this file names
+exit 9
+```
+
+A `..` under a prefix walks out of it, and what it would walk into here is whatever
+else the estate keeps in that store. Rewriting it silently would be worse than
+refusing, which is exactly the argument #344 made about `locks/`.
+
+**`prefix:` has no default**, deliberately, so leaving it out is a refusal rather
+than a guess:
+
+```
+sopuli: C:\Users\ville\AppData\Local\Temp\sopuli-468\noprefix.yaml: reset_records.prefix: must name the prefix records are written under
+  hint: a path in the store, such as `sopuli/personal-resets`
+exit 9
+```
+
+A default would put records somewhere the file does not say, in a store the file
+does name — so nobody could tell where the journal is by reading the configuration.
+
+**What you cannot test yet**: that a reset with *no* block configured warns and
+runs. There is no reset. That warning gets its code when the verb that raises it
+lands, rather than being reserved now for nothing to emit.
+
 ---
 
 ## 11. Getting refused on purpose

@@ -47,6 +47,7 @@ from sopuli.config.personal_accounts import build_personal_accounts, reject_cros
 from sopuli.config.policies import build_policies
 from sopuli.config.profiles import build_profiles, select_profile
 from sopuli.config.references import check_references
+from sopuli.config.reset_records import build_reset_records
 from sopuli.config.target_sets import build_target_sets
 from sopuli.config.targets import build_targets
 from sopuli.config.vault_env import NO_ENV
@@ -89,6 +90,8 @@ TOP_LEVEL_KEYS = (
     # #449). Beside the application keys rather than among them: nothing masters
     # one, so it shares no key with the form above.
     "personal_accounts",
+    # UC-2's reset journal: where a reset is recorded, never what it set (#468).
+    "reset_records",
 )
 
 
@@ -296,6 +299,7 @@ def build_config(
         runtime=build_runtime(document),
         applications=build_applications(document),
         personal_accounts=build_personal_accounts(document),
+        reset_records=build_reset_records(document),
     )
     # Before anything else looks at either section: a name in both makes the
     # whitelist ambiguous about which guarantee applies, and every later step --

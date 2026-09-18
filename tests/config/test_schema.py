@@ -38,8 +38,11 @@ from sopuli.config import (
     defaults,
     groups,
     loading,
+    locking,
+    personal_accounts,
     policies,
     profiles,
+    reset_records,
     safety,
     target_sets,
     targets,
@@ -64,6 +67,9 @@ KEY_SETS: dict[str, tuple[str, ...]] = {
     "safety": safety.SAFETY_KEYS,
     "vault": vaults.VAULT_KEYS,
     "vault_auth": vaults.AUTH_KEYS,
+    "vault_patch": vaults.PATCHABLE_KEYS,
+    "vault_tls": vaults.TLS_KEYS,
+    "locking": locking.LOCKING_KEYS,
     "material_ref": auth.MATERIAL_KINDS,
     "target": targets.TARGET_KEYS,
     "admin": targets.ADMIN_KEYS,
@@ -87,6 +93,8 @@ KEY_SETS: dict[str, tuple[str, ...]] = {
     "application": applications.APPLICATION_KEYS,
     "override": applications.OVERRIDE_KEYS,
     "oracle_options": applications.ORACLE_KEYS,
+    "personal_account": personal_accounts.PERSONAL_ACCOUNT_KEYS,
+    "reset_records": reset_records.RESET_RECORDS_KEYS,
 }
 
 #: Every closed set, beside the tuple :func:`~sopuli.config.fields.choice` is
@@ -202,6 +210,33 @@ def test_there_are_key_sets_and_enums_to_check() -> None:
     passes vacuously."""
     assert len(KEY_SETS) > 20
     assert len(ENUMS) > 10
+
+
+def test_every_object_in_the_schema_has_a_row_in_the_table() -> None:
+    """The table has to be **complete**, not merely non-empty.
+
+    Guarding its size catches an emptied table and nothing else. A *new* section
+    added without a row here is the failure that actually happens: generation
+    still asserts the keys match, but the dedicated per-section check silently
+    does not cover the new object, and nobody finds out because every test that
+    exists still passes.
+
+    It had happened five times when this was written: ``locking`` (#83),
+    ``vault_tls`` (#135), ``vault_patch`` (#136), ``personal_account`` (#467) and
+    ``reset_records`` (#468). All five are in the table above now, and this is
+    what keeps the sixth from getting in.
+    """
+    schema = build_schema()
+    objects = {
+        name
+        for name, spec in schema["$defs"].items()
+        if spec.get("type") == "object" and "properties" in spec
+    }
+    missing = sorted(objects - set(KEY_SETS))
+    assert not missing, (
+        f"these schema objects have no KEY_SETS row, so nothing checks their keys "
+        f"against the builder's constant: {missing}"
+    )
 
 
 def test_the_inline_form_is_the_application_entry_hoisted() -> None:

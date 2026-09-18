@@ -153,6 +153,14 @@ def _vault_references(config: Config) -> list[_Reference]:
         found.append(_Reference(config.defaults.vault, ROOT.key("defaults").key("vault")))
     found.extend(_patch_references(config.defaults.vaults, at=ROOT.key("defaults")))
 
+    # UC-2's reset journal (#468). Checked here rather than left to the verb
+    # that writes one, because a dangling name is a misspelling either way and
+    # the file is open now -- and because the failure it would otherwise produce
+    # arrives *after* a password has already changed (UC-2 §3.4), which is the
+    # worst moment to learn that a store name is wrong.
+    if config.reset_records is not None:
+        found.append(_Reference(config.reset_records.vault, ROOT.key("reset_records").key("vault")))
+
     return found
 
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-1.4.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-1.5.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
@@ -100,6 +100,9 @@
       },
       "description": "Accounts belonging to people, for UC-2's reset (H1, #449).",
       "minItems": 1
+    },
+    "reset_records": {
+      "$ref": "#/$defs/reset_records"
     }
   },
   "$defs": {
@@ -701,6 +704,27 @@
           "type": "string",
           "minLength": 1,
           "description": "The name of an entry in `policies:`."
+        }
+      }
+    },
+    "reset_records": {
+      "type": "object",
+      "description": "Where a personal account's reset is recorded (UC-2 §3.1): who reset it, by which path, and where it was delivered -- never the password. Not the delivery target. Absent means no journal is kept, which warns and runs.",
+      "additionalProperties": false,
+      "required": [
+        "vault",
+        "prefix"
+      ],
+      "properties": {
+        "vault": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of an entry in `vaults:`."
+        },
+        "prefix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The path records are written under. One record per (target, account) is built beneath it."
         }
       }
     },

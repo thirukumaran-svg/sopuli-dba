@@ -858,6 +858,29 @@ class PersonalAccountRule:
 
 
 @dataclass(frozen=True)
+class ResetRecords:
+    """Where UC-2 journals a reset -- a store and a prefix (H2, #450, #468).
+
+    One destination for the estate rather than one per account, because the
+    record's own path is derived from the (target, account) pair rather than
+    written (:func:`sopuli.reset_record.record_path`). What an operator chooses
+    is where the journal lives; what a run chooses is which record in it.
+
+    **Not the delivery target.** On the unseen path the password goes where only
+    the person can read it; this holds what happened and no password in any
+    representation (UC-2 §3.1, §3.5). Two objects, two lifetimes, and a store
+    that happens to be the same store does not make them one thing.
+
+    ``vault`` names an entry in `vaults:`, resolved with every other store
+    reference by :mod:`sopuli.config.references`, so a misspelling is refused at
+    load with the same message an application's ``vault:`` gets.
+    """
+
+    vault: str
+    prefix: str
+
+
+@dataclass(frozen=True)
 class Config:
     """One validated config file."""
 
@@ -868,6 +891,12 @@ class Config:
     #: name may not appear in both -- see
     #: :func:`~sopuli.config.personal_accounts.reject_cross_declaration`.
     personal_accounts: tuple[PersonalAccountRule, ...] = ()
+    #: Where UC-2's reset journal lives, or `None` where the file declares no
+    #: destination (#468). `None` is a documented mode rather than a default
+    #: waiting to be filled in: a reset with nowhere to journal warns and runs,
+    #: because the seen path may have no store at all and refusing would take
+    #: the fallback away from the estates it exists for (UC-2 §3.1, §3.4).
+    reset_records: ResetRecords | None = None
     vaults: tuple[Vault, ...] = ()
     targets: tuple[Target, ...] = ()
     target_sets: tuple[TargetSet, ...] = ()

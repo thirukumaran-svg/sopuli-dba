@@ -75,6 +75,7 @@ DOCUMENT: dict[str, Any] = {
             "policy": "app-standard",
         }
     ],
+    "reset_records": {"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
 }
 
 
