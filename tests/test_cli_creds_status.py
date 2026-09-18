@@ -137,7 +137,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
 
         monkeypatch.setattr("sopuli.cli.connect", fake_connect)
         monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
-        monkeypatch.setattr("sopuli.cli.admin_resolve", lambda target, env: _credential())
+        monkeypatch.setattr("sopuli.cli.admin_resolve", lambda target, **_: _credential())
         return {"store": store, "sessions": sessions}
 
     return install

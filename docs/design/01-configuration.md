@@ -919,6 +919,25 @@ and the variable, so the fix is the one line it quotes. Refusing is also the
 reversible half: deciding later that a bare variable implies `method: env` only
 widens what works.
 
+**Whether there is a terminal is decided once, at the CLI boundary**, and the
+prompter travels from there (#476). `invocation.terminal_prompter()` builds a
+`PasswordPrompt(ask=getpass.getpass)` when `sys.stdin` is a terminal and `None`
+when it is not; `_pass_invocation` builds exactly one per run and hangs it on the
+`Invocation`, and every command that connects passes it to `admin.resolve`.
+**One per run is load-bearing rather than tidy** — the cache below is what makes
+"one prompt covers every target that declares the same credential" true, and a
+prompter built per target, or inside `resolve`, would ask once per target while
+passing every other test in this section.
+
+The boundary owns the decision because it is the only layer that knows the
+process's own streams; `sopuli/admin.py` never names `getpass`, which would put
+a terminal read one import away from the config layer. The question itself goes
+through `output/tty.py`'s tolerant probe (#416) rather than `stdin.isatty()`,
+because a detached stdin — a scheduler, a service manager — *raises* on being
+asked, and that is precisely the run whose answer must be "nobody is watching".
+The question is never written to stdout: `getpass` puts it on the controlling
+terminal, or on stderr, and stdout carries the run document (J1).
+
 **`auth: prompt` with no terminal fails, and fails as exit 8** — aborted, not
 config-invalid. The file is right, the invocation is right, and the run stopped
 because it needed a human and there was not one; sending a scheduler's owner to
@@ -927,6 +946,13 @@ condition is answerable *before* anything is touched — `needs_prompt()` over t
 selected estate — which is invariant 4's shape applied to a source rather than
 to a capability. Both guards exist: the plan phase does not yet, and the one that
 must not be forgotten is the one nearest the pipe.
+
+**Exit 8 is not yet what a run actually exits with**, and that is tracked rather
+than implied: every command that connects treats a target it cannot reach as a
+per-target finding, so `NobodyToAskError` currently lands in that target's entry
+and the run exits 1. Reconciling the two — a plan-phase refusal for the mutating
+verbs, and what `doctor` should do when it surveys thirty targets and one of them
+wanted a password — is #481.
 
 **A prompt never reads stdin**, which is how P5's *one stream, one reader*
 survives contact with this method. `--from-stdin` (UC-1 §5) claims the pipe for

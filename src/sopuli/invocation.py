@@ -71,14 +71,17 @@ document rather than opening a second one: one run, one correlation id.
 from __future__ import annotations
 
 import functools
+import getpass
 import os
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TextIO, TypeVar
 
 import click
 
+from sopuli.admin import PasswordPrompt, Prompter
 from sopuli.config.discovery import discover
 from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.config.loading import load_layers
@@ -92,6 +95,7 @@ from sopuli.output.color import ColorChoice
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.explain_view import ratchet_notes
+from sopuli.output.tty import is_a_terminal
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import config_contributions, env_contributions
 from sopuli.store.protocol import StoreError
@@ -261,6 +265,24 @@ class Invocation:
     #: :func:`load_config_layers` is the one place that reads it.
     vault_addr: str | None = None
     resolved: Mapping[str, Resolved] = field(default_factory=dict)
+    #: How ``auth: prompt`` asks, or ``None`` when nobody is at a terminal
+    #: (#476). Built once per run by :func:`_pass_invocation`, because
+    #: :class:`~sopuli.admin.PasswordPrompt` caches its answers and one instance
+    #: is what makes §3a's "one prompt covers every target that declares the
+    #: same credential" true -- a second instance would ask again for a
+    #: credential the first already has.
+    #:
+    #: **A value rather than a location**, unlike :attr:`vault_token_file`, and
+    #: it holds no secret either way: what is stored is the *means* of asking,
+    #: and nothing has been asked until a target that declares ``prompt`` is
+    #: reached. A run that authenticates by wallet builds one and never calls it.
+    #:
+    #: ``None`` is the refusal P5 needs rather than an absent feature:
+    #: :func:`sopuli.admin._from_prompt` turns it into exit 8, and the reason a
+    #: prompter exists *only* under a terminal is that a terminal is not
+    #: carrying a piped password -- so ``--from-stdin`` and this can never be
+    #: two readers of one stream.
+    prompt: Prompter | None = None
     #: The configuration, read by the boundary before the verb ran (#153).
     #:
     #: ``None`` only where no file has been read: an :class:`Invocation` built
@@ -641,6 +663,42 @@ def load_config_layers(invocation: Invocation, *, env: Mapping[str, str]) -> Loa
     return LoadedConfig(paths=paths, declared=declared, config=config)
 
 
+def terminal_prompter(stdin: TextIO | None) -> Prompter | None:
+    """How ``auth: prompt`` asks, when there is somebody to ask (#476).
+
+    The half of ``sopuli/admin.py`` that lives out here, and it is out here for
+    the reason that module's :data:`~sopuli.admin.Asker` note gives: naming
+    :mod:`getpass` in the config layer would put a terminal read one import away
+    from it, and **the decision whether there is a terminal already lives at this
+    boundary**. So the supplier is built where the process's own streams are
+    known, and everything below takes it as an argument.
+
+    ``None`` when stdin cannot answer to being a terminal, which is a refusal and
+    not a missing feature -- :func:`sopuli.admin._from_prompt` turns it into
+    exit 8 with a message naming the three sources that need nobody. The
+    condition is stdin and deliberately not stderr: what is being protected is
+    P5's *one stream, one reader*, and the stream ``--from-stdin`` claims is
+    stdin. A run with a piped password therefore builds no prompter at all, so
+    the two can never both read the pipe.
+
+    :func:`~sopuli.output.tty.is_a_terminal` rather than ``stdin.isatty()``,
+    which is #416's whole point: under a scheduler or a service manager stdin is
+    detached, and a detached stream raises on being asked. That is exactly the
+    run whose answer must be "nobody is watching" rather than a traceback from
+    inside the code that was finding out.
+
+    **The question is never put on stdout**, and :mod:`getpass` is what makes
+    that true rather than a rule kept here: it writes to the controlling terminal
+    where there is one and to stderr otherwise. Stdout carries the run document
+    under ``--output json`` (J1), and a prompt written there would corrupt it for
+    every reader -- while writing the *answer* anywhere is invariant 1's problem
+    and is why the echo is off.
+    """
+    if not is_a_terminal(stdin):
+        return None
+    return PasswordPrompt(ask=getpass.getpass)
+
+
 def _wired(contributions: dict[str, list[Contribution]], name: str) -> list[Contribution]:
     """The contribution list for a setting this run actually consults.
 
@@ -830,6 +888,12 @@ def _pass_invocation(func: F) -> F:
             # output format the tool does not have is still not a request it can
             # honour, wherever it was written.
             check_output_mode(invocation)
+            # Built here and not in `resolve_invocation`, which is pure and is
+            # called twice: a prompter made in there would be made twice, and the
+            # second would arrive empty. One per run is the whole design of
+            # `PasswordPrompt` -- the cache *is* the answer to "have we asked for
+            # this one already" -- so it is attached once, after the last resolve.
+            invocation = replace(invocation, prompt=terminal_prompter(sys.stdin))
             kwargs[INVOCATION_PARAM] = invocation
             text = ctx.invoke(func, **kwargs)
         except click.Abort as exc:

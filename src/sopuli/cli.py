@@ -2155,7 +2155,7 @@ def _check_target(
     try:
         try:
             module = resolve_driver(target.target)
-            credential = admin_resolve(target, env=os.environ)
+            credential = admin_resolve(target, env=os.environ, prompt=run.prompt)
             driver = module.OracleDriver(
                 env=os.environ,
                 correlation_id=run.document.correlation_id,
@@ -3960,7 +3960,7 @@ def _apply_target(
     try:
         try:
             module = resolve_driver(target.target)
-            credential = admin_resolve(target, env=os.environ)
+            credential = admin_resolve(target, env=os.environ, prompt=run.prompt)
             driver = module.OracleDriver(
                 env=os.environ,
                 correlation_id=run.document.correlation_id,
@@ -4372,7 +4372,7 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
     different thing from the one that runs.
     """
     module = resolve_driver(target.target)
-    credential = admin_resolve(target, env=os.environ)
+    credential = admin_resolve(target, env=os.environ, prompt=run.prompt)
     driver = module.OracleDriver(
         env=os.environ,
         correlation_id=run.document.correlation_id,
