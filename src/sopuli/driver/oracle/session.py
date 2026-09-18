@@ -42,6 +42,8 @@ import oracledb
 from sopuli.config.model import ExpandedTarget
 from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.accounts import (
+    accounts_with_profile,
+    accounts_with_role,
     deliberately_locked,
     describe,
     failed_logins,
@@ -49,6 +51,7 @@ from sopuli.driver.oracle.accounts import (
     password_constraints,
     resolve_name,
     resolve_profile,
+    resolve_role,
 )
 from sopuli.driver.oracle.capabilities import assert_scope, observe, require_read_write
 from sopuli.driver.oracle.client import (
@@ -396,6 +399,38 @@ class OracleSession:
 
         with self.connection.cursor() as cursor:
             return resolve_profile(cursor, profile)
+
+    def resolve_role(self, role: str) -> str | None:
+        """How this database spells ``role``, or ``None`` if it has no such one.
+
+        **No capability gate**, unlike :meth:`resolve_profile`. ``DBA_ROLES`` is
+        in ``02-oracle-privileges.md`` §2's grant set unconditionally, and
+        nothing here is a *profile* operation -- gating it on
+        ``profile_management`` would refuse a role predicate on a target whose
+        only shortcoming is about profiles.
+        """
+        with self.connection.cursor() as cursor:
+            return resolve_role(cursor, role)
+
+    def accounts_matching(
+        self, *, profile: str | None = None, role: str | None = None
+    ) -> tuple[str, ...]:
+        """Every account a predicate admits, as the dictionary spells them.
+
+        One method for the two predicate kinds rather than two, because the
+        caller has one rule with one of them set and would otherwise branch to
+        choose a method and branch again on the result. Exactly one is given;
+        neither and both are programming errors and say so.
+        """
+        if (profile is None) == (role is None):
+            raise ValueError("accounts_matching takes exactly one of `profile` and `role`")
+
+        with self.connection.cursor() as cursor:
+            if profile is not None:
+                require_capability(self.scope(), PROFILE_MANAGEMENT, target=self.target.name)
+                return accounts_with_profile(cursor, profile)
+            assert role is not None
+            return accounts_with_role(cursor, role)
 
     def _assign_profile(self, account: str, profile: str) -> AttributeChange:
         """``ALTER USER … PROFILE …``, or report that the account is already on it.

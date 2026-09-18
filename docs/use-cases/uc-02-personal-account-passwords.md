@@ -167,6 +167,28 @@ whole string calls a deliberately locked account open. The answer is to split on
 ` & ` and look for a `LOCKED` component, which is #309's `EXPIRED(GRACE)` lesson
 applied in the one other field that has the same shape.
 
+**The verb is built** (#490): `sopuli account list`, which resolves the
+declaration against each selected target and reports what it matched, with the
+rule that admitted each account. It mutates nothing and reads no password. Three
+things about the build belong here rather than in a diff:
+
+- **A name may be admitted by more than one rule, and is listed once.** An
+  enumerated entry yields the *file's* spelling and a predicate the
+  *dictionary's*, so `jdoe` and `JDOE` are one person — and the first draft
+  listed them as two rows. Found by running it, not by reasoning: a listing that
+  shows one account twice misreports the size of the whitelist somebody is
+  reviewing. The name shown is the database's own where the account exists.
+- **A predicate can admit an account no reset will touch**, and the listing says
+  so rather than leaving it to be discovered. Creating a role grants it to the
+  creator, so `role: ACME_DEV_TEAM` admits whoever ran the `CREATE ROLE` —
+  measured on the tier-1 stack, where that was `SYSTEM`. Guardrail 2 refuses it
+  at plan time; the row carries a notice saying so. This is H1's stated cost made
+  visible, which is the whole reason the verb exists.
+- **The refusals are the ones §2 specifies**, and the two-rules-two-policies one
+  fires here exactly as it does in the mutating verb — a listing that quietly
+  showed the first match would be where an operator formed the belief a reset
+  then refuses.
+
 A **listing**
 verb is `account list`, and H1 (#449) is what earns it rather than H3. Under a
 predicate something has to resolve the rule and show what it matched, and
@@ -184,7 +206,12 @@ more columns — the database's password-change date and the metadata record's
 configured there is no `reset_at` to report, and `SOPULI-W021`'s own rule applies to
 the pair: a documented column that vanishes with nothing saying why is a hole in the
 contract, so `account list` prints `-` and carries the §3.4 warning that says which
-absence it is. It is the listing verb reporting what exists, not a verb that fails
+absence it is. **That warning is `SOPULI-W023`** (#490), one per run rather than one
+per account, because a missing journal is a property of the configuration while a
+missing database date is a property of one account. It is allocated with this verb
+and not with the reset: #468 built the block and left the number unallocated because
+nothing could emit it, and the emitter turned out to be the verb with a column to
+leave empty. It is the listing verb reporting what exists, not a verb that fails
 because history does not.
 
 Every operation is limited to declared accounts, and **H1 (#449) settled what

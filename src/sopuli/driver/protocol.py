@@ -894,6 +894,50 @@ class Session(Protocol):
         """
         ...
 
+    def resolve_role(self, role: str) -> str | None:
+        """The role as this database spells it, or ``None`` if it has none (#490).
+
+        :meth:`resolve_profile`'s argument for the other predicate kind, and it
+        exists because UC-2 §2 draws a distinction that an account list cannot:
+        a `role:` predicate naming a role that **does not exist** is a
+        misspelling and is refused, while one that exists and matches **no
+        accounts** is a true answer about today's estate. Both are an empty
+        result from :meth:`accounts_matching`, so something has to ask separately.
+        """
+        ...
+
+    def accounts_matching(
+        self, *, profile: str | None = None, role: str | None = None
+    ) -> tuple[str, ...]:
+        """Every account a predicate admits, as the dictionary spells them (#490).
+
+        The resolution half of H1's predicate. :func:`sopuli.personal.admits`
+        answers "does this rule admit that account" for a verb acting on one
+        name; this answers "which accounts does this rule admit", for the verb
+        that lists them.
+
+        **An implementation must resolve a role transitively**, including
+        accounts that hold it through another role. `admits` decides membership
+        against the traversed set, so an enumeration reading only direct grants
+        would show an operator *fewer* accounts than a reset would accept — and a
+        listing that under-reports what a predicate admits is worse than none,
+        because it will be read as the whole set.
+
+        **Empty is an answer, not an error** (UC-2 §2). Whether the profile or
+        role exists is :meth:`resolve_profile`/:meth:`resolve_role`'s question,
+        asked first by the caller that needs to tell a misspelling from an empty
+        estate.
+
+        Exactly one of ``profile`` and ``role`` is given; neither and both are
+        programming errors.
+
+        **This returns names, and it does not widen anything.** Invariant 5's
+        second sentence is untouched: a mutating verb still requires the account
+        named on the command line and refuses any name the predicate does not
+        admit. What this feeds is a listing.
+        """
+        ...
+
     def verify_password(
         self,
         account: str,

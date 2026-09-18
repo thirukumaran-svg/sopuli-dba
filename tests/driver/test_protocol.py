@@ -263,6 +263,14 @@ class _Session:
     def resolve_profile(self, profile: str) -> str | None:
         return self.profile if profile.upper() == self.profile else None
 
+    def resolve_role(self, role: str) -> str | None:
+        return role.upper() if role.upper() == "DEV_TEAM" else None
+
+    def accounts_matching(
+        self, *, profile: str | None = None, role: str | None = None
+    ) -> tuple[str, ...]:
+        return ("JDOE",) if (profile or role) else ()
+
     def suspend_account(self, account: str) -> protocol.AccountChange:
         return protocol.AccountChange(
             protocol.ACCOUNT_LOCK,

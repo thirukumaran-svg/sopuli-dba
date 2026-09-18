@@ -2139,11 +2139,14 @@ out: **`CAPABILITIES` reads 5 on 18c and 6 on 21c and 26ai.** The missing one is
 
 ---
 
-## 10a. `account suspend` — the one UC-2 verb that exists
+## 10a. The two UC-2 verbs that exist
 
-UC-2 is not built. There is no `reset-password`, no `expire-password` and no
-`account list`; if that is what you sat down to test, this section is the whole of
-what you can run, and the rest of UC-2 is still design documents.
+UC-2 is half built. There is **no `reset-password` and no `expire-password`** — the
+verbs that change a password — and if that is what you sat down to test, stop here;
+the delivery half is still design documents and two open decisions (#439, #453).
+
+What you can run is `account suspend`, which locks an account, and `account list`,
+which reads the declaration and shows you what it matched.
 
 **What this verb does** is `ALTER USER "…" ACCOUNT LOCK` against an account
 `personal_accounts:` declares — the offboarding case. The state it produces is
@@ -2267,6 +2270,159 @@ system was not suspended on any of 1
 `SYSTEM` is still `OPEN` afterwards — check it. A waived check is recorded in
 `results[].overridden`, so a document can say somebody did it on purpose; the
 whitelist is not waivable and so never appears there.
+
+### `account list` — reading a whitelist you cannot enumerate
+
+This is the verb H1 earned. A personal account may be declared by **name** or by a
+**predicate** over a database profile or role, and a predicate is not in the file —
+membership is a profile assignment or a role grant, made by whoever administers the
+database rather than whoever reviews the config. So the whitelist is not something
+you can read off the page, and this is the command that reads it for you.
+
+Add a predicate to the file from §6, and make an estate for it:
+
+```sql
+CREATE PROFILE acme_dev_prof LIMIT PASSWORD_LIFE_TIME 90;
+CREATE USER acme_dev_alice IDENTIFIED BY "Aa1-demo-pw-00001" PROFILE acme_dev_prof;
+CREATE USER acme_dev_bob   IDENTIFIED BY "Aa1-demo-pw-00002";
+CREATE USER acme_dev_carol IDENTIFIED BY "Aa1-demo-pw-00003" PROFILE acme_dev_prof;
+CREATE ROLE acme_dev_team;
+GRANT acme_dev_team TO acme_dev_bob;
+```
+
+```yaml
+personal_accounts:
+  - accounts: [acme_dev_alice, acme_dev_bob]
+    policy: personal-standard
+  - profile: ACME_DEV_PROF
+    policy: personal-standard
+```
+
+```bash
+sopuli account list
+```
+```
+ACCOUNT         TARGET        DECLARED BY              STATUS  DB_PW_CHANGED  RESET_AT
+ACME_DEV_ALICE  tier1-oracle  names                    OPEN    2026-09-18     -
+ACME_DEV_BOB    tier1-oracle  names                    OPEN    2026-09-18     -
+ACME_DEV_CAROL  tier1-oracle  profile 'ACME_DEV_PROF'  OPEN    2026-09-18     -
+
+3 declared accounts, 3 on the selected targets
+```
+
+**Alice is declared twice and listed once.** She is named in the enumerated entry
+*and* carries the profile, which UC-2 §2 calls ordinary — and the two rules give her
+name in two spellings, `acme_dev_alice` from the file and `ACME_DEV_ALICE` from the
+dictionary. The first build of this verb printed both. That is worth knowing because
+it is the kind of bug a listing verb must not have: it misreports the size of the
+whitelist you are reviewing.
+
+**RESET_AT is empty and says why.** This config declares no `reset_records:`
+block, so there is no journal to read:
+
+```bash
+sopuli --output json account list | jq -r '.diagnostics[] | "\(.code) \(.message)"'
+```
+```
+SOPULI-W023 no `reset_records:` block is declared, so there is no reset journal to read and RESET_AT is empty for every account; the database's own password-change date is unaffected and is reported beside it
+```
+
+#### Filling that column in
+
+Nothing *writes* a reset record yet — `reset-password` does not exist — but the
+column is read for real, so you can prove it works by writing one by hand. Declare
+the journal (§10a's `reset_records:` block, below), then:
+
+```bash
+vault kv put -mount=kv sopuli/personal-resets/tier1-oracle/acme_dev_alice   account=acme_dev_alice target=tier1-oracle reset_at=2026-09-17T09:14:22Z   seen=false expired=false
+```
+```
+ACCOUNT         TARGET        DECLARED BY  STATUS  DB_PW_CHANGED  RESET_AT
+ACME_DEV_ALICE  tier1-oracle  names        OPEN    2026-09-18     2026-09-17T09:14:22Z
+
+1 declared account, 1 on the selected targets
+```
+
+The path is `<prefix>/<target>/<account>`, lowercased on the account — one record
+per (target, account), which is the pair two concurrent resets collide on (#468).
+No `SOPULI-W023` this time, because there is now a journal.
+
+**Look at those two dates.** The database says the password changed *after* the
+journal says it was reset. On the unseen path that is a **finding**, not a
+curiosity: somebody changed the password after the tool delivered it, so whatever
+the person was told to fetch no longer works. That is why UC-2 §3.2 keeps them as
+two columns off two clocks rather than folding them into one number — here the
+disagreement is only an artefact of a hand-written record, but the shape is the
+real one.
+
+#### The asymmetry worth causing on purpose
+
+**A predicate that matches nothing is an answer.** Make an empty profile and point
+a rule at it:
+
+```sql
+CREATE PROFILE acme_empty_prof LIMIT PASSWORD_LIFE_TIME 90;
+```
+```
+no declared personal accounts on the selected targets
+```
+
+Exit **0**. That is a true fact about today's estate, not a failure to look.
+
+**A predicate that names nothing is a typo.** Change it to a profile that does not
+exist:
+
+```
+Error: target 'tier1-oracle' has no profile 'ACME_NOSUCH_PROF', which `personal_accounts:` declares a predicate over -- a predicate that matches no accounts is an answer, and one that names nothing is a typo
+```
+
+Exit **1**. Both cases are an empty list from the database, which is exactly why the
+tool asks whether the profile exists as a separate question — an empty list cannot
+tell the two apart, and only one of them is somebody's mistake.
+
+The same pair holds for `role:`.
+
+#### The thing a predicate will teach you
+
+Point a rule at a role and look at who holds it:
+
+```yaml
+personal_accounts:
+  - role: ACME_DEV_TEAM
+```
+```
+ACCOUNT       TARGET        DECLARED BY           STATUS  DB_PW_CHANGED  RESET_AT
+ACME_DEV_BOB  tier1-oracle  role 'ACME_DEV_TEAM'  OPEN    2026-09-18     -
+SYSTEM        tier1-oracle  role 'ACME_DEV_TEAM'  OPEN    -              -
+
+2 declared accounts, 2 on the selected targets
+```
+
+**`SYSTEM` is in the whitelist**, and it is not a bug — creating a role grants it to
+the creator, and `acme_dev_team` was created by `SYSTEM`. This is H1's stated cost,
+live: *predicate membership is controlled by whoever grants the role, not by whoever
+reviews the file.* The row carries a notice saying a mutating verb would refuse it:
+
+```bash
+sopuli --output json account list | jq -r '.results[] | select(.account=="SYSTEM") | .warnings[].message'
+```
+```
+the database reports this account as its own, so a mutating verb refuses it at plan time (guardrail 2) -- a predicate can admit an account no reset will touch, and creating a role grants it to the creator
+```
+
+Try `profile: DEFAULT` if you want the lesson in full — on the tier-1 stack it
+declares **34 accounts**, most of them Oracle's own.
+
+#### Other things worth doing
+
+| Try | What you get |
+|---|---|
+| an enumerated account the database does not have | a row with `ACCOUNT_MISSING` and the count says `(1 not present)` — the declaration is a claim worth reporting as unmet |
+| `--account NAME` | filters the resolved set. It **cannot extend** it: invariant 5's second sentence, and a name the declaration does not admit simply lists nothing |
+| `--select env=nosuch` | `no targets selected`, exit 0 |
+| a second rule naming a different `policy:` for one account | refused at plan time, naming both rules — which password policy applies must not depend on file order |
+
+---
 
 ### `reset_records:` — a block you can write, and nothing that reads it yet
 
@@ -2882,7 +3038,7 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.24.schema.json`](schemas/sopuli-run-1.24.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.25.schema.json`](schemas/sopuli-run-1.25.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json

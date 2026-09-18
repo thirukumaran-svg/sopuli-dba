@@ -73,13 +73,13 @@ from typing import Any, TypeVar
 
 import click
 
+from sopuli import account_list, preflight, reset_record, suspend
 from sopuli import apply as apply_states
 from sopuli import check as check_states
 from sopuli import constraints as constraint_source
 from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
-from sopuli import preflight, suspend
 from sopuli import repair as repair_module
 from sopuli import rotate as rotation
 from sopuli import status as status_states
@@ -107,6 +107,7 @@ from sopuli.config import (
     refuse_unknown,
 )
 from sopuli.config.expansion import declared_at
+from sopuli.config.model import PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints
@@ -125,6 +126,7 @@ from sopuli.diagnostics import (
     install_diagnostics,
     lock_broken,
     lock_diagnostics,
+    no_reset_journal,
     unlistable_stores,
     vault_diagnostics,
     wallet_diagnostics,
@@ -180,6 +182,9 @@ from sopuli.lock.takeover import (
 )
 from sopuli.material import strip_one_newline
 from sopuli.output.about_view import render as render_about
+from sopuli.output.account_list_view import build_result as build_account_list_result
+from sopuli.output.account_list_view import render_account_list
+from sopuli.output.account_list_view import summarise as summarise_account_list
 from sopuli.output.apply_view import build_result as build_apply_result
 from sopuli.output.apply_view import render_apply, render_source_table, repair_invocation
 from sopuli.output.apply_view import summarise as summarise_apply
@@ -1445,6 +1450,324 @@ def _suspend_one(
         if session is not None:
             with suppress(Exception):
                 session.close()
+
+
+@account_group.command("list")
+@click.option(
+    "--select",
+    "selectors",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Limit to targets carrying this label. Repeatable.",
+)
+@click.option(
+    "--target", "targets", multiple=True, metavar="NAME", help="Limit to this target. Repeatable."
+)
+@click.option(
+    "--group", "groups", multiple=True, metavar="NAME", help="Limit to this group. Repeatable."
+)
+@click.option(
+    "--account",
+    "account",
+    metavar="NAME",
+    help="Show only this account. Filters the resolved set; it cannot extend it.",
+)
+@global_options
+def account_list_command(
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    account: str | None,
+    run: Invocation,
+) -> str:
+    """Resolve `personal_accounts:` and show what it matched.
+
+    Reads no password and writes nothing. It is the verb H1 (#449) owed: a
+    personal account may be declared by a *predicate* over a database profile or
+    role, and until this there was no way to read a whitelist you cannot
+    enumerate. The declaration is resolved against each selected target, and each
+    account is reported with the rule that admitted it and the state the database
+    is in.
+
+    Two date columns, not one. DB_PW_CHANGED is the database's own
+    password-change date and RESET_AT is what the reset journal recorded, and
+    UC-2 3.2 keeps them apart deliberately: they come off two clocks and answer
+    two questions. A database date later than RESET_AT on the unseen path means
+    somebody changed the password after the tool delivered it.
+
+    Either can be empty and an empty one is never silent: SOPULI-W021 says why
+    there is no database date, SOPULI-W023 that no journal is configured.
+
+    A predicate naming a profile or role that does not exist is refused -- that
+    is a misspelling. One that exists and matches no accounts is not an error,
+    because that is a true answer about today's estate.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+
+    # The target selectors only. `--account` is **not** one of them here, and
+    # that is the whole of H1's amendment showing up in the command line:
+    # `refuse_unknown` compares an account name against what `applications:`
+    # declares, so passing a personal account through it would refuse every name
+    # this verb exists to report -- and a *predicate* name is not in the file at
+    # all, so nothing in the config layer could validate it. It filters the
+    # resolved set instead, after the database has said who is in it, which is
+    # UC-2 2's rule for the flag: it narrows, it never widens.
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    reached = config.expanded_targets
+    if not reached:
+        document.finish(ExitCode.SUCCESS, Summary())
+        return "no targets selected"
+
+    if config.reset_records is None:
+        document.diagnostics.extend(no_reset_journal())
+
+    rows: list[account_list.Row] = []
+    errors = 0
+    for target in reached:
+        found, failed = _list_one(target, run, config, wanted=account)
+        rows.extend(found)
+        errors += failed
+
+    document.results = [build_account_list_result(row) for row in rows]
+    document.finish(ExitCode.PARTIAL if errors else ExitCode.SUCCESS, summarise_account_list(rows))
+    return render_account_list(rows)
+
+
+def _list_one(
+    target: ExpandedTarget,
+    run: Invocation,
+    config: Config,
+    *,
+    wanted: str | None,
+) -> tuple[list[account_list.Row], int]:
+    """One target: resolve every rule that applies, then describe what they named.
+
+    **The predicates are resolved first and the accounts described second**, on
+    one connection. Resolution is one query per rule and description is one per
+    account, so an estate declaring four hundred developers by profile spends one
+    query to learn who they are -- the arrangement the predicate exists for.
+
+    A target that cannot be reached is one failed target and not a failed run: an
+    estate of nine PDBs with one down should still report the other eight, which
+    is the rule every other multi-target verb here follows.
+    """
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return [_unreachable_row(target, _as_error(error))], 1
+
+        names = _declared_names(session, config, target, wanted=wanted)
+        journal = _reset_journal(run, config)
+        return [_describe_row(session, name, target, config, journal=journal) for name in names], 0
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+def _declared_names(
+    session: Any,
+    config: Config,
+    target: ExpandedTarget,
+    *,
+    wanted: str | None,
+) -> list[str]:
+    """Every account the declaration admits here, once each.
+
+    **Deduplicated across rules, case-insensitively, and both halves were found
+    by running it rather than by reasoning about it.** An account may be admitted
+    by more than one rule -- UC-2 2 calls that ordinary -- and an enumerated rule
+    yields the *file's* spelling while a predicate yields the *dictionary's*. So
+    ``acme_dev_alice`` enumerated and ``ACME_DEV_ALICE`` carrying the profile are
+    one person, and the first draft of this verb listed them as two rows. A
+    listing that shows one account twice is worse than one that omits it: it
+    misreports the size of the whitelist an operator is reviewing.
+
+    First occurrence wins, so file order leads and predicates fill in behind it,
+    which keeps a reviewer's listing aligned with the file they are reading it
+    against.
+
+    ``--account`` filters here, after resolution. UC-2 2's rule for the flag: it
+    narrows the resolved set and never extends it.
+    """
+    seen: dict[str, str] = {}
+    for rule in account_list.rules_on(config, target.name):
+        for name in _resolve_rule(session, rule, target):
+            seen.setdefault(name.casefold(), name)
+
+    names = list(seen.values())
+    if wanted is not None:
+        folded = wanted.casefold()
+        names = [name for name in names if name.casefold() == folded]
+    return names
+
+
+def _resolve_rule(
+    session: Any, rule: PersonalAccountRule, target: ExpandedTarget
+) -> tuple[str, ...]:
+    """The names a rule admits on this target, refusing a predicate that misspells."""
+    if not rule.is_predicate:
+        return account_list.enumerated_names(rule)
+
+    if rule.profile is not None:
+        if session.resolve_profile(rule.profile) is None:
+            raise _no_such_predicate(target, "profile", rule.profile)
+        return tuple(session.accounts_matching(profile=rule.profile))
+
+    assert rule.role is not None
+    if session.resolve_role(rule.role) is None:
+        raise _no_such_predicate(target, "role", rule.role)
+    return tuple(session.accounts_matching(role=rule.role))
+
+
+def _no_such_predicate(target: ExpandedTarget, noun: str, name: str) -> click.ClickException:
+    """UC-2 2's refusing half, worded so the other half is visible in it.
+
+    The message says both rules at once because an operator meeting this needs to
+    know that the *other* empty answer is fine: a predicate matching nothing is a
+    true answer about today's estate, and only a predicate naming nothing is a
+    typo. Saying only the first would teach the wrong lesson about the second.
+    """
+    return click.ClickException(
+        f"target {target.name!r} has no {noun} {name!r}, which `personal_accounts:` "
+        f"declares a predicate over -- a predicate that matches no accounts is an "
+        f"answer, and one that names nothing is a typo"
+    )
+
+
+def _reset_journal(run: Invocation, config: Config) -> SecretStore | None:
+    """The store UC-2's reset records live in, or ``None`` where none is declared.
+
+    Opened **once per target** rather than once per account, for
+    :func:`_stores_for`'s own reason: a store is a client, and an estate with
+    four hundred developers in one vault should authenticate once. The run's
+    client cache makes it once per *run* in practice.
+
+    ``None`` is the documented mode, not a failure (UC-2 3.4): a configuration
+    with no `reset_records:` block keeps no journal, `SOPULI-W023` says so, and
+    the listing still reports everything else.
+    """
+    records = config.reset_records
+    if records is None:
+        return None
+    opened = _stores_for({records.vault}, config, token_file=run.vault_token_file, cache=run.stores)
+    return opened.get(records.vault)
+
+
+def _reset_at(journal: SecretStore | None, config: Config, target: str, account: str) -> str | None:
+    """What the journal says about this account's last reset, if anything.
+
+    **Three absences, one rendering, and only one of them is a finding.** No
+    journal configured is `SOPULI-W023`, raised once for the run. A journal with
+    no record for this account is not a finding at all -- nobody has reset them
+    through this tool -- and gets no code. A journal that could not be read is
+    reported on the row.
+
+    Never raises. A listing verb that failed because a *metadata* store was
+    unreachable would be refusing to describe an estate over its history, which
+    is the priority inversion UC-2 3.4 rules out for the reset and which applies
+    at least as strongly to a read.
+    """
+    records = config.reset_records
+    if journal is None or records is None:
+        return None
+    try:
+        stored = journal.read(reset_record.record_path(records, target=target, account=account))
+    except Exception:  # noqa: BLE001 -- history is not worth failing a listing over
+        return None
+    if stored is None or not isinstance(stored.data, dict):
+        return None
+    moment = stored.data.get("reset_at")
+    return moment if isinstance(moment, str) else None
+
+
+def _describe_row(
+    session: Any,
+    name: str,
+    target: ExpandedTarget,
+    config: Config,
+    *,
+    journal: SecretStore | None = None,
+) -> account_list.Row:
+    """One account: its state, the rule that admitted it, and what is worth saying.
+
+    The rule is resolved through :func:`sopuli.account_list.rule_for` rather than
+    carried from whichever one produced the name, because an account may be
+    admitted by more than one -- and because that is where the
+    two-rules-two-policies refusal lives. A listing that showed the first match
+    would be where an operator formed the belief the mutating verb then refuses.
+
+    **The name reported is the one the database gave back**, where there is one.
+    ``02-oracle-privileges.md`` 4's rule about spellings is about statements, and
+    nothing here issues one -- but a listing that showed the file's spelling for
+    an enumerated account and the dictionary's for a predicate account would be
+    showing two vocabularies in one column, which is how the duplicate rows that
+    :func:`_declared_names` now folds got there in the first place. Where the
+    account does not exist, the file's spelling is all there is, and it is what
+    the reader needs to go and look for.
+    """
+    state = session.describe_user(name)
+    profile = state.profile if state is not None else None
+    roles = tuple(state.roles) if state is not None and state.roles else ()
+    admitted = account_list.rule_for(config, name, target.name, profile=profile, roles=roles)
+
+    notices: list[str] = []
+    # A predicate can admit an account a mutating verb would refuse, and the
+    # commonest case is not hypothetical: creating a role grants it to the
+    # creator, so `role: ACME_DEV_TEAM` admits whoever ran the CREATE ROLE --
+    # measured on the tier-1 stack, where it turned out to be `SYSTEM`. Guardrail
+    # 2 would refuse that at plan time, and a listing that showed it with nothing
+    # said would be overstating the whitelist it exists to let somebody review.
+    if state is not None and state.vendor_maintained:
+        notices.append(
+            "the database reports this account as its own, so a mutating verb refuses it "
+            "at plan time (guardrail 2) -- a predicate can admit an account no reset will "
+            "touch, and creating a role grants it to the creator"
+        )
+    owner = account_list.cross_declared(config, name)
+    if owner is not None:
+        notices.append(
+            f"also declared by {owner}: the whitelist is ambiguous about which guarantee "
+            f"applies, and only a predicate can reach this -- an enumerated name is "
+            f"refused when the file loads"
+        )
+
+    return account_list.Row(
+        account=state.name if state is not None else name,
+        target=target.name,
+        rule=admitted,
+        state=state,
+        reset_at=_reset_at(journal, config, target.name, name),
+        notices=tuple(notices),
+    )
+
+
+def _unreachable_row(target: ExpandedTarget, error: Error) -> account_list.Row:
+    """A target that could not be answered, reported as a row rather than a failure.
+
+    **`ERROR`, never `ACCOUNT_MISSING`**, and the row carries the error object.
+    The first draft left `state` to be inferred from "no `UserState`", which
+    rendered a down or unauthenticated target as *this account does not exist* --
+    a connectivity failure reported as a fact about an estate, with nothing in
+    `results[]` to tell the two apart. `account suspend` already draws that
+    distinction and this now matches it (Copilot's review of #493).
+    """
+    return account_list.Row(
+        account=account_list.ABSENT,
+        target=target.name,
+        rule=None,
+        state=None,
+        unreachable=error,
+    )
 
 
 @cli.group("lock")

@@ -39,7 +39,7 @@ which paths ran and which are still untried.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.5.schema.json](schemas/sopuli-config-1.5.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.24.schema.json](schemas/sopuli-run-1.24.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-run-1.25.schema.json](schemas/sopuli-run-1.25.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -630,6 +630,9 @@ coming and what each one waits on.
 | `reset_records:` | #468 | **built**, schema 1.5 |
 | `delivery:`, with `notify:` beside or inside it | #440, #442 | blocked, and the rest of this table is inside it |
 
+The verbs, for the same reason: `account suspend` (#463) and `account list` (#490)
+are built; `reset-password` and `expire-password` wait on the delivery half.
+
 **`personal_accounts:`** is a list, each entry declaring exactly one of
 `accounts:`, `profile:` or `role:`, plus optional `targets:` and `policy:`. What
 it *reuses* is worth as much as what it adds —
@@ -681,9 +684,10 @@ merge-policy table with it.
 next: every `delivery:` issue waits on #440, which waits on #456, which waits on
 **#439** and **#453**. Both of those are decisions rather than work, which is the
 ordinary meaning of this repository's `decision` label — the queue is not short of
-implementation, it is short of two answers. The UC-2 work that *is* unblocked is a
-verb rather than a block: `account list` (#490), which resolves a predicate and
-shows what it matched, and which needs no delivery method and no open decision.
+implementation, it is short of two answers. The UC-2 work that *was* unblocked was a
+verb rather than a block, and it is now built: `account list` (#490) resolves a
+predicate and shows what it matched, needing no delivery method and no open
+decision.
 
 **Each block is a schema minor bump** — 1.4 became 1.5 with the record, and onward for
 `delivery:` and, unless they are batched, each method sub-block. Additive and

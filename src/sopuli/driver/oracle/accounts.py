@@ -266,6 +266,55 @@ NAME_QUERY = "select username from dba_users where username = :name"
 #: is a dozen rows and the question here is about the name.
 PROFILE_NAME_QUERY = "select distinct profile from dba_profiles where profile = :profile"
 
+#: A role's own spelling, and whether it exists -- :data:`PROFILE_NAME_QUERY`'s
+#: argument again, for the other kind of predicate (`account list`, #490).
+#:
+#: It exists because UC-2 §2 draws an asymmetry that cannot be drawn without it:
+#: a `role:` predicate naming a role that **does not exist** is a misspelling and
+#: is refused, while one that exists and matches **no accounts** is a true answer
+#: about today's estate and is not an error. Both produce an empty account list,
+#: so the empty list cannot tell them apart and something has to ask.
+ROLE_NAME_QUERY = "select role from dba_roles where role = :role"
+
+#: Every account carrying a profile -- a `profile:` predicate resolved the other
+#: way round (H1, #449; the listing verb is #490).
+#:
+#: ``DBA_USERS`` rather than ``SYS.USER$``, so this needs no grant beyond the one
+#: :data:`USER_QUERY` already has. The order is the dictionary's own so that two
+#: runs list an estate identically -- an unordered listing that shuffles between
+#: runs is one nobody can diff.
+ACCOUNTS_WITH_PROFILE_QUERY = (
+    "select username from dba_users where profile = :profile order by username"
+)
+
+#: Every account holding a role, **including through another role**.
+#:
+#: :data:`ROLES_QUERY` walked **up** from an account to the roles it holds; this
+#: walks **down** from a role to the accounts that hold it, and it has to, or the
+#: two disagree. ``admits()`` decides membership from the traversed set, so a
+#: flat ``where granted_role = :role`` here would list *fewer* accounts than a
+#: reset would accept -- an operator reviewing what a predicate admits would be
+#: shown a shorter estate than the one the verb acts on, which is the one wrong
+#: answer a listing verb must not give.
+#:
+#: The ``join`` is what keeps roles out of the answer. A role granted to another
+#: role is a grantee like any other, so the traversal returns both accounts and
+#: roles, and only the ones ``DBA_USERS`` knows are accounts. Filtering here
+#: rather than in Python because the dictionary is what decides what an account
+#: is.
+#:
+#: ``NOCYCLE`` for :data:`ROLES_QUERY`'s reason, and the same caveat: Oracle
+#: refuses a circular grant (``ORA-01934``), so it is defensive rather than
+#: load-bearing.
+ACCOUNTS_WITH_ROLE_QUERY = (
+    "select distinct u.username from dba_users u "
+    "join (select grantee from dba_role_privs "
+    "start with granted_role = :role "
+    "connect by nocycle prior grantee = granted_role) g "
+    "on g.grantee = u.username "
+    "order by u.username"
+)
+
 #: Consecutive failed logins, behind the optional ``SELECT ON SYS.USER$`` grant
 #: (#86). Gated on the ``offline_verify`` capability, which gates this and
 #: :data:`PTIME_QUERY` in this build and nothing else.
@@ -549,6 +598,68 @@ def resolve_profile(cursor: Cursor, profile: str) -> str | None:
     """
     row = read(cursor, PROFILE_NAME_QUERY, profile=profile.upper())
     return None if row is None else str(row[0])
+
+
+def resolve_role(cursor: Cursor, role: str) -> str | None:
+    """The role as the dictionary spells it, or ``None`` if there is no such one.
+
+    :func:`resolve_profile`'s argument for the other predicate, and it exists for
+    a reason that is not symmetry: UC-2 §2 refuses a predicate naming a role that
+    does not exist and accepts one that matches nothing, and both of those look
+    like an empty list from :func:`accounts_with_role`. Only asking separately
+    tells them apart.
+
+    Upper-cased on the way in, as :func:`resolve_profile` is, and the same
+    consequence follows for a genuinely lower-case quoted role: ``None``, and a
+    refusal naming what was looked for, rather than the tool guessing at a second
+    spelling.
+    """
+    row = read(cursor, ROLE_NAME_QUERY, role=role.upper())
+    return None if row is None else str(row[0])
+
+
+def accounts_with_profile(cursor: Cursor, profile: str) -> tuple[str, ...]:
+    """Every account carrying ``profile``, in the dictionary's own order.
+
+    The **resolution** half of a `profile:` predicate: :func:`sopuli.personal.admits`
+    answers "does this rule admit that account" for a verb acting on one name,
+    and this answers "which accounts does this rule admit" for the verb that
+    lists them.
+
+    An empty tuple is a true answer about today's estate and not an error (UC-2
+    §2). Whether the profile *exists* is :func:`resolve_profile`'s question, and
+    the caller asks it first -- a misspelling and an empty profile are the same
+    empty tuple here.
+    """
+    return _names(cursor, ACCOUNTS_WITH_PROFILE_QUERY, profile=profile.upper())
+
+
+def accounts_with_role(cursor: Cursor, role: str) -> tuple[str, ...]:
+    """Every account holding ``role``, directly or through another role.
+
+    **Transitive, and that is a correctness requirement rather than a courtesy.**
+    :func:`sopuli.personal.admits` decides membership against the set
+    :data:`ROLES_QUERY` traverses, so an enumeration that read only direct grants
+    would show an operator fewer accounts than a reset would accept. A listing
+    verb that under-reports what a predicate admits is worse than no listing
+    verb, because it would be read as the whole set.
+
+    Empty is a true answer; existence is :func:`resolve_role`'s question.
+    """
+    return _names(cursor, ACCOUNTS_WITH_ROLE_QUERY, role=role.upper())
+
+
+def _names(cursor: Cursor, statement: str, **binds: Any) -> tuple[str, ...]:
+    """Every first column of a multi-row read, as the dictionary spelled it.
+
+    Not :func:`~sopuli.driver.oracle.capabilities.read`, which fetches one row.
+    The :data:`ABSENT_CODES` rule does not apply either: these two views are the
+    ones ``02-oracle-privileges.md`` §2 already grants, so a failure to read one
+    is a broken installation rather than an absent capability, and turning it
+    into an empty list would report an estate with nobody in it.
+    """
+    cursor.execute(statement, binds or None)
+    return tuple(str(row[0]) for row in cursor.fetchall())
 
 
 def _user_row(cursor: Cursor, account: str) -> tuple[str, Any] | None:

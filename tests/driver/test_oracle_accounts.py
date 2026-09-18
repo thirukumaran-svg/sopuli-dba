@@ -763,3 +763,109 @@ def test_a_timed_lock_is_not_a_deliberate_one(status: str) -> None:
     the first three wrong -- which is #309's `EXPIRED(GRACE)` bug in the other
     field. A failed-login lock is not an offboarding."""
     assert not deliberately_locked(status)
+
+
+# ------------------------------------- resolving a predicate the other way ---
+#
+# `account list` (#490) asks the mirror of the two questions above: not *what
+# does this account carry* but *who carries this*. Both queries are measured
+# here rather than reasoned about, because the transitive one has to agree with
+# `ROLES_QUERY` above or the listing verb under-reports what a reset would
+# accept.
+
+LIST_PROFILE = "acme_listed_prof"
+LIST_ROLE = "acme_listed_role"
+LIST_PARENT_ROLE = "acme_listed_parent"
+LIST_DIRECT = "acme_listed_direct"
+LIST_INDIRECT = "acme_listed_indirect"
+
+
+@pytest.fixture
+def predicate_estate(session: Any) -> Iterator[Any]:
+    """Two accounts, a profile, and a role held one step away from each.
+
+    ``LIST_INDIRECT`` holds ``LIST_ROLE`` only through ``LIST_PARENT_ROLE``,
+    which is the shape a flat `DBA_ROLE_PRIVS` read misses.
+    """
+    _run(
+        session,
+        f"create profile {LIST_PROFILE} limit password_life_time 90",
+        f"create role {LIST_ROLE}",
+        f"create role {LIST_PARENT_ROLE}",
+        f"grant {LIST_ROLE} to {LIST_PARENT_ROLE}",
+        f'create user {LIST_DIRECT} identified by "Aa1-listed-pw-0001" profile {LIST_PROFILE}',
+        f'create user {LIST_INDIRECT} identified by "Aa1-listed-pw-0002"',
+        f"grant {LIST_ROLE} to {LIST_DIRECT}",
+        f"grant {LIST_PARENT_ROLE} to {LIST_INDIRECT}",
+    )
+    try:
+        yield session
+    finally:
+        for statement in (
+            f"drop user {LIST_DIRECT}",
+            f"drop user {LIST_INDIRECT}",
+            f"drop role {LIST_PARENT_ROLE}",
+            f"drop role {LIST_ROLE}",
+            f"drop profile {LIST_PROFILE}",
+        ):
+            with contextlib.suppress(Exception):
+                _run(session, statement)
+
+
+def test_a_profile_predicate_lists_the_accounts_carrying_it(predicate_estate: Any) -> None:
+    found = predicate_estate.accounts_matching(profile=LIST_PROFILE)
+
+    assert LIST_DIRECT.upper() in found
+    assert LIST_INDIRECT.upper() not in found, "it is on DEFAULT"
+
+
+def test_a_role_predicate_finds_the_account_holding_it_through_another(
+    predicate_estate: Any,
+) -> None:
+    """The measurement this query exists for.
+
+    ``admits()`` decides membership from the *traversed* role set, so a flat
+    ``where granted_role = :role`` here would list only the direct holder — and
+    `account list` would show an operator fewer accounts than a reset would
+    accept, which is the one wrong answer a listing verb must not give.
+    """
+    found = predicate_estate.accounts_matching(role=LIST_ROLE)
+
+    assert LIST_DIRECT.upper() in found, "the direct grant"
+    assert LIST_INDIRECT.upper() in found, "and the one held through another role"
+
+
+def test_the_listing_agrees_with_what_admits_would_say(predicate_estate: Any) -> None:
+    """The two halves of H1's predicate, checked against each other on one estate.
+
+    This is the assertion that keeps the listing verb and the mutating verb from
+    disagreeing: every name the enumeration returns must be one `admits` accepts.
+    """
+    from sopuli.config.model import PersonalAccountRule
+    from sopuli.personal import admits
+
+    rule = PersonalAccountRule(role=LIST_ROLE)
+    for name in predicate_estate.accounts_matching(role=LIST_ROLE):
+        state = predicate_estate.describe_user(name)
+        assert state is not None
+        assert admits(rule, name, profile=state.profile, roles=state.roles), name
+
+
+def test_a_role_predicate_lists_no_roles_only_accounts(predicate_estate: Any) -> None:
+    """A role granted to a role is a grantee like any other, so the traversal
+    returns both; the join to `DBA_USERS` is what keeps roles out of a listing of
+    accounts."""
+    found = predicate_estate.accounts_matching(role=LIST_ROLE)
+
+    assert LIST_PARENT_ROLE.upper() not in found
+
+
+def test_a_predicate_naming_nothing_is_distinguishable_from_one_matching_nothing(
+    predicate_estate: Any,
+) -> None:
+    """UC-2 §2's asymmetry, and why `resolve_role` exists beside the enumeration:
+    both cases are an empty list, so only asking separately tells them apart."""
+    assert predicate_estate.resolve_role(LIST_ROLE) == LIST_ROLE.upper()
+    assert predicate_estate.resolve_role("acme_no_such_role_at_all") is None
+    assert predicate_estate.resolve_profile(LIST_PROFILE) == LIST_PROFILE.upper()
+    assert predicate_estate.resolve_profile("acme_no_such_prof_at_all") is None

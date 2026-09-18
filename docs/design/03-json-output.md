@@ -41,7 +41,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.24.schema.json`](../schemas/sopuli-run-1.24.schema.json),
+Schemas: [`../schemas/sopuli-run-1.25.schema.json`](../schemas/sopuli-run-1.25.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -1498,6 +1498,7 @@ is not contract and may improve.
 | `SOPULI-W021` | The database would not say when an account's password was last set, so `results[].password_age_days` is absent and `creds status` prints `-` under `DB_PW_CHANGED` (#386). **The message says why**, because the two causes want different responses: a release with no `DBA_USERS.PASSWORD_CHANGE_DATE` (18c, 11.2) and no `SELECT ON SYS.USER$` to read `PTIME` instead — which a grant fixes — or a value that could not be read, which is worth investigating. It exists because a consumer cannot see a dash: a documented field that vanishes per target with nothing saying why is a hole in the contract. **One per result, on `results[].warnings[]`**, beside the field it explains, unlike `SOPULI-W018`'s per-target grouping — a consumer reading one result should not have to join it to a run-level array. The text output groups it per target. Emitted by `creds check` and `creds status`; informational, since nothing gates on the database's date (Q9) |
 
 | `SOPULI-W022` | A target's admin credential was read from an environment variable (#477). P2 lists `env` last in its bootstrap order and **supports** it — an estate with no other way in is the case it exists for — so this is a flag and never a refusal; `01-configuration.md` §3a says twice that the source "stays flagged wherever it is reported", and until this code existed `Resolved.low_assurance` was computed on every run and read by nothing. It is #216's rule exactly: the run connects, succeeds and exits 0, and nothing else in the document says *how* the tool got hold of the credential — a reader cannot tell a run that authenticated from a wallet from one that used a variable a CI job exported. **The message names the variable**, from `Resolved.source`, because what the reader does next is go and look at where it is set. **One per target per run**, deduplicated on (code, target): a target may be resolved twice in one run — `creds apply --strategy` pre-flights and then applies — and the configuration did not change between them. Keyed on `admin.LOW_ASSURANCE` rather than on the method name, so a second low-assurance source is flagged without finding every reporting site again. **Emitted by every command that connects** — `doctor`, `account suspend`, `creds status`, `creds generate` (unless `--offline`), `creds check`, `creds apply`, `creds rotate` and `creds finish-rollover`, which is every verb that opens a database session today — and **printed by `doctor` alone**. The list is exhaustive rather than illustrative because the alternative is a consumer concluding that the verbs it omits do not carry the code; it is exhaustive *as of writing*, and the mechanism rather than the list is the guarantee: every one of them resolves its admin credential through `cli._admin_credential`, so a verb that starts connecting gets this without anybody remembering to add it. P2 asks for the flag *in output* and text is the default output, so something must print it; but the fact is a property of the *configuration*, identical on every run until the file changes, so a line under every rotation would be the warning a reader learns to filter. That is the same line the other printed notices draw: `SOPULI-W020` is printed because the stale document is the one the operator just passed, and `SOPULI-W018` because the unrun check is about this run's accounts. `doctor` is the verb whose job is to report on the setup, and `diagnostics[]` is where anything alerting reads it |
+| `SOPULI-W023` | `account list` had no reset journal to read, so its `RESET_AT` column is empty for every row and `results[].reset_at` is absent (#490). The configuration declares no `reset_records:` block (#468), which is a **documented mode rather than a fault**: UC-2 §3.1 keeps the journal optional because the seen (`manual`) path may have no store at all, and that is the site it exists for. It is `SOPULI-W021`'s rule applied to the other date column — a documented column that vanishes with nothing saying why is a hole in the contract — and §2 asks for it by name. **One per run, not one per result**, and that is the difference from `SOPULI-W021` beside it: a missing journal is a property of the configuration and is identical on every row, while whether the database will say when *this* account's password changed can differ between two accounts on one target. **Allocated with the verb that raises it**, which turned out to be the listing verb and not the reset: #468 built the block and deliberately left this number unallocated, because a code with no emitter is what `SOPULI-W022` was written to fix. It says which absence it is, because the other one — a journal that holds no record for this account yet — is not a finding at all and gets no code |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
@@ -1940,6 +1941,35 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.24 became 1.25 with `sopuli account list`** (#490), UC-2's listing verb.
+Four additive changes, each a minor bump by the ordinary rule:
+
+- `account.list` joins the `command` enum;
+- **`DECLARED` joins the `state` enum.** It is that verb's ordinary row: the
+  declaration matched this account and the database has it. It is deliberately
+  not `IN_SYNC` — nothing was compared, because this verb never reads a password
+  — and an account the declaration names and the database does not have is
+  `ACCOUNT_MISSING`, which already meant exactly that and did not need a synonym.
+- **`results[].declared_by`** — which `personal_accounts:` rule admitted the
+  account: `accounts '...'` for an enumerated entry, or `profile '...'` /
+  `role '...'` for a predicate. **This is the field the verb exists for.** Under a
+  predicate the answer is not in the configuration at all, because membership is a
+  profile assignment or a role grant (H1, #449), so a record saying an account is
+  declared without saying by what cannot be checked afterwards. `null` where the
+  declaration named an account the database does not have, since there was nothing
+  to resolve the rule against.
+- **`results[].reset_at`** — when the reset journal says this account was last
+  reset, from the `reset_records:` store (#468). Absent where no journal is
+  configured, and `SOPULI-W023` says so.
+
+**`reset_at` and `password_age_days` are two clocks and must not be folded**, which
+is UC-2 §3.2 and the one thing to know before consuming either. The first is what
+this tool recorded; the second is the database's own. On the unseen path a database
+date *later* than `reset_at` is a finding: somebody changed the password after the
+tool delivered it, so the copy the person was told to fetch no longer works. A
+consumer that averaged them, or took whichever was present, would turn that finding
+into a number.
 
 **1.23 became 1.24 with `sopuli account suspend`** (#463), UC-2's offboarding verb.
 Three additive changes, each a minor bump by the ordinary rule:

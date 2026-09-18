@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 import click
 
+from sopuli.account_list import DECLARED
 from sopuli.apply import PENDING_APPLY, SKIPPED
 from sopuli.check import (
     ACCOUNT_MISSING,
@@ -159,6 +160,13 @@ _STATE_ROLES: dict[str, Role] = {
     EXPIRED: Role.BAD,
     UNVERIFIABLE: Role.INCONCLUSIVE,
     SKIPPED: Role.INCONCLUSIVE,
+    # `account list`'s ordinary row (#490), and dim for `creds status`'s reason
+    # rather than by analogy: neither verb reports a state that means the
+    # credential is healthy, because neither asks. `DECLARED` says the
+    # declaration matched and nothing about the password -- so it must not
+    # compete with a row that does say something, and `IN_SYNC` stays the only
+    # state a reader can stop reading at.
+    DECLARED: Role.INCONCLUSIVE,
 }
 
 

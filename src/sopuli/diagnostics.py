@@ -340,6 +340,29 @@ PASSWORD_CHANGE_DATE_UNKNOWN = "SOPULI-W021"
 #: is that the run says so.
 LOW_ASSURANCE_ADMIN = "SOPULI-W022"
 
+#: `account list` had no reset journal to read, so its ``RESET_AT`` column is
+#: empty (UC-2 §3.4, #490).
+#:
+#: **Allocated with the verb that raises it**, which is this one and not the
+#: reset. #468 built the `reset_records:` block and deliberately left this code
+#: unallocated, because nothing could emit it: a code computed on every run and
+#: read by nothing is what :data:`LOW_ASSURANCE_ADMIN` was written to fix. The
+#: emitter turned out to be the *listing* verb — §3.4's absence is stated for a
+#: reset, and it is `account list` that has a documented column to leave empty
+#: because of it.
+#:
+#: **It is `SOPULI-W021`'s rule applied to the other date column.** §2 says so
+#: outright: a documented column that vanishes with nothing saying why is a hole
+#: in the contract. So the dash is accompanied by this, and the message says
+#: which of the absences it is -- no journal configured, as against a journal
+#: with no record for this account yet, which is not this code and is not a
+#: finding at all.
+#:
+#: A warning and never a refusal, for §3.4's reason: an estate that keeps no
+#: journal is a documented mode, not a broken one. A person who cannot log in is
+#: still locked out whether or not the estate keeps history.
+NO_RESET_JOURNAL = "SOPULI-W023"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -502,6 +525,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "definitions, and is not rotated by anything here. The run authenticated and "
             "the message names the variable, because what to do about it is to look at "
             "where that variable is set."
+        ),
+        NO_RESET_JOURNAL: (
+            "`account list` reported an empty RESET_AT column because this configuration "
+            "declares no `reset_records:` block, so there is no journal to read. The "
+            "database's own password-change date is unaffected and is reported beside it. "
+            "An estate that keeps no journal is a documented mode rather than a fault "
+            "(UC-2 §3.4): what is owed is that the empty column says why, which is this."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -798,6 +828,33 @@ def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
                 f"could not list {_names(sorted(names))}: this survey covers the lock "
                 f"paths this configuration declares, and a record left at a path it no "
                 f"longer names would not appear"
+            ),
+        )
+    ]
+
+
+def no_reset_journal() -> list[Diagnostic]:
+    """Say why `account list`'s ``RESET_AT`` column is empty (UC-2 §3.4, #490).
+
+    One entry for the run rather than one per account, because the cause is the
+    *configuration* and is identical on every row -- the same reasoning
+    :data:`LOW_ASSURANCE_ADMIN` follows, and the opposite of
+    :data:`PASSWORD_CHANGE_DATE_UNKNOWN`, which is per result because *that*
+    absence is per account: one release, one grant, but a date that may be
+    readable for one person and not another.
+
+    A warning and never a refusal. An estate that keeps no journal is a
+    documented mode (§3.1), and a listing verb that refused to describe an estate
+    because it keeps no history would have its priorities backwards.
+    """
+    return [
+        Diagnostic(
+            level="warning",
+            code=NO_RESET_JOURNAL,
+            message=(
+                "no `reset_records:` block is declared, so there is no reset journal to "
+                "read and RESET_AT is empty for every account; the database's own "
+                "password-change date is unaffected and is reported beside it"
             ),
         )
     ]
