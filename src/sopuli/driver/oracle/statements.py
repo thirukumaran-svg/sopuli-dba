@@ -370,7 +370,12 @@ def admissible(secret: Secret, limit: ByteLimit) -> None:
 
 
 def alter_user_password(
-    account: Identifier, secret: Secret, *, scope: Scope, limit: ByteLimit
+    account: Identifier,
+    secret: Secret,
+    *,
+    scope: Scope,
+    limit: ByteLimit,
+    expire: bool = False,
 ) -> Statement:
     """``ALTER USER "…" IDENTIFIED BY "…"``, and nothing around it.
 
@@ -383,14 +388,29 @@ def alter_user_password(
     database gave back (#178) and ``secret`` is a
     :class:`~sopuli.secrets.Secret`, so neither a config string nor a bare
     password can reach SQL by accident.
+
+    ``expire`` appends ``PASSWORD EXPIRE`` -- UC-2 §4.1's seen form (#441), where
+    the owner must change the password at first logon and the expiry is what ends
+    the DBA's exposure. **A suffix here and a second statement in §4.3**, which
+    is not an inconsistency: this clause is part of how the password is set, and
+    closing a rollover window is a separate operation Oracle spells separately.
+
+    Two things about the suffix are worth knowing before reading a leak result
+    into it. Its retention is **unmeasured on every release**
+    (unverified: expire-ddl-text): Oracle's masking is keyed to the statement
+    type, which gives no reason to expect a difference from the bare form and is
+    not a measurement of one. And the clause goes **before** the container
+    clause, because ``CONTAINER=ALL`` is the last thing Oracle accepts on this
+    statement -- the reverse order is a syntax error rather than a style choice.
     """
     admissible(secret, limit)
     clause = container_clause(account, scope)
     identifier = account.quoted()
+    expiry = " PASSWORD EXPIRE" if expire else ""
 
     return Statement(
-        f'ALTER USER {identifier} IDENTIFIED BY "{secret.reveal()}"{clause}',
-        redacted=f"ALTER USER {identifier} IDENTIFIED BY {REDACTED}{clause}",
+        f'ALTER USER {identifier} IDENTIFIED BY "{secret.reveal()}"{expiry}{clause}',
+        redacted=f"ALTER USER {identifier} IDENTIFIED BY {REDACTED}{expiry}{clause}",
     )
 
 

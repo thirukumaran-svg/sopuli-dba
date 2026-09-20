@@ -279,6 +279,23 @@ class _Session:
             detail="account was open; locked",
         )
 
+    def reset_password(
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        expire: bool,
+        keep_rollover: bool = False,
+    ) -> tuple[protocol.AccountChange, ...]:
+        return (
+            protocol.AccountChange(
+                protocol.PASSWORD_SET, changed=True, status="OPEN", detail="password set"
+            ),
+        )
+
+    def require_no_rollover_window(self, account: str) -> None:
+        return None
+
     def apply_attributes(
         self, account: str, attributes: protocol.AccountAttributes
     ) -> tuple[protocol.AttributeChange, ...]:

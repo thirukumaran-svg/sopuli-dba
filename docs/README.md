@@ -535,6 +535,20 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   tier 2. Until it has one, `use-cases/uc-02-personal-account-passwords.md` §4.3
   still refuses a seen reset on a rollover profile at plan time — now for a
   measured reason rather than an absent one.
+- `unverified` `stale-rollover` (#441) — **What an open rollover window does when
+  the profile that granted it is set back to zero.** Raised by a review of #504,
+  which predicted the old password would keep working; **measured twice on 26ai
+  Free 23.26.2.0.0, 2026-09-20**, and the prediction is wrong on this release in a
+  way worth writing down. `ACCOUNT_STATUS` still reads `OPEN & IN ROLLOVER`, and
+  the old password is **already dead** — `ORA-01017` — so what outlives the profile
+  change is the *status* rather than the exposure. `EXPIRE PASSWORD ROLLOVER
+  PERIOD` is accepted in that state and takes the account back to `OPEN`. The
+  driver therefore closes the window on either signal, the profile's grant or an
+  open window, which costs one silently-accepted statement here and is
+  safety-critical on any release where the old password *does* outlive the change.
+  **Unmeasured on 19c and 21c**: needs tier 2. Nothing refuses on this and nothing
+  waits for it — the wider condition is correct under both answers, which is why
+  this is a note rather than a blocker.
 - `unverified` `expire-ddl-text` (#438, #457) — **Whether `ALTER USER … IDENTIFIED BY
   … PASSWORD EXPIRE` is retained or masked the way the bare `IDENTIFIED BY` form
   is.** Gate 2's probe (`sql/oracle/02_password_leak_probe.sql`) issues the bare

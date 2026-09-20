@@ -562,6 +562,37 @@ last, which is *deliver then `ALTER USER`* on the unseen path and *`ALTER USER`
 then print* on the seen one — because what cannot be undone is the DDL on one path
 and the print on the other.
 
+**The driver half is built** (#441): `Session.reset_password`, which issues all
+three statements as one operation, and `Session.require_no_rollover_window`, which
+is §4.3's refusal asked at plan time. The verb, the delivery and the record are the
+other half and are not built. Four things about the build belong here rather than
+in a diff, and the last two were measured on 26ai Free 23.26.2.0.0 on 2026-09-20
+because reasoning could not settle them:
+
+- **One state read decides all three statements.** Three reads would be three
+  chances to see three different states, and an operation that unlocked an account
+  on the strength of a status it no longer had would be reporting somebody else's
+  run.
+- **Every statement is reported, including the ones not issued** — the rule
+  `apply_attributes` already follows. An account that was not locked is a row
+  saying so, because a caller that had to read *absent* as *nothing to do* would be
+  inferring the operation's shape from its output.
+- **The window is read from the state taken before the reset.** `IDENTIFIED BY` on
+  a rollover profile *opens* a window, so a state read afterwards says one is open
+  on every such account, and the row would stop distinguishing the profile that
+  grants a window from the account that has just been given one.
+- **`expire` is required rather than defaulted**, and that is §1 made structural:
+  the seen path always expires and the unseen path never does, so a caller that has
+  not decided which path it is on has not decided what it is doing.
+
+Two measurements the tier-1 tests now hold, both of which the earlier sections
+predicted and neither of which had been run against this code: a seen reset leaves
+the account `EXPIRED` with the **new password still authenticating** — `ORA-28001`
+is Oracle's change-at-logon flow rather than a refusal — and an unseen reset on a
+rollover profile leaves the old password answering `ORA-01017` once statement 3 has
+closed the window, while `keep_rollover` leaves **both** passwords working, which
+is the exposure §4.3's default exists to remove.
+
 ### 4.2 The password
 
 Generated from a policy, by the same tier-0 code UC-1 uses (01-configuration §8).
@@ -608,6 +639,16 @@ Three things follow, and the first two are measured
   only after the change is verified. UC-2 verifies nothing (§5), so the
   precondition is dropped rather than inherited. That is safe here for the same
   reason the default is: there is nobody holding the old password to strand.
+- **A window outlives the profile that granted it, and the status then lies.**
+  Measured twice on 26ai Free 23.26.2.0.0 on 2026-09-20, prompted by a review of
+  #504 that predicted the opposite: setting `PASSWORD_ROLLOVER_TIME` to zero while
+  a window is open leaves `ACCOUNT_STATUS` reading `OPEN & IN ROLLOVER`, and the
+  old password is **already dead** — `ORA-01017` — so what survives the profile
+  change is the *status* rather than the exposure. The close statement is accepted
+  in that state and takes the account back to `OPEN`. The driver therefore closes
+  on either signal, the profile's grant or an open window, which is safe under this
+  measurement and safety-critical under a release where the old password does
+  outlive the change. Unmeasured anywhere but 26ai (unverified: stale-rollover).
 - **An explicit flag keeps the window**, for the reset where the person *does*
   still know their old password and a grace period is a convenience. The
   asymmetry is worth stating: **a reset after a suspected disclosure is exactly

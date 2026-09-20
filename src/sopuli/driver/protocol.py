@@ -221,10 +221,35 @@ ATTRIBUTE_SET = "attribute_set"
 #: contract promising something that cannot happen.
 ACCOUNT_LOCK = "account_lock"
 
-#: What an account verb reports as. One entry today, and the tuple exists for the
-#: reason :data:`ATTRIBUTE_KINDS` does -- so a second verb cannot be added without
-#: a renderer noticing.
-ACCOUNT_ACTIONS = (ACCOUNT_LOCK,)
+#: Set an account's password: ``ALTER USER … IDENTIFIED BY`` (UC-2 §4.1).
+#:
+#: **Already in the schema's enum**, which is why a personal reset needs no bump
+#: to report what it did: UC-1's `creds apply` has emitted this word since the
+#: contract was written. Named here now because a *driver* reports it for the
+#: first time, and :data:`ACCOUNT_UNLOCK` above sets the rule -- what a driver
+#: calls a step is what the document calls it, rather than a second vocabulary
+#: translated at the output layer.
+#:
+#: `output/apply_view.py` and `output/finish_rollover_view.py` still spell this
+#: and :data:`ROLLOVER_FINISH` as literals, from before there was anywhere to put
+#: them. Pointing those two at these constants is worth doing and is not this
+#: change; what matters here is that the driver does not invent a third spelling.
+PASSWORD_SET = "password_set"
+
+#: End an open password rollover window: ``ALTER USER … EXPIRE PASSWORD ROLLOVER
+#: PERIOD`` (UC-1 §6.3, UC-2 §4.3).
+ROLLOVER_FINISH = "rollover_finish"
+
+#: What an account verb reports as, and the tuple exists for the reason
+#: :data:`ATTRIBUTE_KINDS` does -- so a verb cannot report a kind without a
+#: renderer noticing.
+#:
+#: **Three of the four arrived with the reset** (#441), which issues up to three
+#: statements as one operation (UC-2 §4.1) and reports each as its own row. That
+#: is `apply_attributes`' rule read for a verb: a row per statement the operation
+#: *considered*, so an account that was not locked says so rather than being
+#: absent from the answer.
+ACCOUNT_ACTIONS = (ACCOUNT_LOCK, ACCOUNT_UNLOCK, PASSWORD_SET, ROLLOVER_FINISH)
 
 #: The kinds an :class:`AttributeChange` reports as, in the order
 #: :meth:`Session.apply_attributes` enforces them.
@@ -844,6 +869,80 @@ class Session(Protocol):
         **Refused on a read-only target before anything is issued**, like every
         other mutating call here: a physical standby would otherwise take the
         statement as far as the cursor and fail there.
+        """
+        ...
+
+    def reset_password(
+        self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
+    ) -> tuple[AccountChange, ...]:
+        """Hand ``account`` a new password -- UC-2 §4.1's whole operation (#441).
+
+        Distinct from :meth:`set_password`, which is UC-1's one statement against
+        an application account. A personal reset is **up to three** statements
+        issued as one operation, each conditional on the state the driver reads
+        first, and they belong together rather than in a caller that would have
+        to re-derive the conditions and get the order right:
+
+        1. ``ACCOUNT UNLOCK``, only where the account is locked by a failed-login
+           limit;
+        2. the password itself, with ``PASSWORD EXPIRE`` where ``expire``;
+        3. ``EXPIRE PASSWORD ROLLOVER PERIOD``, unless ``keep_rollover``.
+
+        Returns one :class:`AccountChange` per statement the operation
+        *considered*, in that order, whether or not it was issued --
+        :meth:`apply_attributes`' rule, and for its reason: an account that was
+        not locked is a row saying so, not an absent row a caller has to read as
+        an answer.
+
+        **A deliberately locked account is refused, and a timed lock is not**
+        (H4, #455). The first is an offboarding somebody performed, and handing
+        that person a working password would undo it silently; the second is what
+        a mistyped password produces, and clearing it is the reset's job.
+        :meth:`suspend_account` is the verb that sets the first, so the two calls
+        agree on what the state means.
+
+        **``expire`` is the seen path and never a default.** UC-2 §1: the seen
+        path always expires, because expiry is what ends the DBA's exposure, and
+        the unseen path never does, because nobody but the owner is meant to know
+        the value. There is no third reading, so the argument is required rather
+        than defaulted -- a caller that has not decided which path it is on has
+        not decided what it is doing.
+
+        **The window is closed by default** (§4.3), which is the one place UC-2
+        defaults the opposite way to UC-1: there the old password's holders are
+        applications nobody can enumerate, and here the only holder is the person
+        being reset, whose not having it is the premise. ``keep_rollover`` is for
+        the reset where they *do* still know it.
+
+        **Callers must ask :meth:`require_no_rollover_window` first** where
+        ``expire`` is true. The refusal belongs at plan time, before a password
+        has been drawn or delivered, and this call raises it too rather than
+        trusting that they did.
+        """
+        ...
+
+    def require_no_rollover_window(self, account: str) -> None:
+        """Refuse an **expiring** reset of ``account`` where its profile grants a
+        password rollover window (UC-2 §4.3), or say nothing.
+
+        :meth:`require_rollover`'s mirror, and the names are opposites because the
+        conditions are: that one refuses where no window can be opened, this one
+        refuses where one would be. Both are plan-time refusals that raise rather
+        than return, so neither can be called and ignored.
+
+        The reason is measured rather than assumed (#455, Q7, on 26ai
+        23.26.2.0.0): ``IDENTIFIED BY … PASSWORD EXPIRE`` is *accepted* on a
+        rollover profile, the resulting status is ``EXPIRED & IN ROLLOVER``, and
+        the old password still authenticates -- it answers ``ORA-28001`` rather
+        than ``ORA-01017``, so it is not merely alive but is itself a way to set
+        the new one. The expiry that is supposed to end the DBA's exposure would
+        leave a second live password behind it for the length of the window.
+
+        **Refused rather than worked around**, and the register entry
+        (unverified: expire-rollover) is why it is not lifted on the strength of
+        one release: a refusal lifted on 26ai alone is a refusal lifted on a guess
+        about 19c and 21c. The unseen path remains available for the same account,
+        and the message says so.
         """
         ...
 

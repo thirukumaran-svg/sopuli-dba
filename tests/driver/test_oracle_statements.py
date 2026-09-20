@@ -82,8 +82,8 @@ def structure(sql: str) -> str:
     return QUOTED.sub('""', sql)
 
 
-def build() -> Statement:
-    return alter_user_password(ACCOUNT, PASSWORD, scope=PDB, limit=UTF8)
+def build(*, expire: bool = False) -> Statement:
+    return alter_user_password(ACCOUNT, PASSWORD, scope=PDB, limit=UTF8, expire=expire)
 
 
 # ------------------------------------------------------------- the statement ---
@@ -91,6 +91,31 @@ def build() -> Statement:
 
 def test_the_statement_is_the_ddl_and_nothing_else() -> None:
     assert build().reveal() == 'ALTER USER "ACME_WEB_USER" IDENTIFIED BY "Zx7-Quarry-Lantern-42"'
+
+
+def test_the_seen_form_appends_password_expire() -> None:
+    """UC-2 §4.1's seen statement (#441). A suffix on this statement, where
+    closing a rollover window is a separate one -- the clause is part of how the
+    password is set, and Oracle spells the other operation separately."""
+    assert build(expire=True).reveal() == (
+        'ALTER USER "ACME_WEB_USER" IDENTIFIED BY "Zx7-Quarry-Lantern-42" PASSWORD EXPIRE'
+    )
+
+
+def test_the_seen_form_is_redacted_the_same_way() -> None:
+    """The redacted form is what every log, message and `__str__` sees, so it
+    has to keep working when the statement grows a clause -- a suffix appended
+    to the revealed form alone would be a redaction that silently stopped
+    matching what was issued."""
+    assert str(build(expire=True)) == (
+        'ALTER USER "ACME_WEB_USER" IDENTIFIED BY *** PASSWORD EXPIRE'
+    )
+
+
+def test_the_seen_form_is_never_a_plsql_block() -> None:
+    """Invariant 13 binds on both statements (UC-2 §4.1), and the suffix is
+    exactly the kind of addition that invites a wrapper to hold it."""
+    assert not WRAPPERS.search(structure(build(expire=True).reveal()))
 
 
 def test_the_statement_is_never_a_plsql_block() -> None:
@@ -113,11 +138,18 @@ def test_the_password_is_never_a_bind() -> None:
     values in clear, and the way a bind gets introduced is by someone adding a
     parameter for one -- so the assertion that there is nowhere to put it is
     worth more than the assertion that this call did not.
+
+    ``expire`` joined the set with UC-2's seen path (#441) and is pinned here
+    like the rest. It is a **flag rather than a value**: it selects a fixed
+    clause and interpolates nothing, so it adds no place for a bind. The
+    assertion is exact rather than a subset check precisely so that distinction
+    has to be made again by whoever adds the next parameter.
     """
     assert not BINDS.search(structure(build().reveal()))
+    assert not BINDS.search(structure(build(expire=True).reveal()))
 
     parameters = set(inspect.signature(alter_user_password).parameters)
-    assert parameters == {"account", "secret", "scope", "limit"}
+    assert parameters == {"account", "secret", "scope", "limit", "expire"}
 
 
 def test_the_detectors_catch_what_they_are_for() -> None:

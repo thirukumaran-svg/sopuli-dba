@@ -67,6 +67,7 @@ from sopuli.driver.oracle.privileges import audit
 from sopuli.driver.oracle.rollover import alter_profile_ddl, is_enabled
 from sopuli.driver.oracle.statements import (
     Identifier,
+    Statement,
     alter_user_password,
     alter_user_profile,
     finish_rollover,
@@ -88,7 +89,9 @@ from sopuli.driver.protocol import (
     ATTRIBUTE_SET,
     OFFLINE_VERIFY,
     PASSWORD_ROLLOVER,
+    PASSWORD_SET,
     PROFILE_MANAGEMENT,
+    ROLLOVER_FINISH,
     SKIPPED,
     UNAVAILABLE,
     VERIFY_LOGIN,
@@ -548,6 +551,236 @@ class OracleSession:
         return AccountChange(
             ACCOUNT_LOCK, changed=True, status=state.status, detail=f"account was {was}; locked"
         )
+
+    def reset_password(
+        self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
+    ) -> tuple[AccountChange, ...]:
+        """UC-2 §4.1's reset: up to three statements, one session, one read.
+
+        **One `describe_user` for all three decisions**, rather than a read per
+        statement. The alternative is not merely slower: three reads is three
+        chances to see three different states, and an operation that unlocked an
+        account on the strength of a status it no longer had would be reporting
+        somebody else's run.
+
+        **Refusals come before anything is issued**, in the order that costs
+        least to be wrong about: read-only, then capability, then the account's
+        existence, then §4.3's rollover refusal, then a deliberate lock. Each is
+        invariant 4's plan-time rule inside one call -- by the time the first
+        statement goes out, nothing left can refuse.
+
+        The per-statement conditions and their measurements are
+        :meth:`~sopuli.driver.protocol.Session.reset_password`'s; this issues
+        what they decided.
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        require_capability(self.scope(), ACCOUNT_LOCK_STATE, target=self.target.name)
+
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'account "{account}" does not exist on this target',
+                hint=(
+                    "the tool does not create accounts (Q8); nothing was reset, and the "
+                    "account name is worth checking against the estate"
+                ),
+            )
+        if expire:
+            # Asked again here although the caller is required to have asked at
+            # plan time: this is the last point at which refusing costs nothing,
+            # and a caller that forgot would otherwise expire a password whose
+            # predecessor keeps working (§4.3).
+            self._refuse_rollover_window(state)
+        if deliberately_locked(state.status):
+            raise DriverError(
+                f'account "{state.name}" is locked, and a reset does not unlock it',
+                hint=(
+                    "`LOCKED` without `(TIMED)` is somebody's decision -- an offboarding, "
+                    "usually -- and handing the account a working password would undo it "
+                    "silently. Unlock it deliberately first if that is what you mean "
+                    "(H4, #455)"
+                ),
+            )
+
+        # Built before the first statement is issued, never between them
+        # (Copilot's review of #504). `alter_user_password` validates: invariant
+        # 11 refuses a password containing `"`, and `admissible` refuses one over
+        # the target's byte limit. Building it inside the sequence would let that
+        # refusal arrive *after* `ACCOUNT UNLOCK` had already run, leaving a
+        # timed-locked account open on behalf of a reset that never happened --
+        # a state change from a failed operation, which is the one outcome
+        # invariant 4's plan-time rule exists to prevent. `byte_limit()` is
+        # resolved by the same call and can fail the same way.
+        statement = alter_user_password(
+            Identifier(state.name),
+            secret,
+            scope=self.scope(),
+            limit=self.byte_limit(),
+            expire=expire,
+        )
+
+        return (
+            self._reset_unlock(state),
+            self._reset_set(state, statement, expire=expire),
+            self._reset_close_window(state, keep=keep_rollover),
+        )
+
+    def _reset_unlock(self, state: UserState) -> AccountChange:
+        """§4.1 statement 1 -- the timed lock only.
+
+        A deliberate lock never reaches here: :meth:`reset_password` refuses it
+        above, so ``locked`` at this point can only be ``LOCKED(TIMED)``. Stated
+        rather than re-tested, because a second test would read as though the
+        refusal might not have happened.
+        """
+        if not state.locked:
+            return AccountChange(
+                ACCOUNT_UNLOCK,
+                changed=False,
+                status=state.status,
+                detail="the account is not locked",
+            )
+        self._issue(unlock_account(Identifier(state.name), scope=self.scope()))
+        return AccountChange(
+            ACCOUNT_UNLOCK,
+            changed=True,
+            status=state.status,
+            detail=f"account was {state.status.lower()}; unlocked",
+        )
+
+    def _reset_set(self, state: UserState, statement: Statement, *, expire: bool) -> AccountChange:
+        """§4.1 statement 2 -- the reset itself, always issued.
+
+        Takes the **built** statement rather than the secret, which is what keeps
+        every refusal ahead of the first `ACCOUNT UNLOCK`: this method can no
+        longer be the one that discovers a password is inadmissible, because by
+        the time it runs that question has been answered.
+
+        ``changed`` is always ``True``, for :meth:`set_password`'s reason: *is
+        the password already this value* is not a question a database can answer,
+        so there is nothing to converge on. Invariant 9 does not govern this verb
+        at all (#454) -- a fresh draw has no fixed point -- and a row claiming
+        ``changed: false`` here could only be a guess.
+        """
+        self._issue(statement)
+        return AccountChange(
+            PASSWORD_SET,
+            changed=True,
+            status=state.status,
+            detail="password set, expired for first logon" if expire else "password set",
+        )
+
+    def _reset_close_window(self, state: UserState, *, keep: bool) -> AccountChange:
+        """§4.3 statement 3 -- end the rollover window unless asked to keep it.
+
+        **The window is read from the state taken before the reset**, not after.
+        That is correct rather than convenient: ``IDENTIFIED BY`` on a profile
+        with a non-zero ``PASSWORD_ROLLOVER_TIME`` *opens* a window, so a state
+        read afterwards would say a window is open on every such account and the
+        row would stop distinguishing the profile that grants one from the
+        account that just got one. What this row answers is whether the reset
+        left the old password able to authenticate.
+
+        Issued with no window open it is accepted silently and changes nothing
+        (measured on 26ai, §4.3), so an account whose profile grants none costs
+        one statement and nothing else -- but reporting ``changed: true`` for it
+        would be the same lie :meth:`finish_rollover` reads its state to avoid.
+
+        **Two conditions, not one** (Copilot's review of #504, and then a
+        measurement). The profile granting a window says the reset is about to
+        open one; a window already being open says something about the account
+        right now. They do come apart, which is the half of the review that was
+        right: setting a profile's ``PASSWORD_ROLLOVER_TIME`` to zero leaves an
+        already-open window reading ``OPEN & IN ROLLOVER``, so ``rollover_time``
+        says no and ``rollover_active`` says yes.
+
+        **What that state does is not what it looks like**, measured twice on
+        26ai Free 23.26.2.0.0 on 2026-09-20 because guessing would have put the
+        wrong sentence here. The review's stated consequence was that the old
+        password stays valid; on this release it does not -- the profile change
+        kills it immediately, ``ORA-01017``, and only the *status* is stale.
+        Closing is still right, for two reasons that survive that correction: the
+        status is what an operator reads and what `creds status` reports, and the
+        statement makes it true again (measured: accepted, and the account goes
+        to ``OPEN``); and the measurement is one release, while a release where
+        the old password *does* outlive the profile change is exactly the review's
+        case with its consequence intact.
+
+        So the wider condition is safe under both readings and costs one
+        silently-accepted statement under the one that holds here.
+        :meth:`finish_rollover` already keys on ``rollover_active`` for its own
+        half of the same question.
+        """
+        grants = is_enabled(state.rollover_time)
+        open_now = bool(state.rollover_active)
+        if keep:
+            return AccountChange(
+                ROLLOVER_FINISH,
+                changed=False,
+                status=state.status,
+                detail=(
+                    "rollover window kept, as asked"
+                    if grants or open_now
+                    else "no rollover window to keep; this profile grants none"
+                ),
+            )
+        if not grants and not open_now:
+            return AccountChange(
+                ROLLOVER_FINISH,
+                changed=False,
+                status=state.status,
+                detail="this profile grants no rollover window",
+            )
+        self._issue(finish_rollover(Identifier(state.name), scope=self.scope()))
+        return AccountChange(
+            ROLLOVER_FINISH,
+            changed=True,
+            status=state.status,
+            detail="rollover window closed; the old password no longer works",
+        )
+
+    def require_no_rollover_window(self, account: str) -> None:
+        """§4.3's plan-time refusal. See the protocol for the measurement."""
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(f'account "{account}" does not exist on this target')
+        self._refuse_rollover_window(state)
+
+    def _refuse_rollover_window(self, state: UserState) -> None:
+        """The refusal itself, shared by the plan-time call and the reset.
+
+        One implementation rather than two, because the two would drift and the
+        one that drifted would be the one nobody runs until a password has
+        already been drawn.
+        """
+        if not is_enabled(state.rollover_time):
+            return
+        profile = state.profile or "its profile"
+        raise DriverError(
+            f'account "{state.name}" is on profile {profile}, which grants a password '
+            f"rollover window, and an expiring reset would leave the old password working",
+            hint=(
+                "measured on 26ai: the account goes to `EXPIRED & IN ROLLOVER`, and the old "
+                "password answers ORA-28001 rather than ORA-01017 -- it still authenticates, "
+                "and it is itself a way to set the new one. Use the unseen delivery path for "
+                "this account, or reset one whose profile grants no window (UC-2 §4.3)"
+            ),
+        )
+
+    def _issue(self, statement: Statement) -> None:
+        """Execute one built statement, classifying whatever the server says.
+
+        The ``reveal()`` is invariant 2's permitted one, as in
+        :meth:`set_password`: nothing between this line and the wire may log it,
+        and ``Statement.__str__`` is the redacted form so an accidental
+        interpolation elsewhere cannot leak it. A cursor per statement, because
+        §4.1's three are separate statements rather than one script.
+        """
+        with self.connection.cursor() as cursor:
+            try:
+                cursor.execute(statement.reveal())
+            except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+                raise from_error(error).as_error() from error
 
     def _unlock(self, account: str) -> AttributeChange:
         """``ALTER USER … ACCOUNT UNLOCK``, or report that there was no lock.
