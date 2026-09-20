@@ -2905,11 +2905,12 @@ def creds_generate(
     in the same write, and any `pending` is cleared -- a staged password left
     behind is one the next `apply` would prefer to what was just promoted.
 
-    **A second run replaces what was staged, and reports a change.** That is an
-    explicit exemption from the idempotency invariant, decided in issue #254: the
-    invariant governs commands that converge on a state, and drawing a fresh
-    random secret has no state to converge on. The run warns that it replaced a
-    staged password, because anything already holding the old one is now stale.
+    **A second run replaces what was staged, and reports a change.** That is
+    outside the idempotency invariant rather than excused from it, decided in
+    issue #254 and placed by #454's scope rule: the invariant governs commands
+    that converge on a state, and drawing a fresh random secret has no state to
+    converge on. The run warns that it replaced a staged password, because
+    anything already holding the old one is now stale.
 
     **One document is one write.** Where several accounts share a secret -- the
     documented default since issue #85 -- their passwords go in a single

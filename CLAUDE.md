@@ -137,18 +137,48 @@ something specific.
    write moves the value `current` held into `previous`, so §8's rollback keeps
    somewhere to go.
    Written here rather than left to be discovered in a diff, as invariant 9's
-   exemption is, and a second one is a decision rather than an implementation
-   detail.
-8. **Every mutating command supports `--dry-run` and prints a plan first.**
-9. **Idempotency:** running any command twice must report `changed: false` the
-   second time and emit no mutation audit record. **`creds generate` is the one
-   exemption** (decided in #254): drawing a fresh random secret has no state to
-   converge on, so a second run replaces `pending` and reports `changed: true`,
-   warning that it did. The invariant governs the *convergent* verbs — `apply`
-   converges the database on the vault, and it is the one that must report
-   `changed: false` on a re-run. An exemption is written here rather than left to
-   be discovered in a diff, and adding a second one is a decision, not an
+   scope rule is, and a second exception is a decision rather than an
    implementation detail.
+8. **Every mutating command supports `--dry-run` and prints a plan first.**
+9. **Idempotency:** running a **convergent** command twice must report
+   `changed: false` the second time and emit no mutation audit record.
+
+   **A convergent command is one with a state to converge on, which is all of
+   them but the two below** — the qualifier narrows the sentence and is not a
+   loophole in it. `apply` converges the database on the vault, and it is the one
+   that must report `changed: false` on a re-run. `account suspend` is the same
+   rule read through the driver: it reads `ACCOUNT_STATUS` first, so a second
+   `ACCOUNT LOCK` against an already-locked account reports `changed: false`.
+   `04-testing.md` §6's release gate states the criterion in the same words, and
+   the two must stay in step.
+
+   **A verb that draws fresh randomness has nothing to converge on, and is
+   outside the invariant rather than an exception to it.** `creds generate`
+   (#254) and `account reset-password` (#454) are both instances: each reports
+   `changed: true` on every run, and each must say what it replaced — `generate`
+   names the version whose `pending` it overwrote, and a reset says that whoever
+   holds the previously delivered password now holds one that no longer works.
+
+   **Scope rather than a list of exemptions, decided in #454**, and the framing
+   is the decision. A list grows one entry at a time and invites the same
+   argument with every later verb that draws a password — UC-4's account
+   creation being the next one — while the rule that admits both of these admits
+   that one too, for a reason anybody can check. What is *not* open to an
+   implementer is the membership test: a verb is outside only because a fresh
+   random draw has nothing to compare against, and anything with an observable
+   target state is convergent and must report `changed: false`. A verb that is
+   inside the invariant and cannot satisfy it is a decision, not an
+   implementation detail.
+
+   **Convergence bought with an optional key does not count**, which is the
+   other half of #454 and the reason a reset is not made convergent instead. Both
+   ways of doing it — on a request id, or on "already expired since the last
+   recorded reset" — key on a metadata record an estate need not configure
+   (UC-2 §3.1), which is also absent in exactly the partly-failed runs somebody
+   retries (§3.4); and account state does not exist as a signal on the unseen
+   path at all, since it issues no `PASSWORD EXPIRE`. An idempotency that holds
+   only where an optional block was written is worse than an honest
+   `changed: true`, because nothing in the output says which of the two you got.
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
     `max_targets`, `confirm_environments` and `safety.delivery.allowed_methods` cannot
     be relaxed by a higher-precedence source. See P3.

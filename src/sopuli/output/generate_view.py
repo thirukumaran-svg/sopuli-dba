@@ -57,9 +57,9 @@ STAGED = "PENDING_APPLY"
 #: A write that did not happen. `results[].error` carries the reason.
 FAILED = "ERROR"
 
-#: The states a write actually happened in. `changed` is true of both, and #254's
-#: exemption from invariant 9 covers both for the same reason -- a fresh draw has
-#: no fixed point to converge on, whichever stage it lands in.
+#: The states a write actually happened in. `changed` is true of both, and both
+#: sit outside invariant 9 for the same reason -- a fresh draw has no fixed point
+#: to converge on, whichever stage it lands in (#254, and #454 for the rule).
 WRITTEN = (STAGED, VAULT_ONLY)
 
 _ACCOUNT = 24
@@ -83,10 +83,11 @@ def build_result(
 
     ``changed`` is ``True`` on every successful write, including a second run
     over an account that already had a ``pending`` staged. That is #254's
-    decision and an explicit exemption from invariant 9: a fresh draw has no
-    fixed point to converge on, so "nothing changed" would be false. The
-    invariant governs the convergent verbs, and `apply` is the one that will
-    report ``changed: false`` on a re-run.
+    decision, and #454's scope rule is what places it: a fresh draw has no fixed
+    point to converge on, so the verb is outside invariant 9 rather than excused
+    from it, and "nothing changed" would simply be false. The invariant governs
+    the convergent verbs, and `apply` is the one that will report
+    ``changed: false`` on a re-run.
 
     **A ``--dry-run`` produces no entry at all.** It emits `plan` and stops --
     which is what invariant 8 asks for, and it avoids inventing a state for

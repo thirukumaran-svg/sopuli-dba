@@ -358,10 +358,13 @@ no session, and a read does not make one.
 - Generating twice without applying simply replaces `pending`. That is safe and
   is reported as such — including a warning naming the version whose `pending`
   was replaced, because anything already holding that password is now stale.
-  This is the **one exemption from invariant 9** and is decided rather than
-  assumed (#254): the invariant governs commands that converge on a state, and a
-  fresh draw has none. `apply` is the convergent half and reports
-  `changed: false` on a re-run.
+  This is **outside invariant 9 rather than an exemption from it**, and it is
+  decided rather than assumed (#254): the invariant governs commands that
+  converge on a state, and a fresh draw has none. `apply` is the convergent half
+  and reports `changed: false` on a re-run. It read *the one exemption* until
+  H7 (#454) put UC-2's reset on the same footing for the same reason and
+  restated the invariant as a scope rule — this verb's behaviour is unchanged,
+  and what changed is that it is no longer a special case of one.
 
 ### `--promote`, and the exception it takes to invariant 7 (#257, decided)
 

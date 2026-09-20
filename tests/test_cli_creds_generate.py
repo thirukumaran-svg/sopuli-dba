@@ -201,8 +201,9 @@ def test_current_is_not_touched(
 def test_a_second_run_replaces_pending_and_reports_a_change(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
-    """#254's decision, and the one exemption from invariant 9: a fresh draw has
-    no state to converge on, so `changed: false` would be false."""
+    """#254's decision, and invariant 9 not reaching this verb: a fresh draw has
+    no state to converge on, so `changed: false` would be false. Scope rather
+    than an exemption since #454, which put UC-2's reset on the same footing."""
     config = write_config(CONFIG)
     run(runner, config)
     first = staged(store)

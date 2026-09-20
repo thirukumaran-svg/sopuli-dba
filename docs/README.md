@@ -322,11 +322,17 @@ ratcheting by **intersection**, so a layer may only narrow the set. Fail-closed:
 a method a later release adds is unusable until an estate names it, where the
 `forbidden_methods` union would have permitted it everywhere on upgrade. It costs
 a fourth ratchet shape, declared per setting the way `safe_bool` already is, and
-there is no `forbidden_methods` now or later; built in #498). Open: a reset never converges, so
-it needs either a second invariant-9 exemption or a convergent verb (H7, #454);
-on the unseen path, what happens to the stored copy and how the DBA is shown
-unable to read it (H8, #459); and, raised by the delivery section itself, what
-"unseen" guarantees when the DBA holds the wrapping token (H9, #496).
+there is no `forbidden_methods` now or later; built in #498). ~~A reset never
+converges~~ (H7, #454 — **closed:** it reports `changed: true` every run and warns
+what it replaced, and invariant 9 is restated as a **scope** rule rather than
+gaining a second exemption: a verb that draws fresh randomness has nothing to
+converge on, which admits `creds generate` and this one by one sentence.
+Convergence on a request id or on account state was refused because both key on a
+record an estate need not configure — and account state is not a signal on the
+unseen path, which issues no `PASSWORD EXPIRE`). Open: on the unseen path, what
+happens to the stored copy and how the DBA is shown unable to read it (H8, #459);
+and, raised by the delivery section itself, what "unseen" guarantees when the DBA
+holds the wrapping token (H9, #496).
 **H2 is decided** (#450): what a reset records lives in three places rather than
 one. The **database** answers *when* the password last changed
 — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant,
@@ -708,12 +714,14 @@ consults the answer until a delivery method exists, so the registry marks it
 inert.
 
 **What blocks what.** **#456 is written and #440 and #498 have landed**, so every
-`delivery:` issue now waits on nothing — the config block and the ratchet are
-both built, and everything below that is implementation rather than decision. Three UC-2 decisions remain and none of them
-blocks this table: H7 (#454), whether a reset needs a second invariant-9 exemption
-or a convergent verb; H8 (#459), the stored copy's lifetime; and H9 (#496), what
-"unseen" guarantees when the DBA holds the wrapping token — which the delivery
-section raised about itself.
+`delivery:` issue now waits on nothing — the config block and the ratchet are both
+built, and everything below that is implementation rather than decision. **H7
+(#454) is closed** too — a reset draws fresh randomness, so it is outside
+invariant 9 rather than an exception to it, and reports `changed: true` with a
+warning naming what it replaced, which is what #441 needed before it could report
+anything at all. Two UC-2 decisions remain and neither blocks this table: H8
+(#459), the stored copy's lifetime; and H9 (#496), what "unseen" guarantees when
+the DBA holds the wrapping token — which the delivery section raised about itself.
 
 **Each block is a schema minor bump** — 1.4 became 1.5 with the record, 1.5 became
 1.6 with `delivery:` and 1.6 became 1.7 with `safety.delivery.allowed_methods`, and

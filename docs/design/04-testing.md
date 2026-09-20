@@ -320,7 +320,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | Test | Needs |
 |---|---|
 | UC-1 happy path: generate → apply → verify → promote | any |
-| Idempotency: every command twice, second reports `unchanged` | any |
+| Idempotency: every **convergent** command twice, second reports `unchanged`; and for the two that draw fresh randomness — `creds generate`, `account reset-password` — that the second run says what it replaced (invariant 9, #254, #454) | any |
 | Drift: change a password out of band, `check` reports DRIFT, exit 3 | any |
 | **Lockout regression**: profile with `FAILED_LOGIN_ATTEMPTS 3`, run `check` against a drifted account 5×, assert the account never locks | any |
 | Verify-function: profile with `ora12c_strong_verify_function` and a violating policy — bounded regeneration, then a clear error carrying the server message. **Assert on the error, never on `DBA_PROFILES`**: in a PDB a *common* profile's `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` rather than the function name, so a dictionary check reports an unconfigured profile while the function is in fact enforcing (`ORA-28003` + `ORA-20000`). Measured for #317: a profile created *in* the PDB answers with the function's name, so a fixture that builds one locally can read it back — which is why `creds generate` reports three states and not two | any |
@@ -501,8 +501,15 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 4. **Lockout.** The lockout regression test passes on every Oracle version in the
    matrix. A tool that locks production accounts while checking them is worse
    than no tool.
-5. **Idempotency.** Every command twice, everywhere, `changed: false` on the
-   second run.
+5. **Idempotency.** Every **convergent** command twice, everywhere,
+   `changed: false` on the second run.
+
+   The qualifier is invariant 9's and is stated here in the same words, because
+   a gate that said *every command* would be one no release could pass: `creds
+   generate` and `account reset-password` draw fresh randomness and have nothing
+   to converge on, so each reports `changed: true` every run by design (#254,
+   #454). They are not skipped by this gate — what is asserted of them is the
+   other half of that decision, that the second run **says what it replaced**.
 6. **The lock holds under contention, and a stolen lock stops the run that lost
    it** (#106). `tests/store/test_lock_concurrency.py`, against a real Vault:
    two genuinely concurrent processes take one lock and exactly one wins, the

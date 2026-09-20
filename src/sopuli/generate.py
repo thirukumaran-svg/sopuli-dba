@@ -29,11 +29,15 @@ never intended. :func:`sopuli.payload.merge` exists for exactly this and says so
 would file the second and lose the first."
 
 **A second run replaces ``pending`` and reports ``changed: true``** (#254). That
-is UC-1 §4 as written, and it is an explicit exemption from invariant 9 rather
-than an oversight: the invariant governs *convergent* commands, and drawing a
-fresh secret has no fixed point to converge on. `apply` converges the database on
-the vault and `check` mutates nothing; those are the commands the invariant is
-about. CLAUDE.md carries the footnote.
+is UC-1 §4 as written, and it is **outside invariant 9 rather than an oversight**:
+the invariant governs *convergent* commands, and drawing a fresh secret has no
+fixed point to converge on. `apply` converges the database on the vault and
+`check` mutates nothing; those are the commands the invariant is about.
+
+It read *an explicit exemption* until #454, which put UC-2's reset on the same
+footing for the same reason and restated the invariant as a scope rule rather
+than a list. Nothing here changes; what changed is that this is no longer a
+special case of one. CLAUDE.md carries the rule.
 
 **Each account is drawn separately, even when they share a document.** Sharing a
 document is a storage layout, not a shared credential -- `acme_web_user` and

@@ -647,6 +647,54 @@ That is stated here rather than solved. It may be the right answer — a DBA acc
 is precisely where a reset deserves an explicit override — or it may make `--force`
 routine in a way #89 did not intend. Neither reading is taken here.
 
+### 4.5 Running it twice
+
+**A reset reports `changed: true` every time, and warns that it replaced
+something** (H7, #454). It draws a fresh random password, which has nothing to
+converge on, so it sits outside invariant 9 rather than taking an exception to it
+— the same footing `creds generate` has had since #254, and `CLAUDE.md`
+invariant 9 now states the rule that admits both rather than listing them.
+
+**What the warning has to say is sharper than `generate`'s**, because more has
+already happened. `generate` replaces a `pending` nothing has read yet. A reset has
+already changed the database and already delivered, so a second run leaves somebody
+holding a password that no longer works — and on `vault_wrapped` (#444) they will
+spend their single unwrap discovering it. The warning names that, not merely that a
+value was replaced. **Its code is allocated with the verb** (#441), for §3.4's
+reason: a code with no emitter is the defect #477 found in `Resolved.low_assurance`.
+
+**The cost is real and lands almost entirely on the unseen path.** The seen path
+cannot be scripted at all — it confirms every time, `--confirm` cannot answer that
+prompt, and stdout must be a terminal (§6.5) — so the run that silently delivers
+twice is an unattended one, which is the unseen path by construction.
+
+#### Why not a convergent verb
+
+Two shapes were weighed and both refused, and the reasons are worth keeping because
+each would look attractive again from a distance:
+
+- **Convergent on a request identity** — a ticket number or `--request-id`, with a
+  re-run under the same id delivering nothing. H2 gave it somewhere to live: §3.1's
+  record already carries `correlation_id`, so a `request_id` beside it is small. It
+  fails on where that record is: an estate need not configure one (§3.1), and the
+  write can fail after a successful reset (§3.4) — which is *precisely* the run
+  somebody retries. So the key is absent exactly when it is needed, and the verb
+  falls back to drawing a second password without saying that is what happened.
+- **Convergent on account state** — reset only an account not already `EXPIRED`
+  since a recorded reset. **The signal does not exist on the default path.** §4.1
+  issues `PASSWORD EXPIRE` on the seen path only; the unseen statement is a bare
+  `IDENTIFIED BY`, and the owner is under no obligation to change what they were
+  given, so `PASSWORD_CHANGE_DATE` stays at `reset_at` and cannot tell *fetched and
+  in use* from *never fetched*. The only thing that could is reading the handover
+  copy back, which §3.5 says the tool never does and whose lifetime is H8 (#459),
+  still open.
+
+Both would also refuse the recovery this document specifies. §6.4 says of either
+ordering failure that *the recovery for either is the same reset run again*, and
+§3.5 says the recovery for a lost personal password is another reset. A verb whose
+default is to refuse the documented recovery would need a `--force`-shaped escape
+for the ordinary case, which is the wrong way round.
+
 ---
 
 ## 5. Lockout, unlocking, and self-service
@@ -732,7 +780,12 @@ is not locked" is false on that axis: it clears the failed-login counter UC-1 §
 `--lockout-margin` reads. So the driver reads the lock state and issues nothing
 where there is no lock, reporting `applied: false`, exactly as #300 already does.
 That also makes the unlock and the window-close the two *convergent* steps of an
-otherwise non-convergent verb, which is H7's (#454) to use.
+otherwise non-convergent verb. **H7 (#454) did not build on them, and §4.5 says
+why**: the draw dominates, so the verb reports `changed: true` however little the
+other two statements did. What they keep is their own honesty one level down —
+`applied: false` for a statement that was not issued — and that is worth having
+whatever the verb reports, because *the account was not locked* and *the account
+was unlocked* are different facts about somebody's morning.
 
 **Self-service here means fetching, not resetting.** An owner who knows their
 password changes it themselves, without the tool: before expiry with
@@ -1016,7 +1069,7 @@ marked inert in the registry until one does.
 | 6 | vault is master | nothing to govern — no master (§1). H2 (#450) makes the database authoritative for **when** a password last changed, which is not a breach of this: invariant 6 governs the value, and a timestamp about the account is not one (§3.2) |
 | 7 | never promote before confirmation | nothing to govern — no promotion (§1) |
 | 8 | `--dry-run` and a plan first | binds, on both paths; the seen path also confirms (§2) |
-| 9 | idempotency | **open** — a reset as sketched draws a new password on every run; H7 (#454) decides between an exemption and a convergent verb. H2 is what unblocked it rather than what answers it: §3's record is somewhere a request identity or a previous reset could be remembered, where H7's options 2 and 3 previously had nowhere |
+| 9 | idempotency | **binds, and does not govern the reset** — H7 (#454) closed it by scope rather than by exception: a verb that draws fresh randomness has nothing to converge on, which puts `account reset-password` where `creds generate` already was (#254). It reports `changed: true` every run and warns what it replaced (§4.5). `expire-password`, `account suspend` and `account list` are all inside the invariant and hold it. The convergent shapes were refused because both key on a record an estate need not configure, and account state is not a signal on the unseen path at all |
 | 10 | safety settings only ratchet | binds, and H6 (#453) has added the axis: `safety.delivery.allowed_methods`, ratcheting by **intersection** so a layer may only narrow which delivery methods an estate may use. The fifth ratcheted setting and the first whose merge is declared rather than read off its type — `01-configuration.md` §9 has the shape, P3 has why it is not a union. Built by #498, as a `delivery:` sub-block of a `safety:` block rather than a key of the `delivery:` block it governs |
 | 11 | no `"` in a password | binds, by generation; authoritative over UC-1 §6.1's older wording |
 | 12 | JSON output is versioned | binds — new verbs and events are schema bumps |
@@ -1105,7 +1158,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 | ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
 | ~~H6~~ | ~~Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union?~~ | **closed** — `safety.delivery.allowed_methods`, ratcheting by **intersection**. Fail-closed: a method added in a later release is unusable until an estate names it, where a `forbidden_methods` union would have permitted it everywhere on upgrade. It costs a fourth ratchet shape, declared per setting as `safe_bool` already is, since both keys would be lists of strings and the type cannot say which merges how. Unset means no constraint; two layers with disjoint lists refuse at plan time naming both; and there is no `forbidden_methods`, now or later · #453 |
-| H7 | A reset never converges: a second invariant-9 exemption, or a convergent verb? | #454 |
+| ~~H7~~ | ~~A reset never converges: a second invariant-9 exemption, or a convergent verb?~~ | **closed** — neither, as asked. The reset reports `changed: true` every run and warns what it replaced, and invariant 9 is restated as a **scope** rule rather than gaining a second exemption: a verb that draws fresh randomness has nothing to converge on, which admits `creds generate` and this one by the same sentence and will admit UC-4's account creation without another argument. Convergence on a request id or on account state was refused for one reason each — the key is a record an estate need not configure and which is missing in exactly the runs somebody retries, and account state does not exist on the unseen path, which issues no `PASSWORD EXPIRE`. The stated cost is that an unattended retry delivers twice, and the warning is what carries it (§4.5) · #454 |
 | H8 | On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it? | #459 |
 | H9 | On `vault_wrapped`, the DBA holds the token — so what does "unseen" guarantee, and is there a channel the tool should carry a retrieval credential by instead? | #496, raised by §6.8 |
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it, and `force_expire: true` required. `CLAUDE.md` invariant 2 gains a fourth exception, justified by the exposure being deliberate, witnessed and expired rather than harmless — so the narrowing is stricter than `--reveal`'s, not equal to it · #439 |

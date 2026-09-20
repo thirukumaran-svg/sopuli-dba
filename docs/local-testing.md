@@ -1671,9 +1671,11 @@ acme_app_user  vault-dev:acme/dev/acme  staged v1
 1 staged; no database was changed -- run `sopuli creds apply` to use them
 ```
 
-**Run it twice and it stages again**, which is invariant 9's one exemption —
-drawing a fresh random secret has no state to converge on. The run says so rather
-than leaving you to notice:
+**Run it twice and it stages again**, which is invariant 9 not applying rather
+than being broken — drawing a fresh random secret has no state to converge on, so
+the verb is outside the invariant (#454 restated it as a scope rule; `creds apply`
+is the convergent half, and §10.3 is where you watch it report `changed: false`).
+The run says so rather than leaving you to notice:
 
 ```
 acme_app_user  vault-dev:acme/dev/acme  staged v2, replaced the pending in v1
@@ -2143,12 +2145,20 @@ out: **`CAPABILITIES` reads 5 on 18c and 6 on 21c and 26ai.** The missing one is
 
 UC-2 is half built. There is **no `reset-password` and no `expire-password`** — the
 verbs that change a password — and if that is what you sat down to test, stop here;
-the delivery half is still design documents. Both decisions that blocked it are
-settled now — #439 (the seen path prints, under five guards) and #453
-(`safety.delivery.allowed_methods`, ratcheting by intersection). The second is
-**built**: the setting resolves, ratchets and is reported by `config show --explain`
-(see `safety.delivery.allowed_methods` below), and no verb reads it, because no delivery method exists to be allowed or
-refused. #439's guards are not built at all.
+the delivery half is still design documents. All three decisions that blocked it
+are settled now — #439 (the seen path prints, under five guards), #453
+(`safety.delivery.allowed_methods`, ratcheting by intersection) and #454 (a reset
+reports `changed: true` every run and warns what it replaced, because a fresh
+random draw has nothing to converge on).
+
+**One of the three is built.** #453's ratchet resolves, merges and is reported by
+`config show --explain` (see `safety.delivery.allowed_methods` below), and no verb
+reads it, because no delivery method exists to be allowed or refused. #439's five
+guards are not built at all.
+
+#454 is worth knowing before the verb exists, because it decides what a retry
+does: **there is no re-run that quietly does nothing.** A second reset draws a
+second password, and whoever holds the first now holds one that fails.
 
 What you can run is `account suspend`, which locks an account, and `account list`,
 which reads the declaration and shows you what it matched.
