@@ -39,8 +39,8 @@ which paths ran and which are still untried.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.7.schema.json](schemas/sopuli-config-1.7.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.26.schema.json](schemas/sopuli-run-1.26.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
-| [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
+| [schemas/sopuli-run-1.27.schema.json](schemas/sopuli-run-1.27.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-event-1.1.schema.json](schemas/sopuli-event-1.1.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
 | `../sql/oracle/01_audit_policy.sql` | Unified audit policies and correlation queries |
@@ -663,8 +663,9 @@ coming and what each one waits on.
 | `reset_records:` | #468 | **built**, schema 1.5 |
 | `delivery:`, with `notify:` beside or inside it | #440, #442 | blocked, and the rest of this table is inside it |
 
-The verbs, for the same reason: `account suspend` (#463) and `account list` (#490)
-are built; `reset-password` and `expire-password` wait on the delivery half.
+The verbs, for the same reason: `account suspend` (#463), `account list` (#490)
+and `reset-password` (#441, on the seen path) are built; `expire-password` is
+not, and neither is any unseen delivery method.
 
 **`personal_accounts:`** is a list, each entry declaring exactly one of
 `accounts:`, `profile:` or `role:`, plus optional `targets:` and `policy:`. What
@@ -723,9 +724,18 @@ is what makes it a fourth shape rather than a second mechanism. `CLAUDE.md`
 invariant 10, P3's safety bullet and `01-configuration.md` §9's merge-policy table
 all carry it, and **#498 built it** — the key in a `safety:` block, the
 intersection across every layer, the plan-time refusal when two layers have no
-method in common, and the effective set in `config show --explain`. No verb
-consults the answer until a delivery method exists, so the registry marks it
-inert.
+method in common, and the effective set in `config show --explain`. **#441 gave
+it its consumer**, which is what #498 said would happen: `account reset-password`
+refuses a method the resolved set does not permit, after the estate merge and
+with no `--force` to waive it, and the registry's `inert_reason` is deleted
+rather than left to rot.
+
+**The seen path is built** (#441): `sopuli account reset-password` with
+`delivery.method: manual`, under #439's five guards, and the unseen methods
+refused at plan time on exit 5 until #444-#447 land. The reset record and the
+advisory lock keyed on its path are the part #468 shaped and nobody has written
+yet, so every run warns that the run document and the database are the whole
+record.
 
 **What blocks what.** **#456 is written and #440 and #498 have landed**, so every
 `delivery:` issue now waits on nothing — the config block and the ratchet are both

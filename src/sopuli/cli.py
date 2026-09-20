@@ -73,7 +73,7 @@ from typing import Any, TypeVar
 
 import click
 
-from sopuli import account_list, preflight, reset_record, suspend
+from sopuli import account_list, preflight, reset, reset_record, suspend
 from sopuli import apply as apply_states
 from sopuli import check as check_states
 from sopuli import constraints as constraint_source
@@ -107,7 +107,7 @@ from sopuli.config import (
     refuse_unknown,
 )
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import PersonalAccountRule
+from sopuli.config.model import Delivery, PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints
@@ -230,6 +230,10 @@ from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.preflight_view import render_preflight
+from sopuli.output.reset_view import build_result as build_reset_result
+from sopuli.output.reset_view import render as render_reset
+from sopuli.output.reset_view import render_password
+from sopuli.output.reset_view import summarise as summarise_reset
 from sopuli.output.rotate_view import render_rotate, render_selection_table
 from sopuli.output.status_view import build_result as build_status_result
 from sopuli.output.status_view import render_status_table
@@ -245,11 +249,13 @@ from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate
 from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, stage_layout
+from sopuli.personal import declared_on
 from sopuli.preflight import Finding
 from sopuli.safety import (
     RefusedError,
     confirmation_demanded,
     for_estate,
+    refuse_disallowed_method,
     refuse_if_over_limit,
     refuse_if_readonly,
     refuse_unconfirmed,
@@ -1450,6 +1456,483 @@ def _suspend_one(
         if session is not None:
             with suppress(Exception):
                 session.close()
+
+
+@account_group.command("reset-password")
+@click.option(
+    "--account",
+    "account",
+    required=True,
+    metavar="NAME",
+    help="The one account to reset. Required: this verb acts on exactly one.",
+)
+@click.option(
+    "--select",
+    "selectors",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Limit to targets carrying this label. Repeatable.",
+)
+@click.option(
+    "--target", "targets", multiple=True, metavar="NAME", help="Limit to this target. Repeatable."
+)
+@click.option(
+    "--group", "groups", multiple=True, metavar="NAME", help="Limit to this group. Repeatable."
+)
+@click.option(
+    "--keep-rollover",
+    is_flag=True,
+    default=False,
+    help="Leave an open rollover window open, so the old password keeps working.",
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Proceed without asking. Refused with `delivery.method: manual`, which always asks.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Waive guardrails 2 to 5. Never the whitelist, and never a deliberate lock.",
+)
+@global_options
+def account_reset_password(
+    account: str,
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    keep_rollover: bool,
+    confirm: bool,
+    force: bool,
+    run: Invocation,
+) -> str:
+    """Give a person's account a new password, and hand it over.
+
+    UC-2's reason for existing: somebody cannot get into their own account,
+    usually because the password expired and they no longer know it. This draws a
+    new one, sets it, and delivers it by the method `delivery:` names.
+
+    **Two paths, and the configuration chooses.** The unseen path -- the default
+    -- puts the value where only the owner can fetch it and shows it to nobody;
+    none of its methods is implemented yet (#444-#447), so a file naming one is
+    refused here rather than after the password has changed. The seen path,
+    `delivery.method: manual`, prints the password to your terminal and always
+    expires the account, because expiry at first logon is what ends your sight of
+    it.
+
+    **`--confirm` cannot be used with `manual`.** That path asks every time and no
+    flag may answer: the prompt exists to establish that somebody is watching, and
+    a flag asserting it would be testifying to its own premise. If nobody can
+    answer, nobody can receive the password either.
+
+    **Running it twice draws a second password.** There is no convergence to be
+    had -- a fresh random draw has nothing to compare against -- so this verb sits
+    outside invariant 9 (#454) and says so in what it prints. Whoever holds the
+    first password holds one that no longer works.
+
+    **The rollover window is closed by default** (UC-2 4.3), so the old password
+    stops working at once. `--keep-rollover` leaves it open, which is for the
+    reset where the person still knows their old password -- and exactly wrong
+    after a suspected disclosure, where somebody else knows it too.
+
+    **One account, named on the command line.** The target selectors narrow where
+    it is reset, not who is; each target holds a separate account with a separate
+    password. A predicate in `personal_accounts:` narrows and never widens.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+    action = "resetting a password"
+    refuse_if_readonly(run.resolved, action=action)
+
+    # Both delivery gates run before a selector is judged and before anything
+    # connects: a reset with nowhere to deliver, or one whose seen path cannot be
+    # watched, must not reach a database at all. UC-2 6.4's ordering is about
+    # which failure to prefer once a run is under way; this is about not starting.
+    delivery = reset.deliverable(run.config.delivery)
+    reset.refuse_seen_path(
+        delivery,
+        is_json=run.is_json,
+        stdout_is_terminal=is_a_terminal(sys.stdout),
+        confirm_given=confirm,
+        preview=run.dry_run,
+    )
+
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    run = _with_estate_safety(run, config)
+    refuse_if_readonly(run.resolved, action=action, estate=config)
+    # After the estate merge, because a target's or a group's `safety:` block is
+    # layer 4 and cannot narrow the set until a selector has run (#424, #498).
+    # `--force` is not passed and cannot be: this is a safety setting, and
+    # invariant 10 is that no source relaxes one.
+    refuse_disallowed_method(run.resolved, delivery.method)
+
+    reached = config.expanded_targets
+    plan = plan_builder.build_for_accounts(
+        config,
+        [(account, target.name) for target in reached],
+        intent=_reset_intent(),
+    )
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
+    document.plan = plan.as_json()
+    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
+
+    header = render_plan(plan, noun="account")
+    if not reached:
+        document.finish(ExitCode.SUCCESS, Summary())
+        return header + "\n\nnothing to reset"
+
+    if not run.dry_run and delivery.is_seen:
+        # **The plan goes out before the first statement, and before the prompt**
+        # (invariant 8; Copilot's review of #505). The verb returns its whole
+        # output as a string, so without this the operator would be asked to
+        # expose a password before seeing what the run was about to do -- and by
+        # then the DDL has already run. On stderr, which is where
+        # `_confirm_environments` puts the same thing for the same reason: stdout
+        # carries the result.
+        click.echo(header, err=True)
+
+    found = [
+        _reset_one(
+            target,
+            account,
+            run,
+            config,
+            delivery=delivery,
+            force=force,
+            keep_rollover=keep_rollover,
+            preview=run.dry_run,
+        )
+        for target in reached
+    ]
+
+    document.results = [one.as_json() for one in found]
+    states = [one.state for one in found]
+    changed = sum(1 for one in found if one.changed)
+    notice = _no_record_written()
+    document.diagnostics.append(notice)
+    document.finish(_reset_exit(states), summarise_reset(states, changed=changed))
+
+    body = render_reset(
+        [(one.account, one.target, one.state, one.status, one.detail) for one in found],
+        changed=changed,
+        preview=run.dry_run,
+        would_reset=sum(1 for one in found if one.would_reset) if run.dry_run else None,
+    )
+    shown = "\n\n".join(one.shown for one in found if one.shown is not None)
+    # Printed as well as serialised (#309): a warning nobody can see in the
+    # default output is not surfaced, and this one says the run kept no record
+    # of itself -- which is what a terminal operator needs, and what
+    # `diagnostics[]` alone tells only a JSON consumer.
+    told = "\n".join(render_notices([notice.message]))
+    return "\n\n".join(part for part in (header, body, told, shown) if part)
+
+
+def _reset_intent() -> list[str]:
+    """What the plan says this run will do, before it does any of it.
+
+    **One word, and the expiry is not a second one.** The seen path always
+    expires, but `PASSWORD EXPIRE` is a *suffix* on the statement that sets the
+    password rather than a statement of its own (UC-2 4.1), so there is nothing
+    separate to promise -- and inventing an `expire_password` intent would put a
+    word in the contract that names no action the driver reports.
+
+    The unlock and the window close are left out for the opposite reason: both
+    are real statements, and both are conditional on state the plan has not read.
+    A plan naming a statement that then does not run is what invariant 8 exists
+    to prevent.
+    """
+    return ["password_set"]
+
+
+def _no_record_written() -> Diagnostic:
+    """UC-2 3.4's first absence, which is this build's only answer.
+
+    The record and the advisory lock keyed on its path are #468's shape and
+    nobody's writer yet, so **no run writes one**, whatever `reset_records:`
+    says. Emitted on every run rather than only where a store is unconfigured,
+    because in this build the two are one situation -- and a warning that fired
+    selectively would imply the other case worked.
+    """
+    return Diagnostic(
+        level="warning",
+        message=(
+            "no reset record was written: this build has no writer for `reset_records:` "
+            "yet, so the run document and the database are the whole record of this reset"
+        ),
+    )
+
+
+def _reset_exit(states: Sequence[str]) -> ExitCode:
+    """Exit 4 where a target could not be reached, 0 otherwise -- `suspend`'s rule.
+
+    A refusal is not a failure: `SKIPPED` is the guardrails working and
+    `ACCOUNT_MISSING` is an ordinary fact about an estate.
+    """
+    failed = set(states) - {reset.RESET, reset.SKIPPED, reset.ACCOUNT_MISSING}
+    return ExitCode.PARTIAL if failed else ExitCode.SUCCESS
+
+
+@dataclass(frozen=True)
+class _Reset:
+    """One (account, target) after `account reset-password` has looked at it."""
+
+    account: str
+    target: str
+    state: str
+    changed: bool
+    detail: str | None = None
+    #: ``ACCOUNT_STATUS`` as it was **read**, before anything was issued.
+    status: str | None = None
+    #: One entry per statement the driver considered: (kind, applied, detail).
+    actions: tuple[tuple[str, bool, str | None], ...] = ()
+    #: The delivery *method*, never a value and never a destination. `manual`'s
+    #: destination is a person, by a route the tool did not carry (UC-2 3.1).
+    delivered: str | None = None
+    overridden: tuple[guardrails.Refusal, ...] = ()
+    #: Under ``--dry-run``, whether this row cleared every gate.
+    would_reset: bool = False
+    duration_ms: int | None = None
+    error: Error | None = None
+    #: The rendered password block, on the seen path only. **Never serialised**:
+    #: `as_json` cannot reach it, and there is no field in the schema it could
+    #: go in. It travels here because the caller prints it after the table, and
+    #: the ordering of those two is a display decision rather than a safety one
+    #: -- the safety is that the run never got this far unless every guard passed.
+    shown: str | None = None
+
+    def as_json(self) -> dict[str, Any]:
+        return build_reset_result(
+            self.account,
+            self.target,
+            state=self.state,
+            changed=self.changed,
+            actions=self.actions,
+            status=self.status,
+            delivered=self.delivered,
+            overridden=self.overridden,
+            duration_ms=self.duration_ms,
+            error=self.error,
+        )
+
+
+def _reset_one(
+    target: ExpandedTarget,
+    account: str,
+    run: Invocation,
+    config: Config,
+    *,
+    delivery: Delivery,
+    force: bool,
+    keep_rollover: bool,
+    preview: bool,
+) -> _Reset:
+    """One target: read the account, decide, draw, set, and hand it over.
+
+    **The order is UC-2 6.4's, and on this path it is `ALTER USER` then print.**
+    The irreversible step goes last, and what cannot be undone here is the
+    printing: a password shown to a DBA has been shown, and one printed without
+    having been set tells them something false, which they will then pass on. So
+    the value on the screen is the account's password by the time anybody reads
+    it. The unseen path prefers the other order, and gets it when a method that
+    delivers elsewhere lands.
+
+    **The password is drawn after the state is read**, not before: the byte limit
+    the policy is validated against is a property of the target (#383), and a
+    draw that ignored it would fail mid-statement on 21c and older.
+
+    Under ``--dry-run`` the read still happens and nothing else does. A preview
+    that skipped the read could not say which account is declared here, what
+    state it is in, or which guardrail would stop it.
+    """
+    started = time.monotonic()
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+            state = session.describe_user(account)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            return _Reset(
+                account=account,
+                target=target.name,
+                state=check_states.ERROR,
+                changed=False,
+                detail=reported.message,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
+
+        decision = reset.decide(
+            state,
+            config=config,
+            account=account,
+            target=target.name,
+            delivery=delivery,
+            force=force,
+        )
+        status = state.status if state is not None else None
+        overridden = decision.review.overridden if decision.review is not None else ()
+        if not decision.proceed:
+            return _Reset(
+                account=account,
+                target=target.name,
+                state=decision.state,
+                changed=False,
+                detail=decision.detail,
+                status=status,
+                overridden=overridden,
+                duration_ms=_elapsed(started),
+            )
+
+        if preview:
+            # **Nothing below this line may run under --dry-run** (invariant 8),
+            # and the first draft of this function proved why the rule is written
+            # as a hard stop rather than a habit: `preview` was threaded in and
+            # never read, so a dry run drew a password, issued the DDL and then
+            # aborted at the prompt -- leaving the account expired with a password
+            # nobody had seen. Found by running it, in the one way a test of the
+            # code as written could not have been.
+            return _Reset(
+                account=account,
+                target=target.name,
+                state=decision.state,
+                changed=False,
+                detail=f"{decision.detail}; would be reset",
+                status=status,
+                overridden=overridden,
+                would_reset=True,
+                duration_ms=_elapsed(started),
+            )
+
+        try:
+            if decision.expire:
+                # UC-2 4.3's refusal, asked here as well as inside the driver:
+                # this is the last point before a password is drawn, and drawing
+                # one for a reset that cannot run wastes nothing but says the
+                # refusal arrived later than it had to.
+                session.require_no_rollover_window(account)
+            secret = generate(
+                _reset_policy(config, account, target.name, state),
+                limit=session.byte_limit(),
+            )
+            changes = session.reset_password(
+                account,
+                secret,
+                expire=decision.expire,
+                keep_rollover=keep_rollover,
+            )
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            return _Reset(
+                account=account,
+                target=target.name,
+                state=check_states.ERROR,
+                changed=False,
+                detail=reported.message,
+                status=status,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
+
+        # The row is built **before** the hand-over, and that is not style
+        # (Copilot's review of #505). `_hand_over` prompts, and declining raises
+        # `click.Abort` -- which used to propagate out of the caller's list
+        # comprehension before `document.results` was ever assigned, so a run
+        # that had changed and expired a password reported only "aborted before
+        # completion". The boundary's own docstring names that case as the one a
+        # document exists for: *a confirmation declined halfway through is
+        # exactly when a scheduler wants to know which targets were touched.*
+        row = _Reset(
+            account=account,
+            target=target.name,
+            state=reset.RESET,
+            changed=True,
+            detail=decision.detail,
+            status=status,
+            actions=tuple((one.action, one.changed, one.detail) for one in changes),
+            delivered=delivery.method,
+            overridden=overridden,
+            duration_ms=_elapsed(started),
+        )
+        try:
+            return replace(
+                row,
+                shown=_hand_over(secret, account=account, target=target.name, delivery=delivery),
+            )
+        except click.Abort:
+            # Recorded, then re-raised. The row carries no password -- there is
+            # no field for one -- so what survives is the fact of the mutation
+            # and nothing that would make declining to look pointless.
+            run.document.results = [*(run.document.results or []), row.as_json()]
+            raise
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+def _reset_policy(
+    config: Config, account: str, target: str, state: UserState | None
+) -> PasswordPolicy:
+    """The policy this account's password is drawn from.
+
+    The rule that admitted the account names it, and `defaults.policy` answers
+    where the rule does not -- the same chain `bindings.py` reads for an
+    application account, so a personal policy is configured the way every other
+    policy is.
+    """
+    rule = (
+        declared_on(config, state.name, target, profile=state.profile, roles=state.roles)
+        if state is not None
+        else None
+    )
+    named = (rule.policy if rule is not None else None) or config.defaults.policy
+    if named is None:
+        raise ConfigError(
+            f"no password policy for {account}",
+            hint=(
+                "name one on the `personal_accounts:` entry that declares it, or set "
+                "`defaults.policy:`"
+            ),
+        )
+    dangling(named, {policy.name for policy in config.policies}, noun="policy", section="policies")
+    return next(policy.password for policy in config.policies if policy.name == named)
+
+
+def _hand_over(secret: Secret, *, account: str, target: str, delivery: Delivery) -> str | None:
+    """Deliver the password, and return whatever the operator should see.
+
+    **The one call into the seen path's reveal**, and the only place in `cli.py`
+    that can reach it. Everything that makes it allowable was established before
+    the run connected: the method is `manual`, the output is text, stdout is a
+    terminal (`reset.refuse_seen_path`), and `force_expire: true` was written in
+    the file (the config layer). What is left is the prompt.
+
+    **The prompt is asked here, after the password is set**, which is 6.4's
+    ordering: the value being shown is by then the account's real password. It is
+    asked on stderr and answered from the terminal, and declining raises -- there
+    is nothing to undo, and the operator has simply chosen not to look, which
+    leaves the account holding a password nobody has seen. That is a lockout the
+    next reset fixes, and it is what "aborted" has to mean here.
+
+    ``None`` for an unseen method, which prints nobody anything.
+    """
+    if not delivery.is_seen:
+        return None
+    click.confirm(
+        f"show the new password for {account} on {target} on this terminal?",
+        abort=True,
+        err=True,
+    )
+    return render_password(secret, account=account)
 
 
 @account_group.command("list")

@@ -103,8 +103,8 @@ prompt — and it holds unchanged now that the answer is a different key.
 
 | Command | What it does | Mutates |
 |---|---|---|
-| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody | yes |
-| `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, show it once — after confirmation | yes |
+| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. **Built, and refused**: no unseen method is implemented (#444-#447), so a file naming one is refused at plan time on exit 5 rather than after the password has changed | yes |
+| `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, show it once — after confirmation. **Built** (#441), under §6.5's five guards | yes |
 | `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password — "make them change it" | yes |
 | `sopuli account list` | resolve the declaration — names, or a predicate over a profile or role — and report what it matched, with each account's state. Reads no password and writes none (H1, #449) | no |
 | any of the mutating verbs, under `--dry-run` | prints the plan and never a password (invariant 8, which binds on every one of them — not the resets alone) | no |
@@ -565,7 +565,10 @@ and the print on the other.
 **The driver half is built** (#441): `Session.reset_password`, which issues all
 three statements as one operation, and `Session.require_no_rollover_window`, which
 is §4.3's refusal asked at plan time. The verb, the delivery and the record are the
-other half and are not built. Four things about the build belong here rather than
+other half; **the verb and the seen delivery are built too** (#441), and the
+record is the part that is not — every run warns that the run document and the
+database are its whole trace. Four things about the driver build belong here
+rather than
 in a diff, and the last two were measured on 26ai Free 23.26.2.0.0 on 2026-09-20
 because reasoning could not settle them:
 
@@ -1008,6 +1011,21 @@ guards are:
 | **refused unless stdout is a terminal** | the guard `--reveal` has no counterpart for, and the one that carries the argument: a value redirected to a file or captured in a CI log outlives the single logon it is good for, because a log is read later and by other people, and expiry does not unpublish it. `\| clip` stops working; that cost is accepted rather than worked around |
 | confirmed every time, and `--confirm` does not answer it (§2) | a yes given in advance asserts the very thing the prompt exists to establish |
 | `force_expire: true` required, refused at plan time when absent | the exposure is bounded by the person's next logon, or it is not bounded at all |
+
+**All five are built** (#441), and the build added one absence worth stating
+here rather than leaving to be discovered: **a `--dry-run` is exempt from guards
+2 to 4.** A preview prints a plan and never a password (§2), so there is no
+emission for those three to guard — and the first draft refused one for want of a
+terminal, which made *show me what this would do* impossible from the CI job that
+most wants it. Guard 5 still binds on a preview, because it is a property of the
+file rather than of an emission: a `manual` block without `force_expire: true` is
+refused whether or not anything runs.
+
+Guard 1 is also now **enforced rather than described**:
+`tests/test_reveal_sites.py` parses `src/` and holds the set of `reveal()` call
+sites to exactly those invariant 2 permits. Until #441 the count lived in three
+docstrings, one of which said "the only `reveal()` call in the tool" and had been
+false since this path was designed.
 
 **The justification is different from `policy sample --reveal`'s, and weaker**,
 which is why the narrowing is stricter. A sample guards nothing; this is a

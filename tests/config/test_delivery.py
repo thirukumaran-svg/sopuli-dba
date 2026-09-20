@@ -161,15 +161,23 @@ def test_the_block_is_a_mapping_not_a_list() -> None:
 # ----------------------------------------------- nothing can deliver yet ---
 
 
-def test_a_configured_method_warns_that_nothing_implements_it() -> None:
+def test_an_unimplemented_method_warns_that_nothing_serves_it() -> None:
     """A `delivery:` block that validates silently reads as delivery being
     configured, and the operator would find out otherwise at the moment a password
     had already been drawn."""
-    notice = unserviceable(built(method="manual", manual={"force_expire": True}))
+    notice = unserviceable(built(method="vault_wrapped", vault_wrapped={"ttl": "15m"}))
 
     assert notice is not None
-    assert "manual" in notice
-    assert "no delivery method is implemented" in notice
+    assert "vault_wrapped" in notice
+    assert "not implemented in this build" in notice
+
+
+def test_an_implemented_method_warns_about_nothing() -> None:
+    """`manual` is served as of #441, and the warning had to learn that: it read
+    *no delivery method is implemented* for every configured method, so an estate
+    with a working seen path was told nothing could hand a password over. Caught
+    by Copilot's review of #505."""
+    assert unserviceable(built(method="manual", manual={"force_expire": True})) is None
 
 
 def test_no_block_means_nothing_to_warn_about() -> None:
@@ -250,11 +258,11 @@ def test_the_warning_reaches_config_warnings_rather_than_only_the_helper() -> No
     config = build_config(
         {
             "version": 1,
-            "delivery": {"method": "manual", "manual": {"force_expire": True}},
+            "delivery": {"method": "vault_wrapped", "vault_wrapped": {"ttl": "15m"}},
         }
     )
 
-    found = [warning for warning in config.warnings if "no delivery method" in warning.message]
+    found = [warning for warning in config.warnings if "not implemented" in warning.message]
     assert len(found) == 1
     assert found[0].at == "delivery.method"
     assert found[0].hint is not None

@@ -825,9 +825,9 @@ question is where their test database lives.
 
   Two gates confirm without consulting the setting, and are unaffected: `creds
   rotate` confirms unconditionally under UC-1 §8 step 1, and `lock break` always
-  has. **A third is specified and not built**: UC-2's seen (`manual`) reset, where
-  the DBA sees a working password, confirms every time — decided on review of
-  #457, `../use-cases/uc-02-personal-account-passwords.md` §2.
+  has. **A third is built** (#441): UC-2's seen (`manual`) reset, where the DBA
+  sees a working password, confirms every time — decided on review of #457,
+  `../use-cases/uc-02-personal-account-passwords.md` §2.
 
   **That third gate is the one `--confirm` does not answer** (#439), and it is the
   only such gate in the tool. For the other two and for the setting, `--confirm` is
@@ -917,7 +917,7 @@ tool safe to run from a scheduler.
   **`jsonl` is the one of the three that does not exist** — `--output` takes
   `text` and `json`, and asking for `jsonl` is a usage error. It is specified
   ahead of its code rather than unbuilt by accident: the event schema is
-  published (`../schemas/sopuli-event-1.0.schema.json`) and #9 is the issue.
+  published (`../schemas/sopuli-event-1.1.schema.json`) and #9 is the issue.
 - One structured audit record per mutation: who (OS user + vault identity), what
   (account, target, operation), when, correlation id, result. Never the secret.
 - A log level, an optional log file, and an explicit statement in the docs that

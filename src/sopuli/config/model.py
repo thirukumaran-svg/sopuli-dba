@@ -905,6 +905,29 @@ class ResetRecords:
 
 
 @dataclass(frozen=True)
+class ManualDelivery:
+    """`delivery.manual:` -- the seen path's settings (#439, #441).
+
+    One key, and it is **required rather than defaulted**. `manual` is the only
+    method that shows a working password to somebody who is not its owner, and
+    what makes that allowable is not that it is harmless but that the exposure is
+    deliberate, witnessed and *time-limited* (UC-2 §1). Expiry is what ends it: a
+    `manual` delivery without `force_expire: true` would be an exposure with no
+    end, so the fifth of #439's five guards refuses one at plan time rather than
+    quietly supplying the safe value.
+
+    **Defaulting it to `True` would have been worse than refusing**, which is why
+    it is a required key and not a field with a default. An estate that never
+    wrote it would get the guard silently, and the one that wrote
+    `force_expire: false` deliberately would get it too -- so the file would say
+    one thing and the run would do another, in the direction that reads as
+    protection.
+    """
+
+    force_expire: bool
+
+
+@dataclass(frozen=True)
 class Delivery:
     """How a personal account's new password reaches its owner (UC-2 §6, #440).
 
@@ -926,9 +949,17 @@ class Delivery:
     a property of a delivery rather than of a run -- and which may never carry the
     secret or anything that retrieves it (UC-2 §6.1), a rule its own builder must
     enforce because it needs the template grammar.
+
+    **`manual` is the first method to claim its field** (#441), which is the shape
+    #440 described in advance: each method's issue adds a typed field of its own
+    rather than a bag. It is ``None`` where `manual` is not the selected method --
+    an unselected method's settings are not read, and a field holding them would
+    invite a consumer to act on a block the run is not using.
     """
 
     method: str
+    #: `manual`'s settings, where `manual` is selected (#439, #441).
+    manual: ManualDelivery | None = None
 
     @property
     def is_seen(self) -> bool:

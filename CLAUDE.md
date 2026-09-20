@@ -75,7 +75,9 @@ something specific.
    is a reminder:
 
    - one reveal site, in the seen path's own view module, reachable only when the
-     configured delivery method is `manual`;
+     configured delivery method is `manual` -- and `tests/test_reveal_sites.py`
+     now holds the whole set by parsing `src/`, so a fifth site fails the suite
+     rather than being noticed in review (#441);
    - refused with `--output json` and `--output jsonl`, as `--reveal` is, and the
      run schema gives the result no property a password could occupy;
    - **refused unless stdout is a terminal.** This has no counterpart in
@@ -91,6 +93,12 @@ something specific.
      either. It is the same claim the terminal check makes, made twice on purpose;
    - `force_expire: true` is required on the method, and a `manual` delivery
      without it is refused at plan time rather than silently defaulted.
+
+   **All five are built** (#441). A sixth guard the build added on its own is
+   worth knowing because it is an absence: a `--dry-run` of the seen path is
+   *exempt* from guards 2 to 4, because a preview prints a plan and never a
+   password, and refusing one for want of a terminal made "show me what this
+   would do" impossible from the job that most wants it.
 
    A fifth exception is a decision, not an implementation detail — and so is
    loosening any of the five guards above.

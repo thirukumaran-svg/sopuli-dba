@@ -555,15 +555,12 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 type=tuple,
                 layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
                 policy=MergePolicy.RATCHET,
+                # Inert until #441, which is the issue #498 named in advance as
+                # "the first to land is what reads the resolved set". It landed,
+                # so the reason is deleted rather than left to rot --
+                # `tests/settings/test_settings_are_wired.py` fails either way
+                # round, which is what sends somebody back to the documents.
                 list_merge=ListMerge.INTERSECTION,
-                inert_reason=(
-                    "no delivery method is implemented in this build, so nothing asks "
-                    "which ones are allowed; #441 and #444-#447 build them, and the "
-                    "first to land is what reads the resolved set. Until then the "
-                    "setting is parsed, ratcheted, reported by `config show --explain` "
-                    "and refuses a configuration no layer could deliver under -- none "
-                    "of which is a consumer"
-                ),
             ),
             # --- one store, several layers (C13, #136) -----------------------
             #

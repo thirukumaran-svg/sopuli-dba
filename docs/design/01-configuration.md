@@ -228,8 +228,28 @@ of the two (§9b's whole division is that the schema is the incomplete check). S
 is a claim about the file's grammar, and the second is a claim about a method's
 settings, which belongs to that method's issue.
 
-**What is inside a sub-block is not validated yet.** Which keys a method takes is
-that method's own issue, because the answer is a fact about the service behind it:
+**`manual:` is the first sub-block with keys** (#441). It takes one, and it is
+required rather than defaulted:
+
+```yaml
+delivery:
+  method: manual
+  manual:
+    force_expire: true
+```
+
+`force_expire: true` is #439's fifth guard, and the only one of the five that
+lives in the file rather than in a run. `false` is **refused rather than
+honoured**, and the key is required rather than defaulted to `true`, for the same
+reason: defaulting would give the guard silently to an estate that never wrote it
+*and* to one that deliberately asked for the opposite, so the file would say one
+thing and the run would do another — in the direction that reads as protection.
+The block is read only when `manual` is the selected method, so a `manual:` block
+kept beside `method: vault_wrapped`, for switching between them, is still
+unjudged.
+
+**What is inside the other five sub-blocks is not validated yet.** Which keys a
+method takes is that method's own issue, because the answer is a fact about the service behind it:
 a response-wrapping token is single-use by construction, so `num_uses` is a config
 *error* rather than a key with a default (#444), and nothing in a config layer can
 know that. Until those land, a typo inside a sub-block is accepted — which is why

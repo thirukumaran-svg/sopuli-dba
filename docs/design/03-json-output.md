@@ -41,8 +41,8 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.26.schema.json`](../schemas/sopuli-run-1.26.schema.json),
-[`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
+Schemas: [`../schemas/sopuli-run-1.27.schema.json`](../schemas/sopuli-run-1.27.schema.json),
+[`../schemas/sopuli-event-1.1.schema.json`](../schemas/sopuli-event-1.1.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---
@@ -1561,7 +1561,8 @@ serialisation is the literal string `"***"`, and whose `__str__`/`__repr__` is t
 same. Nothing in the codebase can accidentally emit one by forgetting a helper,
 because there is no code path that produces the plaintext except the vault write,
 the database driver call, `policy sample --reveal`, and UC-2's seen reset (#439,
-specified and not built).
+built in #441). `tests/test_reveal_sites.py` pins that list by parsing `src/`, so
+a fifth path fails the suite rather than being noticed in review.
 
 Consequences that show up in the schema:
 
@@ -1608,11 +1609,17 @@ See `04-testing.md` §6.
 
 #### The second exception: UC-2's seen reset (#439)
 
-**Decided and not built.** `account reset-password` on the `manual` delivery path
-prints a working password once. Written here because this section is the redaction
-contract, and a contract that named only the first exception would contradict the
-use case the moment #441 lands — the failure #411 was raised about, where a settled
-result reaches one document and leaves the others disagreeing.
+**Built** (#441). `account reset-password` on the `manual` delivery path prints a
+working password once, under five structural guards. Written here because this
+section is the redaction contract, and a contract that named only the first
+exception would have contradicted the use case the moment the verb landed — the
+failure #411 was raised about, where a settled result reaches one document and
+leaves the others disagreeing.
+
+**Nothing in this contract can carry the value**, which is the half that matters
+here: `results[]` has no property a password could occupy, and the verb refuses
+`--output json` and `--output jsonl` outright. Those are one guard asserted twice,
+and the second is the one that survives somebody adding an output mode.
 
 **Its justification is different, and weaker.** The first exception rests on a
 sample being no credential at all. This *is* one, and somebody can log in with it.
@@ -1977,6 +1984,56 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**The event schema went 1.0 to 1.1 in the same change** (#441), and it adds an
+event nothing emits: **`password.displayed`**, the seen reset's exposure.
+
+That is deliberate rather than an oversight, and it is the one place this
+document's usual rule bends. A contract value with no emitter is normally the
+defect `SOPULI-W022` was written to fix -- but the whole event schema has had no
+emitter since it was published, because `--output jsonl` is unimplemented (#9),
+so this is extending an artefact that is already ahead of its stream rather than
+creating a new inconsistency. The word is registered with **the change that
+causes the exposure** rather than with the one that will carry it, because the
+change that knows why the event exists is the one that should name it.
+
+**What records the exposure today is the run document**, which every run has:
+`results[].delivered` says the method was `manual`, and `manual` is by definition
+the path that shows somebody a password. `password.displayed` is what a *stream*
+consumer will read when there is a stream.
+
+**1.26 became 1.27 with `sopuli account reset-password`** (#441), UC-2's reset.
+Two additive changes:
+
+- `account.reset-password` joins the `command` enum;
+- **`RESET` joins the `state` enum** — what a reset row reports, the way
+  `account suspend` reports `LOCKED`: the thing that happened to the account. It
+  is not one of the existing words and reusing one would have been worse than a
+  bump — `IN_SYNC` claims a comparison this verb never makes, and the account's
+  own status differs by path (`EXPIRED` on the seen path, `OPEN` on the unseen
+  one), so neither is a fact about the *reset*;
+- **`results[].delivered`** — how the password was handed over: the delivery
+  *method*, never a value and never a destination. `manual` records the method
+  and no location, because the seen path's destination is a person by a route the
+  tool did not carry, and UC-2 §3.1's record draws the same distinction. Absent on
+  a row that delivered nothing, which is every row a run refused.
+
+**No new `action_kind`**, which is worth saying because the verb issues three
+statements and reports each: `account_unlock`, `password_set` and
+`rollover_finish` have all been in that enum since it was written.
+
+**`state` did need one**, and the first draft of this section claimed otherwise —
+caught by Copilot's review of #505, which found that `account reset-password
+--dry-run --output json` emitted `state: "RESET"` against an enum that stopped at
+`DECLARED`, so the tool produced a document its own contract rejected. That
+combination is reachable because a preview is exempt from the seen path's output
+guard: it prints a plan and never a password.
+
+**There is no property a password could occupy, and that is a guard rather than
+an omission** (#439's second). Refusing `--output json` stops the seen path from
+running while a document is produced; this makes the document unable to carry the
+value whatever runs. The two are one guard asserted twice, and the second is the
+one that survives somebody adding an output mode.
 
 **1.25 became 1.26 with `safety.delivery.allowed_methods`** (#498), H6's ratchet.
 One additive change: **`config.targets[].safety.delivery`**, an object holding

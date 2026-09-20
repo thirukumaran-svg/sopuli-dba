@@ -2141,27 +2141,225 @@ out: **`CAPABILITIES` reads 5 on 18c and 6 on 21c and 26ai.** The missing one is
 
 ---
 
-## 10a. The two UC-2 verbs that exist
+## 10a. The UC-2 verbs
 
-UC-2 is half built. There is **no `reset-password` and no `expire-password`** — the
-verbs that change a password — and if that is what you sat down to test, stop here;
-the delivery half is still design documents. All three decisions that blocked it
-are settled now — #439 (the seen path prints, under five guards), #453
-(`safety.delivery.allowed_methods`, ratcheting by intersection) and #454 (a reset
-reports `changed: true` every run and warns what it replaced, because a fresh
-random draw has nothing to converge on).
+Three exist: `account reset-password`, `account suspend` and `account list`.
+There is still **no `expire-password`**.
 
-**One of the three is built.** #453's ratchet resolves, merges and is reported by
-`config show --explain` (see `safety.delivery.allowed_methods` below), and no verb
-reads it, because no delivery method exists to be allowed or refused. #439's five
-guards are not built at all.
+`reset-password` is built on the **seen** path only (#441). The unseen methods —
+`vault_wrapped` and the rest — are #444-#447, and a file naming one is refused at
+plan time rather than after the password has changed. So what you can test here is
+the path that prints a password to your terminal, which is the one with five
+guards on it.
 
-#454 is worth knowing before the verb exists, because it decides what a retry
-does: **there is no re-run that quietly does nothing.** A second reset draws a
-second password, and whoever holds the first now holds one that fails.
+**#454 is what decides what a retry does**, and it is worth knowing before you run
+anything twice: **there is no re-run that quietly does nothing.** A second reset
+draws a second password, and whoever holds the first now holds one that fails.
 
-What you can run is `account suspend`, which locks an account, and `account list`,
-which reads the declaration and shows you what it matched.
+### `account reset-password` — the seen path
+
+The configuration needs three things: a `personal_accounts:` entry declaring the
+account, a policy to draw from, and a `delivery:` block selecting `manual`.
+
+```yaml
+personal_accounts:
+  - accounts: [acme_dev_alice]
+    policy: personal-standard
+
+delivery:
+  method: manual
+  manual:
+    force_expire: true
+```
+
+Make the account first:
+
+```sql
+CREATE USER acme_dev_alice IDENTIFIED BY "Old-Pa55word-Alice1";
+GRANT CREATE SESSION TO acme_dev_alice;
+```
+
+#### The preview, which reaches the database and changes nothing
+
+```bash
+sopuli --config manual.yaml account reset-password --account acme_dev_alice --dry-run
+```
+```
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT         TARGET    INTENT        SECRET
+acme_dev_alice  free-pdb  password_set  -
+
+ACCOUNT         TARGET    STATE  WAS   DETAIL
+acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'; would be reset
+
+would reset acme_dev_alice on 1 of 1 targets
+```
+
+Exit 0. Three things to read out of it. `SECRET` is `-` because nothing masters a
+personal account's password — there is no vault document, which is the first way
+UC-2 differs from UC-1. `WAS` is the account status *before* anything would be
+issued. And the preview **works without a terminal**, which is deliberate: the
+guards below protect an emission, and a preview emits nothing.
+
+That last one is worth causing on purpose, because it was a bug: the first build
+of this verb reset the password under `--dry-run` and then aborted at the prompt,
+leaving the account expired with a password nobody had seen. Check it yourself —
+run the preview, then look at `ACCOUNT_STATUS`. It must still be `OPEN`.
+
+#### Doing it
+
+At a terminal, because it will not run anywhere else:
+
+```bash
+sopuli --config manual.yaml account reset-password --account acme_dev_alice
+```
+```
+show the new password for acme_dev_alice on free-pdb on this terminal? [y/N]: y
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT         TARGET    INTENT        SECRET
+acme_dev_alice  free-pdb  password_set  -
+
+ACCOUNT         TARGET    STATE  WAS   DETAIL
+acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'
+
+reset acme_dev_alice on 1 of 1 targets
+
+password for acme_dev_alice, shown once:
+
+    <the password, on a line of its own>
+
+It is expired: the owner must change it at first logon, which is what ends
+your sight of it. It is not stored anywhere and will not be shown again.
+```
+
+**The password in that sample is substituted and nothing else is.** The run was
+real — against 26ai in the tier-1 stack, on an account dropped afterwards — and
+the value it printed is left out on purpose: a document that shows something
+shaped exactly like a working credential teaches the wrong reflex, and the shape
+of the output is what this sample is for.
+
+The account is `EXPIRED` afterwards, and the password **works**: logging in with
+it answers `ORA-28001`, which is Oracle's change-at-logon flow rather than a
+refusal. `ORA-01017` would mean it did not work at all. That distinction is the
+whole of UC-2 §5, and it is what makes the exposure time-limited — the owner's
+first logon ends it.
+
+#### Six failures worth causing
+
+Each has its own exit code, and a script branching on them wants them apart:
+
+```bash
+sopuli --config manual.yaml account reset-password --account acme_dev_alice --output json
+```
+```
+sopuli: `delivery.method: manual` cannot be used with --output json or --output jsonl
+  hint: json is what gets captured and shipped to log aggregation, so a working password never appears in it -- use the text output, or an unseen delivery method
+```
+
+Exit **2**. Guard 2, and it is `policy sample --reveal`'s refusal one verb over:
+the machine-readable format is the safe one, so it wins.
+
+```bash
+sopuli --config manual.yaml account reset-password --account acme_dev_alice | cat
+```
+```
+sopuli: `delivery.method: manual` prints a password, and stdout is not a terminal
+  hint: a value redirected to a file or captured in a CI log outlives the single logon it is good for, and expiry does not unpublish it. Run this at a terminal and read the password off the screen -- `| clip` and `| pbcopy` do not work here, deliberately -- or use an unseen delivery method
+```
+
+Exit **8**. Guard 3, the one the whole argument rests on. **There is no flag that
+turns it off**, and that is a decision rather than an omission: a flag that exists
+to weaken a guard ends up in scripts, which is the exact place this value must
+never reach. `| clip` not working is the accepted cost.
+
+```bash
+sopuli --config manual.yaml account reset-password --account acme_dev_alice --confirm
+```
+```
+sopuli: --confirm cannot answer the prompt `delivery.method: manual` asks
+  hint: that prompt is not a formality to be waived: the run is about to print a working password to a screen, and a flag cannot establish that somebody is at it. Drop --confirm and answer it -- if that is impossible, nobody is there to receive the password either
+```
+
+Exit **2**. Guard 4, and the only gate in the tool that cannot be given a yes in
+advance — `creds rotate` and `lock break` both take one.
+
+The two usage errors are asked **before** the terminal check, which is also worth
+knowing: a redirected run with `--confirm` is told about the flag rather than
+about a terminal it was never going to have.
+
+```bash
+sopuli --config no-expire.yaml config validate
+```
+```
+sopuli: no-expire.yaml: delivery.manual.force_expire: `manual` delivery needs `force_expire: true`
+  hint: `manual` prints a working password to your terminal, and expiry at first logon is what ends that exposure -- so it is written down rather than assumed (UC-2 6.5). Use an unseen method if you do not want the account expired
+```
+
+Exit **9**. Guard 5, and the only one of the five that lives in the file. Writing
+`force_expire: false` is refused in its own words rather than flipped:
+
+```
+sopuli: expire-false.yaml: delivery.manual.force_expire: `manual` delivery requires `force_expire: true`, not false
+  hint: there is no unexpiring seen path: until the owner's first logon the password on your screen is a working credential, and expiry is the only thing that ends that. An unseen method delivers without expiring
+```
+
+The last two are about having somewhere to deliver at all, and both refuse
+**before anything connects** — a reset that reached a database and then found
+nowhere to put the password would have changed one nobody can be told:
+
+```
+sopuli: `delivery.method: vault_wrapped` is configured and is not implemented in this build
+  hint: only `manual` can deliver today (#441); the unseen methods are #444-#447. `config validate` warns about this before a run needs it
+```
+
+Exit **5** — the capability code, because the file is not wrong. And with no
+`delivery:` block at all:
+
+```
+sopuli: no `delivery:` is configured, so a new password would have nowhere to go
+  hint: a reset hands a password to a person; without a delivery method there is nobody to hand it to. Configure `delivery:` (UC-2 6.2), or use `account expire-password` if what you want is to force a change
+```
+
+Exit **8**.
+
+#### The safety ratchet, refusing a method
+
+`safety.delivery.allowed_methods` (§10b) now has the consumer #498 said would
+arrive with the first delivery method. Narrow the set to something `manual` is
+not in:
+
+```yaml
+defaults:
+  safety:
+    delivery:
+      allowed_methods: [vault_wrapped]
+```
+```
+sopuli: `delivery.method: manual` is not permitted here; `safety.delivery.allowed_methods` allows vault_wrapped
+  hint: set at defaults.safety.delivery.allowed_methods; no layer can widen it (invariant 10), and --force does not reach a safety setting -- deliver by one of the permitted methods, or change the set where it is written
+```
+
+Exit **8**. Worth trying `--force` against it: it changes nothing, because
+`--force` waives the *account* guardrails and never a safety setting. Worth
+trying under `--dry-run` too — the refusal still fires, because it is about what
+the run is configured to do rather than about an emission.
+
+#### What is not built
+
+- **No reset record.** `reset_records:` parses and nothing writes to it, so every
+  run carries a warning saying the run document and the database are the whole
+  record. The advisory lock keyed on that record's path is absent with it, so two
+  DBAs resetting the same person at once are not serialised.
+- **No unseen delivery**, which is the default and the one the use case is really
+  about. #444-#447.
+- **No `expire-password`**, the verb that forces a change without setting one.
+
+### The two other UC-2 verbs
+
+`account suspend` locks an account, and `account list` reads the declaration and
+shows you what it matched.
 
 **What this verb does** is `ALTER USER "…" ACCOUNT LOCK` against an account
 `personal_accounts:` declares — the offboarding case. The state it produces is
@@ -3342,7 +3540,7 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.26.schema.json`](schemas/sopuli-run-1.26.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.27.schema.json`](schemas/sopuli-run-1.27.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json

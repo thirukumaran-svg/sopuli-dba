@@ -55,6 +55,7 @@ from sopuli.check import (
     UNVERIFIABLE,
 )
 from sopuli.generate import VAULT_ONLY
+from sopuli.reset import RESET
 from sopuli.store.protocol import DEGRADED, OK, UNREACHABLE
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -167,6 +168,18 @@ _STATE_ROLES: dict[str, Role] = {
     # compete with a row that does say something, and `IN_SYNC` stays the only
     # state a reader can stop reading at.
     DECLARED: Role.INCONCLUSIVE,
+    # A reset that happened (#441). **`ATTENTION`, not `GOOD`**, and the first
+    # draft had it the other way round until `test_the_converged_state_is_the_
+    # only_good_one` refused it -- rightly, and the rule it enforces is the
+    # reason: `IN_SYNC` is the one row a reader can stop at, and a second `GOOD`
+    # would make the column stop answering *what do I have to look at*.
+    #
+    # `ATTENTION` is also the honest answer here rather than a concession. A
+    # reset leaves work: the password is on a screen and has to reach a person,
+    # and that person must change it at first logon. A row saying *nothing to
+    # see* would be wrong about the one path whose whole premise is that
+    # somebody is watching it.
+    RESET: Role.ATTENTION,
 }
 
 

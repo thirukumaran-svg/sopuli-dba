@@ -5,8 +5,12 @@ question somebody actually has: *what do the passwords look like*. This renders
 samples so they can answer it — offline, drawing from
 :func:`sopuli.passwords.generate`, writing nothing anywhere.
 
-**This module holds the only ``reveal()`` call in the tool, and that is the third
-exception to invariant 2.** The rule is that no code path emits plaintext except
+**This module holds one of the tool's two output-layer ``reveal()`` calls, and it
+is the third exception to invariant 2.** It was *the only one* until #441 built
+UC-2's seen path, whose reveal lives in :mod:`sopuli.output.reset_view` and is
+invariant 2's fourth exception -- narrowed more strictly than this one, because
+its justification is weaker: that is a credential somebody can log in with, and
+this is a sample. The rule is that no code path emits plaintext except
 the vault write and the driver call; a sample is neither, and it is allowed
 because *a sample is not a credential*: nothing authenticates with it, it is never
 stored, and it guards nothing. What keeps the exception narrow is structural
@@ -84,9 +88,10 @@ def render_samples(
             _classes(description),
         ]
         if reveal:
-            # Invariant 2's third exception, and the only `reveal()` in the tool
-            # outside a test. See this module's docstring for why it is allowed and
-            # what keeps it from spreading.
+            # Invariant 2's third exception. One of two `reveal()` calls in the
+            # output layer -- `output/reset_view.py` has the fourth exception's --
+            # and `tests/test_reveal_sites.py` holds the pair to exactly that.
+            # See this module's docstring for why it is allowed.
             row.append(sample.reveal())
         rows.append(row)
 

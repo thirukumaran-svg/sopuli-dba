@@ -50,6 +50,10 @@ MAX_TARGETS = "safety.max_targets"
 #: The environments a mutation may not enter without an explicit yes (P5, #292).
 CONFIRM_ENVIRONMENTS = "safety.confirm_environments"
 
+#: Which UC-2 delivery methods an estate permits (H6, #453, #498). Ratchets by
+#: intersection, so a layer may only narrow the set.
+ALLOWED_METHODS = "safety.delivery.allowed_methods"
+
 #: How many readonly targets a refusal names before it stops listing them.
 #:
 #: A ceiling rather than a paragraph: the message exists so somebody can find the
@@ -414,6 +418,46 @@ def confirmation_demanded(
     if not matched:
         return None
     return Confirmation(environments=matched, location=answer.location)
+
+
+def refuse_disallowed_method(resolved: Mapping[str, Resolved], method: str) -> None:
+    """Stop a run whose delivery method no layer permits (H6, #453, #498).
+
+    The consumer #498 said would arrive with the first delivery method, arriving
+    with it (#441). Until now the set was resolved, ratcheted, reported by
+    `config show --explain` and read by nothing, which is the shape this
+    codebase has been bitten by four times and marks with ``inert_reason``.
+
+    **Unset is no constraint**, which is the intersection's first rule: an estate
+    that wrote nothing has not thereby forbidden everything. The resolver returns
+    ``None`` for a setting no layer supplied, and that is the ordinary case.
+
+    **`--force` has nothing to say about it.** That flag waives
+    ``02-oracle-privileges.md`` §4's *account* guardrails; this is a safety
+    setting, and invariant 10's whole point is that no source can relax one. So
+    the refusal takes no override parameter -- there is nothing for a caller to
+    pass, which is the same reason `--force` is not in the settings registry.
+
+    Exit 8 and category ``policy``, like every other refusal here: the file is
+    right and the answer is no. A method that does not *exist* is a different
+    thing and exits 5 (:class:`sopuli.reset.DeliveryUnavailableError`); this one
+    exists and is forbidden.
+    """
+    answer = resolved.get(ALLOWED_METHODS)
+    if answer is None or not answer.value:
+        return
+    permitted = tuple(answer.value)
+    if method in permitted:
+        return
+    raise RefusedError(
+        f"`delivery.method: {method}` is not permitted here; "
+        f"`{ALLOWED_METHODS}` allows {', '.join(permitted)}",
+        hint=(
+            f"set at {answer.location}; no layer can widen it (invariant 10), and "
+            f"--force does not reach a safety setting -- deliver by one of the permitted "
+            f"methods, or change the set where it is written"
+        ),
+    )
 
 
 def refuse_unconfirmed(demand: Confirmation, *, action: str, targets: int) -> None:

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-event-1.1.schema.json",
+  "title": "sopuli-dba streamed event",
+  "description": "One JSON object per line, emitted by `sopuli … --output jsonl` as the run progresses. The final run.finished event carries the same summary as the --output json document. Draft — not yet implemented (#9). 1.1 therefore adds an event nothing emits: `password.displayed` is registered with the path that causes it (#441, UC-2's seen reset) rather than with the stream that will carry it, so the word is decided by the change that knows why the event exists. The exposure is recorded today in the run document, which every run has.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["schema_version", "event", "seq", "ts", "correlation_id"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+    "event": {
+      "type": "string",
+      "enum": [
+        "run.started",
+        "plan.resolved",
+        "confirmation.required",
+        "lock.acquired",
+        "lock.denied",
+        "target.started",
+        "vault.read",
+        "vault.write",
+        "vault.promote",
+        "password.generated",
+        "password.applied",
+        "password.displayed",
+        "verification.done",
+        "target.finished",
+        "lock.released",
+        "diagnostic",
+        "run.finished"
+      ]
+    },
+    "seq": { "type": "integer", "minimum": 0, "description": "Monotonic within a run. Consumers may use gaps to detect truncation." },
+    "ts": { "type": "string", "format": "date-time" },
+    "correlation_id": { "type": "string" },
+    "account": { "type": ["string", "null"] },
+    "target": { "type": ["string", "null"] },
+    "level": { "type": "string", "enum": ["info", "warning", "error"], "default": "info" },
+    "message": { "type": ["string", "null"], "description": "Human-readable, redacted." },
+    "data": {
+      "type": "object",
+      "description": "Event-specific payload. Shapes are reused from the run schema: target.finished carries a $defs/result, run.finished carries a $defs/summary and exit_code, plan.resolved carries a $defs/plan.",
+      "additionalProperties": true
+    }
+  },
+
+  "allOf": [
+    {
+      "if": { "properties": { "event": { "const": "target.finished" } }, "required": ["event"] },
+      "then": { "required": ["account", "target", "data"] }
+    },
+    {
+      "if": { "properties": { "event": { "const": "run.finished" } }, "required": ["event"] },
+      "then": { "required": ["data"] }
+    },
+    {
+      "if": { "properties": { "event": { "const": "password.applied" } }, "required": ["event"] },
+      "then": {
+        "required": ["account", "target"],
+        "description": "Never carries the password. The data object may carry only the vault version and the action outcome."
+      }
+    }
+  ]
+}
