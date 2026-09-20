@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.64.0](https://github.com/villebase/sopuli-dba/compare/v0.63.0...v0.64.0) (2026-09-18)
+
+
+### Features
+
+* `sopuli account list`, the verb H1 owed ([#490](https://github.com/villebase/sopuli-dba/issues/490)) ([#493](https://github.com/villebase/sopuli-dba/issues/493)) ([ba78c82](https://github.com/villebase/sopuli-dba/commit/ba78c82c6559b9d10cc0218acd4c7d3b0b35306e))
+* **config:** the `delivery:` block, UC-2's handover ([#440](https://github.com/villebase/sopuli-dba/issues/440)) ([#499](https://github.com/villebase/sopuli-dba/issues/499)) ([2f0ee29](https://github.com/villebase/sopuli-dba/commit/2f0ee2990e56defebc08d1cb819f387b4d7d7cc1))
+* **config:** the `reset_records:` block, and the record a reset writes ([#468](https://github.com/villebase/sopuli-dba/issues/468)) ([#491](https://github.com/villebase/sopuli-dba/issues/491)) ([5852894](https://github.com/villebase/sopuli-dba/commit/5852894ece73d0ae6ae75982c79502135c346e10))
+
 ## [0.63.0](https://github.com/villebase/sopuli-dba/compare/v0.62.0...v0.63.0) (2026-09-18)
 
 
