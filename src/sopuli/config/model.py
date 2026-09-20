@@ -165,6 +165,28 @@ class Binding:
 
 
 @dataclass(frozen=True)
+class SafetyDelivery:
+    """The ``delivery:`` sub-block of a ``safety:`` block (H6, #453, #498).
+
+    A block of its own rather than a ``delivery_allowed_methods`` field, because
+    the key path is what an operator edits and what every message names:
+    ``safety.delivery.allowed_methods``. Flattening it here would leave the model
+    spelling one thing and the file another, and a second UC-2 safety axis would
+    have nowhere obvious to go.
+
+    **``None`` means no constraint, not the empty set**, which is the one reading
+    an intersection cannot get wrong twice: a layer that wrote nothing must be
+    distinguishable from one that allows nothing, or a file configuring no
+    delivery policy at all would resolve to an estate that can deliver nothing.
+    :class:`Safety`'s fields keep the same distinction for the same reason, and
+    ``allowed_methods: []`` is refused where it is read rather than stored as
+    ``()`` -- see :func:`sopuli.config.safety.build_safety`.
+    """
+
+    allowed_methods: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
 class Safety:
     """A ``safety:`` block, which §9 allows under ``defaults``, a target, a group
     or a profile.
@@ -172,7 +194,8 @@ class Safety:
     Every field is optional, and that is load-bearing rather than lazy. §9 says
     safety settings do *not* follow last-one-wins: the resolved value is the
     safest of all layers -- the lowest ``max_targets``, the union of
-    ``confirm_environments``, ``readonly`` if any layer sets it. A layer that
+    ``confirm_environments``, the *intersection* of
+    ``delivery.allowed_methods``, ``readonly`` if any layer sets it. A layer that
     says nothing must therefore be distinguishable from one that sets the
     built-in default, or "safest of all layers" cannot be computed. Resolution
     itself belongs to the precedence work; this only reads what was written.
@@ -181,6 +204,7 @@ class Safety:
     max_targets: int | None = None
     confirm_environments: tuple[str, ...] = ()
     readonly: bool | None = None
+    delivery: SafetyDelivery | None = None
 
 
 @dataclass(frozen=True)

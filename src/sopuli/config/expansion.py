@@ -305,6 +305,12 @@ def _render_safety(
             for index, name in enumerate(safety.confirm_environments)
         ),
         readonly=safety.readonly,
+        # `delivery.allowed_methods` carries no placeholder and cannot: every
+        # entry was checked against the method enum while the block was built,
+        # and a `{tenant}` in one would have been refused there. So it passes
+        # through whole, like `max_targets`, rather than being substituted into
+        # a value that can only be one of six literals.
+        delivery=safety.delivery,
     )
 
 
@@ -553,6 +559,13 @@ def _patch_safety(
         max_targets=base.max_targets if patch.max_targets is None else patch.max_targets,
         confirm_environments=confirm if confirm else base.confirm_environments,
         readonly=base.readonly if patch.readonly is None else patch.readonly,
+        # Key by key like the rest, and the whole sub-block at once: an override
+        # that writes `delivery:` replaces the template's, rather than merging
+        # one list into another and producing a set neither block contains.
+        # Widening is not a way round the ratchet -- `target_safety` contributes
+        # the template's block as well, so both reach the resolver and the
+        # intersection is taken over the two (#424).
+        delivery=base.delivery if patch.delivery is None else patch.delivery,
     )
 
 

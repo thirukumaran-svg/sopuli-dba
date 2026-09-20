@@ -913,6 +913,16 @@ def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:
     them in would make one object's answer depend on four, and hide which. They
     are in ``config.declared`` as written, and in the text view's ``safety``
     section by the key that writes them.
+
+    **A setting's name is a path, and the JSON nests along it** (schema 1.26,
+    Copilot's review of #500). Every safety setting was one key deep until
+    ``safety.delivery.allowed_methods``, so stripping the ``safety.`` prefix and
+    using the remainder as a key was the same thing as nesting. It stopped being
+    so the moment a setting had a sub-block: the flat form emits a property
+    literally called ``delivery.allowed_methods``, which the run schema's
+    ``additionalProperties: false`` refuses -- a document the tool produces and
+    its own contract rejects (invariant 12). Nesting along every separator is the
+    general form, so the next sub-block needs no change here either.
     """
     contributions: dict[str, list[Contribution]] = {}
     for name, value, detail, layer in target_safety(expanded):
@@ -923,13 +933,14 @@ def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:
         )
     if not contributions:
         return None
-    resolved = resolve_all(contributions)
-    return {
-        name.split(".", 1)[1]: list(answer.value)
-        if isinstance(answer.value, tuple)
-        else answer.value
-        for name, answer in resolved.items()
-    }
+    block: dict[str, Any] = {}
+    for name, answer in resolve_all(contributions).items():
+        *blocks, key = name.split(".")[1:]
+        where = block
+        for step in blocks:
+            where = where.setdefault(step, {})
+        where[key] = list(answer.value) if isinstance(answer.value, tuple) else answer.value
+    return block
 
 
 def _binding_json(binding: Binding) -> dict[str, Any]:

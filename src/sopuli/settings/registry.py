@@ -37,6 +37,14 @@ the setting unreachable and — worse — made it look like a guardrail while be
 the opposite. So :attr:`Setting.safe_bool` says which value is the safe one, per
 setting, declared rather than inferred from the name.
 
+**And so do ratcheted lists**, one type over and for the same reason (H6, #453).
+A list merged toward safety meant the union while there was one list setting.
+``safety.delivery.allowed_methods`` is the second, and it must *intersect* --
+each layer may only narrow which delivery methods an estate may use -- while
+``safety.confirm_environments`` must still union. Both are ``tuple[str, ...]``,
+so the type cannot say which is which and :attr:`Setting.list_merge` does,
+required for a ratcheted list and refused for anything else.
+
 **:attr:`Setting.layers` is enforced.** A contribution from a layer a setting
 does not declare raises rather than being merged. ``output`` has no meaning on a
 target and ``safety.max_targets`` has no business arriving from an environment
@@ -152,6 +160,39 @@ class MergePolicy(StrEnum):
     """The *safest* layer wins, whichever it is. Invariant 10."""
 
 
+class ListMerge(StrEnum):
+    """Which direction a ratcheted **list** setting merges (H6, #453).
+
+    The fourth shape of one policy, and the first that the value's type could not
+    give. Three are read off the type -- a boolean ratchets toward its safe value,
+    an integer to the minimum, a list to the union -- and that held for as long as
+    there was one list setting. ``safety.confirm_environments`` and
+    ``safety.delivery.allowed_methods`` are both ``tuple[str, ...]`` and must
+    merge oppositely, so the shape is declared per setting, exactly as
+    :attr:`Setting.safe_bool` already is for the booleans whose polarity the type
+    could not give either. That precedent is why this is a fourth shape rather
+    than a second mechanism.
+    """
+
+    UNION = "union"
+    """Every layer's entries are kept. One layer naming an environment is enough
+    to have it confirmed, and no layer can remove another's."""
+
+    INTERSECTION = "intersection"
+    """Only what *every* layer allows survives. Each layer may narrow the set and
+    none may restore what a lower one removed.
+
+    Fail-closed on purpose, which is the whole reason for the extra shape: a
+    delivery method a later release adds is unusable until an estate names it,
+    where a ``forbidden_methods`` union would have permitted it everywhere on
+    upgrade -- silently widening a guard that stands in front of putting a live
+    credential on a wire (``00-principles.md`` P3). Three rules come with it and
+    are the resolver's: unset means no constraint rather than the empty
+    intersection, disjoint layers are a refusal rather than an empty answer, and
+    there is no ``forbidden_methods`` key, now or later.
+    """
+
+
 #: The settings invariant 10 governs. One glance, one list.
 #:
 #: A name here may only be declared :attr:`MergePolicy.RATCHET`, and a name not
@@ -165,6 +206,7 @@ SAFETY_SETTINGS = frozenset(
         "safety.readonly",
         "safety.max_targets",
         "safety.confirm_environments",
+        "safety.delivery.allowed_methods",
         "locking.break_expired",
         "vaults.*.tls.verify",
     }
@@ -209,6 +251,17 @@ class Setting:
     #: renames a setting, and the failure mode is a guardrail that stops holding
     #: while every test still passes.
     safe_bool: bool = True
+    #: For a ratcheted **list**, which direction it merges (H6, #453).
+    #:
+    #: Required there and refused everywhere else, for :attr:`safe_bool`'s reason
+    #: read one type over: ``safety.confirm_environments`` and
+    #: ``safety.delivery.allowed_methods`` are both ``tuple[str, ...]``, one must
+    #: union and the other must intersect, and no property of the values says
+    #: which. A new list setting therefore cannot inherit a shape by omission --
+    #: the failure mode being a guard that merges the wrong way round while every
+    #: test still passes, which is the same failure mode ``policy`` is required
+    #: against.
+    list_merge: ListMerge | None = None
     #: Why this setting is accepted and then ignored, or ``None`` where it is
     #: wired to something (#358).
     #:
@@ -269,6 +322,21 @@ class Setting:
                 f"{self.name!r} declares safe_bool=False but is not a ratcheted bool; "
                 f"polarity only means anything for a ratcheted boolean"
             )
+        ratcheted_list = ratchet and self.type is tuple
+        if ratcheted_list and self.list_merge is None:
+            raise ValueError(
+                f"{self.name!r} is a ratcheted list and declares no list_merge; "
+                f"say which way it merges -- `confirm_environments` unions and "
+                f"`delivery.allowed_methods` intersects, and the type cannot tell "
+                f"them apart"
+            )
+        if self.list_merge is not None and not ratcheted_list:
+            # The mirror of the `safe_bool` rule above: OVERRIDE never merges
+            # anything, and a non-list has no union to have a direction in.
+            raise ValueError(
+                f"{self.name!r} declares list_merge={self.list_merge} but is not a "
+                f"ratcheted list; a merge direction only means anything for one"
+            )
 
     @property
     def is_safety(self) -> bool:
@@ -305,6 +373,7 @@ def _setting(
     policy: MergePolicy,
     builtin: Any = None,
     safe_bool: bool = True,
+    list_merge: ListMerge | None = None,
     inert_reason: str | None = None,
 ) -> Setting:
     return Setting(
@@ -314,6 +383,7 @@ def _setting(
         policy=policy,
         builtin=builtin,
         safe_bool=safe_bool,
+        list_merge=list_merge,
         inert_reason=inert_reason,
     )
 
@@ -460,6 +530,40 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 type=tuple,
                 layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
                 policy=MergePolicy.RATCHET,
+                list_merge=ListMerge.UNION,
+            ),
+            _setting(
+                # Which UC-2 delivery methods an estate may use (H6, #453). The
+                # fifth ratcheted setting and the first whose merge shape is
+                # declared rather than read off its type -- see
+                # :class:`ListMerge`, and `01-configuration.md` §9 for the three
+                # rules an intersection needs that a union does not.
+                #
+                # No built-in, like `max_targets` and for the same reading: an
+                # unset `allowed_methods` is *no constraint*, which is not the
+                # same claim as the tool having chosen a set. A built-in here
+                # would be worse than it is there, because it would take part in
+                # the intersection and cap every estate at whatever this release
+                # happened to know about.
+                #
+                # The same three layers as the rest of a `safety:` block. There
+                # is deliberately no `Layer.CLI`: a flag that widened the set for
+                # one run is the relaxation invariant 10 exists to forbid, and a
+                # flag that narrowed it would be a second spelling of a guard the
+                # file already writes.
+                "safety.delivery.allowed_methods",
+                type=tuple,
+                layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS),
+                policy=MergePolicy.RATCHET,
+                list_merge=ListMerge.INTERSECTION,
+                inert_reason=(
+                    "no delivery method is implemented in this build, so nothing asks "
+                    "which ones are allowed; #441 and #444-#447 build them, and the "
+                    "first to land is what reads the resolved set. Until then the "
+                    "setting is parsed, ratcheted, reported by `config show --explain` "
+                    "and refuses a configuration no layer could deliver under -- none "
+                    "of which is a consumer"
+                ),
             ),
             # --- one store, several layers (C13, #136) -----------------------
             #

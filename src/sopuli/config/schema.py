@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.6.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.7.schema.json
 """
 
 from __future__ import annotations
@@ -104,7 +104,17 @@ from sopuli.config import (
 #: editor offers the method names and checks nothing inside them -- which is why
 #: `sopuli config validate` warns that no method is implemented rather than
 #: letting a clean parse read as a working delivery.
-SCHEMA_VERSION = "1.6"
+#:
+#: 1.6 became 1.7 with `safety.delivery.allowed_methods` (H6, #453, #498): a
+#: `delivery:` sub-block of every `safety:` block, holding the set of UC-2
+#: delivery methods that layer permits. Optional like every bump before it, and
+#: absent means *no constraint* rather than the empty set -- which is the one
+#: reading an intersection cannot get wrong twice. The shape refuses an empty
+#: array, because a layer permitting nothing can never be widened by a later one
+#: and no run under it could deliver anything; and there is no `forbidden_methods`
+#: counterpart, now or later, so an editor offering one is offering a key the
+#: tool refuses.
+SCHEMA_VERSION = "1.7"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -262,11 +272,50 @@ def _safety() -> Schema:
             "max_targets": POSITIVE_INT,
             "confirm_environments": _array(STRING),
             "readonly": BOOLEAN,
+            "delivery": _safety_delivery(),
         },
         description=(
             "Safety settings only ratchet toward safe: the resolved value is the "
-            "lowest max_targets, the union of confirm_environments, and readonly if "
-            "any layer sets it (00-principles.md P3, invariant 10)."
+            "lowest max_targets, the union of confirm_environments, the intersection "
+            "of delivery.allowed_methods, and readonly if any layer sets it "
+            "(00-principles.md P3, invariant 10)."
+        ),
+    )
+
+
+def _safety_delivery() -> Schema:
+    """``safety.delivery:`` -- which UC-2 delivery methods an estate may use.
+
+    A safety axis rather than a key of the top-level ``delivery:`` block, and the
+    two are worth telling apart in an editor as well as in a document: that block
+    says which method is used and is overridden last-one-wins, this says which
+    ones *may* be, and it only ever narrows.
+
+    ``minItems`` is the one constraint the schema can carry: an empty list is a
+    configuration under which nothing could ever be delivered, and because the
+    set only narrows no later layer could restore anything. The builder refuses
+    it with a message that says that; this is §9b's "fast, local, incomplete"
+    half of the same check.
+    """
+    return _object(
+        keys=safety.SAFETY_DELIVERY_KEYS,
+        types={
+            "allowed_methods": _array(
+                _enum(delivery.DELIVERY_METHODS),
+                description=(
+                    "The UC-2 delivery methods this layer permits (01-configuration.md "
+                    "9, H6). Ratchets by intersection: each layer may only narrow the "
+                    "set, and no higher-precedence layer can restore a method a lower "
+                    "one removed. Absent means no constraint. Fail-closed on purpose -- "
+                    "a method a later release adds is unusable until an estate names it. "
+                    "There is no forbidden_methods key, now or later."
+                ),
+                minItems=1,
+            ),
+        },
+        description=(
+            "Which delivery methods this layer permits. Narrows only; two layers "
+            "with no method in common are refused rather than resolved."
         ),
     )
 

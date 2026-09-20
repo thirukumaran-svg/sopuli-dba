@@ -12,7 +12,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.6.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.7.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -244,8 +244,8 @@ token or a one-time link is refused rather than rendered.
 
 **`safety.delivery.allowed_methods` restricts the set an estate may use**, and it
 is not a key of this block: it is a safety axis, ratcheting by intersection under
-§9's merge-policy table. A reader who filed it here would look for it in the wrong
-place.
+§9's merge-policy table, written in a `safety:` block and documented with the rest
+of one. A reader who filed it here would look for it in the wrong place.
 
 ### What an application entry actually is
 
@@ -272,7 +272,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.6.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.7.schema.json
 version: 1
 
 runtime:
@@ -1246,10 +1246,26 @@ keeps its own guardrail (UC-1 §6.2) and belongs to an application, not here.
 | `max_targets` | at least 1. Use `readonly: true` to block changes entirely — `max_targets: 0` is far more likely to be a slip that then blocks every run |
 | `confirm_environments` | environments a mutation may not enter without an explicit yes |
 | `readonly` | refuse every mutation |
+| `delivery.allowed_methods` | the UC-2 delivery methods this layer permits. At least one — the list only ever narrows, so a layer permitting nothing could never be widened by a later one and is refused rather than stored |
 
 A block may be written under `defaults`, a profile, a target, a target set's
 template or `overrides:` entry, or a group. §9 resolves the lot by taking the
 safest of them.
+
+```yaml
+defaults:
+  safety:
+    delivery:
+      allowed_methods: [vault_wrapped, one_time_link]
+```
+
+`delivery:` here is a **sub-block of `safety:`**, not the top-level `delivery:`
+block of §1a, and the two answer different questions: that one says which method
+an estate uses and is overridden last-one-wins, this says which ones it *may*
+use and can only be narrowed. Every entry is checked against the same set of six
+method names, so an allow-list naming a method that does not exist is refused —
+which under an intersection is the difference between a typo and an estate that
+cannot deliver at all. There is no `forbidden_methods`, now or later.
 
 Every field is optional, and an unset one stays unset rather than taking the
 built-in default. §9 resolves safety by taking the *safest* of all layers rather
@@ -2659,7 +2675,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-1.6.schema.json`](../schemas/sopuli-config-1.6.schema.json),
+[`docs/schemas/sopuli-config-1.7.schema.json`](../schemas/sopuli-config-1.7.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -2670,7 +2686,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-1.6.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.7.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -2721,7 +2737,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.6.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.7.schema.json
 version: 1
 ```
 
@@ -2732,7 +2748,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.6.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.7.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

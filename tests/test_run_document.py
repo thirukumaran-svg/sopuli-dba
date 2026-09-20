@@ -18,6 +18,7 @@ import pytest
 from click.testing import CliRunner
 from jsonschema import Draft202012Validator
 
+from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import (
@@ -70,6 +71,44 @@ def test_emitted_document_validates(validator: Draft202012Validator, config_file
     )
     assert result.exit_code == ExitCode.SUCCESS
     assert _errors(validator, json.loads(result.output)) == []
+
+
+def test_a_resolved_view_carrying_a_nested_safety_setting_validates(
+    validator: Draft202012Validator, write_config: WriteConfig
+) -> None:
+    """`config show --resolved` with `safety.delivery.allowed_methods` on a target
+    (#498, schema 1.26).
+
+    The guard the tests above could not be: every safety setting was one key deep,
+    so nothing had ever put a *nested* one in `config.targets[].safety` -- and the
+    view built its properties by stripping `safety.` off the setting name, which
+    emitted a property literally called `delivery.allowed_methods` and was refused
+    by `additionalProperties: false`. The tool produced a document its own
+    contract rejected, and every test in the suite passed. Copilot's review of
+    #500 found it; this is what would have.
+    """
+    path = write_config(
+        "version: 1\n"
+        "targets:\n"
+        "  - name: alpha-0\n"
+        "    type: oracle\n"
+        "    dsn: 192.0.2.10:1521/ALPHA\n"
+        "    environment: dev\n"
+        "    admin: { username: SOPULI_SVC, auth: { method: env } }\n"
+        "    safety:\n"
+        "      delivery:\n"
+        "        allowed_methods: [vault_wrapped, manual]\n"
+    )
+    result = CliRunner().invoke(
+        cli, ["config", "show", "--config", str(path), "--resolved", "--output", "json"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    document = json.loads(result.output)
+    assert _errors(validator, document) == []
+    assert document["config"]["targets"][0]["safety"] == {
+        "delivery": {"allowed_methods": ["manual", "vault_wrapped"]}
+    }
 
 
 def test_document_from_the_builder_validates(validator: Draft202012Validator) -> None:

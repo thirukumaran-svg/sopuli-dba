@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config
 from sopuli.config.selection import Selection, filter_estate
@@ -45,6 +46,14 @@ from sopuli.safety import (
 from sopuli.settings import Layer, Resolved
 from sopuli.settings.resolver import resolve_all
 from sopuli.settings.sources import config_contributions, estate_contributions
+
+#: The setting H6 added, spelled here rather than imported from `sopuli.safety`.
+#: Nothing refuses on it yet -- no delivery method is implemented -- and a
+#: constant beside `READONLY` would make `tests/settings/test_settings_are_wired.py`
+#: read the name as wired while no gate consults it, which is the shape that
+#: whole sweep exists to catch. It is declared inert in the registry, and this is
+#: what inert looks like from a test.
+ALLOWED_METHODS = "safety.delivery.allowed_methods"
 
 TARGET = {
     "type": "oracle",
@@ -295,6 +304,39 @@ def test_confirm_environments_unions_across_the_layers() -> None:
     )
 
     assert folded(config)[CONFIRM_ENVIRONMENTS].value == ("dev", "prod")
+
+
+def test_allowed_methods_intersects_across_the_layers() -> None:
+    """The other list setting, merged the other way, at the layer only this merge
+    can reach (H6, #453). A target permitting less than ``defaults`` does narrow
+    the estate's set -- and the union that governs the line above would have
+    widened it instead."""
+    config = estate(
+        safety={"delivery": {"allowed_methods": ["vault_wrapped"]}},
+        defaults={"safety": {"delivery": {"allowed_methods": ["vault_wrapped", "manual"]}}},
+    )
+
+    answer = folded(config)[ALLOWED_METHODS]
+    assert answer.value == ("vault_wrapped",)
+    assert answer.location == "targets[0].safety.delivery.allowed_methods"
+
+
+def test_a_target_disjoint_with_defaults_is_refused_at_the_estate_merge() -> None:
+    """The case the boundary cannot see, and the reason the refusal lives in the
+    resolver rather than in a verb: these two layers are compatible until a run
+    selects the target that makes them disjoint, and every verb reaches the same
+    merge without having to remember to check."""
+    config = estate(
+        safety={"delivery": {"allowed_methods": ["manual"]}},
+        defaults={"safety": {"delivery": {"allowed_methods": ["vault_wrapped"]}}},
+    )
+
+    with pytest.raises(ConfigError) as raised:
+        folded(config)
+
+    assert "resolves to nothing" in str(raised.value)
+    assert "targets[0].safety.delivery.allowed_methods allows manual" in str(raised.value)
+    assert raised.value.exit_code is ExitCode.CONFIG_INVALID
 
 
 def test_a_setting_no_object_wrote_is_returned_untouched() -> None:

@@ -168,6 +168,7 @@ RESOLVED_SETTINGS = (
     "output",
     "profile",
     "safety.confirm_environments",
+    "safety.delivery.allowed_methods",
     "safety.dry_run",
     "safety.max_targets",
     "safety.readonly",

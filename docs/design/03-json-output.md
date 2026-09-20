@@ -41,7 +41,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.25.schema.json`](../schemas/sopuli-run-1.25.schema.json),
+Schemas: [`../schemas/sopuli-run-1.26.schema.json`](../schemas/sopuli-run-1.26.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -1977,6 +1977,26 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.25 became 1.26 with `safety.delivery.allowed_methods`** (#498), H6's ratchet.
+One additive change: **`config.targets[].safety.delivery`**, an object holding
+`allowed_methods` — the delivery methods left after this target's own block and any
+target set template or `overrides:` entry have been intersected.
+
+**It is a sub-block, and that is the whole content of the bump.** Every safety
+setting was one key deep until this one, so the resolved view built each property
+by stripping `safety.` off the setting's name — which is nesting, as long as
+nothing nests. With a sub-block it stopped being: the view emitted a property
+literally called `delivery.allowed_methods`, and `safety`'s
+`additionalProperties: false` refused it, so `config show --resolved --output json`
+produced a document this contract rejected the moment a target wrote the key. Found
+by Copilot's review of #500 rather than by a test, because nothing had ever put a
+nested setting on a target. The view now nests along every separator in a setting's
+name, so the next sub-block needs no change to either.
+
+`allowed_methods` is never the empty array: two layers with no method in common
+refuse at plan time (`01-configuration.md` §9) rather than resolving to nothing, so
+a consumer reading an empty list would be reading a state the tool does not produce.
 
 **1.24 became 1.25 with `sopuli account list`** (#490), UC-2's listing verb.
 Four additive changes, each a minor bump by the ordinary rule:

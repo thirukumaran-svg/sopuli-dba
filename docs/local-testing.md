@@ -2145,8 +2145,10 @@ UC-2 is half built. There is **no `reset-password` and no `expire-password`** �
 verbs that change a password — and if that is what you sat down to test, stop here;
 the delivery half is still design documents. Both decisions that blocked it are
 settled now — #439 (the seen path prints, under five guards) and #453
-(`safety.delivery.allowed_methods`, ratcheting by intersection) — but nothing implements
-either yet.
+(`safety.delivery.allowed_methods`, ratcheting by intersection). The second is
+**built**: the setting resolves, ratchets and is reported by `config show --explain`
+(see `safety.delivery.allowed_methods` below), and no verb reads it, because no delivery method exists to be allowed or
+refused. #439's guards are not built at all.
 
 What you can run is `account suspend`, which locks an account, and `account list`,
 which reads the declaration and shows you what it matched.
@@ -2638,6 +2640,193 @@ does name — so nobody could tell where the journal is by reading the configura
 runs. There is no reset. That warning gets its code when the verb that raises it
 lands, rather than being reserved now for nothing to emit.
 
+### `safety.delivery.allowed_methods` — the list that only narrows
+
+The block above says which delivery method an estate uses. This says which ones it
+**may** use, and it is the one setting in the tool that merges by *intersection*:
+each layer can take methods away and none can put one back. It goes in a `safety:`
+block — under `defaults:`, a profile, a target, a target set or a group — not in
+`delivery:`.
+
+```yaml
+defaults:
+  safety:
+    delivery:
+      allowed_methods: [vault_wrapped, one_time_link, manual]
+
+profiles:
+  unattended:
+    safety:
+      delivery:
+        allowed_methods: [vault_wrapped]
+```
+
+```bash
+sopuli --config ok.yaml config show --explain
+```
+```
+safety
+KEY                                                  VALUE                                 NOTE
+defaults.safety.delivery.allowed_methods             vault_wrapped, one_time_link, manual
+profiles.unattended.safety.delivery.allowed_methods  vault_wrapped
+
+settings
+  db.connect_timeout_s            = 30                                    [built-in default]
+  db.query_timeout_s              = 0                                     [built-in default]
+  output                          = text                                  [built-in default]
+  safety.delivery.allowed_methods = manual, one_time_link, vault_wrapped  [defaults.safety.delivery.allowed_methods]
+  safety.dry_run                  = false                                 [built-in default]
+  safety.readonly                 = false                                 [built-in default]
+  vault                           = vault-dev                             [defaults.vault]
+  vaults.vault-dev.addr           = http://127.0.0.1:8200                 [vaults.vault-dev.addr]
+  vaults.vault-dev.kv_version     = 2                                     [vaults.vault-dev.kv_version]
+  vaults.vault-dev.mount          = kv                                    [vaults.vault-dev.mount]
+```
+
+Now select the profile, which permits one of the three:
+
+```bash
+sopuli --config ok.yaml --profile unattended config show --explain
+```
+```
+settings
+  db.connect_timeout_s            = 30                     [built-in default]
+  db.query_timeout_s              = 0                      [built-in default]
+  output                          = text                   [built-in default]
+  profile                         = unattended             [cli --profile (group)]
+  safety.delivery.allowed_methods = vault_wrapped          [profiles.unattended.safety.delivery.allowed_methods]
+                                    defaults.safety.delivery.allowed_methods asked for vault_wrapped, one_time_link, manual; safety.delivery.allowed_methods stays vault_wrapped (profiles.unattended.safety.delivery.allowed_methods) -- safety settings only ratchet toward safe
+  safety.dry_run                  = false                  [built-in default]
+  safety.readonly                 = false                  [built-in default]
+  vault                           = vault-dev              [defaults.vault]
+  vaults.vault-dev.addr           = http://127.0.0.1:8200  [vaults.vault-dev.addr]
+  vaults.vault-dev.kv_version     = 2                      [vaults.vault-dev.kv_version]
+  vaults.vault-dev.mount          = kv                     [vaults.vault-dev.mount]
+```
+
+Two things to read out of that. The reported source is the **profile**, because
+that is the layer that narrowed the set and the key you would edit to get a method
+back — `defaults:` only permitted what the profile decided. And the second line is
+the ratchet note, which names what the lower layer lost; swap the two lists and it
+does not appear, because a layer that permitted more than survived is the only kind
+of loser this setting has.
+
+Now reverse the two lists — `[vault_wrapped]` in `defaults:`, and the profile
+asking for `manual` as well. Layer 3 outranks layer 5 everywhere else in the file:
+
+```bash
+sopuli --config reversed.yaml --profile unattended config show --explain
+```
+```
+safety
+KEY                                                  VALUE                  NOTE
+defaults.safety.delivery.allowed_methods             vault_wrapped
+profiles.unattended.safety.delivery.allowed_methods  vault_wrapped, manual  defeated by the ratchet
+
+settings
+  safety.delivery.allowed_methods = vault_wrapped          [defaults.safety.delivery.allowed_methods]
+                                    profiles.unattended.safety.delivery.allowed_methods asked for vault_wrapped, manual; safety.delivery.allowed_methods stays vault_wrapped (defaults.safety.delivery.allowed_methods) -- safety settings only ratchet toward safe
+```
+
+`manual` is gone, the higher layer is marked **defeated by the ratchet**, and the
+reported source has moved to `defaults:` — the layer that now does the narrowing.
+That is the whole point of the intersection: there is no layer from which a method
+can be added back.
+
+#### Four failures worth causing
+
+All exit **9**.
+
+```bash
+sopuli --config disjoint.yaml --profile unattended config validate
+```
+```
+sopuli: `safety.delivery.allowed_methods` resolves to nothing: profiles.unattended.safety.delivery.allowed_methods allows vault_wrapped; defaults.safety.delivery.allowed_methods allows manual
+  hint: these layers have no method in common, so nothing could be delivered under all of them -- widen one, or delete it; the setting only ever narrows, so a layer meant to impose nothing is a layer that should not be written
+```
+
+Two layers with nothing in common is the refusal worth understanding: an empty
+intersection is a configuration nobody can have meant, and honouring one of the two
+layers would be choosing which guard to ignore. The message names **every** layer
+that spoke, because an empty result is never one block's doing. Note that it has no
+file path in front of it, unlike the three below: this one is not found while the
+file is being read, but while the layers are being merged, which is after the last
+file has been closed.
+
+The same refusal reaches a target's own block, and there it needs a run to appear
+at all — these two layers are compatible until something selects the target that
+makes them disjoint:
+
+```bash
+sopuli --config target-disjoint.yaml --profile unattended creds status --dry-run
+```
+```
+sopuli: `safety.delivery.allowed_methods` resolves to nothing: profiles.unattended.safety.delivery.allowed_methods allows vault_wrapped; targets[0].safety.delivery.allowed_methods allows manual; defaults.safety.delivery.allowed_methods allows vault_wrapped, one_time_link, manual
+  hint: these layers have no method in common, so nothing could be delivered under all of them -- widen one, or delete it; the setting only ever narrows, so a layer meant to impose nothing is a layer that should not be written
+```
+
+```bash
+sopuli --config empty.yaml config validate
+```
+```
+sopuli: empty.yaml: defaults.safety.delivery.allowed_methods: allowed_methods is empty, so no delivery method would be permitted
+  hint: the set only ever narrows, so nothing could widen it again -- name the methods this estate permits, or leave the key out, which imposes no constraint at all
+```
+
+`allowed_methods: []` is not the way to say "never hand a password over" — leaving
+the key out is no constraint at all, and an empty list is a layer nothing could
+ever widen. An estate that means it configures no `delivery:` block instead.
+
+```bash
+sopuli --config unknown.yaml config validate
+```
+```
+sopuli: unknown.yaml: defaults.safety.delivery.allowed_methods[0]: unknown delivery method 'carrier_pigeon'
+  hint: known: vault_wrapped, vault_path, one_time_link, onepassword_share, manual, smtp_encrypted
+```
+
+```bash
+sopuli --config forbidden.yaml config validate
+```
+```
+sopuli: forbidden.yaml: defaults.safety.delivery: unknown key 'forbidden_methods'
+  hint: known keys here: allowed_methods
+```
+
+There is no `forbidden_methods`, now or later, and the refusal is the answer to the
+obvious question. A list of what is *refused* would have cost no new code and would
+have permitted every method a later release adds, everywhere, on upgrade — silently
+widening a guard that stands in front of putting a live credential on a wire.
+
+#### Where a target's own list shows up in JSON
+
+Write the key on a *target* rather than in `defaults:`, and the resolved view
+carries it as a sub-block — run schema 1.26, and the shape matters because
+`config.targets[].safety` refuses any property it does not name:
+
+```bash
+sopuli --config tier1-target.yaml config show --resolved --output json
+```
+```json
+"safety": {
+  "delivery": {
+    "allowed_methods": [
+      "manual",
+      "vault_wrapped"
+    ]
+  }
+}
+```
+
+Sorted, and intersected with whatever a target set's template or `overrides:` entry
+wrote — so what the document carries is what a run would read rather than what the
+target's own line says.
+
+**What you cannot test yet**: any of this having an effect. No delivery method is
+implemented, so the set is resolved, ratcheted, reported here and read by no verb —
+which is what the registry means by marking it inert. The first method to land is
+what starts consulting it.
+
 ---
 
 ## 11. Getting refused on purpose
@@ -2739,7 +2928,9 @@ consulted.
 
 `max_targets` is the third key, and `readonly: true` is the way to block
 everything — `max_targets: 0` is far more likely to be a slip that then blocks every
-run.
+run. The fourth is `delivery.allowed_methods`, which is a list rather than a switch
+and merges by intersection rather than union; it has its own section above, because
+what is worth trying about it is the merge rather than the refusal.
 
 ### `--vault-addr` with nothing to apply it to
 
@@ -3141,7 +3332,7 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.25.schema.json`](schemas/sopuli-run-1.25.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.26.schema.json`](schemas/sopuli-run-1.26.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json

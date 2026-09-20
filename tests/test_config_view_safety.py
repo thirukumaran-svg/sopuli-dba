@@ -308,6 +308,44 @@ def test_a_targets_block_reaches_the_document() -> None:
     }
 
 
+def test_a_nested_setting_reaches_the_document_as_a_sub_block() -> None:
+    """`safety.delivery.allowed_methods` is the first safety setting whose name
+    has two parts, and the view builds a property per part (#498, schema 1.26).
+
+    The flat form emitted a property literally called `delivery.allowed_methods`,
+    which `config.targets[].safety` refuses under `additionalProperties: false` --
+    so a target writing the key made `config show --resolved --output json`
+    produce a document this tool's own contract rejects. Copilot's review of #500
+    found it; nothing here had ever put a nested setting on a target.
+    """
+    config = one_target({"delivery": {"allowed_methods": ["vault_wrapped", "manual"]}})
+
+    assert target_json(config, "alpha-0") == {
+        "delivery": {"allowed_methods": ["manual", "vault_wrapped"]}
+    }
+
+
+def test_a_nested_setting_is_ratcheted_like_every_other() -> None:
+    """Sorted and intersected, so what the document carries is what the run reads
+    rather than what the target's line says."""
+    config = build(
+        target_sets={
+            "appdb": {
+                **TEMPLATE,
+                "safety": {"delivery": {"allowed_methods": ["vault_wrapped", "manual"]}},
+                "overrides": {
+                    "appdb-dev-beta": {"safety": {"delivery": {"allowed_methods": ["manual"]}}}
+                },
+            }
+        }
+    )
+
+    assert target_json(config, "appdb-dev-beta") == {"delivery": {"allowed_methods": ["manual"]}}
+    assert target_json(config, "appdb-dev-alpha") == {
+        "delivery": {"allowed_methods": ["manual", "vault_wrapped"]}
+    }
+
+
 def test_the_json_value_is_ratcheted_rather_than_flattened() -> None:
     """The case the whole property exists to get right: a contract carrying
     `readonly: false` for a target the tool then refuses to mutate is the lie

@@ -97,12 +97,18 @@ def test_the_safety_settings_are_the_ones_p3_names() -> None:
     resemblance. ``vaults.*.tls.verify`` joined with C13's partial blocks (#136)
     on the same argument again: §3a puts it under the ratchet, and until a second
     layer could supply it there was nothing for the ratchet to do.
+
+    ``safety.delivery.allowed_methods`` joined with H6 (#453, #498), and P3 now
+    names it: which UC-2 delivery methods an estate may use is a guard in front
+    of putting a live credential on a wire, and it is the fifth member on the
+    same argument as the two before it rather than by resemblance.
     """
     assert set(SAFETY_SETTINGS) == {
         "safety.dry_run",
         "safety.readonly",
         "safety.max_targets",
         "safety.confirm_environments",
+        "safety.delivery.allowed_methods",
         "locking.break_expired",
         "vaults.*.tls.verify",
     }

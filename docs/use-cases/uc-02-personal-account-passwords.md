@@ -985,7 +985,7 @@ that is enforced and one that is asserted. Registered in §9 and tracked as **#4
 it blocks no delivery method, because every one of them can be built against the
 text above.
 
-The shared notify channel is #442, the config block and the ratchet are #440.
+The shared notify channel is #442, the config block is #440 and the ratchet is #498.
 
 **How an estate restricts the set of methods is decided** (H6, #453):
 `safety.delivery.allowed_methods`, ratcheting by **intersection**, so each layer may
@@ -995,7 +995,12 @@ until an estate names it — which is the opposite of what a `forbidden_methods`
 would have done on upgrade, and this is a guard in front of putting a live
 credential on a wire. It is the fifth ratcheted setting and the first whose merge
 shape is declared rather than read off its type; `01-configuration.md` §9 has the
-rules, and #440 writes it into the block.
+rules, and **#498 built it**: the key is read from any `safety:` block, the
+intersection is taken across every layer including a target's and a group's, two
+layers with no method in common refuse at plan time naming all of them, and
+`config show --explain` reports the effective set and which layer narrowed it. No
+verb consults the answer, because no delivery method exists yet — the setting is
+marked inert in the registry until one does.
 
 ---
 
@@ -1012,7 +1017,7 @@ rules, and #440 writes it into the block.
 | 7 | never promote before confirmation | nothing to govern — no promotion (§1) |
 | 8 | `--dry-run` and a plan first | binds, on both paths; the seen path also confirms (§2) |
 | 9 | idempotency | **open** — a reset as sketched draws a new password on every run; H7 (#454) decides between an exemption and a convergent verb. H2 is what unblocked it rather than what answers it: §3's record is somewhere a request identity or a previous reset could be remembered, where H7's options 2 and 3 previously had nowhere |
-| 10 | safety settings only ratchet | binds, and H6 (#453) has added the axis: `safety.delivery.allowed_methods`, ratcheting by **intersection** so a layer may only narrow which delivery methods an estate may use. The fifth ratcheted setting and the first whose merge is declared rather than read off its type — `01-configuration.md` §9 has the shape, P3 has why it is not a union. Written into the `delivery:` block by #440 |
+| 10 | safety settings only ratchet | binds, and H6 (#453) has added the axis: `safety.delivery.allowed_methods`, ratcheting by **intersection** so a layer may only narrow which delivery methods an estate may use. The fifth ratcheted setting and the first whose merge is declared rather than read off its type — `01-configuration.md` §9 has the shape, P3 has why it is not a union. Built by #498, as a `delivery:` sub-block of a `safety:` block rather than a key of the `delivery:` block it governs |
 | 11 | no `"` in a password | binds, by generation; authoritative over UC-1 §6.1's older wording |
 | 12 | JSON output is versioned | binds — new verbs and events are schema bumps |
 | 13 | no password literal in a PL/SQL block | binds on both statements (§4.1) |

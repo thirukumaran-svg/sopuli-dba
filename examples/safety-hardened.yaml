@@ -14,7 +14,7 @@
 # See which layer produced each effective setting:
 #     sopuli --config safety-hardened.yaml config show --explain
 
-# yaml-language-server: $schema=../docs/schemas/sopuli-config-1.6.schema.json
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-1.7.schema.json
 
 version: 1
 
@@ -68,6 +68,27 @@ defaults:
     # 1; to stop changes entirely, use `readonly` below rather than trying to
     # write 0.
     max_targets: 4
+
+    # Which ways a personal account's new password may be handed to its owner
+    # (UC-2 6). This one is the odd member of the block: it is a list, and it
+    # merges by *intersection* rather than by union. Each layer may only take
+    # methods away, and no higher-precedence layer can put one back -- so the
+    # `audit` profile below could narrow this to `vault_wrapped` alone, and
+    # nothing could widen it again for that run.
+    #
+    # Leave it out and there is no constraint at all. Writing an empty list is
+    # refused, because a layer that permits nothing can never be widened by a
+    # later one, and `[]` is much more likely to be a slip than a policy.
+    #
+    # A site wants this when some of the six methods are unacceptable to it --
+    # `manual` prints a working password to whoever ran the command, and an
+    # estate that has decided nobody does that says so here rather than
+    # trusting every file that inherits from this one.
+    #
+    # Nothing delivers yet: no method is implemented in this build, so the set
+    # is resolved, reported by `config show --explain` and read by no verb.
+    delivery:
+      allowed_methods: [vault_wrapped, one_time_link]
 
     # Refuse every change, everywhere. Not set here -- see the `audit` profile
     # below for where it is, and why.

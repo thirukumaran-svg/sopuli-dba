@@ -38,8 +38,8 @@ which paths ran and which are still untried.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-1.6.schema.json](schemas/sopuli-config-1.6.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.25.schema.json](schemas/sopuli-run-1.25.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-config-1.7.schema.json](schemas/sopuli-config-1.7.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-run-1.26.schema.json](schemas/sopuli-run-1.26.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -63,7 +63,7 @@ run schema. That is no longer an assertion in prose: `tests/test_schemas.py`
 checks it, and CI runs it on every push and pull request (invariant 12).
 
 To get completion and inline errors while editing a config, put
-`# yaml-language-server: $schema=./sopuli-config-1.6.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-1.7.schema.json` on the file's
 first line — see [design/01-configuration.md](design/01-configuration.md) §9b,
 which also explains why the schema's `$id` is not a URL to paste there.
 
@@ -322,7 +322,7 @@ ratcheting by **intersection**, so a layer may only narrow the set. Fail-closed:
 a method a later release adds is unusable until an estate names it, where the
 `forbidden_methods` union would have permitted it everywhere on upgrade. It costs
 a fourth ratchet shape, declared per setting the way `safe_bool` already is, and
-there is no `forbidden_methods` now or later). Open: a reset never converges, so
+there is no `forbidden_methods` now or later; built in #498). Open: a reset never converges, so
 it needs either a second invariant-9 exemption or a convergent verb (H7, #454);
 on the unseen path, what happens to the stored copy and how the DBA is shown
 unable to read it (H8, #459); and, raised by the delivery section itself, what
@@ -701,18 +701,23 @@ setting rather than read off the type, since `confirm_environments` is a list of
 strings too and the two must merge oppositely; `safe_bool` is the precedent, which
 is what makes it a fourth shape rather than a second mechanism. `CLAUDE.md`
 invariant 10, P3's safety bullet and `01-configuration.md` §9's merge-policy table
-all carry it now, and **#440 is what writes it into the block**.
+all carry it, and **#498 built it** — the key in a `safety:` block, the
+intersection across every layer, the plan-time refusal when two layers have no
+method in common, and the effective set in `config show --explain`. No verb
+consults the answer until a delivery method exists, so the registry marks it
+inert.
 
-**What blocks what.** **#456 is written**, so every `delivery:` issue now waits on
-#440 alone — the config block and the ratchet — and everything below that is
-implementation rather than decision. Three UC-2 decisions remain and none of them
+**What blocks what.** **#456 is written and #440 and #498 have landed**, so every
+`delivery:` issue now waits on nothing — the config block and the ratchet are
+both built, and everything below that is implementation rather than decision. Three UC-2 decisions remain and none of them
 blocks this table: H7 (#454), whether a reset needs a second invariant-9 exemption
 or a convergent verb; H8 (#459), the stored copy's lifetime; and H9 (#496), what
 "unseen" guarantees when the DBA holds the wrapping token — which the delivery
 section raised about itself.
 
-**Each block is a schema minor bump** — 1.4 became 1.5 with the record, and onward for
-`delivery:` and, unless they are batched, each method sub-block. Additive and
+**Each block is a schema minor bump** — 1.4 became 1.5 with the record, 1.5 became
+1.6 with `delivery:` and 1.6 became 1.7 with `safety.delivery.allowed_methods`, and
+onward for each method sub-block unless they are batched. Additive and
 optional every time, so a file that declares none of them keeps meaning exactly
 what it did, which is the rule every bump so far has followed.
 

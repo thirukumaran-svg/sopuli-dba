@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-1.6.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-1.7.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; and a profile may not set a key that would change scope. A file this schema accepts may still be refused there.",
@@ -126,7 +126,7 @@
     },
     "safety": {
       "type": "object",
-      "description": "Safety settings only ratchet toward safe: the resolved value is the lowest max_targets, the union of confirm_environments, and readonly if any layer sets it (00-principles.md P3, invariant 10).",
+      "description": "Safety settings only ratchet toward safe: the resolved value is the lowest max_targets, the union of confirm_environments, the intersection of delivery.allowed_methods, and readonly if any layer sets it (00-principles.md P3, invariant 10).",
       "additionalProperties": false,
       "properties": {
         "max_targets": {
@@ -142,6 +142,29 @@
         },
         "readonly": {
           "type": "boolean"
+        },
+        "delivery": {
+          "type": "object",
+          "description": "Which delivery methods this layer permits. Narrows only; two layers with no method in common are refused rather than resolved.",
+          "additionalProperties": false,
+          "properties": {
+            "allowed_methods": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "vault_wrapped",
+                  "vault_path",
+                  "one_time_link",
+                  "onepassword_share",
+                  "manual",
+                  "smtp_encrypted"
+                ]
+              },
+              "description": "The UC-2 delivery methods this layer permits (01-configuration.md 9, H6). Ratchets by intersection: each layer may only narrow the set, and no higher-precedence layer can restore a method a lower one removed. Absent means no constraint. Fail-closed on purpose -- a method a later release adds is unusable until an estate names it. There is no forbidden_methods key, now or later.",
+              "minItems": 1
+            }
+          }
         }
       }
     },
