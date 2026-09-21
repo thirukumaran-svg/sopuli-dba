@@ -14,9 +14,14 @@ things in the two places.
 
 from __future__ import annotations
 
+import builtins
+import json
+import os
+import subprocess
 import sys
 from collections.abc import Callable
-from typing import NoReturn
+from pathlib import Path
+from typing import Any, NoReturn
 
 import pytest
 
@@ -278,13 +283,117 @@ def test_the_warning_is_its_own_code_and_is_registered() -> None:
     assert MISSING_DRIVER != "SOPULI-W003"
 
 
-def test_installed_answers_without_importing() -> None:
+# ------------------------------------------------------- asking, not importing ---
+
+#: A vendor package whose import is *observable* -- it writes a file and says so.
+#:
+#: ADR-006 rule 3 is about the side effects of an import, which for an SDK can
+#: mean reading a config file or reaching a metadata service. A stub is how this
+#: suite gets to watch one happen: the real `oracledb` imports quietly, and on a
+#: base cell it is not there to import at all.
+STUB_CLIENT = """import os, pathlib
+
+pathlib.Path(os.environ["SOPULI_IMPORT_MARKER"]).write_text("imported", encoding="utf-8")
+"""
+
+#: Run in a subprocess because the claim is about a *process* (#506). Asserting
+#: ``"oracledb" not in sys.modules`` inside this session asserted it about a
+#: session that has already imported whatever the tests before it imported --
+#: and `pytest-randomly` decides what those were. The suite was green because
+#: ``test_driver_registry`` sorts before ``test_oracle_*``, and any seed that
+#: moved one Oracle module earlier reddened it: the driver fixtures
+#: ``importorskip`` ``sopuli.driver.oracle.session``, which imports `oracledb` at
+#: module scope on purpose (rule 1). One subprocess, and the guard is true rather
+#: than order-dependent.
+PROBE = """
+import json
+import sys
+
+from sopuli.driver.registry import DRIVERS, installed
+
+answer = installed(DRIVERS["oracle"])
+print(json.dumps({
+    "answer": answer,
+    "loaded": sorted(name for name in sys.modules if name.split(".")[0] == "oracledb"),
+}))
+"""
+
+
+def _ask_in_a_clean_interpreter(tmp_path: Path) -> tuple[dict[str, object], Path]:
+    """Ask ``installed`` the question once, in a process that has imported nothing.
+
+    The stub goes on ``PYTHONPATH``, which precedes site-packages, so it is the
+    `oracledb` the probe finds whether or not the real one is installed. That is
+    what keeps this module's promise -- nothing here depends on how this machine
+    happens to be installed -- while still measuring the property on a base cell,
+    where there would otherwise be no client to refrain from importing.
+    """
+    (tmp_path / "oracledb.py").write_text(STUB_CLIENT, encoding="utf-8")
+    marker = tmp_path / "import-happened"
+    # Prepended rather than assigned: a `PYTHONPATH` the parent set is how a
+    # checkout that is not installed finds `sopuli` at all, and discarding it
+    # would make this pass or fail on how the machine was set up.
+    path = os.pathsep.join(filter(None, (str(tmp_path), os.environ.get("PYTHONPATH"))))
+
+    finished = subprocess.run(
+        [sys.executable, "-c", PROBE],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": path, "SOPULI_IMPORT_MARKER": str(marker)},
+    )
+
+    assert finished.returncode == 0, f"the probe itself failed:\n{finished.stderr}"
+    return dict(json.loads(finished.stdout.strip().splitlines()[-1])), marker
+
+
+def test_installed_answers_without_importing(tmp_path: Path) -> None:
     """ADR-006 rule 3: asking must not run a vendor package's import side
     effects, which for an SDK can mean reading a config file or reaching a
     metadata service."""
-    installed(ORACLE)
+    report, marker = _ask_in_a_clean_interpreter(tmp_path)
 
-    assert "oracledb" not in sys.modules
+    assert report["loaded"] == [], "asking imported the client"
+    assert not marker.exists(), "asking ran the client's import side effects"
+
+
+def test_the_probe_is_looking_at_a_client_it_could_have_imported(tmp_path: Path) -> None:
+    """The half that keeps the test above from passing for the wrong reason.
+
+    A probe that found no `oracledb` at all would assert that nothing was
+    imported and mean nothing by it -- which is what the old in-session version
+    did on a base cell, and what it did in this one on any seed that had already
+    imported the real client. ``answer`` is the stub being found: `installed`
+    says yes, having looked and not imported.
+    """
+    report, _ = _ask_in_a_clean_interpreter(tmp_path)
+
+    assert report["answer"] is True
+
+
+def test_asking_never_reaches_the_import_machinery(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same rule as a property of the call, asserted in-session (#506).
+
+    Weaker than the subprocess -- it says *this function* does not import, not
+    that nothing did -- and it is here because it is the one that fails
+    legibly. A rewrite of :func:`installed` that reaches for an import names
+    itself here, where the subprocess reports a process state and leaves the
+    reader to find out which call produced it.
+    """
+    real_import = builtins.__import__
+
+    def refuse_the_client(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name.split(".")[0] in ORACLE.provides:
+            raise AssertionError(f"installed() imported {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse_the_client)
+    monkeypatch.setattr(
+        "importlib.import_module",
+        _raising(AssertionError("installed() reached importlib.import_module")),
+    )
+
+    installed(ORACLE)
 
 
 def _raising(exc: BaseException) -> Callable[..., NoReturn]:

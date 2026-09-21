@@ -210,6 +210,27 @@ The developer environment is `sopuli-dba[all]`, which is exactly why the base ce
 has to exist: every ordinary test passes there whether or not base is clean, so
 nothing else in the suite can see rule 3 break.
 
+**A claim about the process needs a process of its own** (#506). Rule 3 — asking
+whether a client is installed must not import it — was asserted as `"oracledb"
+not in sys.modules` inside the suite, which is a statement about the whole
+session rather than about the call: anything that imported the client earlier
+makes it false, and the driver fixtures do exactly that. It passed because
+`test_driver_registry` sorts before `test_oracle_*`, so the guard held by
+alphabetical accident and reddened on any order that moved one Oracle module
+earlier. A guard that passes or fails by ordering is one that gets dismissed as
+flaky the first time it goes red, which is how a real regression is waved
+through.
+
+The rule it leaves is two-part, and both halves are worth having: a test whose
+subject is **what importing did** runs in a subprocess (`tests/test_import_order.py`
+and `tests/store/test_install_shape.py` already do), and a test whose subject is
+**what one call did** asserts on the call — patch the import machinery and let
+the function name itself. The subprocess makes the claim true; the patch makes
+the failure legible. Where the property is only observable when a vendor package
+is installed, the subprocess supplies a stub one on `PYTHONPATH` rather than
+reading whatever this machine happens to have, which is the same trick this
+section's base cell plays with its import blocker.
+
 ---
 
 ## 4. Tiers
