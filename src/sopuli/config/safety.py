@@ -36,10 +36,24 @@ SAFETY_KEYS = ("max_targets", "confirm_environments", "readonly", "delivery")
 SAFETY_DELIVERY_KEYS = ("allowed_methods",)
 
 
-def build_safety(raw: Any, *, at: KeyPath) -> Safety | None:
-    """Read a ``safety:`` block, or ``None`` where there is none."""
-    if raw is None:
+def read_safety(container: dict[str, Any], *, at: KeyPath) -> Safety | None:
+    """``safety:`` where the key is written, ``None`` where it is absent.
+
+    **Key presence decides, not the value** (#501), which is the rule
+    :func:`~sopuli.config.fields.optional_bool` already follows for ``readonly``
+    inside the block. ``safety:`` with nothing indented under it is ``null``, and
+    reading that as *no block* is how a ``readonly`` somebody thought they had
+    written can vanish -- a half-finished edit looks exactly like this. The
+    published schema types the property as an object and refuses the null, and
+    §9b forbids the tool being the looser of the two.
+    """
+    if "safety" not in container:
         return None
+    return build_safety(container["safety"], at=at.key("safety"))
+
+
+def build_safety(raw: Any, *, at: KeyPath) -> Safety:
+    """Read a ``safety:`` block that is known to be written."""
     block = mapping(raw, at=at)
     reject_unknown_keys(block, allowed=SAFETY_KEYS, at=at)
 
@@ -55,11 +69,12 @@ def build_safety(raw: Any, *, at: KeyPath) -> Safety | None:
             hint="use `readonly: true` to block changes entirely",
         )
 
-    confirm = block.get("confirm_environments")
     return Safety(
         max_targets=max_targets,
         confirm_environments=(
-            () if confirm is None else string_list(confirm, at=at.key("confirm_environments"))
+            ()
+            if "confirm_environments" not in block
+            else string_list(block["confirm_environments"], at=at.key("confirm_environments"))
         ),
         readonly=optional_bool(block, "readonly", at=at),
         delivery=(

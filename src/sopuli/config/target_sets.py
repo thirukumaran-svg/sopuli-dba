@@ -45,7 +45,7 @@ from sopuli.config.model import (
     TargetPatch,
     TargetSet,
 )
-from sopuli.config.safety import build_safety
+from sopuli.config.safety import read_safety
 from sopuli.config.targets import TARGET_KEYS, TARGET_TYPES, read_admin, read_oracle, read_target
 
 TARGET_SET_KEYS = (*TARGET_KEYS, "for_each", "overrides")
@@ -258,7 +258,7 @@ def _build_patch(raw: Any, *, at: KeyPath) -> TargetPatch:
             None if "oracle" not in patch else read_oracle(patch["oracle"], at=at.key("oracle"))
         ),
         labels=_patch_labels(patch, at=at),
-        safety=build_safety(patch.get("safety"), at=at.key("safety")),
+        safety=read_safety(patch, at=at),
     )
 
 

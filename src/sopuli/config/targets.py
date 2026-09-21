@@ -37,7 +37,7 @@ from sopuli.config.fields import (
     sequence,
 )
 from sopuli.config.model import AdminAuth, AdminCredential, Target, TargetOracle
-from sopuli.config.safety import build_safety
+from sopuli.config.safety import read_safety
 from sopuli.config.secret_refs import parse_secret_ref
 
 TARGET_KEYS = (
@@ -139,7 +139,7 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
         admin=read_admin(entry.get("admin"), at=at.key("admin")),
         oracle=read_oracle(entry.get("oracle"), at=at.key("oracle")),
         labels=() if "labels" not in entry else pairs(entry["labels"], at=at.key("labels")),
-        safety=build_safety(entry.get("safety"), at=at.key("safety")),
+        safety=read_safety(entry, at=at),
     )
 
 

@@ -3140,6 +3140,42 @@ run. The fourth is `delivery.allowed_methods`, which is a list rather than a swi
 and merges by intersection rather than union; it has its own section above, because
 what is worth trying about it is the merge rather than the refusal.
 
+#### A block with nothing under it
+
+The failure worth causing on purpose here is the half-finished edit. Write the
+heading and indent nothing under it:
+
+```yaml
+defaults:
+  policy: standard
+  vault: vault-dev
+  safety:
+```
+
+```
+$ sopuli --config null-safety.yaml config validate
+sopuli: null-safety.yaml: defaults.safety: must be a mapping, not nothing
+```
+
+Exit 9. Until #501 that file loaded, and loaded as *no safety block at all* — so a
+`readonly` somebody thought they had written could vanish because the key beneath
+it was left blank. The same for the list:
+
+```yaml
+  safety:
+    readonly: true
+    confirm_environments:
+```
+
+```
+$ sopuli --config null-confirm.yaml config validate
+sopuli: null-confirm.yaml: defaults.safety.confirm_environments: must be a list, not nothing
+```
+
+Exit 9, where it used to read as `()` — silently "confirm nothing, anywhere".
+Both refusals apply wherever a `safety:` block may be written: `defaults:`, a
+profile, a target, a group, a target set's template or an `overrides:` entry.
+
 ### `--vault-addr` with nothing to apply it to
 
 Delete `vault: vault-dev` from `defaults:` and try to redirect the store anyway:

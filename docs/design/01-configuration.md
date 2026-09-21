@@ -2751,6 +2751,24 @@ So a file the schema accepts may still be refused by `sopuli config validate`,
 and that is the intended division rather than a gap. The schema is the fast,
 local, incomplete check; the tool is the complete one.
 
+**Incomplete, never looser** — the division only works in one direction (#501). A
+file the *tool* accepts and the schema refuses inverts it: the editor reports an
+error on a file that runs, which teaches people to stop trusting the editor. The
+case that broke it was a key written with nothing under it. YAML reads
+`safety:` with an empty body as `null`, and the builders read that null as *the
+key is absent* — while the schema types the property as an object and refuses it.
+So **key presence decides, never the value**: a builder asks whether the key was
+written and hands anything present to the field helper, which names the key when
+it refuses. `optional_bool` and `optional_int` already worked that way, which is
+why `max_targets: null` and `readonly: null` were refused in the same block that
+accepted `safety: null` and `confirm_environments: null`.
+
+Reading the null as absence is also the dangerous direction for these two in
+particular: both are guards, so `confirm_environments: null` was silently
+"confirm nothing, anywhere" and `safety: null` was silently a layer with no
+guard on it at all. A file that says either is a file whose author thinks it says
+something else.
+
 ### Pointing an editor at it
 
 A schema nothing is pointed at is a file in a directory. The association is made

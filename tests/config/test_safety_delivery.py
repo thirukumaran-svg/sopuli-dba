@@ -24,7 +24,6 @@ def test_a_safety_block_may_declare_no_delivery_policy() -> None:
     permitting nothing -- see the setting's own test for why that matters."""
     safety = build_safety({"max_targets": 1}, at=AT)
 
-    assert safety is not None
     assert safety.delivery is None
 
 
@@ -34,7 +33,6 @@ def test_the_allowed_methods_are_read_in_the_order_written() -> None:
         at=AT,
     )
 
-    assert safety is not None
     assert safety.delivery is not None
     assert safety.delivery.allowed_methods == ("vault_wrapped", "manual")
 
@@ -45,7 +43,6 @@ def test_a_delivery_block_that_writes_nothing_imposes_no_constraint() -> None:
     below."""
     safety = build_safety({"delivery": {}}, at=AT)
 
-    assert safety is not None
     assert safety.delivery is not None
     assert safety.delivery.allowed_methods is None
 
@@ -66,7 +63,6 @@ def test_every_real_method_is_accepted() -> None:
     in an allow-list on the day it is added."""
     safety = build_safety({"delivery": {"allowed_methods": list(DELIVERY_METHODS)}}, at=AT)
 
-    assert safety is not None
     assert safety.delivery is not None
     assert safety.delivery.allowed_methods == DELIVERY_METHODS
 

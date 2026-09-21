@@ -14,7 +14,7 @@ from sopuli.config.errors import ROOT
 from sopuli.config.fields import mapping, optional_string, reject_unknown_keys
 from sopuli.config.locking import build_locking
 from sopuli.config.model import Defaults, OracleRuntime, Runtime
-from sopuli.config.safety import build_safety
+from sopuli.config.safety import read_safety
 from sopuli.config.vaults import build_vault_patches, vault_name
 
 DEFAULTS_KEYS = ("vault", "vaults", "policy", "profile", "safety", "locking")
@@ -37,7 +37,7 @@ def build_defaults(document: dict[str, Any]) -> Defaults:
         vault=vault_name(entry, at=at),
         policy=optional_string(entry, "policy", at=at),
         profile=optional_string(entry, "profile", at=at),
-        safety=build_safety(entry.get("safety"), at=at.key("safety")),
+        safety=read_safety(entry, at=at),
         locking=build_locking(entry.get("locking"), at=at.key("locking")),
         # `vault:` names a store and `vaults:` describes one -- C13, and the two
         # keys sit one line apart here on purpose. Layer 5, so these are

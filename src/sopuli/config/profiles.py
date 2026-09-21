@@ -44,7 +44,7 @@ from sopuli.config.locking import build_locking
 from sopuli.config.model import Profile, ProfileDb
 from sopuli.config.policies import ROTATION_STRATEGIES, build_verify
 from sopuli.config.references import dangling
-from sopuli.config.safety import build_safety
+from sopuli.config.safety import read_safety
 from sopuli.config.vaults import build_vault_patches, vault_name
 
 #: §5's whitelist. Everything here changes how the run behaves; nothing here
@@ -107,7 +107,7 @@ def _build_profile(name: str, raw: Any, *, at: KeyPath) -> Profile:
         vault=vault_name(entry, at=at),
         verify=build_verify(entry.get("verify"), at=at.key("verify")),
         rotation_strategy=_build_rotation_strategy(entry.get("rotation"), at=at.key("rotation")),
-        safety=build_safety(entry.get("safety"), at=at.key("safety")),
+        safety=read_safety(entry, at=at),
         locking=build_locking(entry.get("locking"), at=at.key("locking")),
         confirm=optional_bool(entry, "confirm", at=at),
         output=_closed(entry, "output", allowed=OUTPUTS, noun="output format", at=at),

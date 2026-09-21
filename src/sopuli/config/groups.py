@@ -18,7 +18,7 @@ from typing import Any
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import label_selector, mapping, reject_unknown_keys
 from sopuli.config.model import Group
-from sopuli.config.safety import build_safety
+from sopuli.config.safety import read_safety
 
 GROUP_KEYS = ("match", "safety")
 
@@ -47,5 +47,5 @@ def _build_group(name: str, raw: Any, *, at: KeyPath) -> Group:
     return Group(
         name=name,
         match=label_selector(entry["match"], at=at.key("match")),
-        safety=build_safety(entry.get("safety"), at=at.key("safety")),
+        safety=read_safety(entry, at=at),
     )

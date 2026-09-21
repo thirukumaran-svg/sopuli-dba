@@ -11,8 +11,11 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.defaults import build_defaults
 from sopuli.config.errors import ConfigError
 from sopuli.config.groups import build_groups
+from sopuli.config.profiles import build_profiles
+from sopuli.config.target_sets import build_target_sets
 from sopuli.config.targets import build_targets
 
 PROD_PDBS: dict[str, Any] = {"match": {"target_set": "appdb", "env": "prod"}}
@@ -146,3 +149,83 @@ def test_an_unknown_safety_key_is_refused() -> None:
     rendered = str(caught.value)
     assert "unknown key 'max_target'" in rendered
     assert "groups.prod-pdbs.safety" in rendered
+
+
+# ------------------------------------------------- a safety block written null ---
+
+
+def _defaults_with(safety: Any) -> None:
+    build_defaults({"version": 1, "defaults": {"safety": safety}})
+
+
+def _group_with(safety: Any) -> None:
+    build_groups(document(**{"prod-pdbs": {**PROD_PDBS, "safety": safety}}))
+
+
+def _profile_with(safety: Any) -> None:
+    build_profiles({"version": 1, "profiles": {"scheduled": {"safety": safety}}})
+
+
+def _target_with(safety: Any) -> None:
+    build_targets(
+        {
+            "version": 1,
+            "targets": [
+                {
+                    "name": "cdb-root-prod",
+                    "type": "oracle",
+                    "dsn": "db-prod.example.com:1521/CDBPROD.pdb.example.com",
+                    "safety": safety,
+                }
+            ],
+        }
+    )
+
+
+def _override_with(safety: Any) -> None:
+    build_target_sets(
+        {
+            "version": 1,
+            "target_sets": {
+                "appdb": {
+                    "type": "oracle",
+                    "name": "appdb-{env}",
+                    "dsn": "{host}:1521/{env}.pdb.example.com",
+                    "for_each": {"env": {"prod": {"host": "db-prod.example.com"}}},
+                    "overrides": {"appdb-prod": {"safety": safety}},
+                }
+            },
+        }
+    )
+
+
+#: Every section §9 allows a safety block under, plus the target-set override that
+#: patches one. Five call sites, and the null was read as "no block" at all five.
+SECTIONS = (_defaults_with, _group_with, _profile_with, _target_with, _override_with)
+
+
+@pytest.mark.parametrize("section", SECTIONS, ids=lambda fn: fn.__name__)
+def test_a_safety_key_with_nothing_under_it_is_refused(section: Any) -> None:
+    """#501: `safety:` with nothing indented under it is `null`, which was read as
+    *no block* -- so a `readonly` somebody thought they had written could vanish
+    because the key underneath it was left blank. A half-finished edit looks
+    exactly like this, and the published schema refuses it, which §9b says the
+    tool may never be looser than."""
+    with pytest.raises(ConfigError) as caught:
+        section(None)
+
+    assert "must be a mapping, not nothing" in str(caught.value)
+    assert str(caught.value.at).endswith("safety")
+
+
+@pytest.mark.parametrize("section", SECTIONS, ids=lambda fn: fn.__name__)
+def test_a_confirm_environments_key_with_nothing_under_it_is_refused(section: Any) -> None:
+    """The same rule one level down, and the same direction of danger:
+    `confirm_environments: null` read as `()` is silently "confirm nothing,
+    anywhere". Key presence decides, as it already did for `max_targets` and
+    `readonly` two lines away."""
+    with pytest.raises(ConfigError) as caught:
+        section({"confirm_environments": None})
+
+    assert "must be a list, not nothing" in str(caught.value)
+    assert str(caught.value.at).endswith("safety.confirm_environments")
