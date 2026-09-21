@@ -51,6 +51,7 @@ from sopuli.config.model import ResetRecords
 from sopuli.config.secret_refs import TRAVERSAL, normalise_path
 from sopuli.lock.keys import LockKey
 from sopuli.lock.record import Holder
+from sopuli.secrets import Secret
 
 
 @dataclass(frozen=True)
@@ -233,7 +234,7 @@ RECORD_KEYS = frozenset(
 DELIVERY_KEYS = frozenset({"method", "to"})
 
 
-def assert_no_secret(document: Any, *, secret: str) -> None:
+def assert_no_secret(document: Any, *, secret: Secret) -> None:
     """Refuse a record document that could carry the password.
 
     Invariant 2 held against the **serialised document**, which is where it has
@@ -266,6 +267,11 @@ def assert_no_secret(document: Any, *, secret: str) -> None:
     practice, since ``to`` is a location and the one writer of it is the delivery
     method's own reference.
 
+    **It takes the** :class:`~sopuli.secrets.Secret`, not the plaintext, and that
+    is what keeps the check from being the leak: the comparison goes through the
+    type's own ``__eq__``, so no caller has to reveal a password in order to
+    prove the document does not carry one.
+
     :class:`AssertionError` rather than a store error or a refusal with an exit
     code, because reaching it is a **programming** error and not a configuration
     one: no config file can provoke it, and no operator can fix it. It is the
@@ -277,7 +283,12 @@ def assert_no_secret(document: Any, *, secret: str) -> None:
         _assert_closed(document["delivery"], allowed=DELIVERY_KEYS, what="record's `delivery`")
 
     for value in _walk(document):
-        if value == secret:
+        # Wrapped rather than revealed. `Secret.__eq__` compares two wrapped
+        # values without producing either, so the one function whose job is to
+        # look for a password does not become a tenth site in
+        # `tests/test_reveal_sites.py` -- which would be an odd way to enforce
+        # invariant 2.
+        if isinstance(value, str) and Secret(value) == secret:
             raise AssertionError(
                 "reset record carries the password it set: invariant 2 permits plaintext "
                 "out through the vault write, the driver call and `policy sample --reveal`, "

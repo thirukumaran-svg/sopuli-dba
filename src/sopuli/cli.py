@@ -127,6 +127,8 @@ from sopuli.diagnostics import (
     lock_broken,
     lock_diagnostics,
     no_reset_journal,
+    no_reset_record,
+    reset_record_unwritten,
     unlistable_stores,
     vault_diagnostics,
     wallet_diagnostics,
@@ -1584,10 +1586,24 @@ def account_reset_password(
     document.plan = plan.as_json()
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
+    # The record path is derived before anything connects, so a name it cannot
+    # be built from is a plan-time refusal (invariant 4) rather than a failure
+    # after the password has already changed.
+    paths = _record_paths(config, account, reached)
+
     header = render_plan(plan, noun="account")
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
         return header + "\n\nnothing to reset"
+
+    # UC-2 3.4's first absence, after the empty-selection exit and before the
+    # first connection: an operator who did not mean to run without a journal
+    # can still stop, and a run that resets nothing has no record to be missing.
+    notices: list[Diagnostic] = []
+    if config.reset_records is None:
+        unrecorded = no_reset_record()
+        document.diagnostics.append(unrecorded)
+        notices.append(unrecorded)
 
     if not run.dry_run and delivery.is_seen:
         # **The plan goes out before the first statement, and before the prompt**
@@ -1609,6 +1625,7 @@ def account_reset_password(
             force=force,
             keep_rollover=keep_rollover,
             preview=run.dry_run,
+            record_at=paths.get(target.name),
         )
         for target in reached
     ]
@@ -1616,8 +1633,16 @@ def account_reset_password(
     document.results = [one.as_json() for one in found]
     states = [one.state for one in found]
     changed = sum(1 for one in found if one.changed)
-    notice = _no_record_written()
-    document.diagnostics.append(notice)
+    # The second of §3.4's absences, raised here rather than inside `_reset_one`
+    # so that the plan-time one above and this one are appended in the order
+    # they happened. A row only carries a reason when a record was attempted and
+    # failed; a row that wrote one, or never had a journal to write to, carries
+    # none.
+    for one in found:
+        if one.record_error is not None:
+            failed = reset_record_unwritten(one.record_error.path, one.record_error.reason)
+            document.diagnostics.append(failed)
+            notices.append(failed)
     document.finish(_reset_exit(states), summarise_reset(states, changed=changed))
 
     body = render_reset(
@@ -1628,11 +1653,143 @@ def account_reset_password(
     )
     shown = "\n\n".join(one.shown for one in found if one.shown is not None)
     # Printed as well as serialised (#309): a warning nobody can see in the
-    # default output is not surfaced, and this one says the run kept no record
-    # of itself -- which is what a terminal operator needs, and what
+    # default output is not surfaced, and these say the run kept no record of
+    # itself -- which is what a terminal operator needs, and what
     # `diagnostics[]` alone tells only a JSON consumer.
-    told = "\n".join(render_notices([notice.message]))
+    told = "\n".join(render_notices([one.message for one in notices]))
     return "\n\n".join(part for part in (header, body, told, shown) if part)
+
+
+def _record_paths(
+    config: Config, account: str, reached: Sequence[ExpandedTarget]
+) -> dict[str, str]:
+    """Where each target's record will go, derived before anything connects.
+
+    Empty where no `reset_records:` block is declared, which is the documented
+    mode rather than a failure (UC-2 §3.4) -- so a caller reads "no path for this
+    target" as "nothing to write" and needs no second flag to tell the two apart.
+
+    **A name the path cannot be built from is refused here** (invariant 4).
+    :func:`~sopuli.reset_record.record_path` raises :class:`ValueError` for a
+    target or an account that is not one path segment -- a `/` in either derives
+    the same record path as a *different* pair, which is one journal describing
+    two accounts and, once #512 lands, one lock where there should be two.
+    Deriving at plan time is what keeps that a refusal rather than a discovery
+    made after the password has changed.
+
+    A :class:`ConfigError` and exit 9, because the offending name is in the
+    file: `targets[].name` or the account the operator typed, and neither is a
+    capability the database lacks.
+    """
+    records = config.reset_records
+    if records is None:
+        return {}
+    derived: dict[str, str] = {}
+    for target in reached:
+        try:
+            derived[target.name] = reset_record.record_path(
+                records, target=target.name, account=account
+            )
+        except ValueError as error:
+            raise ConfigError(
+                f"no reset record path for {account} on {target.name}: {error}",
+                hint=(
+                    "the record is one per (target, account) under "
+                    f"`reset_records.prefix` ({records.prefix}), so each name has to be "
+                    "a single path segment"
+                ),
+            ) from error
+    return derived
+
+
+@dataclass(frozen=True)
+class _RecordFailure:
+    """A record that could not be written, and where it was going to go."""
+
+    path: str
+    reason: str
+
+
+def _write_reset_record(
+    run: Invocation,
+    config: Config,
+    *,
+    path: str,
+    account: str,
+    target: str,
+    delivery: Delivery,
+    expired: bool,
+    secret: Secret,
+) -> _RecordFailure | None:
+    """Journal one reset, or say why it could not be (UC-2 §3.1, #511).
+
+    **Called after the database has confirmed and after delivery** (§6.4). The
+    record holds what happened, so writing it earlier would make it hold an
+    intention -- which is also why §3.4 makes a failed write a warning on a
+    *successful* run rather than a rollback: the password has already changed
+    and the person still needs it.
+
+    **On the seen path "after delivery" is as late as a function can be.** The
+    password is displayed by this command returning a string, so the write
+    happens once the value is composed and every guard has passed, a moment
+    before Click echoes it. Restructuring the verb to echo first would put a
+    store write after the one emission in this tool that must never be retried.
+
+    **`seen` records the path rather than the operator's eyes.** It is `true` for
+    a `manual` delivery even where the prompt was declined and nothing was
+    printed: the field answers "was this the path that shows a DBA a working
+    password", which is what makes the absent `delivery.to` unambiguous (§3.1),
+    and a journal that understated an exposure would be wrong in the direction
+    that matters. What the operator did about the prompt is in the run document.
+
+    Never raises. Every failure is a :class:`_RecordFailure` the caller turns
+    into `SOPULI-W025`, because there is no failure here worth ending a run that
+    has already succeeded.
+    """
+    try:
+        # **Opening is inside the guard, not beside it** (Copilot's review of
+        # #513). `_stores_for` resolves a credential and builds a client, and
+        # every one of those steps can fail -- an unreachable Vault, a token
+        # that has expired since the run began, a backend whose extra is not
+        # installed. Outside the guard that exception would escape a reset that
+        # had already succeeded and turn it into a failed run, which is exactly
+        # the false negative 3.4 rules out: the password has changed and the
+        # person still needs it.
+        journal = _reset_journal(run, config)
+    except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
+        return _RecordFailure(path=path, reason=_as_error(error).message)
+    if journal is None:
+        # Unreachable while `path` comes from `_record_paths`, which derives
+        # nothing without a block -- and cheaper to answer than to prove at every
+        # call site. A store that could not be opened is a failure, not a silence.
+        return _RecordFailure(path=path, reason="no store to write it to")
+    record = reset_record.ResetRecord(
+        account=account,
+        target=target,
+        reset_at=utc_now(),
+        seen=delivery.is_seen,
+        expired=expired,
+        delivery=reset_record.Delivery(method=delivery.method),
+        by=current_holder(),
+        correlation_id=run.document.correlation_id,
+    )
+    document = record.to_dict()
+    # Invariant 2 against the serialised document rather than against the
+    # writer's intentions, which is what #468 built it for: the type has no
+    # field a password could go in, and this is what holds when a later delivery
+    # method puts its own reference in `delivery.to`. An `AssertionError` -- a
+    # programming error, not a configuration one -- so it is deliberately not
+    # caught below.
+    reset_record.assert_no_secret(document, secret=secret)
+    try:
+        # Unguarded: serialising two concurrent resets is the advisory lock's
+        # job (#512, UC-2 §3.3), and a compare-and-set here would buy nothing it
+        # will not buy properly -- while failing forever on a path whose latest
+        # version was deleted, which reads as `None` and is not version 0.
+        journal.write(path, document, cas=None)
+    except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
+        return _RecordFailure(path=path, reason=_as_error(error).message)
+    return None
 
 
 def _reset_intent() -> list[str]:
@@ -1650,24 +1807,6 @@ def _reset_intent() -> list[str]:
     to prevent.
     """
     return ["password_set"]
-
-
-def _no_record_written() -> Diagnostic:
-    """UC-2 3.4's first absence, which is this build's only answer.
-
-    The record and the advisory lock keyed on its path are #468's shape and
-    nobody's writer yet, so **no run writes one**, whatever `reset_records:`
-    says. Emitted on every run rather than only where a store is unconfigured,
-    because in this build the two are one situation -- and a warning that fired
-    selectively would imply the other case worked.
-    """
-    return Diagnostic(
-        level="warning",
-        message=(
-            "no reset record was written: this build has no writer for `reset_records:` "
-            "yet, so the run document and the database are the whole record of this reset"
-        ),
-    )
 
 
 def _reset_exit(states: Sequence[str]) -> ExitCode:
@@ -1701,6 +1840,11 @@ class _Reset:
     would_reset: bool = False
     duration_ms: int | None = None
     error: Error | None = None
+    #: Why this reset's record could not be written, where one was attempted and
+    #: failed (UC-2 3.4's second absence). **Never serialised as a result
+    #: field**: the caller turns it into `SOPULI-W025` in ``diagnostics[]``,
+    #: which is where a consumer already looks for what a run could not do.
+    record_error: _RecordFailure | None = None
     #: The rendered password block, on the seen path only. **Never serialised**:
     #: `as_json` cannot reach it, and there is no field in the schema it could
     #: go in. It travels here because the caller prints it after the table, and
@@ -1733,6 +1877,7 @@ def _reset_one(
     force: bool,
     keep_rollover: bool,
     preview: bool,
+    record_at: str | None = None,
 ) -> _Reset:
     """One target: read the account, decide, draw, set, and hand it over.
 
@@ -1862,16 +2007,49 @@ def _reset_one(
             overridden=overridden,
             duration_ms=_elapsed(started),
         )
-        try:
+
+        def journalled(one: _Reset) -> _Reset:
+            """The record, written after the database and after delivery (§6.4).
+
+            Nothing to write where no `reset_records:` block was declared, which
+            is the documented mode `SOPULI-W024` already announced at plan time.
+            """
+            if record_at is None:
+                return one
             return replace(
-                row,
-                shown=_hand_over(secret, account=account, target=target.name, delivery=delivery),
+                one,
+                record_error=_write_reset_record(
+                    run,
+                    config,
+                    path=record_at,
+                    account=account,
+                    target=target.name,
+                    delivery=delivery,
+                    expired=decision.expire,
+                    secret=secret,
+                ),
+            )
+
+        try:
+            return journalled(
+                replace(
+                    row,
+                    shown=_hand_over(
+                        secret, account=account, target=target.name, delivery=delivery
+                    ),
+                )
             )
         except click.Abort:
             # Recorded, then re-raised. The row carries no password -- there is
             # no field for one -- so what survives is the fact of the mutation
             # and nothing that would make declining to look pointless.
-            run.document.results = [*(run.document.results or []), row.as_json()]
+            #
+            # **Journalled too, and that is the point of doing it here.** The
+            # password was set; a declined prompt changes what the operator saw
+            # and not what the database holds, so a journal that skipped this
+            # run would be missing the one reset that most needs explaining --
+            # an account whose new password nobody received.
+            run.document.results = [*(run.document.results or []), journalled(row).as_json()]
             raise
     finally:
         if session is not None:

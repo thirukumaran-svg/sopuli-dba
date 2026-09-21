@@ -363,6 +363,39 @@ LOW_ASSURANCE_ADMIN = "SOPULI-W022"
 #: still locked out whether or not the estate keeps history.
 NO_RESET_JOURNAL = "SOPULI-W023"
 
+#: A reset wrote no record, because the configuration declares no
+#: `reset_records:` block (UC-2 §3.4's first absence, #511).
+#:
+#: **Its own code rather than** :data:`NO_RESET_JOURNAL`, which says the same
+#: thing about a different verb: that one explains an empty column in a listing,
+#: and this one says a mutation went unrecorded. A consumer that had to tell them
+#: apart by reading the message would be parsing prose to find out whether
+#: anything happened.
+#:
+#: **Raised at plan time**, before the password changes, which is §3.4's own
+#: requirement and the whole reason it is worth saying: an operator who did not
+#: mean to run without a journal should find out while it can still be fixed
+#: rather than afterwards.
+#:
+#: It says *and no lock was taken*, because where there is no store there is no
+#: lock either (§3.3) -- two facts with one cause, and an operator told only the
+#: first would not learn that two concurrent resets of one account are not
+#: serialised.
+NO_RESET_RECORD = "SOPULI-W024"
+
+#: The reset succeeded and its record could not be written (UC-2 §3.4's second
+#: absence, #511).
+#:
+#: **A warning on a successful run**, never a rollback and never a non-zero exit.
+#: The password has already changed and the person still needs it, so failing the
+#: run would report a false negative about the part that mattered.
+#:
+#: Distinct from :data:`NO_RESET_RECORD` because the operator's next move differs:
+#: an absent journal is a configuration somebody chose, and a failed write is
+#: something to go and look at -- a revoked token, a policy that grants read and
+#: not write, or a store that is not there.
+RESET_RECORD_UNWRITTEN = "SOPULI-W025"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -532,6 +565,21 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "database's own password-change date is unaffected and is reported beside it. "
             "An estate that keeps no journal is a documented mode rather than a fault "
             "(UC-2 §3.4): what is owed is that the empty column says why, which is this."
+        ),
+        NO_RESET_RECORD: (
+            "`account reset-password` wrote no record of the reset, because this "
+            "configuration declares no `reset_records:` block -- so the run document and "
+            "the database are the whole record of it, and no advisory lock was taken on "
+            "the account either. Raised at plan time, before the password changes. An "
+            "estate with no store is a documented mode rather than a fault (UC-2 §3.4): "
+            "the seen path may have no store at all, and that is the site it exists for."
+        ),
+        RESET_RECORD_UNWRITTEN: (
+            "The reset succeeded and its record could not be written. The password has "
+            "changed and the person still needs it, so this is a warning on a successful "
+            "run rather than a failure (UC-2 §3.4) -- but unlike an absent journal it is "
+            "something to go and look at: a revoked token, a policy granting read and not "
+            "write, or a store that is not reachable."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -858,6 +906,55 @@ def no_reset_journal() -> list[Diagnostic]:
             ),
         )
     ]
+
+
+def no_reset_record() -> Diagnostic:
+    """Say that this reset is going unrecorded, before it happens (#511).
+
+    §3.4's first absence, raised at **plan time** rather than with the result:
+    an operator who did not mean to run without a journal should find out while
+    the password is still the one the person has.
+
+    One entry for the run, like :func:`no_reset_journal`, because the cause is
+    the configuration rather than the account -- and this verb resets one account
+    anyway, which is §2's rule for a mutating verb.
+
+    It names the lock as well as the record. Where there is no store there is no
+    lock (§3.3), and an operator told only that history is missing would not
+    learn that two concurrent resets of the same account are not serialised.
+    """
+    return Diagnostic(
+        level="warning",
+        code=NO_RESET_RECORD,
+        message=(
+            "no `reset_records:` block is declared, so no record of this reset will be "
+            "written and no advisory lock is taken on the account: the run document and "
+            "the database are the whole record of it"
+        ),
+    )
+
+
+def reset_record_unwritten(path: str, reason: str) -> Diagnostic:
+    """The reset happened and the journal did not hear about it (#511).
+
+    §3.4's second absence. **A warning on a successful run** -- the password has
+    changed and the person still needs it, so failing here would report a false
+    negative about the part that mattered.
+
+    The reason is carried verbatim, and **last**, because it is the whole value
+    of the warning: "could not be written" sends somebody to look at a store, and
+    "403 at sopuli/personal-resets/..." sends them to a policy. Last because a
+    store's own message ends in its own punctuation, and anything appended after
+    it reads as a fragment of it.
+    """
+    return Diagnostic(
+        level="warning",
+        code=RESET_RECORD_UNWRITTEN,
+        message=(
+            f"the password was reset and its record at {path} could not be written, so "
+            f"the run document and the database are the whole record of it: {reason}"
+        ),
+    )
 
 
 def lock_diagnostics(manager: LockManager) -> list[Diagnostic]:

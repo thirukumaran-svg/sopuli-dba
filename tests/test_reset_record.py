@@ -28,6 +28,7 @@ from sopuli.reset_record import (
     record_lock_key,
     record_path,
 )
+from sopuli.secrets import Secret
 from sopuli.store import MemoryStore
 
 RECORDS = ResetRecords(vault="kv", prefix="sopuli/personal-resets")
@@ -220,14 +221,19 @@ def test_two_accounts_on_one_target_do_not_collide() -> None:
 
 # ------------------------------------------------- what it may never hold ---
 
-PASSWORD = "Xq7!tvBm2LsdPw9r"
+#: Wrapped, because that is what :func:`assert_no_secret` takes: the comparison
+#: goes through `Secret.__eq__`, so proving a document holds no password needs no
+#: reveal (#511). The documents below carry the *plaintext*, which is the thing
+#: being looked for.
+PLAINTEXT = "Xq7!tvBm2LsdPw9r"
+PASSWORD = Secret(PLAINTEXT)
 
 
 def test_the_password_in_a_key_the_record_does_declare_is_refused() -> None:
     """The value half, reached through a **permitted** key -- which is the case
     the closed shape cannot catch, and the reason both halves exist."""
     with pytest.raises(AssertionError) as raised:
-        assert_no_secret({"account": PASSWORD}, secret=PASSWORD)
+        assert_no_secret({"account": PLAINTEXT}, secret=PASSWORD)
     assert "invariant 2" in str(raised.value)
 
 
@@ -235,11 +241,11 @@ def test_it_is_refused_at_any_depth_and_in_a_key() -> None:
     """A record has no field a password is a *part* of, so an occurrence anywhere
     is the failure -- including a document built by inverting a mapping."""
     with pytest.raises(AssertionError):
-        assert_no_secret({"delivery": {"to": PASSWORD}}, secret=PASSWORD)
+        assert_no_secret({"delivery": {"to": PLAINTEXT}}, secret=PASSWORD)
     with pytest.raises(AssertionError):
-        assert_no_secret({"by": {"host": PASSWORD}}, secret=PASSWORD)
+        assert_no_secret({"by": {"host": PLAINTEXT}}, secret=PASSWORD)
     with pytest.raises(AssertionError):
-        assert_no_secret({PASSWORD: "jdoe"}, secret=PASSWORD)
+        assert_no_secret({PLAINTEXT: "jdoe"}, secret=PASSWORD)
 
 
 def test_the_record_this_build_writes_passes_it() -> None:

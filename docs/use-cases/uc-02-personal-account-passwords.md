@@ -375,11 +375,32 @@ into this section rather than leaving in a diff:
   runs on the write path rather than in a test alone, which is the difference
   between the invariant holding and the invariant having held once.
 
-**What #468 deliberately did not build is the warning.** §3.4's "no store
-configured" needs a code of its own, and nothing can emit it until
-`account reset-password` exists: a code with no emitter is the shape #477 found
-and fixed, where `Resolved.low_assurance` was computed on every run and read by
-nothing. It is allocated with the verb that raises it.
+**What #468 deliberately did not build is the warning, and #511 built both of
+them.** §3.4's "no store configured" is `SOPULI-W024`, raised at plan time; a
+record that could not be written after a successful reset is `SOPULI-W025`.
+Neither could be allocated before there was a verb to emit it — a code with no
+emitter is the shape #477 found and fixed, where `Resolved.low_assurance` was
+computed on every run and read by nothing. Two codes rather than one, because
+the operator's next move differs: an absent journal is a configuration somebody
+chose, and a failed write is a store to go and look at.
+
+**The writer is #511, and three things about it are worth reading back here.**
+The record is written after the database confirms and after delivery (§6.4), and
+on the seen path "after delivery" is as late as a function can be — the value is
+composed and every guard has passed, a moment before it reaches the screen.
+`seen` records the **path** rather than the operator's eyes: a `manual` delivery
+whose prompt was declined still journals `seen: true`, because that is what makes
+the absent `delivery.to` mean something, and a journal that understated an
+exposure would be wrong in the direction that matters. And a run whose prompt was
+declined is journalled at all, which is the same argument as the run document's:
+the password was set, so the reset that most needs explaining is exactly the one
+where nobody received it.
+
+**The record path is derived at plan time**, before anything connects, so a
+target or account name that is not a single path segment is a refusal naming both
+(invariant 4) rather than a discovery made after the password has changed. Two
+such names derive one path, which is one journal describing two accounts — and,
+once §3.3's lock lands, one lock where there should be two.
 
 ### 3.2 Why the database is authoritative for *when*, and Q9 is not the precedent
 
@@ -455,14 +476,18 @@ Three absences, and they are not the same absence:
   document and the database are the record for that reset. **A warning with a code
   of its own**, at plan time rather than after the fact, because an operator who did
   not mean to run this way should find out before the password changes rather than
-  after. The number is allocated when it is built and is deliberately not reserved
-  here — how codes are allocated is J3, still open (`03-json-output.md` §9).
+  after. Built in #511 as `SOPULI-W024`, allocated by hand with the verb that
+  raises it — how codes are allocated in general is J3, still open
+  (`03-json-output.md` §9).
 - **The record write fails, after the reset succeeded.** A warning on a successful
   run — never a rollback, never a non-zero exit. The password has already changed
   and the person still needs it, so failing the run would report a false negative
   about the part that mattered. The record is written **after** the database
   confirms and after delivery, so what it holds is a fact rather than an intention,
-  and its absence is the case above reached by a different route.
+  and its absence is the case above reached by a different route. `SOPULI-W025` in
+  #511, and a second code rather than a reuse of the first: the absence is the
+  same and what to do about it is not, since this one names a store that answered
+  and the message carries what it said.
 - **The database will not say when.** `SOPULI-W021` exists for exactly this and
   already distinguishes the causes: a release with no
   `DBA_USERS.PASSWORD_CHANGE_DATE` and no `SELECT ON SYS.USER$` to read `PTIME`

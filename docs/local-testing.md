@@ -2246,6 +2246,109 @@ refusal. `ORA-01017` would mean it did not work at all. That distinction is the
 whole of UC-2 §5, and it is what makes the exposure time-limited — the owner's
 first logon ends it.
 
+#### What the journal then holds
+
+Everything above runs without a `reset_records:` block, and every one of those
+runs ends with a note saying what that costs:
+
+```
+1 note:
+  no `reset_records:` block is declared, so no record of this reset will be written and no advisory lock is taken on the account: the run document and the database are the whole record of it
+```
+
+`SOPULI-W024`, raised at **plan time** — before the password changes, so an
+operator who did not mean to run this way can still stop. It fires under
+`--dry-run` too, which is the cheapest way to see it. It is a warning and never
+a refusal: the seen path may have no store at all, and that is the site `manual`
+exists for.
+
+Declare one — the `reset_records:` block below in this section, with the
+`vault-dev` store from §6 — and run the reset again:
+
+```yaml
+reset_records:
+  vault: vault-dev
+  prefix: sopuli/personal-resets
+```
+
+The note goes away, and there is now something to go and look at:
+
+```bash
+vault kv get -mount=kv sopuli/personal-resets/free-pdb/acme_dev_alice
+```
+```
+========= Data =========
+Key               Value
+---               -----
+account           acme_dev_alice
+by                map[host:dba-ws-4.example.com os_user:dba01 pid:17976]
+correlation_id    404c461b-5308-4418-99f8-ea99e204ecb5
+delivery          map[method:manual]
+expired           true
+reset_at          2026-09-21T16:22:15.673177Z
+seen              true
+target            free-pdb
+```
+
+**That is a real record from a real run** against the tier-1 stack, with `by`
+anonymised — the host and user were this laptop's, and the vocabulary rule in
+`CLAUDE.md` applies to a sample as much as to a fixture. Nothing else is
+substituted.
+
+Four things to read out of it:
+
+- **`seen: true`, and no `delivery.to`.** The destination was a person, by a
+  route the tool did not carry, so there is no location to record — and `seen`
+  is the field that makes the absence mean something rather than look like
+  missing data. An unseen method would carry a `to` and `seen: false`.
+- **No password, in any representation.** Not the value, not a hash, not a
+  verifier. There is no field one could go in, and `assert_no_secret` checks the
+  serialised document on the way out rather than trusting the writer.
+- **`correlation_id` joins it to the run** that produced it, and `by` says which
+  runner — the lock record's own shape, so a reader who has learned one has
+  learned both.
+- **`reset_at` is the tool's moment, not the database's.** The database stays
+  authoritative for *when the password last changed* (UC-2 §3.2), and on this
+  path it is designed to go stale: the owner must change the password at first
+  logon, and the tool never sees that.
+
+Run it twice and the record is overwritten, which is the second run reporting
+`changed: true` doing what it says. **Nothing serialises two concurrent resets
+yet** — the advisory lock keyed on this path is #512.
+
+#### A journal that cannot be written
+
+Worth causing on purpose, because the rule is the opposite of this codebase's
+usual reflex. Point the store at a mount that is not there:
+
+```yaml
+vaults:
+  vault-dev:
+    mount: kv-that-is-not-there
+```
+```
+1 note:
+  the password was reset and its record at sopuli/personal-resets/free-pdb/acme_dev_alice could not be written, so the run document and the database are the whole record of it: the store answered HTTP 404 at 'sopuli/personal-resets/free-pdb/acme_dev_alice': no handler for route "kv-that-is-not-there/data/sopuli/personal-resets/free-pdb/acme_dev_alice". route entry not found.
+```
+
+Exit **0**, and the password is printed as usual. `SOPULI-W025` is a warning on
+a **successful** run: the password has already changed and the person still
+needs it, so failing here would report a false negative about the part that
+mattered. It is a separate code from `SOPULI-W024` because the next move
+differs — an absent journal is a configuration somebody chose, and this is a
+store to go and look at.
+
+The one thing that *is* refused is a record path that cannot be derived. A `/`
+in a target name would put two different (target, account) pairs at one path:
+
+```
+sopuli: no reset record path for acme_dev_alice on tier1/oracle: target 'tier1/oracle' cannot be a record path component: a `/` in it would derive the same record path as a different target and account
+  hint: the record is one per (target, account) under `reset_records.prefix` (sopuli/personal-resets), so each name has to be a single path segment
+```
+
+Exit **9**, at plan time, before anything connects — and under `--dry-run` too,
+because it is about what the configuration says rather than about an emission.
+
 #### Six failures worth causing
 
 Each has its own exit code, and a script branching on them wants them apart:
@@ -2348,10 +2451,9 @@ the run is configured to do rather than about an emission.
 
 #### What is not built
 
-- **No reset record.** `reset_records:` parses and nothing writes to it, so every
-  run carries a warning saying the run document and the database are the whole
-  record. The advisory lock keyed on that record's path is absent with it, so two
-  DBAs resetting the same person at once are not serialised.
+- **No advisory lock.** The record is written since #511, and the lock keyed on
+  its path is #512 — so two DBAs resetting the same person at the same second are
+  not serialised, and the second password overwrites the first.
 - **No unseen delivery**, which is the default and the one the use case is really
   about. #444-#447.
 - **No `expire-password`**, the verb that forces a change without setting one.
@@ -2542,9 +2644,11 @@ SOPULI-W023 no `reset_records:` block is declared, so there is no reset journal 
 
 #### Filling that column in
 
-Nothing *writes* a reset record yet — `reset-password` does not exist — but the
-column is read for real, so you can prove it works by writing one by hand. Declare
-the journal (§10a's `reset_records:` block, below), then:
+`account reset-password` fills it for real since #511 — §10a's *What the journal
+then holds* does that end to end. What follows writes a record **by hand**, which
+is still the quicker way to exercise the column on its own: it needs no database
+and no password, and it lets you put a date in the column and see it rendered.
+Declare the journal (§10a's `reset_records:` block, below), then:
 
 ```bash
 vault kv put -mount=kv sopuli/personal-resets/tier1-oracle/acme_dev_alice   account=acme_dev_alice target=tier1-oracle reset_at=2026-09-17T09:14:22Z   seen=false expired=false
@@ -2637,14 +2741,13 @@ declares **34 accounts**, most of them Oracle's own.
 
 ---
 
-### `reset_records:` — a block you can write, and nothing that reads it yet
+### `reset_records:` — where the journal lives
 
-**Say this plainly, because the section above is the reason to be careful:** UC-2's
-reset journal is *configurable* as of #468 and is written by nothing, because the
-verb that would write one does not exist. `config validate` accepts the block and
-refuses a bad one; no run produces a record, and there is no record to go and look
-at afterwards. It is here so that the refusals are testable now rather than
-discovered later, alongside a verb.
+UC-2's reset journal became configurable in #468 and **written** in #511: an
+`account reset-password` run with this block declared writes one record per
+(target, account), and a run without it says so and resets anyway. What the
+record holds, and how to read it back out of Vault, is §10a's *What the journal
+then holds*; this is the block that decides where it goes.
 
 Add it to the file from §6:
 
