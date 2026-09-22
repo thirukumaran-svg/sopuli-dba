@@ -472,14 +472,30 @@ because 7 asserts that nothing happened and that is a lie once one target has
 been reset. A `--dry-run` takes no lock at all, for invariant 8's reason: a
 preview that left a claim in the vault would block the run it was previewing.
 
-**`lock status` does not survey these locks, and that sentence used to say it
-did.** Measured on the tier-1 stack while building #512: the listing verb builds
-its estate from `bindings`, which come from `applications:` and `accounts:`, so a
-configuration whose only locks are UC-2's reports `no lock paths are declared`
-while one is held. `lock break` is unaffected -- it takes the key on the command
-line. The fix is not one line, which is why it is **#514** rather than this
-issue: a personal account declared by a *predicate* (H1) cannot be enumerated
-without asking the database, and `lock status` is an offline verb.
+**`lock status` surveys these locks by listing the prefix, not by enumerating
+keys** (#514). The obvious implementation does not work and the first build did
+not have one: the listing verb builds its estate from `bindings`, which come from
+`applications:` and `accounts:`, so between #512 and #514 a configuration whose
+only locks were UC-2's reported `no lock paths are declared` while one was held.
+Extending that estate is not the fix either, because a personal account declared
+by a *predicate* (H1) has no name until a database is asked and this verb asks
+none -- so a key-by-key expansion would list the name-declared accounts and
+silently omit the rest, which is a listing wrong in the direction that matters.
+
+What it does instead is list the store under the declared `reset_records:`
+prefix and report what is actually there, which is the same move #150 made for
+records at paths the file no longer declares. The difference is in what the
+survey then *calls* them: a reset lock is this estate's, so it is neither a
+binding's nor a leftover, and `declared_by: reset_records` is the third answer
+(`03-json-output.md` §8, schema 1.28). `lock break` was unaffected throughout --
+it takes the key on the command line.
+
+**A selector narrows the bindings and not the prefix**, which is a cost worth
+stating rather than leaving to be discovered. A record path spells its target, so
+`--target` could filter on that segment -- and a record under this prefix whose
+target segment matches nothing declared is exactly the one an operator needs to
+see, which such a filter would hide. A path segment is not a declaration, so the
+region is surveyed whole.
 
 **A declared store that cannot be reached refuses the run**, and that is not
 §3.4's absence wearing a different hat. The lock lives in the journal's store, so

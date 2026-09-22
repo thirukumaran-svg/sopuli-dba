@@ -169,7 +169,7 @@ from sopuli.invocation import (
     group_options,
 )
 from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
-from sopuli.lock.inspect import declared_locks, mode_of, resolvable_locks, survey
+from sopuli.lock.inspect import declared_locks, mode_of, reset_region, resolvable_locks, survey
 from sopuli.lock.inspect import discover as discover_locks
 from sopuli.lock.keys import LockKey, acquisition_order, normalise_path, parse_lock_key
 from sopuli.lock.manager import LockableStore, LockManager, describe_holder
@@ -2612,6 +2612,23 @@ def lock_status(
     refused, so a survey never becomes a command that works on some backends and
     not others.
 
+    **And it surveys UC-2's reset locks, which no binding declares** (#514).
+    `reset_records:` declares a prefix rather than a set of keys -- a personal
+    account admitted by a `profile:` or `role:` predicate has no name until a
+    database is asked, and this verb asks none -- so the region is listed like
+    any other and what is found under it is reported as this estate's, with
+    `declared_by: reset_records` rather than as a leftover. The store is opened
+    because the block declares it, so a configuration with no `applications:` at
+    all still gets a survey; before this it opened nothing and reported an empty
+    estate while a reset held a lock.
+
+    **A selector does not narrow that region, and the reason is that a path
+    segment is not a declaration.** A record path spells its target, so filtering
+    by it would mean trusting the spelling -- and a record under this prefix whose
+    target segment matches nothing declared is precisely the one worth seeing,
+    which a filter built on the segment would hide. So `--select` decides which
+    *bindings* are surveyed, as it always did, and the prefix is surveyed whole.
+
     Always exit 0 when it could look. A held lock is a finding, not a failure --
     exit 7 means *this run could not proceed*, and this run had nothing to
     proceed with. A store that could not be *listed* is not a failure either: the
@@ -2637,13 +2654,25 @@ def lock_status(
     # survey.
     everything = resolvable_locks(config)
     keys = declared_locks(filter_estate(config, selection))
+    # UC-2's locks are keyed on the reset record's path, which no binding
+    # produces (#514). The prefix is declared and the keys under it are not
+    # enumerable offline -- a predicate-declared personal account has no name
+    # until a database is asked -- so the region is *listed* rather than
+    # expanded, and the store has to be opened for that to happen even when no
+    # binding names it. Before this, a UC-2-only configuration opened no store
+    # at all and reported an empty estate while holding a lock.
+    region = reset_region(config)
+    wanted = {key.store for key in keys}
+    if region is not None:
+        wanted.add(region.store)
 
-    stores = _stores_for(
-        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
-    )
+    stores = _stores_for(wanted, config, token_file=run.vault_token_file, cache=run.stores)
     leftovers = discover_locks(everything, stores=stores)
     states = survey(
-        acquisition_order([*keys, *leftovers.keys]), stores=stores, declared=set(everything)
+        acquisition_order([*keys, *leftovers.keys]),
+        stores=stores,
+        declared=set(everything),
+        region=region,
     )
     mode = mode_of(stores)
 
@@ -2659,7 +2688,9 @@ def lock_status(
         # they were examined, and `summary.total` is what was examined.
         Summary(total=len(states), ok=len(states), changed=0, failed=0),
     )
-    return render_status(paths, states, match=selection.select, mode=mode)
+    return render_status(
+        paths, states, match=selection.select, mode=mode, region=region is not None
+    )
 
 
 @lock_group.command("break")

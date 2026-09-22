@@ -2377,13 +2377,124 @@ sopuli: vault-dev:sopuli/personal-resets/free-pdb/acme_dev_bob is held by an unk
   hint: wait for it to finish, or coordinate with whoever is running it. `--force` breaks a lock that is still live -- the holder is fenced and stops at its next check, having applied whatever it applied
 ```
 
-**`sopuli lock status` does not show these locks, and that is a gap rather than
-a design** (#514). Its estate comes from `applications:` and `accounts:` — the
-secret documents UC-1 locks — so a configuration whose only locks are UC-2's
-reports `no lock paths are declared` even while one is held. `lock break` works
-because it takes the key on the command line; `lock status` has nowhere to get
-the key from, and a personal account declared by *predicate* cannot be
-enumerated offline at all, which is why this is not a one-line fix.
+**`sopuli lock status` shows these locks since #514, and the way it finds them is
+the interesting part.** Its estate comes from `applications:` and `accounts:` —
+the secret documents UC-1 locks — and no binding produces a record path, so
+between #512 and #514 a configuration whose only locks were UC-2's reported `no
+lock paths are declared` while one was held. Extending that estate would not have
+worked either: a personal account declared by *predicate* has no name until a
+database is asked, and this verb asks none. So it lists the declared
+`reset_records:` prefix instead and reports what is actually there.
+
+Plant the claim above and ask:
+
+```bash
+sopuli --config manual.yaml lock status
+```
+```
+config: manual.yaml
+mode:   cas
+
+personal-account resets, under the prefix this config declares:
+LOCK                                                      STATE  HOLDER   COMMAND           SINCE                 EXPIRES
+vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice  held   unknown  account reset...  2030-01-01T12:00:00Z  2030-01-01T12:15:00Z
+
+1 reset lock under the declared prefix (1 held)
+```
+
+Exit 0 — a held lock is a finding, not a failure. `HOLDER` is `unknown` because
+the recipe above writes no `holder` key, which is the same reason `lock break`
+says so two paragraphs up; a claim the tool itself took names the host, the pid
+and the user.
+
+**Three things in that output are deliberate.** The table is a *third* one, beside
+the declared locks and the leftovers, because a reset lock is neither: it is this
+estate's, so calling it a leftover would say a colleague's reset belongs to
+somebody else's configuration, and it was discovered rather than enumerated, so
+listing it with the bindings would imply the file names it. The summary counts it
+in its own clause and **not** as a proportion — there is no denominator, because
+the paths under the prefix cannot be counted without resolving a predicate
+against a database. And the `LOCK` cell is no longer truncated at 52 characters,
+which it had been since #105: the full key is what `lock break` takes, and a
+reset key is long enough (`<prefix>/<target>/<account>`) that every row was cut.
+
+In JSON it is one `found[]` entry with the field that carries the distinction:
+
+```bash
+sopuli --config manual.yaml lock status --output json | jq '.lock.found[]'
+```
+```json
+{
+  "vault": "vault-dev",
+  "path": "sopuli/personal-resets/free-pdb/acme_dev_alice",
+  "held": true,
+  "declared": true,
+  "declared_by": "reset_records",
+  "state": "held",
+  "expired": false,
+  "version": 1,
+  "acquired_at": "2030-01-01T12:00:00Z",
+  "expires_at": "2030-01-01T12:15:00Z",
+  "holder": {
+    "host": null,
+    "pid": null,
+    "os_user": null,
+    "correlation_id": "01JTHEIRS",
+    "command": "account reset-password"
+  }
+}
+```
+
+`declared_by` is new in schema **1.28** and is `binding` for a rotation lock,
+`reset_records` for this one, and `null` for a leftover. `declared` stays a
+boolean and now means "this configuration accounts for the path at all", which is
+what a consumer filtering its own locks was already asking it.
+
+Break it and ask again, which is the shape you see after an ordinary reset:
+
+```bash
+sopuli --config manual.yaml lock break vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice --force --confirm
+sopuli --config manual.yaml lock status
+```
+```
+personal-account resets, under the prefix this config declares:
+LOCK                                                      STATE     HOLDER   COMMAND           SINCE                 EXPIRES
+vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice  released  unknown  account reset...  2030-01-01T12:00:00Z  2030-01-01T12:15:00Z
+
+1 reset lock under the declared prefix (0 held)
+```
+
+`released`, still listed, and `(0 held)` — the record stays because the version
+counter is the fence, and the survey reports what is there rather than only what
+is in the way.
+
+**The empty answer says which empty it is**, and that distinction is the whole
+reason #514 was a bug rather than a missing feature. With the claim cleared:
+
+```
+no lock paths are declared, and nothing is held under the reset-record prefix
+```
+
+Take `reset_records:` out of the file and the same estate says only `no lock paths
+are declared`. One of those sentences means *I looked and it is quiet* and the
+other means *there was nowhere to look*, and before this they were the same
+sentence.
+
+**A journal store that cannot be reached now fails this verb**, which is new and
+is the same answer a binding's store has always got. Point `reset_records.vault`
+at a second `vaults:` entry on a dead port:
+
+```
+sopuli: could not reach the store: [WinError 10061] No connection could be made because the target machine actively refused it
+  hint: check `addr`, and `tls.ca_file` if the certificate is your own CA
+```
+
+Exit 1. Answering *what is held* without contacting the store the locks live in
+would be a false negative, which is the bug this section is about — so the store
+being unreachable is a failure rather than a quiet gap. Note the difference from
+the `SOPULI-W005` warning above it: that one is a store which cannot **list** at
+all, a permanent property reported without failing, because refusing there would
+cost the operator the report for every other store too.
 
 **A preview takes no lock**, which is invariant 8 read for the lock: a
 `--dry-run` that left a claim in the vault would block the run it was
@@ -3753,7 +3864,7 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.27.schema.json`](schemas/sopuli-run-1.27.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.28.schema.json`](schemas/sopuli-run-1.28.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json

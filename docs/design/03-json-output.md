@@ -41,7 +41,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.27.schema.json`](../schemas/sopuli-run-1.27.schema.json),
+Schemas: [`../schemas/sopuli-run-1.28.schema.json`](../schemas/sopuli-run-1.28.schema.json),
 [`../schemas/sopuli-event-1.1.schema.json`](../schemas/sopuli-event-1.1.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -793,7 +793,8 @@ record at a path the config *does not* declare is reported too:
 "lock": {
   "mode": "cas",
   "found": [ { "vault": "vault-prod", "path": "apps/acme/db",
-               "held": true, "declared": true, "state": "held",
+               "held": true, "declared": true, "declared_by": "binding",
+               "state": "held",
                "expired": false, "version": 41,
                "acquired_at": "…", "expires_at": "…",
                "holder": { "host": "ci-runner-3", "pid": 8821,
@@ -812,7 +813,7 @@ definition `denied.holder` uses, because the question at exit 7 and the question
 `lock status` answers are the same question.
 
 **`declared` says whose the record is** (#150). `false` is one the store holds
-and the file does not name — an application renamed or removed, or another
+and the file names nowhere — an application renamed or removed, or another
 config's estate sharing the mount — and it is the entry an operator cannot
 otherwise see, which is the entire reason for listing. Invariant 5 is not
 strained: the config whitelists what the tool may *touch*, and a survey touches
@@ -821,6 +822,16 @@ a survey never turns somebody's own lock into a leftover, and it is required on
 every entry rather than written only on the leftovers — a consumer that had to
 read absence as "mine" would be branching on a gap, which is also what a producer
 that forgot the field emits.
+
+**`declared_by` says how** (#514), because from UC-2 onwards "whose" has three
+answers rather than two. A reset lock is keyed on the reset record's path, which
+no binding produces, so the survey finds it by listing the declared
+`reset_records:` prefix rather than by enumerating keys — an account admitted by
+a predicate has no name until a database is asked, and this verb asks none. Such
+an entry carries `declared: true` and `declared_by: "reset_records"`; a binding's
+carries `"binding"`; a leftover carries `null`. §8's 1.28 entry says why the
+boolean widened instead of becoming a tri-state, and why this field is not an
+enum.
 
 A **fourth array was rejected.** What split `held` from `found` was that one
 field would have meant different things in each; nothing of the sort happens
@@ -1986,6 +1997,34 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.27 became 1.28 when the survey found a third kind of record** (#514). One
+additive change: **`lock.found[].declared_by`**, which says *how* this
+configuration accounts for a path — `binding`, `reset_records`, or `null` for a
+leftover.
+
+**It exists because a boolean ran out of answers.** Until UC-2 there were two
+kinds of record: one a binding names, and one nothing names. A reset lock is
+neither. It is keyed on the reset record's own path, so the file declares the
+*prefix* and cannot name the keys beneath it — an account admitted by a
+`profile:` or `role:` predicate has no name until a database is asked, and `lock
+status` asks none. Reporting it `declared: false` would tell an operator a
+colleague's reset belongs to another estate; reporting it `true` with nothing
+else would claim the file enumerates it.
+
+**`declared` stayed and widened rather than being replaced.** It now means "this
+configuration accounts for the path at all", which is what a consumer filtering
+its own locks out of a survey was already asking it. Widening a boolean's
+extension is a minor bump; turning it into a tri-state string is a rename, which
+is major — and it would have cost every consumer a change to answer a question
+none of them asked.
+
+**`declared_by` is not an enum, deliberately**, which is the opposite call from
+`state`'s neighbours in §3. A later release may claim another region by prefix —
+UC-4 hands accounts over through the same delivery abstraction (UC-2 §6.7) — and
+a consumer that switched exhaustively on two values would break on the third
+rather than fall through to "not mine, or not mine yet".
+
 
 **The event schema went 1.0 to 1.1 in the same change** (#441), and it adds an
 event nothing emits: **`password.displayed`**, the seen reset's exposure.

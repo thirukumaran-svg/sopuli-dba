@@ -411,7 +411,11 @@ def test_a_survey_reports_the_holder_the_way_a_denial_does(
                 # `survey` was given no declared set, which means "every key here
                 # is declared" -- the answer for a caller that did not go looking
                 # (#150). `lock status` passes one; this test is about the holder.
+                # `declared_by` defaults the same way and for the same reason
+                # (#514): a caller that never asked describes what it found
+                # correctly rather than marking the whole survey undeclared.
                 "declared": True,
+                "declared_by": "binding",
                 "state": "held",
                 "expired": False,
                 "version": 1,

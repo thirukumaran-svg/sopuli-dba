@@ -39,7 +39,7 @@ which paths ran and which are still untried.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.7.schema.json](schemas/sopuli-config-1.7.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.27.schema.json](schemas/sopuli-run-1.27.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-run-1.28.schema.json](schemas/sopuli-run-1.28.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.1.schema.json](schemas/sopuli-event-1.1.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -660,7 +660,7 @@ coming and what each one waits on.
 | Block | Issue | State |
 |---|---|---|
 | `personal_accounts:` | #467 | **built**, schema 1.4 |
-| `reset_records:` | #468, #511, #512 | **built**, schema 1.5; written by `account reset-password` since #511, and locked on since #512 |
+| `reset_records:` | #468, #511, #512, #514 | **built**, schema 1.5; written by `account reset-password` since #511, locked on since #512, and surveyed by `lock status` since #514 |
 | `delivery:`, with `notify:` beside or inside it | #440, #442 | blocked, and the rest of this table is inside it |
 
 The verbs, for the same reason: `account suspend` (#463), `account list` (#490)
@@ -684,8 +684,11 @@ rather than an accessory to it. **#511 writes the record** — a run with the bl
 declared journals one per (target, account), and one without it warns at plan
 time and resets anyway. **#512 takes the advisory lock** keyed on that path, so
 two DBAs resetting one person at once no longer overwrite each other -- the
-second is refused at exit 7 before it connects. `lock status` does not yet survey
-those locks (#514); `lock break` clears one by name.
+second is refused at exit 7 before it connects. **#514 makes `lock status` see
+them**, by listing the declared prefix rather than enumerating keys under it —
+which is the only way an offline verb can reach a predicate-declared account —
+and reporting what it finds as this estate's rather than as a leftover
+(`declared_by`, schema 1.28). `lock break` has cleared one by name throughout.
 
 **`delivery:`** is one enum plus a sub-block per method, and #440 builds only the
 skeleton: the `method` key, and a check that the matching sub-block exists. Each

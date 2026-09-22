@@ -200,8 +200,15 @@ def record_lock_key(records: ResetRecords, *, target: str, account: str) -> Lock
 
     An ordinary :class:`~sopuli.lock.keys.LockKey`, which is the whole claim of
     UC-2 §3.3: the key is the only new thing, and everything downstream of it --
-    the ``locks/`` prefix, the CAS, the fencing token, `lock status`, `lock
-    break` -- is the machinery #83 already built, unchanged.
+    the ``locks/`` prefix, the CAS, the fencing token, `lock break` -- is the
+    machinery #83 already built, unchanged.
+
+    **`lock status` was the exception, and #514 made the sentence true again.**
+    That verb enumerates its estate from `bindings`, and no binding produces a
+    record path, so it reported an empty estate while a reset held a lock. It now
+    reaches these keys the only way an offline verb can -- by listing the
+    declared `reset_records:` prefix -- because a predicate-declared account (H1)
+    has no name until a database is asked.
 
     Keyed on the *record's* path rather than on the delivery target's, because
     the delivery target does not exist on every path: `manual` writes nothing,

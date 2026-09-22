@@ -32,6 +32,12 @@ because it is the same kind of thing described the same way -- what differs is
 whose it is, which is one boolean. The *text* view does split them, and that is
 a rendering decision rather than a contract one: a table is read by eye, and "is
 this mine" is the first question somebody asks of a row.
+
+**And "whose" turned out to have three answers, not two** (#514). A UC-2 reset
+lock sits under a prefix the file declares without naming the key, so it is
+neither a binding's nor a leftover. ``declared_by`` carries which, ``declared``
+stays the boolean it was, and the text view grows a third table for the same
+reason it grew a second one.
 """
 
 from __future__ import annotations
@@ -42,7 +48,7 @@ from typing import Any
 
 from sopuli.clock import to_rfc3339
 from sopuli.lock.errors import LockDeniedError
-from sopuli.lock.inspect import LockState
+from sopuli.lock.inspect import BINDING, RESET_RECORDS, LockState
 from sopuli.lock.manager import HeldLock, LockManager, describe_holder
 from sopuli.lock.record import HELD, RELEASED, LockRecord
 from sopuli.lock.takeover import ABSENT, Nothing, Outcome, Take
@@ -173,10 +179,18 @@ def build_status_section(states: Sequence[LockState], *, mode: str) -> dict[str,
 def _found(state: LockState, record: LockRecord) -> dict[str, Any]:
     """One record, described from outside.
 
-    ``declared`` says whether this configuration binds an account to the path.
+    ``declared`` says whether this configuration accounts for the path at all.
     It is on every entry rather than only on the leftovers, because a consumer
     that had to read it as "absent means mine" would be branching on a gap, and
     a gap is what a producer that forgot the field also emits.
+
+    ``declared_by`` says *how* (#514), and exists because the boolean ran out of
+    answers: a UC-2 reset lock is this estate's without any binding naming it,
+    so reporting it as a leftover would be false and reporting it as a binding
+    would claim the file enumerates something it cannot. The two fields are kept
+    side by side rather than one replacing the other -- widening the boolean is
+    a minor bump under invariant 12 and removing it is a major one, to save a
+    consumer that only asks "is this mine" precisely nothing.
 
     ``state`` is reported as written and ``held`` as
     :attr:`~sopuli.lock.inspect.LockState.is_held` reads it, which is not the
@@ -195,6 +209,7 @@ def _found(state: LockState, record: LockRecord) -> dict[str, Any]:
         "path": state.key.path,
         "held": state.is_held,
         "declared": state.declared,
+        "declared_by": state.declared_by,
         "state": record.state,
         "expired": state.expired,
         "version": state.version,
@@ -210,6 +225,7 @@ def render_status(
     *,
     match: tuple[tuple[str, str], ...] = (),
     mode: str,
+    region: bool = False,
 ) -> str:
     """``lock status`` in text -- the survey a person reads.
 
@@ -233,6 +249,18 @@ def render_status(
     put the answer in the heading rather than in a cell, which is where somebody
     scanning the output will actually read it -- and colour alone could not have
     carried it, since ``NO_COLOR`` is honoured.
+
+    **Reset locks get a third** (#514), on the same argument. They are this
+    estate's, so putting them under the leftovers heading would tell an operator
+    that a colleague's reset belongs to somebody else's configuration; and they
+    were discovered rather than enumerated, so putting them in the first table
+    would imply the file names them. The heading is where that distinction goes,
+    because it is one sentence and it is true of every row beneath it.
+
+    ``region`` is whether a `reset_records:` prefix was surveyed at all, and it
+    is passed in rather than inferred from the rows: with none found, *looked
+    and it is quiet* and *did not look* are the same empty table, and they are
+    the two answers #514 was filed about confusing.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -241,11 +269,20 @@ def render_status(
     lines.append(f"mode:   {mode}")
 
     found = [state for state in states if state.record is not None]
-    mine = [state for state in found if state.declared]
-    leftovers = [state for state in found if not state.declared]
+    mine = [state for state in found if state.declared_by == BINDING]
+    resets = [state for state in found if state.declared_by == RESET_RECORDS]
+    leftovers = [state for state in found if state.declared_by is None]
 
     if mine:
         lines.extend(["", *_table(mine)])
+    if resets:
+        lines.extend(
+            [
+                "",
+                "personal-account resets, under the prefix this config declares:",
+                *_table(resets),
+            ]
+        )
     if leftovers:
         lines.extend(
             [
@@ -254,7 +291,7 @@ def render_status(
                 *_table(leftovers),
             ]
         )
-    lines.extend(["", _summary(states, found)])
+    lines.extend(["", _summary(states, found, region=region)])
     return "\n".join(lines)
 
 
@@ -268,7 +305,7 @@ def _table(states: Sequence[LockState]) -> list[str]:
     return list(
         render_table(
             [
-                Column("LOCK", _LOCK),
+                Column("LOCK"),
                 Column("STATE"),
                 Column("HOLDER", _HOLDER),
                 Column("COMMAND", _COMMAND),
@@ -280,10 +317,20 @@ def _table(states: Sequence[LockState]) -> list[str]:
     )
 
 
-#: Column caps. `_LOCK` is `_REF`'s width in `config_view`, because it holds the
-#: same kind of string -- a store name and a path -- and two views truncating one
-#: estate at different points would read as two estates.
-_LOCK = 52
+#: Column caps. **The LOCK column has none, and that is the point of it.** It
+#: used to share `config_view`'s `_REF` width of 52, on the argument that two
+#: views truncating one estate at different points would read as two estates --
+#: which was true and was the smaller of two consistencies. The cell is what
+#: exit 7 prints and what `sopuli lock break` takes, so a truncated one destroys
+#: the single string the operator is about to paste, in exactly the way
+#: :func:`render_status` says splitting it into two columns would.
+#:
+#: It went unnoticed while the only keys were rotation paths, which are short.
+#: UC-2's are not: a reset lock is `<prefix>/<target>/<account>` (#514), so
+#: `vault-dev:sopuli/personal-resets/appdb-alpha/acme_dev_alice` is 58
+#: characters before an estate picks its own names, and *every* reset row was
+#: cut. Measured, not predicted -- it is what the first run of the fixed survey
+#: printed. No existing sample changes, because none of them was over the cap.
 _HOLDER = 28
 _COMMAND = 16
 
@@ -328,7 +375,7 @@ def _who(record: LockRecord) -> str:
     return f"{holder.os_user}@{holder.host}"
 
 
-def _summary(states: Sequence[LockState], found: Sequence[LockState]) -> str:
+def _summary(states: Sequence[LockState], found: Sequence[LockState], *, region: bool) -> str:
     """What was examined, and how much of it is in somebody's way.
 
     Three numbers rather than one, because they answer different questions:
@@ -341,24 +388,56 @@ def _summary(states: Sequence[LockState], found: Sequence[LockState]) -> str:
     folding discovered records in would make "3 of 5" move when somebody else's
     estate changed. They are counted afterwards, in their own clause, because
     finding one is a separate thing to have learned.
+
+    **A reset lock is not in the denominator either, and for a different
+    reason** (#514). A leftover is excluded because it is not this estate's; a
+    reset lock is excluded although it *is*, because there is no denominator to
+    put it in. The paths under the `reset_records:` prefix cannot be counted
+    without resolving a predicate against a database (H1), and "1 of 1 held"
+    built from the records that happen to exist would be a proportion whose
+    bottom number is its top one. So they are counted the way leftovers are: how
+    many were found, and how many of those are held.
+
+    **"No lock paths are declared" now has to say whether the prefix was
+    looked at**, which is ``region``. Before #514 an empty survey had one
+    meaning; now it has two, and the difference between *nothing is held* and
+    *nothing was surveyed* is the whole of the bug this closes.
+
+    **The proportion is dropped entirely when nothing declares a path**, which
+    is the ordinary shape of a UC-2-only estate. ``0 of 0 declared lock paths
+    held`` is not a fact anybody needs in front of the clause that has the
+    finding in it, and it reads as a failed count rather than as an empty set.
+    ``0 of 5`` still prints: there the denominator is the point.
     """
-    declared = [state for state in states if state.declared]
-    leftovers = [state for state in found if not state.declared]
-    if not declared and not leftovers:
+    declared = [state for state in states if state.declared_by == BINDING]
+    resets = [state for state in found if state.declared_by == RESET_RECORDS]
+    leftovers = [state for state in found if state.declared_by is None]
+    if not declared and not resets and not leftovers:
+        if region:
+            return "no lock paths are declared, and nothing is held under the reset-record prefix"
         return "no lock paths are declared"
 
-    held = [state for state in found if state.declared and state.is_held]
-    expired = [state for state in held if state.expired]
-    body = f"{len(held)} of {len(declared)} declared lock paths held"
-    if expired:
-        body += f", {len(expired)} past expiry"
+    clauses = []
+    if declared:
+        held = [state for state in declared if state.is_held]
+        expired = [state for state in held if state.expired]
+        clause = f"{len(held)} of {len(declared)} declared lock paths held"
+        if expired:
+            clause += f", {len(expired)} past expiry"
+        clauses.append(clause)
+    if resets:
+        held_resets = [state for state in resets if state.is_held]
+        clauses.append(
+            f"{len(resets)} reset lock{'' if len(resets) == 1 else 's'} "
+            f"under the declared prefix ({len(held_resets)} held)"
+        )
     if leftovers:
         held_leftovers = [state for state in leftovers if state.is_held]
-        body += (
-            f"; {len(leftovers)} record{'' if len(leftovers) == 1 else 's'} "
+        clauses.append(
+            f"{len(leftovers)} record{'' if len(leftovers) == 1 else 's'} "
             f"at paths this config does not declare ({len(held_leftovers)} held)"
         )
-    return body
+    return "; ".join(clauses)
 
 
 # ------------------------------------------------------------- breaking one ---
