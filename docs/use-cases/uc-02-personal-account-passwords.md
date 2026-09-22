@@ -341,8 +341,10 @@ in Vault's own audit log and **cannot unwrap it**, which is the only reason a
 journal that "anyone who may know *that* a reset happened" can read is allowed to
 carry it at all. The token itself must never be written here: §6.1 makes it
 secret-bearing, and a record is exactly the long-lived, widely-readable object its
-TTL exists to outlive. **#444 part 1 writes no `to` on this path**; part 2 adds it,
-and the value is the accessor above rather than the placeholder.
+TTL exists to outlive. **#444 writes it**, and
+`assert_no_secret` now takes the token as well as the password, so putting the
+*token* in this field is an `AssertionError` rather than a matter of the writer
+having picked the right one of the two things Vault returns.
 
 **`delivery.to` is present only where delivery has a location.** A store path or an
 accessor is one; the seen path's destination is a person, by a route the
@@ -1024,6 +1026,12 @@ implementation violates it:
   `password.delivered` on success, and `password.displayed` for the seen path's
   exposure, which is its own fact and not a variant of the first (#441). Neither
   event carries the password, and the run schema has no property that could.
+  **Both words are registered and neither has an emitter**: `--output jsonl` is
+  unimplemented (#9), so `password.displayed` arrived with #441 and
+  `password.delivered` with #444, each with the change that knows why the event
+  exists rather than with the stream that will carry it. What records a delivery
+  today is `results[].handover` in the run document, which every run has — the
+  accessor that names the hand-over, never the credential that performs it.
 
 **`manual` requires `force_expire: true`** and is refused at plan time without it
 (§6.4). That is the runtime half of the seen path's guarantee: the exposure is
@@ -1146,11 +1154,10 @@ and the third has no counterpart on the seen path:
 
 - **Never in the run document, and no property could hold it.** A document is
   captured, shipped to log aggregation and kept; a token in one outlives the TTL
-  that is this method's whole guarantee. What it **will** carry instead is the
-  *accessor*, which names the hand-over and cannot use it — #444's second part adds
-  the field, and until it lands the document records the method and nothing else
-  about the hand-over. The receipt already holds the accessor; only its home is
-  outstanding.
+  that is this method's whole guarantee. What it carries instead is the *accessor*,
+  in `results[].handover` beside the expiry, which names the hand-over and cannot
+  perform it — so a run stays auditable without the document becoming the thing
+  that leaks.
 - **No terminal is required**, which is a deliberate departure from `manual`'s
   third guard. A pipe is how a handover script works, and forbidding one would
   leave an estate no way to deliver unattended except the path that shows a DBA a

@@ -735,40 +735,31 @@ def test_a_fence_lost_between_targets_stops_there_and_exits_four(
 
 # ------------------------------------------- the unseen path, `vault_wrapped` ---
 
-#: The same estate as `JOURNALLED`, delivering through a wrapping token instead of
-#: a terminal. `vault_wrapped:` names no `vault:`, so the store comes from §3's
-#: chain -- `defaults.vault` here -- which is the resolution most estates will get.
-WRAPPED = (
-    MANUAL.replace(
-        """delivery:
+#: `JOURNALLED`'s estate, delivering through a wrapping token instead of a
+#: terminal. Built on that one rather than on `MANUAL` so a journal exists: the
+#: record's `delivery.to` is #444 part 2's, and a config with no `reset_records:`
+#: writes no record to look at. `vault_wrapped:` names no `vault:`, so the store
+#: comes from §3's chain -- `defaults.vault` here, which is the resolution most
+#: estates will get.
+WRAPPED = JOURNALLED.replace(
+    """delivery:
   method: manual
   manual:
     force_expire: true
 """,
-        """delivery:
+    """delivery:
   method: vault_wrapped
   vault_wrapped:
     ttl: {ttl}
 """,
-    ).replace(
-        """defaults:
+).replace(
+    """defaults:
   policy: personal-standard
 """,
-        """defaults:
+    """defaults:
   policy: personal-standard
   vault: vault-dev
 """,
-    )
-    + """
-vaults:
-  vault-dev:
-    type: hashicorp
-    addr: {addr}
-    mount: {mount}
-    kv_version: 2
-    auth:
-      method: token
-"""
 )
 
 
@@ -1145,3 +1136,78 @@ def test_each_target_s_handover_names_its_target(
     result = run(runner, config, "--account", ACCOUNT)
 
     assert f"hand this to {ACCOUNT} for tier1-oracle" in result.output
+
+
+def test_the_document_names_the_handover_without_being_able_to_perform_it(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """#444 part 2, and the pair of assertions is the whole design.
+
+    The accessor is there, so a scheduled reset is auditable: somebody can tie this
+    run to an entry in the vault's own log. The token is not, and no property could
+    hold it -- a document is captured, shipped to log aggregation and kept, and a
+    token in one outlives the TTL that is this method's guarantee.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT, "--output", "json")
+
+    handover = json.loads(result.stdout)["results"][0]["handover"]
+    assert handover["accessor"], "the run is not auditable without it"
+    assert handover["expires_at"]
+    assert handover["accessor"] not in result.stderr, "the accessor is not the token"
+    assert "hvs." not in result.stdout
+
+
+def test_the_record_carries_the_accessor_as_its_destination(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """UC-2 §3.1's `to`, which had no writer until now.
+
+    Read back out of the real journal, and checked against the *document's* own
+    accessor so the two agree -- a record naming a different hand-over than the run
+    reported would be worse than one naming none.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT, "--output", "json")
+
+    reported = json.loads(result.stdout)["results"][0]["handover"]["accessor"]
+    path = f"sopuli/personal-resets/tier1-oracle/{ACCOUNT}"
+    stored = journal.client.get(f"/v1/{private_mount}/data/{path}")
+    assert stored.status_code == 200, stored.text
+    record = stored.json()["data"]["data"]
+    assert record["delivery"] == {"method": "vault_wrapped", "to": reported}
+
+
+def test_the_record_never_carries_the_token(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """The guard `assert_no_secret` gained for this, asserted end to end rather
+    than only against a hand-built document: the journal is readable by anyone who
+    may know *that* a reset happened, which is precisely who must not be able to
+    perform one."""
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    token = _token_in(result.output)
+    path = f"sopuli/personal-resets/tier1-oracle/{ACCOUNT}"
+    stored = journal.client.get(f"/v1/{private_mount}/data/{path}")
+    assert stored.status_code == 200, stored.text
+    assert token not in json.dumps(stored.json()["data"]["data"])

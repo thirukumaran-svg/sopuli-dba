@@ -917,7 +917,7 @@ tool safe to run from a scheduler.
   **`jsonl` is the one of the three that does not exist** — `--output` takes
   `text` and `json`, and asking for `jsonl` is a usage error. It is specified
   ahead of its code rather than unbuilt by accident: the event schema is
-  published (`../schemas/sopuli-event-1.1.schema.json`) and #9 is the issue.
+  published (`../schemas/sopuli-event-1.2.schema.json`) and #9 is the issue.
 - One structured audit record per mutation: who (OS user + vault identity), what
   (account, target, operation), when, correlation id, result. Never the secret.
 - A log level, an optional log file, and an explicit statement in the docs that

@@ -241,8 +241,8 @@ RECORD_KEYS = frozenset(
 DELIVERY_KEYS = frozenset({"method", "to"})
 
 
-def assert_no_secret(document: Any, *, secret: Secret) -> None:
-    """Refuse a record document that could carry the password.
+def assert_no_secret(document: Any, *, secret: Secret, token: Secret | None = None) -> None:
+    """Refuse a record document that could carry the password, or fetch it.
 
     Invariant 2 held against the **serialised document**, which is where it has
     to be held. A type with no password field proves that no *writer in this
@@ -268,11 +268,27 @@ def assert_no_secret(document: Any, *, secret: Secret) -> None:
       mapping. This is what catches the password reaching a key that legitimately
       exists.
 
+    **``token`` closes the hole this docstring used to only describe** (#444 part
+    2). It said the shape "proves nothing about ... a delivery method that stuffs a
+    value into ``delivery.to`` because the provider's reference happened to be
+    one", and then `vault_wrapped` arrived with two candidates for that field: the
+    accessor, which names the hand-over and cannot perform it, and the **token**,
+    which performs it. UC-2 §6.1 makes the second secret-bearing because the rule
+    is about reach rather than value, so a record carrying it would be a
+    long-lived, widely-readable object holding the thing whose TTL exists to keep
+    it short-lived. Passing the token in makes writing one an
+    :class:`AssertionError` rather than a matter of the caller having picked the
+    right field.
+
+    ``None`` where the method produced no token -- the seen path, and #447's path
+    when it lands -- because there is then nothing to compare against and an
+    absent argument says that better than a sentinel.
+
     What remains uncovered is a *derived* value written into one of the permitted
-    string fields -- a hash in ``delivery.to``. Saying so is better than implying
-    a check that is not there: the closed shape is what makes it unreachable in
-    practice, since ``to`` is a location and the one writer of it is the delivery
-    method's own reference.
+    string fields -- a hash of the password in ``delivery.to``. Saying so is better
+    than implying a check that is not there: the closed shape is what makes it
+    unreachable in practice, since ``to`` is a location and the writers of it are
+    the delivery method's own non-secret references.
 
     **It takes the** :class:`~sopuli.secrets.Secret`, not the plaintext, and that
     is what keeps the check from being the leak: the comparison goes through the
@@ -295,11 +311,20 @@ def assert_no_secret(document: Any, *, secret: Secret) -> None:
         # look for a password does not become a tenth site in
         # `tests/test_reveal_sites.py` -- which would be an odd way to enforce
         # invariant 2.
-        if isinstance(value, str) and Secret(value) == secret:
+        if not isinstance(value, str):
+            continue
+        if Secret(value) == secret:
             raise AssertionError(
                 "reset record carries the password it set: invariant 2 permits plaintext "
                 "out through the vault write, the driver call and `policy sample --reveal`, "
                 "and a metadata record is none of the three (UC-2 §3.1)"
+            )
+        if token is not None and Secret(value) == token:
+            raise AssertionError(
+                "reset record carries the hand-over token: it holds no password and "
+                "produces one, which UC-2 §6.1 treats the same way because the rule is "
+                "about reach. `delivery.to` takes the accessor, which names the hand-over "
+                "and cannot perform it (UC-2 §3.1)"
             )
 
 

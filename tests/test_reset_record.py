@@ -277,3 +277,55 @@ def test_a_key_delivery_does_not_declare_is_refused() -> None:
 def test_a_document_that_is_not_an_object_is_refused() -> None:
     with pytest.raises(AssertionError, match="not an object"):
         assert_no_secret([record().to_dict()], secret=PASSWORD)
+
+
+# ------------------------------------------- and the token, which fetches it (#444) ---
+
+#: What `vault_wrapped` hands the DBA. Not a password -- and UC-2 §6.1 covers it
+#: anyway, because the rule is about reach rather than value.
+TOKEN_TEXT = "hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA"
+TOKEN = Secret(TOKEN_TEXT)
+
+
+def test_the_hand_over_token_in_delivery_to_is_refused() -> None:
+    """The hole the docstring used to only describe (#444 part 2).
+
+    It said the closed shape "proves nothing about ... a delivery method that
+    stuffs a value into `delivery.to`", and then `vault_wrapped` arrived with two
+    candidates for that field: the accessor, which names the hand-over, and the
+    token, which performs it. A record is long-lived and readable by anyone who may
+    know *that* a reset happened, so a token in one outlives the TTL that is the
+    method's whole guarantee.
+    """
+    with pytest.raises(AssertionError) as raised:
+        assert_no_secret({"delivery": {"to": TOKEN_TEXT}}, secret=PASSWORD, token=TOKEN)
+
+    assert "hand-over token" in str(raised.value)
+    assert "accessor" in str(raised.value)
+
+
+def test_the_token_is_refused_at_any_depth_like_the_password() -> None:
+    """Same walk, so a token reaching a permitted field by another route is caught
+    by the same pass rather than by a second one that could disagree."""
+    for document in ({"account": TOKEN_TEXT}, {"by": {"host": TOKEN_TEXT}}, {TOKEN_TEXT: "x"}):
+        with pytest.raises(AssertionError):
+            assert_no_secret(document, secret=PASSWORD, token=TOKEN)
+
+
+def test_the_accessor_in_delivery_to_is_what_the_field_is_for() -> None:
+    """The positive case, which is the point of distinguishing the two: an
+    accessor names the hand-over in the store's own audit log and cannot perform
+    it, so the record is allowed to carry it and stay readable by people who may
+    know a reset happened without being able to use one."""
+    assert_no_secret(
+        {"delivery": {"method": "vault_wrapped", "to": "EXAMPLEaccessor000000000"}},
+        secret=PASSWORD,
+        token=TOKEN,
+    )
+
+
+def test_no_token_given_means_nothing_to_compare_against() -> None:
+    """`None` rather than a sentinel, for the seen path and for #447's when it
+    lands: a method that produced no token has nothing for this to look for, and an
+    absent argument says that better than a value standing in for absence."""
+    assert_no_secret({"delivery": {"to": TOKEN_TEXT}}, secret=PASSWORD)

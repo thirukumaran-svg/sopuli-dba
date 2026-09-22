@@ -39,8 +39,8 @@ which paths ran and which are still untried.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.7.schema.json](schemas/sopuli-config-1.7.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.28.schema.json](schemas/sopuli-run-1.28.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
-| [schemas/sopuli-event-1.1.schema.json](schemas/sopuli-event-1.1.schema.json) | JSON Schema for `--output jsonl` events |
+| [schemas/sopuli-run-1.29.schema.json](schemas/sopuli-run-1.29.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-event-1.2.schema.json](schemas/sopuli-event-1.2.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
 | `../sql/oracle/01_audit_policy.sql` | Unified audit policies and correlation queries |
@@ -660,7 +660,7 @@ coming and what each one waits on.
 | Block | Issue | State |
 |---|---|---|
 | `personal_accounts:` | #467 | **built**, schema 1.4 |
-| `reset_records:` | #468, #511, #512, #514 | **built**, schema 1.5; written by `account reset-password` since #511, locked on since #512, and surveyed by `lock status` since #514 |
+| `reset_records:` | #468, #511, #512, #514, #444 | **built**, schema 1.5; written by `account reset-password` since #511, locked on since #512, surveyed by `lock status` since #514, and carrying an unseen delivery's accessor in `delivery.to` since #444 |
 | `delivery:`, with `notify:` beside or inside it | #440, #441, #442, #444 | **built** for two methods: `manual` (#441) and `vault_wrapped` (#444, the default). `notify:` is #442 and unbuilt |
 
 The verbs, for the same reason: `account suspend` (#463), `account list` (#490)

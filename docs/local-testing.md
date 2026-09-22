@@ -2304,7 +2304,23 @@ Four things to read out of it:
 - **`seen: true`, and no `delivery.to`.** The destination was a person, by a
   route the tool did not carry, so there is no location to record — and `seen`
   is the field that makes the absence mean something rather than look like
-  missing data. An unseen method would carry a `to` and `seen: false`.
+  missing data. **An unseen method carries both**, which is worth seeing beside
+  it; the same account, reset through `vault_wrapped`:
+
+  ```
+  delivery          map[method:vault_wrapped to:EXAMPLEaccessor000000000]
+  expired           false
+  seen              false
+  ```
+
+  `to` is the wrapping token's **accessor** and never the token. The accessor
+  names the hand-over in Vault's audit log and cannot perform it; the token can,
+  and a journal readable by anyone who may know *that* a reset happened is the
+  last place it belongs. `assert_no_secret` is given the token as well as the
+  password since #444, so writing one here is an `AssertionError` rather than a
+  matter of the writer having picked the right one of Vault's two return values.
+  `expired: false` is the other half of the path showing through: nothing needs
+  expiring when nobody but the owner was ever meant to know the value.
 - **No password, in any representation.** Not the value, not a hash, not a
   verifier. There is no field one could go in, and `assert_no_secret` checks the
   serialised document on the way out rather than trusting the writer.
@@ -2630,10 +2646,16 @@ them finding it spent is the only warning either of you gets.
 That went to **stderr**, and `run.json` is a clean document:
 
 ```bash
-jq '.results[0].delivered' run.json ; grep -c 'hvs\.' run.json
+jq '.results[0] | {delivered, handover}' run.json ; grep -c 'hvs\.' run.json
 ```
-```
-"vault_wrapped"
+```json
+{
+  "delivered": "vault_wrapped",
+  "handover": {
+    "accessor": "EXAMPLEaccessor000000000",
+    "expires_at": "2026-09-22T13:07:34.882513Z"
+  }
+}
 0
 ```
 
@@ -2646,8 +2668,18 @@ outlives the TTL that is this method's guarantee. And so it goes to stderr, whic
 is the split this verb already makes for the plan and the confirmation prompt —
 stdout carries the result, and here the result is the document.
 
-The accessor that *names* the handover without being able to use it is #444's
-second part; today the document records the method and nothing else about it.
+**`handover.accessor` is the half of Vault's answer that cannot fetch anything.**
+Vault returns two values beside a wrapped password: the token, which produces the
+password in anybody's hands, and the accessor, which names the wrap in the audit
+log and produces nothing. The document carries the second and has no property for
+the first — so a scheduled reset stays auditable, and `grep` for `hvs.` still
+answers `0`. The accessor above is substituted; everything else in that block is
+what the run printed.
+
+`handover.expires_at` is the store's own clock, not this host's: Vault's
+`creation_time` plus the TTL it actually applied, which a mount's `max_ttl` may
+have cut below what the file asked for. It is reported and never enforced — nothing
+here polices a TTL Vault is already policing.
 
 #### Failures worth causing on purpose
 
@@ -4079,7 +4111,7 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.28.schema.json`](schemas/sopuli-run-1.28.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.29.schema.json`](schemas/sopuli-run-1.29.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json

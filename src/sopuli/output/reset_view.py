@@ -34,6 +34,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from sopuli.clock import to_rfc3339
+from sopuli.delivery import Handover
 from sopuli.driver.guardrails import Refusal
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint, state_cell
@@ -90,6 +92,7 @@ def build_result(
     actions: Sequence[tuple[str, bool, str | None]] = (),
     status: str | None = None,
     delivered: str | None = None,
+    handover: Handover | None = None,
     overridden: Sequence[Refusal] = (),
     duration_ms: int | None = None,
     error: Error | None = None,
@@ -105,6 +108,24 @@ def build_result(
     ``delivered`` is the *method*, never a value and never a location on the seen
     path: `manual`'s destination is a person, by a route the tool did not carry.
     UC-2 §3.1 makes the same distinction for the record it writes.
+
+    **``handover`` is what an auditor can act on, and it is deliberately not what
+    the person fetches with** (#444 part 2). ``accessor`` names the hand-over in
+    the store's own audit log and cannot perform it; ``expires_at`` says when
+    fetching stops. It arrives as a :class:`~sopuli.delivery.Handover`, whose
+    *presence* is the signal and whose fields are nullable within it -- a type with
+    no token attribute, so this builder cannot be handed one.
+
+    The retrieval credential itself has no property here and never
+    will -- a document is captured, shipped to log aggregation and kept, and a
+    token in one outlives the TTL that is the method's whole guarantee. That is the
+    same argument the password's absence rests on, made about a different object.
+
+    The section is **absent rather than null on the seen path**, which has neither
+    field to fill: `manual`'s hand-over is a person reading a screen, so there is
+    no accessor to name and no store clock to expire. A consumer therefore reads
+    presence as "the tool put this somewhere" rather than having to compare two
+    nulls.
 
     ``actions`` is one entry per statement the driver considered, in the order it
     considered them -- the unlock, the reset, the window. A row per statement
@@ -130,6 +151,19 @@ def build_result(
         entry["account_status"] = status
     if delivered is not None:
         entry["delivered"] = delivered
+    if handover is not None:
+        # **Presence says a delivery put the password somewhere**, and that is not
+        # the same as either field being populated (Copilot's review of #519). A
+        # wrap that returned a token but no accessor and no usable TTL is a real
+        # hand-over with nothing to say about itself, and building the section out
+        # of "is either field set" reported it as the seen path -- which is the one
+        # thing this section's presence exists to tell apart.
+        entry["handover"] = {
+            "accessor": handover.accessor,
+            "expires_at": (
+                to_rfc3339(handover.expires_at) if handover.expires_at is not None else None
+            ),
+        }
     if overridden:
         entry["overridden"] = [
             {"check": refusal.check, "reason": refusal.reason} for refusal in overridden

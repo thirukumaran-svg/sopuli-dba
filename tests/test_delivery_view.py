@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sopuli.delivery import Receipt
+from sopuli.delivery import Handover, Receipt
 from sopuli.output.delivery_view import UNKNOWN_EXPIRY, render_handover
+from sopuli.output.reset_view import build_result
 from sopuli.secrets import Secret
 
 TOKEN = "hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA"
@@ -90,3 +91,102 @@ def test_the_password_has_no_way_into_this_view() -> None:
 
     assert set(signature(render_handover).parameters) == {"receipt", "account", "target"}
     assert set(Receipt.__dataclass_fields__) == {"method", "token", "accessor", "expires_at"}
+
+
+# ----------------------------------------- what the document says instead (#444) ---
+
+
+def test_the_result_carries_the_accessor_and_the_expiry() -> None:
+    """The half of Vault's answer that names the hand-over and cannot perform it.
+    An auditor ties this run to an entry in the vault's own log with it; nobody
+    fetches a password with it."""
+    entry = build_result(
+        "acme_dev_alice",
+        "free-pdb",
+        state="RESET",
+        changed=True,
+        delivered="vault_wrapped",
+        handover=Handover(accessor="EXAMPLEaccessor000000000", expires_at=WHEN),
+    )
+
+    assert entry["handover"] == {
+        "accessor": "EXAMPLEaccessor000000000",
+        "expires_at": "2026-09-22T10:21:00Z",
+    }
+
+
+def test_the_seen_path_has_no_handover_section_at_all() -> None:
+    """Absent rather than two nulls. `manual`'s destination is a person reading a
+    screen, so there is no accessor to name and no store clock to expire -- and a
+    consumer reads presence as "the tool put this somewhere" instead of having to
+    tell an empty hand-over from one it cannot see."""
+    entry = build_result(
+        "acme_dev_alice", "free-pdb", state="RESET", changed=True, delivered="manual"
+    )
+
+    assert "handover" not in entry
+
+
+def test_a_hand_over_with_no_accessor_still_reports_the_expiry() -> None:
+    """Null for the field the answer did not carry, rather than dropping the
+    section: a store that wrapped without returning an accessor still gave an
+    expiry, and an auditor who cannot name the hand-over can still say when it
+    stopped being fetchable."""
+    entry = build_result(
+        "acme_dev_alice",
+        "free-pdb",
+        state="RESET",
+        changed=True,
+        delivered="vault_wrapped",
+        handover=Handover(expires_at=WHEN),
+    )
+
+    assert entry["handover"] == {"accessor": None, "expires_at": "2026-09-22T10:21:00Z"}
+
+
+def test_a_handover_that_knows_nothing_about_itself_is_still_reported() -> None:
+    """Copilot's review of #519, and the bug was real: a wrap that returned a token
+    but no accessor and no usable TTL is a delivery that happened, and keying the
+    section on "is either field set" reported it as the **seen** path -- which is
+    the one thing the section's presence exists to tell apart.
+
+    Presence now comes from the `Handover` existing at all, which is a fact about
+    whether a delivery put the password somewhere rather than about how much the
+    store was willing to say."""
+    entry = build_result(
+        "acme_dev_alice",
+        "free-pdb",
+        state="RESET",
+        changed=True,
+        delivered="vault_wrapped",
+        handover=Handover(),
+    )
+
+    assert entry["handover"] == {"accessor": None, "expires_at": None}
+
+
+def test_the_reported_half_of_a_receipt_drops_the_token() -> None:
+    """The narrowing is a type rather than a convention: what the output layer is
+    handed has no token attribute, so it cannot take the wrong one."""
+    receipt = Receipt(
+        method="vault_wrapped",
+        token=Secret(TOKEN),
+        accessor="EXAMPLEaccessor000000000",
+        expires_at=WHEN,
+    )
+
+    reported = receipt.reported()
+
+    assert not hasattr(reported, "token")
+    assert (reported.accessor, reported.expires_at) == (receipt.accessor, receipt.expires_at)
+
+
+def test_no_property_in_the_result_could_hold_the_token() -> None:
+    """The structural half, asserted rather than described. `build_result` has no
+    parameter a retrieval credential could arrive through -- which is the same
+    guarantee the password already has, made about the object UC-2 §6.1 says the
+    rule also covers."""
+    from inspect import signature
+
+    assert not any("token" in name for name in signature(build_result).parameters)
+    assert not any("token" in name for name in Handover.__dataclass_fields__)

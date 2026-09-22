@@ -41,8 +41,8 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.28.schema.json`](../schemas/sopuli-run-1.28.schema.json),
-[`../schemas/sopuli-event-1.1.schema.json`](../schemas/sopuli-event-1.1.schema.json)
+Schemas: [`../schemas/sopuli-run-1.29.schema.json`](../schemas/sopuli-run-1.29.schema.json),
+[`../schemas/sopuli-event-1.2.schema.json`](../schemas/sopuli-event-1.2.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---
@@ -1997,6 +1997,52 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.28 became 1.29 when a hand-over could be described without being performed**
+(#444). One additive change: **`results[].handover`**, an object carrying
+`accessor` and `expires_at`, emitted on an unseen delivery and absent on the seen
+path.
+
+**It exists because `delivered` could not grow.** That property is a string and
+its own description says "never a value and **never a destination**", so the
+accessor could not go in it without a rename — major, under §8, to answer a
+question no consumer had asked. A sibling object also generalises where a widened
+string would not: `vault_path` (#447) will report a path here, `one_time_link`
+(#445) a link id, and each is the same *kind* of fact about a hand-over.
+
+**What it holds is the half that cannot fetch.** Vault returns two things beside a
+wrapped password: the token, which produces the password in anybody's hands, and
+the accessor, which names the wrap in the audit log and produces nothing. The first
+has no property here and will not get one — a document is captured, shipped to log
+aggregation and kept, and a token in one outlives the TTL that is the method's
+whole guarantee. That is the argument the password's absence already rests on,
+applied to a different object, and UC-2 §6.1 is why it applies at all: the rule is
+about reach rather than value.
+
+**Present whenever a delivery put the password somewhere, and absent otherwise.**
+That is a fact about the *path*, not about how much the store was willing to say:
+a wrap that returned neither an accessor nor a usable TTL is still a hand-over, and
+the section is there with two nulls. Keying its presence on "is either field set"
+was a real bug in the first draft — it reported such a delivery as the seen path,
+which is the one thing the section exists to tell apart. On `manual` it is absent,
+because the destination is a person reading a screen: no accessor to name, and no
+store clock to expire.
+
+**`expires_at` comes from the store's clock, not this host's** — Vault's
+`creation_time` plus the TTL it actually applied, which a mount's `max_ttl` may
+have shortened below what the file asked for. Reported and never enforced: nothing
+here polices a TTL the store is already policing, and a second clock would only
+disagree with the first.
+
+**The event schema went 1.1 to 1.2 in the same change**, adding
+**`password.delivered`** — the event UC-2 §6.3 says every delivery emits. It has no
+emitter, for 1.1's reason exactly: `--output jsonl` is unimplemented (#9), so this
+extends an artefact already ahead of its stream, and the word is registered with
+the change that knows why the event exists. Neither it nor `password.displayed`
+carries the password, and neither carries the retrieval credential — a consumer
+that wants to tie a stream to a vault's audit log reads `handover.accessor` from
+the run document.
+
 
 **1.27 became 1.28 when the survey found a third kind of record** (#514). One
 additive change: **`lock.found[].declared_by`**, which says *how* this

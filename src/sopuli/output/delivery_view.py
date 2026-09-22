@@ -16,11 +16,9 @@ emits one. `tests/test_reveal_sites.py` records it with that reason.
 
 - **Never in the run document, and there is no property it could occupy.** The
   document is what gets captured, shipped to log aggregation and kept; a token in
-  it outlives the TTL that is the method's whole guarantee. **What the document
-  will carry instead is the *accessor***, which names the hand-over without being
-  able to use it -- `Receipt.accessor` holds it and #444's second part writes it.
-  Today the document records the method and nothing else about the hand-over, so
-  this bullet is a statement about the token and not yet about the accessor.
+  it outlives the TTL that is the method's whole guarantee. What the document
+  carries instead is the *accessor*, in ``results[].handover``, which names the
+  hand-over without being able to perform it.
 - **No terminal is required**, which is where this departs from `manual`
   deliberately. A pipe is how a handover script works — `| mail`, `| chat-send` —
   and forbidding one would leave an estate with no way to deliver unattended
