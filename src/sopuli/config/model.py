@@ -928,6 +928,38 @@ class ManualDelivery:
 
 
 @dataclass(frozen=True)
+class WrappedDelivery:
+    """`delivery.vault_wrapped:` -- the default method's settings (#444).
+
+    One key, and it is **required rather than defaulted** for the same reason
+    `manual`'s is: a wrapping token's whole safety story is that it stops working,
+    and for how long is not something a tool should choose on an estate's behalf.
+    A default would be a number nobody reviewed standing between a password and
+    whoever finds the token later.
+
+    **The TTL is a string, passed to Vault rather than parsed.** Vault owns the
+    grammar of ``X-Vault-Wrap-TTL``, and a second implementation of it here would
+    be a parser that disagrees with the server about what ``90m`` means -- and
+    disagrees silently, since both sides would accept the input. What the config
+    layer checks is the *shape*, so a typo is a config error rather than a 400
+    after a password has been drawn.
+
+    **There is no `num_uses`, and writing one is an error.** A response-wrapping
+    token is single-use by construction, so the key would describe a guarantee
+    this tool is not providing and Vault is. Accepting and ignoring it is the
+    failure mode that matters: a file saying `num_uses: 1` reads as an estate
+    having chosen something.
+    """
+
+    ttl: str
+    #: Which `vaults:` entry to wrap into, or ``None`` for §3's chain -- the
+    #: target's `vault:`, then `defaults.vault`. Not `reset_records.vault`:
+    #: UC-2 §3.5 keeps the journal and the delivery target apart, and a default
+    #: that joined them would hide whether an estate meant them to be one store.
+    vault: str | None = None
+
+
+@dataclass(frozen=True)
 class Delivery:
     """How a personal account's new password reaches its owner (UC-2 §6, #440).
 
@@ -960,6 +992,10 @@ class Delivery:
     method: str
     #: `manual`'s settings, where `manual` is selected (#439, #441).
     manual: ManualDelivery | None = None
+    #: `vault_wrapped`'s settings, where it is selected (#444). The second method
+    #: to claim a field, and the shape #440 predicted holds: a typed field per
+    #: method, ``None`` for every method the run is not using.
+    vault_wrapped: WrappedDelivery | None = None
 
     @property
     def is_seen(self) -> bool:

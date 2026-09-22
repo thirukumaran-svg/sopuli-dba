@@ -21,7 +21,7 @@ import pytest
 
 from sopuli.config.errors import ArgumentError
 from sopuli.config.loading import build_config
-from sopuli.config.model import Config, Delivery, ManualDelivery
+from sopuli.config.model import Config, Delivery, ManualDelivery, WrappedDelivery
 from sopuli.driver.protocol import UserState
 from sopuli.exit_codes import ExitCode
 from sopuli.reset import (
@@ -36,7 +36,13 @@ from sopuli.reset import (
 from sopuli.safety import RefusedError
 
 SEEN = Delivery(method="manual", manual=ManualDelivery(force_expire=True))
-UNSEEN = Delivery(method="vault_wrapped")
+UNSEEN = Delivery(method="vault_wrapped", vault_wrapped=WrappedDelivery(ttl="15m"))
+
+#: A method UC-2 §6.2 defines and this build still cannot serve. Its own constant
+#: since #444, which made `vault_wrapped` implemented: before that, one value
+#: stood in for both "unseen" and "unavailable", and the two tests that used it
+#: were passing for different reasons.
+UNIMPLEMENTED = Delivery(method="one_time_link")
 
 TARGET = {
     "type": "oracle",
@@ -103,7 +109,7 @@ def test_an_unimplemented_method_is_refused_on_the_capability_code() -> None:
     defines and this build cannot serve, which is what exit 5 has meant since
     P1."""
     with pytest.raises(DeliveryUnavailableError) as caught:
-        deliverable(UNSEEN)
+        deliverable(UNIMPLEMENTED)
 
     assert "not implemented in this build" in str(caught.value)
     assert caught.value.exit_code is ExitCode.UNSUPPORTED_CAPABILITY
@@ -184,9 +190,14 @@ def test_the_usage_errors_are_asked_before_the_environment_one() -> None:
 
 
 def test_no_guard_fires_on_an_unseen_delivery() -> None:
-    """None of the three is true of a method that prints nobody anything.
-    Refusing one for want of a terminal would be a guard firing on a path it was
-    not written about."""
+    """None of the three is true of a method that prints no *password*.
+
+    The reason needed narrowing when #444 landed: this used to say "prints nobody
+    anything", which stopped being true the day an unseen method returned a
+    wrapping token. Each guard is about a password on a screen, and a retrieval
+    credential with its own TTL is a different object -- argued in
+    `sopuli/output/delivery_view.py`.
+    """
     refuse_seen_path(UNSEEN, is_json=True, stdout_is_terminal=False, confirm_given=True)
 
 

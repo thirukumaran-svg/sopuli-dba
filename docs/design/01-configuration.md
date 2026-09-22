@@ -251,13 +251,53 @@ The block is read only when `manual` is the selected method, so a `manual:` bloc
 kept beside `method: vault_wrapped`, for switching between them, is still
 unjudged.
 
-**What is inside the other five sub-blocks is not validated yet.** Which keys a
-method takes is that method's own issue, because the answer is a fact about the service behind it:
-a response-wrapping token is single-use by construction, so `num_uses` is a config
-*error* rather than a key with a default (#444), and nothing in a config layer can
-know that. Until those land, a typo inside a sub-block is accepted — which is why
-**`config validate` warns that no delivery method is implemented in this build**
-rather than letting a clean parse read as a working delivery.
+**`vault_wrapped:` is the second, and the default method's** (#444):
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+    vault: vault-handover    # optional
+```
+
+`ttl` is **required**, on `force_expire`'s argument read for a different guarantee:
+a wrapping token's whole safety story is that it stops working, so how soon is not
+a number to inherit from a tool's default. The value is a Vault duration and is
+**passed through rather than parsed** — Vault owns that grammar, and a second
+implementation of it here would disagree with the server silently — so what the
+file is checked for is the shape, `15m` or `900s` or `1h`. A typo is then a config
+error rather than a 400 after a password has been drawn.
+
+`vault` is **optional**, and omitting it takes §3's chain: the target's `vault:`,
+then `defaults.vault`. It deliberately does **not** fall back to
+`reset_records.vault` — UC-2 §3.5 keeps the journal and the delivery target apart
+as two objects with two lifetimes, and a default that joined them would leave a
+reader unable to tell an estate that chose one store from one that never chose.
+
+**`num_uses` is refused rather than accepted and ignored.** A response-wrapping
+token is single-use by construction, so the key can only describe a guarantee Vault
+is already making — and a file that sets `num_uses: 1` reads as an estate having
+chosen something. This is the case that shows why each method's keys belong to that
+method's issue: the answer is a fact about the service behind it, and nothing in a
+config layer could know it.
+
+**What is inside the other four sub-blocks is not validated yet**, so a typo inside
+one is accepted — which is why **`config validate` warns when the selected method
+is not implemented in this build** rather than letting a clean parse read as a
+working delivery. `manual` and `vault_wrapped` are the two that are.
+
+**The published schema still leaves every sub-block open, and #444 is what
+established that it has to** (§9b). The plan was that each method's issue would
+close its own; the first one to try found that it cannot unconditionally, because an
+*unselected* sub-block is left unjudged by the tool on purpose — so `required:
+["ttl"]`, or a pattern on it, or `additionalProperties: false` would refuse a file
+the tool accepts, which is the one direction this document forbids. Closing a
+sub-block needs a **conditional** schema — `if` on `method`, `then` the constraints
+— and the condition is not trivial either, since `method` is optional and its
+absence *selects* `vault_wrapped`. That is one shape serving all six methods and
+worth building once a second method has keys to close; until then the tool is the
+stricter of the two, which is the safe asymmetry.
 
 **`notify:` nests here** rather than beside `delivery:`, because it is a property
 of a delivery rather than of a run. Its keys are #442's. One rule about it is

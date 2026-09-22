@@ -125,8 +125,9 @@ class DeliveryUnavailableError(RefusedError):
         super().__init__(
             f"`delivery.method: {method}` is configured and is not implemented in this build",
             hint=(
-                "only `manual` can deliver today (#441); the unseen methods are #444-#447. "
-                "`config validate` warns about this before a run needs it"
+                "this build serves `manual` (#441) and `vault_wrapped` (#444); the methods "
+                "still to come are #445-#447 and `smtp_encrypted`. `config validate` warns "
+                "about this before a run needs it"
             ),
         )
 
@@ -146,10 +147,21 @@ def refuse_seen_path(
     and guard 5 is the config layer's, because `force_expire` is a property of
     the file (:func:`sopuli.config.delivery._build_manual`).
 
-    Nothing here is true of an unseen delivery, so all three are skipped for one:
-    a `vault_wrapped` reset writes a token to a store and prints nobody anything,
-    and refusing it for want of a terminal would be a guard firing on a path it
-    was not written about.
+    Nothing here is true of an unseen delivery, so all three are skipped for one,
+    and the reason needed correcting when the first one landed (#444). This used
+    to say a `vault_wrapped` reset "prints nobody anything" -- a prediction
+    written before any unseen method existed, and wrong: §6.1 bars the wrapping
+    token from the notify channel and the tool carries no other, so the token
+    *does* print, to be passed on out of band.
+
+    The guards are still skipped, on the narrower ground that survives. Each is
+    about a **password** on a screen: a prompt establishes somebody is watching
+    one, the terminal check keeps one out of a log that outlives its expiry, and
+    the JSON refusal keeps one out of the document. What an unseen delivery emits
+    is a retrieval credential with a TTL of its own, whose single use makes
+    interception detectable -- a different object, argued in
+    `output/delivery_view.py`, which is also why it goes to stderr rather than
+    being refused under `--output json`.
 
     **A ``--dry-run`` is skipped for the same reason, and that one was found by
     running it.** A preview prints a plan and never a password -- UC-2 §2 says so

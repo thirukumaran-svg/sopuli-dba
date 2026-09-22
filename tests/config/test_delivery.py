@@ -69,7 +69,12 @@ def test_manual_is_the_one_seen_method() -> None:
     assert built(method="manual", manual={"force_expire": True}).is_seen
     for method in DELIVERY_METHODS:
         if method != "manual":
-            assert not built(method=method, **{method: {}}).is_seen
+            # Each method's own required keys arrive with its issue, so a sweep
+            # over the enum has to carry them: `vault_wrapped` needs a `ttl`
+            # since #444, and an empty block is a config error rather than an
+            # unseen delivery.
+            settings = {"ttl": "15m"} if method == "vault_wrapped" else {}
+            assert not built(method=method, **{method: settings}).is_seen
 
 
 def test_the_enum_is_the_whole_set_including_the_method_with_no_issue() -> None:
@@ -165,10 +170,13 @@ def test_an_unimplemented_method_warns_that_nothing_serves_it() -> None:
     """A `delivery:` block that validates silently reads as delivery being
     configured, and the operator would find out otherwise at the moment a password
     had already been drawn."""
-    notice = unserviceable(built(method="vault_wrapped", vault_wrapped={"ttl": "15m"}))
+    # `one_time_link` rather than `vault_wrapped`, which #444 implemented. The
+    # test is about the warning and not about which method happens to be
+    # missing, so it moves to one that still is -- and there are four left.
+    notice = unserviceable(built(method="one_time_link", one_time_link={}))
 
     assert notice is not None
-    assert "vault_wrapped" in notice
+    assert "one_time_link" in notice
     assert "not implemented in this build" in notice
 
 
@@ -204,6 +212,8 @@ def test_the_block_reaches_the_config() -> None:
 
     assert config.delivery is not None
     assert config.delivery.method == "vault_wrapped"
+    assert config.delivery.vault_wrapped is not None
+    assert config.delivery.vault_wrapped.ttl == "15m"
 
 
 def test_a_file_with_no_delivery_carries_none() -> None:
@@ -258,7 +268,7 @@ def test_the_warning_reaches_config_warnings_rather_than_only_the_helper() -> No
     config = build_config(
         {
             "version": 1,
-            "delivery": {"method": "vault_wrapped", "vault_wrapped": {"ttl": "15m"}},
+            "delivery": {"method": "one_time_link", "one_time_link": {}},
         }
     )
 
@@ -273,3 +283,109 @@ def test_a_file_with_no_delivery_carries_no_such_warning() -> None:
     config = build_config({"version": 1})
 
     assert not [w for w in config.warnings if "no delivery method" in w.message]
+
+
+# --------------------------------------------- `vault_wrapped:`'s keys (#444) ---
+
+
+def test_the_ttl_is_required_rather_than_defaulted() -> None:
+    """The argument `force_expire` makes one method over: a wrapping token's whole
+    safety story is that it stops working, so how soon is not a number to inherit
+    from a tool's default. A default would be an unreviewed value standing between
+    a password and whoever finds the token afterwards."""
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(document(method="vault_wrapped", vault_wrapped={}))
+
+    assert "needs a `ttl`" in str(raised.value)
+    assert "delivery.vault_wrapped.ttl" in str(raised.value)
+
+
+def test_num_uses_is_refused_rather_than_ignored() -> None:
+    """#444's own correction to its original plan. A response-wrapping token is
+    single-use by construction, so the key can only describe a guarantee Vault is
+    already making -- and accepting it silently would leave a file whose author
+    believes the tool is enforcing something."""
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(
+            document(method="vault_wrapped", vault_wrapped={"ttl": "15m", "num_uses": 1})
+        )
+
+    assert "takes no `num_uses`" in str(raised.value)
+    assert "single use by construction" in str(raised.value.hint or "")
+
+
+@pytest.mark.parametrize("ttl", ["15", "15x", "0m", "-5m", "fifteen minutes", "15 m"])
+def test_a_ttl_that_is_not_a_duration_is_refused_at_load(ttl: str) -> None:
+    """Shape only, because Vault owns the grammar -- but shape *here*, so a typo
+    is a config error rather than a 400 after a password has been drawn."""
+    with pytest.raises(ConfigError, match="is not a duration"):
+        build_delivery(document(method="vault_wrapped", vault_wrapped={"ttl": ttl}))
+
+
+def test_an_empty_ttl_is_refused_by_the_field_before_the_shape() -> None:
+    """Refused, and with the better message of the two: `must not be empty` says
+    what to do, and `is not a duration` about an empty string would leave somebody
+    looking for the unit they mistyped. Asserted so that tightening the pattern
+    later does not quietly take the precise answer away."""
+    with pytest.raises(ConfigError, match="must not be empty"):
+        build_delivery(document(method="vault_wrapped", vault_wrapped={"ttl": ""}))
+
+
+@pytest.mark.parametrize("ttl", ["15m", "900s", "1h", "90m"])
+def test_the_durations_vault_actually_takes_are_accepted(ttl: str) -> None:
+    section = built(method="vault_wrapped", vault_wrapped={"ttl": ttl})
+
+    assert section.vault_wrapped is not None
+    assert section.vault_wrapped.ttl == ttl
+
+
+def test_the_store_is_optional_and_absence_means_the_chain() -> None:
+    """Omitting `vault:` takes §3's chain -- the target's, then `defaults.vault` --
+    which is the same resolution a secret ref walks. ``None`` rather than a
+    materialised default, so a later layer can tell "not named here" from "named
+    as this"."""
+    section = built(method="vault_wrapped", vault_wrapped={"ttl": "15m"})
+
+    assert section.vault_wrapped is not None
+    assert section.vault_wrapped.vault is None
+
+
+def test_the_store_can_be_named_on_the_method() -> None:
+    """And it is not `reset_records.vault`. UC-2 §3.5 keeps the journal and the
+    delivery target apart as two objects with two lifetimes, so an estate that
+    wants them in one store says so twice rather than having one default to the
+    other."""
+    section = built(method="vault_wrapped", vault_wrapped={"ttl": "15m", "vault": "vault-handover"})
+
+    assert section.vault_wrapped is not None
+    assert section.vault_wrapped.vault == "vault-handover"
+
+
+def test_an_unknown_key_in_the_wrapped_block_is_refused() -> None:
+    """P3's "a typo in a credential tool must never be silently ignored", applied
+    to the *selected* block now that it has keys of its own to typo -- which is
+    the difference from the unselected one two tests down, whose keys stay
+    unjudged on purpose."""
+    with pytest.raises(ConfigError, match="delivery.vault_wrapped"):
+        build_delivery(document(method="vault_wrapped", vault_wrapped={"ttl": "15m", "tt1": "x"}))
+
+
+def test_the_block_is_not_read_when_another_method_is_selected() -> None:
+    """`manual`'s rule, one method over: an unselected block is kept so somebody
+    can switch between two configurations, and reading it either way would make a
+    file start failing for a key the run never consults."""
+    section = built(
+        method="manual",
+        manual={"force_expire": True},
+        vault_wrapped={"num_uses": 1},
+    )
+
+    assert section.method == "manual"
+    assert section.vault_wrapped is None
+
+
+def test_vault_wrapped_is_served_by_this_build() -> None:
+    """The warning that told an estate nothing could deliver had to learn about
+    `manual` in #441 and about this method in #444 -- and `IMPLEMENTED` is one
+    list so that `config validate` and the verb cannot disagree."""
+    assert unserviceable(built(method="vault_wrapped", vault_wrapped={"ttl": "15m"})) is None

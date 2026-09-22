@@ -105,6 +105,25 @@ from sopuli.config import (
 #: `sopuli config validate` warns that no method is implemented rather than
 #: letting a clean parse read as a working delivery.
 #:
+#: **#444 did not bump this, and that is a finding rather than an omission.** The
+#: 1.6 note below promises that "each method's issue closes its own" sub-block, and
+#: `vault_wrapped` is the first issue in a position to try. It cannot, because a
+#: sub-block for an *unselected* method is deliberately left unjudged by the
+#: builder (#440, `01-configuration.md` §9b's rule that an unselected block is how
+#: somebody switches between configurations). Any constraint published here --
+#: `required: ["ttl"]`, a pattern on it, `additionalProperties: false` -- would
+#: refuse a file the tool accepts, which is the one direction §9b forbids: the
+#: schema is the fast incomplete check, and the tool must never be the looser of
+#: the two.
+#:
+#: Closing a sub-block therefore needs a **conditional** schema -- `if` on
+#: `method`, `then` the constraints -- and the condition is not a one-liner either,
+#: because `method` is optional and its absence *selects* `vault_wrapped`. That is
+#: worth doing and it is not #444's: it is one shape that serves all six methods,
+#: and it should be built once when a second method has keys to close. Until then
+#: the sub-blocks stay open and the tool is the stricter of the two, which is the
+#: safe asymmetry.
+#:
 #: 1.6 became 1.7 with `safety.delivery.allowed_methods` (H6, #453, #498): a
 #: `delivery:` sub-block of every `safety:` block, holding the set of UC-2
 #: delivery methods that layer permits. Optional like every bump before it, and
@@ -1012,9 +1031,11 @@ def _delivery() -> Schema:
     sub_block: Schema = {
         "type": "object",
         "description": (
-            "This method's own settings. The keys are the method's issue to define; "
-            "until then they are unchecked, and `config validate` warns that no "
-            "delivery method is implemented in this build."
+            "This method's own settings. Unchecked here: a sub-block for a method "
+            "that is not selected is left unjudged by the tool, so a constraint "
+            "published here would refuse a file the tool accepts. `config validate` "
+            "warns when the selected method is not implemented in this build, and "
+            "checks the selected method's keys itself."
         ),
     }
     return _object(

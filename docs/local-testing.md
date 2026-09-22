@@ -2146,11 +2146,15 @@ out: **`CAPABILITIES` reads 5 on 18c and 6 on 21c and 26ai.** The missing one is
 Three exist: `account reset-password`, `account suspend` and `account list`.
 There is still **no `expire-password`**.
 
-`reset-password` is built on the **seen** path only (#441). The unseen methods —
-`vault_wrapped` and the rest — are #444-#447, and a file naming one is refused at
-plan time rather than after the password has changed. So what you can test here is
-the path that prints a password to your terminal, which is the one with five
-guards on it.
+`reset-password` is built on **two** paths now: the seen one (`manual`, #441) and
+the default unseen one (`vault_wrapped`, #444). The other four unseen methods are
+#445-#447 and `smtp_encrypted`, and a file naming one of those is refused at plan
+time rather than after the password has changed.
+
+They are worth testing in that order, because they fail in opposite directions and
+the guards are almost disjoint. `manual` prints a working password and lives under
+five guards; `vault_wrapped` prints a *token* and lives under three rules, one of
+which is the absence of a guard the seen path has.
 
 **#454 is what decides what a retry does**, and it is worth knowing before you run
 anything twice: **there is no re-run that quietly does nothing.** A second reset
@@ -2499,6 +2503,217 @@ cost the operator the report for every other store too.
 **A preview takes no lock**, which is invariant 8 read for the lock: a
 `--dry-run` that left a claim in the vault would block the run it was
 previewing.
+
+### `account reset-password` — the unseen path (`vault_wrapped`)
+
+The default method, and the one the tool exists to make possible: a DBA resets a
+password without ever seeing it. Swap the `delivery:` block for this one — the
+`vault-dev` store from §6 is already there, and `vault_wrapped:` names no `vault:`,
+so it takes §3's chain and lands on `defaults.vault`:
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+```
+
+```bash
+sopuli --config wrapped.yaml account reset-password --account acme_dev_alice
+```
+```
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT         TARGET    INTENT        SECRET
+acme_dev_alice  free-pdb  password_set  -
+
+ACCOUNT         TARGET    STATE  WAS   DETAIL
+acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'
+
+reset acme_dev_alice on 1 of 1 targets
+
+hand this to acme_dev_alice for free-pdb; it unwraps once:
+
+    hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA
+
+It stops working at 2026-09-22T10:21:00.953243Z, and the first unwrap is the
+last. Do not unwrap it to check -- that spends the person's one read, and
+them finding it spent is the only warning either of you gets.
+```
+
+**The plan also went to stderr**, before anything was issued, which that capture
+does not show because it is stdout. Both streams carry it on a real run: stdout
+because the plan is part of the result, and stderr because the plan has to survive
+a run that raises part way through — a multi-target reset that fails on target
+three never builds the returned string at all, and the operator would otherwise be
+left with no record of what it had been about to touch. `--dry-run` echoes it once,
+to stdout, because a preview mutates nothing for an early copy to outlive.
+
+**The token above is substituted and nothing else is.** The run was real, against
+the tier-1 stack, and the value it printed is replaced here for the reason the
+password is in the seen path's sample and then some: a response-wrapping token *is*
+a credential that retrieves a password (UC-2 §6.1), and committing one to a
+repository is committing material pulled from a real environment. What this sample
+is for is the shape.
+
+**That run was redirected to a file**, which is the first thing to notice: it is
+the state `manual` refuses with exit 8. An unseen delivery is allowed a pipe on
+purpose — `| mail` is how a handover works — and the cost is stated rather than
+hidden, because a redirect outlives the token's TTL. What makes it a different
+trade from `manual`'s is the object: fifteen single-use minutes whose one use is
+detectable, against a password good until somebody's first logon.
+
+**No prompt, either.** The seen path asks every time and `--confirm` cannot answer
+it; there is nothing to ask here, because nobody is being shown a password.
+
+**The heading names the target, and that was a defect worth knowing about.** Drop
+`--target` on an estate with several and the verb resets the account on every one,
+drawing a *separate* password for each — so you get one block per target, and until
+the code review of #518 they were identical apart from the token. Sending somebody
+the wrong one hands them a password that does not work on the host you named. The
+cubbyhole itself always carried the target, so the person unwrapping could tell;
+the DBA holding three tokens could not.
+
+#### Fetch it, and then fail to fetch it again
+
+```bash
+vault unwrap -format=json <the token>
+```
+```json
+{
+  "data": {
+    "account": "acme_dev_alice",
+    "password": "<24 characters>",
+    "target": "free-pdb"
+  }
+}
+```
+
+The `account` and `target` are in the cubbyhole so that somebody sent two tokens
+does not have to guess which is which. **The password is substituted here and
+nothing else is**, for the reason the seen path's sample says: a document showing
+something shaped exactly like a working credential teaches the wrong reflex.
+
+Now do it again:
+
+```
+Error unwrapping: Error making API request.
+
+URL: PUT http://127.0.0.1:8200/v1/sys/wrapping/unwrap
+Code: 400. Errors:
+```
+
+**That failure is the whole promise of the method.** Single use does not prevent
+interception; it makes it *detectable*. If the person's own unwrap fails, somebody
+else has already read it — and that is the only warning either of them gets, which
+is why the output tells the DBA not to unwrap it to check.
+
+**Log in with what you fetched, and check `ACCOUNT_STATUS`.** It is `OPEN`, not
+`EXPIRED`: expiry is what ends the *seen* path's exposure, and on this path nobody
+but the owner is meant ever to know the value, so there is nothing to end.
+
+#### `--output json`, and where the token goes
+
+```bash
+sopuli --config wrapped.yaml account reset-password --account acme_dev_alice --output json > run.json
+```
+```
+hand this to acme_dev_alice for free-pdb; it unwraps once:
+
+    hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA
+
+It stops working at 2026-09-22T10:21:35.594645Z, and the first unwrap is the
+last. Do not unwrap it to check -- that spends the person's one read, and
+them finding it spent is the only warning either of you gets.
+```
+
+That went to **stderr**, and `run.json` is a clean document:
+
+```bash
+jq '.results[0].delivered' run.json ; grep -c 'hvs\.' run.json
+```
+```
+"vault_wrapped"
+0
+```
+
+**Three things there are deliberate.** `--output json` is *not* refused, unlike on
+the seen path — the document is what makes a scheduled reset auditable, and taking
+it away would make an estate choose between an audit trail and the default delivery
+method. The token is not in it, and there is no property that could hold one: a
+document is captured, shipped to log aggregation and kept, and a token in one
+outlives the TTL that is this method's guarantee. And so it goes to stderr, which
+is the split this verb already makes for the plan and the confirmation prompt —
+stdout carries the result, and here the result is the document.
+
+The accessor that *names* the handover without being able to use it is #444's
+second part; today the document records the method and nothing else about it.
+
+#### Failures worth causing on purpose
+
+**A `num_uses` key.** Reach for the thing you already have:
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+    num_uses: 1
+```
+```
+sopuli: wrapped.yaml: delivery.vault_wrapped.num_uses: `vault_wrapped` takes no `num_uses`
+  hint: a Vault response-wrapping token is single use by construction -- the unwrap is the last read, and that is what makes interception detectable (UC-2 6.6). There is no counter to set, so the key is refused rather than accepted and ignored
+```
+
+Exit 9. Refused rather than accepted and ignored, because a file that sets it reads
+as an estate having chosen something.
+
+**A TTL that is not a duration**, and this one has two answers worth seeing rather
+than one. Unquoted, YAML hands the tool a number:
+
+```
+sopuli: wrapped.yaml: delivery.vault_wrapped.ttl: must be a string, not a number
+```
+
+Quoted, it reaches the duration check:
+
+```
+sopuli: wrapped.yaml: delivery.vault_wrapped.ttl: ttl '15' is not a duration
+  hint: digits and one unit -- `s`, `m` or `h`, as in `15m`. The value is passed to Vault rather than interpreted here, so an unparseable one would otherwise fail with a 400 after a password had already been drawn
+```
+
+Both exit 9 at load, and `"0m"` and `"fifteen minutes"` get the second. Worth
+causing both, because the first sample in this section was written as a prediction
+and said the *second* message — `ttl: 15` is the spelling somebody will actually
+type, and it is a type error before it is ever a duration error. The shape is
+checked here and the grammar stays Vault's, which is what keeps the two from
+disagreeing about what `90m` means.
+
+**A delivery with nowhere to deliver.** Take `vault:` off the target *and*
+`defaults.vault` out, leaving `vault_wrapped:` naming none either:
+
+```
+sopuli: wrapped.yaml: delivery.vault_wrapped.vault: `delivery.method: vault_wrapped` has no store to deliver into
+  hint: name one under the method, on the target, or as `defaults.vault` -- the same chain a secret ref walks. A store is not guessed at, because the wrong one would hand somebody else's vault a working password
+```
+
+Exit **8**, before anything connects — the chain is knowable from the file. Note
+what it does *not* fall back to: `reset_records.vault` is still set in that file
+and is not used, because §3.5 keeps the journal and the delivery target apart.
+
+**A store that cannot wrap.** Point the delivery at a non-HashiCorp entry and it is
+refused with exit 5, naming the store: response wrapping is a Vault feature with no
+equivalent elsewhere, so there is nothing to degrade to. **Before the DDL**, which
+is invariant 4 and was a bug in the first build of this — the backend used to be
+resolved inside the per-target loop, so an estate that could never have delivered
+found out after a password had been drawn. You cannot cause this one against the
+tier-1 stack, which has only HashiCorp stores; it is
+`test_a_store_that_cannot_wrap_is_refused_before_the_ddl`'s.
+
+**A one-second TTL.** `ttl: 1s` is legal and nothing stops you configuring a
+handover nobody can catch. Worth doing once, because it is the cheapest way to see
+the expiry failure — and worth remembering that the tool will not argue with you
+about it.
 
 #### A journal that cannot be written
 

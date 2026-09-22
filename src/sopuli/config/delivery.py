@@ -25,11 +25,19 @@ every run of `config validate`.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.fields import choice, mapping, optional_bool, reject_unknown_keys
-from sopuli.config.model import Delivery, ManualDelivery
+from sopuli.config.fields import (
+    choice,
+    mapping,
+    optional_bool,
+    reject_unknown_keys,
+    required_string,
+    string,
+)
+from sopuli.config.model import Delivery, ManualDelivery, WrappedDelivery
 
 #: The methods UC-2 §6.2 defines, in the order that section lists them. **The
 #: whole set, not the subset with issues**: `smtp_encrypted` has no issue of its
@@ -58,15 +66,35 @@ DEFAULT_METHOD = "vault_wrapped"
 #: The seen path. Named because two rules key on it and neither should re-spell it.
 MANUAL = "manual"
 
-#: The methods this build can actually serve (#441). Here rather than in
+#: The one *unseen* method this build serves (#444), and the default.
+WRAPPED = "vault_wrapped"
+
+#: The methods this build can actually serve (#441, #444). Here rather than in
 #: :mod:`sopuli.reset` because :func:`unserviceable` needs it too, and one list
 #: is what keeps `config validate`'s warning and the verb's refusal from
 #: disagreeing about which methods work.
-IMPLEMENTED = (MANUAL,)
+IMPLEMENTED = (MANUAL, WRAPPED)
 
 #: The keys `manual:` takes (#441). One, and it is required -- see
 #: :class:`~sopuli.config.model.ManualDelivery` for why it is not a default.
 MANUAL_KEYS = ("force_expire",)
+
+#: The keys `vault_wrapped:` takes (#444). `ttl` is required; `vault` is
+#: optional, and naming no store is how an estate takes §3's chain -- the
+#: target's `vault:`, then `defaults.vault`. The same chain a secret ref walks,
+#: for the same reason: an operator who has learned one store resolution should
+#: not have to learn a second.
+WRAPPED_KEYS = ("ttl", "vault")
+
+#: A Vault duration: digits and one unit. Shape only -- see
+#: :class:`~sopuli.config.model.WrappedDelivery` for why the grammar stays
+#: Vault's. ``s``, ``m`` and ``h`` are the three a wrap TTL is ever written in;
+#: Vault accepts more, and an estate that needs one can say ``5400s``.
+TTL_PATTERN = re.compile(r"^[1-9][0-9]*[smh]$")
+
+#: The key #444 refuses rather than accepts. Its own constant because the refusal
+#: has to name it, and a literal in a message is a literal somebody renames once.
+NUM_USES = "num_uses"
 
 #: Keys the block itself takes, beside one sub-block per method. `notify` nests
 #: here rather than sitting beside `delivery:` (§6.3): it is a property of a
@@ -110,6 +138,9 @@ def build_delivery(document: dict[str, Any]) -> Delivery | None:
     return Delivery(
         method=method,
         manual=_build_manual(block[MANUAL], at=at.key(MANUAL)) if method == MANUAL else None,
+        vault_wrapped=(
+            _build_wrapped(block[WRAPPED], at=at.key(WRAPPED)) if method == WRAPPED else None
+        ),
     )
 
 
@@ -160,6 +191,73 @@ def _build_manual(raw: Any, *, at: KeyPath) -> ManualDelivery:
             ),
         )
     return ManualDelivery(force_expire=True)
+
+
+def _build_wrapped(raw: Any, *, at: KeyPath) -> WrappedDelivery:
+    """`vault_wrapped:`'s own settings -- the second method to claim a field (#444).
+
+    **Only where `vault_wrapped` is the selected method**, for `manual`'s reason:
+    an unselected block is kept so somebody can switch between two configurations,
+    and reading it either way would make a file start failing for a key the run
+    never consults.
+
+    `vault` is **optional**, and omitting it takes §3's chain: the target's
+    `vault:`, then `defaults.vault`. Delivery deliberately does not inherit
+    `reset_records.vault` -- UC-2 §3.5 keeps the journal and the delivery target
+    apart as two objects with two lifetimes, and having one default to the other
+    would make a reader who found them equal unable to tell whether an estate
+    chose that.
+
+    `ttl` is **required**, and the argument is the one `force_expire` makes one
+    method over: a wrapping token's whole safety story is that it stops working,
+    so for how long is not a number to inherit from a tool's default. A default
+    here would be an unreviewed value standing between a password and whoever
+    finds the token afterwards.
+
+    **`num_uses` is refused rather than ignored**, which is #444's own correction
+    to its original plan. A response-wrapping token is single-use by construction,
+    so the key can only describe a guarantee Vault is already making -- and a file
+    that sets it reads as an estate having chosen something. The refusal names the
+    property instead, because an operator who wrote it was reaching for exactly
+    the thing they already have.
+    """
+    block = mapping(raw, at=at)
+    if NUM_USES in block:
+        raise ConfigError(
+            f"`vault_wrapped` takes no `{NUM_USES}`",
+            at=at.key(NUM_USES),
+            hint=(
+                "a Vault response-wrapping token is single use by construction -- the "
+                "unwrap is the last read, and that is what makes interception detectable "
+                "(UC-2 6.6). There is no counter to set, so the key is refused rather "
+                "than accepted and ignored"
+            ),
+        )
+    reject_unknown_keys(block, allowed=WRAPPED_KEYS, at=at)
+
+    if "ttl" not in block:
+        raise ConfigError(
+            "`vault_wrapped` delivery needs a `ttl`",
+            at=at.key("ttl"),
+            hint=(
+                "the token stops working, and how soon is the whole of what this method "
+                "promises -- so it is written down rather than defaulted. A Vault duration: "
+                "`15m`, `900s`, `1h`"
+            ),
+        )
+    vault = string(block["vault"], at=at.key("vault")) if "vault" in block else None
+    ttl = required_string(block, "ttl", at=at)
+    if not TTL_PATTERN.match(ttl):
+        raise ConfigError(
+            f"ttl {ttl!r} is not a duration",
+            at=at.key("ttl"),
+            hint=(
+                "digits and one unit -- `s`, `m` or `h`, as in `15m`. The value is passed to "
+                "Vault rather than interpreted here, so an unparseable one would otherwise "
+                "fail with a 400 after a password had already been drawn"
+            ),
+        )
+    return WrappedDelivery(ttl=ttl, vault=vault)
 
 
 def _require_sub_block(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
@@ -233,14 +331,14 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
 def unserviceable(delivery: Delivery | None) -> str | None:
     """Why the configured method cannot deliver yet, or ``None`` when it could.
 
-    **`manual` is implemented and the other five are not** (#441). This used to
-    say *no method is implemented*, which was true when #440 wrote it and became
-    false the day the seen path landed -- so `config validate` told an estate with
-    a working `manual` configuration that nothing could hand a password over.
-    Caught by Copilot's review of #505.
+    **Two are implemented and four are not** (#441, #444), and this sentence has
+    now been wrong twice in the same way. It said *no method is implemented* until
+    the seen path landed, and *only `manual`* until the unseen default did -- both
+    caught in review rather than by a test, because what it describes lives in
+    :data:`IMPLEMENTED` and nothing makes the prose follow it.
 
-    The five that remain are #444-#447's, and `smtp_encrypted` has no issue at
-    all; until one of them lands, a file naming `method: vault_wrapped` is a file
+    The four that remain are #445-#447's and `smtp_encrypted`'s, which has no issue
+    at all; until one of them lands, a file naming `method: one_time_link` is a file
     that parses and cannot hand anybody a password.
 
     A **warning rather than a refusal**, following E4/E5's shape for a configured

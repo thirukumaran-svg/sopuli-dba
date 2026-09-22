@@ -1,7 +1,8 @@
 """Every place the tool turns a `Secret` back into plaintext, pinned (#441).
 
-`CLAUDE.md` invariant 2 permits exactly four: the vault write, the driver call,
-`policy sample --reveal`, and UC-2's seen reset. Each is argued for in the module
+`CLAUDE.md` invariant 2 permits the vault write, the driver call, `policy sample
+--reveal`, UC-2's seen reset, and -- since #444 -- the wrapping token an unseen
+delivery hands back. Each is argued for in the module
 that holds it, and each is supposed to stay where it is -- #439's first guard is
 literally *one reveal site, and there must be no third*.
 
@@ -38,6 +39,14 @@ PERMITTED = {
     "driver/oracle/client.py": "the driver call -- invariant 2's second exception",
     "output/policy_view.py": "`policy sample --reveal` -- the third; a sample is not a credential",
     "output/reset_view.py": "UC-2's seen reset -- the fourth, under five structural guards (#439)",
+    "output/delivery_view.py": (
+        "the wrapping token -- not a password, but UC-2 6.1's retrieval credential, "
+        "which the rule covers because it is about reach rather than value (#444)"
+    ),
+    "delivery/vault_wrapped.py": (
+        "the vault write -- invariant 2's first exception, reached as a wrap rather "
+        "than a KV put (#444)"
+    ),
     "passwords.py": "generation's own validation, which never leaves the process",
     "store/credentials.py": "the vault write -- invariant 2's first exception",
     "store/hashicorp/_auth.py": "the vault login, which is the write's other half",

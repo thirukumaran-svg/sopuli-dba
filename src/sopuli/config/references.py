@@ -161,6 +161,24 @@ def _vault_references(config: Config) -> list[_Reference]:
     if config.reset_records is not None:
         found.append(_Reference(config.reset_records.vault, ROOT.key("reset_records").key("vault")))
 
+    # UC-2's delivery target (#444), on the same argument one block over and with
+    # it sharpened: a misspelled store here is discovered when the run opens it,
+    # which on the unseen path is *before* the DDL (§6.4) -- so the reset refuses
+    # and nobody is worse off. That is the good case. The bad one is a name that
+    # resolves to a **different declared store**, which no reference check can
+    # catch, and the reason this one is worth having anyway is that it catches the
+    # typo before an operator has to reason about which of the two happened.
+    #
+    # Only the *selected* method's block is read, which is `build_delivery`'s rule:
+    # an unselected `vault_wrapped:` block is left unjudged so somebody can keep
+    # one to switch to, and validating a name in it would refuse a file the run
+    # never consults.
+    delivery = config.delivery
+    if delivery is not None and delivery.vault_wrapped is not None:
+        named = delivery.vault_wrapped.vault
+        if named is not None:
+            found.append(_Reference(named, ROOT.key("delivery").key("vault_wrapped").key("vault")))
+
     return found
 
 

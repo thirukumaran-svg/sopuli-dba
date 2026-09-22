@@ -48,8 +48,9 @@ something specific.
 2. **Redaction happens at the output serialiser, not at each call site.** Secret
    values are wrapped in a type whose `str`, `repr` and JSON serialisation are
    `"***"`. There must be no code path that emits plaintext except the vault write,
-   the driver call, `policy sample --reveal`, and UC-2's seen reset. Do not
-   "remember to mask" at a log statement.
+   the driver call, `policy sample --reveal`, UC-2's seen reset, and the wrapping
+   token an unseen delivery hands back (#444, and the only one of the five that is
+   not a password). Do not "remember to mask" at a log statement.
 
    The third exception is allowed because **a sample is not a credential**:
    nothing authenticates with it, it is never stored, and it guards nothing —
@@ -76,7 +77,7 @@ something specific.
 
    - one reveal site, in the seen path's own view module, reachable only when the
      configured delivery method is `manual` -- and `tests/test_reveal_sites.py`
-     now holds the whole set by parsing `src/`, so a fifth site fails the suite
+     now holds the whole set by parsing `src/`, so a new site fails the suite
      rather than being noticed in review (#441);
    - refused with `--output json` and `--output jsonl`, as `--reveal` is, and the
      run schema gives the result no property a password could occupy;
@@ -100,8 +101,40 @@ something specific.
    password, and refusing one for want of a terminal made "show me what this
    would do" impossible from the job that most wants it.
 
-   A fifth exception is a decision, not an implementation detail — and so is
-   loosening any of the five guards above.
+   **The fifth exception is the wrapping token an unseen delivery hands back,
+   decided in #444, and it is not a password at all** — which is why its argument
+   is shaped differently from the four above rather than being a weaker version of
+   the fourth. What makes it an exception is §6.1's rule that the guard is about
+   *reach* and not about value: "the password, or anything that retrieves it". A
+   response-wrapping token holds no password and produces one, so it is typed as a
+   `Secret` and emitted through one `reveal()`, in
+   `sopuli/output/delivery_view.py`.
+
+   What allows the emission is that there is nowhere else for it to go. §6.1 bars
+   it from the notify channel, the tool carries no other channel, and the handover
+   to the person is out of band — so a method that could not print it could not
+   deliver at all. Three rules keep it narrow, and the middle one is **weaker**
+   than the seen path's on purpose:
+
+   - **never in the run document, and no property could hold it.** The document is
+     captured and kept, and a token in one outlives the TTL that is the method's
+     whole guarantee. What it will carry instead is the *accessor*, which names the
+     hand-over and cannot use it — #444's second part adds that field, and until it
+     lands the document records the method and nothing else about the hand-over;
+   - **no terminal is required**, which is guard 3 deliberately not applied. A pipe
+     is how a handover script works, and forbidding one would leave an estate no
+     unattended path but `manual`. The cost is real and accepted: a redirect
+     outlives the token. What makes it a different trade is the object — minutes of
+     single use, whose one use is detectable, against a password good until
+     somebody's first logon;
+   - **under `--output json` it goes to stderr** rather than being refused, because
+     the document is what makes a scheduled reset auditable and refusing it would
+     make an estate choose between an audit trail and the default method.
+
+   A **sixth** exception is a decision, not an implementation detail — and so is
+   loosening any of the five guards above, or any of the three rules here.
+   `tests/test_reveal_sites.py` holds the whole set by parsing `src/`, so a new
+   site fails the suite rather than being noticed in review.
 3. **Never branch on a version number from config.** Query the database for its
    capabilities, cache per session, and branch on the capability. See P1.
 4. **A command that needs an unavailable capability fails at plan time**, with a

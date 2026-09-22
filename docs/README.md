@@ -661,11 +661,12 @@ coming and what each one waits on.
 |---|---|---|
 | `personal_accounts:` | #467 | **built**, schema 1.4 |
 | `reset_records:` | #468, #511, #512, #514 | **built**, schema 1.5; written by `account reset-password` since #511, locked on since #512, and surveyed by `lock status` since #514 |
-| `delivery:`, with `notify:` beside or inside it | #440, #442 | blocked, and the rest of this table is inside it |
+| `delivery:`, with `notify:` beside or inside it | #440, #441, #442, #444 | **built** for two methods: `manual` (#441) and `vault_wrapped` (#444, the default). `notify:` is #442 and unbuilt |
 
 The verbs, for the same reason: `account suspend` (#463), `account list` (#490)
-and `reset-password` (#441, on the seen path) are built; `expire-password` is
-not, and neither is any unseen delivery method.
+and `reset-password` are built -- the latter on **both** the seen path (#441) and
+the default unseen one (#444, `vault_wrapped`). `expire-password` is not, and
+neither are the other four unseen methods (#445-#447 and `smtp_encrypted`).
 
 **`personal_accounts:`** is a list, each entry declaring exactly one of
 `accounts:`, `profile:` or `role:`, plus optional `targets:` and `policy:`. What

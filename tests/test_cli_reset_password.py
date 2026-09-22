@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -29,9 +30,11 @@ from conftest import WriteConfig
 from oracle_harness import Environment
 from sopuli.cli import cli
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
+from sopuli.delivery.vault_wrapped import NotWrappableError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockStolenError
 from sopuli.lock.manager import LockManager
+from sopuli.store import StoreError
 from sopuli.store.hashicorp.kv2 import Kv2Store
 
 ACCOUNT = "acme_dev_alice"
@@ -121,7 +124,7 @@ def test_an_unimplemented_method_is_refused_before_anything_connects(
     from the delivery gate rather than from a connection timing out."""
     config = OFFLINE.replace(
         "method: manual\n  manual:\n    force_expire: true",
-        "method: vault_wrapped\n  vault_wrapped:\n    ttl: 15m",
+        "method: one_time_link\n  one_time_link: {}",
     )
     result = run(runner, write_config(config), "--account", ACCOUNT)
 
@@ -728,3 +731,417 @@ def test_a_fence_lost_between_targets_stops_there_and_exits_four(
     )
     assert first.status_code == 200, "the target that ran before the fence was lost"
     assert second.status_code == 404, "the run carried on past the fence"
+
+
+# ------------------------------------------- the unseen path, `vault_wrapped` ---
+
+#: The same estate as `JOURNALLED`, delivering through a wrapping token instead of
+#: a terminal. `vault_wrapped:` names no `vault:`, so the store comes from §3's
+#: chain -- `defaults.vault` here -- which is the resolution most estates will get.
+WRAPPED = (
+    MANUAL.replace(
+        """delivery:
+  method: manual
+  manual:
+    force_expire: true
+""",
+        """delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: {ttl}
+""",
+    ).replace(
+        """defaults:
+  policy: personal-standard
+""",
+        """defaults:
+  policy: personal-standard
+  vault: vault-dev
+""",
+    )
+    + """
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: {addr}
+    mount: {mount}
+    kv_version: 2
+    auth:
+      method: token
+"""
+)
+
+
+def _wrapped_config(
+    live_oracle: Environment, vault_stack: Any, mount: str, *, ttl: str = "15m"
+) -> str:
+    return WRAPPED.format(
+        dsn=live_oracle.dsn,
+        user=os.environ.get("SOPULI_TEST_ORACLE_USER", "system"),
+        account=ACCOUNT,
+        addr=vault_stack.addr,
+        mount=mount,
+        ttl=ttl,
+    )
+
+
+def _token_in(text: str) -> str:
+    """The wrapping token out of what the operator was shown.
+
+    Parsed out of the real output rather than returned by a seam, because what
+    this file is testing is that the operator *can* get it from there -- a helper
+    reading it off the receipt would pass with the printing broken.
+    """
+    found = [word for word in text.split() if word.startswith("hvs.")]
+    assert len(found) == 1, f"expected exactly one token in the output, got {found}"
+    return found[0]
+
+
+def _unwrap(vault_stack: Any, token: str) -> Any:
+    return vault_stack.client.post(
+        "/v1/sys/wrapping/unwrap", headers={"X-Vault-Token": token}, json={}
+    )
+
+
+def test_the_unseen_path_delivers_without_a_terminal_and_without_a_prompt(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """The two guards `manual` lives under, and neither applies here (#444).
+
+    `CliRunner`'s stdout is a buffer -- exactly like a redirect or a CI log -- and
+    that is the state guard 3 refuses on the seen path. An unseen delivery is
+    allowed it on purpose: a pipe is how a handover script works, and forbidding
+    one would leave an estate no way to deliver unattended except the path that
+    shows a DBA a password. No input is supplied either, so a prompt would abort.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "unwraps once" in result.output
+    _token_in(result.output)
+
+
+def test_the_delivered_password_is_the_account_s_and_the_dba_never_saw_it(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """The whole point of the path, asserted end to end.
+
+    The password appears nowhere in what the operator was shown, and unwrapping
+    the token produces it along with the account it belongs to. Whether it *works*
+    is `tests/driver`'s and the by-hand run's; what this pins is that the value in
+    the cubbyhole is the one the run set, and that the run's own output is not it.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    answer = _unwrap(journal, _token_in(result.output))
+    assert answer.status_code == 200, answer.text
+    data = answer.json()["data"]
+    assert data["account"] == ACCOUNT
+    assert data["target"] == "tier1-oracle"
+    assert data["password"] not in result.output, "the password reached the operator's screen"
+
+
+def test_the_account_is_not_expired_on_the_unseen_path(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """UC-2 §1's table, from the database's side. Expiry is what ends the *seen*
+    path's exposure; here nobody but the owner is meant ever to know the value, so
+    there is nothing to end and `PASSWORD EXPIRE` is not issued."""
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert account() == "OPEN"
+
+
+def test_the_token_unwraps_exactly_once(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """§6.6's claim, checked against Vault rather than taken from the docs.
+
+    Single use is what makes interception *detectable*: a value fetched twice is a
+    value somebody else fetched first, and the person's own fetch failing is how
+    anybody finds out. This is the assertion the whole method's promise rests on,
+    and nothing in this codebase enforces it -- Vault does, which is why it is
+    tested against a real one.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+    token = _token_in(run(runner, config, "--account", ACCOUNT).output)
+
+    assert _unwrap(journal, token).status_code == 200
+    assert _unwrap(journal, token).status_code == 400
+
+
+def test_an_expired_token_no_longer_unwraps(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """The other half of #444's acceptance. A one-second TTL rather than a slept
+    fifteen minutes -- and `1s` is a legal value the config layer accepts, which is
+    worth knowing: nothing stops an estate configuring a handover nobody can catch.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount, ttl="1s"))
+    token = _token_in(run(runner, config, "--account", ACCOUNT).output)
+
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if _unwrap(journal, token).status_code != 200:
+            return
+        time.sleep(1)
+    pytest.fail("the token was still unwrappable 30s after a 1s ttl")
+
+
+def test_the_token_goes_to_stderr_and_never_into_the_json_document(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """The stream split (#444), and the rule the document half of it protects.
+
+    `--output json` is *not* refused here, unlike on the seen path: the document
+    is what makes a scheduled reset auditable, and taking it away would leave an
+    estate choosing between an audit trail and the default delivery method. What
+    it must never contain is the token -- a document is captured, shipped to log
+    aggregation and kept, and a token in it outlives the TTL that is this method's
+    whole guarantee. So stdout carries the document and stderr carries the
+    hand-over, which is the split this verb already makes for the plan and the
+    prompt.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT, "--output", "json")
+
+    # `result.stdout` rather than `result.output`, which since click 8.2 is the
+    # two streams combined -- and using it here would have passed whichever
+    # stream the token came out of, which is the entire claim.
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    document = json.loads(result.stdout)
+    assert document["results"][0]["delivered"] == "vault_wrapped"
+    assert "hvs." not in result.stdout, "the token reached the document"
+    assert "unwraps once" in result.stderr
+    _token_in(result.stderr)
+
+
+def test_the_password_is_in_no_run_document(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """#444's third acceptance criterion, asserted against the value rather than
+    against the schema: the plaintext is fetched back out of the cubbyhole and
+    looked for in everything the run emitted on either stream."""
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT, "--output", "json")
+
+    password = _unwrap(journal, _token_in(result.stderr)).json()["data"]["password"]
+    assert password not in result.stdout, "the password reached the run document"
+    assert password not in result.stderr, "the password reached the hand-over"
+
+
+def test_a_failed_delivery_leaves_the_old_password_working(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """UC-2 §6.4's ordering, which is the reason the unseen path delivers first.
+
+    Compare the two failures the section compares. Delivery fails and the DDL
+    never runs: the store holds nothing usable and **the person's old password
+    still works**, so nobody is worse off than before the run. The other order
+    fails the other way -- an account with a password nobody holds, and a person
+    who could not log in now cannot be helped by themselves either. Asserted on
+    `ACCOUNT_STATUS` and on the exit code, because the observable claim is that
+    nothing was issued.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+    before = account()
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise StoreError("the wrap was refused by the test")
+
+    monkeypatch.setattr("sopuli.delivery.vault_wrapped.VaultWrapped.deliver", refuse)
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert account() == before, "the DDL ran although the hand-over had failed"
+    assert "hvs." not in result.output
+
+
+def test_a_store_that_cannot_wrap_is_refused_before_the_ddl(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invariant 4 for a delivery capability, and the first build got it wrong.
+
+    A store that cannot wrap is knowable from the file before any database is
+    reached, so it has to be exit 5 naming the store -- not a per-target error row
+    after a password has been drawn, which is what resolving the backend inside
+    the loop produced. Asserted on `ACCOUNT_STATUS`, because the observable claim
+    is that nothing was issued.
+
+    The refusal itself is `tests/test_delivery_vault_wrapped.py`'s; what this pins
+    is *when* it arrives.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+    before = account()
+
+    def refuse(store: Any, *, vault: str, ttl: str) -> Any:
+        raise NotWrappableError(vault)
+
+    # Patched at the definition site rather than on `sopuli.cli`, which no longer
+    # holds the name: the module is imported inside `_delivery_backend` so that an
+    # offline command never loads `httpx` (ADR-006 rule 1).
+    monkeypatch.setattr("sopuli.delivery.vault_wrapped.for_store", refuse)
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "needs a HashiCorp store" in str(result.exception)
+    assert account() == before, "the DDL ran although delivery could never have worked"
+
+
+def test_the_plan_reaches_the_operator_before_the_unseen_path_mutates(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """Invariant 8 on a path with no prompt (Copilot's review of #518).
+
+    The seen path echoes the plan early so the prompt cannot come first (#505);
+    here there is no prompt, and the argument is what happens when the run raises
+    part way through. The verb returns its whole output as one string, so a failure
+    before the return leaves the operator nothing at all -- no plan, no record of
+    what was about to be touched. Echoing to stderr makes the plan survive that.
+
+    Asserted on the stream rather than on ordering within one buffer, because that
+    is the claim: stdout carries the result and stderr carries the plan, and a
+    reader who lost stdout still knows what the run was for.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "Plan:" in result.stderr
+    assert ACCOUNT in result.stderr
+
+
+def test_a_preview_does_not_echo_the_plan_twice(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """`--dry-run` mutates nothing, so there is no failure for an early copy to
+    survive and no prompt for it to precede -- and a preview that printed its plan
+    on both streams would just be noisier."""
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT, "--dry-run")
+
+    assert "Plan:" in result.stdout
+    assert "Plan:" not in result.stderr
+
+
+def test_a_delivery_with_no_store_anywhere_in_the_chain_is_refused(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """The code review of #518: the refusal existed and nothing exercised it.
+
+    §3's chain runs out when the method names no `vault:`, the target names none
+    and `defaults.vault` is unset. That is knowable from the file, so it is refused
+    before anything connects -- asserted against an address nothing answers, so a
+    passing test cannot be one that reached a database first.
+
+    Exit 8 rather than 9, following `deliverable`'s precedent for "no `delivery:`
+    is configured": the file is not malformed, it is a delivery with nowhere to
+    deliver.
+    """
+    config = OFFLINE.replace(
+        "method: manual\n  manual:\n    force_expire: true",
+        "method: vault_wrapped\n  vault_wrapped:\n    ttl: 15m",
+    )
+
+    result = run(runner, write_config(config), "--account", ACCOUNT)
+
+    assert result.exception.exit_code == ExitCode.ABORTED
+    assert "no store to deliver into" in str(result.exception)
+    assert "defaults.vault" in str(result.exception.hint)
+
+
+def test_each_target_s_handover_names_its_target(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """The defect the code review of #518 found, from the operator's side.
+
+    A reset with no `--target` reaches every declared target and draws a *separate*
+    password for each, so the hand-over blocks have to be told apart. They were
+    not: each read "hand this to alice" and carried a different token, and sending
+    the wrong one hands somebody a password that does not work on the host they
+    were told about.
+
+    One target here, because the tier-1 stack has one -- so what this pins is that
+    the target reaches the block at all. `tests/test_delivery_view.py` holds the
+    rendering, where two of them can be compared without a database.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert f"hand this to {ACCOUNT} for tier1-oracle" in result.output

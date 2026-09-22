@@ -777,27 +777,27 @@
         },
         "vault_wrapped": {
           "type": "object",
-          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+          "description": "This method's own settings. Unchecked here: a sub-block for a method that is not selected is left unjudged by the tool, so a constraint published here would refuse a file the tool accepts. `config validate` warns when the selected method is not implemented in this build, and checks the selected method's keys itself."
         },
         "vault_path": {
           "type": "object",
-          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+          "description": "This method's own settings. Unchecked here: a sub-block for a method that is not selected is left unjudged by the tool, so a constraint published here would refuse a file the tool accepts. `config validate` warns when the selected method is not implemented in this build, and checks the selected method's keys itself."
         },
         "one_time_link": {
           "type": "object",
-          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+          "description": "This method's own settings. Unchecked here: a sub-block for a method that is not selected is left unjudged by the tool, so a constraint published here would refuse a file the tool accepts. `config validate` warns when the selected method is not implemented in this build, and checks the selected method's keys itself."
         },
         "onepassword_share": {
           "type": "object",
-          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+          "description": "This method's own settings. Unchecked here: a sub-block for a method that is not selected is left unjudged by the tool, so a constraint published here would refuse a file the tool accepts. `config validate` warns when the selected method is not implemented in this build, and checks the selected method's keys itself."
         },
         "manual": {
           "type": "object",
-          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+          "description": "This method's own settings. Unchecked here: a sub-block for a method that is not selected is left unjudged by the tool, so a constraint published here would refuse a file the tool accepts. `config validate` warns when the selected method is not implemented in this build, and checks the selected method's keys itself."
         },
         "smtp_encrypted": {
           "type": "object",
-          "description": "This method's own settings. The keys are the method's issue to define; until then they are unchecked, and `config validate` warns that no delivery method is implemented in this build."
+          "description": "This method's own settings. Unchecked here: a sub-block for a method that is not selected is left unjudged by the tool, so a constraint published here would refuse a file the tool accepts. `config validate` warns when the selected method is not implemented in this build, and checks the selected method's keys itself."
         }
       }
     },

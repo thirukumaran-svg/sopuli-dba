@@ -328,13 +328,24 @@ It carries what happened, and nothing that happened *to*:
  "reset_at": "2026-09-17T09:14:22Z",
  "seen": false,
  "expired": false,
- "delivery": {"method": "vault_wrapped", "to": "cubbyhole/response"},
+ "delivery": {"method": "vault_wrapped", "to": "EXAMPLEaccessor000000000"},
  "by": {"host": "dba-ws-4.example.com", "os_user": "dba01"},
  "correlation_id": "01J..."}
 ```
 
-**`delivery.to` is present only where delivery has a location.** A store path or a
-cubbyhole reference is one; the seen path's destination is a person, by a route the
+**On `vault_wrapped`, `to` is the wrapping token's *accessor*, and this example
+used to read `cubbyhole/response`** — a placeholder written before the method
+existed. The accessor above is a synthetic stand-in. A real one is what Vault returns
+beside the token; it names the handover
+in Vault's own audit log and **cannot unwrap it**, which is the only reason a
+journal that "anyone who may know *that* a reset happened" can read is allowed to
+carry it at all. The token itself must never be written here: §6.1 makes it
+secret-bearing, and a record is exactly the long-lived, widely-readable object its
+TTL exists to outlive. **#444 part 1 writes no `to` on this path**; part 2 adds it,
+and the value is the accessor above rather than the placeholder.
+
+**`delivery.to` is present only where delivery has a location.** A store path or an
+accessor is one; the seen path's destination is a person, by a route the
 tool did not carry, so `manual` records the method and omits `to` rather than
 inventing a value for stdout. What makes that unambiguous is `seen`, which is the
 field a reader is actually asking about there. #468 has the key optional for this
@@ -945,7 +956,7 @@ method must exist — both refused at load, config-invalid (exit 9), by #440.
 
 | `method` | Path | The person gets | Issue |
 |---|---|---|---|
-| `vault_wrapped` | unseen | a Vault response-wrapping token, single use | #444 |
+| `vault_wrapped` | unseen | a Vault response-wrapping token, single use | #444, **built** |
 | `vault_path` | unseen | a KV path only their own identity can read | #447 |
 | `one_time_link` | unseen | a URL that decrypts once | #445 |
 | `onepassword_share` | unseen | an item in a password manager | #446 |
@@ -987,6 +998,7 @@ delivery:
   method: vault_wrapped
   vault_wrapped:
     ttl: 15m
+    # vault: vault-handover   # optional; §3's chain otherwise
   notify:
     method: webhook
     webhook:
@@ -1108,7 +1120,10 @@ this subsection, because the config key makes them look interchangeable.
   twice is a value somebody else fetched first, and **interception is detectable
   even where it is not preventable**. That is the strongest property in the table,
   and it comes with the weakest: the token is a **bearer credential**, so whoever
-  holds it can unwrap it, whatever their identity.
+  holds it can unwrap it, whatever their identity. **Built in #444, and single use
+  is Vault's rather than ours** — measured against the container, not taken from
+  the documentation: the second unwrap answers 400, and there is no `num_uses` to
+  configure because there is no counter this tool keeps.
 - **`vault_path`** — owner-only by the store's own access control, for as long as
   the path's policy says so. Identity rather than bearer, which is the opposite
   trade: interception needs the person's own credentials, and nothing makes the
@@ -1123,6 +1138,30 @@ this subsection, because the config key makes them look interchangeable.
   simulated with a follow-up delete, the documentation must not claim single-view.
 - **`smtp_encrypted`** — as strong as the recipient's key management, and no
   stronger.
+
+**What the DBA is shown, and where** (#444). The password goes to Vault and to
+nobody else; what comes back is the token, and it is printed because §6.1 bars it
+from the notify channel and the tool carries no other channel at all. Three rules,
+and the third has no counterpart on the seen path:
+
+- **Never in the run document, and no property could hold it.** A document is
+  captured, shipped to log aggregation and kept; a token in one outlives the TTL
+  that is this method's whole guarantee. What it **will** carry instead is the
+  *accessor*, which names the hand-over and cannot use it — #444's second part adds
+  the field, and until it lands the document records the method and nothing else
+  about the hand-over. The receipt already holds the accessor; only its home is
+  outstanding.
+- **No terminal is required**, which is a deliberate departure from `manual`'s
+  third guard. A pipe is how a handover script works, and forbidding one would
+  leave an estate no way to deliver unattended except the path that shows a DBA a
+  password. The cost is stated rather than hidden: a redirect to a file outlives
+  the token. What makes it a different trade is the object — fifteen single-use
+  minutes whose one use is detectable, against a password good until somebody's
+  first logon.
+- **Under `--output json` it goes to stderr**, because stdout is carrying the
+  document. `manual` is *refused* with `--output json`; this is not, because the
+  document is what makes a scheduled reset auditable and taking it away would make
+  an estate choose between an audit trail and the default method.
 
 **"The DBA never sees it" has to be true of the store, not asserted.** A DBA whose
 store token can read the person's path could read the password back, and the unseen

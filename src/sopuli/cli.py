@@ -69,7 +69,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import click
 
@@ -111,6 +111,7 @@ from sopuli.config.model import Delivery, PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints
+from sopuli.delivery import Receipt
 from sopuli.diagnostics import (
     CONSTRAINTS_UNREAD,
     LOCK_LOST,
@@ -199,6 +200,7 @@ from sopuli.output.config_view import (
     render_validation,
 )
 from sopuli.output.constraints_view import build_constraints, render_constraints
+from sopuli.output.delivery_view import render_handover
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, RunDocument, Summary
@@ -271,6 +273,14 @@ from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
 from sopuli.version import get_version
+
+if TYPE_CHECKING:  # pragma: no cover -- annotations only
+    # ADR-006 rule 1: `sopuli.delivery.vault_wrapped` reaches the HashiCorp
+    # transport and therefore `httpx`, so importing it at module scope would put a
+    # vendor client in the base install and load a backend for every offline
+    # command. `tests/store/test_install_shape.py` holds that, and it is what
+    # caught this -- the first build imported it here and three of those went red.
+    from sopuli.delivery.vault_wrapped import VaultWrapped
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -1590,6 +1600,18 @@ def account_reset_password(
     # be built from is a plan-time refusal (invariant 4) rather than a failure
     # after the password has already changed.
     paths = _record_paths(config, account, reached)
+    # **The delivery backend too, and for the same invariant** (#444). A store
+    # that cannot wrap is an unavailable capability, knowable from the file
+    # before any database is reached -- so it is exit 5 here, naming the store,
+    # rather than a per-target error row after a password has been drawn. The
+    # first build resolved the backend inside the loop and got exactly that.
+    #
+    # **Skipped under `--dry-run`**, which is #441's exemption read for a
+    # capability rather than for a guard: a preview delivers nothing, so it needs
+    # nothing to deliver with, and opening the store would make `--dry-run`
+    # require vault credentials that the run it previews would use and the
+    # preview would not.
+    backends = _delivery_backends(run, config, delivery, reached)
 
     header = render_plan(plan, noun="account")
     if not reached:
@@ -1605,14 +1627,26 @@ def account_reset_password(
         document.diagnostics.append(unrecorded)
         notices.append(unrecorded)
 
-    if not run.dry_run and delivery.is_seen:
-        # **The plan goes out before the first statement, and before the prompt**
-        # (invariant 8; Copilot's review of #505). The verb returns its whole
-        # output as a string, so without this the operator would be asked to
-        # expose a password before seeing what the run was about to do -- and by
-        # then the DDL has already run. On stderr, which is where
-        # `_confirm_environments` puts the same thing for the same reason: stdout
-        # carries the result.
+    if not run.dry_run:
+        # **The plan goes out before the first statement** (invariant 8; Copilot's
+        # reviews of #505 and #518). The verb returns its whole output as a
+        # string, so without this nothing reaches the operator until the run is
+        # over. On stderr, which is where `_confirm_environments` puts the same
+        # thing for the same reason: stdout carries the result.
+        #
+        # **On the seen path the argument is the prompt**: without this the
+        # operator would be asked to expose a password before seeing what the run
+        # was about to do, and by then the DDL has already run (#505).
+        #
+        # **On an unseen path there is no prompt, and the argument is failure**
+        # (#518). That review read it as invariant 8 being broken outright, which
+        # is arguable -- the plan is still the first thing in the returned output,
+        # and a path with no consent step has no decision to protect. What is not
+        # arguable is the multi-target run that raises on target three: the
+        # returned string is never built, so the operator gets a traceback-shaped
+        # failure with no record of what the run had been about to touch. That is
+        # the same case #505's `click.Abort` handling exists for, reached by a
+        # different route, and echoing here is the same fix.
         click.echo(header, err=True)
 
     # UC-2 §3.3's lock, keyed on the record's path -- the one location that
@@ -1649,6 +1683,7 @@ def account_reset_password(
                         keep_rollover=keep_rollover,
                         preview=run.dry_run,
                         record_at=paths.get(target.name),
+                        backend=backends.get(target.name),
                     )
                 )
     except LockDeniedError as denied:
@@ -1706,6 +1741,19 @@ def account_reset_password(
         would_reset=sum(1 for one in found if one.would_reset) if run.dry_run else None,
     )
     shown = "\n\n".join(one.shown for one in found if one.shown is not None)
+    if shown and run.is_json:
+        # **The hand-over goes to stderr when stdout is carrying the document**
+        # (#444). It is never *in* the document -- the schema has no property a
+        # token could occupy -- and it still has to reach the operator, because
+        # 6.1 bars it from the notify channel and nothing else carries it. The
+        # split is the one this verb already makes for the plan and the prompt:
+        # stdout carries the result, and in this mode the result is JSON.
+        #
+        # Unreachable for `manual`, which is refused with `--output json` before a
+        # password is drawn. That refusal stays exactly as narrow as it was; what
+        # changed is that an unseen method can reach this line at all.
+        click.echo(shown, err=True)
+        shown = ""
     # Printed as well as serialised (#309): a warning nobody can see in the
     # default output is not surfaced, and these say the run kept no record of
     # itself -- which is what a terminal operator needs, and what
@@ -1976,11 +2024,19 @@ class _Reset:
     #: field**: the caller turns it into `SOPULI-W025` in ``diagnostics[]``,
     #: which is where a consumer already looks for what a run could not do.
     record_error: _RecordFailure | None = None
-    #: The rendered password block, on the seen path only. **Never serialised**:
-    #: `as_json` cannot reach it, and there is no field in the schema it could
-    #: go in. It travels here because the caller prints it after the table, and
-    #: the ordering of those two is a display decision rather than a safety one
-    #: -- the safety is that the run never got this far unless every guard passed.
+    #: **What the operator is shown, and it is secret-bearing on both paths**: the
+    #: password block on the seen path, and the wrapping token on an unseen one
+    #: (#444). This comment said "the password block, on the seen path only" until
+    #: the code review of #518, which is worth noting because it is the field's
+    #: one statement about what it holds -- and :class:`_Reset` is a plain frozen
+    #: dataclass, so the generated ``__repr__`` renders this unredacted. Nothing
+    #: does that today; the comment is what tells the next reader not to.
+    #:
+    #: **Never serialised**: `as_json` cannot reach it, and there is no field in
+    #: the schema it could go in. It travels here because the caller prints it
+    #: after the table, and the ordering of those two is a display decision rather
+    #: than a safety one -- the safety is that the run never got this far unless
+    #: every guard passed.
     shown: str | None = None
 
     def as_json(self) -> dict[str, Any]:
@@ -2009,6 +2065,7 @@ def _reset_one(
     keep_rollover: bool,
     preview: bool,
     record_at: str | None = None,
+    backend: VaultWrapped | None = None,
 ) -> _Reset:
     """One target: read the account, decide, draw, set, and hand it over.
 
@@ -2099,6 +2156,24 @@ def _reset_one(
                 _reset_policy(config, account, target.name, state),
                 limit=session.byte_limit(),
             )
+            # **UC-2 6.4's other order, and this is the branch that makes it
+            # two orders rather than one** (#444). The rule is that the
+            # irreversible step goes last, and what is irreversible differs by
+            # path: on the seen path it is the print, so the DDL comes first; on
+            # an unseen one it is the DDL, because it kills the old password, so
+            # the hand-over comes first.
+            #
+            # Compare the failures, which is how §6.4 argues it. Delivery fails
+            # here and the DDL never runs: the store holds a value that
+            # authenticates nothing and **the person's old password still
+            # works**, so nobody is worse off. The other order fails the other
+            # way -- an account with a password nobody holds, and the person who
+            # could not log in now cannot be helped by themselves either.
+            receipt = (
+                None
+                if backend is None
+                else backend.deliver(secret, account=account, target=target.name)
+            )
             changes = session.reset_password(
                 account,
                 secret,
@@ -2166,7 +2241,11 @@ def _reset_one(
                 replace(
                     row,
                     shown=_hand_over(
-                        secret, account=account, target=target.name, delivery=delivery
+                        secret,
+                        account=account,
+                        target=target.name,
+                        delivery=delivery,
+                        receipt=receipt,
                     ),
                 )
             )
@@ -2186,6 +2265,97 @@ def _reset_one(
         if session is not None:
             with suppress(Exception):
                 session.close()
+
+
+def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) -> str:
+    """Which `vaults:` entry an unseen delivery writes into.
+
+    §3's chain, minus the ref prefix that has no equivalent here: the method's own
+    `vault:`, then the target's, then `defaults.vault`. Reused rather than
+    reinvented because an operator who has learned where a rotation's document
+    goes should not have to learn a second resolution to find out where a handover
+    goes.
+
+    **Not `reset_records.vault`.** UC-2 §3.5 keeps the journal and the delivery
+    target apart as two objects with two lifetimes; defaulting one to the other
+    would make an estate that had them equal indistinguishable from one that never
+    chose.
+
+    Refused rather than guessed when the chain runs out, which is invariant 4 read
+    for a store: a delivery with nowhere to deliver is knowable before a password
+    is drawn.
+    """
+    wrapped = delivery.vault_wrapped
+    named = wrapped.vault if wrapped is not None else None
+    chosen = named or target.target.vault or config.defaults.vault
+    if chosen is None:
+        raise RefusedError(
+            f"`delivery.method: {delivery.method}` has no store to deliver into",
+            at=ROOT.key("delivery").key(delivery.method).key("vault"),
+            hint=(
+                "name one under the method, on the target, or as `defaults.vault` -- the "
+                "same chain a secret ref walks. A store is not guessed at, because the "
+                "wrong one would hand somebody else's vault a working password"
+            ),
+        )
+    return chosen
+
+
+def _delivery_backends(
+    run: Invocation, config: Config, delivery: Delivery, reached: Sequence[ExpandedTarget]
+) -> dict[str, VaultWrapped]:
+    """One backend per target, built before anything connects (invariant 4).
+
+    Empty on the seen path, which delivers through the terminal and has no
+    backend, and empty under ``--dry-run``: a preview delivers nothing, so it
+    needs nothing to deliver with, and opening the store would make a preview
+    require credentials the run it previews would use and it would not. That is
+    #441's exemption read for a capability rather than for a guard.
+
+    One per target rather than one per run, because the store is resolved through
+    §3's chain and a target may name its own. The run's client cache makes a
+    shared store one connection anyway (#483).
+    """
+    if delivery.is_seen or run.dry_run:
+        return {}
+    return {target.name: _delivery_backend(run, config, delivery, target) for target in reached}
+
+
+def _delivery_backend(
+    run: Invocation, config: Config, delivery: Delivery, target: ExpandedTarget
+) -> VaultWrapped:
+    """The backend one unseen delivery goes through, opened from the run's cache.
+
+    One client per store per run (#483), so a reset whose journal and whose
+    cubbyhole live in the same vault authenticates to it once.
+
+    `vault_wrapped` is the only unseen method this build serves, so this returns
+    its type rather than the protocol: a ``DeliveryBackend`` return annotation
+    would claim a polymorphism that does not exist yet, and #445-#447 each add a
+    branch here when they land.
+    """
+    # Imported here rather than at module scope, for the reason the store registry
+    # imports its backends on first use (ADR-006 rule 1). Nothing above this line
+    # needs `httpx`, and an offline command must not load a module that does.
+    from sopuli.delivery import vault_wrapped
+
+    name = _delivery_store(config, delivery, target)
+    store = _stores_for({name}, config, token_file=run.vault_token_file, cache=run.stores)[name]
+    wrapped = delivery.vault_wrapped
+    if wrapped is None:  # pragma: no cover -- unreachable through a config file
+        # Unreachable through a file: `_require_sub_block` and `_build_wrapped`
+        # between them guarantee the block is populated whenever the method is
+        # selected. It is a refusal rather than an empty string anyway (the code
+        # review of #518), because `ttl=""` sends an empty `X-Vault-Wrap-TTL` and
+        # surfaces as Vault declining to wrap -- a message about a stripped header
+        # rather than about a missing TTL, after a password has been drawn. The
+        # module's own rule is that it must not guess.
+        raise RefusedError(
+            f"`delivery.method: {delivery.method}` has no settings, so no TTL is known",
+            at=ROOT.key("delivery").key(delivery.method),
+            hint="write a `ttl` under the method (UC-2 6.3)",
+        )
+    return vault_wrapped.for_store(store, vault=name, ttl=wrapped.ttl)
 
 
 def _reset_policy(
@@ -2216,8 +2386,15 @@ def _reset_policy(
     return next(policy.password for policy in config.policies if policy.name == named)
 
 
-def _hand_over(secret: Secret, *, account: str, target: str, delivery: Delivery) -> str | None:
-    """Deliver the password, and return whatever the operator should see.
+def _hand_over(
+    secret: Secret,
+    *,
+    account: str,
+    target: str,
+    delivery: Delivery,
+    receipt: Receipt | None = None,
+) -> str | None:
+    """Show whatever the operator has to act on, and return it rather than print.
 
     **The one call into the seen path's reveal**, and the only place in `cli.py`
     that can reach it. Everything that makes it allowable was established before
@@ -2232,10 +2409,24 @@ def _hand_over(secret: Secret, *, account: str, target: str, delivery: Delivery)
     leaves the account holding a password nobody has seen. That is a lockout the
     next reset fixes, and it is what "aborted" has to mean here.
 
-    ``None`` for an unseen method, which prints nobody anything.
+    **An unseen method returns the hand-over instead** (#444), and the sentence
+    here used to be "``None`` for an unseen method, which prints nobody anything".
+    That was a prediction written before any unseen method existed, and it was
+    wrong: §6.1 bars the wrapping token from the notify channel and the tool
+    carries no other, so the token comes back to the DBA to pass on out of band.
+    The password still goes nowhere near the screen -- the *token* is what prints,
+    and `output/delivery_view.py` holds the argument for that being allowed.
+
+    **No prompt on that path, and no terminal check.** Both guards are about
+    somebody reading a working password off a screen; a token is not one, and the
+    pipe a handover script needs is the thing `manual` forbids on purpose.
     """
     if not delivery.is_seen:
-        return None
+        return (
+            render_handover(receipt, account=account, target=target)
+            if receipt is not None
+            else None
+        )
     click.confirm(
         f"show the new password for {account} on {target} on this terminal?",
         abort=True,
