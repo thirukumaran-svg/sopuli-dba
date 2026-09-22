@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.65.0](https://github.com/villebase/sopuli-dba/compare/v0.64.0...v0.65.0) (2026-09-22)
+
+
+### Features
+
+* `sopuli account reset-password`, UC-2's seen path under five guards ([#441](https://github.com/villebase/sopuli-dba/issues/441)) ([#507](https://github.com/villebase/sopuli-dba/issues/507)) ([981d009](https://github.com/villebase/sopuli-dba/commit/981d00959abb113b1a3d1d8b8373d99bd5a64164))
+* **delivery:** `vault_wrapped`, UC-2's unseen path ([#444](https://github.com/villebase/sopuli-dba/issues/444), part 1 of 2) ([#518](https://github.com/villebase/sopuli-dba/issues/518)) ([d41693c](https://github.com/villebase/sopuli-dba/commit/d41693cdfaa3457db71027f5d0e9e7ec04d2eb3e))
+* **delivery:** the hand-over receipt ([#444](https://github.com/villebase/sopuli-dba/issues/444), part 2 of 2) ([#519](https://github.com/villebase/sopuli-dba/issues/519)) ([c1acce1](https://github.com/villebase/sopuli-dba/commit/c1acce1092338ae3639bf497bdbad2a93aa6b2e5))
+* **driver:** reset a personal account's password, UC-2 §4.1's three statements ([#441](https://github.com/villebase/sopuli-dba/issues/441)) ([#504](https://github.com/villebase/sopuli-dba/issues/504)) ([1c4aa09](https://github.com/villebase/sopuli-dba/commit/1c4aa09b82ccf3be87789c71b6a68ddb4772cd41))
+* **reset:** take UC-2's advisory lock on the reset record's path ([#512](https://github.com/villebase/sopuli-dba/issues/512)) ([#515](https://github.com/villebase/sopuli-dba/issues/515)) ([3871cc6](https://github.com/villebase/sopuli-dba/commit/3871cc67f28ccb641969428e4a87e119cfed8fb6))
+* **reset:** write UC-2's reset record, and say so when there is none ([#511](https://github.com/villebase/sopuli-dba/issues/511)) ([#513](https://github.com/villebase/sopuli-dba/issues/513)) ([1872d86](https://github.com/villebase/sopuli-dba/commit/1872d8602c8b9e63f160f33742176ac0df28e065))
+* **settings:** `safety.delivery.allowed_methods`, the fourth ratchet shape ([#498](https://github.com/villebase/sopuli-dba/issues/498)) ([#500](https://github.com/villebase/sopuli-dba/issues/500)) ([d4f48ba](https://github.com/villebase/sopuli-dba/commit/d4f48ba0b64817e6ccb59ef4540295577ee6233a))
+
+
+### Bug Fixes
+
+* **config:** refuse a null `safety:` block and a null `confirm_environments` ([#501](https://github.com/villebase/sopuli-dba/issues/501)) ([#508](https://github.com/villebase/sopuli-dba/issues/508)) ([4ec02da](https://github.com/villebase/sopuli-dba/commit/4ec02da5ddf53072d18b2b7e13f8ff5c19a6b371))
+* **lock:** survey UC-2's reset locks by listing the declared prefix ([#514](https://github.com/villebase/sopuli-dba/issues/514)) ([#517](https://github.com/villebase/sopuli-dba/issues/517)) ([cfa1b2c](https://github.com/villebase/sopuli-dba/commit/cfa1b2c7e11b00fb479e39e52134a6363ca9808f))
+
 ## [0.64.0](https://github.com/villebase/sopuli-dba/compare/v0.63.0...v0.64.0) (2026-09-18)
 
 
