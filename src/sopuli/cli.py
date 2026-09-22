@@ -66,7 +66,7 @@ import os
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TypeVar
@@ -1615,24 +1615,75 @@ def account_reset_password(
         # carries the result.
         click.echo(header, err=True)
 
-    found = [
-        _reset_one(
-            target,
-            account,
-            run,
-            config,
-            delivery=delivery,
-            force=force,
-            keep_rollover=keep_rollover,
-            preview=run.dry_run,
-            record_at=paths.get(target.name),
-        )
-        for target in reached
-    ]
+    # UC-2 §3.3's lock, keyed on the record's path -- the one location that
+    # exists on the seen path and the unseen one alike, and the unit two
+    # concurrent resets collide on. None under `--dry-run` (a preview takes no
+    # lock, as `creds generate` does not) and none where no `reset_records:`
+    # block declares a store, which is what `SOPULI-W024` above has already
+    # said: where there is no store there is no lock.
+    manager = _reset_lock_manager(run, config, selection)
+    found: list[_Reset] = []
+    stolen: LockStolenError | None = None
+    try:
+        keys = _reset_lock_keys(config, account, reached)
+        with manager.holding(keys) if manager is not None else nullcontext():
+            for target in reached:
+                key = _reset_lock_key(config, account, target)
+                if manager is not None and key is not None:
+                    try:
+                        # The fence, immediately before the statements rather
+                        # than once for the run (UC-1 §8): what a stalled run
+                        # holds is a memory of having held a lock.
+                        manager.check(key)
+                    except LockStolenError as lost:
+                        stolen = lost
+                        break
+                found.append(
+                    _reset_one(
+                        target,
+                        account,
+                        run,
+                        config,
+                        delivery=delivery,
+                        force=force,
+                        keep_rollover=keep_rollover,
+                        preview=run.dry_run,
+                        record_at=paths.get(target.name),
+                    )
+                )
+    except LockDeniedError as denied:
+        # Exit 7, and nothing was issued: acquisition is all-or-nothing and
+        # happens before the first connection, so a reset refused here is a
+        # reset that did not start. Somebody else is resetting this account on
+        # this target, which is the collision §3.3 keys the lock to prevent.
+        if manager is not None:
+            _record_locks(document, manager, denied=denied)
+        raise
+    except click.Abort:
+        # The seen path's prompt, declined. `holding()` has already let the lock
+        # go in its `finally`, so this records a lock that is released rather
+        # than one that looks stuck -- and it records it at all for the reason
+        # `_reset_one` records the row: a run abandoned half way is exactly when
+        # somebody needs to know what it held and what it touched.
+        if manager is not None:
+            _record_locks(document, manager)
+        raise
+
+    if manager is not None:
+        _record_locks(document, manager)
 
     document.results = [one.as_json() for one in found]
     states = [one.state for one in found]
     changed = sum(1 for one in found if one.changed)
+    if stolen is not None:
+        # `creds generate`'s split, for its reason: exit 7 asserts that nothing
+        # happened, which is a lie once one target's password has been reset.
+        # Printed as well as serialised, because on this verb the reader is by
+        # definition at a terminal (§6.5) and the accounts *not* reached are the
+        # thing they have to act on.
+        fence = Diagnostic(level="error", message=stolen.message, code=LOCK_LOST)
+        document.diagnostics.append(fence)
+        notices.append(fence)
     # The second of §3.4's absences, raised here rather than inside `_reset_one`
     # so that the plan-time one above and this one are appended in the order
     # they happened. A row only carries a reason when a record was attempted and
@@ -1643,7 +1694,10 @@ def account_reset_password(
             failed = reset_record_unwritten(one.record_error.path, one.record_error.reason)
             document.diagnostics.append(failed)
             notices.append(failed)
-    document.finish(_reset_exit(states), summarise_reset(states, changed=changed))
+    document.finish(
+        _reset_exit(states, stolen=stolen is not None, changed=changed),
+        summarise_reset(states, changed=changed),
+    )
 
     body = render_reset(
         [(one.account, one.target, one.state, one.status, one.detail) for one in found],
@@ -1658,6 +1712,74 @@ def account_reset_password(
     # `diagnostics[]` alone tells only a JSON consumer.
     told = "\n".join(render_notices([one.message for one in notices]))
     return "\n\n".join(part for part in (header, body, told, shown) if part)
+
+
+def _reset_lock_manager(
+    run: Invocation, config: Config, selection: Selection
+) -> LockManager | None:
+    """The manager UC-2 §3.3's lock is taken with, or ``None`` for no lock.
+
+    ``None`` in exactly two states, and neither is a failure: under
+    ``--dry-run``, because a preview takes no lock any more than `creds
+    generate`'s does, and where no `reset_records:` block declares a store,
+    because **where there is no store there is no lock** -- the second half of
+    the sentence `SOPULI-W024` already says out loud.
+
+    **A store that is declared and cannot be reached is not one of the two.**
+    Opening it here means such a run fails before it connects to a database and
+    before anything is issued, which is where UC-1's lock stores already fail
+    and the only honest answer: the estate asked for a lock, the lock cannot be
+    taken, and nothing has happened yet. It is a different case from §3.4's
+    absences, which are all about a store that went away *after* the password
+    changed -- there the reset stands and a warning carries it.
+
+    The store is opened through the run's own client cache, so the journal write
+    that follows authenticates once rather than twice.
+    """
+    records = config.reset_records
+    if run.dry_run or records is None:
+        return None
+    journal = _reset_journal(run, config)
+    if journal is None:  # pragma: no cover -- `records` is not None, so neither is this
+        return None
+    return LockManager(
+        stores={records.vault: _lockable(records.vault, config, {records.vault: journal})},
+        correlation_id=run.document.correlation_id,
+        command="account reset-password",
+        selection=describe_selection(selection),
+        break_expired=_break_expired(run),
+    )
+
+
+def _reset_lock_key(config: Config, account: str, target: ExpandedTarget) -> LockKey | None:
+    """One (target, account)'s lock, which is its record's path.
+
+    Never raises here although :func:`~sopuli.reset_record.record_lock_key`
+    can: the same derivation ran at plan time in :func:`_record_paths`, and a
+    name it refuses has already ended the run.
+    """
+    records = config.reset_records
+    if records is None:
+        return None
+    return reset_record.record_lock_key(records, target=target.name, account=account)
+
+
+def _reset_lock_keys(
+    config: Config, account: str, reached: Sequence[ExpandedTarget]
+) -> list[LockKey]:
+    """Every lock this run needs, in acquisition order.
+
+    Sorted for :func:`~sopuli.lock.keys.acquisition_order`'s reason rather than
+    for presentation: taking locks in one order across every run is what makes
+    deadlock structurally impossible. A reset of one person on nine PDBs takes
+    nine locks, and two operators doing it at once must not each hold half.
+    """
+    found = {
+        key
+        for key in (_reset_lock_key(config, account, target) for target in reached)
+        if key is not None
+    }
+    return list(acquisition_order(found))
 
 
 def _record_paths(
@@ -1809,12 +1931,21 @@ def _reset_intent() -> list[str]:
     return ["password_set"]
 
 
-def _reset_exit(states: Sequence[str]) -> ExitCode:
+def _reset_exit(states: Sequence[str], *, stolen: bool = False, changed: int = 0) -> ExitCode:
     """Exit 4 where a target could not be reached, 0 otherwise -- `suspend`'s rule.
 
     A refusal is not a failure: `SKIPPED` is the guardrails working and
     `ACCOUNT_MISSING` is an ordinary fact about an estate.
+
+    **A lost fence splits the same way `creds generate` splits it** (#512). Exit
+    7 asserts that nothing happened, so it is only right while nothing has: once
+    one target's password has been reset and a later target's lock has been
+    taken, the run is partial and says so with 4. Somebody holds a password the
+    estate is no longer wholly consistent about, which is a worse thing to
+    mislabel than a lock.
     """
+    if stolen:
+        return ExitCode.PARTIAL if changed else ExitCode.LOCK_HELD
     failed = set(states) - {reset.RESET, reset.SKIPPED, reset.ACCOUNT_MISSING}
     return ExitCode.PARTIAL if failed else ExitCode.SUCCESS
 

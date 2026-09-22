@@ -660,7 +660,7 @@ coming and what each one waits on.
 | Block | Issue | State |
 |---|---|---|
 | `personal_accounts:` | #467 | **built**, schema 1.4 |
-| `reset_records:` | #468, #511 | **built**, schema 1.5; written by `account reset-password` since #511 |
+| `reset_records:` | #468, #511, #512 | **built**, schema 1.5; written by `account reset-password` since #511, and locked on since #512 |
 | `delivery:`, with `notify:` beside or inside it | #440, #442 | blocked, and the rest of this table is inside it |
 
 The verbs, for the same reason: `account suspend` (#463), `account list` (#490)
@@ -682,8 +682,10 @@ written where only the person can read it. The same path is what UC-2's advisory
 lock keys on (§3.3), which is why the block is a prerequisite of the reset verb
 rather than an accessory to it. **#511 writes the record** — a run with the block
 declared journals one per (target, account), and one without it warns at plan
-time and resets anyway. The lock keyed on that path is **#512** and is not built,
-so two concurrent resets of one account are not yet serialised.
+time and resets anyway. **#512 takes the advisory lock** keyed on that path, so
+two DBAs resetting one person at once no longer overwrite each other -- the
+second is refused at exit 7 before it connects. `lock status` does not yet survey
+those locks (#514); `lock break` clears one by name.
 
 **`delivery:`** is one enum plus a sub-block per method, and #440 builds only the
 skeleton: the `method` key, and a check that the matching sub-block exists. Each

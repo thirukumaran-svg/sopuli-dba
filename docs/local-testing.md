@@ -2313,8 +2313,81 @@ Four things to read out of it:
   logon, and the tool never sees that.
 
 Run it twice and the record is overwritten, which is the second run reporting
-`changed: true` doing what it says. **Nothing serialises two concurrent resets
-yet** — the advisory lock keyed on this path is #512.
+`changed: true` doing what it says.
+
+#### The lock on that same path
+
+Two DBAs resetting the same person at the same moment is the collision UC-2
+§3.3 exists to stop: the second password overwrites the first before the person
+has fetched either, and neither DBA finds out. Since #512 the reset takes an
+advisory lock keyed on the **record's own path** — the one location that exists
+on every delivery path — with the `locks/` prefix, the compare-and-set and the
+fencing token that `creds rotate` has always used.
+
+You can watch it being taken and let go. After a reset:
+
+```bash
+vault kv get -mount=kv locks/sopuli/personal-resets/free-pdb/acme_dev_alice
+```
+```
+========= Data =========
+Key               Value
+---               -----
+acquired_at       2026-09-21T18:18:34.665634Z
+command           account reset-password
+correlation_id    4575ac3a-5f90-4c18-9c0e-c873ecd95dfc
+expires_at        2026-09-21T18:33:34.665634Z
+holder            map[host:dba-ws-4.example.com os_user:dba01 pid:17336]
+state             released
+```
+
+`released`, not deleted, and not absent: a KV v2 delete leaves the version
+counter behind, after which no first acquisition can ever compare-and-set
+against version 0 again — and that counter *is* the fence (#83). `by` is
+anonymised here as above; nothing else is.
+
+**Cause the collision on purpose.** Write somebody else's claim straight into
+Vault, at the same path, with an expiry far enough away that nothing about this
+is about expiry:
+
+```bash
+vault kv metadata put -mount=kv -cas-required=true   locks/sopuli/personal-resets/free-pdb/acme_dev_alice
+vault kv put -mount=kv -cas=<current version>   locks/sopuli/personal-resets/free-pdb/acme_dev_alice   state=held command="account reset-password" correlation_id=01JTHEIRS   acquired_at=2030-01-01T12:00:00Z expires_at=2030-01-01T12:15:00Z
+```
+
+The `-cas-required=true` matters: a lock path created without it is refused by
+the manager's own pre-flight with exit **5** (#390), which is a different
+failure and not the one you are trying to see. Then run the reset:
+
+```
+sopuli: vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice is locked by dba02@dba-ws-9.example.com pid 8821 running account reset-password
+  hint: wait for it to finish, or coordinate with whoever is running it
+```
+
+Exit **7**, and **nothing was issued** — the lock is taken before the run
+connects to a database, so the person's old password still works and there is
+nothing to explain. Check `ACCOUNT_STATUS` afterwards to prove it.
+
+`sopuli lock break vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice`
+clears it, exactly as it clears a UC-1 lock, and refuses a live claim without
+`--force`:
+
+```
+sopuli: vault-dev:sopuli/personal-resets/free-pdb/acme_dev_bob is held by an unknown holder running account reset-password and has not expired
+  hint: wait for it to finish, or coordinate with whoever is running it. `--force` breaks a lock that is still live -- the holder is fenced and stops at its next check, having applied whatever it applied
+```
+
+**`sopuli lock status` does not show these locks, and that is a gap rather than
+a design** (#514). Its estate comes from `applications:` and `accounts:` — the
+secret documents UC-1 locks — so a configuration whose only locks are UC-2's
+reports `no lock paths are declared` even while one is held. `lock break` works
+because it takes the key on the command line; `lock status` has nowhere to get
+the key from, and a personal account declared by *predicate* cannot be
+enumerated offline at all, which is why this is not a one-line fix.
+
+**A preview takes no lock**, which is invariant 8 read for the lock: a
+`--dry-run` that left a claim in the vault would block the run it was
+previewing.
 
 #### A journal that cannot be written
 
@@ -2451,9 +2524,10 @@ the run is configured to do rather than about an emission.
 
 #### What is not built
 
-- **No advisory lock.** The record is written since #511, and the lock keyed on
-  its path is #512 — so two DBAs resetting the same person at the same second are
-  not serialised, and the second password overwrites the first.
+- **`lock status` does not survey the reset locks** (#514). They are taken and
+  released since #512, and `lock break` clears one by name, but the listing verb
+  builds its estate from `applications:` and cannot enumerate a predicate-declared
+  personal account offline.
 - **No unseen delivery**, which is the default and the one the use case is really
   about. #444-#447.
 - **No `expire-password`**, the verb that forces a change without setting one.

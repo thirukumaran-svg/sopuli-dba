@@ -460,8 +460,33 @@ the person has fetched either — had nothing to key on.
 **The metadata record's path is that key.** It exists on the seen path and the
 unseen one alike, and in both of the unseen path's delivery forms; it is one per
 (target, account); and it is the unit two concurrent resets actually collide on. Nothing about the lock machinery changes: same `locks/`
-prefix, same CAS, same fencing token, same `lock status` and `lock break`. The key
-is the only new thing, and it is a key of the shape that layer already takes.
+prefix, same CAS, same fencing token, same `lock break`. The key is the only new
+thing, and it is a key of the shape that layer already takes.
+
+**Built in #512**, and three things about the build belong here. The lock is
+taken **before the run connects to a database**, so a reset refused at exit 7 is
+one that did not start and the person's old password still works. The fence is
+re-read immediately before each target's statements, and a fence lost part way
+through a multi-target run exits **4** rather than 7 -- `creds generate`'s split,
+because 7 asserts that nothing happened and that is a lie once one target has
+been reset. A `--dry-run` takes no lock at all, for invariant 8's reason: a
+preview that left a claim in the vault would block the run it was previewing.
+
+**`lock status` does not survey these locks, and that sentence used to say it
+did.** Measured on the tier-1 stack while building #512: the listing verb builds
+its estate from `bindings`, which come from `applications:` and `accounts:`, so a
+configuration whose only locks are UC-2's reports `no lock paths are declared`
+while one is held. `lock break` is unaffected -- it takes the key on the command
+line. The fix is not one line, which is why it is **#514** rather than this
+issue: a personal account declared by a *predicate* (H1) cannot be enumerated
+without asking the database, and `lock status` is an offline verb.
+
+**A declared store that cannot be reached refuses the run**, and that is not
+§3.4's absence wearing a different hat. The lock lives in the journal's store, so
+a store that does not answer means the lock cannot be taken -- and nothing has
+happened yet, which is exactly where UC-1's lock stores already stop a run.
+§3.4's absences are all about a store that went away *after* the password
+changed; there the reset stands and a warning carries it.
 
 **Where there is no store there is no lock**, which is the other half of §3.1's
 cost and the reason §3.4's warning says so rather than mentioning only the record.

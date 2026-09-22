@@ -164,7 +164,9 @@ and is asserted against the serialised document rather than trusted to each writ
 **Its path is also what UC-2's advisory lock keys on** (§3.3), which is why the
 block is a prerequisite of the reset verb rather than an accessory to it. Nothing
 else about locking changes: the same `locks/` prefix, the same CAS, the same
-fencing token, the same `lock status` and `lock break`.
+fencing token, the same `lock break`. Built in #512 — and `lock status` is the
+one exception to that list, because its estate comes from `bindings` and no
+binding produces a record path (#514).
 
 **Absent is a documented mode rather than an error.** The seen path may have no
 store at all — that is the site `manual` exists for — so a reset with nothing

@@ -30,6 +30,9 @@ from oracle_harness import Environment
 from sopuli.cli import cli
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
 from sopuli.exit_codes import ExitCode
+from sopuli.lock.errors import LockDeniedError, LockStolenError
+from sopuli.lock.manager import LockManager
+from sopuli.store.hashicorp.kv2 import Kv2Store
 
 ACCOUNT = "acme_dev_alice"
 OLD = "Old-Pa55word-Alice1"
@@ -498,10 +501,18 @@ def test_a_record_that_cannot_be_written_warns_on_a_successful_run(
     monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
     config = write_config(_journalled_config(live_oracle, journal, private_mount))
 
-    def refuse(self: Any, path: str, data: Any, *, cas: int | None) -> int:
+    real = Kv2Store.write
+
+    def refuse_the_record(self: Any, path: str, data: Any, *, cas: int | None) -> int:
+        # The **record** path only, never `locks/` (#512). A store that refused
+        # both would fail the run at acquisition, before the password changed,
+        # which is a different case with its own test below. What this stands in
+        # for is a Vault policy granting the lock prefix and not the journal one.
+        if path.startswith("locks/"):
+            return int(real(self, path, data, cas=cas))
         raise RuntimeError("permission denied by the test")
 
-    monkeypatch.setattr("sopuli.store.hashicorp.kv2.Kv2Store.write", refuse)
+    monkeypatch.setattr("sopuli.store.hashicorp.kv2.Kv2Store.write", refuse_the_record)
 
     result = run(runner, config, "--account", ACCOUNT, input="y\n")
 
@@ -511,7 +522,7 @@ def test_a_record_that_cannot_be_written_warns_on_a_successful_run(
     assert account() == "EXPIRED", "a failed record write rolled back the reset"
 
 
-def test_a_journal_that_cannot_be_opened_warns_on_a_successful_run(
+def test_a_journal_that_cannot_be_opened_refuses_before_anything_is_issued(
     runner: CliRunner,
     write_config: WriteConfig,
     live_oracle: Environment,
@@ -520,16 +531,18 @@ def test_a_journal_that_cannot_be_opened_warns_on_a_successful_run(
     private_mount: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The same absence one step earlier (Copilot's review of #513).
+    """Not 3.4's absence, and the difference is *when* (#512).
 
-    Opening the store resolves a credential and builds a client, and each of
-    those can fail on its own -- an unreachable Vault, a token that expired
-    since the run began, an extra that is not installed. That happens *after*
-    the password has changed, so it is §3.4's second absence however early it
-    fails, and not a failed run.
+    Since the lock, a declared journal is opened before the first statement,
+    because the lock lives in it. So a store that cannot be reached stops the
+    run where UC-1's lock stores already stop one -- before the DDL, with the
+    person's old password still working and nothing to explain. 3.4's absences
+    are all about a store that went away *after* the password changed; there the
+    reset stands and `SOPULI-W025` carries it.
     """
     monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
     config = write_config(_journalled_config(live_oracle, journal, private_mount))
+    before = account()
 
     def unreachable(run: Any, config: Any) -> Any:
         raise RuntimeError("the store could not be opened by the test")
@@ -538,7 +551,180 @@ def test_a_journal_that_cannot_be_opened_warns_on_a_successful_run(
 
     result = run(runner, config, "--account", ACCOUNT, input="y\n")
 
+    assert result.exit_code != ExitCode.SUCCESS
+    assert account() == before == "OPEN", "the reset ran without the lock it was told to take"
+
+
+# ------------------------------------------------------- the lock (#512) ---
+
+#: Where the advisory lock for this (target, account) lives: the record's own
+#: path under the `locks/` prefix the manager adds (UC-2 3.3).
+LOCK_PATH = f"locks/sopuli/personal-resets/tier1-oracle/{ACCOUNT}"
+RECORD_PATH = f"sopuli/personal-resets/tier1-oracle/{ACCOUNT}"
+
+#: Somebody else's claim, expiring far enough away that nothing here is about
+#: expiry. `break_expired` is off by default, so a live claim is a refusal.
+THEIR_LOCK = {
+    "state": "held",
+    "correlation_id": "01JTHEIRS",
+    "command": "account reset-password",
+    "holder": {"host": "ci-runner-3", "pid": 8821, "os_user": "svc_sopuli"},
+    "acquired_at": "2030-01-01T12:00:00Z",
+    "expires_at": "2030-01-01T12:15:00Z",
+}
+
+
+def test_a_reset_of_an_account_somebody_else_is_resetting_is_refused(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The collision UC-2 3.3 keys the lock to prevent, from the command line.
+
+    Two DBAs resetting the same person at once: the second password overwrites
+    the first before the person has fetched either, and neither DBA finds out.
+    The claim is written through the Vault API rather than by a second run of
+    the tool, so what is asserted is that this run reads somebody else's lock
+    rather than that it can read its own.
+
+    **Nothing was issued**, which is the other half and the reason exit 7 is
+    honest here: acquisition happens before the first connection.
+    """
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
+    config = write_config(_journalled_config(live_oracle, journal, private_mount))
+    # Written the way the tool writes one, not the short way: `cas_required` on
+    # the path first, then the record under `cas: 0`. A path created without the
+    # metadata is refused by the manager's own pre-flight (#390) with exit 5,
+    # which would make this test pass for the wrong reason -- it would never
+    # reach the claim it is about.
+    journal.client.post(f"/v1/{private_mount}/metadata/{LOCK_PATH}", json={"cas_required": True})
+    journal.client.post(
+        f"/v1/{private_mount}/data/{LOCK_PATH}",
+        json={"data": THEIR_LOCK, "options": {"cas": 0}},
+    )
+    before = account()
+
+    result = run(runner, config, "--account", ACCOUNT, input="y\n")
+
+    # `CliRunner` drives the group rather than `sopuli.cli.main`, so the refusal
+    # arrives as the exception and the runner's own code is 1. `LockDeniedError`
+    # is what the boundary maps to exit 7, and it carries no code of its own --
+    # `tests/test_cli_creds_apply.py` asserts the same way for the same reason.
+    assert isinstance(result.exception, LockDeniedError), result.exception
+    assert "ci-runner-3" in str(result.exception), "the message names who holds it"
+    assert account() == before == "OPEN", "the reset ran under somebody else's lock"
+    stored = journal.client.get(f"/v1/{private_mount}/data/{RECORD_PATH}")
+    assert stored.status_code == 404, "a refused reset wrote a record"
+
+
+def test_the_lock_is_let_go_when_the_reset_is_done(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Released rather than deleted (#83): a deleted path leaves a version
+    counter no first acquisition could ever take again, so the record stays and
+    says `released`. The next reset of this account has to be able to run."""
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
+    config = write_config(_journalled_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT, input="y\n")
+
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert "could not be written" in result.output
-    assert "the store could not be opened by the test" in result.output
-    assert account() == "EXPIRED", "a store that would not open rolled back the reset"
+    stored = journal.client.get(f"/v1/{private_mount}/data/{LOCK_PATH}")
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["data"]["data"]["state"] == "released"
+
+
+def test_a_preview_takes_no_lock(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """Invariant 8 read for the lock: a preview writes nothing, and a lock record
+    is a write. `creds generate` takes none under `--dry-run` for the same
+    reason, and a preview that left a claim in the vault would block the run it
+    was previewing."""
+    config = write_config(_journalled_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT, "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert journal.client.get(f"/v1/{private_mount}/data/{LOCK_PATH}").status_code == 404
+
+
+#: The same estate with a second target pointed at the same database. Two
+#: targets rather than two databases: what is under test is the run's handling of
+#: a lost fence between one target and the next, and the number of Oracles in the
+#: tier-1 stack has nothing to do with it.
+TWO_TARGETS = """
+  - name: tier1-oracle-b
+    type: oracle
+    environment: dev
+    dsn: "{dsn}"
+    admin: {{ username: {user}, auth: {{ method: env }} }}
+"""
+
+
+def test_a_fence_lost_between_targets_stops_there_and_exits_four(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`creds generate`'s split, on this verb (Copilot's review of #515).
+
+    Exit 7 asserts that nothing happened. Once the first target's password has
+    been reset, that is a lie -- somebody is holding a password that works -- so
+    a fence lost before the *second* target is exit 4 with `SOPULI-W011`, and the
+    second target is not touched.
+
+    The steal is simulated at the fence rather than by racing a second process:
+    what is under test is this verb's branch, and a real race would assert the
+    lock manager's behaviour, which `tests/lock/` already holds.
+    """
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
+    user = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
+    # Inserted into `targets:` rather than appended, which is where a second
+    # entry goes and not where the file ends.
+    marker = "\npolicies:"
+    written = _journalled_config(live_oracle, journal, private_mount).replace(
+        marker, TWO_TARGETS.format(dsn=live_oracle.dsn, user=user) + marker
+    )
+    config = write_config(written)
+
+    checks = {"count": 0}
+    real = LockManager.check
+
+    def fence(self: Any, *keys: Any) -> None:
+        checks["count"] += 1
+        if checks["count"] > 1:
+            raise LockStolenError("somebody else holds it now", key=keys[0])
+        real(self, *keys)
+
+    monkeypatch.setattr("sopuli.lock.manager.LockManager.check", fence)
+
+    result = run(runner, config, "--account", ACCOUNT, input="y\n")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "somebody else holds it now" in result.output
+    first = journal.client.get(f"/v1/{private_mount}/data/{RECORD_PATH}")
+    second = journal.client.get(
+        f"/v1/{private_mount}/data/sopuli/personal-resets/tier1-oracle-b/{ACCOUNT}"
+    )
+    assert first.status_code == 200, "the target that ran before the fence was lost"
+    assert second.status_code == 404, "the run carried on past the fence"
