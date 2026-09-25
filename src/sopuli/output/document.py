@@ -39,6 +39,7 @@ __all__ = [
     "Error",
     "Option",
     "RunDocument",
+    "StreamState",
     "Summary",
     "current_actor",
     "to_rfc3339",
@@ -256,6 +257,22 @@ class Summary:
 
 
 @dataclass
+class StreamState:
+    """Where a ``--output jsonl`` stream has got to. Never serialised.
+
+    Kept on the document because the document is the one object a run holds from
+    the moment the invocation resolves to the moment it exits -- the invocation
+    itself is rebuilt once the config has been read, and an emitter is built per
+    call. A counter held on either would restart, and a ``seq`` that restarts is
+    one a consumer reads as truncation (``03-json-output.md`` §5).
+    """
+
+    started: bool = False
+    seq: int = 0
+    diagnostics_sent: int = 0
+
+
+@dataclass
 class RunDocument:
     """One run, serialisable to the ``--output json`` contract.
 
@@ -437,6 +454,9 @@ class RunDocument:
     #: Why the run failed as a whole. Absent on success, and absent on exit 2 --
     #: which never produces a document at all (J7, ``03-json-output.md`` §6).
     error: Error | None = None
+    #: The ``jsonl`` stream's bookkeeping (#9). Not part of the contract, and
+    #: :meth:`to_dict` never reads it.
+    stream: StreamState = field(default_factory=StreamState, repr=False, compare=False)
 
     @classmethod
     def start(

@@ -15,9 +15,14 @@ Two rules are enforced structurally here rather than by convention:
   callers to have avoided it -- for a run's text half and for ``sopuli about``,
   which is not a run at all (#413).
 
-``jsonl`` is deliberately not offered yet: no command streams anything, and an
-output mode that silently behaves like ``json`` would be a lie in the contract.
-It arrives with the first command that has per-target events to emit.
+* **Streaming (#9).** ``--output jsonl`` writes one event per line as the run
+  happens, each flushed as it is written -- a line sitting in a pipe buffer until
+  exit is ``json`` with worse syntax. The stream is *closed* by :meth:`Emitter.emit`,
+  the same call that writes the ``json`` document, so every path that finishes a
+  run -- success, failure, abort -- ends the stream with ``run.finished`` without
+  knowing which mode it is in. Only a verb that has events to stream accepts the
+  mode at all (:data:`sopuli.invocation.STREAMING_COMMANDS`); one that silently
+  behaved like ``json`` would be a lie in the contract.
 """
 
 from __future__ import annotations
@@ -34,7 +39,7 @@ from typing import TYPE_CHECKING, Any, TextIO
 import click
 
 from sopuli.output.color import ColorChoice, resolve_color
-from sopuli.output.document import to_rfc3339
+from sopuli.output.document import to_rfc3339, utc_now
 from sopuli.output.spinner import Spinner
 from sopuli.output.spinner import disabled as spinner_disabled
 from sopuli.output.spinner import make as make_spinner
@@ -49,6 +54,13 @@ class OutputMode(StrEnum):
 
     TEXT = "text"
     JSON = "json"
+    JSONL = "jsonl"
+
+
+#: What every streamed event carries as ``schema_version``. The event schema is
+#: versioned apart from the run document's, so it has a constant of its own; the
+#: published file is ``docs/schemas/sopuli-event-<EVENT_SCHEMA_VERSION>.schema.json``.
+EVENT_SCHEMA_VERSION = "1.3"
 
 
 class RedactingJSONEncoder(json.JSONEncoder):
@@ -107,7 +119,15 @@ class Emitter:
 
     @property
     def is_json(self) -> bool:
-        return self.mode is OutputMode.JSON
+        """Whether stdout is a machine contract: ``json`` *or* ``jsonl``.
+
+        Every question asked of this is about the contract rather than the
+        framing -- no colour, no spinner, no password -- and the two modes answer
+        each the same way. A ``jsonl`` stream that acquired an escape sequence
+        because a check said ``is JSON`` would break exactly the consumer the
+        mode exists for.
+        """
+        return self.mode is not OutputMode.TEXT
 
     def use_color(self) -> bool:
         """Whether this run's output may carry ANSI escape sequences.
@@ -165,10 +185,103 @@ class Emitter:
         stream, and that is what makes the promise true of anything the renderer
         produces -- and of a vendor message that arrives already decorated.
         """
+        if self.mode is OutputMode.JSONL:
+            self.event(document, "run.finished", data=_finished(document))
+            return
         if self.is_json:
             print(render_json(document), file=self._out())
             return
         self.emit_text(text)
+
+    def event(
+        self,
+        document: RunDocument,
+        name: str,
+        *,
+        account: str | None = None,
+        target: str | None = None,
+        data: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Stream one event under ``--output jsonl``; do nothing otherwise.
+
+        A no-op outside ``jsonl`` so a verb can call it unconditionally, which is
+        :meth:`spinner`'s arrangement: no call site carries a branch on the mode,
+        so none can get the branch wrong.
+
+        Two events are written for the caller rather than by it. ``run.started``
+        goes out ahead of whichever event comes first, so a stream always opens
+        with it however the run began -- a config that failed to load still
+        gets one, then its ``run.finished``. And any ``diagnostics[]`` entry made
+        since the last event goes out ahead of this one, as a ``diagnostic``
+        event: the thirty-odd places that append to the document's list keep
+        doing only that, and the stream still carries every entry, in order,
+        before the event that followed it.
+
+        The state that makes that work -- the next ``seq``, how many diagnostics
+        have gone -- lives on the document (:class:`~sopuli.output.document.StreamState`),
+        because the document is the one object a run keeps from start to finish.
+        An emitter is built per call.
+        """
+        if self.mode is not OutputMode.JSONL:
+            return
+        state = document.stream
+        if not state.started:
+            state.started = True
+            self._line(
+                document,
+                "run.started",
+                data={"command": document.command, "dry_run": document.dry_run},
+            )
+        for diagnostic in document.diagnostics[state.diagnostics_sent :]:
+            self._line(
+                document,
+                "diagnostic",
+                account=diagnostic.account,
+                target=diagnostic.target,
+                level=diagnostic.level,
+                message=diagnostic.message,
+                data={"code": diagnostic.code} if diagnostic.code is not None else None,
+            )
+        state.diagnostics_sent = len(document.diagnostics)
+        self._line(document, name, account=account, target=target, data=data)
+
+    def _line(
+        self,
+        document: RunDocument,
+        name: str,
+        *,
+        account: str | None = None,
+        target: str | None = None,
+        level: str | None = None,
+        message: str | None = None,
+        data: Mapping[str, Any] | None = None,
+    ) -> None:
+        state = document.stream
+        line: dict[str, Any] = {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "event": name,
+            "seq": state.seq,
+            "ts": utc_now(),
+            "correlation_id": document.correlation_id,
+        }
+        for key, value in (
+            ("account", account),
+            ("target", target),
+            ("level", level),
+            ("message", message),
+            ("data", data),
+        ):
+            if value is not None:
+                line[key] = value
+        state.seq += 1
+        # Flushed per line: that is the difference between a stream and a
+        # document that arrives in pieces at exit. Compact, because one object
+        # per line is the framing and indentation would break it.
+        print(
+            json.dumps(line, cls=RedactingJSONEncoder, separators=(",", ":")),
+            file=self._out(),
+            flush=True,
+        )
 
     def emit_text(self, text: str) -> None:
         """Write human text through the colour gate, with no document behind it.
@@ -193,3 +306,21 @@ class Emitter:
         if not self.use_color():
             text = click.unstyle(text)
         print(text.rstrip("\n"), file=self._out())
+
+
+def _finished(document: RunDocument) -> dict[str, Any]:
+    """``run.finished.data``: what the ``json`` document says about the outcome.
+
+    Built from the document's own serialisers, not restated, so that §1's promise
+    -- the last event carries the same ``summary`` and ``exit_code`` as the
+    document -- is one computation rather than two that agree today. ``error``
+    rides along on a run that failed as a whole: the stream has nowhere else to
+    say *why*, and a consumer branching on ``exit_code`` needs the category.
+    """
+    data: dict[str, Any] = {
+        "summary": document.summary.to_dict(),
+        "exit_code": document.exit_code,
+    }
+    if document.error is not None:
+        data["error"] = document.error.to_dict()
+    return data

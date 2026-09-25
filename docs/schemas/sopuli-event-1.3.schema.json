@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-event-1.3.schema.json",
+  "title": "sopuli-dba streamed event",
+  "description": "One JSON object per line, emitted by `sopuli … --output jsonl` as the run progresses. The final run.finished event carries the same summary and exit_code as the --output json document. Implemented in 1.3 (#9), for `creds check` first; a verb that does not stream refuses --output jsonl rather than emitting less than its document would. 1.3 also makes the payloads the design already promised into requirements: run.finished.data carries summary and exit_code (and error when the run failed as a whole), target.started names its target, plan.resolved carries its plan. `password.displayed` (1.1, #441) and `password.delivered` (1.2, #444) are registered and still have no emitter: the verb that causes them does not stream yet. Neither carries the password, and neither carries the retrieval credential an unseen delivery hands back.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "schema_version",
+    "event",
+    "seq",
+    "ts",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$"
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "run.started",
+        "plan.resolved",
+        "confirmation.required",
+        "lock.acquired",
+        "lock.denied",
+        "target.started",
+        "vault.read",
+        "vault.write",
+        "vault.promote",
+        "password.generated",
+        "password.applied",
+        "password.delivered",
+        "password.displayed",
+        "verification.done",
+        "target.finished",
+        "lock.released",
+        "diagnostic",
+        "run.finished"
+      ]
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic within a run. Consumers may use gaps to detect truncation."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string"
+    },
+    "account": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "target": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "level": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ],
+      "default": "info"
+    },
+    "message": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Human-readable, redacted."
+    },
+    "data": {
+      "type": "object",
+      "description": "Event-specific payload. Shapes are reused from the run schema: target.finished carries a $defs/result, run.finished carries a $defs/summary, exit_code and -- on a run that failed as a whole -- a $defs/error, plan.resolved carries a $defs/plan -- and a diagnostic event carries its level, message, account and target at the top level like any event, with its code, when it has one, in data.code.",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "target.finished"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "account",
+          "target",
+          "data"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "run.finished"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "required": [
+              "summary",
+              "exit_code"
+            ],
+            "properties": {
+              "exit_code": {
+                "type": "integer"
+              },
+              "summary": {
+                "type": "object"
+              },
+              "error": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "password.applied"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "account",
+          "target"
+        ],
+        "description": "Never carries the password. The data object may carry only the vault version and the action outcome."
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "target.started"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "target"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "plan.resolved"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "diagnostic"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "level",
+          "message"
+        ]
+      }
+    }
+  ]
+}

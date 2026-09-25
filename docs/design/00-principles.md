@@ -915,10 +915,10 @@ tool safe to run from a scheduler.
 
 - Human output by default; `--output json` for one machine-readable object,
   `--output jsonl` to stream per-target events. Scripts consume JSON, never text.
-  **`jsonl` is the one of the three that does not exist** — `--output` takes
-  `text` and `json`, and asking for `jsonl` is a usage error. It is specified
-  ahead of its code rather than unbuilt by accident: the event schema is
-  published (`../schemas/sopuli-event-1.2.schema.json`) and #9 is the issue.
+  **`jsonl` is offered only by a verb that streams** (#9): `creds check` today.
+  Any other verb refuses it as a usage error rather than emitting a stream
+  thinner than its document — `03-json-output.md` §5 has the rule, and the
+  event schema is `../schemas/sopuli-event-1.3.schema.json`.
 - One structured audit record per mutation: who (OS user + vault identity), what
   (account, target, operation), when, correlation id, result. Never the secret.
 - A log level, an optional log file, and an explicit statement in the docs that

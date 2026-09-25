@@ -286,18 +286,35 @@ def test_dry_run_from_the_environment_cannot_be_turned_off(
 def test_an_unknown_output_format_names_the_variable_it_came_from(
     runner: CliRunner, show: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`jsonl` is in §6's table and not implemented yet (#9), so this is real.
-
-    click checks `--output`; nothing checks the variable, and a bare ValueError
+    """click checks `--output`; nothing checks the variable, and a bare ValueError
     out of the enum names neither the value nor where it was set.
     """
-    monkeypatch.setenv("SOPULI_OUTPUT", "jsonl")
+    monkeypatch.setenv("SOPULI_OUTPUT", "yaml")
     result = runner.invoke(cli, show)
     assert result.exit_code != ExitCode.SUCCESS
     assert isinstance(result.exception, Exception)
     message = str(result.exception)
     assert "SOPULI_OUTPUT" in message
-    assert "jsonl" in message
+    assert "yaml" in message
+
+
+def test_jsonl_from_the_environment_is_refused_by_a_verb_that_does_not_stream(
+    runner: CliRunner, show: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#9: `jsonl` is a real mode now, and still not one `config show` has.
+
+    The variable is the realistic source: a CI image that sets it for its
+    scheduled `creds check` also runs everything else that job does.
+    """
+    monkeypatch.setenv("SOPULI_OUTPUT", "jsonl")
+    result = runner.invoke(cli, show)
+    assert isinstance(result.exception, ArgumentError)
+    assert result.exception.exit_code == ExitCode.USAGE
+    message = str(result.exception)
+    assert "SOPULI_OUTPUT" in message
+    assert "`config show` does not stream" in message
+    assert "creds check" in (result.exception.hint or "")
+    assert result.stdout == ""
 
 
 VAULT_CONFIG = """
@@ -941,21 +958,22 @@ def test_the_run_document_still_validates_with_a_profile(runner: CliRunner, esta
     assert list(validator.iter_errors(document_of(result))) == []
 
 
-def test_an_output_format_this_build_lacks_is_refused_from_a_profile(
+def test_jsonl_from_a_profile_is_refused_by_a_verb_that_does_not_stream(
     runner: CliRunner, write_config: WriteConfig
 ) -> None:
-    """`jsonl` is in §6's table and not implemented (#9), and a profile may write
-    it -- so the refusal has to survive arriving from layer 3.
+    """#9's refusal has to survive arriving from layer 3.
 
-    Exit 2, like the same value from `SOPULI_OUTPUT`: what failed is not the file
-    but the run's ability to say anything about itself, and a document is exactly
-    what cannot be produced. The message still names the key.
+    A profile is checked only after the file is read, so this is the *second*
+    call to `check_output_mode`, inside the exit handler. Exit 2, like the same
+    value from `SOPULI_OUTPUT`: what failed is not the file but the run's ability
+    to produce what was asked for, and the message still names the key.
 
-    The regression this guards is the *second* exception. A profile-supplied
-    value is refused inside the exit handler, which asks the invocation whether
-    the run is JSON before deciding whether to emit a document -- and reading
-    that through `OutputMode` raised `ValueError`, replacing a clean exit 2 with
-    a traceback about an enum on exit 1.
+    Until #9 this test wrote `jsonl` as a format the build lacked. The profile
+    validator admits only the three modes, so that is now the one value a profile
+    can carry and a verb can still refuse -- and it guards the same regression:
+    the handler asks the invocation whether the run is JSON on the way past, and
+    reading that through `OutputMode` once raised `ValueError`, replacing a clean
+    exit 2 with a traceback about an enum on exit 1.
     """
     path = write_config("version: 1\nprofiles:\n  ci:\n    output: jsonl\n")
 
@@ -963,9 +981,9 @@ def test_an_output_format_this_build_lacks_is_refused_from_a_profile(
 
     assert isinstance(result.exception, ArgumentError)
     assert result.exception.exit_code == ExitCode.USAGE
-    message = str(result.exception)
-    assert "profiles.ci.output" in message
-    assert "'jsonl' is not an output format" in message
+    assert "profiles.ci.output" in str(result.exception)
+    assert "`config show` does not stream" in str(result.exception)
+    assert result.stdout == ""
 
 
 def test_the_refusal_leaves_stdout_byte_empty(runner: CliRunner, write_config: WriteConfig) -> None:

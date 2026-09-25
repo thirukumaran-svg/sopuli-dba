@@ -1137,7 +1137,7 @@ def policy_sample(
         # A UsageError, for `config show --select`'s reason as well: two flags
         # that cannot both be honoured is a fact about argv, not about the file.
         raise click.UsageError(
-            "--reveal cannot be used with --output json\n"
+            "--reveal cannot be used with --output json or jsonl\n"
             "       json output is what gets captured and shipped to log "
             "aggregation, so a sample never\n"
             "       appears in it -- drop --reveal, or use the text output"
@@ -3915,6 +3915,10 @@ def creds_check(
     plan = plan_builder.build(config, intent=["verify"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="checking credentials")
     document.plan = plan.as_json()
+    # The events are no-ops outside `--output jsonl` (#9), so none of this
+    # branches on the mode.
+    emitter = run.emitter()
+    emitter.event(document, "plan.resolved", data=document.plan)
 
     stores = _stores_for(
         {binding.vault for binding in config.bindings if binding.vault is not None},
@@ -3931,6 +3935,8 @@ def creds_check(
     # from one `grace_warning` call so they cannot disagree (#309).
     notices: list[str] = []
     for target_name, bindings in _grouped(config.bindings).items():
+        emitter.event(document, "target.started", target=target_name)
+        done = len(results)
         rows.extend(
             _check_target(
                 by_target[target_name],
@@ -3944,6 +3950,19 @@ def creds_check(
                 notices=notices,
             )
         )
+        # Per target rather than per account: the accounts on one target share
+        # one connection, so they finish together. What streams is the entries
+        # this target just added, which are the document's own `results[]`
+        # entries -- one shape, so §5's `target.finished` is a result by
+        # construction rather than by a second serialiser keeping pace.
+        for result in results[done:]:
+            emitter.event(
+                document,
+                "target.finished",
+                account=result["account"],
+                target=result["target"],
+                data=result,
+            )
 
     document.results = results
     states = [outcome.state for _, outcome in rows]

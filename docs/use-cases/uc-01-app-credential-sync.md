@@ -83,8 +83,9 @@ command already covers everything declared, which is what the paragraph below
 says and what makes `--all` a second spelling of nothing, and the ceiling
 `--limit` offered is `safety.max_targets` — a setting the resolver will not
 accept from the command line, for the reason `00-principles.md` P5 now gives.
-`jsonl` left for a third reason: `--output` takes `text` and `json`, and asking
-for `jsonl` is a usage error. `invocation.selection` still carries `all` and
+`jsonl` left for a third reason: at the time `--output` took `text` and `json`,
+and asking for `jsonl` was a usage error. Since #9 it is a real mode, offered by
+the verbs that stream (`03-json-output.md` §5) and refused by the rest. `invocation.selection` still carries `all` and
 `limit` as slots (`03-json-output.md` §1); a slot in a schema is a promise, and a
 line in a list shaped like help output is a claim.
 
@@ -1902,8 +1903,10 @@ caller supplies rather than something the verb acquires.
 
 **Step 9's audit record is the run document.** `--output json` is the record a
 scheduler keeps, and `creds.rotate` was already in the run schema's command enum;
-the `sopuli-event-1.0` event stream is `--output jsonl` (#9), which has no emitter
-for any verb yet and gains one for all of them at once.
+the event stream is `--output jsonl`, which `creds check` was the first verb to
+emit (#9). `rotate` does not stream yet and refuses the mode; giving it events is
+its own change, because its events are the interesting ones — `password.applied`
+and `vault.promote` are where a stream that stops tells you the most.
 
 **Confirmation, and what it is not.** §8 step 1 is "plan + confirm", so `rotate`
 prints the plan to stderr and asks; `--confirm` answers in advance and an

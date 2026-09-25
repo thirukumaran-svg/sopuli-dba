@@ -4712,6 +4712,58 @@ and their layers are reported (#428) -- `invocation.options` deliberately carrie
 only the run's, which is why `vault` is in the block above and
 `vaults.vault-dev.addr` is not.
 
+### Streaming: `--output jsonl`
+
+`creds check` is the one verb that streams (#9): one JSON object per line,
+flushed as each target finishes. With §10's drift in place:
+
+```bash
+sopuli --config sopuli.yaml creds check --output jsonl ; echo "exit $?"
+```
+
+```
+{"schema_version":"1.3","event":"run.started","seq":0,"ts":"2026-09-25T17:48:29.670694Z","correlation_id":"9352c606-8399-4ca3-836f-86a769203940","data":{"command":"creds.check","dry_run":false}}
+{"schema_version":"1.3","event":"plan.resolved","seq":1,"ts":"2026-09-25T17:48:29.670851Z","correlation_id":"9352c606-8399-4ca3-836f-86a769203940","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["verify"],"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user"}}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]}}}
+{"schema_version":"1.3","event":"target.started","seq":2,"ts":"2026-09-25T17:48:30.167605Z","correlation_id":"9352c606-8399-4ca3-836f-86a769203940","target":"free-pdb"}
+{"schema_version":"1.3","event":"diagnostic","seq":3,"ts":"2026-09-25T17:48:31.447496Z","correlation_id":"9352c606-8399-4ca3-836f-86a769203940","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.3","event":"target.finished","seq":4,"ts":"2026-09-25T17:48:31.447583Z","correlation_id":"9352c606-8399-4ca3-836f-86a769203940","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"DRIFT","changed":false,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user","version":1,"stage":"current"},"actions":[{"kind":"verify","applied":true,"detail":"vault v1 the database rejected this password (ORA-01017): ORA-01017: invalid credential or not authorized; logon denied"}],"verification":{"method":"login","result":"fail","latency_ms":null,"lcount":0,"failed_login_attempts_limit":"UNLIMITED","lockout_margin_hit":false,"previous_password_accepted":null},"password_age_days":0.0,"duration_ms":1087}}
+{"schema_version":"1.3","event":"run.finished","seq":5,"ts":"2026-09-25T17:48:31.448006Z","correlation_id":"9352c606-8399-4ca3-836f-86a769203940","data":{"summary":{"total":1,"ok":0,"changed":0,"failed":0,"unchanged":1,"drift":1,"unverifiable":0,"by_state":{"DRIFT":1}},"exit_code":3}}
+exit 3
+```
+
+Three things worth checking by hand, because they are the contract:
+
+- **`run.finished.data` is the `--output json` document's `summary` and
+  `exit_code`**, byte for byte. Run the same check with `--output json` and
+  compare; the exit code is 3 in both.
+- **`SOPULI-W022` arrives just before `target.finished`**, not when the admin
+  credential was resolved. A diagnostic goes out ahead of the next event, which
+  is the stream keeping pace with `diagnostics[]` rather than every place that
+  makes one writing to stdout.
+- **A failure still closes the stream.** With a token the vault will not accept
+  (`VAULT_TOKEN=not-a-token`) the target's `target.finished` carries `"state":
+  "ERROR"` and the store's `error`, and `run.finished` says `exit_code: 1`. With
+  `--config` pointing at a file that is not there, the stream is `run.started`
+  then `run.finished` with `exit_code: 9` and `error.category: "config"`.
+
+**Every other verb refuses it**, because a stream carrying less than the
+document would be a quiet downgrade — `config show` has a `config` section the
+event schema has no home for:
+
+```bash
+sopuli --config sopuli.yaml config show --output jsonl ; echo "exit $?"
+```
+
+```
+sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
+  hint: use --output json for the same run as one document; jsonl is offered by: creds check
+exit 2
+```
+
+Worth causing once from the environment too — `SOPULI_OUTPUT=jsonl` is how a CI
+image sets it for its scheduled check, and every other verb the same job runs
+then refuses it, with `SOPULI_OUTPUT` named where `--output (verb)` is above.
+
 ---
 
 ## 16. Cleanup
@@ -4745,8 +4797,9 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
 
 - **`admin install`**, which will run the SQL in `sql/oracle/` for you. Run the
   scripts by hand for now.
-- **`--output jsonl`** and the streaming event contract. Nothing streams yet, so the
-  format is deliberately not offered.
+- **`--output jsonl` on any verb but `creds check`.** The mode exists (§15), and
+  the verbs that take a lock or change a password -- whose events are the most
+  interesting ones -- do not stream yet, so they refuse it.
 - **`--method hash`**, verification without a login attempt. The spike behind it
   is done — the layout is read (#431), the derivation reproduces (#432), and
   degradation on an account with no `T:` is settled (#433), all on the tier-2

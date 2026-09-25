@@ -43,6 +43,7 @@ from sopuli.driver.protocol import (
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore
 
@@ -624,3 +625,141 @@ def test_a_low_assurance_admin_source_is_recorded_but_not_printed(
     assert ADMIN_PASSWORD_ENV in flagged[0]["message"]
     assert ADMIN_PASSWORD_ENV not in printed.output
     assert "low assurance" not in printed.output
+
+
+# ------------------------------------------------------------------ jsonl ---
+#
+# `creds check` is the first verb that streams (#9). The emitter's own rules --
+# framing, `seq`, redaction -- are `tests/test_output_jsonl.py`'s; these are about
+# what this verb puts through it, and whether the stream and the document it
+# stands beside describe the same run.
+
+EVENT_SCHEMA = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "schemas"
+    / f"sopuli-event-{EVENT_SCHEMA_VERSION}.schema.json"
+)
+
+
+def stream(result: Result, events: Draft202012Validator) -> list[dict[str, Any]]:
+    lines = [json.loads(line) for line in result.output.splitlines()]
+    for line in lines:
+        assert [error.message for error in events.iter_errors(line)] == [], line
+    return lines
+
+
+@pytest.fixture
+def events() -> Draft202012Validator:
+    return Draft202012Validator(json.loads(EVENT_SCHEMA.read_text(encoding="utf-8")))
+
+
+def test_jsonl_streams_each_target_as_it_finishes(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    estate()
+    result = run(runner, write_config(CONFIG), "--output", "jsonl")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    lines = stream(result, events)
+    assert [(line["event"], line.get("target")) for line in lines] == [
+        ("run.started", None),
+        ("plan.resolved", None),
+        ("target.started", "appdb-alpha"),
+        ("target.finished", "appdb-alpha"),
+        ("target.started", "appdb-beta"),
+        ("target.finished", "appdb-beta"),
+        ("run.finished", None),
+    ]
+    assert [line["seq"] for line in lines] == list(range(len(lines)))
+    assert len({line["correlation_id"] for line in lines}) == 1
+
+
+def test_jsonl_and_json_describe_the_same_run(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """§1: a consumer can use either without a second code path. Drift, so the
+    exit code and the summary both have something to agree about."""
+    estate(answers={"ACME_WEB_USER": VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017")})
+    config = write_config(CONFIG)
+
+    lines = stream(run(runner, config, "--output", "jsonl"), events)
+    body = document(run(runner, config, "--output", "json"))
+
+    finished = lines[-1]["data"]
+    assert finished == {"summary": body["summary"], "exit_code": body["exit_code"]}
+    assert finished["exit_code"] == ExitCode.DRIFT
+    plan = next(line["data"] for line in lines if line["event"] == "plan.resolved")
+    assert plan == body["plan"]
+    streamed = [line["data"] for line in lines if line["event"] == "target.finished"]
+
+    def comparable(entry: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in entry.items() if key != "duration_ms"}
+
+    assert [comparable(entry) for entry in streamed] == [
+        comparable(entry) for entry in body["results"]
+    ]
+
+
+def test_an_unreachable_target_still_streams_its_results(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """The failure the stream exists to observe: a target that went wrong is a
+    `target.finished` with its error, not a gap."""
+    estate(connect_error=RuntimeError("ORA-12541: no listener"))
+    lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl"), events)
+
+    finished = [line for line in lines if line["event"] == "target.finished"]
+    assert [line["target"] for line in finished] == ["appdb-alpha", "appdb-beta"]
+    assert all(line["account"] == "acme_web_user" for line in finished)
+    assert all("error" in line["data"] for line in finished)
+    assert lines[-1]["data"]["exit_code"] == ExitCode.FAILURE
+
+
+def test_a_run_that_fails_before_any_target_still_opens_and_closes_the_stream(
+    runner: CliRunner, tmp_path: Path, events: Draft202012Validator
+) -> None:
+    """J7's rule on jsonl's terms: a run that began gets `run.started` and a
+    `run.finished` carrying the error -- exit 9 here, a config that is not there."""
+    result = run(runner, tmp_path / "missing.yaml", "--output", "jsonl")
+
+    lines = stream(result, events)
+    assert [line["event"] for line in lines] == ["run.started", "run.finished"]
+    assert lines[-1]["data"]["exit_code"] == ExitCode.CONFIG_INVALID
+    assert lines[-1]["data"]["error"]["category"] == "config"
+
+
+def test_streamed_payloads_are_the_run_schema_shapes(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """The event schema checks the envelope and leaves `data` open; 03 §5 says the
+    payloads are the run schema's `$defs`. Checked against those here rather than
+    by a cross-file `$ref`, which would bind the event schema's version to the
+    run schema's (review of #534)."""
+    estate(answers={"ACME_WEB_USER": VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017")})
+    lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl"), events)
+    defs = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+
+    def shape(name: str) -> Draft202012Validator:
+        return Draft202012Validator({"$defs": defs, "$ref": f"#/$defs/{name}"})
+
+    checks = [(shape("plan"), line["data"]) for line in lines if line["event"] == "plan.resolved"]
+    checks += [
+        (shape("result"), line["data"]) for line in lines if line["event"] == "target.finished"
+    ]
+    checks += [(shape("summary"), lines[-1]["data"]["summary"])]
+    assert len(checks) == 4
+    for validator, payload in checks:
+        assert [error.message for error in validator.iter_errors(payload)] == [], payload

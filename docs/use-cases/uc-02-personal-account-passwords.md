@@ -608,8 +608,9 @@ entry would have its priorities backwards.
   two lifetimes, and conflating them is how the handover copy would end up living
   as long as the audit trail.
 - **The run document is always a record**, and it never carries a password
-  (invariant 2). So will the jsonl stream be, once there is one — `--output jsonl`
-  is a usage error in this build (`03-json-output.md`).
+  (invariant 2). So will the jsonl stream be when this verb streams — today
+  `account reset-password` does not, and refuses `--output jsonl` as every
+  non-streaming verb does (`03-json-output.md` §5).
 
 ---
 
@@ -1074,8 +1075,9 @@ implementation violates it:
   `password.delivered` on success, and `password.displayed` for the seen path's
   exposure, which is its own fact and not a variant of the first (#441). Neither
   event carries the password, and the run schema has no property that could.
-  **Both words are registered and neither has an emitter**: `--output jsonl` is
-  unimplemented (#9), so `password.displayed` arrived with #441 and
+  **Both words are registered and neither has an emitter**: `--output jsonl`
+  exists since #9, but `account reset-password` does not stream and refuses it,
+  so `password.displayed` arrived with #441 and
   `password.delivered` with #444, each with the change that knows why the event
   exists rather than with the stream that will carry it. What records a delivery
   today is `results[].handover` in the run document, which every run has — the
@@ -1354,7 +1356,7 @@ What a test must show, once there is something to test:
   concurrent resets of one (target, account) collide on the lock its path keys,
   where before H2 they collided on nothing;
 - **both:** the password appears in no run document, diagnostic or log sink, and in
-  no jsonl event once that stream exists. The seen path's one deliberate emission
+  no jsonl event once this verb streams. The seen path's one deliberate emission
   is the only exception, and it is what that path's confirmation guards;
 - the two measurements behind the seen path's markers, each on 26ai and then 21c —
   gate 2's probe extended to the `PASSWORD EXPIRE` form

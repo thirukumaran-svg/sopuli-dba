@@ -329,19 +329,25 @@ class Invocation:
 
     @property
     def is_json(self) -> bool:
-        """Whether this run's output is the machine-readable contract.
+        """Whether this run's output is a machine-readable contract -- ``json``
+        or ``jsonl`` (#9).
+
+        Both, because every caller is asking the contract's question rather than
+        the framing's: may a password be printed, may the handover token go to
+        stdout. A seen reset refused under ``json`` and allowed under ``jsonl``
+        would be invariant 2's guard lost to an output mode added after it.
 
         Compared against the resolved value rather than through
         :attr:`output_mode`, so that a format this build does not have answers
-        ``False`` instead of raising. A run can reach here holding one: a profile
-        may write ``output: jsonl`` (#153), :func:`check_output_mode` refuses it,
-        and the refusal travels out through the exit handler -- which asks this
-        question on the way past. Raising there would replace a usage error
-        naming ``profiles.ci.output`` with a ``ValueError`` about an enum, and
-        ``False`` is the true answer in any case: a run that could not read its
-        own ``--output`` emits no document at all.
+        ``False`` instead of raising. A run can reach here holding one: a
+        variable or a profile may carry any string (#153),
+        :func:`check_output_mode` refuses it, and the refusal travels out through
+        the exit handler -- which asks this question on the way past. Raising
+        there would replace a usage error naming ``profiles.ci.output`` with a
+        ``ValueError`` about an enum, and ``False`` is the true answer in any
+        case: a run that could not read its own ``--output`` emits no document.
         """
-        return bool(self.value("output") == OutputMode.JSON)
+        return self.value("output") in (OutputMode.JSON, OutputMode.JSONL)
 
     @property
     def profile(self) -> str | None:
@@ -743,6 +749,18 @@ def _wired(contributions: dict[str, list[Contribution]], name: str) -> list[Cont
     return contributions[name]
 
 
+#: The verbs that accept ``--output jsonl`` (#9), by :func:`command_path`.
+#:
+#: A verb is here because it streams something the document would otherwise
+#: carry only at exit -- per-target results, as each target finishes. One that
+#: is not refuses the mode rather than accepting it and emitting ``run.started``
+#: and ``run.finished`` with its findings missing: ``jsonl`` and ``json`` are
+#: promised to describe the same run (``03-json-output.md`` §1), and the event
+#: schema has no home for a ``config`` or a ``lock`` section. Adding a verb
+#: means giving it events, not only a line here.
+STREAMING_COMMANDS: frozenset[str] = frozenset({"creds.check"})
+
+
 def check_output_mode(invocation: Invocation) -> None:
     """Refuse an output format the tool does not have, naming where it came from.
 
@@ -750,8 +768,11 @@ def check_output_mode(invocation: Invocation) -> None:
     checked by nothing, and an unknown value there would otherwise surface as a
     bare ``ValueError`` out of the enum three frames later. Naming the location is
     what makes it fixable -- the same variable can be inherited from a CI image
-    nobody in the room chose. ``jsonl`` is the realistic case: it is in §6's table
-    and not yet implemented (#9).
+    nobody in the room chose.
+
+    **And a format this verb does not have** (#9): ``jsonl`` is refused by any
+    verb outside :data:`STREAMING_COMMANDS`, for the same reason and on the same
+    exit -- the request names a real mode, but not one this run can produce.
 
     An :class:`~sopuli.config.errors.ArgumentError`, so it exits 2 and emits no
     document, and this is the case ``03-json-output.md`` §6 names outright:
@@ -766,12 +787,26 @@ def check_output_mode(invocation: Invocation) -> None:
     so the line to fix is still in it.
     """
     answer = invocation.resolved.get("output")
-    if answer is None or answer.value in {mode.value for mode in OutputMode}:
+    if answer is None:
         return
-    raise ArgumentError(
-        f"{answer.location}: {answer.value!r} is not an output format",
-        hint=f"this build has: {', '.join(mode.value for mode in OutputMode)}",
-    )
+    if answer.value not in {mode.value for mode in OutputMode}:
+        raise ArgumentError(
+            f"{answer.location}: {answer.value!r} is not an output format",
+            hint=f"this build has: {', '.join(mode.value for mode in OutputMode)}",
+        )
+    command = invocation.document.command
+    if answer.value == OutputMode.JSONL and command not in STREAMING_COMMANDS:
+        # The same exit 2 and the same reason as an unknown format: this verb
+        # cannot honour the request, so the invocation did not resolve, and
+        # §6's rule for jsonl is zero events rather than a thin stream.
+        raise ArgumentError(
+            f"{answer.location}: `{command.replace('.', ' ')}` does not stream, "
+            "so it has no jsonl output",
+            hint=(
+                "use --output json for the same run as one document; jsonl is "
+                f"offered by: {', '.join(sorted(c.replace('.', ' ') for c in STREAMING_COMMANDS))}"
+            ),
+        )
 
 
 # -------------------------------------------------------------- the wiring ---

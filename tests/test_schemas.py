@@ -5,9 +5,10 @@ this runs in CI." ``tests/test_run_document.py`` covers one half of that, the
 document a command actually emits. This file covers the other half, which was
 until now only asserted in prose in ``docs/README.md``:
 
-* every committed schema is a valid Draft 2020-12 schema, including
-  ``sopuli-event-1.0.schema.json``, which nothing referenced from code yet
-  because ``--output jsonl`` is unimplemented (#9)
+* every committed schema is a valid Draft 2020-12 schema, including the
+  superseded ``sopuli-event-1.*`` files that no build emits any more -- the
+  current one is also validated line by line against what ``--output jsonl``
+  writes, in ``tests/test_output_jsonl.py`` (#9)
 * every committed sample validates against the schema it claims to describe
 
 The schemas are found by glob rather than listed. A schema added later is then

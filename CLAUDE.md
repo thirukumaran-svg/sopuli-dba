@@ -393,6 +393,12 @@ already suspected. Three that got through, and how (#309, #322, #326):
 Do not commit generated artefacts, `.env` files, Oracle binaries, or anything
 pulled from a real environment.
 
+**Every commit is signed off** — `git commit -s`, which adds the
+`Signed-off-by:` line `CONTRIBUTING.md` requires (DCO). No CI check enforces
+it, which is exactly why it is written here: a commit without one is caught
+only by somebody reading the log, and fixing it afterwards means rewriting a
+pushed branch.
+
 **Every PR gets a Copilot review, and the review gets answered.** Opening a pull
 request is not the end of the task. Request the review, wait for it, and then
 resolve every comment it leaves — one of exactly two ways:

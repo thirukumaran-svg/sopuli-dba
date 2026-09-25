@@ -3,10 +3,10 @@
 Status: draft / sketch, **partly implemented**. The run document, `--output
 text|json`, colour resolution, the `config` section, `diagnostics`, `plan`,
 `results` and four of `invocation.selection`'s six members are real and validated
-against the schema in CI (`sopuli/output/`). **`--output jsonl` is the one output
-mode that does not exist** — `--output` takes `text` and `json`, and asking for
-`jsonl` is a usage error — so §5 and everything else said about streaming here is
-still a sketch. This paragraph called `plan` and `results` unwritten until #392;
+against the schema in CI (`sopuli/output/`). **`--output jsonl` exists since #9,
+for the verbs that stream** — `creds check` first, and so far only — and any other
+verb refuses it as a usage error; §5 says what is emitted and why the refusal is
+the rule. This paragraph called `plan` and `results` unwritten until #392;
 they have been emitted by every `creds` verb for many releases.
 
 **`lock` is emitted by the two `lock` verbs and by the three mutating `creds`
@@ -21,9 +21,9 @@ place all three go through, and it is called after release so that `released`
 reports the store record rather than the moment (#348). This paragraph said
 `held[]` was still waiting on `creds generate`, "which does not exist", until
 #392 — it had shipped, with a lock, three releases earlier.
-The `lock.*` events are the remaining wait: they need `--output jsonl` (#9),
-which has no emitter, so their payloads are specified in §5 and not yet produced
-by anything.
+The `lock.*` events are the remaining wait: `--output jsonl` exists (#9), but the
+verbs that take a lock do not stream yet, so their payloads are specified in §5
+and not yet produced by anything.
 
 **`invocation.selection` is now filled in** (#297). The object has carried
 slots for `applications`, `accounts`, `targets`, `groups`, `all` and `limit`
@@ -42,7 +42,7 @@ a config emits them, `config show` in both its views as well as
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
 Schemas: [`../schemas/sopuli-run-1.30.schema.json`](../schemas/sopuli-run-1.30.schema.json),
-[`../schemas/sopuli-event-1.2.schema.json`](../schemas/sopuli-event-1.2.schema.json)
+[`../schemas/sopuli-event-1.3.schema.json`](../schemas/sopuli-event-1.3.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---
@@ -65,7 +65,8 @@ Three output modes:
 
 `jsonl` and `json` describe the same run. The last `run.finished` event carries
 the same `summary` and `exit_code` as the `json` document, so a consumer can use
-either without a second code path.
+either without a second code path. **`jsonl` is offered only by a verb that
+streams** — `creds check` today — and refused by the rest; §5 says why.
 
 ### Encoding, on every mode
 
@@ -88,7 +89,7 @@ order:
 
 | # | Rule | Result |
 |---|---|---|
-| 1 | `--output json` | never coloured, whatever else says |
+| 1 | `--output json` or `jsonl` | never coloured, whatever else says |
 | 2 | `--color never` | off |
 | 3 | `--color always` | on |
 | 4 | `SOPULI_NO_COLOR` or `NO_COLOR` set and not empty | off |
@@ -1667,24 +1668,78 @@ in any jsonl event, or in any log sink, whatever the delivery method.
 
 ## 5. Streaming events
 
+**Implemented for `creds check`** (#9). A drifted account against the tier-1
+stack, pasted from the run and trimmed only where `…` says so:
+
 ```jsonl
-{"schema_version":"1.0","event":"run.started","seq":0,"ts":"…","correlation_id":"…"}
-{"schema_version":"1.0","event":"plan.resolved","seq":1,"ts":"…","correlation_id":"…","data":{…}}
-{"schema_version":"1.0","event":"lock.acquired","seq":2,"ts":"…","correlation_id":"…","account":"ORDERS_APP","data":{"vault":"vault-prod","path":"apps/acme/db","mode":"cas","fence":41}}
-{"schema_version":"1.0","event":"target.started","seq":3,"ts":"…","correlation_id":"…","target":"cdb1-pdb-orders"}
-{"schema_version":"1.0","event":"password.applied","seq":4,"ts":"…","correlation_id":"…","target":"cdb1-pdb-orders","account":"ORDERS_APP","data":{"vault_version":8}}
-{"schema_version":"1.0","event":"target.finished","seq":5,"ts":"…","correlation_id":"…","target":"cdb1-pdb-orders","account":"ORDERS_APP","data":{…result…}}
-{"schema_version":"1.0","event":"run.finished","seq":9,"ts":"…","correlation_id":"…","data":{"summary":{…},"exit_code":0}}
+{"schema_version":"1.3","event":"run.started","seq":0,"ts":"2026-09-25T17:48:29.670694Z","correlation_id":"9352c606-…","data":{"command":"creds.check","dry_run":false}}
+{"schema_version":"1.3","event":"plan.resolved","seq":1,"ts":"2026-09-25T17:48:29.670851Z","correlation_id":"9352c606-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["verify"],…}],"blast_radius":{…}}}
+{"schema_version":"1.3","event":"target.started","seq":2,"ts":"2026-09-25T17:48:30.167605Z","correlation_id":"9352c606-…","target":"free-pdb"}
+{"schema_version":"1.3","event":"diagnostic","seq":3,"ts":"2026-09-25T17:48:31.447496Z","correlation_id":"9352c606-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.3","event":"target.finished","seq":4,"ts":"2026-09-25T17:48:31.447583Z","correlation_id":"9352c606-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"DRIFT","changed":false,…,"duration_ms":1087}}
+{"schema_version":"1.3","event":"run.finished","seq":5,"ts":"2026-09-25T17:48:31.448006Z","correlation_id":"9352c606-…","data":{"summary":{"total":1,"ok":0,"changed":0,"failed":0,"unchanged":1,"drift":1,"unverifiable":0,"by_state":{"DRIFT":1}},"exit_code":3}}
 ```
 
 `seq` is monotonic within a run, so a consumer can detect truncation — which
-matters because the interesting failure mode is the process dying mid-rotation.
-A stream that ends without `run.finished` means the run did not complete, and the
-last `seq` says where it stopped.
+matters because the interesting failure mode is the process dying mid-run. A
+stream that ends without `run.finished` means the run did not complete, and the
+last `seq` says where it stopped. **Every line is flushed as it is written**: a
+line held in a pipe buffer until exit would make this `json` with worse syntax.
 
 Payload shapes are reused, not redefined: `target.finished.data` is a `result`
-object, `run.finished.data` carries `summary` + `exit_code`, `plan.resolved.data`
-is a `plan`.
+object — the same entry `results[]` carries, not a second serialisation of it —
+`run.finished.data` carries `summary` + `exit_code`, and `plan.resolved.data` is
+a `plan`. Event schema 1.3 makes those three into requirements rather than prose.
+
+**Two events are written for the verb rather than by it**, so neither can be
+forgotten by the next verb to stream:
+
+- **`run.started` always opens the stream**, ahead of whichever event came first.
+  A run that fails before any target — a config file that is not there, exit 9 —
+  is `run.started` then `run.finished`, which is J7 on jsonl's terms: the run
+  began, so it has a stream, and the stream ends.
+- **`run.finished` is written by the same call that writes the `json` document**,
+  on every path out of a run — success, a failure that escaped the verb, an
+  abort. It carries `error` beside `summary` and `exit_code` when the run failed
+  as a whole, because the stream has nowhere else to say why.
+
+**`diagnostic` events stream what `diagnostics[]` holds**, each one ahead of the
+event that followed it, with its code in `data.code`. The places that make a
+diagnostic append to the document and do nothing else; the emitter sends
+whatever is new before each event. The consequence worth knowing is that a
+diagnostic arrives when the *next* event does, not the instant it is made —
+above, `SOPULI-W022` is made while the target is being connected to and is sent
+just ahead of that target's `target.finished`.
+
+`creds check` streams **per target**, not per account: the accounts on one
+target share one connection and finish together, so their `target.finished`
+events arrive together once that connection is done.
+
+### Which verbs stream, and why the rest refuse
+
+**Only a verb that has events to stream accepts `--output jsonl`**, and every
+other verb refuses it on exit 2 with no events, naming where the value came from
+— `--output`, `SOPULI_OUTPUT` or a profile's `output:`:
+
+```
+sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
+  hint: use --output json for the same run as one document; jsonl is offered by: creds check
+```
+
+The alternative was to accept it everywhere and emit `run.started` and
+`run.finished` around nothing, and it is refused for §1's reason: `jsonl` and
+`json` are promised to describe the same run, and the event schema has no home
+for a `config`, `lock`, `targets` or `constraints` section. A stream that
+silently carried less than the document would be the quiet downgrade §2 refuses
+everywhere else. `STREAMING_COMMANDS` in `sopuli/invocation.py` is the list,
+and adding a verb to it means giving the verb events rather than only a line
+there.
+
+**A verb that refuses the machine formats refuses `jsonl` twice.** `account
+reset-password`'s seen path and `policy sample --reveal` are refused under
+`--output json`; both verbs are also outside the streaming list, and the
+refusal checks treat `jsonl` as a machine format too — so the guard survives
+either verb learning to stream.
 
 The three `lock.*` events were in the enum from 1.0 and now have a payload. Each
 carries the store, the path and the fence — `lock.denied` carries the holder
@@ -1862,9 +1917,9 @@ jq '.invocation.options' result.json
 # drift grouped by any target label, without parsing target names
 jq -r '.results[] | select(.state=="DRIFT") | .scope.labels.tenant' result.json | sort | uniq -c
 
-# follow a live rotation
-sopuli creds rotate --application orders-app --output jsonl \
-  | jq -r 'select(.event|test("target|password|vault")) | "\(.seq) \(.event) \(.target // "-")"'
+# follow a scheduled check live, one line per target as it finishes
+sopuli creds check --application orders-app --output jsonl \
+  | jq -r 'select(.event=="target.finished") | "\(.seq) \(.target) \(.account) \(.data.state)"'
 
 # join to the database audit trail
 jq -r .invocation.correlation_id result.json
@@ -2056,12 +2111,23 @@ disagree with the first.
 
 **The event schema went 1.1 to 1.2 in the same change**, adding
 **`password.delivered`** — the event UC-2 §6.3 says every delivery emits. It has no
-emitter, for 1.1's reason exactly: `--output jsonl` is unimplemented (#9), so this
+emitter, for 1.1's reason exactly: `--output jsonl` was unimplemented then (#9), so this
 extends an artefact already ahead of its stream, and the word is registered with
 the change that knows why the event exists. Neither it nor `password.displayed`
 carries the password, and neither carries the retrieval credential — a consumer
 that wants to tie a stream to a vault's audit log reads `handover.accessor` from
 the run document.
+
+**The event schema went 1.2 to 1.3 when something first emitted it** (#9). Three
+payloads §5 had described since 1.0 became requirements: `run.finished.data`
+must carry `summary` and `exit_code` (and may carry `error`), `target.started`
+must name its `target`, and `plan.resolved` must carry `data`. A `diagnostic`
+event must carry `level` and `message`. Tightening a schema nothing emitted
+breaks no consumer — there were none — and it is what turns §1's "the last event
+carries the same summary" from prose into something CI checks on every line.
+**Added rather than renamed**, which is the event schema's own practice since
+1.1 and 1.17's reasoning: 1.3 is the first version a build emits, so it is the
+one a consumer will fetch.
 
 
 **1.27 became 1.28 when the survey found a third kind of record** (#514). One
@@ -2098,7 +2164,7 @@ event nothing emits: **`password.displayed`**, the seen reset's exposure.
 That is deliberate rather than an oversight, and it is the one place this
 document's usual rule bends. A contract value with no emitter is normally the
 defect `SOPULI-W022` was written to fix -- but the whole event schema has had no
-emitter since it was published, because `--output jsonl` is unimplemented (#9),
+emitter since it was published, because `--output jsonl` was unimplemented (#9),
 so this is extending an artefact that is already ahead of its stream rather than
 creating a new inconsistency. The word is registered with **the change that
 causes the exposure** rather than with the one that will carry it, because the
@@ -2107,7 +2173,8 @@ change that knows why the event exists is the one that should name it.
 **What records the exposure today is the run document**, which every run has:
 `results[].delivered` says the method was `manual`, and `manual` is by definition
 the path that shows somebody a password. `password.displayed` is what a *stream*
-consumer will read when there is a stream.
+consumer will read once the verb streams — `--output jsonl` exists since #9, and
+`account reset-password` refuses it until it has events of its own.
 
 **1.26 became 1.27 with `sopuli account reset-password`** (#441), UC-2's reset.
 Two additive changes:
