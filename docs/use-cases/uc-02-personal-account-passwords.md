@@ -4,8 +4,7 @@ Status: partly built. §9 lists what is still open, and each open question is a
 `decision` issue. What an operator can run today: `personal_accounts:` (#467),
 **`sopuli account suspend`** (#463), **`sopuli account list`** (#490), and
 **`sopuli account reset-password`** on the seen path (#441) and the default unseen
-one (`vault_wrapped`, #444). `expire-password` has its driver half (#525) and no
-verb yet.
+one (`vault_wrapped`, #444), and **`sopuli account expire-password`** (#525).
 Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
@@ -106,7 +105,7 @@ prompt — and it holds unchanged now that the answer is a different key.
 |---|---|---|
 | `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. **Built** for `vault_wrapped` (#444); a file naming an unseen method that is not implemented yet (#445-#447, `smtp_encrypted`) is refused at plan time on exit 5, before the password changes | yes |
 | `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, show it once — after confirmation. **Built** (#441), under §6.5's five guards | yes |
-| `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password — "make them change it". Closes an open rollover window first. **Driver built** (#525); the verb is not | yes |
+| `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password — "make them change it". Closes an open rollover window first. **Built** (#525) | yes |
 | `sopuli account list` | resolve the declaration — names, or a predicate over a profile or role — and report what it matched, with each account's state. Reads no password and writes none (H1, #449) | no |
 | any of the mutating verbs, under `--dry-run` | prints the plan and never a password (invariant 8, which binds on every one of them — not the resets alone) | no |
 

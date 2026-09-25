@@ -1214,7 +1214,7 @@ To watch it go away, point the target at any other source: `auth: external`,
 `method: vault` and `auth: prompt` are none of them flagged.
 
 **Only `doctor` prints it.** Every verb that opens a database session puts
-`SOPULI-W022` in `diagnostics[]` — `account suspend`, `creds status`, `creds
+`SOPULI-W022` in `diagnostics[]` — the four `account` verbs, `creds status`, `creds
 generate` (unless `--offline`), `check`, `apply`, `rotate` and `finish-rollover`
 as well as `doctor` — so anything alerting on JSON sees it wherever a credential
 was used. None of them print a line, because the fact is a property of your
@@ -2143,8 +2143,8 @@ out: **`CAPABILITIES` reads 5 on 18c and 6 on 21c and 26ai.** The missing one is
 
 ## 10a. The UC-2 verbs
 
-Three exist: `account reset-password`, `account suspend` and `account list`.
-There is still **no `expire-password`**.
+Four exist: `account reset-password`, `account expire-password`, `account
+suspend` and `account list`.
 
 `reset-password` is built on **two** paths now: the seen one (`manual`, #441) and
 the default unseen one (`vault_wrapped`, #444). The other four unseen methods are
@@ -3143,7 +3143,8 @@ the run is configured to do rather than about an emission.
   `vault_wrapped` is [the unseen path](#account-reset-password--the-unseen-path-vault_wrapped);
   `vault_path`, `one_time_link`, `onepassword_share` and `smtp_encrypted` are
   refused at exit 5 as shown above (#445-#447).
-- **No `expire-password`**, the verb that forces a change without setting one.
+- Nothing else on this path. `expire-password`, which forces a change without
+  setting a password, has [its own section](#account-expire-password--make-them-change-it).
 
 ### The two other UC-2 verbs
 
@@ -3272,6 +3273,155 @@ system was not suspended on any of 1
 `SYSTEM` is still `OPEN` afterwards — check it. A waived check is recorded in
 `results[].overridden`, so a document can say somebody did it on purpose; the
 whitelist is not waivable and so never appears there.
+
+### `account expire-password` — make them change it
+
+**What this verb does** is `ALTER USER "…" PASSWORD EXPIRE` with no password in
+it: the person's next logon is forced to change the password. Nothing is drawn,
+nothing is delivered and nothing is shown, so there is no `delivery:` block to
+configure and no guard to satisfy beyond the ones every mutating verb has.
+
+**If a rollover window is open, it is closed first** (#525). Expiring does not
+close one, and that was measured rather than assumed: through the window the
+**old** password keeps authenticating (`ORA-28001`, not `ORA-01017`) and can be
+used to set the next one. So the verb issues `EXPIRE PASSWORD ROLLOVER PERIOD`,
+then the expiry. Somebody who remembers only the old password then needs a reset.
+
+It needs two accounts to be worth trying. One is plain, and the other has a window
+open, which takes a rollover profile and a second password:
+
+```sql
+CREATE USER acme_expire_demo IDENTIFIED BY "Aa1-demo-pw-00001";
+GRANT CREATE SESSION TO acme_expire_demo;
+CREATE USER acme_expire_roll IDENTIFIED BY "Aa1-roll-old-0001" PROFILE sopuli_rollover;
+GRANT CREATE SESSION TO acme_expire_roll;
+ALTER USER acme_expire_roll IDENTIFIED BY "Aa1-roll-new-0002";
+-- acme_expire_roll is now OPEN & IN ROLLOVER: both passwords work
+```
+
+```yaml
+personal_accounts:
+  - accounts: [acme_expire_demo, acme_expire_roll]
+```
+
+No `policy:` is needed, because nothing is generated.
+
+#### The preview, then the run, then the run again
+
+```
+$ sopuli account expire-password --account acme_expire_demo --dry-run
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT           TARGET        INTENT           SECRET
+acme_expire_demo  tier1-oracle  password_expire  -
+
+ACCOUNT           TARGET        STATE    STATUS  DETAIL
+acme_expire_demo  tier1-oracle  EXPIRED  OPEN    declared by accounts 'acme_expire_demo', 'acme_expire_roll'; would be expired
+
+would expire acme_expire_demo's password on 1 of 1 targets
+```
+
+Without `--dry-run`:
+
+```
+ACCOUNT           TARGET        STATE    STATUS  DETAIL
+acme_expire_demo  tier1-oracle  EXPIRED  OPEN    account was open; password expired
+
+expired acme_expire_demo's password on 1 of 1 targets
+```
+
+And again, which is invariant 9:
+
+```
+ACCOUNT           TARGET        STATE    STATUS   DETAIL
+acme_expire_demo  tier1-oracle  EXPIRED  EXPIRED  the password is already expired
+
+acme_expire_demo's password was already expired on 1 of 1
+```
+
+Oracle accepts a second `PASSWORD EXPIRE` **silently**. The second run says
+"already expired" only because the verb reads `ACCOUNT_STATUS` first, and the
+closing line counts changes rather than rows in `EXPIRED`, which is `account
+suspend`'s lesson applied before it could cost anything.
+
+#### The window, closed
+
+```
+$ sopuli account expire-password --account acme_expire_roll
+ACCOUNT           TARGET        STATE    STATUS              DETAIL
+acme_expire_roll  tier1-oracle  EXPIRED  OPEN & IN ROLLOVER  rollover window closed; the old password no longer works; account was open & in rollover; password expired
+
+expired acme_expire_roll's password on 1 of 1 targets
+```
+
+Then try both passwords from sqlplus, **each as its own invocation with the
+`CONNECT` on stdin**. An expired login prompts for a new password and would read
+the rest of a script as its answer:
+
+```
+old password:      ORA-01017: invalid credential or not authorized; logon denied
+current password:  ORA-28001: The account has expired. The password must be changed.
+```
+
+`ORA-01017` is the window gone. `ORA-28001` is the current password still
+authenticating, and being made to change.
+
+The JSON of a re-run shows both statements the driver considered, neither issued:
+
+```json
+{
+  "account": "acme_expire_roll",
+  "target": "tier1-oracle",
+  "state": "EXPIRED",
+  "changed": false,
+  "actions": [
+    { "kind": "rollover_finish", "applied": false, "detail": "no rollover window is open" },
+    { "kind": "password_expire", "applied": false, "detail": "the password is already expired" }
+  ],
+  "account_status": "EXPIRED",
+  "duration_ms": 232
+}
+```
+
+**`EXPIRED & IN ROLLOVER` is not "already expired"**, and it is the case worth
+setting up by hand, because it is what a DBA's own `ALTER USER … PASSWORD EXPIRE`
+leaves behind on a rollover profile. From `OPEN & IN ROLLOVER`, issue
+`ALTER USER acme_expire_roll PASSWORD EXPIRE` yourself, then run the verb:
+
+```
+ACCOUNT           TARGET        STATE    STATUS                 DETAIL
+acme_expire_roll  tier1-oracle  EXPIRED  EXPIRED & IN ROLLOVER  rollover window closed; the old password no longer works
+
+expired acme_expire_roll's password on 1 of 1 targets
+```
+
+Only the window closes, the expiry is not reissued, and the row reports a change.
+**Getting back to `OPEN & IN ROLLOVER` takes two `IDENTIFIED BY`s, not one.**
+Measured on 26ai, twice: setting a password on an `EXPIRED` account opens no
+window, and it even clears one that was open. The first `IDENTIFIED BY` gives plain
+`OPEN`, and only the second opens the window.
+
+#### Failures worth causing
+
+| Try | What you get |
+|---|---|
+| omit `--account` | `Error: Missing option '--account'.`, exit **2** |
+| `--account system` | exit **0**, state `SKIPPED`, all three guardrails named, as for `account suspend` |
+| `--account system --force` | exit **0**, still `SKIPPED`, because the whitelist is the one refusal `--force` never waives |
+| `--account acme_nobody_here` | exit **0**, state `ACCOUNT_MISSING`: the tool creates nothing |
+| `--select env=nosuch` | `Plan: 0 accounts x 0 targets = 0 accounts`, then `nothing to expire`, exit **0** |
+
+```
+$ sopuli account expire-password --account system --force
+ACCOUNT  TARGET        STATE    STATUS  DETAIL
+system   tier1-oracle  SKIPPED  OPEN    the config does not declare this account, and no flag extends the whitelist
+
+system's password was not expired on any of 1
+```
+
+It writes no `reset_records:` entry and takes no advisory lock, so `lock status`
+shows nothing for it. It delivers nothing, so there is nothing for either to
+protect (#525).
 
 ### `account list` — reading a whitelist you cannot enumerate
 
@@ -4398,7 +4548,7 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.29.schema.json`](schemas/sopuli-run-1.29.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.30.schema.json`](schemas/sopuli-run-1.30.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json

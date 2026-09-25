@@ -68,8 +68,15 @@ def decide(
     account: str,
     target: str,
     force: bool = False,
+    proceeding_as: str = LOCKED,
 ) -> Decision:
     """May this run suspend ``account`` on ``target``?
+
+    ``proceeding_as`` is the ``results[].state`` a permitted row reports, and the
+    one thing `account expire-password` (#525) changes when it asks the same
+    question through :func:`sopuli.expire.decide`. The gates are identical
+    because the question is: whether a run may touch a person's account does not
+    depend on which statement it is about to issue.
 
     ``state`` is ``None`` where the account does not exist there, which is a
     finding rather than an error: the tool creates nothing (Q8), and an estate
@@ -113,7 +120,7 @@ def decide(
 
     return Decision(
         proceed=True,
-        state=LOCKED,
+        state=proceeding_as,
         detail=f"declared by {rule.label}" if rule is not None else "declared",
         review=found,
     )

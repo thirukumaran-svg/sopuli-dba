@@ -39,7 +39,7 @@ which paths ran and which are still untried.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.8.schema.json](schemas/sopuli-config-1.8.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.29.schema.json](schemas/sopuli-run-1.29.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-run-1.30.schema.json](schemas/sopuli-run-1.30.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.2.schema.json](schemas/sopuli-event-1.2.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -665,8 +665,9 @@ coming and what each one waits on.
 
 The verbs, for the same reason: `account suspend` (#463), `account list` (#490)
 and `reset-password` are built -- the latter on **both** the seen path (#441) and
-the default unseen one (#444, `vault_wrapped`). `expire-password` is not, and
-neither are the other four unseen methods (#445-#447 and `smtp_encrypted`).
+the default unseen one (#444, `vault_wrapped`) -- and so is `expire-password`
+(#525), which closes an open rollover window before it expires. The other four
+unseen methods are not (#445-#447 and `smtp_encrypted`).
 
 **`personal_accounts:`** is a list, each entry declaring exactly one of
 `accounts:`, `profile:` or `role:`, plus optional `targets:` and `policy:`. What

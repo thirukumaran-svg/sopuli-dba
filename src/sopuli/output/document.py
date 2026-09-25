@@ -27,7 +27,7 @@ from typing import Any, Literal
 # format (#83), and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.29"
+SCHEMA_VERSION = "1.30"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 

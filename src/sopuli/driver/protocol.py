@@ -812,6 +812,28 @@ class AccountChange:
     detail: str | None = None
 
 
+class PartialAccountChangeError(DriverError):
+    """A multi-statement account verb failed **after** changing something.
+
+    Raised where an earlier statement committed and a later one did not. DDL
+    commits as it goes, so there is no rolling the first back. Without this the
+    caller could only see an exception, and would report the account untouched
+    when it was not (Copilot's review of #527).
+
+    ``completed`` is the :class:`AccountChange` rows for the statements that
+    ran, in order. ``cause`` is the failure itself, whose category, exit code,
+    vendor code and hint this error carries unchanged, so a caller that reports
+    it as an ordinary failure still reports the server's own words.
+    """
+
+    def __init__(self, cause: DriverError, *, completed: tuple[AccountChange, ...]) -> None:
+        super().__init__(cause.message, hint=cause.hint, code=cause.code)
+        self.category = cause.category
+        self.exit_code = cause.exit_code
+        self.cause = cause
+        self.completed = completed
+
+
 # --------------------------------------------------------------- interface ---
 
 
@@ -975,6 +997,11 @@ class Session(Protocol):
 
         **Refused on a read-only target before anything is issued**, like every
         other mutating call here.
+
+        **A failure after the window closed raises
+        :class:`PartialAccountChangeError`**, carrying the close. By then the old
+        password is already dead and cannot be revived, and a caller that saw only
+        an exception would report the account as untouched.
         """
         ...
 

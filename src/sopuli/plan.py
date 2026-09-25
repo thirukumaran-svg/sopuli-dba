@@ -71,6 +71,7 @@ ACTION_KINDS = frozenset(
         "rollover_finish",
         "account_unlock",
         "account_lock",
+        "password_expire",
         "attribute_set",
         "verify",
     )

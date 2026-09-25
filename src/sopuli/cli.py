@@ -74,7 +74,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import click
 
-from sopuli import account_list, preflight, reset, reset_record, suspend
+from sopuli import account_list, expire, preflight, reset, reset_record, suspend
 from sopuli import apply as apply_states
 from sopuli import check as check_states
 from sopuli import constraints as constraint_source
@@ -149,10 +149,13 @@ from sopuli.driver.protocol import (
     ATTRIBUTE_SET,
     FAIL,
     PASS,
+    PASSWORD_EXPIRE,
     VERIFY_LOGIN,
     AccountAttributes,
+    AccountChange,
     AttributeChange,
     DriverError,
+    PartialAccountChangeError,
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
@@ -212,6 +215,9 @@ from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, RunDocument, Summary
 from sopuli.output.emit import Emitter
+from sopuli.output.expire_view import build_result as build_expire_result
+from sopuli.output.expire_view import render as render_expire
+from sopuli.output.expire_view import summarise as summarise_expire
 from sopuli.output.finish_rollover_view import build_result as build_finish_result
 from sopuli.output.finish_rollover_view import render_finish, render_window_table
 from sopuli.output.finish_rollover_view import summarise as summarise_finish
@@ -1468,6 +1474,290 @@ def _suspend_one(
             changed=change.changed,
             detail=change.detail,
             status=change.status,
+            overridden=overridden,
+            duration_ms=_elapsed(started),
+        )
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+@account_group.command("expire-password")
+@click.option(
+    "--account",
+    "account",
+    required=True,
+    metavar="NAME",
+    help="The one account to expire. Required: this verb acts on exactly one.",
+)
+@click.option(
+    "--select",
+    "selectors",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Limit to targets carrying this label. Repeatable.",
+)
+@click.option(
+    "--target", "targets", multiple=True, metavar="NAME", help="Limit to this target. Repeatable."
+)
+@click.option(
+    "--group", "groups", multiple=True, metavar="NAME", help="Limit to this group. Repeatable."
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Proceed without asking. Required where `safety.confirm_environments` applies.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Waive guardrails 2 to 5. Never the whitelist, which nothing waives.",
+)
+@global_options
+def account_expire_password(
+    account: str,
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    confirm: bool,
+    force: bool,
+    run: Invocation,
+) -> str:
+    """Make a person change their password at next logon, without setting one.
+
+    `ALTER USER ... PASSWORD EXPIRE`, against an account `personal_accounts:`
+    declares. No password is drawn, sent or shown, so there is nothing to
+    deliver and nothing that could leak -- which is why this is its own verb
+    rather than a flag on `reset-password`.
+
+    **An open rollover window is closed first** (#525). Expiring does not close
+    one: measured, the old password keeps authenticating through the window and
+    can be used to set the next one. So the verb issues `EXPIRE PASSWORD
+    ROLLOVER PERIOD`, then the expiry. Somebody who knows only the old password
+    then needs a reset rather than a self-service change.
+
+    **One account, named on the command line**, and a predicate in
+    `personal_accounts:` never widens it -- `account suspend`'s rules. The
+    guardrails are the ones every mutating verb uses, and `--force` waives
+    checks 2 to 5 and never the whitelist.
+
+    **Idempotent.** An account already expired with no window open reports no
+    change and issues nothing. `EXPIRED(GRACE)` is not already expired: the
+    password still logs in until this runs. A lock of either kind is left alone.
+
+    It writes no reset record and takes no advisory lock: it delivers nothing,
+    so there is nothing for either to protect.
+
+    Help text stays ASCII throughout, which is P4's rule.
+    """
+    document = run.document
+    action = "expiring a password"
+    refuse_if_readonly(run.resolved, action=action)
+
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = filter_estate(run.config, selection)
+    document.selection = selection.as_json() or None
+    document.diagnostics.extend(config_diagnostics(config))
+
+    run = _with_estate_safety(run, config)
+    refuse_if_readonly(run.resolved, action=action, estate=config)
+
+    reached = config.expanded_targets
+    plan = plan_builder.build_for_accounts(
+        config, [(account, target.name) for target in reached], intent=[PASSWORD_EXPIRE]
+    )
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
+    document.plan = plan.as_json()
+    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
+
+    if not reached:
+        document.finish(ExitCode.SUCCESS, Summary())
+        return render_plan(plan, noun="account") + "\n\nnothing to expire"
+
+    found = [
+        _expire_one(target, account, run, config, force=force, preview=run.dry_run)
+        for target in reached
+    ]
+
+    document.results = [record.as_json() for record in found]
+    states = [record.state for record in found]
+    changed = sum(1 for record in found if record.changed)
+    document.finish(_expire_exit(states), summarise_expire(states, changed=changed))
+
+    header = render_plan(plan, noun="account")
+    body = render_expire(
+        [
+            (record.account, record.target, record.state, record.status, record.detail)
+            for record in found
+        ],
+        changed=changed,
+        preview=run.dry_run,
+        would_expire=sum(1 for one in found if one.would_expire) if run.dry_run else None,
+    )
+    return f"{header}\n\n{body}"
+
+
+@dataclass(frozen=True)
+class _Expired:
+    """One (account, target) after `account expire-password` has looked at it."""
+
+    account: str
+    target: str
+    state: str
+    changed: bool
+    detail: str | None = None
+    #: ``ACCOUNT_STATUS`` as it was **read**, before anything was issued.
+    status: str | None = None
+    #: One ``(kind, applied, detail)`` per statement the driver considered. Empty
+    #: for a row that never reached it.
+    actions: tuple[tuple[str, bool, str | None], ...] = ()
+    overridden: tuple[guardrails.Refusal, ...] = ()
+    #: Under ``--dry-run``, whether this row cleared every gate. ``_Suspended``'s
+    #: rule: one field for "would have" and "did" would blur the two.
+    would_expire: bool = False
+    duration_ms: int | None = None
+    error: Error | None = None
+
+    def as_json(self) -> dict[str, Any]:
+        return build_expire_result(
+            self.account,
+            self.target,
+            state=self.state,
+            changed=self.changed,
+            actions=self.actions,
+            detail=self.detail,
+            status=self.status,
+            overridden=self.overridden,
+            duration_ms=self.duration_ms,
+            error=self.error,
+        )
+
+
+def _expire_exit(states: Sequence[str]) -> ExitCode:
+    """Exit 4 where a target could not be reached, 0 otherwise -- `suspend`'s rule."""
+    failed = set(states) - {expire.EXPIRED, expire.SKIPPED, expire.ACCOUNT_MISSING}
+    return ExitCode.PARTIAL if failed else ExitCode.SUCCESS
+
+
+def _expire_detail(changes: Sequence[AccountChange]) -> str | None:
+    """The row's one-line detail: what was done, or why nothing was.
+
+    The statements that were issued, in order; where none was, the expiry's own
+    reason, because "the password is already expired" is the answer and "no
+    rollover window is open" is only half of it.
+    """
+    done = [change.detail for change in changes if change.changed and change.detail]
+    if done:
+        return "; ".join(done)
+    return next((change.detail for change in changes if change.action == PASSWORD_EXPIRE), None)
+
+
+def _expire_one(
+    target: ExpandedTarget,
+    account: str,
+    run: Invocation,
+    config: Config,
+    *,
+    force: bool,
+    preview: bool,
+) -> _Expired:
+    """One target: read the account, decide, and expire it or say why not.
+
+    ``_suspend_one``'s shape: the state is read before anything is decided, and
+    under ``--dry-run`` the read happens and the statements do not.
+    """
+    started = time.monotonic()
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+            state = session.describe_user(account)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            return _Expired(
+                account=account,
+                target=target.name,
+                state=check_states.ERROR,
+                changed=False,
+                detail=reported.message,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
+
+        decision = expire.decide(
+            state, config=config, account=account, target=target.name, force=force
+        )
+        status = state.status if state is not None else None
+        overridden = decision.review.overridden if decision.review is not None else ()
+        if not decision.proceed:
+            return _Expired(
+                account=account,
+                target=target.name,
+                state=decision.state,
+                changed=False,
+                detail=decision.detail,
+                status=status,
+                overridden=overridden,
+                duration_ms=_elapsed(started),
+            )
+
+        if preview:
+            return _Expired(
+                account=account,
+                target=target.name,
+                state=decision.state,
+                changed=False,
+                detail=f"{decision.detail}; would be expired",
+                status=status,
+                overridden=overridden,
+                would_expire=True,
+                duration_ms=_elapsed(started),
+            )
+
+        try:
+            changes = session.expire_password(account)
+        except PartialAccountChangeError as error:
+            # The window closed and the expiry failed. Still an error, and
+            # still exit 4, but the row says what did happen: `changed` is true
+            # and the close is reported as applied (Copilot's review of #527).
+            reported = _as_error(error)
+            done = tuple((one.action, one.changed, one.detail) for one in error.completed)
+            return _Expired(
+                account=account,
+                target=target.name,
+                state=check_states.ERROR,
+                changed=True,
+                detail=f"{_expire_detail(error.completed)}; then: {reported.message}",
+                status=status,
+                actions=(*done, (PASSWORD_EXPIRE, False, reported.message)),
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            return _Expired(
+                account=account,
+                target=target.name,
+                state=check_states.ERROR,
+                changed=False,
+                detail=reported.message,
+                status=status,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
+
+        return _Expired(
+            account=account,
+            target=target.name,
+            state=expire.EXPIRED,
+            changed=any(change.changed for change in changes),
+            detail=_expire_detail(changes),
+            status=changes[0].status if changes else status,
+            actions=tuple((change.action, change.changed, change.detail) for change in changes),
             overridden=overridden,
             duration_ms=_elapsed(started),
         )

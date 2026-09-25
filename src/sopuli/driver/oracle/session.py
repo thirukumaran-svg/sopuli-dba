@@ -104,6 +104,7 @@ from sopuli.driver.protocol import (
     ChangeResult,
     Credential,
     DriverError,
+    PartialAccountChangeError,
     PrivilegeAudit,
     Scope,
     UnsupportedCapabilityError,
@@ -770,7 +771,17 @@ class OracleSession:
                 ),
             )
 
-        return (self._expire_close_window(state), self._expire(state))
+        closed = self._expire_close_window(state)
+        try:
+            expired = self._expire(state)
+        except DriverError as error:
+            # The close has committed, and it is the half that matters: the old
+            # password is already dead. Reporting the account as untouched would
+            # hide that, so the failure carries what already happened.
+            if closed.changed:
+                raise PartialAccountChangeError(error, completed=(closed,)) from error
+            raise
+        return (closed, expired)
 
     def _expire_close_window(self, state: UserState) -> AccountChange:
         """Statement 1 -- end the window, only where one is open now.
