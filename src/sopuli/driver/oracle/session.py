@@ -70,6 +70,7 @@ from sopuli.driver.oracle.statements import (
     Statement,
     alter_user_password,
     alter_user_profile,
+    expire_password,
     finish_rollover,
     lock_account,
     unlock_account,
@@ -87,7 +88,9 @@ from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
     ACCOUNT_UNLOCK,
     ATTRIBUTE_SET,
+    EXPIRE_PASSWORD,
     OFFLINE_VERIFY,
+    PASSWORD_EXPIRE,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
     PROFILE_MANAGEMENT,
@@ -737,6 +740,87 @@ class OracleSession:
             changed=True,
             status=state.status,
             detail="rollover window closed; the old password no longer works",
+        )
+
+    def expire_password(self, account: str) -> tuple[AccountChange, ...]:
+        """Close an open window, then expire: #525's two statements, one read.
+
+        **One `describe_user` for both decisions**, for :meth:`reset_password`'s
+        reason: two reads are two chances to see two different states.
+
+        The conditions and the measurements behind them are
+        :meth:`~sopuli.driver.protocol.Session.expire_password`'s. What is here
+        is the order of refusals -- read-only, capability, existence -- and every
+        one of them lands before the first statement is issued.
+
+        ``state.expired`` already excludes ``EXPIRED(GRACE)`` (#309), which is
+        exactly the reading this needs: a grace-period password still logs in,
+        so expiring it is a change rather than a no-op.
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        require_capability(self.scope(), EXPIRE_PASSWORD, target=self.target.name)
+
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'account "{account}" does not exist on this target',
+                hint=(
+                    "the tool does not create accounts (Q8); nothing was expired, and the "
+                    "account name is worth checking against the estate"
+                ),
+            )
+
+        return (self._expire_close_window(state), self._expire(state))
+
+    def _expire_close_window(self, state: UserState) -> AccountChange:
+        """Statement 1 -- end the window, only where one is open now.
+
+        Keyed on ``rollover_active`` alone, unlike :meth:`_reset_close_window`,
+        which also closes where the profile merely grants a window. The reset
+        needs the wider test because its own ``IDENTIFIED BY`` opens a window; a
+        bare ``PASSWORD EXPIRE`` opens none (measured, #525 E6), so a profile
+        that grants one with none open has nothing to close.
+
+        ``rollover_active`` is read from the status, so it also catches the
+        stale-window case :meth:`_reset_close_window` documents -- a window that
+        outlived its profile's grant still reads ``IN ROLLOVER``.
+        """
+        if not state.rollover_active:
+            return AccountChange(
+                ROLLOVER_FINISH,
+                changed=False,
+                status=state.status,
+                detail="no rollover window is open",
+            )
+        self._issue(finish_rollover(Identifier(state.name), scope=self.scope()))
+        return AccountChange(
+            ROLLOVER_FINISH,
+            changed=True,
+            status=state.status,
+            detail="rollover window closed; the old password no longer works",
+        )
+
+    def _expire(self, state: UserState) -> AccountChange:
+        """Statement 2 -- the expiry, unless the password is already expired.
+
+        Read from the state taken before statement 1, which is safe: closing a
+        window changes the ``IN ROLLOVER`` component and never the ``EXPIRED``
+        one (measured, #525 E8 and E9).
+        """
+        if state.expired:
+            return AccountChange(
+                PASSWORD_EXPIRE,
+                changed=False,
+                status=state.status,
+                detail="the password is already expired",
+            )
+        self._issue(expire_password(Identifier(state.name), scope=self.scope()))
+        was = state.status.lower()
+        return AccountChange(
+            PASSWORD_EXPIRE,
+            changed=True,
+            status=state.status,
+            detail=f"account was {was}; password expired",
         )
 
     def require_no_rollover_window(self, account: str) -> None:

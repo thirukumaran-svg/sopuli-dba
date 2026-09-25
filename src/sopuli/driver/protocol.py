@@ -240,6 +240,16 @@ PASSWORD_SET = "password_set"
 #: PERIOD`` (UC-1 §6.3, UC-2 §4.3).
 ROLLOVER_FINISH = "rollover_finish"
 
+#: Expire an account's password without setting one: the bare
+#: ``ALTER USER … PASSWORD EXPIRE`` (UC-2 §2, #525).
+#:
+#: Its own kind rather than :data:`PASSWORD_SET`, because no password is set:
+#: the seen reset's ``IDENTIFIED BY … PASSWORD EXPIRE`` sets one and reports as
+#: that, and a reader who met ``password_set`` on a verb that draws nothing would
+#: be told something false. Like :data:`ACCOUNT_LOCK` before its verb shipped, it
+#: is not in the run schema's ``action_kind`` enum until something emits it.
+PASSWORD_EXPIRE = "password_expire"
+
 #: What an account verb reports as, and the tuple exists for the reason
 #: :data:`ATTRIBUTE_KINDS` does -- so a verb cannot report a kind without a
 #: renderer noticing.
@@ -248,8 +258,9 @@ ROLLOVER_FINISH = "rollover_finish"
 #: statements as one operation (UC-2 §4.1) and reports each as its own row. That
 #: is `apply_attributes`' rule read for a verb: a row per statement the operation
 #: *considered*, so an account that was not locked says so rather than being
-#: absent from the answer.
-ACCOUNT_ACTIONS = (ACCOUNT_LOCK, ACCOUNT_UNLOCK, PASSWORD_SET, ROLLOVER_FINISH)
+#: absent from the answer. The fifth arrived with `expire-password` (#525), which
+#: reports the same way over two statements.
+ACCOUNT_ACTIONS = (ACCOUNT_LOCK, ACCOUNT_UNLOCK, PASSWORD_SET, ROLLOVER_FINISH, PASSWORD_EXPIRE)
 
 #: The kinds an :class:`AttributeChange` reports as, in the order
 #: :meth:`Session.apply_attributes` enforces them.
@@ -918,6 +929,52 @@ class Session(Protocol):
         ``expire`` is true. The refusal belongs at plan time, before a password
         has been drawn or delivered, and this call raises it too rather than
         trusting that they did.
+        """
+        ...
+
+    def expire_password(self, account: str) -> tuple[AccountChange, ...]:
+        """Force ``account`` to change its password at next logon (UC-2 §2, #525).
+
+        Two statements, each conditional on the one state the driver reads first,
+        and returned as one :class:`AccountChange` per statement *considered*, in
+        this order -- :meth:`reset_password`'s rule:
+
+        1. **end an open rollover window** (:data:`ROLLOVER_FINISH`), only where
+           one is open;
+        2. **expire the password** (:data:`PASSWORD_EXPIRE`), only where it is
+           not already expired.
+
+        **The window is closed because expiring does not close it** (#525, option
+        b). Measured on 26ai Free 23.26.2.0.0: expiring an account with an open
+        window leaves ``EXPIRED & IN ROLLOVER``, and the *old* password still
+        answers ``ORA-28001`` -- it authenticates, and it is itself a way to set
+        the next one. Closing first kills it (``ORA-01017``). It is the reset's
+        default (H4, #455) for the reason given there: the only holder of the old
+        password is the person whose account this is.
+
+        **Close first, then expire, and the order is about failure.** Both orders
+        reach plain ``EXPIRED`` (measured). If the second statement fails, close
+        then expire leaves ``OPEN`` with the old password already dead, while
+        expire then close would leave option (a)'s state by accident.
+
+        **Only an open window is closed, not a profile that grants one.** The
+        bare expiry sets no password and so opens no window -- measured: on a
+        rollover profile with none open it leaves plain ``EXPIRED``. That is where
+        this differs from the reset, whose own ``IDENTIFIED BY`` opens one.
+
+        **Idempotent** (invariant 9). The converged state is expired with no
+        window open. Oracle accepts a second ``PASSWORD EXPIRE`` silently
+        (measured), so the driver issues nothing where the account is already
+        there. ``EXPIRED(GRACE)`` is **not** already expired: the password still
+        logs in, and expiring it is a real change (measured).
+
+        **A lock is left alone, either kind.** Expiry and a lock are independent
+        components of the status (measured: ``LOCKED`` becomes
+        ``EXPIRED & LOCKED``), and this verb unlocks nothing -- the reset is
+        what does that.
+
+        **Refused on a read-only target before anything is issued**, like every
+        other mutating call here.
         """
         ...
 

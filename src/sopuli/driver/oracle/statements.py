@@ -494,6 +494,30 @@ def lock_account(account: Identifier, *, scope: Scope) -> Statement:
     return Statement(text, redacted=text)
 
 
+def expire_password(account: Identifier, *, scope: Scope) -> Statement:
+    """``ALTER USER "…" PASSWORD EXPIRE`` -- force a change, set nothing (#525).
+
+    The **bare** form: no ``IDENTIFIED BY``, so no password is drawn, sent or
+    held. That is what separates it from :func:`alter_user_password`'s
+    ``expire`` suffix, which is the seen reset's, and why `account
+    expire-password` needs no delivery method.
+
+    Measured on 26ai Free 23.26.2.0.0 (``sql/oracle/08_expire_password_probe.sql``,
+    twice): ``OPEN`` becomes ``EXPIRED`` and the unchanged password answers
+    ``ORA-28001``. A lock is left alone -- ``LOCKED`` becomes
+    ``EXPIRED & LOCKED`` -- and an open rollover window survives it, which is why
+    the driver closes the window first (see
+    :meth:`~sopuli.driver.protocol.Session.expire_password`).
+
+    Nothing secret is in it, and it is issued directly anyway, for
+    :func:`unlock_account`'s reason. The container clause goes last, as it does
+    after the suffix in :func:`alter_user_password`.
+    """
+    clause = container_clause(account, scope)
+    text = f"ALTER USER {account.quoted()} PASSWORD EXPIRE{clause}"
+    return Statement(text, redacted=text)
+
+
 def finish_rollover(account: Identifier, *, scope: Scope) -> Statement:
     """``ALTER USER "…" EXPIRE PASSWORD ROLLOVER PERIOD`` -- end the window now.
 

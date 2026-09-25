@@ -28,6 +28,7 @@ from sopuli.driver.oracle.statements import (
     alter_user_password,
     alter_user_profile,
     container_clause,
+    expire_password,
     lock_account,
     unlock_account,
 )
@@ -442,6 +443,41 @@ def test_the_lock_takes_the_same_container_clause_as_the_password() -> None:
 
     with pytest.raises(ContainerScopeError):
         lock_account(COMMON, scope=PDB)
+
+
+# ------------------------------------------------------------------ expiring ---
+
+
+def test_the_expiry_is_the_bare_ddl_and_nothing_else() -> None:
+    """`account expire-password` (#525): no `IDENTIFIED BY`, so no password at all."""
+    assert (
+        expire_password(ACCOUNT, scope=PDB).reveal() == 'ALTER USER "ACME_WEB_USER" PASSWORD EXPIRE'
+    )
+
+
+def test_the_expiry_is_never_a_plsql_block() -> None:
+    """Invariant 13 on a statement with nothing to hide -- the habit, again."""
+    sql = expire_password(ACCOUNT, scope=PDB).reveal()
+
+    assert sql.startswith("ALTER USER ")
+    assert not WRAPPERS.search(structure(sql))
+    assert not BINDS.search(structure(sql))
+    assert "IDENTIFIED" not in sql
+
+
+def test_the_expiry_has_nothing_to_redact() -> None:
+    statement = expire_password(ACCOUNT, scope=PDB)
+
+    assert statement.redacted == statement.reveal()
+    assert REDACTED not in str(statement)
+
+
+def test_the_expiry_takes_the_container_clause_last() -> None:
+    """`CONTAINER=ALL` is the last thing Oracle accepts on this statement."""
+    assert expire_password(COMMON, scope=ROOT).reveal().endswith(" PASSWORD EXPIRE" + CONTAINER_ALL)
+
+    with pytest.raises(ContainerScopeError):
+        expire_password(COMMON, scope=PDB)
 
 
 # ----------------------------------------------------------------- unlocking ---

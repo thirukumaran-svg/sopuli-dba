@@ -293,6 +293,16 @@ class _Session:
             ),
         )
 
+    def expire_password(self, account: str) -> tuple[protocol.AccountChange, ...]:
+        return (
+            protocol.AccountChange(
+                protocol.PASSWORD_EXPIRE,
+                changed=True,
+                status="OPEN",
+                detail="account was open; password expired",
+            ),
+        )
+
     def require_no_rollover_window(self, account: str) -> None:
         return None
 

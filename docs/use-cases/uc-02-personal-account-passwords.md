@@ -1,10 +1,11 @@
 # UC-2 — Personal account passwords: reset and hand over
 
-Status: draft / sketch. **Almost nothing here is built, and much of it is not
-decided** — §9 lists what is open, and each open question is a `decision` issue.
-The exceptions, and they are the whole of what an operator can run today:
-`personal_accounts:` (#467) and **`sopuli account suspend`** (#463). No reset, no
-`expire-password`, no `account list`.
+Status: partly built. §9 lists what is still open, and each open question is a
+`decision` issue. What an operator can run today: `personal_accounts:` (#467),
+**`sopuli account suspend`** (#463), **`sopuli account list`** (#490), and
+**`sopuli account reset-password`** on the seen path (#441) and the default unseen
+one (`vault_wrapped`, #444). `expire-password` has its driver half (#525) and no
+verb yet.
 Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
@@ -103,9 +104,9 @@ prompt — and it holds unchanged now that the answer is a different key.
 
 | Command | What it does | Mutates |
 |---|---|---|
-| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. **Built, and refused**: no unseen method is implemented (#444-#447), so a file naming one is refused at plan time on exit 5 rather than after the password has changed | yes |
+| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. **Built** for `vault_wrapped` (#444); a file naming an unseen method that is not implemented yet (#445-#447, `smtp_encrypted`) is refused at plan time on exit 5, before the password changes | yes |
 | `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, show it once — after confirmation. **Built** (#441), under §6.5's five guards | yes |
-| `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password — "make them change it" | yes |
+| `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password — "make them change it". Closes an open rollover window first. **Driver built** (#525); the verb is not | yes |
 | `sopuli account list` | resolve the declaration — names, or a predicate over a profile or role — and report what it matched, with each account's state. Reads no password and writes none (H1, #449) | no |
 | any of the mutating verbs, under `--dry-run` | prints the plan and never a password (invariant 8, which binds on every one of them — not the resets alone) | no |
 
@@ -132,6 +133,46 @@ somewhere to deliver it, while expiring one needs neither a password nor a
 delivery method. As a flag it would leave the reset's delivery arguments
 meaningless in half its invocations, which is how a verb acquires options that are
 errors in most combinations.
+
+**It closes an open rollover window before it expires** — #525, option (b),
+decided rather than inherited. `sql/oracle/08_expire_password_probe.sql` measured
+the bare statement on 26ai Free 23.26.2.0.0, twice. Expiring an account with a
+window open leaves `EXPIRED & IN ROLLOVER`, and the **old** password still answers
+`ORA-28001`: it authenticates, and it is itself a way to set the next one. That is
+§4.3's Q7 finding again, now on the form that sets no password. Closing first
+kills it (`ORA-01017`), which is the reset's default for the reason §4.3 gives:
+the only holder of the old password is the person whose account this is.
+
+Four things follow from that, and each is measured or decided rather than assumed:
+
+- **Close, then expire.** Both orders end in plain `EXPIRED`. They differ only
+  when the second statement fails: close-then-expire leaves `OPEN` with the old
+  password already dead, while the reverse would leave option (a)'s state by
+  accident.
+- **Only an open window is closed**, not a profile that merely grants one. A bare
+  expiry sets no password and so opens no window; on a rollover profile with none
+  open it leaves plain `EXPIRED`. The reset closes on the wider test because its
+  own `IDENTIFIED BY` opens one.
+- **The converged state is `EXPIRED` with no window open** (invariant 9). Oracle
+  accepts a second `PASSWORD EXPIRE` silently, so the driver reads the state
+  first. An account at `EXPIRED & IN ROLLOVER` is not converged: the verb closes
+  the window and reports a change. `EXPIRED(GRACE)` is not converged either,
+  because the password still logs in; expiring it moves the expiry date to now.
+- **A lock is left alone, either kind.** `LOCKED` becomes `EXPIRED & LOCKED`.
+  This verb unlocks nothing.
+
+**The cost, stated rather than buried:** somebody who knows only the old password
+loses the self-service change the window would have given them, and needs a reset.
+The benefit is that the safety does not depend on a release nobody has measured.
+A close with no window open is accepted silently (§4.3), so if 21c (#461) or 19c
+already kill the old password on expiry, the close costs one no-op statement.
+
+**It writes no reset record and takes no reset lock** (#525), the same as
+`account suspend`. §3.1's record journals resets and where they were delivered,
+and §3.3's lock stops two deliveries overwriting each other. An expiry draws
+nothing and delivers nothing, so the run document is its record. **There is no
+flag to keep the window**, for the reason §4.3's promised flag is still unnamed:
+H3 invented no flags for an operation nobody had asked for.
 
 **Two more verbs, and neither is specified here.** Disabling an account — the
 offboarding case — is **`sopuli account suspend`**. It is *named* rather than
