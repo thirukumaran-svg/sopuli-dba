@@ -37,6 +37,7 @@ import re
 from pathlib import Path
 
 from sopuli.driver.oracle.privileges import (
+    PREDICATE_READS,
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     ROOT_ONLY_READS,
@@ -126,7 +127,7 @@ def test_the_script_issues_nothing_the_tool_did_not_ask_for() -> None:
     over-granting, and it would be reporting it about an account that did exactly
     what the documentation said.
     """
-    accounted = required() | frozenset(ROOT_ONLY_READS) | OPTIONAL
+    accounted = required() | frozenset(ROOT_ONLY_READS) | frozenset(PREDICATE_READS) | OPTIONAL
 
     assert granted() <= accounted, f"in the script and not in §2: {sorted(granted() - accounted)}"
 
@@ -137,6 +138,15 @@ def test_the_root_only_grant_is_in_the_script_and_not_in_the_default_set() -> No
     a PDB install would be reported as short of a grant §2 never gives it there."""
     assert frozenset(ROOT_ONLY_READS) <= granted()
     assert not frozenset(ROOT_ONLY_READS) & required()
+
+
+def test_the_predicate_grant_is_in_the_script_and_not_in_the_default_set() -> None:
+    """#531. `DBA_ROLES` is granted by §2 and installed by the script, and it is
+    not a required read: `creds apply` refuses on a missing one, and an estate
+    installed before #531 must keep rotating without a grant only `account list`
+    uses. The `role_lookup` capability gates that verb instead."""
+    assert frozenset(PREDICATE_READS) <= granted()
+    assert not frozenset(PREDICATE_READS) & required()
 
 
 def test_the_optional_grants_are_optional_on_both_sides() -> None:

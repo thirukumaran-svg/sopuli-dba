@@ -30,6 +30,12 @@
 --         one the sixth COLUMN/NEW_VALUE line exists for. The report section
 --         lists SYS.V_$PWFILE_USERS under Y and not under N.
 --
+--         SELECT ON SYS.DBA_ROLES added 2026-09-25 (#531) and run on 26ai Free
+--         23.26.2.0.0 in all three modes, through
+--         tests/driver/test_oracle_install_script.py, and by hand in PDB mode;
+--         section 7's report lists it. Untried on 21c, 18c and 11g, where the
+--         view exists and the line is the same shape as its neighbours.
+--
 -- Run as SYS AS SYSDBA or an equivalent DBA.
 --
 -- Pick a mode:
@@ -262,6 +268,10 @@ GRANT ALTER USER     TO &eff_user&cont_all;
 -- refuses to describe an account at all, rather than reading "cannot see any
 -- roles" as "holds no admin role" — which would turn a safety check into a
 -- silent pass.
+--
+-- DBA_ROLES is what tells a `role:` predicate naming no role from one that
+-- matches nobody (#531). Without it `account list` refuses role predicates
+-- (capability role_lookup); nothing in UC-1 reads it.
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT [3] dictionary reads
@@ -271,6 +281,8 @@ PROMPT   SELECT ON DBA_PROFILES
 GRANT SELECT ON SYS.DBA_PROFILES   TO &eff_user&cont_all;
 PROMPT   SELECT ON DBA_ROLE_PRIVS
 GRANT SELECT ON SYS.DBA_ROLE_PRIVS TO &eff_user&cont_all;
+PROMPT   SELECT ON DBA_ROLES
+GRANT SELECT ON SYS.DBA_ROLES      TO &eff_user&cont_all;
 PROMPT   SELECT ON V$DATABASE
 GRANT SELECT ON SYS.V_$DATABASE    TO &eff_user&cont_all;
 PROMPT   SELECT ON V$INSTANCE

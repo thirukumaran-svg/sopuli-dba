@@ -131,6 +131,13 @@ EXPIRE_PASSWORD = "expire_password"
 #: Lock state can be read and set.
 ACCOUNT_LOCK_STATE = "account_lock_state"
 
+#: Which roles exist can be read, which is what tells a misspelled ``role:``
+#: predicate from one that matches nobody (UC-2 §2). Oracle: ``SELECT ON
+#: SYS.DBA_ROLES``, in §2's grant set since #531. An estate installed before
+#: that reports it absent, and `account list` refuses a role predicate there at
+#: plan time rather than calling a real role misspelled.
+ROLE_LOOKUP = "role_lookup"
+
 #: Every capability P1 names. ``tests/driver/test_protocol.py`` checks this
 #: against the table in ``00-principles.md`` itself, so a capability added to the
 #: document and not to the code -- or the reverse -- fails rather than drifts.
@@ -143,6 +150,7 @@ CAPABILITIES = frozenset(
         PASSWORD_REUSE_POLICY,
         EXPIRE_PASSWORD,
         ACCOUNT_LOCK_STATE,
+        ROLE_LOOKUP,
     }
 )
 

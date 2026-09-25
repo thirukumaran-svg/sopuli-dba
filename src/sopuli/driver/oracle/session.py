@@ -94,6 +94,7 @@ from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
     PROFILE_MANAGEMENT,
+    ROLE_LOOKUP,
     ROLLOVER_FINISH,
     SKIPPED,
     UNAVAILABLE,
@@ -410,12 +411,28 @@ class OracleSession:
     def resolve_role(self, role: str) -> str | None:
         """How this database spells ``role``, or ``None`` if it has no such one.
 
-        **No capability gate**, unlike :meth:`resolve_profile`. ``DBA_ROLES`` is
-        in ``02-oracle-privileges.md`` §2's grant set unconditionally, and
-        nothing here is a *profile* operation -- gating it on
-        ``profile_management`` would refuse a role predicate on a target whose
-        only shortcoming is about profiles.
+        **Gated on** :data:`~sopuli.driver.protocol.ROLE_LOOKUP`, its own
+        capability rather than ``profile_management``: nothing here is a profile
+        operation, and a target whose only shortcoming is about profiles must
+        not refuse a role predicate.
+
+        This used to say ``DBA_ROLES`` was in ``02-oracle-privileges.md`` §2's
+        grant set. It was not (#531), so on a correctly installed service
+        account the read was ``ORA-00942``, which read as "no such role", and
+        every ``role:`` predicate in `account list` was refused as a
+        misspelling. §2 grants it now, and an estate installed before that is
+        refused here, at plan time, naming the grant.
         """
+        require_capability(
+            self.scope(),
+            ROLE_LOOKUP,
+            target=self.target.name,
+            hint=(
+                "the service account cannot read DBA_ROLES, so a role that matches nobody "
+                "cannot be told from one that does not exist: GRANT SELECT ON SYS.DBA_ROLES "
+                "to it (02-oracle-privileges.md section 2, or sql/oracle/00_install.sql)"
+            ),
+        )
         with self.connection.cursor() as cursor:
             return resolve_role(cursor, role)
 

@@ -52,6 +52,7 @@ from sopuli.driver.protocol import (
     PASSWORD_REUSE_POLICY,
     PASSWORD_ROLLOVER,
     PROFILE_MANAGEMENT,
+    ROLE_LOOKUP,
     UNKNOWN,
     DriverError,
     Scope,
@@ -136,6 +137,7 @@ PROBES: dict[str, str] = {
     PASSWORD_REUSE_POLICY: (
         "select count(*) from dba_profiles where resource_name = 'PASSWORD_REUSE_MAX'"
     ),
+    ROLE_LOOKUP: "select count(*) from dba_roles where rownum = 1",
 }
 
 #: Capabilities with nothing to ask, and why.

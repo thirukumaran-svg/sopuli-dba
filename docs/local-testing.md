@@ -1187,7 +1187,7 @@ client
   reaches           19.1 and later
 
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7
 
 1 note:
   free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
@@ -1231,7 +1231,7 @@ a laptop minutes adrift will take over locks that have not expired, or wait on
 ones that have.
 
 Then `--output json` for the same run — `targets[].scope.capabilities` names the
-six the driver probed for, which is what `--strategy rollover` branches on in §10.
+seven the driver probed for, which is what `--strategy rollover` branches on in §10.
 
 ### 9a. `auth: { method: vault }` — the unattended admin source
 
@@ -1261,7 +1261,7 @@ targets:
 
 ```
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7
 ```
 
 Exit 0, and **no `SOPULI-W022` note** — which is the cheapest way to see what
@@ -1318,7 +1318,7 @@ dramatic, which makes the point:
 
 ```
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7
   free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
   free-pdb: over-granted, and the tool needs none of it: ALTER PROFILE, ALTER SYSTEM,
     BECOME USER, CREATE USER, DBA, DROP USER, GRANT ANY DATA ROLE, GRANT ANY OBJECT
@@ -3607,6 +3607,45 @@ tool asks whether the profile exists as a separate question — an empty list ca
 tell the two apart, and only one of them is somebody's mistake.
 
 The same pair holds for `role:`.
+
+#### A role predicate on a service account installed before #531
+
+A `role:` rule needs to know which roles **exist**, and that answer lives in
+`DBA_ROLES`. §2 has granted it since #531. Before that it did not, whatever the
+code said, so a correctly installed service account could not tell a real role
+from a typo. Install one with the script, then take the grant away to rebuild the
+older estate:
+
+```bash
+docker cp sql/oracle/00_install.sql sopuli-test-oracle-free-1:/tmp/00_install.sql
+docker exec -i sopuli-test-oracle-free-1   sqlplus -S "sys/sopuli-test@localhost:1521/FREEPDB1 as sysdba"   @/tmp/00_install.sql PDB acme_list_svc USERS N N N
+```
+
+Point a target at it (`admin: { username: ACME_LIST_SVC, auth: { method: env,
+password_env: SOPULI_SVC_PASSWORD } }`) with `role: ACME_DEV_TEAM` declared. With
+the grant, the list is what it is as `SYSTEM`:
+
+```
+ACCOUNT       TARGET        DECLARED BY           STATUS  DB_PW_CHANGED  RESET_AT
+ACME_DEV_BOB  free-pdb-svc  role 'ACME_DEV_TEAM'  OPEN    2026-09-25     -
+SYS           free-pdb-svc  role 'ACME_DEV_TEAM'  OPEN    -              -
+
+2 declared accounts, 2 on the selected targets
+```
+
+Then `revoke select on sys.dba_roles from acme_list_svc` as `SYS`:
+
+```
+sopuli: target "free-pdb-svc" does not support role_lookup
+  hint: the service account cannot read DBA_ROLES, so a role that matches nobody cannot be told from one that does not exist: GRANT SELECT ON SYS.DBA_ROLES to it (02-oracle-privileges.md section 2, or sql/oracle/00_install.sql)
+```
+
+Exit **5**, the capability exit code. Before #531 the same run said `target
+'free-pdb-svc' has no role 'ACME_DEV_TEAM'` and exited 1, blaming the file for
+the missing grant. `doctor` shows it too: that target reports 5 capabilities
+rather than 6, with `role_lookup` absent. Nothing else changes. `creds` and the
+mutating `account` verbs never read `DBA_ROLES`, so an older install keeps
+working for everything but this listing.
 
 #### The thing a predicate will teach you
 

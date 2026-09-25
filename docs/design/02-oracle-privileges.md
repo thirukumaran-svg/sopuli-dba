@@ -143,11 +143,13 @@ GRANT ALTER USER     TO sopuli_svc;
 GRANT SELECT ON SYS.DBA_USERS      TO sopuli_svc;
 GRANT SELECT ON SYS.DBA_PROFILES   TO sopuli_svc;
 GRANT SELECT ON SYS.DBA_ROLE_PRIVS TO sopuli_svc;
+GRANT SELECT ON SYS.DBA_ROLES      TO sopuli_svc;
 GRANT SELECT ON SYS.V_$DATABASE    TO sopuli_svc;
 GRANT SELECT ON SYS.V_$INSTANCE    TO sopuli_svc;
 ```
 
-`SELECT_CATALOG_ROLE` covers all four in one grant and is a reasonable
+`SELECT_CATALOG_ROLE` covers all six in one grant (read off `DBA_TAB_PRIVS` on
+26ai, 2026-09-25) and is a reasonable
 convenience choice — it reaches the `DBA_*` and `V$` views but **not** base
 tables such as `SYS.USER$`. The explicit list is the documented default because
 it makes a privilege review trivial; the role is fine if your site prefers it.
@@ -186,6 +188,22 @@ reports `ERROR` with category `authorization`, `ORA-00942` and a hint naming
 this grant, and exits 1. `ORA-00904` is still the one code that narrows the
 query, since a missing column is how a release's `DBA_USERS` shape is found.
 
+**`DBA_ROLES` joined this list with #531, and nothing in UC-1 reads it.** It is
+the one place that says whether a role *exists*, and UC-2 §2 turns on that: a
+`role:` predicate naming no role is a misspelling and is refused, and one naming
+a role that matches nobody is a true empty answer. `resolve_role`'s docstring
+said this view was already granted when it was not. Measured on 26ai, an account
+holding exactly the grants above got `ORA-00942` from it, so `account list`
+refused every role predicate as a misspelling on a correctly installed target.
+
+**An estate installed before #531 is gated, not broken.** `role_lookup` is a
+probed capability (P1), so `account list` refuses a role predicate at plan time,
+exit 5, with the capability, the target and this grant named. It is deliberately
+**not** one of the `doctor --check-privileges` audit's required reads (§3). The
+pre-flight in `creds apply` and `rotate` blocks on a missing required read, and
+adding this one there would stop every older install from rotating over a grant only a UC-2 listing uses. `doctor`
+shows it the capability way instead, as `role_lookup` absent.
+
 **A role-granted `ALTER USER` reads as absent.** `common_users` is probed through
 `USER_SYS_PRIVS`, which shows **direct** grants only — so an account holding
 `ALTER USER` through a role (as `SYSTEM` does) reports the capability absent and
@@ -209,6 +227,7 @@ GRANT ALTER USER     TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.DBA_USERS      TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.DBA_PROFILES   TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.DBA_ROLE_PRIVS TO c##sopuli_svc CONTAINER=ALL;
+GRANT SELECT ON SYS.DBA_ROLES      TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.V_$DATABASE  TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.V_$INSTANCE  TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.V_$PDBS      TO c##sopuli_svc;   -- root only

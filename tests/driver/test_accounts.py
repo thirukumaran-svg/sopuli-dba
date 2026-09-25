@@ -17,9 +17,11 @@ import pytest
 from sopuli.constraints import NAMED, NONE, UNKNOWN
 from sopuli.driver.oracle.accounts import (
     NAME_QUERY,
+    PROFILE_NAME_QUERY,
     PROFILE_QUERY,
     PTIME_QUERY,
     PWFILE_QUERY,
+    ROLE_NAME_QUERY,
     ROLES_QUERY,
     USER_QUERY,
     USER_QUERY_LEGACY,
@@ -30,6 +32,8 @@ from sopuli.driver.oracle.accounts import (
     password_constraints,
     password_file_member,
     resolve_name,
+    resolve_profile,
+    resolve_role,
 )
 from sopuli.driver.protocol import DriverError
 
@@ -308,6 +312,33 @@ def test_resolving_a_name_without_the_grant_raises() -> None:
 
 def test_resolving_a_name_the_database_has_not_got_is_none() -> None:
     assert resolve_name(_Cursor({NAME_QUERY: None}), "acme_no_such_user") is None
+
+
+@pytest.mark.parametrize(
+    ("resolve", "query", "view"),
+    [
+        (resolve_role, ROLE_NAME_QUERY, "DBA_ROLES"),
+        (resolve_profile, PROFILE_NAME_QUERY, "DBA_PROFILES"),
+    ],
+)
+def test_resolving_a_predicate_without_the_grant_raises(
+    resolve: Any, query: str, view: str
+) -> None:
+    """#531. Read through the probes' rule, an ungranted view was "no such role",
+    and the predicate was refused as a misspelling."""
+    with pytest.raises(DictionaryUnreadableError) as raised:
+        resolve(_Cursor({query: _ora("ORA-00942")}), "acme_dev_team")
+
+    assert raised.value.code == "ORA-00942"
+    assert f"GRANT SELECT ON SYS.{view}" in (raised.value.hint or "")
+
+
+@pytest.mark.parametrize(
+    ("resolve", "query"),
+    [(resolve_role, ROLE_NAME_QUERY), (resolve_profile, PROFILE_NAME_QUERY)],
+)
+def test_a_predicate_naming_nothing_is_none(resolve: Any, query: str) -> None:
+    assert resolve(_Cursor({query: None}), "acme_no_such_thing") is None
 
 
 # --------------------------------------------------------------- the columns ---

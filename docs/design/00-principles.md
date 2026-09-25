@@ -135,6 +135,7 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `password_reuse_policy` | Server may reject a generated password | yes (`PASSWORD_REUSE_*`, verify function) |
 | `expire_password` | Force expiry / end rollover | yes |
 | `account_lock_state` | Read and set lock state | yes |
+| `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, §2's grant set since #531 |
 
 A command that needs a capability the target lacks must fail with a distinct exit
 code and a message naming the capability and the target — never a generic error.

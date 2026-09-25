@@ -472,6 +472,20 @@ def _unreadable(error: Exception, view: str) -> DriverError:
     return diagnosis.as_error()
 
 
+def _lookup(cursor: Cursor, statement: str, view: str, **binds: Any) -> Any:
+    """One row of a view §2 grants, or ``None`` where the query found none.
+
+    Not :func:`~sopuli.driver.oracle.capabilities.read`, whose rule is right for
+    a probe and wrong here: a refused grant raises (:func:`_unreadable`) rather
+    than reading as an absence.
+    """
+    try:
+        cursor.execute(statement, binds)
+        return cursor.fetchone()
+    except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+        raise _unreadable(error, view) from error
+
+
 def describe(cursor: Cursor, account: str, *, user_dollar: bool = False) -> UserState | None:
     """One account as the database describes it, or ``None`` if there is none.
 
@@ -641,8 +655,12 @@ def resolve_profile(cursor: Cursor, profile: str) -> str | None:
     genuinely lower-case profile with quotes gets ``None`` here and a refusal
     naming what it looked for, which is the honest outcome: guessing at a second
     spelling would be the tool deciding which of two profiles the file meant.
+
+    ``None`` only where the query answered with no row (#531). A refused grant
+    raises :class:`DictionaryUnreadableError`, because "no such profile" is the
+    refusal a misspelling earns and a missing grant is not one.
     """
-    row = read(cursor, PROFILE_NAME_QUERY, profile=profile.upper())
+    row = _lookup(cursor, PROFILE_NAME_QUERY, "DBA_PROFILES", profile=profile.upper())
     return None if row is None else str(row[0])
 
 
@@ -659,8 +677,13 @@ def resolve_role(cursor: Cursor, role: str) -> str | None:
     consequence follows for a genuinely lower-case quoted role: ``None``, and a
     refusal naming what was looked for, rather than the tool guessing at a second
     spelling.
+
+    ``None`` only where the query answered with no row. A refused grant raises
+    :class:`DictionaryUnreadableError` (#531): read through the capability
+    probes' rule, an ungranted ``DBA_ROLES`` was "no such role", and every
+    ``role:`` predicate was refused as a misspelling.
     """
-    row = read(cursor, ROLE_NAME_QUERY, role=role.upper())
+    row = _lookup(cursor, ROLE_NAME_QUERY, "DBA_ROLES", role=role.upper())
     return None if row is None else str(row[0])
 
 
@@ -904,11 +927,7 @@ def resolve_name(cursor: Cursor, account: str) -> str | None:
     ``None`` only where the query answered with no row. A refused grant raises
     (#521), for :class:`DictionaryUnreadableError`'s reason.
     """
-    try:
-        cursor.execute(NAME_QUERY, {"name": account.upper()})
-        row = cursor.fetchone()
-    except Exception as error:  # noqa: BLE001 -- classified, never swallowed
-        raise _unreadable(error, "DBA_USERS") from error
+    row = _lookup(cursor, NAME_QUERY, "DBA_USERS", name=account.upper())
     return str(row[0]) if row else None
 
 

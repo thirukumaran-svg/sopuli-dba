@@ -50,6 +50,7 @@ import pytest
 from _pytest.outcomes import Failed
 
 from sopuli.driver.oracle.privileges import (
+    PREDICATE_READS,
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     ROOT_ONLY_READS,
@@ -571,7 +572,9 @@ def test_common_install_grants_exactly_what_the_tool_requires(
     assert result.returncode == 0, result.stdout[-2000:]
 
     held = grants_of(container, ROOT, COMMON_SVC)
-    expected = set(REQUIRED_PRIVILEGES) | set(REQUIRED_READS) | set(ROOT_ONLY_READS)
+    expected = (
+        set(REQUIRED_PRIVILEGES) | set(REQUIRED_READS) | set(PREDICATE_READS) | set(ROOT_ONLY_READS)
+    )
     assert held == expected, f"missing={expected - held} over={held - expected}"
 
 
@@ -588,7 +591,7 @@ def test_pdb_install_is_local_and_omits_the_root_only_read(
     assert result.returncode == 0, result.stdout[-2000:]
 
     held = grants_of(container, PDB, LOCAL_SVC)
-    assert held == set(REQUIRED_PRIVILEGES) | set(REQUIRED_READS)
+    assert held == set(REQUIRED_PRIVILEGES) | set(REQUIRED_READS) | set(PREDICATE_READS)
     assert not set(ROOT_ONLY_READS) & held
 
     common = query(container, PDB, f"SELECT common FROM dba_users WHERE username = '{LOCAL_SVC}';")
@@ -610,8 +613,8 @@ def test_noncdb_mode_installs_the_same_local_account(
     """
     result = sqlplus(container, local_connect, f"{scripts}/00_install.sql", "NONCDB", SVC)
     assert result.returncode == 0, result.stdout[-2000:]
-    assert grants_of(container, local_connect, LOCAL_SVC) == set(REQUIRED_PRIVILEGES) | set(
-        REQUIRED_READS
+    assert grants_of(container, local_connect, LOCAL_SVC) == (
+        set(REQUIRED_PRIVILEGES) | set(REQUIRED_READS) | set(PREDICATE_READS)
     )
 
 

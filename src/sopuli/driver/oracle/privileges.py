@@ -206,6 +206,14 @@ REQUIRED_READS = {
     "SELECT ON V_$INSTANCE": "select count(*) from v$instance where rownum = 1",
 }
 
+#: §2 grants these, and **no pre-flight requires them** (#531). ``DBA_ROLES`` is
+#: read only to resolve a ``role:`` predicate in `account list`, which is gated on
+#: the ``role_lookup`` capability instead. Kept out of :data:`REQUIRED_READS`
+#: because `creds apply` and `rotate` refuse on a missing required read, and an
+#: estate installed before #531 must keep rotating without a grant only a UC-2
+#: listing uses.
+PREDICATE_READS = {"SELECT ON DBA_ROLES": "select count(*) from dba_roles where rownum = 1"}
+
 #: §2 grants this one **in the root only**, so its absence in a PDB is the
 #: documented install and not a finding. Kept apart from :data:`REQUIRED_READS`
 #: rather than filtered out of it at the call site, because "not required here"

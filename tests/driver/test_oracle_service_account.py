@@ -47,11 +47,12 @@ from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Targ
 from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.driver.oracle.privileges import (
     PASSWORD_FILE_PRIVILEGES,
+    PREDICATE_READS,
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     audit,
 )
-from sopuli.driver.protocol import Credential
+from sopuli.driver.protocol import ROLE_LOOKUP, Credential, UnsupportedCapabilityError
 from sopuli.secrets import Secret
 
 ADMIN_PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
@@ -139,6 +140,8 @@ def _grants() -> tuple[str, ...]:
     return (
         *(f"grant {privilege} to {ACCOUNT}" for privilege in REQUIRED_PRIVILEGES),
         *(f"grant {grant.replace('ON ', 'ON SYS.')} to {ACCOUNT}" for grant in REQUIRED_READS),
+        # §2 grants these too (#531), though no pre-flight requires them.
+        *(f"grant {grant.replace('ON ', 'ON SYS.')} to {ACCOUNT}" for grant in PREDICATE_READS),
     )
 
 
@@ -265,6 +268,18 @@ def _drop(admin: Any) -> None:
 def _audit(session: Any) -> Any:
     with session.connection.cursor() as cursor:
         return audit(cursor, scope_type=session.scope().type)
+
+
+#: What an estate installed before #531 holds: §2's set without ``DBA_ROLES``.
+#: Revoked rather than never granted so :func:`_grants` stays the one list.
+WITHOUT_ROLE_LOOKUP = f"revoke SELECT ON SYS.DBA_ROLES from {ACCOUNT}"
+
+
+@pytest.fixture
+def installed_before_531(admin: Any, live_oracle: Environment) -> Iterator[Any]:
+    """§2's account as it was before `DBA_ROLES` joined the grant set."""
+    with _installed(admin, live_oracle, WITHOUT_ROLE_LOOKUP) as opened:
+        yield opened
 
 
 # ------------------------------------------------------------- staying quiet ---
@@ -486,3 +501,41 @@ def test_taking_the_optional_grant_is_not_itself_an_over_grant(
     """
     assert _audit(password_file_reader).over_granted == ()
     assert _audit(password_file_reader).missing == ()
+
+
+# ------------------------------------------------------------ role predicates ---
+
+
+def test_a_correct_install_can_tell_a_role_from_a_misspelling(service_account: Any) -> None:
+    """#531. Every other role test runs as `system`, which reads `DBA_ROLES`
+    whatever §2 says -- which is how a correctly installed service account came to
+    refuse every `role:` predicate as a misspelling without a test noticing.
+
+    `CONNECT` is Oracle's own and exists on every release, so the control needs
+    no fixture of its own."""
+    assert service_account.scope().supports(ROLE_LOOKUP)
+    assert service_account.resolve_role("connect") == "CONNECT"
+    assert service_account.resolve_role("acme_no_such_role_at_all") is None
+
+
+def test_an_install_without_the_grant_is_refused_naming_it(installed_before_531: Any) -> None:
+    """The gate: an estate installed before #531 is told what to grant, at plan
+    time and with the capability named (invariant 4), rather than told that a
+    role it can see in SQL*Plus does not exist."""
+    assert not installed_before_531.scope().supports(ROLE_LOOKUP)
+
+    with pytest.raises(UnsupportedCapabilityError) as raised:
+        installed_before_531.resolve_role("connect")
+
+    assert raised.value.capability == ROLE_LOOKUP
+    assert "GRANT SELECT ON SYS.DBA_ROLES" in (raised.value.hint or "")
+
+
+def test_an_install_without_the_grant_still_describes_accounts(
+    installed_before_531: Any,
+) -> None:
+    """The reason the grant is a capability and not a required read: UC-1 reads
+    nothing from `DBA_ROLES`, so an older install keeps working for everything
+    but a role predicate -- and its privilege audit is short of nothing."""
+    assert installed_before_531.describe_user(ACCOUNT) is not None
+    assert _audit(installed_before_531).missing == ()
