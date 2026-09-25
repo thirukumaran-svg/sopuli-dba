@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.66.0](https://github.com/villebase/sopuli-dba/compare/v0.65.0...v0.66.0) (2026-09-25)
+
+
+### Features
+
+* `sopuli account expire-password`, forcing a change without setting a password ([#525](https://github.com/villebase/sopuli-dba/issues/525)) ([#527](https://github.com/villebase/sopuli-dba/issues/527)) ([a05ef27](https://github.com/villebase/sopuli-dba/commit/a05ef276f53f89dbc2534ad42078ba735d2d79f3))
+* **driver:** expire a password without setting one, closing an open window first ([#525](https://github.com/villebase/sopuli-dba/issues/525)) ([#526](https://github.com/villebase/sopuli-dba/issues/526)) ([24dbb8a](https://github.com/villebase/sopuli-dba/commit/24dbb8a3138ba772ea8c9257295ac02b43783f52))
+* **notify:** `notify.method: webhook`, UC-2's shared notify channel ([#442](https://github.com/villebase/sopuli-dba/issues/442)) ([#520](https://github.com/villebase/sopuli-dba/issues/520)) ([6925161](https://github.com/villebase/sopuli-dba/commit/69251615cfd0833de8a601c31d034ebf49761ab7))
+
 ## [0.65.0](https://github.com/villebase/sopuli-dba/compare/v0.64.0...v0.65.0) (2026-09-22)
 
 
