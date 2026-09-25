@@ -42,6 +42,7 @@ from sopuli.apply import Source
 from sopuli.check import (
     ACCOUNT_MISSING,
     DRIFT,
+    ERROR,
     EXPIRED,
     IN_SYNC,
     LOCKED,
@@ -89,6 +90,11 @@ def settled_before_closing(
       nothing to do. Measured on 26ai, issuing the statement anyway is accepted
       silently and changes nothing, so a run that just issued it would report a
       change every night.
+    * **A database that is not open read-write.** ``ERROR``, exit 1 (#521). A
+      physical standby cannot take the ``ALTER USER``, so it is refused here,
+      before the login a close would otherwise spend and before a preview can
+      promise a close that would fail. An **unknown** open mode is not refused,
+      for :func:`~sopuli.driver.oracle.capabilities.require_read_write`'s reason.
     * **A locked or expired account.** Reported as itself. The window is beside
       the point for an account nothing can authenticate as, and closing it would
       be a mutation nobody asked for on an account already needing attention.
@@ -110,6 +116,12 @@ def settled_before_closing(
         )
     if not user.rollover_active:
         return Outcome(IN_SYNC, "no rollover window is open")
+    if scope.read_write is False:
+        return Outcome(
+            ERROR,
+            f"the database is open {scope.open_mode or 'read-only'} and cannot end a "
+            "window; point the target at the primary",
+        )
     if user.locked or user.expired:
         return Outcome(
             LOCKED if user.locked else EXPIRED,

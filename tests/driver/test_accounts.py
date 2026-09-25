@@ -16,6 +16,7 @@ import pytest
 
 from sopuli.constraints import NAMED, NONE, UNKNOWN
 from sopuli.driver.oracle.accounts import (
+    NAME_QUERY,
     PROFILE_QUERY,
     PTIME_QUERY,
     PWFILE_QUERY,
@@ -23,11 +24,14 @@ from sopuli.driver.oracle.accounts import (
     USER_QUERY,
     USER_QUERY_LEGACY,
     USER_QUERY_NO_CHANGE_DATE,
+    DictionaryUnreadableError,
     RolesUnreadableError,
     describe,
     password_constraints,
     password_file_member,
+    resolve_name,
 )
+from sopuli.driver.protocol import DriverError
 
 CHANGED = datetime(2026, 8, 22, 10, 41, 36)
 
@@ -235,6 +239,75 @@ def test_a_missing_account_is_a_state_and_not_an_error() -> None:
     cursor = _Cursor({USER_QUERY: None, USER_QUERY_NO_CHANGE_DATE: None, USER_QUERY_LEGACY: None})
 
     assert describe(cursor, "acme_no_such_user") is None
+
+
+@pytest.mark.parametrize("code", ["ORA-00942", "ORA-01031", "ORA-41900"])
+def test_an_unreadable_dba_users_is_a_missing_grant_and_not_a_missing_account(
+    code: str,
+) -> None:
+    """#521. The probes' `read()` turned these into `None`, and `None` here is
+    `ACCOUNT_MISSING` -- so a service account without the grant reported every
+    account in the estate as absent, and the operator went looking for accounts
+    rather than for a grant."""
+    cursor = _Cursor({USER_QUERY: _ora(code, 'table or view "SYS"."DBA_USERS" does not exist')})
+
+    with pytest.raises(DictionaryUnreadableError) as raised:
+        describe(cursor, "acme_orders_user")
+
+    assert raised.value.code == code
+    assert "DBA_USERS" in raised.value.message, "the server's message is kept"
+    assert "GRANT SELECT ON SYS.DBA_USERS" in (raised.value.hint or "")
+    assert cursor.asked == [USER_QUERY], "a refused grant is not narrowed past"
+
+
+def test_an_unrelated_failure_is_classified_rather_than_called_a_grant() -> None:
+    cursor = _Cursor({USER_QUERY: _ora("ORA-03113", "end-of-file on communication channel")})
+
+    with pytest.raises(DriverError) as raised:
+        describe(cursor, "acme_orders_user")
+
+    assert not isinstance(raised.value, DictionaryUnreadableError)
+    assert raised.value.code == "ORA-03113"
+
+
+def test_an_answered_query_with_no_row_is_not_asked_again() -> None:
+    """The absence is the answer. The narrower shapes ask the same question and
+    cannot change it."""
+    cursor = _Cursor({USER_QUERY: None})
+
+    assert describe(cursor, "acme_no_such_user") is None
+    assert cursor.asked == [USER_QUERY]
+
+
+def test_a_missing_column_on_the_narrowest_shape_is_not_an_absent_account() -> None:
+    """`ORA-00904` narrows only while there is a narrower shape to try. On the
+    last one it means the view is not what any release has, which is a failure
+    rather than an account nobody created."""
+    cursor = _Cursor(
+        {
+            USER_QUERY: _ora("ORA-00904"),
+            USER_QUERY_NO_CHANGE_DATE: _ora("ORA-00904"),
+            USER_QUERY_LEGACY: _ora("ORA-00904", '"EXPIRY_DATE": invalid identifier'),
+        }
+    )
+
+    with pytest.raises(DriverError) as raised:
+        describe(cursor, "acme_orders_user")
+
+    assert raised.value.code == "ORA-00904"
+
+
+def test_resolving_a_name_without_the_grant_raises() -> None:
+    cursor = _Cursor({NAME_QUERY: _ora("ORA-00942")})
+
+    with pytest.raises(DictionaryUnreadableError) as raised:
+        resolve_name(cursor, "acme_orders_user")
+
+    assert raised.value.code == "ORA-00942"
+
+
+def test_resolving_a_name_the_database_has_not_got_is_none() -> None:
+    assert resolve_name(_Cursor({NAME_QUERY: None}), "acme_no_such_user") is None
 
 
 # --------------------------------------------------------------- the columns ---
@@ -566,6 +639,22 @@ def test_unreadable_roles_are_refused_rather_than_reported_as_none_held() -> Non
         describe(cursor, "acme_orders_user")
 
     assert "DBA_ROLE_PRIVS" in (raised.value.hint or "")
+    assert raised.value.code == "ORA-00942", "the server's code is carried (#521)"
+    assert "DBA_ROLE_PRIVS" in raised.value.message, "and so is its message"
+
+
+def test_a_role_read_failing_for_another_reason_does_not_prescribe_a_grant() -> None:
+    """#521. The grant hint was attached to every failure, so a dropped
+    connection told the operator to `GRANT SELECT ON SYS.DBA_ROLE_PRIVS`."""
+    cursor = _cursor()
+    cursor.answers[ROLES_QUERY] = _ora("ORA-03113", "end-of-file on communication channel")
+
+    with pytest.raises(DriverError) as raised:
+        describe(cursor, "acme_orders_user")
+
+    assert not isinstance(raised.value, RolesUnreadableError)
+    assert raised.value.code == "ORA-03113"
+    assert "DBA_ROLE_PRIVS" not in (raised.value.hint or "")
 
 
 def test_roles_are_read_on_every_describe_rather_than_on_request() -> None:

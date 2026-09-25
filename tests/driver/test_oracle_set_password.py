@@ -318,3 +318,30 @@ def test_a_read_only_target_is_refused_before_any_statement(session_module: Any)
 
     assert "orders-dr" in str(raised.value)
     assert connection.opened.executed == [], "nothing may reach the wire"
+
+
+def test_finishing_a_rollover_on_a_read_only_target_is_refused_before_any_statement(
+    session_module: Any,
+) -> None:
+    """#521: `finish_rollover` was the one mutating method without the guard, so
+    a standby reached `ALTER USER ... EXPIRE PASSWORD ROLLOVER PERIOD` and failed
+    there. Refused before the state is even read, as `set_password` is."""
+    from sopuli.driver.oracle.capabilities import ReadOnlyTargetError
+    from sopuli.driver.protocol import Scope
+
+    connection = _Connection()
+    session = session_module.OracleSession(
+        connection=connection,
+        target=ExpandedTarget(
+            target=Target(name="orders-dr", type="oracle", dsn="dr.example.com:1521/orders"),
+            index=0,
+        ),
+        correlation_id=CORRELATION_ID,
+    )
+    session._scope = Scope(type="pdb", open_mode="READ ONLY", read_write=False)
+
+    with pytest.raises(ReadOnlyTargetError) as raised:
+        session.finish_rollover(ACCOUNT)
+
+    assert "orders-dr" in str(raised.value)
+    assert connection.opened.executed == [], "nothing may reach the wire"

@@ -111,6 +111,7 @@ from typing import Any
 
 from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.capabilities import Cursor, read
+from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.oracle.rollover import is_enabled, window_end
 from sopuli.driver.protocol import DriverError, UserState
 
@@ -426,6 +427,51 @@ class RolesUnreadableError(DriverError):
     category = "authorization"
 
 
+class DictionaryUnreadableError(DriverError):
+    """A view ``02-oracle-privileges.md`` §2 grants could not be read (#521).
+
+    :func:`~sopuli.driver.oracle.capabilities.read` turns ``ORA-00942`` and its
+    kin into ``None``, which is right for a probe -- an optional grant nobody
+    made is the ordinary estate -- and wrong for ``DBA_USERS``. There ``None``
+    means *the database has no such account*, so a service account missing the
+    grant reported every account in the estate as ``ACCOUNT_MISSING``, and the
+    operator went looking for accounts rather than for a grant.
+
+    The server's code and message are carried, and the hint names the grant.
+    """
+
+    category = "authorization"
+
+
+#: What a refused read of a granted view says. :data:`ABSENT_CODES` without
+#: ``ORA-00904``: a missing column is how :func:`_user_row` finds a release's
+#: shape, and is never a missing grant.
+_GRANT_CODES = frozenset({"ORA-00942", "ORA-01031", "ORA-41900"})
+
+#: The one code :func:`_user_row` narrows on rather than raises.
+_NO_SUCH_COLUMN = "ORA-00904"
+
+
+def _unreadable(error: Exception, view: str) -> DriverError:
+    """``error`` from reading ``view``, as something to raise.
+
+    A refused grant becomes :class:`DictionaryUnreadableError` naming the grant;
+    anything else is classified as every other statement is, so an unrelated
+    failure is not misdiagnosed as a missing grant.
+    """
+    diagnosis = from_error(error)
+    if diagnosis.code in _GRANT_CODES:
+        return DictionaryUnreadableError(
+            f"could not read {view}: {diagnosis.message}",
+            code=diagnosis.code,
+            hint=(
+                f"GRANT SELECT ON SYS.{view} to the service account -- "
+                "02-oracle-privileges.md section 2, or sql/oracle/00_install.sql"
+            ),
+        )
+    return diagnosis.as_error()
+
+
 def describe(cursor: Cursor, account: str, *, user_dollar: bool = False) -> UserState | None:
     """One account as the database describes it, or ``None`` if there is none.
 
@@ -681,11 +727,24 @@ def _user_row(cursor: Cursor, account: str) -> tuple[str, Any] | None:
     made 18c answer as 11.2 and gave up a guardrail input it could have read.
     Every shape projects the same seven columns, so a caller reads fixed
     positions whichever one answered.
+
+    **Only ``ORA-00904`` narrows** (#521). This used the capability probes'
+    :func:`~sopuli.driver.oracle.capabilities.read`, so an ungranted view was
+    ``None`` three times over and read as a missing account. A refused grant
+    raises :class:`DictionaryUnreadableError` now, and a query that answered with
+    no row is the account's absence -- asking the narrower shapes the same
+    question cannot change that answer.
     """
-    for query in (USER_QUERY, USER_QUERY_NO_CHANGE_DATE, USER_QUERY_LEGACY):
-        row = read(cursor, query, name=account.upper())
-        if row is not None:
-            return query, row
+    shapes = (USER_QUERY, USER_QUERY_NO_CHANGE_DATE, USER_QUERY_LEGACY)
+    for query in shapes:
+        try:
+            cursor.execute(query, {"name": account.upper()})
+            row = cursor.fetchone()
+        except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+            if query is not shapes[-1] and from_error(error).code == _NO_SUCH_COLUMN:
+                continue
+            raise _unreadable(error, "DBA_USERS") from error
+        return (query, row) if row is not None else None
     return None
 
 
@@ -728,12 +787,23 @@ def password_file_member(cursor: Cursor, name: str) -> bool | None:
 
 
 def _roles(cursor: Cursor, name: str) -> frozenset[str]:
+    """The roles ``name`` holds, directly or through other roles.
+
+    A refused grant is :class:`RolesUnreadableError`, carrying the server's code
+    and message. Anything else is classified as any other statement is (#521):
+    the grant hint used to be attached to every failure, and prescribing a
+    ``GRANT`` for a timeout or a lost connection sends the reader the wrong way.
+    """
     try:
         cursor.execute(ROLES_QUERY, {"name": name})
         return frozenset(str(role[0]).upper() for role in cursor.fetchall())
-    except Exception as error:  # noqa: BLE001 -- re-raised as a diagnosable one
+    except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+        diagnosis = from_error(error)
+        if diagnosis.code not in _GRANT_CODES:
+            raise diagnosis.as_error() from error
         raise RolesUnreadableError(
-            f'could not read the roles held by "{name}"',
+            f'could not read the roles held by "{name}": {diagnosis.message}',
+            code=diagnosis.code,
             hint=(
                 "guardrail 4 refuses an account holding DBA, PDB_DBA, CDB_DBA or "
                 "AUDIT_ADMIN, and cannot tell an account with none from a view it "
@@ -830,8 +900,15 @@ def resolve_name(cursor: Cursor, account: str) -> str | None:
 
     ``02-oracle-privileges.md`` §4: the name that reaches a statement is the one
     read back from the dictionary, never the raw string from a config file.
+
+    ``None`` only where the query answered with no row. A refused grant raises
+    (#521), for :class:`DictionaryUnreadableError`'s reason.
     """
-    row = read(cursor, NAME_QUERY, name=account.upper())
+    try:
+        cursor.execute(NAME_QUERY, {"name": account.upper()})
+        row = cursor.fetchone()
+    except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+        raise _unreadable(error, "DBA_USERS") from error
     return str(row[0]) if row else None
 
 

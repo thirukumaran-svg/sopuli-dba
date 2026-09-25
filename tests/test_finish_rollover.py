@@ -81,6 +81,42 @@ def test_a_missing_account_is_reported_and_not_created() -> None:
     assert outcome.state == check.ACCOUNT_MISSING
 
 
+def test_a_read_only_database_is_refused_before_the_login() -> None:
+    """#521. A standby cannot take the `ALTER USER`, so the refusal comes here --
+    ahead of the login a close would spend, and ahead of a preview promising a
+    close that could only fail."""
+    standby = Scope(
+        type="pdb",
+        container="ALPHA",
+        capabilities=frozenset({EXPIRE_PASSWORD}),
+        open_mode="READ ONLY",
+        read_write=False,
+    )
+
+    outcome = windows.settled_before_closing(user(), source(), standby)
+
+    assert outcome is not None
+    assert outcome.state == check.ERROR
+    assert "READ ONLY" in outcome.detail
+
+
+def test_an_unknown_open_mode_is_not_a_refusal() -> None:
+    """`require_read_write`'s rule: a mode nobody could read is not evidence of a
+    standby, and refusing on it would turn a missing grant into an outage."""
+    assert ABLE.read_write is None
+    assert windows.settled_before_closing(user(), source(), ABLE) is None
+
+
+def test_a_read_only_database_with_no_window_is_still_nothing_to_do() -> None:
+    """Nothing would be issued, so there is nothing to refuse."""
+    standby = Scope(type="pdb", open_mode="READ ONLY", read_write=False)
+
+    outcome = windows.settled_before_closing(user(rollover_active=False), source(), standby)
+
+    assert outcome is not None
+    assert outcome.state == check.IN_SYNC
+
+
 def test_a_locked_account_keeps_its_window() -> None:
     """The window is beside the point for an account nothing can authenticate
     as, and closing it would be a mutation nobody asked for on an account already

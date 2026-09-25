@@ -173,6 +173,18 @@ missing grant would have turned a safety check into a silent success. The driver
 therefore refuses to describe an account whose roles it cannot read
 (`RolesUnreadableError`), naming this grant — the same rule as a capability probe
 that could not be answered, which raises instead of reporting absent (#195).
+Only a refused grant (`ORA-00942`, `ORA-01031`, `ORA-41900`) is reported that
+way, with the server's code and message. Any other failure is classified as
+itself, because the grant is the wrong fix for a dropped connection (#521).
+
+**`DBA_USERS` is refused on the same rule** (#521). There the tempting
+misreading is worse: "no row" means the database has no such account, so an
+ungranted view read as `ACCOUNT_MISSING` for every account in the estate. That
+was measured on 26ai against a service account holding `CREATE SESSION` and
+`ALTER USER` only: `creds status` reported `ACCOUNT_MISSING` and exited 0. It now
+reports `ERROR` with category `authorization`, `ORA-00942` and a hint naming
+this grant, and exits 1. `ORA-00904` is still the one code that narrows the
+query, since a missing column is how a release's `DBA_USERS` shape is found.
 
 **A role-granted `ALTER USER` reads as absent.** `common_users` is probed through
 `USER_SYS_PRIVS`, which shows **direct** grants only — so an account holding

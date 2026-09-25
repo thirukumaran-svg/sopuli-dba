@@ -1193,7 +1193,13 @@ class OracleSession:
         decision belongs to the command, which has the vault's view of whether
         the applications have moved on. Putting an ownership guard here would be
         a guard built on a fact this layer cannot observe.
+
+        **A read-only target is refused first** (#521), as every other mutating
+        method here is. `creds finish-rollover` refuses a standby before it
+        spends a login (:func:`sopuli.finish_rollover.settled_before_closing`);
+        this is the driver's own guard, so no caller reaches the DDL without it.
         """
+        require_read_write(self.scope(), target=self.target.name)
         state = self.describe_user(account)
         if state is None:
             raise DriverError(f'account "{account}" does not exist on this target')

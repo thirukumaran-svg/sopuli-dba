@@ -1636,6 +1636,49 @@ forty accounts on one 18c database print one line naming "40 accounts". In
 Put the grant back (`grant select on sys.user$ to system container=all`), and the
 `-` becomes a date and the note goes. The lockout guard tests need it too.
 
+#### A service account that cannot read `DBA_USERS`
+
+Make an account that can connect and rotate, and read nothing:
+
+```sql
+CREATE USER acme_nogrant_svc IDENTIFIED BY "Svc-Pass-2026x";
+GRANT CREATE SESSION, ALTER USER TO acme_nogrant_svc;
+```
+
+Add a second target that authenticates as it:
+
+```yaml
+  - name: free-pdb-nogrant
+    type: oracle
+    environment: dev
+    vault: vault-dev
+    dsn: "127.0.0.1:1521/FREEPDB1"
+    admin: { username: ACME_NOGRANT_SVC, auth: { method: env, password_env: SOPULI_NOGRANT_PASSWORD } }
+    oracle: { scope: pdb, container: FREEPDB1 }
+```
+
+```
+ACCOUNT          TARGET            STATE  VAULT_V  AGE  DB_PW_CHANGED  PROFILE  ROLLOVER
+acme_batch_user  free-pdb-nogrant  ERROR  -        -    -              -        -
+
+1 account: 1 unreachable
+```
+
+The exit code is 1. `--output json` carries the server's code and names the
+grant:
+
+```json
+"error": {
+  "category": "authorization",
+  "message": "could not read DBA_USERS: ORA-00942: table or view \"SYS\".\"DBA_USERS\" does not exist",
+  "code": "ORA-00942",
+  "hint": "GRANT SELECT ON SYS.DBA_USERS to the service account -- 02-oracle-privileges.md section 2, or sql/oracle/00_install.sql"
+}
+```
+
+Before #521 this same run said `ACCOUNT_MISSING` and exited 0. The account was
+there, the tool just wasn't allowed to look.
+
 ### 10.2 `generate` — stage a password, touch no database
 
 ```bash
@@ -2097,6 +2140,35 @@ acme_batch_user  free-pdb  IN_SYNC  no rollover window is open
 
 no rollover window was open on any of 1
 ```
+
+#### A standby, which is refused before the login
+
+Open a window as above, then make the PDB read-only. That is the tier-1 stack's
+closest stand-in for a physical standby:
+
+```bash
+printf "alter pluggable database FREEPDB1 close immediate;\nalter pluggable database FREEPDB1 open read only;\nexit\n" \
+  | docker exec -i sopuli-test-oracle-free-1 sqlplus -S "/ as sysdba"
+```
+
+(From Git Bash, prefix `docker exec` with `MSYS_NO_PATHCONV=1`, or the `/`
+arrives as a Windows path.)
+
+```
+ACCOUNT          TARGET    WINDOW
+acme_batch_user  free-pdb  open, 59m left
+
+ACCOUNT          TARGET    STATE  DETAIL
+acme_batch_user  free-pdb  ERROR  the database is open READ ONLY and cannot end a window; point the target at the primary
+
+nothing closed, 1 failed
+```
+
+The exit code is 1, and `--dry-run` refuses in the same words. Before #521 a real
+run spent its one login and then sent the `ALTER USER`, which came back
+`ORA-16000`. Worse, a preview said `would end this window, 59m early` about a
+close that could only fail. Put the PDB back with `open read write` in place of
+`open read only`, and the same command closes the window.
 
 ### 10.10 Asking for a strategy the estate cannot serve
 
