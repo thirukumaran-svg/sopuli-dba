@@ -38,6 +38,7 @@ from sopuli.config.fields import (
     string,
 )
 from sopuli.config.model import Delivery, ManualDelivery, WrappedDelivery
+from sopuli.config.notify import build_notify
 
 #: The methods UC-2 §6.2 defines, in the order that section lists them. **The
 #: whole set, not the subset with issues**: `smtp_encrypted` has no issue of its
@@ -141,6 +142,11 @@ def build_delivery(document: dict[str, Any]) -> Delivery | None:
         vault_wrapped=(
             _build_wrapped(block[WRAPPED], at=at.key(WRAPPED)) if method == WRAPPED else None
         ),
+        # Read whichever method is selected, which is the opposite of the rule one
+        # line up (#442). A method's sub-block is left unjudged when it is not the
+        # chosen one, because nothing consults it; a notification is a property of
+        # the delivery as a whole, so an estate that wrote one meant it.
+        notify=build_notify(block["notify"], at=at.key("notify")) if "notify" in block else None,
     )
 
 
@@ -326,6 +332,9 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
             mapping(block[name], at=at.key(name))
     if "notify" in block:
         mapping(block["notify"], at=at.key("notify"))
+    # Its keys are read by `build_notify` (#442) rather than left for later, which
+    # is why the sentence that used to follow here -- "that check needs the template
+    # grammar, which arrives with the channel" -- is gone: the grammar arrived.
 
 
 def unserviceable(delivery: Delivery | None) -> str | None:

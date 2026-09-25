@@ -80,7 +80,9 @@ class Method:
         return not self.required
 
 
-def read_material(raw: Any, *, at: KeyPath) -> MaterialRef:
+def read_material(
+    raw: Any, *, at: KeyPath, noun: str = "auth material", example: str = "SOPULI_VAULT_SECRET_ID"
+) -> MaterialRef:
     """Read ``{ env: NAME }`` or ``{ file: PATH }`` -- never a value.
 
     A bare value is the failure worth a message of its own. It is what somebody
@@ -88,13 +90,20 @@ def read_material(raw: Any, *, at: KeyPath) -> MaterialRef:
     that the file does not hold it; "must be a mapping" would read as a type
     complaint about a line that is wrong for a much more specific reason. Numbers
     count: an unquoted ``role_id: 1234`` is the same mistake in YAML's clothing.
+
+    ``noun`` and ``example`` exist because this reader stopped being only auth's
+    (#442). A webhook URL is a MaterialRef for C9's reason -- it embeds its own
+    credential -- and telling somebody who pasted a chat URL that "auth material is
+    named, not written here", with `SOPULI_VAULT_SECRET_ID` as the example, answers
+    a question they did not ask. Both default to what every auth caller already
+    said, so the defaults are the existing behaviour rather than a new one.
     """
     if isinstance(raw, str | int | float):
         raise ConfigError(
-            "auth material is named, not written here",
+            f"{noun} is named, not written here",
             at=at,
             hint=(
-                f"write one of {_kinds()} -- e.g. `{{ env: SOPULI_VAULT_SECRET_ID }}`. "
+                f"write one of {_kinds()} -- e.g. `{{ env: {example} }}`. "
                 "P2: the config points at where the material comes from, never at the "
                 "material itself"
             ),

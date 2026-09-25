@@ -69,6 +69,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import click
@@ -107,7 +108,7 @@ from sopuli.config import (
     refuse_unknown,
 )
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import Delivery, PersonalAccountRule
+from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints
@@ -129,6 +130,7 @@ from sopuli.diagnostics import (
     lock_diagnostics,
     no_reset_journal,
     no_reset_record,
+    notification_unsent,
     reset_record_unwritten,
     unlistable_stores,
     vault_diagnostics,
@@ -183,7 +185,12 @@ from sopuli.lock.takeover import (
     check_fenceable,
     plan_break,
 )
+from sopuli.material import environment as material_environment
+from sopuli.material import resolve as resolve_material
 from sopuli.material import strip_one_newline
+from sopuli.notify import Facts as NotifyFacts
+from sopuli.notify import registry as notify_registry
+from sopuli.notify import render as render_notification
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
@@ -1613,6 +1620,22 @@ def account_reset_password(
     # preview would not.
     backends = _delivery_backends(run, config, delivery, reached)
 
+    # **The notify channel too, and for the same reason** (Copilot's finding on
+    # #520). The first build resolved it inside `_notify`, which wraps everything
+    # in a bare `except` so that a dead webhook cannot fail a reset that already
+    # succeeded -- and that swallowed `SOPULI-20003` along with it. A configured
+    # channel whose client is not installed then became a warning *after* the
+    # password changed, when it was knowable before the run connected to anything.
+    # That is invariant 4 exactly, and E5's contract: configured-but-uninstalled
+    # fails use with exit 9.
+    #
+    # **Not skipped under `--dry-run`**, which is where this stops mirroring
+    # `_delivery_backends` above. That one is skipped because opening a store needs
+    # credentials a preview should not demand; resolving a channel imports a module
+    # and opens nothing, and telling an operator their notify client is missing is
+    # among the things a preview is *for*.
+    channel = _notify_channel(delivery)
+
     header = render_plan(plan, noun="account")
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
@@ -1684,6 +1707,7 @@ def account_reset_password(
                         preview=run.dry_run,
                         record_at=paths.get(target.name),
                         backend=backends.get(target.name),
+                        channel=channel,
                     )
                 )
     except LockDeniedError as denied:
@@ -1729,6 +1753,13 @@ def account_reset_password(
             failed = reset_record_unwritten(one.record_error.path, one.record_error.reason)
             document.diagnostics.append(failed)
             notices.append(failed)
+        # #442's, and appended after the record's so the two read in the order they
+        # happened: the notification goes out first, and the journal is written
+        # last because it holds what happened (§6.4).
+        if one.notify_error is not None:
+            unsent = notification_unsent(one.account, one.target, one.notify_error)
+            document.diagnostics.append(unsent)
+            notices.append(unsent)
     document.finish(
         _reset_exit(states, stolen=stolen is not None, changed=changed),
         summarise_reset(states, changed=changed),
@@ -2026,6 +2057,12 @@ class _Reset:
     #: field**: the caller turns it into `SOPULI-W025` in ``diagnostics[]``,
     #: which is where a consumer already looks for what a run could not do.
     record_error: _RecordFailure | None = None
+    #: Why this reset's notification could not be sent, where a channel was
+    #: configured and failed (#442). **Never serialised as a result field**, for
+    #: `record_error`'s reason: the caller turns it into `SOPULI-W026` in
+    #: ``diagnostics[]``, which is where a consumer already looks for what a run
+    #: could not do.
+    notify_error: str | None = None
     #: **What the operator is shown, and it is secret-bearing on both paths**: the
     #: password block on the seen path, and the wrapping token on an unseen one
     #: (#444). This comment said "the password block, on the seen path only" until
@@ -2081,6 +2118,7 @@ def _reset_one(
     preview: bool,
     record_at: str | None = None,
     backend: VaultWrapped | None = None,
+    channel: _NotifyChannel | None = None,
 ) -> _Reset:
     """One target: read the account, decide, draw, set, and hand it over.
 
@@ -2255,17 +2293,12 @@ def _reset_one(
             )
 
         try:
-            return journalled(
-                replace(
-                    row,
-                    shown=_hand_over(
-                        secret,
-                        account=account,
-                        target=target.name,
-                        delivery=delivery,
-                        receipt=receipt,
-                    ),
-                )
+            shown = _hand_over(
+                secret,
+                account=account,
+                target=target.name,
+                delivery=delivery,
+                receipt=receipt,
             )
         except click.Abort:
             # Recorded, then re-raised. The row carries no password -- there is
@@ -2279,6 +2312,34 @@ def _reset_one(
             # an account whose new password nobody received.
             run.document.results = [*(run.document.results or []), journalled(row).as_json()]
             raise
+
+        # **After the hand-over, and before the record** (#442, and the ordering is
+        # Copilot's finding on #520 rather than the one this shipped with). The
+        # first version notified before `_hand_over`, which is wrong on the seen
+        # path for a reason the unseen path does not have: there, `_hand_over` is
+        # the delivery. It prompts, declining aborts, and the password is then
+        # sitting on an account that nobody has read -- so a notification sent
+        # beforehand says a password is waiting when the only channel that could
+        # have carried it was refused.
+        #
+        # Notifying after covers both paths with one ordering rather than a branch:
+        # on the unseen path `_hand_over` only renders a token it was already
+        # handed, so it cannot fail and cannot reorder anything. The record still
+        # comes last, because §6.4 says it holds what happened and a notification
+        # is part of that.
+        #
+        # **A failure here never fails the run**, which is `SOPULI-W026` and UC-2
+        # §3.4's argument one object over: the password has changed and the person
+        # can fetch it, so ending the run would report a false negative about the
+        # part that mattered. What is lost is that somebody must be told another
+        # way, which is what the warning says.
+        return journalled(
+            replace(
+                row,
+                shown=shown,
+                notify_error=_notify(channel, account=account, target=target, receipt=receipt),
+            )
+        )
     finally:
         if session is not None:
             with suppress(Exception):
@@ -2317,6 +2378,101 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
             ),
         )
     return chosen
+
+
+@dataclass(frozen=True)
+class _NotifyChannel:
+    """A channel proved usable before the run connected to anything (#520).
+
+    Holds the three things sending needs and none of them can fail once this
+    exists: the settings, the imported sender, and the resolved URL. Building it
+    is what may refuse, and it is built at plan time.
+    """
+
+    notify: Notify
+    sender: ModuleType
+    url: Secret
+
+
+def _notify_channel(delivery: Delivery) -> _NotifyChannel | None:
+    """The channel a reset will notify through, resolved before anything connects.
+
+    ``None`` where no `notify:` block was configured, which is not a failure to
+    notify -- an estate chose that, and `config validate` is where the choice is
+    reported.
+
+    **Invariant 4, and the reason this is not inside :func:`_notify`.** Two things
+    here can fail for reasons knowable in advance, and both used to fail late:
+
+    - the client may not be installed, which :func:`~sopuli.notify.registry.resolve`
+      turns into `SOPULI-20003` at exit 9. `_notify` catches everything so that a
+      dead webhook cannot fail a reset that already worked, and that swallowed this
+      too -- turning ADR-006's E5 contract into a warning issued after the password
+      changed;
+    - the URL may not resolve, because the environment variable or the file the
+      `MaterialRef` names is absent. The docstring this replaces argued that a
+      missing variable is "as much nobody-was-told as a refused request is", which
+      is true about the outcome and wrong about the timing: a refused request is
+      news and an unset variable is a configuration error, and the second one is
+      answerable before a password is drawn.
+
+    What is left to fail at send time is the send, which is what `SOPULI-W026` is
+    for.
+    """
+    notify = delivery.notify
+    if notify is None:
+        return None
+    # Imported on first use, ADR-006 rule 1: `webhook` reaches `httpx`, and an
+    # offline verb must not load a module that does.
+    sender = notify_registry.resolve(notify.method)
+    url = resolve_material(
+        notify.webhook.url,  # type: ignore[union-attr]
+        env=material_environment(),
+        where="delivery.notify.webhook.url",
+    )
+    return _NotifyChannel(notify=notify, sender=sender, url=url)
+
+
+def _notify(
+    channel: _NotifyChannel | None,
+    *,
+    account: str,
+    target: ExpandedTarget,
+    receipt: Receipt | None,
+) -> str | None:
+    """Say a password is waiting, or why nobody could be told (#442).
+
+    ``None`` both when it worked and when no channel is configured -- an estate
+    that configured none has not failed to notify, and a return value that
+    distinguished the two would invite a caller to warn about a choice somebody
+    made.
+
+    **Never raises**, and by here that claim covers a much smaller surface than it
+    used to: :func:`_notify_channel` has already imported the sender and resolved
+    the URL, so what remains is rendering and one POST. Every failure comes back as
+    a string the caller turns into `SOPULI-W026`, for UC-2 §3.4's argument one
+    object over -- the password has changed and the person can fetch it, so ending
+    the run would report a false negative about the part that mattered.
+
+    **Nothing here can reach the password.** It is not a parameter, and what the
+    channel sends is rendered from :class:`~sopuli.notify.Facts`, which has no
+    field one could occupy. That is §6.1 made structural rather than checked here.
+    """
+    if channel is None:
+        return None
+    try:
+        message = render_notification(
+            channel.notify,
+            NotifyFacts(
+                account=account,
+                target=target.name,
+                expires_at=receipt.expires_at if receipt is not None else None,
+            ),
+        )
+        channel.sender.send(channel.url, message)
+    except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
+        return _as_error(error).message
+    return None
 
 
 def _delivery_backends(
@@ -3250,7 +3406,7 @@ def config_validate(
 
     **Validated by the loader, not by the published schema.** The two are not
     equivalent, and the stricter one wins:
-    ``docs/schemas/sopuli-config-1.7.schema.json`` is structural, deliberately
+    ``docs/schemas/sopuli-config-1.8.schema.json`` is structural, deliberately
     leaves the cross-key rules out (``01-configuration.md`` section 9b), and
     ``jsonschema`` is a development dependency that must not become a runtime
     one. The schema is the editor's fast local check; this is the complete one.

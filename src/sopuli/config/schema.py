@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.7.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.8.schema.json
 """
 
 from __future__ import annotations
@@ -49,6 +49,7 @@ from sopuli.config import (
     groups,
     loading,
     locking,
+    notify,
     personal_accounts,
     policies,
     profiles,
@@ -133,7 +134,21 @@ from sopuli.config import (
 #: and no run under it could deliver anything; and there is no `forbidden_methods`
 #: counterpart, now or later, so an editor offering one is offering a key the
 #: tool refuses.
-SCHEMA_VERSION = "1.7"
+#: 1.7 became 1.8 when `delivery.notify:` got a grammar (#442): `method`, and a
+#: `webhook:` block with a MaterialRef `url` and a `template`. **Closed, where
+#: `vault_wrapped:` could not be** -- and the difference is the whole of the note
+#: above. A method's sub-block is left unjudged when that method is not selected,
+#: so a constraint on it would refuse a file the tool accepts; `notify:` is read
+#: whichever method is selected, because a notification is a property of the
+#: delivery rather than of a method, so closing it refuses exactly what the
+#: builder refuses.
+#:
+#: What is deliberately **not** expressed is the placeholder rule. A pattern
+#: approximating it would be a second, weaker statement of UC-2 6.1 -- the rule
+#: that the notify channel may not carry the password or anything that retrieves
+#: it -- and two statements of one rule drift. It stays with the builder, where
+#: the refusal can say why.
+SCHEMA_VERSION = "1.8"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -1052,14 +1067,7 @@ def _delivery() -> Schema:
                     "a stock Vault."
                 ),
             ),
-            "notify": {
-                "type": "object",
-                "description": (
-                    "The low-trust channel that says a password is ready (#442). It may "
-                    "never carry the password or anything that retrieves it -- a wrapping "
-                    "token and a one-time link are both refused in a template (UC-2 6.1)."
-                ),
-            },
+            "notify": _notify(),
             **dict.fromkeys(delivery.DELIVERY_METHODS, sub_block),
         },
         description=(
@@ -1067,6 +1075,73 @@ def _delivery() -> Schema:
             "method, and the sub-block of the same name carries its settings. Absent "
             "means no delivery is configured, which is not the same as choosing the "
             "default."
+        ),
+    )
+
+
+def _notify() -> Schema:
+    """`delivery.notify:` -- the low-trust channel (#442, UC-2 §6.1).
+
+    **Closed, unlike a delivery method's sub-block**, and the difference is the
+    one #444 established: a method's settings are left unjudged when that method
+    is not selected, so any constraint published for them would refuse a file the
+    tool accepts. `notify:` has no such exemption -- it is read whichever delivery
+    method is selected, because a notification is a property of the delivery as a
+    whole -- so closing it here refuses exactly what the builder refuses.
+
+    The template's placeholders are **not** expressed as a pattern. A regex that
+    approximated :func:`sopuli.config.notify.check_template` would be a second,
+    weaker statement of §6.1's rule, and the two would drift; §9b's division puts
+    a cross-value rule with the builder, where the message can say *why* a name is
+    refused rather than that a string did not match.
+    """
+    return _object(
+        keys=notify.NOTIFY_KEYS,
+        types={
+            "method": _enum(
+                notify.NOTIFY_METHODS,
+                description=(
+                    "How the person is told a password is waiting (UC-2 6.3). Absent means "
+                    "`webhook`, which is the only one there is -- and the enum holds only "
+                    "what is decided, unlike `delivery.method`, because nothing defines a "
+                    "set of notify channels."
+                ),
+            ),
+            notify.WEBHOOK: _object(
+                keys=notify.WEBHOOK_KEYS,
+                required=notify.WEBHOOK_KEYS,
+                types={
+                    "url": {
+                        "$ref": "#/$defs/material_ref",
+                        "description": (
+                            "Where to post. Named rather than written (C9): a chat "
+                            "incoming-webhook URL embeds its own credential, so a literal "
+                            "one here is a credential in a file people commit -- and it is "
+                            "what makes the redaction #442 asked for structural, since the "
+                            "model never holds a value to redact."
+                        ),
+                    },
+                    "template": {
+                        "type": "string",
+                        "description": (
+                            "The message, in the estate's own words -- the tool does not "
+                            "author it, because what is true of a hand-over differs by "
+                            "delivery method. Placeholders are `{account}`, `{target}` and "
+                            "`{expires_at}`, and **every other name is refused at load**: "
+                            "UC-2 6.1 bars the password *or anything that retrieves it* "
+                            "from this channel, so a template naming a token does not "
+                            "render empty, it does not load. `{{` is a literal brace."
+                        ),
+                    },
+                },
+                description="Where to post and what to say. Both keys required.",
+            ),
+        },
+        description=(
+            "The low-trust channel that says a password is ready (#442). It may never "
+            "carry the password or anything that retrieves it (UC-2 6.1), which is "
+            "enforced by the placeholder set being closed rather than by a list of "
+            "forbidden words."
         ),
     )
 

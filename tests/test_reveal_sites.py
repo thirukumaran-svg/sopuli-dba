@@ -21,6 +21,15 @@ form needs dataflow analysis, and every instance so far has been the simple one.
 
 Adding a site means adding it here **and** to invariant 2, in the same change.
 That is the point: the edit is small, and it is impossible to make by accident.
+
+**Two classes of site, and the list has always held both.** Invariant 2 enumerates
+the paths a *password* may take, and those are the entries that carry a number. The
+others -- the vault login, the token on the wire, and since #442 a webhook URL --
+are credentials the tool *presents to a service it is calling*, which is a separate
+and already-accepted class: a credential that never reached the wire would
+authenticate nothing. Adding one of those is not a new exception to invariant 2, and
+saying so here is what keeps somebody from either renumbering the invariant or
+sneaking a password path in under this heading.
 """
 
 from __future__ import annotations
@@ -51,6 +60,13 @@ PERMITTED = {
     "store/credentials.py": "the vault write -- invariant 2's first exception",
     "store/hashicorp/_auth.py": "the vault login, which is the write's other half",
     "store/hashicorp/_transport.py": "the token on the wire, for the same reason",
+    "notify/webhook.py": (
+        "a webhook URL on the wire (#442) -- `_transport.py`'s reason, not a sixth "
+        "numbered exception: invariant 2 enumerates the paths a *password* may take, "
+        "and material the tool presents to a service it is calling has always been a "
+        "separate already-accepted class. A chat URL is a credential (C9), so it is a "
+        "`Secret`, and it is revealed where every credential is -- at the wire"
+    ),
     "driver/oracle/statements.py": "building the DDL, which is the driver call's text",
     "driver/oracle/session.py": "issuing that DDL -- the one cursor.execute it reaches",
 }

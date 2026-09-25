@@ -63,11 +63,27 @@ oci = [
   # should not inherit it.
   "oci>=2.126",
 ]
+notify = [
+  # E7 (#442): UC-2's notify channel posts to a webhook, and a channel that opens
+  # a socket is an extra like any other. `httpx` again, and the duplication with
+  # `hashicorp` is deliberate -- rule 3 names the installed dependency set, so an
+  # estate that has httpx for one reason has it for both, and one that has it for
+  # neither is the case a base install defends.
+  #
+  # **Its own name rather than folding into `hashicorp`**, which was the
+  # alternative and is why this is a fourth category rather than a reuse: an
+  # estate on OCI Vault installing a HashiCorp extra in order to post a chat
+  # message would make the extra's name stop meaning why the dependency is there,
+  # which is the property ADR-006 exists to keep real.
+  #
+  # A future `smtp` channel adds nothing here: the standard library sends mail.
+  "httpx>=0.27",
+]
 # E3: `all` exists because CI and the test matrix need one name that means
 # everything. It is deliberately not what README recommends -- an install line
 # that reads `sopuli[all]` undoes the split for every reader who copies it.
 all = [
-  "sopuli-dba[oracle,hashicorp,oci]",
+  "sopuli-dba[oracle,hashicorp,oci,notify]",
 ]
 
 dev = [

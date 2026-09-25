@@ -85,14 +85,43 @@ def test_the_enum_is_the_whole_set_including_the_method_with_no_issue() -> None:
     assert len(DELIVERY_METHODS) == 6
 
 
-def test_a_notify_block_is_accepted_and_left_to_its_own_issue() -> None:
+def test_a_notify_block_is_read_now_that_its_issue_landed() -> None:
+    """This used to assert the block was *accepted and left alone*, which was
+    right until #442 gave it a grammar. `tests/config/test_notify.py` holds what
+    that grammar is; what belongs here is that `delivery:` reaches it, and that it
+    does so whichever method is selected."""
     section = built(
         method="vault_wrapped",
         vault_wrapped={"ttl": "15m"},
-        notify={"method": "webhook", "webhook": {"url": {"env": "SOPULI_NOTIFY"}}},
+        notify={
+            "method": "webhook",
+            "webhook": {
+                "url": {"env": "SOPULI_NOTIFY"},
+                "template": "{account} on {target} has a new password waiting",
+            },
+        },
     )
 
-    assert section.method == "vault_wrapped"
+    assert section.notify is not None
+    assert section.notify.webhook is not None
+    assert section.notify.webhook.url.location == "SOPULI_NOTIFY"
+
+
+def test_a_notify_block_is_read_on_the_seen_path_too() -> None:
+    """A notification is a property of the delivery as a whole, not of a method --
+    so unlike a method's own sub-block it is read whichever method is selected.
+    The tool does not author the message, so an estate on `manual` writes one that
+    is true of `manual`."""
+    section = built(
+        method="manual",
+        manual={"force_expire": True},
+        notify={
+            "method": "webhook",
+            "webhook": {"url": {"env": "SOPULI_NOTIFY"}, "template": "{account} was reset"},
+        },
+    )
+
+    assert section.notify is not None
 
 
 # ---------------------------------------------------------------- refusing ---

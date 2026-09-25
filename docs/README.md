@@ -38,7 +38,7 @@ which paths ran and which are still untried.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-1.7.schema.json](schemas/sopuli-config-1.7.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-config-1.8.schema.json](schemas/sopuli-config-1.8.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
 | [schemas/sopuli-run-1.29.schema.json](schemas/sopuli-run-1.29.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.2.schema.json](schemas/sopuli-event-1.2.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
@@ -63,7 +63,7 @@ run schema. That is no longer an assertion in prose: `tests/test_schemas.py`
 checks it, and CI runs it on every push and pull request (invariant 12).
 
 To get completion and inline errors while editing a config, put
-`# yaml-language-server: $schema=./sopuli-config-1.7.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-1.8.schema.json` on the file's
 first line — see [design/01-configuration.md](design/01-configuration.md) §9b,
 which also explains why the schema's `$id` is not a URL to paste there.
 
@@ -661,7 +661,7 @@ coming and what each one waits on.
 |---|---|---|
 | `personal_accounts:` | #467 | **built**, schema 1.4 |
 | `reset_records:` | #468, #511, #512, #514, #444 | **built**, schema 1.5; written by `account reset-password` since #511, locked on since #512, surveyed by `lock status` since #514, and carrying an unseen delivery's accessor in `delivery.to` since #444 |
-| `delivery:`, with `notify:` beside or inside it | #440, #441, #442, #444 | **built** for two methods: `manual` (#441) and `vault_wrapped` (#444, the default). `notify:` is #442 and unbuilt |
+| `delivery:`, with `notify:` inside it | #440, #441, #442, #444 | **built**. Two delivery methods -- `manual` (#441) and `vault_wrapped` (#444, the default) -- and `notify.method: webhook` (#442), which posts through the `[notify]` extra. **The two ways it can fail are not the same** (#520): a client that is not installed refuses the reset at plan time with `SOPULI-20003` and exit 9, before the password changes, because it is knowable then; a webhook that cannot be reached at send time is `SOPULI-W026` at exit 0, because by then the password has changed and the person can still fetch it |
 
 The verbs, for the same reason: `account suspend` (#463), `account list` (#490)
 and `reset-password` are built -- the latter on **both** the seen path (#441) and

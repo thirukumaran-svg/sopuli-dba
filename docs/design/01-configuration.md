@@ -12,7 +12,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.7.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.8.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -300,10 +300,61 @@ worth building once a second method has keys to close; until then the tool is th
 stricter of the two, which is the safe asymmetry.
 
 **`notify:` nests here** rather than beside `delivery:`, because it is a property
-of a delivery rather than of a run. Its keys are #442's. One rule about it is
-binding already and is UC-2 §6.1's: the channel that notifies may be low-trust and
-the channel that carries the secret may not, so a template referencing a wrapping
-token or a one-time link is refused rather than rendered.
+of a delivery rather than of a run — and **its grammar landed in #442**:
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+  notify:
+    method: webhook
+    webhook:
+      url: { env: SOPULI_NOTIFY_WEBHOOK }
+      template: "{account} on {target} has a new password waiting"
+```
+
+| Key | Meaning |
+|---|---|
+| `method` | one of `webhook`. Absent means `webhook` |
+| `webhook.url` | a MaterialRef (C9), required |
+| `webhook.template` | the message, required |
+
+**`url` is named rather than written** because a chat incoming-webhook URL embeds
+its own credential, so a literal one is a credential in a file people commit. #442
+also asked that it be redacted wherever the configuration is shown, and the
+MaterialRef makes that *structural*: the model holds a location, so there is no
+value to redact and no step to remember.
+
+**The template's placeholders are a closed set** — `{account}`, `{target}`,
+`{expires_at}` — and every other name is refused **at load**. That is UC-2 §6.1
+enforced rather than documented: the channel that notifies may be low-trust and
+the channel that carries the secret may not, which covers the password *or
+anything that retrieves it*. Three details, each because the obvious
+implementation gets it wrong:
+
+- **the closed set is the guard, not a blocklist.** A list of `password` and
+  `wrap_token` fails open on `{wrapping_token}` or `{pw}`. `sopuli/config/notify.py`
+  keeps such a list only to give a *better message* for the names somebody would
+  actually reach for, and says so, because a reader who mistook it for the
+  enforcement would be one widening away from a hole;
+- **refused at load, not at send**, because a refusal after a password has been
+  drawn arrives too late to act on;
+- **`{{` is a literal brace**, which is `str.format`'s convention, so a message
+  containing one does not meet a refusal about a placeholder nobody wrote.
+
+**The enum holds one value and is not padded out**, which is the opposite call from
+`delivery.method` and the difference is real: §6.2 *defines* six delivery methods,
+so listing only the ones with tickets would be a contract shaped by project
+bookkeeping. Nothing defines a set of notify channels — `smtp` and `chat` are
+"their own issues if needed" — so inventing two values would publish a contract
+nobody has decided.
+
+**Nothing is sent yet.** #442 has two parts: this one reads and refuses
+configuration, and the second opens the socket. A configured channel therefore gets
+its own `config validate` warning, separate from the delivery method's, because an
+estate can have a working delivery and an inert notification and one sentence
+covering both would say only that something here does not work.
 
 **`safety.delivery.allowed_methods` restricts the set an estate may use**, and it
 is not a key of this block: it is a safety axis, ratcheting by intersection under
@@ -335,7 +386,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.7.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.8.schema.json
 version: 1
 
 runtime:
@@ -2738,7 +2789,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-1.7.schema.json`](../schemas/sopuli-config-1.7.schema.json),
+[`docs/schemas/sopuli-config-1.8.schema.json`](../schemas/sopuli-config-1.8.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -2749,7 +2800,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-1.7.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.8.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -2818,7 +2869,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.7.schema.json
+# yaml-language-server: $schema=./sopuli-config-1.8.schema.json
 version: 1
 ```
 
@@ -2829,7 +2880,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.7.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.8.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

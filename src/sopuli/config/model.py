@@ -960,6 +960,47 @@ class WrappedDelivery:
 
 
 @dataclass(frozen=True)
+class WebhookNotify:
+    """`delivery.notify.webhook:` -- where to post, and what to say (#442).
+
+    ``url`` is a :class:`MaterialRef` rather than a string, and that is C9 doing
+    real work rather than being applied uniformly: a chat incoming-webhook URL
+    *embeds its own credential*, so a plain string here would put one in a file
+    people commit and in every rendering of that file. Holding a location instead
+    means the redaction the issue asked for is structural -- there is no value to
+    redact, because the model never has one.
+
+    ``template`` is the estate's own sentence, which is why the tool never authors
+    it: what is true of a hand-over differs by path, and a message the tool wrote
+    would be wrong on one of them. Its placeholders are checked at load against a
+    closed set (:mod:`sopuli.config.notify`), so a template that cannot render is
+    a config error rather than a failure once a password has been drawn.
+    """
+
+    url: MaterialRef
+    template: str
+
+
+@dataclass(frozen=True)
+class Notify:
+    """`delivery.notify:` -- the low-trust channel that says a password is ready.
+
+    **Nests inside `delivery:` rather than beside it** (UC-2 §6.3), because it is
+    a property of a delivery rather than of a run: an estate delivering two ways
+    would need two of these.
+
+    **It may never carry the password, or anything that retrieves it** (§6.1).
+    That is the one binding rule of UC-2 §6 and it is enforced in the config
+    layer, where a template is read -- not at send time, because by then a
+    password has been drawn and the run has something to lose.
+    """
+
+    method: str
+    #: `webhook`'s settings, where `webhook` is the selected method.
+    webhook: WebhookNotify | None = None
+
+
+@dataclass(frozen=True)
 class Delivery:
     """How a personal account's new password reaches its owner (UC-2 §6, #440).
 
@@ -996,6 +1037,12 @@ class Delivery:
     #: to claim a field, and the shape #440 predicted holds: a typed field per
     #: method, ``None`` for every method the run is not using.
     vault_wrapped: WrappedDelivery | None = None
+    #: The channel that says a password is ready (#442), or ``None`` where the
+    #: estate configured none. Read whichever `method` is selected, unlike a
+    #: method's own sub-block: a notification is a property of the delivery as a
+    #: whole, and the template is the estate's sentence rather than the tool's --
+    #: so it is theirs to make true of the path they chose.
+    notify: Notify | None = None
 
     @property
     def is_seen(self) -> bool:

@@ -303,7 +303,7 @@ jobs:
       matrix:
         # base first, because it is the cell that can actually fail: the others
         # prove an extra resolves, and base proves the boundary held.
-        shape: ["", "[oracle]", "[hashicorp]", "[oci]", "[all]"]
+        shape: ["", "[oracle]", "[hashicorp]", "[oci]", "[notify]", "[all]"]
 
     steps:
       - uses: actions/checkout@v4

@@ -71,19 +71,24 @@ sys.meta_path.insert(0, Blocker())
 
 import sopuli
 from sopuli.driver.registry import DRIVERS
+from sopuli.notify.registry import NOTIFIERS
 from sopuli.store.registry import BACKENDS
 
-backends = tuple(backend.module for backend in BACKENDS.values()) + tuple(
-    driver.module for driver in DRIVERS.values()
+backends = (
+    tuple(backend.module for backend in BACKENDS.values())
+    + tuple(driver.module for driver in DRIVERS.values())
+    + tuple(notifier.module for notifier in NOTIFIERS.values())
 )
 imported = []
 for found in pkgutil.walk_packages(sopuli.__path__, "sopuli."):
     # Rule 1 puts the client import *inside* the backend module, so a backend is
     # the one place importing a client is correct. Everything else must not.
     # Drivers are backends for this purpose (#170): `sopuli.driver.oracle` is
-    # where `oracledb` may be imported, and nowhere above it. Listed from the
-    # registry rather than by hand, so a second driver inherits the exemption
-    # instead of failing this on the day it is added.
+    # where `oracledb` may be imported, and nowhere above it. Notify channels are
+    # too (#442, E7): `sopuli.notify.webhook` is where `httpx` may be imported for
+    # a notification. Listed from the registries rather than by hand, so a second
+    # driver or channel inherits the exemption instead of failing this on the day
+    # it is added.
     if any(found.name == module or found.name.startswith(module + ".") for module in backends):
         continue
     importlib.import_module(found.name)

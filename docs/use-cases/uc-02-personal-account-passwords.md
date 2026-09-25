@@ -949,6 +949,14 @@ secret-bearing, and never travels the notify channel.** #442's webhook carries
 `{account}`, `{target}` and "it is ready"; it does not carry `{wrap_token}` or
 `{item_link}`, and a template that references one is refused rather than rendered.
 
+**Built in #442, and enforced by the closed set rather than by naming those two.**
+A template may use `{account}`, `{target}` and `{expires_at}`; every other name is
+a load-time refusal, because a blocklist would fail open on `{wrapping_token}` or
+on whatever a later method calls its credential. `sopuli/notify.Facts` is the same
+guarantee one layer down: it has a field per placeholder and none for a password,
+a token or a link, so the renderer cannot emit what it was never handed.
+`01-configuration.md` §1 has the grammar.
+
 What that leaves open is the subject of H9 below.
 
 ### 6.2 The methods

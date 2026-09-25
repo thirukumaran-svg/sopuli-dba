@@ -44,6 +44,7 @@ The base install carries what every invocation uses and nothing else.
 | base | CLI framework (`click`, ADR-002), YAML parser (`pyyaml`, ADR-004), `pywin32` on Windows for P4's permission check, and sopuli itself | `sopuli` |
 | store extras | one vendor client per secret store | `sopuli-dba[<store>]` |
 | driver extras | one database driver per product | `sopuli-dba[<product>]` |
+| notify extras | the client a notify channel posts with (E7, #442) | `sopuli-dba[notify]` |
 | `all` | every extra above | `sopuli-dba[all]` |
 
 `pywin32` is in base and is not a counter-example: it is selected by a platform
@@ -170,6 +171,24 @@ message; that is the `config` category's shape, and exit 9 already means "fix
 your configuration, not your command line" (P5). It carries an `error.code` so
 that a consumer can branch on this case specifically without parsing the
 message.
+
+**A notify channel is a fourth category, not a reuse (E7).** UC-2's notify channel
+posts to a webhook (#442), which needs `httpx` — the same client `[hashicorp]`
+already installs. Reusing that extra was the obvious move and is refused: an estate
+on OCI Vault that wants a chat message would install a *HashiCorp* extra to get one,
+and the property this ADR defends is that an extra names **why** a dependency is
+there. A name that has stopped meaning that is a split in appearance only.
+
+The cost is one more name in an install line and one more cell in the matrix, which
+is small and is paid by the estates that use the feature. What it buys is that the
+three registries — stores, drivers, and now channels — all answer the same question
+the same way, and `tests/store/test_install_shape.py` derives its exemptions from all
+three rather than from a hand-kept list.
+
+**A channel with nothing to install needs no extra**, and one is coming: a future
+`smtp` channel sends with the standard library, so
+`sopuli.notify.registry.Notifier.extra` is optional exactly as a store's is. The
+category is "the client a channel posts with", not "every channel".
 
 **`doctor` always reports install shape (E6).** Which backends are installed,
 which are configured, and where the two disagree — listed every run, not only on

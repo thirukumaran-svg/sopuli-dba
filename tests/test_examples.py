@@ -79,3 +79,35 @@ def test_example_config_validates_without_warnings(name: str, write_config: Writ
     result = CliRunner().invoke(cli, ["--config", str(path), "config", "validate"])
 
     assert "0 warnings" in result.output, result.output
+
+
+# ------------------------------------------- and the editor pointer is real ---
+
+
+def test_every_example_points_its_editor_at_a_schema_that_exists() -> None:
+    """The `# yaml-language-server:` line is a real reference, not a comment.
+
+    **Copilot found this on #520**, three commits after the schema was renamed
+    1.7 -> 1.8: the README was updated and these three files were not, so an editor
+    opening any example resolved a `$schema` that had been deleted. It fails
+    silently -- the reader gets no completion and no validation, and nothing says
+    why -- which is why a test now holds it rather than a reviewer noticing.
+
+    Checked here rather than in `test_schemas.py` because the path is relative to
+    the example, so the file it names is only resolvable from where the file sits.
+    The identical pointers inside `docs/design/01-configuration.md` are deliberately
+    *not* checked: those are inside code fences, showing what a reader would write
+    next to their own config, and `./` there means their directory rather than ours.
+    """
+    pointer = "# yaml-language-server: $schema="
+    checked = 0
+    for example in sorted(EXAMPLES.glob("*.yaml")):
+        for line in example.read_text(encoding="utf-8").splitlines():
+            if not line.startswith(pointer):
+                continue
+            schema = (example.parent / line[len(pointer) :].strip()).resolve()
+            assert schema.is_file(), (
+                f"{example.name} points at a schema that does not exist: {schema}"
+            )
+            checked += 1
+    assert checked, "no example declares a schema pointer -- did the convention change?"

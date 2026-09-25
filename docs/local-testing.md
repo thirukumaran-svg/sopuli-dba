@@ -2681,6 +2681,263 @@ what the run printed.
 have cut below what the file asked for. It is reported and never enforced — nothing
 here polices a TTL Vault is already policing.
 
+#### Telling the person a password is waiting
+
+`notify:` nests inside `delivery:` and is the **low-trust** half of UC-2 §6: it says
+that a password is ready, never what it is. Built in #442, and it needs its own
+install extra:
+
+```bash
+pip install -e '.[oracle,hashicorp,notify]'
+```
+
+**`[notify]` rather than reusing `[hashicorp]`**, although both install `httpx`: an
+estate on OCI Vault that wants a chat message should not install a HashiCorp extra
+to get one, because ADR-006's whole point is that an extra names *why* a dependency
+is there (E7). Without it the block still validates — a missing client is E4/E5's
+case, not a broken configuration — but a reset refuses before it changes anything
+([below](#without-the-extra-installed)).
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+  notify:
+    method: webhook
+    webhook:
+      url: { env: SOPULI_NOTIFY_WEBHOOK }
+      template: "{account} on {target} has a new password waiting"
+```
+
+#### Watch one arrive
+
+You do not need a chat service. Run something that prints what it is posted:
+
+```bash
+python - <<'EOF' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("content-length", 0)))
+        print("POSTED to", self.path, flush=True)
+        print(json.dumps(json.loads(body), indent=2), flush=True)
+        self.send_response(204); self.end_headers()
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", 8477), H).serve_forever()
+EOF
+export SOPULI_NOTIFY_WEBHOOK=http://127.0.0.1:8477/hooks/T00/B00/EXAMPLE
+sopuli --config wrapped.yaml account reset-password --account acme_dev_alice
+```
+
+The listener prints:
+
+```
+POSTED to /hooks/T00/B00/EXAMPLE
+{
+  "text": "acme_dev_alice on free-pdb has a new password waiting"
+}
+```
+
+**Read what is not in that body.** No password, no wrapping token, no accessor, and
+no second key: the body is `{"text": ...}` and nothing else, so a low-trust channel
+cannot accumulate the shape of an estate. `{account}` and `{target}` are there
+because the template asked for them.
+
+#### When the channel is down
+
+Stop the listener and run the same reset again. **Exit 0**, the password is
+delivered, and:
+
+```
+2 notes:
+  no `reset_records:` block is declared, so no record of this reset will be written and no advisory lock is taken on the account: the run document and the database are the whole record of it
+  the password for acme_dev_alice on free-pdb was delivered and the notification could not be sent, so nobody has been told it is waiting -- tell them another way today and look at `delivery.notify.webhook.url` afterwards: the webhook could not be reached: ConnectError
+```
+
+**The target is in that sentence, and it was not in the first build** (#520). One
+reset reaches every declared target and notifies once per target, so two failures
+out of three produced two identical notes and no way to tell whose person had not
+been told. The same defect #519 found in the hand-over block, one object over.
+
+`SOPULI-W026`, and a warning rather than a failure for `SOPULI-W025`'s reason and
+more easily: by the time anything is posted the password has changed and the person
+can fetch it, so ending the run would report a false negative about the part that
+mattered. What is lost is that somebody has to be told another way, which is what
+the note says to do.
+
+**The URL is not in that message**, and that is deliberate rather than incidental:
+`httpx` puts it in the text of several of its own errors, and the URL *is* the
+credential — so a warning built from the exception's message would put a live chat
+webhook into `diagnostics[]`, a run document, and whatever ingests them. What is
+carried is the exception's class name.
+
+**Two things about producing that sample, because both nearly became wrong entries
+in this guide.** `pkill -f listener.py` does not stop a background Python on
+Windows, so the run that was supposed to fail succeeded and the absent warning
+looked like a bug in the tool — use `Stop-Process` and check the port. And `tail -6`
+of the output shows the hand-over block, not the note: notes print *before* it, so
+look for the note by name rather than at the end.
+
+#### Without the extra installed
+
+Uninstall `httpx` — or read this and take it on trust, because the dev environment
+has it for the HashiCorp store. `config validate` says:
+
+```
+delivery.notify.method: `delivery.notify.method: webhook` is configured and its client is not installed, so nothing can send through it (pip install "sopuli-dba[notify]")
+    hint: the block is valid and this build cannot send through it. `account reset-password` refuses rather than resetting without notifying -- before the password changes -- so install the client or take `delivery.notify` out of the file. `config validate` warns instead of failing because it is the question *is this file usable here*, and the answer is yes everywhere but this block
+```
+
+To produce it without uninstalling anything, hide the module from the lookup —
+`installed()` asks `importlib.util.find_spec`, which answers `None` for a
+`sys.modules` entry set to `None`:
+
+```bash
+python -c "import sys; sys.modules['httpx']=None; sys.argv=['sopuli','--config','sopuli.yaml','config','validate']; from sopuli.cli import main; main()"
+```
+
+The first wording ended "so nothing will be sent when a password is delivered",
+which promised a delivery that the refusal below no longer makes (#520).
+
+Exit 0, and it is **separate from the delivery method's** warning on purpose: an
+estate can have a working delivery and an inert notification, and one sentence
+covering both would say only that something in the block does not work.
+
+**A reset then refuses, at exit 9, and does not change the password** (#520). The
+first build ran it, delivered, and raised `SOPULI-W026` — the same note as an
+unreachable webhook, on the argument that from the person's side it is the same
+outcome. It is not: an unreachable webhook is news that arrives after the password
+has changed and there is nothing better to do with it, while a client that is not
+installed is knowable before the run connects to anything. That is invariant 4, and
+E5's contract that configured-but-uninstalled fails use with exit 9:
+
+```
+sopuli: notify method 'webhook' needs a client this machine does not have
+  hint: pip install "sopuli-dba[notify]" -- or take `delivery.notify` out of the file if nobody should be told. The reset is refused rather than run without the notification, because it is refused *before* the password changes and running it would leave somebody holding a credential nobody told them about
+```
+
+**Two things about reproducing that, because neither is obvious.** The output above
+came from a `--dry-run`, which resolves the channel on purpose — telling you the
+client is missing is among the things a preview is for, and it is the one place this
+deliberately does *not* mirror the delivery backend, which a preview skips because
+opening a store would demand credentials the preview does not need.
+
+And `[notify]` and `[hashicorp]` both supply `httpx`, so you cannot see this on the
+default unseen path by uninstalling it: the HashiCorp store needs the same client and
+refuses first, with `SOPULI-20001` naming `vault-dev`. The configuration where
+`[notify]` is the only thing that supplies it is `manual` delivery with a notify
+channel, which is what the sample above ran.
+
+**The URL is resolved there too**, which went further than the review asked. An
+absent environment variable is a configuration error rather than news, so it is
+answered in the same place:
+
+```
+sopuli: delivery.notify.webhook.url: the environment variable SOPULI_NOTIFY_WEBHOOK is not set
+  hint: an empty value counts as unset (§6). Check the name, and that whatever exports it runs in the same process tree as this command
+```
+
+Exit 9, and the account is untouched.
+
+#### Three templates that look fine and are not
+
+**Found by Copilot on #520, and all three were holes in this guide's own claim**
+that a template is proved renderable at load. They passed validation and raised
+inside `render()` — which happens *after* the password has changed, and is the one
+moment UC-2 §6 has no answer for. `Formatter().parse()` hands back the format spec
+and the conversion separately, and the walk was discarding both; it also called
+`.strip()` on a name that `str.format` does not strip.
+
+```yaml
+      template: "fetch it before {expires_at:%Y}"
+```
+```
+sopuli: t.yaml: delivery.notify.webhook.template: a notify template may not give {expires_at} a format spec
+  hint: `{expires_at:%Y}` would be applied to a string and raise when the message is rendered -- which is after the password has changed. Every substitution is already formatted the way the run document formats it, so write `{expires_at}`
+```
+
+```yaml
+      template: "{ account } has a new password"
+```
+```
+sopuli: t.yaml: delivery.notify.webhook.template: a notify template may not pad a placeholder with spaces: { account }
+  hint: `str.format` looks up the name exactly as written, spaces included, so `{ account }` would raise when the message is rendered -- which is after the password has changed. Write `{account}`
+```
+
+```yaml
+      template: "{account!r} has a new password"
+```
+```
+sopuli: t.yaml: delivery.notify.webhook.template: a notify template may not give {account} a conversion
+  hint: `{account!r}` converts a value that is already a string. Write `{account}`
+```
+
+Exit 9 for each. **The middle one is refused rather than trimmed**, which is the
+decision worth knowing: accepting `{ account }` would mean this validator and
+`str.format` read the same file differently, and the estate wrote the file, so the
+file is what should say what it means. The third does not raise at render at all —
+`!r` merely quotes a string that is already one — and is refused anyway, because the
+closed set is about what a template may *ask for*, and a conversion is a second
+spelling of one placeholder.
+
+#### The refusal that is the point of the whole block
+
+**A template may not name the secret, or anything that fetches it.** Try the thing
+everybody will try first:
+
+```yaml
+      template: "your new password is {wrap_token}"
+```
+```
+sopuli: notify_secret.yaml: delivery.notify.webhook.template: a notify template may not reference {wrap_token}
+  hint: UC-2 6.1: the channel that notifies may be low-trust and the channel that carries the secret may not -- and that covers the password *or anything that retrieves it*, because the rule is about reach rather than value. Say that a password is ready and let the person fetch it: available: `{account}`, `{target}`, `{expires_at}`
+```
+
+Exit 9, **at load** — before a password has been drawn, which is the only time a
+refusal about a template is any use. `{wrap_token}` is worth trying specifically
+because #442 proposed it as a placeholder before §6.1 settled the question, so it
+is the mistake the design itself nearly made.
+
+**The guard is the closed set, not that word.** Try a name nobody has ever listed:
+
+```yaml
+      template: "hello {full_name}"
+```
+```
+sopuli: notify_unknown.yaml: delivery.notify.webhook.template: unknown placeholder {full_name} in the notify template
+  hint: available: `{account}`, `{target}`, `{expires_at}`. An unknown name is refused rather than left empty, because a message with a hole in it is one somebody has to go and diagnose. Write `{{` for a literal brace
+```
+
+Same exit, different message, and the difference is the whole design: `{full_name}`
+is refused because it is *not in the allowed set*, not because it is on a forbidden
+list. A blocklist would have let `{wrapping_token}` through. The list of named
+secrets exists only to make the first message better than the second one.
+
+Worth doing both, because the second refusal is the one that proves the first is not
+load-bearing.
+
+#### A URL is named, not written
+
+```yaml
+      url: https://chat.example.com/hooks/T00/B00/XXXX
+```
+```
+sopuli: notify_literal.yaml: delivery.notify.webhook.url: a webhook URL is named, not written here
+  hint: write one of `env:`, `file:` -- e.g. `{ env: SOPULI_NOTIFY_WEBHOOK }`. P2: the config points at where the material comes from, never at the material itself
+```
+
+Exit 9. A chat incoming-webhook URL **is** a credential — the path segments are the
+token — so a literal one is a credential in a file people commit. That is C9, and
+it also answers something #442 asked for separately: the URL is redacted wherever
+the configuration is shown, and it is redacted *structurally*, because the model
+holds a location and never a value. There is nothing to redact.
+
+**That message used to say "auth material" and suggest `SOPULI_VAULT_SECRET_ID`.**
+The reader is shared with every `auth:` block, and #442 is the first caller that is
+not one — so it now takes the noun and the example from its caller. Somebody who
+pasted a chat URL should not be told about a vault secret id.
+
 #### Failures worth causing on purpose
 
 **A `num_uses` key.** Reach for the thing you already have:

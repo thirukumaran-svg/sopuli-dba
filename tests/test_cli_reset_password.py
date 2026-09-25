@@ -1211,3 +1211,167 @@ def test_the_record_never_carries_the_token(
     stored = journal.client.get(f"/v1/{private_mount}/data/{path}")
     assert stored.status_code == 200, stored.text
     assert token not in json.dumps(stored.json()["data"]["data"])
+
+
+# ------------------------------------------- the notify channel (#442, #520) ---
+#
+# **This section exists because it did not.** #442 shipped a notify channel with
+# no test at this layer at all -- the renderer was tested, the sender was tested
+# against a mock, and nothing drove the verb. Three of the five findings on #520
+# live here, and none of them was reachable from either of the units.
+
+NOTIFY_BLOCK = """
+  notify:
+    method: webhook
+    webhook:
+      url: { env: SOPULI_NOTIFY_WEBHOOK }
+      template: "{account} on {target} has a new password waiting"
+"""
+
+
+class Recorder:
+    """A sender that answers, and remembers whether it was asked."""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def send(self, url: Any, message: str) -> None:
+        self.messages.append(message)
+
+
+@pytest.fixture
+def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
+    """Replaces the *resolved channel's* sender, so the registry and the URL are
+    still exercised -- which is where #520's second finding was."""
+    stub = Recorder()
+    monkeypatch.setenv("SOPULI_NOTIFY_WEBHOOK", "https://chat.example.com/hooks/T0/B0/EXAMPLE")
+    monkeypatch.setattr("sopuli.notify.registry.resolve", lambda method: stub)
+    return stub
+
+
+def _seen_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guard 3 satisfied the way a terminal satisfies it.
+
+    `CliRunner` has no terminal, so the seen path is refused at plan time and the
+    ordering this file cares about is unreachable. Patched at the one seam
+    `refuse_seen_path` reads rather than at `isatty`, because the guard takes
+    `stdout_is_terminal` as an argument for exactly this reason.
+    """
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
+
+
+def test_declining_the_seen_prompt_tells_nobody_a_password_is_waiting(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    recorder: Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**Copilot's first finding on #520, and the one that made the run lie.**
+
+    On the seen path `_hand_over` *is* the delivery: it prompts, and declining
+    raises `click.Abort`, leaving the password set on an account nobody has read.
+    The first build notified before that prompt, so answering "no" sent "a new
+    password is waiting" when the only channel that could have carried it had just
+    been refused -- and on `manual` there is no store to fetch it from, so the
+    message was not merely early but false.
+
+    The password still changed. That is not what this asserts and is not a defect:
+    §6.4 puts the DDL first and the abort path journals the mutation.
+    """
+    _seen_terminal(monkeypatch)
+    config = MANUAL.format(
+        dsn=live_oracle.dsn,
+        user=os.environ.get("SOPULI_TEST_ORACLE_USER", "system"),
+        account=ACCOUNT,
+    ).replace("    force_expire: true", "    force_expire: true" + NOTIFY_BLOCK)
+
+    result = run(runner, write_config(config), "--account", ACCOUNT, input="n\n")
+
+    # `click.Abort` reaches `CliRunner` as a `SystemExit` rather than one of this
+    # project's errors -- the prompt is click's, and so is declining it.
+    assert result.exit_code != ExitCode.SUCCESS
+    assert recorder.messages == [], "notified a hand-over that was refused"
+
+
+def test_accepting_the_seen_prompt_does_notify(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    recorder: Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half, without which the fix above could be "never notify".
+
+    Moving the call after `_hand_over` is only correct if the seen path still
+    notifies when the operator looks.
+    """
+    _seen_terminal(monkeypatch)
+    config = MANUAL.format(
+        dsn=live_oracle.dsn,
+        user=os.environ.get("SOPULI_TEST_ORACLE_USER", "system"),
+        account=ACCOUNT,
+    ).replace("    force_expire: true", "    force_expire: true" + NOTIFY_BLOCK)
+
+    result = run(runner, write_config(config), "--account", ACCOUNT, input="y\n")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert recorder.messages == [f"{ACCOUNT} on tier1-oracle has a new password waiting"]
+
+
+def test_a_notify_client_that_is_not_installed_refuses_before_the_password_changes(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**Copilot's second finding on #520**, and invariant 4 for the third time in
+    this issue's lifetime.
+
+    `_notify` wraps everything in a bare `except` so a dead webhook cannot fail a
+    reset that already worked -- and that swallowed `SOPULI-20003` too, turning
+    ADR-006's E5 contract ("configured-but-uninstalled fails use with exit 9") into
+    a warning issued *after* the password had changed. It is knowable before the
+    run connects to anything, so now it is answered there.
+
+    Tier 0, and that is the assertion: nothing in this test can reach a database,
+    because the refusal happens before anything opens one.
+    """
+    _seen_terminal(monkeypatch)
+    monkeypatch.setenv("SOPULI_NOTIFY_WEBHOOK", "https://chat.example.com/hooks/T0/B0/EXAMPLE")
+
+    def absent(name: str) -> Any:
+        raise ModuleNotFoundError(f"No module named {'httpx'!r}", name="httpx")
+
+    monkeypatch.setattr("sopuli.notify.registry.importlib.import_module", absent)
+    config = OFFLINE.replace("    force_expire: true", "    force_expire: true" + NOTIFY_BLOCK)
+
+    result = run(runner, write_config(config), "--account", ACCOUNT)
+
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert "sopuli-dba[notify]" in str(result.exception.hint)
+
+
+def test_a_missing_webhook_url_refuses_before_the_password_changes(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same finding read one line further, and this part went past what the
+    comment asked for.
+
+    The old docstring argued that an unresolvable URL belongs in `SOPULI-W026`
+    because "a missing variable is as much nobody-was-told as a refused request
+    is". That is true about the outcome and wrong about the timing: a refused
+    request is news, and an unset environment variable is a configuration error
+    that is answerable before a password is drawn.
+    """
+    _seen_terminal(monkeypatch)
+    monkeypatch.delenv("SOPULI_NOTIFY_WEBHOOK", raising=False)
+    config = OFFLINE.replace("    force_expire: true", "    force_expire: true" + NOTIFY_BLOCK)
+
+    result = run(runner, write_config(config), "--account", ACCOUNT)
+
+    assert result.exception.exit_code != ExitCode.SUCCESS
+    assert "SOPULI_NOTIFY_WEBHOOK" in str(result.exception) + str(
+        getattr(result.exception, "hint", "")
+    )
