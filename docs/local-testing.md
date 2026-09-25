@@ -3101,8 +3101,8 @@ The last two are about having somewhere to deliver at all, and both refuse
 nowhere to put the password would have changed one nobody can be told:
 
 ```
-sopuli: `delivery.method: vault_wrapped` is configured and is not implemented in this build
-  hint: only `manual` can deliver today (#441); the unseen methods are #444-#447. `config validate` warns about this before a run needs it
+sopuli: `delivery.method: one_time_link` is configured and is not implemented in this build
+  hint: this build serves `manual` (#441) and `vault_wrapped` (#444); the methods still to come are #445-#447 and `smtp_encrypted`. `config validate` warns about this before a run needs it
 ```
 
 Exit **5** — the capability code, because the file is not wrong. And with no
@@ -3139,12 +3139,10 @@ the run is configured to do rather than about an emission.
 
 #### What is not built
 
-- **`lock status` does not survey the reset locks** (#514). They are taken and
-  released since #512, and `lock break` clears one by name, but the listing verb
-  builds its estate from `applications:` and cannot enumerate a predicate-declared
-  personal account offline.
-- **No unseen delivery**, which is the default and the one the use case is really
-  about. #444-#447.
+- **Four of the six delivery methods.** `manual` is this section and
+  `vault_wrapped` is [the unseen path](#account-reset-password--the-unseen-path-vault_wrapped);
+  `vault_path`, `one_time_link`, `onepassword_share` and `smtp_encrypted` are
+  refused at exit 5 as shown above (#445-#447).
 - **No `expire-password`**, the verb that forces a change without setting one.
 
 ### The two other UC-2 verbs
@@ -3482,106 +3480,6 @@ store that is not declared is refused at load, while a prefix that is not the on
 you meant is accepted and looks entirely correct. Showing the pair is what lets the
 second be noticed.
 
-### `delivery:` — a block that validates and cannot deliver
-
-Same shape as `reset_records:` above, and the same warning attached: **#440 builds
-the block and no method is implemented**, so a file naming one parses and cannot
-hand anybody a password. `config validate` says so rather than letting a clean
-parse read as a working delivery.
-
-```yaml
-delivery:
-  method: vault_wrapped
-  vault_wrapped:
-    ttl: 15m
-  notify:
-    method: webhook
-    webhook:
-      url: { env: SOPULI_NOTIFY_WEBHOOK }
-```
-
-```bash
-sopuli --config sopuli.yaml config validate
-```
-```
-config: C:\Users\ville\AppData\Local\Temp\sopuli-440\ok.yaml
-
-ok: 1 target, 0 bindings, 1 warning
-
-1 warning:
-  delivery.method: `delivery.method: vault_wrapped` is configured and no delivery method is implemented in this build, so nothing can hand a password over yet
-    hint: the block is valid and this build cannot act on it; nothing is wrong with the file
-```
-
-**Exit 0 with a warning**, not a refusal: the file is valid and the build is
-incomplete, which is E4/E5's shape for a configured backend this build cannot
-serve.
-
-Six methods, five of them unseen. `manual` is the one that prints a working
-password to your terminal — UC-2 §6.5 has the five guards on it, none of which is
-built either.
-
-#### Three failures worth causing
-
-All exit **9**.
-
-```bash
-sopuli --config unknown-method.yaml config validate
-```
-```
-sopuli: ...\unknown-method.yaml: delivery.method: unknown delivery method 'carrier_pigeon'
-  hint: known: vault_wrapped, vault_path, one_time_link, onepassword_share, manual, smtp_encrypted
-```
-
-The method is checked **before** unknown keys are, and that ordering is the message
-rather than a detail: a file saying `method: carrier_pigeon` usually has a
-`carrier_pigeon:` block under it, so it is an unknown *key* as well — and reporting
-the key would answer a question you did not ask while burying the one you did.
-
-```bash
-sopuli --config no-subblock.yaml config validate
-```
-```
-sopuli: ...\no-subblock.yaml: delivery.one_time_link: delivery method 'one_time_link' is selected and has no `one_time_link:` block
-  hint: every method needs settings of its own -- a wrapping token needs a ttl, a link needs a backend; write the block, or select a different method
-```
-
-Leave `method:` out entirely and you get the same refusal naming `vault_wrapped` —
-the default still needs its block, because a default is not an excuse to skip the
-settings it needs.
-
-```bash
-sopuli --config unknown-key.yaml config validate
-```
-```
-sopuli: ...\unknown-key.yaml: delivery: unknown key 'retries'
-  hint: known keys here: manual, method, notify, one_time_link, onepassword_share, smtp_encrypted, vault_path, vault_wrapped
-```
-
-**What will not be refused**, and is worth trying so the boundary is clear: a typo
-*inside* a sub-block. `vault_wrapped: { tt1: 15m }` validates cleanly. Which keys a
-method takes belongs to that method's own issue, because the answer is a fact about
-the service behind it — and the warning above is what stops a clean parse being
-mistaken for approval.
-
-A sub-block for a method you did **not** select is also left alone — keeping a
-`vault_wrapped:` block beside `method: manual` is how you switch between them, and
-its keys are unjudged too.
-
-But it must still be an *object*. `vault_wrapped: 15m` is refused wherever it
-appears:
-
-```
-sopuli: ...\loose.yaml: delivery.vault_wrapped: must be a mapping, not a string
-```
-
-That is the one thing checked about an unselected block, and it is checked because
-the published schema types all six method properties as objects — the tool must
-never accept a file the schema refuses, which is the wrong way round for §9b's
-division of labour.
-
----
-
 #### Failures worth causing
 
 All four exit **9**, and each names the key:
@@ -3636,9 +3534,141 @@ exit 9
 A default would put records somewhere the file does not say, in a store the file
 does name — so nobody could tell where the journal is by reading the configuration.
 
-**What you cannot test yet**: that a reset with *no* block configured warns and
-runs. There is no reset. That warning gets its code when the verb that raises it
-lands, rather than being reserved now for nothing to emit.
+**With no block at all**, a reset still runs and says so, as `SOPULI-W024` — shown under
+[What the journal then holds](#what-the-journal-then-holds) — and `account list`
+leaves `RESET_AT` empty with `SOPULI-W023`.
+
+### `delivery:` — which method, and what the file is checked for
+
+#440 built the block and **two of its six methods deliver**: `manual`, the seen
+path (#441), and `vault_wrapped`, the unseen one and the default (#444). What they
+do is under [`account reset-password`](#account-reset-password--the-seen-path)
+above; this section is only about the file. The other four — `vault_path`,
+`one_time_link`, `onepassword_share` and `smtp_encrypted` — parse and cannot hand
+anybody a password yet.
+
+A block that works:
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+  notify:
+    method: webhook
+    webhook:
+      url: { env: SOPULI_NOTIFY_WEBHOOK }
+      template: "{account} on {target} has a new password waiting"
+```
+
+```bash
+sopuli --config ok.yaml config validate
+```
+```
+config: ok.yaml
+
+ok: 1 target, 1 binding, 0 warnings
+```
+
+`template:` is required; leave it out and the file is refused with
+`delivery.notify.webhook.template: must be given`.
+
+Select one of the four that are not built, and `config validate` says so rather
+than letting a clean parse read as a working delivery:
+
+```bash
+sopuli --config unimpl.yaml config validate
+```
+```
+config: unimpl.yaml
+
+ok: 1 target, 1 binding, 1 warning
+
+1 warning:
+  delivery.method: `delivery.method: one_time_link` is configured and is not implemented in this build, so nothing can hand a password over that way yet
+    hint: the block is valid and this build cannot act on it; nothing is wrong with the file
+```
+
+**Exit 0 with a warning**, not a refusal: the file is valid and the build is
+incomplete, which is E4/E5's shape for a configured backend this build cannot
+serve.
+
+#### Failures worth causing
+
+All exit **9**.
+
+```bash
+sopuli --config unknown-method.yaml config validate
+```
+```
+sopuli: unknown-method.yaml: delivery.method: unknown delivery method 'carrier_pigeon'
+  hint: known: vault_wrapped, vault_path, one_time_link, onepassword_share, manual, smtp_encrypted
+```
+
+The method is checked **before** unknown keys are, and that ordering is the message
+rather than a detail: a file saying `method: carrier_pigeon` usually has a
+`carrier_pigeon:` block under it, so it is an unknown *key* as well — and reporting
+the key would answer a question you did not ask while burying the one you did.
+
+```bash
+sopuli --config no-subblock.yaml config validate
+```
+```
+sopuli: no-subblock.yaml: delivery.one_time_link: delivery method 'one_time_link' is selected and has no `one_time_link:` block
+  hint: every method needs settings of its own -- a wrapping token needs a ttl, a link needs a backend; write the block, or select a different method
+```
+
+Leave `method:` out entirely and you get the same refusal naming `vault_wrapped` —
+the default still needs its block, because a default is not an excuse to skip the
+settings it needs.
+
+```bash
+sopuli --config unknown-key.yaml config validate
+```
+```
+sopuli: unknown-key.yaml: delivery: unknown key 'retries'
+  hint: known keys here: manual, method, notify, one_time_link, onepassword_share, smtp_encrypted, vault_path, vault_wrapped
+```
+
+A typo inside the block of a **built** method is refused too, because the method's
+keys are known now:
+
+```
+sopuli: subtypo.yaml: delivery.vault_wrapped: unknown key 'tt1'
+  hint: known keys here: ttl, vault
+```
+
+And `manual` without `force_expire: true` is refused rather than defaulted —
+invariant 2's fifth guard on the seen path:
+
+```
+sopuli: manual-noexpire.yaml: delivery.manual.force_expire: `manual` delivery needs `force_expire: true`
+  hint: `manual` prints a working password to your terminal, and expiry at first logon is what ends that exposure -- so it is written down rather than assumed (UC-2 6.5). Use an unseen method if you do not want the account expired
+```
+
+**What will not be refused**, and is worth trying so the boundary is clear: a typo
+inside the block of a method that is **not built**. `one_time_link: { bakend: x }`
+validates with only the not-implemented warning above. Which keys a method takes
+belongs to that method's own issue, because the answer is a fact about the service
+behind it — and the warning is what stops a clean parse being mistaken for
+approval.
+
+A sub-block for a method you did **not** select is also left alone — keeping a
+`vault_wrapped:` block beside `method: manual` is how you switch between them, and
+its keys are unjudged even when the method is built: `vault_wrapped: { tt1: 15m }`
+beside `method: manual` validates with no warning.
+
+But it must still be an *object*. `vault_wrapped: 15m` is refused wherever it
+appears:
+
+```
+sopuli: loose.yaml: delivery.vault_wrapped: must be a mapping, not a string
+```
+
+That is the one thing checked about an unselected block, and it is checked because
+the published schema types all six method properties as objects — the tool must
+never accept a file the schema refuses, which is the wrong way round for §9b's
+division of labour.
 
 ### `safety.delivery.allowed_methods` — the list that only narrows
 
