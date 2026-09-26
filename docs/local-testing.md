@@ -1698,6 +1698,8 @@ vault-dev:acme/dev/acme  pending  acme_app_user
 nothing was written (--dry-run)
 ```
 
+It streams with `--output jsonl` (#535), `constraints:` line and all; §15 has it.
+
 The `constraints:` line is the one surprise in this verb: `generate` **does**
 connect, to ask each selected target how long a password may be in that database's
 own character set, and the strictest answer governs the draw. It reads and never
@@ -4801,8 +4803,8 @@ only the run's, which is why `vault` is in the block above and
 
 ### Streaming: `--output jsonl`
 
-`creds check`, `creds apply` and `creds rotate` stream (#9, #535): one JSON
-object per line,
+`creds check`, `creds apply`, `creds rotate` and `creds generate` stream (#9,
+#535): one JSON object per line,
 flushed as it is written. `creds check` first, with §10's drift in place:
 
 ```bash
@@ -4909,6 +4911,49 @@ invariant 9 on the stream. The events that remain between `target.started` and
 - **`--dry-run`** streams `run.started`, `plan.resolved`, one `vault.read` and
   `run.finished` — no lock, no target.
 
+#### `creds generate --output jsonl`
+
+```bash
+sopuli --config sopuli.yaml creds generate --output jsonl ; echo "exit $?"
+```
+
+```
+{"schema_version":"1.6","event":"run.started","seq":0,"ts":"2026-09-26T16:02:28.187333Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","data":{"command":"creds.generate","dry_run":false}}
+{"schema_version":"1.6","event":"plan.resolved","seq":1,"ts":"2026-09-26T16:02:28.187582Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["generate","vault_write_pending"],"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user"}}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]}}}
+{"schema_version":"1.6","event":"diagnostic","seq":2,"ts":"2026-09-26T16:02:28.966181Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.6","event":"constraints.resolved","seq":3,"ts":"2026-09-26T16:02:28.966448Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","data":{"source":"targets","max_password_bytes":128,"character_set":"AL32UTF8","targets":[{"target":"free-pdb","reachable":true,"max_password_bytes":128,"measured_as":"utf-8","character_set":"AL32UTF8"}],"accounts":[{"target":"free-pdb","account":"ACME_APP_USER","profile":"DEFAULT","verify_function":{"state":"none"},"password_reuse_max":"UNLIMITED","password_reuse_time":"UNLIMITED","password_versions":["11G","12C"]}]}}
+{"schema_version":"1.6","event":"lock.acquired","seq":4,"ts":"2026-09-26T16:02:29.520019Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":21,"acquired_at":"2026-09-26T16:02:29.507471Z","expires_at":"2026-09-26T16:17:29.507471Z","released":false}}
+{"schema_version":"1.6","event":"vault.read","seq":5,"ts":"2026-09-26T16:02:29.526852Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","data":{"vault":"vault-dev","path":"acme/dev/acme","version":8}}
+{"schema_version":"1.6","event":"password.generated","seq":6,"ts":"2026-09-26T16:02:29.526997Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","account":"acme_app_user","data":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending"}}
+{"schema_version":"1.6","event":"vault.write","seq":7,"ts":"2026-09-26T16:02:29.530758Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","data":{"vault":"vault-dev","path":"acme/dev/acme","version":9,"stage":"pending"}}
+{"schema_version":"1.6","event":"lock.released","seq":8,"ts":"2026-09-26T16:02:29.535031Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":21,"acquired_at":"2026-09-26T16:02:29.507471Z","expires_at":"2026-09-26T16:17:29.507471Z","released":true}}
+{"schema_version":"1.6","event":"target.finished","seq":9,"ts":"2026-09-26T16:02:29.535146Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"PENDING_APPLY","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending","field":"acme_app_user","version":9},"actions":[{"kind":"vault_write_pending","applied":true,"detail":"staged v9"}]}}
+{"schema_version":"1.6","event":"run.finished","seq":10,"ts":"2026-09-26T16:02:29.535349Z","correlation_id":"f3925d23-2311-487e-b538-640c56185283","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"by_state":{"PENDING_APPLY":1}},"exit_code":0}}
+exit 0
+```
+
+`constraints.resolved` is the `constraints` section of the `--output json`
+document, whole, and it comes before anything is drawn. A `--dry-run` streams
+`run.started`, `plan.resolved`, `constraints.resolved` and `run.finished` and
+nothing else.
+
+**`--promote --overwrite-current`** swaps the staging write for a promotion —
+`vault.promote`, with the draw marked `"stage":"current"`:
+
+```
+{"schema_version":"1.6","event":"vault.read","seq":5,"ts":"2026-09-26T16:02:31.805675Z","correlation_id":"074237b8-ab4f-4f4e-b784-9615a0fa5dbe","data":{"vault":"vault-dev","path":"acme/dev/acme","version":9}}
+{"schema_version":"1.6","event":"password.generated","seq":6,"ts":"2026-09-26T16:02:31.805763Z","correlation_id":"074237b8-ab4f-4f4e-b784-9615a0fa5dbe","account":"acme_app_user","data":{"vault":"vault-dev","path":"acme/dev/acme","stage":"current"}}
+{"schema_version":"1.6","event":"vault.promote","seq":7,"ts":"2026-09-26T16:02:31.808371Z","correlation_id":"074237b8-ab4f-4f4e-b784-9615a0fa5dbe","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":10}}
+```
+
+That leaves the vault's `current` on a password no database has; `creds apply`
+puts it back in step (it reported `IN_SYNC`, exit 0). Read version 9's `pending`
+and version 10's `acme_app_user` back from Vault and grep both saved streams:
+`0` hits each.
+
+`--from-stdin` streams no `password.generated` at all — the value was supplied,
+not drawn — and still streams its `vault.write`.
+
 #### `creds rotate --output jsonl`
 
 ```bash
@@ -4973,7 +5018,7 @@ sopuli --config sopuli.yaml config show --output jsonl ; echo "exit $?"
 
 ```
 sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
-  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check, creds rotate
+  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check, creds generate, creds rotate
 exit 2
 ```
 

@@ -1,0 +1,624 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-event-1.6.schema.json",
+  "title": "sopuli-dba streamed event",
+  "description": "One JSON object per line, emitted by `sopuli … --output jsonl` as the run progresses. The final run.finished event carries the same summary and exit_code as the --output json document. Implemented in 1.3 (#9), for `creds check` first; a verb that does not stream refuses --output jsonl rather than emitting less than its document would. 1.3 made the payloads the design already promised into requirements: run.finished.data carries summary and exit_code (and error when the run failed as a whole), target.started names its target, plan.resolved carries its plan. 1.4 (#535) adds `creds apply` and gives the events it is the first to emit a payload: lock.acquired and lock.released carry a lock.held[] entry and lock.denied a lock.denied entry from the run schema; vault.read and vault.write name the vault, the path and the version, never the content; vault.promote names the version the promotion produced; verification.done carries a $defs/verification. password.applied and password.generated have closed payloads, so that no later field can carry a password. 1.5 (#535) adds `creds rotate`, the first verb to emit confirmation.required, whose data carries the prompt the person was shown -- sent only when somebody is actually asked, so a stream that stops after it is a run waiting on a person. vault.write may carry an error object where the write was refused. 1.6 (#535) adds `creds generate` and one event for it: constraints.resolved, sent once with the run document's `constraints` section as its data, as plan.resolved carries `plan`. `password.displayed` (1.1, #441) and `password.delivered` (1.2, #444) are registered and still have no emitter: the verb that causes them does not stream yet. Neither carries the password, and neither carries the retrieval credential an unseen delivery hands back.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "schema_version",
+    "event",
+    "seq",
+    "ts",
+    "correlation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$"
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "run.started",
+        "plan.resolved",
+        "constraints.resolved",
+        "confirmation.required",
+        "lock.acquired",
+        "lock.denied",
+        "target.started",
+        "vault.read",
+        "vault.write",
+        "vault.promote",
+        "password.generated",
+        "password.applied",
+        "password.delivered",
+        "password.displayed",
+        "verification.done",
+        "target.finished",
+        "lock.released",
+        "diagnostic",
+        "run.finished"
+      ]
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic within a run. Consumers may use gaps to detect truncation."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string"
+    },
+    "account": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "target": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "level": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ],
+      "default": "info"
+    },
+    "message": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Human-readable, redacted."
+    },
+    "data": {
+      "type": "object",
+      "description": "Event-specific payload. Shapes are reused from the run schema: target.finished carries a $defs/result, run.finished carries a $defs/summary, exit_code and -- on a run that failed as a whole -- a $defs/error, plan.resolved carries a $defs/plan, constraints.resolved a $defs/constraints, lock.acquired and lock.released carry a lock.held[] entry, lock.denied a lock.denied object, verification.done a $defs/verification -- and a diagnostic event carries its level, message, account and target at the top level like any event, with its code, when it has one, in data.code.",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "target.finished"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "account",
+          "target",
+          "data"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "run.finished"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "required": [
+              "summary",
+              "exit_code"
+            ],
+            "properties": {
+              "exit_code": {
+                "type": "integer"
+              },
+              "summary": {
+                "type": "object"
+              },
+              "error": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "password.applied"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "account",
+          "target",
+          "data"
+        ],
+        "description": "Never carries the password. The data object carries only the vault version the value came from and the account's outcome, and is closed so that no later field can carry anything else.",
+        "properties": {
+          "data": {
+            "required": [
+              "version",
+              "outcome"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "outcome": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "target.started"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "target"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "plan.resolved"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "diagnostic"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "level",
+          "message"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "lock.acquired"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "required": [
+              "vault",
+              "path",
+              "fence",
+              "acquired_at",
+              "expires_at",
+              "released"
+            ],
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "fence": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "released": {
+                "type": "boolean"
+              },
+              "acquired_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "lock.released"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "required": [
+              "vault",
+              "path",
+              "fence",
+              "acquired_at",
+              "expires_at",
+              "released"
+            ],
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "fence": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "released": {
+                "type": "boolean"
+              },
+              "acquired_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "lock.denied"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "required": [
+              "vault",
+              "path",
+              "reason"
+            ],
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "acquired_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "vault.read"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "required": [
+              "vault",
+              "path",
+              "version"
+            ],
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "version": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "vault.write"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "required": [
+              "vault",
+              "path",
+              "version"
+            ],
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "version": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "error": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "vault.promote"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ],
+        "description": "Sent for a promotion write that was attempted. A document held back because a target did not confirm has no vault.promote.",
+        "properties": {
+          "data": {
+            "required": [
+              "vault",
+              "path",
+              "promoted_to"
+            ],
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "promoted_to": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "error": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "password.generated"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "account",
+          "data"
+        ],
+        "description": "Never carries the password: the data object names where it was staged and is closed.",
+        "properties": {
+          "data": {
+            "required": [
+              "vault",
+              "path",
+              "stage"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "vault": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "stage": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "verification.done"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "account",
+          "target",
+          "data"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "confirmation.required"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "required": [
+              "prompt"
+            ],
+            "properties": {
+              "prompt": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "constraints.resolved"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "data"
+        ]
+      }
+    }
+  ]
+}

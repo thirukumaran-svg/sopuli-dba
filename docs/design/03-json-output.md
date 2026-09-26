@@ -4,7 +4,8 @@ Status: draft / sketch, **partly implemented**. The run document, `--output
 text|json`, colour resolution, the `config` section, `diagnostics`, `plan`,
 `results` and four of `invocation.selection`'s six members are real and validated
 against the schema in CI (`sopuli/output/`). **`--output jsonl` exists since #9,
-for the verbs that stream** — `creds check` first, then `creds apply` and `creds rotate` (#535) — and
+for the verbs that stream** — `creds check` first, then `creds apply`, `creds rotate` and `creds generate`
+(#535) — and
 any other verb refuses it as a usage error; §5 says what is emitted and why the refusal is
 the rule. This paragraph called `plan` and `results` unwritten until #392;
 they have been emitted by every `creds` verb for many releases.
@@ -22,8 +23,8 @@ reports the store record rather than the moment (#348). This paragraph said
 `held[]` was still waiting on `creds generate`, "which does not exist", until
 #392 — it had shipped, with a lock, three releases earlier.
 The `lock.*` events are emitted by `creds apply` since #535, the first verb that
-both takes a lock and streams, and by `creds rotate` after it; `creds generate`
-still refuses `jsonl` until its `constraints` section has an event of its own.
+both takes a lock and streams, and by `creds rotate` and `creds generate` after
+it. `lock break` does not stream, on purpose — §5 says why.
 
 **`invocation.selection` is now filled in** (#297). The object has carried
 slots for `applications`, `accounts`, `targets`, `groups`, `all` and `limit`
@@ -42,7 +43,7 @@ a config emits them, `config show` in both its views as well as
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
 Schemas: [`../schemas/sopuli-run-1.30.schema.json`](../schemas/sopuli-run-1.30.schema.json),
-[`../schemas/sopuli-event-1.5.schema.json`](../schemas/sopuli-event-1.5.schema.json)
+[`../schemas/sopuli-event-1.6.schema.json`](../schemas/sopuli-event-1.6.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---
@@ -66,7 +67,8 @@ Three output modes:
 `jsonl` and `json` describe the same run. The last `run.finished` event carries
 the same `summary` and `exit_code` as the `json` document, so a consumer can use
 either without a second code path. **`jsonl` is offered only by a verb that
-streams** — `creds check`, `creds apply` and `creds rotate` today — and refused
+streams** — `creds check`, `creds apply`, `creds rotate` and `creds generate`
+today — and refused
 by the rest; §5
 says why.
 
@@ -1858,6 +1860,59 @@ answered with EOF, from the same stack:
 
 followed by `run.finished` with exit 8.
 
+### `creds generate`
+
+**Streams since #535**, and the one thing it needed that no other verb did was
+somewhere to put its `constraints` section. From the tier-1 stack, trimmed only
+where `…` says so:
+
+```jsonl
+{"schema_version":"1.6","event":"run.started","seq":0,"ts":"2026-09-26T16:02:28.187333Z","correlation_id":"f3925d23-…","data":{"command":"creds.generate","dry_run":false}}
+{"schema_version":"1.6","event":"plan.resolved","seq":1,"ts":"2026-09-26T16:02:28.187582Z","correlation_id":"f3925d23-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["generate","vault_write_pending"],…}],"blast_radius":{…}}}
+{"schema_version":"1.6","event":"diagnostic","seq":2,"ts":"2026-09-26T16:02:28.966181Z","correlation_id":"f3925d23-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable …","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.6","event":"constraints.resolved","seq":3,"ts":"2026-09-26T16:02:28.966448Z","correlation_id":"f3925d23-…","data":{"source":"targets","max_password_bytes":128,"character_set":"AL32UTF8","targets":[{"target":"free-pdb","reachable":true,"max_password_bytes":128,"measured_as":"utf-8","character_set":"AL32UTF8"}],"accounts":[{"target":"free-pdb","account":"ACME_APP_USER","profile":"DEFAULT","verify_function":{"state":"none"},"password_reuse_max":"UNLIMITED","password_reuse_time":"UNLIMITED","password_versions":["11G","12C"]}]}}
+{"schema_version":"1.6","event":"lock.acquired","seq":4,"ts":"2026-09-26T16:02:29.520019Z","correlation_id":"f3925d23-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":21,"acquired_at":"2026-09-26T16:02:29.507471Z","expires_at":"2026-09-26T16:17:29.507471Z","released":false}}
+{"schema_version":"1.6","event":"vault.read","seq":5,"ts":"2026-09-26T16:02:29.526852Z","correlation_id":"f3925d23-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":8}}
+{"schema_version":"1.6","event":"password.generated","seq":6,"ts":"2026-09-26T16:02:29.526997Z","correlation_id":"f3925d23-…","account":"acme_app_user","data":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending"}}
+{"schema_version":"1.6","event":"vault.write","seq":7,"ts":"2026-09-26T16:02:29.530758Z","correlation_id":"f3925d23-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":9,"stage":"pending"}}
+{"schema_version":"1.6","event":"lock.released","seq":8,"ts":"2026-09-26T16:02:29.535031Z","correlation_id":"f3925d23-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":21,"acquired_at":"2026-09-26T16:02:29.507471Z","expires_at":"2026-09-26T16:17:29.507471Z","released":true}}
+{"schema_version":"1.6","event":"target.finished","seq":9,"ts":"2026-09-26T16:02:29.535146Z","correlation_id":"f3925d23-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"PENDING_APPLY","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending","field":"acme_app_user","version":9},"actions":[{"kind":"vault_write_pending","applied":true,"detail":"staged v9"}]}}
+{"schema_version":"1.6","event":"run.finished","seq":10,"ts":"2026-09-26T16:02:29.535349Z","correlation_id":"f3925d23-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"by_state":{"PENDING_APPLY":1}},"exit_code":0}}
+```
+
+**`constraints.resolved` is the section, once, as soon as it exists** — the
+`constraints` object the run document carries, unchanged, sent after every
+target has been read and before anything is drawn. That is `plan.resolved`'s
+arrangement, and it was chosen over one event per target as each is read: the
+section's estate-wide fields, `strictest_target` and `character_set`, belong to
+no single target, and a per-target stream would leave every consumer to
+recompute "strictest" — logic this tool already owns. The notes the reading
+produced (`SOPULI-W015` to `W017`) arrive just ahead of it as `diagnostic`
+events. A `--dry-run` streams it too, because the reading is most of what a
+preview of `generate` is for: `run.started`, `plan.resolved`,
+`constraints.resolved`, `run.finished`.
+
+- **The staging events are rotate's**, from the same code: a `vault.read` per
+  document, a `password.generated` per account drawn, and one `vault.write` per
+  document, however many accounts share it.
+- **A password from `--from-stdin` is not announced as generated.** The event
+  reports provenance as it happens, and that value was supplied; its row says
+  so, and the `vault.write` still appears.
+- **`--promote` is `vault.promote`, not `vault.write`**, because what a
+  consumer watches that event for — `current` changed, applications will now
+  fetch this — is exactly what it does. Invariant 7's one exception is visible on
+  the stream as what it is, with the draws marked `"stage":"current"`:
+
+  ```jsonl
+  {"schema_version":"1.6","event":"vault.read","seq":5,"ts":"2026-09-26T16:02:31.805675Z","correlation_id":"074237b8-ab4f-4f4e-b784-9615a0fa5dbe","data":{"vault":"vault-dev","path":"acme/dev/acme","version":9}}
+  {"schema_version":"1.6","event":"password.generated","seq":6,"ts":"2026-09-26T16:02:31.805763Z","correlation_id":"074237b8-ab4f-4f4e-b784-9615a0fa5dbe","account":"acme_app_user","data":{"vault":"vault-dev","path":"acme/dev/acme","stage":"current"}}
+  {"schema_version":"1.6","event":"vault.promote","seq":7,"ts":"2026-09-26T16:02:31.808371Z","correlation_id":"074237b8-ab4f-4f4e-b784-9615a0fa5dbe","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":10}}
+  ```
+
+- **`confirmation.required` is sent by the environment gate too**
+  (`safety.confirm_environments`), which `generate` shares with `apply`: only
+  when somebody is actually asked, with the question in `data.prompt`.
+
 ### Which verbs stream, and why the rest refuse
 
 **Only a verb that has events to stream accepts `--output jsonl`**, and every
@@ -1866,19 +1921,31 @@ other verb refuses it on exit 2 with no events, naming where the value came from
 
 ```
 sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
-  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check, creds rotate
+  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check, creds generate, creds rotate
 ```
 
 The alternative was to accept it everywhere and emit `run.started` and
 `run.finished` around nothing, and it is refused for §1's reason: `jsonl` and
 `json` are promised to describe the same run, and the event schema has no home
-for a `config`, `targets` or `constraints` section. (`lock` was on that list
-until #535 gave the `lock.*` events a payload; a verb that takes a lock can
-stream now, and `creds apply` does.) A stream that
+for a `config` or `targets` section. (`lock` and `constraints` were on that
+list until #535 gave the `lock.*` events a payload and `creds generate` an event
+for its `constraints`.) A stream that
 silently carried less than the document would be the quiet downgrade §2 refuses
 everywhere else. `STREAMING_COMMANDS` in `sopuli/invocation.py` is the list,
 and adding a verb to it means giving the verb events rather than only a line
 there.
+
+**`lock break` refuses it on purpose**, decided in #535 rather than left for
+later. Streaming is for runs whose progress or stopping point matters, and `lock
+break` is one action with nothing that unfolds: its stream would be `run.started`,
+one event carrying the `broken[]` entry, and `run.finished` — the run document
+with worse syntax, bought with a new event name. `--output json` already gives a
+consumer all of it.
+
+```
+sopuli: --output (verb): `lock break` does not stream, so it has no jsonl output
+  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check, creds generate, creds rotate
+```
 
 **A verb that refuses the machine formats refuses `jsonl` twice.** `account
 reset-password`'s seen path and `policy sample --reveal` are refused under
@@ -2295,6 +2362,14 @@ for 1.3's reason.
 to emit `confirmation.required`: its `data` must carry the `prompt`. `vault.write`
 may carry an `error` object, for a staging write the vault refused. Both are on
 events nothing emitted under 1.4 in those shapes, so no 1.4 stream fails 1.5.
+
+**The event schema went 1.5 to 1.6 with `creds generate`** (#535), and it is the
+first bump since 1.1 to add an event *name*: `constraints.resolved`, which must
+carry `data` — the run schema's `$defs/constraints`. Adding a value to the event
+enum is minor under §8, and it is the one kind of minor change an exhaustive
+consumer notices; that is the cost of giving the section a home, weighed against
+putting it inside `run.finished` (late, and a catch-all) or one event per target
+(which strands the estate-wide fields).
 
 
 **1.27 became 1.28 when the survey found a third kind of record** (#514). One

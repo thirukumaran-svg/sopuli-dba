@@ -32,6 +32,7 @@ from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import lock_path
 from sopuli.lock.record import Holder, LockRecord
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.passwords import ByteLimit
 from sopuli.payload import ORIGIN, PENDING, PREVIOUS
 from sopuli.store import MemoryStore, SecretStore
@@ -1286,3 +1287,245 @@ def test_a_document_shaped_wrongly_fails_that_document_and_not_the_run(
     assert {entry["state"] for entry in found["results"]} == {"ERROR"}
     assert found["results"][0]["error"]["category"] == "vault"
     assert current(store) == {"acme_web_user": {"nested": "wrong"}}, "nothing was written"
+
+
+# ------------------------------------------------------------------ jsonl ---
+#
+# `creds generate` streams (#535). What is its own is `constraints.resolved`:
+# the run document's `constraints` section, sent once as soon as it exists --
+# `plan.resolved`'s arrangement, chosen over one event per target because the
+# section's estate-wide fields belong to no one target.
+
+EVENT_SCHEMA = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "schemas"
+    / f"sopuli-event-{EVENT_SCHEMA_VERSION}.schema.json"
+)
+
+
+@pytest.fixture
+def events() -> Draft202012Validator:
+    return Draft202012Validator(json.loads(EVENT_SCHEMA.read_text(encoding="utf-8")))
+
+
+def stream(text: str, events: Draft202012Validator) -> list[dict[str, Any]]:
+    lines = [json.loads(line) for line in text.splitlines() if line.startswith("{")]
+    for line in lines:
+        assert [error.message for error in events.iter_errors(line)] == [], line
+    return lines
+
+
+def names(lines: list[dict[str, Any]]) -> list[str]:
+    return [line["event"] for line in lines if line["event"] != "diagnostic"]
+
+
+def test_jsonl_streams_the_reading_then_the_draws_then_the_write(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    events: Draft202012Validator,
+) -> None:
+    """Two accounts in one document: one lock, one read, a draw each, one write."""
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128})
+    result = run(runner, write_config(CONFIG), "--output", "jsonl")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    lines = stream(result.stdout, events)
+    assert names(lines) == [
+        "run.started",
+        "plan.resolved",
+        "constraints.resolved",
+        "lock.acquired",
+        "vault.read",
+        "password.generated",
+        "password.generated",
+        "vault.write",
+        "lock.released",
+        "target.finished",
+        "target.finished",
+        "run.finished",
+    ]
+    drawn = [line["account"] for line in lines if line["event"] == "password.generated"]
+    assert drawn == ["acme_web_user", "acme_batch_user"]
+    write = next(line["data"] for line in lines if line["event"] == "vault.write")
+    assert write == {"vault": "vault-prod", "path": PATH, "version": 1, "stage": "pending"}
+    assert [line["seq"] for line in lines] == list(range(len(lines)))
+
+
+def test_jsonl_and_json_describe_the_same_generation(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    events: Draft202012Validator,
+) -> None:
+    """Including the section the stream could not carry before 1.6."""
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)
+    config = write_config(CONFIG)
+    lines = stream(run(runner, config, "--output", "jsonl").stdout, events)
+    body = document(run(runner, config, "--output", "json"))
+
+    assert lines[-1]["data"] == {"summary": body["summary"], "exit_code": body["exit_code"]}
+    resolved = next(line["data"] for line in lines if line["event"] == "constraints.resolved")
+    assert resolved == body["constraints"]
+    defs = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    shape = Draft202012Validator({"$defs": defs, "$ref": "#/$defs/constraints"})
+    assert [error.message for error in shape.iter_errors(resolved)] == []
+
+    def comparable(entry: dict[str, Any]) -> dict[str, Any]:
+        # Each run writes the next version, so the second run's rows say v2 and
+        # "replaced the pending in v1"; the shape and the accounts must agree.
+        return {key: entry[key] for key in ("account", "target", "state", "changed")}
+
+    streamed = [line["data"] for line in lines if line["event"] == "target.finished"]
+    assert [comparable(one) for one in streamed] == [comparable(one) for one in body["results"]]
+    result = Draft202012Validator({"$defs": defs, "$ref": "#/$defs/result"})
+    for one in streamed:
+        assert [error.message for error in result.iter_errors(one)] == []
+
+
+def test_no_generated_password_reaches_the_stream(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    events: Draft202012Validator,
+) -> None:
+    result = run(runner, write_config(CONFIG), "--output", "jsonl")
+
+    stream(result.stdout, events)
+    for value in staged(store).values():
+        assert value not in result.stdout
+
+
+def test_a_supplied_password_is_not_announced_as_generated(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    events: Draft202012Validator,
+) -> None:
+    """`password.generated` reports provenance as it happens, and a value from
+    stdin was not generated. Nor does it reach the stream."""
+    supplied = "Qx7mTa2Lb9Rc4Nd8Pe3Vf6Wz"
+    result = run(
+        runner, write_config(CONFIG), "--from-stdin", "--output", "jsonl", stdin=supplied + "\n"
+    )
+
+    lines = stream(result.stdout, events)
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "password.generated" not in names(lines)
+    assert "vault.write" in names(lines)
+    assert supplied not in result.stdout
+
+
+def test_promote_streams_a_promotion_and_no_staging_write(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    events: Draft202012Validator,
+) -> None:
+    """Invariant 7's one exception is `vault.promote` on the stream -- `current`
+    changed -- and the draws say which stage they went to."""
+    lines = stream(
+        run(runner, write_config(CONFIG), "--promote", "--output", "jsonl").stdout, events
+    )
+
+    assert "vault.write" not in names(lines)
+    promoted = [line["data"] for line in lines if line["event"] == "vault.promote"]
+    assert promoted == [{"vault": "vault-prod", "path": PATH, "promoted_to": 1}]
+    stages = {line["data"]["stage"] for line in lines if line["event"] == "password.generated"}
+    assert stages == {"current"}
+
+
+def test_a_dry_run_streams_the_plan_and_the_reading_and_nothing_else(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    events: Draft202012Validator,
+) -> None:
+    lines = stream(
+        run(runner, write_config(CONFIG), "--dry-run", "--output", "jsonl").stdout, events
+    )
+
+    assert names(lines) == ["run.started", "plan.resolved", "constraints.resolved", "run.finished"]
+
+
+def test_a_held_lock_is_streamed_as_denied(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    events: Draft202012Validator,
+) -> None:
+    key = LockKey(store="vault-prod", path=PATH)
+    store.require_cas(lock_path(key))
+    store.write(
+        lock_path(key),
+        LockRecord.acquired(
+            correlation_id="01JTHEIRS",
+            command="creds rotate",
+            holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
+            now=utc_now(),
+        ).to_dict(),
+        cas=0,
+    )
+
+    result = run(runner, write_config(CONFIG), "--output", "jsonl")
+
+    assert isinstance(result.exception, LockDeniedError)
+    lines = stream(result.stdout, events)
+    assert names(lines)[-2:] == ["lock.denied", "run.finished"]
+    assert lines[-2]["data"]["holder"]["correlation_id"] == "01JTHEIRS"
+    assert lines[-1]["data"]["exit_code"] == ExitCode.LOCK_HELD
+
+
+def test_the_environment_gate_announces_its_prompt(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    events: Draft202012Validator,
+) -> None:
+    """`safety.confirm_environments` asks through the gate `apply` shares, and
+    the stream says a person is being asked before anything waits on them."""
+    guarded = CONFIG.replace(
+        "  policy: app-standard\n",
+        "  policy: app-standard\n  safety:\n    confirm_environments: [dev]\n",
+    )
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    result = run(runner, write_config(guarded), "--output", "jsonl", stdin="n\n")
+
+    prompts = [
+        line["data"]["prompt"]
+        for line in stream(result.stdout, events)
+        if line["event"] == "confirmation.required"
+    ]
+    assert prompts == ["staging a password in `dev`?"]
+    assert store.read(PATH) is None
+
+
+def test_a_promotion_refused_before_its_write_still_announces_the_draws(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    events: Draft202012Validator,
+) -> None:
+    """A `current` that appeared after the plan was made is refused under the
+    lock, before the write. The passwords were drawn all the same, so they are
+    announced -- as `_stage` announces before a write that fails -- and no
+    `vault.promote` is sent, because none was attempted (review of #544)."""
+    store.write(PATH, {"DB_CREDENTIALS": {"acme_web_user": "Existing-Current-Value-1"}}, cas=0)
+    # The plan-time read sees nothing, which is the race the in-lock re-check
+    # exists for: somebody wrote `current` between the plan and the lock.
+    monkeypatch.setattr("sopuli.cli._current_holders", lambda writes, stores: {})
+
+    lines = stream(
+        run(runner, write_config(CONFIG), "--promote", "--output", "jsonl").stdout, events
+    )
+
+    drawn = [line["account"] for line in lines if line["event"] == "password.generated"]
+    assert drawn == ["acme_web_user", "acme_batch_user"]
+    assert "vault.promote" not in names(lines)
+    states = [line["data"]["state"] for line in lines if line["event"] == "target.finished"]
+    assert states == ["ERROR", "ERROR"]

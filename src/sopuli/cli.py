@@ -3684,8 +3684,11 @@ def _confirm_environments(
         return
     if not _can_prompt():
         refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
+    question = f"{action} in `{demand.named}`?"
+    # As `rotate`'s gate does (#535): only where somebody is actually asked.
+    run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
     click.echo(render_plan(plan, noun=noun), err=True)
-    click.confirm(f"{action} in `{demand.named}`?", abort=True, err=True)
+    click.confirm(question, abort=True, err=True)
 
 
 def _with_estate_safety(run: Invocation, config: Config) -> Invocation:
@@ -4563,6 +4566,9 @@ def creds_generate(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     document.plan = plan.as_json()
+    # No-ops outside `--output jsonl` (#535).
+    emitter = run.emitter()
+    emitter.event(document, "plan.resolved", data=document.plan)
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="generation")
 
     bindings = [binding for binding in config.bindings if binding.secret is not None]
@@ -4575,6 +4581,13 @@ def creds_generate(
     document.constraints = build_constraints(limits)
     notices = constraint_diagnostics(limits, supplied=supplied is not None)
     document.diagnostics.extend(notices)
+    if document.constraints is not None:
+        # The section whole, once, as soon as it exists -- `plan.resolved`'s
+        # arrangement (#535). Per target would strand the estate-wide fields,
+        # `strictest_target` and `character_set`, which belong to no one target
+        # and which a consumer would otherwise have to recompute. The notes the
+        # reading produced go out ahead of it as `diagnostic` events.
+        emitter.event(document, "constraints.resolved", data=document.constraints)
     candidates = [
         _candidate(
             binding,
@@ -4648,6 +4661,7 @@ def creds_generate(
         command="creds generate",
         selection=describe_selection(selection),
         break_expired=_break_expired(run),
+        observer=_lock_events(run),
     )
 
     results: list[dict[str, Any]] = []
@@ -4668,17 +4682,19 @@ def creds_generate(
                     break
                 rows.extend(
                     _promote_document(
-                        write, stores[write.key.store], authorised=overwrite, out=results
+                        write, stores[write.key.store], authorised=overwrite, out=results, run=run
                     )
                     if promote
                     else _stage(write, stores[write.key.store], out=results, run=run)
                 )
     except LockDeniedError as denied:
         _record_locks(document, manager, denied=denied)
+        emitter.event(document, "lock.denied", data=denied_entry(denied))
         raise
 
     _record_locks(document, manager)
     document.results = results
+    _stream_results(run)
     states = [state for _, state, _ in rows]
     if stolen is not None:
         # The same split `creds apply` makes, for the same reason: 7 asserts
@@ -4935,6 +4951,7 @@ def _promote_document(
     *,
     authorised: bool,
     out: list[dict[str, Any]],
+    run: Invocation,
 ) -> list[tuple[Candidate, str, str]]:
     """Write one document's passwords straight to `current` (#257, UC-1 §4).
 
@@ -4966,7 +4983,13 @@ def _promote_document(
     definition of what a promotion writes is worth more than a tidier first
     version.
     """
+    emitter = run.emitter()
     existing = store.read(write.key.path)
+    emitter.event(run.document, "vault.read", data=_vault_event(write.key, existing))
+    # Before either refusal below, as `_stage` announces before its write: the
+    # passwords were drawn whatever becomes of this document, and the row says
+    # what did (review of #544).
+    _announce_draws(write, run, stage=CURRENT)
     cas = 0 if existing is None else existing.version
     data = existing.data if existing is not None else None
 
@@ -5013,12 +5036,32 @@ def _promote_document(
             stage=CURRENT,
         )
 
+    # Invariant 7's one exception, on the stream as what it is (#535): a
+    # promotion no database confirmed. `vault.promote` rather than
+    # `vault.write`, because what a consumer watches that event for -- `current`
+    # changed, applications will now fetch this -- is exactly what happens here.
+    # A document refused before the write (above) sends none, as in `apply`.
     patch = apply_states.promotion_patch(entries, at=utc_now(), by=_rotated_by())
     try:
         written = write_credential(store, write.key.path, patch, cas=cas)
     except Exception as error:  # noqa: BLE001 -- a per-document finding
         reported = _as_error(error)
+        emitter.event(
+            run.document,
+            "vault.promote",
+            data={
+                "vault": write.key.store,
+                "path": write.key.path,
+                "promoted_to": None,
+                "error": reported.to_dict(),
+            },
+        )
         return _reported(write, FAILED, reported.message, out=out, stage=CURRENT, error=reported)
+    emitter.event(
+        run.document,
+        "vault.promote",
+        data={"vault": write.key.store, "path": write.key.path, "promoted_to": written.version},
+    )
 
     return _reported(
         write,
@@ -5030,6 +5073,24 @@ def _promote_document(
         overwritten=tuple(replaced),
         mechanism=written.mechanism,
     )
+
+
+def _announce_draws(write: DocumentWrite, run: Invocation, *, stage: str = PENDING) -> None:
+    """One ``password.generated`` per drawn password, ahead of its write (#535).
+
+    A supplied one (``--from-stdin``) was not generated, and saying it was would
+    give it the wrong provenance on the one channel that reports provenance as
+    it happens -- so it gets no event, and its row says ``supplied``.
+    """
+    emitter = run.emitter()
+    for candidate in write.candidates:
+        if not candidate.supplied:
+            emitter.event(
+                run.document,
+                "password.generated",
+                account=candidate.binding.account,
+                data={"vault": write.key.store, "path": write.key.path, "stage": stage},
+            )
 
 
 def _stage(
@@ -5051,17 +5112,7 @@ def _stage(
     cas = 0 if existing is None else existing.version
     replaced = _already_pending(existing, write)
 
-    # One per drawn password, ahead of the write that stages it (#535). A
-    # supplied one was not generated, and saying it was would give it the wrong
-    # provenance on the one channel that reports provenance as it happens.
-    for candidate in write.candidates:
-        if not candidate.supplied:
-            emitter.event(
-                run.document,
-                "password.generated",
-                account=candidate.binding.account,
-                data={"vault": write.key.store, "path": write.key.path, "stage": PENDING},
-            )
+    _announce_draws(write, run)
     try:
         written = write_credential(store, write.key.path, write.patch(stage=PENDING), cas=cas)
     except Exception as error:  # noqa: BLE001 -- a per-document finding
