@@ -1030,19 +1030,20 @@ class Session(Protocol):
         refuses where one would be. Both are plan-time refusals that raise rather
         than return, so neither can be called and ignored.
 
-        The reason is measured rather than assumed (#455, Q7, on 26ai
-        23.26.2.0.0): ``IDENTIFIED BY … PASSWORD EXPIRE`` is *accepted* on a
+        The reason is measured rather than assumed (#455 and #461, Q7, on 26ai
+        23.26.2.0.0 and 21c 21.3.0.0.0, identically): ``IDENTIFIED BY … PASSWORD
+        EXPIRE`` is *accepted* on a
         rollover profile, the resulting status is ``EXPIRED & IN ROLLOVER``, and
         the old password still authenticates -- it answers ``ORA-28001`` rather
         than ``ORA-01017``, so it is not merely alive but is itself a way to set
         the new one. The expiry that is supposed to end the DBA's exposure would
         leave a second live password behind it for the length of the window.
 
-        **Refused rather than worked around**, and the register entry
-        (unverified: expire-rollover) is why it is not lifted on the strength of
-        one release: a refusal lifted on 26ai alone is a refusal lifted on a guess
-        about 19c and 21c. The unseen path remains available for the same account,
-        and the message says so.
+        **Refused rather than worked around.** From an ``EXPIRED`` start the same
+        statement leaves no second password (#529), so whether this narrows to
+        accounts whose old password still authenticates is a decision, #541, and
+        not something to loosen here. 19c is unmeasured. The unseen path remains
+        available for the same account, and the message says so.
         """
         ...
 

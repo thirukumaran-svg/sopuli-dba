@@ -21,8 +21,9 @@
 --       nothing; uc-02 sec.4.3 refuses that combination until someone reads it.
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
--- as SYSTEM, 2026-09-16 -- results in RESULTS below. 21c, 18c, 11.2 and 19c
--- UNRUN. On a release with no rollover (18c, 11.2) section 7 reports ABSENT and
+-- as SYSTEM, 2026-09-16, and on 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim),
+-- XEPDB1, as SYSTEM, 2026-09-26 (#461), twice -- results in RESULTS below. 18c,
+-- 11.2 and 19c UNRUN. On a release with no rollover (18c, 11.2) section 7 reports ABSENT and
 -- the script STOPS there; Q1-Q5 run on every line.
 --
 -- THROWAWAY DATABASES ONLY. Creates and drops an account, deliberately locks
@@ -96,9 +97,29 @@
 --       password is still live, and is itself a way to set the new one. Both are
 --       live, both expired.
 --
---       This measures the `expire-rollover` register entry on 26ai only. It does
---       NOT settle it: the entry needs 21c as well, and uc-02 sec.4.3's plan-time
---       refusal stands until it has one. Recorded here, decided nowhere.
+--       This measured the `expire-rollover` register entry on 26ai. 21c, below,
+--       is the second release it needed. Recorded here, decided nowhere.
+--
+--
+-- RESULTS -- 21c XE 21.3.0.0.0, XEPDB1, as SYSTEM, 2026-09-26 (#461)
+--
+--   Two full runs, each followed by the two Q7 login checks. The second run's
+--   statuses, LCOUNTs and login results were diffed against the first's with the
+--   timestamps stripped: identical.
+--
+--   Q1-Q6b  identical to 26ai, line for line. ACCOUNT UNLOCK on an unlocked
+--           account resets LCOUNT 2 -> 0; IDENTIFIED BY leaves it at 2; neither
+--           LOCKED(TIMED) nor LOCKED is cleared by IDENTIFIED BY (ORA-28000 with
+--           the new password); both combined clause orders are accepted; Q6's
+--           window opens with both passwords live, closes to p1 ORA-01017, and
+--           the close with no window open is accepted silently; Q6b ends OPEN,
+--           p3 working and p2 ORA-01017.
+--
+--   Q7      identical to 26ai. `IDENTIFIED BY ... PASSWORD EXPIRE` is ACCEPTED on
+--           SOPULI_ROLLOVER, the status is `EXPIRED & IN ROLLOVER`, and the OLD
+--           password p1 answers ORA-28001, as does the new p2. Expiring does not
+--           end the window on 21c either. With 26ai, that settles the register
+--           entry: the two releases it named agree.
 --
 --
 -- HOW TO RUN

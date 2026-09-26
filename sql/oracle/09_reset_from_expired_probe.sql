@@ -28,14 +28,15 @@
 --   C2  CONTROL, from OPEN: R2's statement. Must reproduce 07 Q7 -- p1
 --       ORA-28001 -- or the login method cannot see the thing it is looking for
 --
--- This MEASURES and decides nothing. Whether sec.4.3's refusal narrows is #529's
--- "not decided here", and it needs 21c as well.
+-- This MEASURES and decides nothing. Whether sec.4.3's refusal narrows is #541.
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
 -- as SYSTEM, 2026-09-26 -- twice, statuses and login results identical, the
 -- only difference the second run's setup dropping the first run's accounts.
--- 21c UNRUN (#461), and it is the release the refusal waits on. 18c and 11.2
--- have no rollover and stop at section 0. 19c UNRUN.
+-- Run on 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim), XEPDB1, as SYSTEM,
+-- 2026-09-26 (#461) -- twice, and identical to 26ai in every status and every
+-- login check in the results table; the setup's grace-period logins send a
+-- different warning code (RESULTS). 18c and 11.2 have no rollover and stop at section 0. 19c UNRUN.
 --
 -- THROWAWAY DATABASES ONLY. Creates and drops accounts and a profile, expires
 -- them, and plants known passwords.
@@ -75,6 +76,13 @@
 --   is 07's Q7 exposure exactly. So the start state that matters is whether the
 --   password still authenticates, not whether ACCOUNT_STATUS begins with
 --   EXPIRED -- the same prefix trap 08's E3 found for the bare expiry.
+--
+--   21c XE 21.3.0.0.0, XEPDB1, 2026-09-26: the table above holds unchanged,
+--   every row, on both runs -- statuses from the script, logins as separate
+--   invocations. Both controls reproduce 07 on 21c too. One difference outside
+--   the question: the grace-period logins in section 2 send ORA-28002 on 21c,
+--   where 26ai sends ORA-28098 (08's E3, #322). The resulting EXPIRED(GRACE)
+--   status is the same.
 --
 --   G was reached by a login in grace on the probe's own profile and then
 --   ALTER USER ... PROFILE sopuli_rollover. The move kept EXPIRED(GRACE) and the

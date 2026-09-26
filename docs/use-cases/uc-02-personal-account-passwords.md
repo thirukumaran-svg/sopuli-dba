@@ -163,8 +163,10 @@ Four things follow from that, and each is measured or decided rather than assume
 **The cost, stated rather than buried:** somebody who knows only the old password
 loses the self-service change the window would have given them, and needs a reset.
 The benefit is that the safety does not depend on a release nobody has measured.
-A close with no window open is accepted silently (§4.3), so if 21c (#461) or 19c
-already kill the old password on expiry, the close costs one no-op statement.
+On 26ai and 21c the expiry leaves the old password live (#455, #461), so there the
+close is what ends it. A close with no window open is accepted silently (§4.3), so
+if 19c already kills the old password on expiry, the close costs one no-op
+statement.
 
 **It writes no reset record and takes no reset lock** (#525), the same as
 `account suspend`. §3.1's record journals resets and where they were delivered,
@@ -780,35 +782,34 @@ Three things follow, and the first two are measured
   (#451) settled the noun and the verbs, and deliberately invented no flags for an
   operation nobody has implemented yet.
 
-**On the seen path it is measured on one release and the refusal stands anyway**
-(unverified: expire-rollover). #455's probe ran it on 26ai 23.26.2.0.0 (Q7), and
-the answer is worse than the guess: `IDENTIFIED BY … PASSWORD EXPIRE` **is**
+**On the seen path it is measured on two releases, and the refusal stands.**
+#455's probe ran it on 26ai 23.26.2.0.0 (Q7) and #461 on 21c 21.3.0.0.0, with the
+same answer on both, and that answer is worse than the guess was: `IDENTIFIED BY … PASSWORD EXPIRE` **is**
 accepted on a rollover profile, the resulting `ACCOUNT_STATUS` is
 `EXPIRED & IN ROLLOVER` — both at once — and **expiring does not end the old
 password's window**. The old password answers `ORA-28001`, not `ORA-01017`: it
 still authenticates, and it is itself a way to set the new one. So on this path
 the expiry that is supposed to end the DBA's exposure leaves a second live
-password behind it for the length of the window.
+password behind it for the length of the window. 19c is unmeasured.
 
 **That is the answer from `OPEN`, and from `EXPIRED` it is different** (#529,
-`sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.2.0.0, twice). This
+`sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.2.0.0 and 21c
+21.3.0.0.0, twice each, identical). This
 section's motivating account, one whose password expired and whose owner no longer
 knows it, is in the second state. There the same statement opens no window. Every
 earlier password answers `ORA-01017`, including the pre-window one on an account
 that started `EXPIRED & IN ROLLOVER`, and the new, expired password is the only
 one that works. `EXPIRED(GRACE)` behaves as `OPEN` does, because its password still
-authenticates. So on this release the exposure Q7 found depends on whether the old
-password is live, not on what the profile grants. **The refusal below is
-unchanged by this.** It keys on the profile, and narrowing it is a decision that
-needs 21c as well.
+authenticates. So on both releases the exposure Q7 found depends on whether the
+old password is live, not on what the profile grants. **The refusal below is
+unchanged by this.** It keys on the profile, and narrowing it is #541's decision,
+which now has both measurements it was waiting for.
 
 **A seen reset of an account whose profile sets a non-zero rollover time is
 therefore still refused at plan time**, naming the account and the profile, before
-any DDL is issued — invariant 4, and now for a measured reason rather than an
-absent one. The register entry needs 21c before it is settled, and a refusal
-lifted on one release is a refusal lifted on a guess about the others. Whether it
-lifts at all, and whether the answer is instead to close the window on this path
-too, belongs with #438/#457 rather than here. The unseen path remains available
+any DDL is issued — invariant 4, and for a reason measured on 26ai and 21c rather
+than an absent one. Whether it narrows (#541), and whether the answer is instead
+to close the window on this path too, belongs with #438/#457 rather than here. The unseen path remains available
 for the same account.
 
 ### 4.4 Guardrails
@@ -1401,8 +1402,8 @@ What a test must show, once there is something to test:
   is the only exception, and it is what that path's confirmation guards;
 - the two measurements behind the seen path's markers, each on 26ai and then 21c —
   gate 2's probe extended to the `PASSWORD EXPIRE` form
-  (unverified: expire-ddl-text), and §4.3's window behaviour
-  (unverified: expire-rollover). Run, not reasoned, which is the only way either
+  (unverified: expire-ddl-text), and §4.3's window behaviour, which #461 ran on
+  21c and which agreed with 26ai. Run, not reasoned, which is the only way either
   marker comes off.
 
 Tests declare the capabilities they need and skip with a reason when absent
@@ -1429,9 +1430,7 @@ Deliberately not a question with an issue: §4.4's collision between guardrail
 check 4 and DBA accounts in scope, which is decided #89 applied to a population it
 was not written for, and is stated so that H1 and part 2 meet it rather than
 rediscover it. The seen path's default for ending a rollover window is not one
-either: the refusal stands until `expire-rollover` is settled, and the register
-entry is where that is tracked. **It is now measured on 26ai and still not
-settled** (#455) — the statement is accepted, the status is `EXPIRED & IN
-ROLLOVER`, and the expiry leaves the old password authenticating; what is missing
-is 21c, so what the refusal waits on is a second release rather than a first
-measurement (§4.3).
+either. `expire-rollover` is **settled on 26ai and 21c** (#455, #461): the
+statement is accepted, the status is `EXPIRED & IN ROLLOVER`, and the expiry
+leaves the old password authenticating. The refusal stands on that, and whether
+it narrows to accounts whose old password is still live is #541 (§4.3).

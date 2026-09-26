@@ -520,7 +520,7 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   keeps this entry open. Purely a display question — Q9 decided `--max-age-days`
   reads only the vault — and the tier-1 test pinning `PTIME` equal to the column
   fails on any release where the two part, so running the suite there settles it.
-- `unverified` `expire-rollover` (#438) — **What `ALTER USER … IDENTIFIED BY …
+- `verified` `expire-rollover` (#438, #461) — **What `ALTER USER … IDENTIFIED BY …
   PASSWORD EXPIRE` does to an account whose profile sets `PASSWORD_ROLLOVER_TIME`.**
   UC-2's **seen** (`manual`) reset is that one statement; its default, unseen reset
   issues no expiry and is unaffected. On a rollover-capable release the old
@@ -531,20 +531,26 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   status is `EXPIRED & IN ROLLOVER` — both at once — and **the expiry does not end
   the old password's window.** The old password answers `ORA-28001`, not
   `ORA-01017`, so it still authenticates and is merely expired, which leaves it a
-  way to set the new one. **21c is unmeasured, so this stays open**: needs 21c,
-  tier 2. Until it has one, `use-cases/uc-02-personal-account-passwords.md` §4.3
-  still refuses a seen reset on a rollover profile at plan time — now for a
-  measured reason rather than an absent one.
+  way to set the new one. **21c 21.3.0.0.0 agrees row for row** (#461, twice,
+  2026-09-26): accepted, `EXPIRED & IN ROLLOVER`, old and new passwords both
+  `ORA-28001`, and 07's Q1–Q6b match 26ai as well. That is the second release
+  the entry named, so it is settled. 19c is unmeasured, and nothing here says
+  what it does.
+  `use-cases/uc-02-personal-account-passwords.md` §4.3 still refuses a seen
+  reset on a rollover profile at plan time, and now the reason has been measured
+  on both releases.
   **Q7 was measured from `OPEN`, and the start state turns out to decide it**
   (#529, `sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.2.0.0, twice,
-  2026-09-26). From `EXPIRED`, and from `EXPIRED & IN ROLLOVER`, the same
+  2026-09-26; **21c 21.3.0.0.0 identical in every status and every login check**,
+  twice, 2026-09-26, #461, though its grace-period logins warn with `ORA-28002`
+  where 26ai sends `ORA-28098`). From `EXPIRED`, and from `EXPIRED & IN ROLLOVER`, the same
   statement opens **no** window and leaves every earlier password `ORA-01017`,
   so the new, expired one is the only password that works. From `EXPIRED(GRACE)`
   it behaves exactly as from `OPEN`, old password `ORA-28001`. So the exposure
   depends on whether the old password still authenticates, not on whether the
-  status reads `EXPIRED`. That is a measurement on one release, not a change to
-  the refusal: whether §4.3 narrows is #529's open question, and it waits on the
-  same 21c run.
+  status reads `EXPIRED`. That is a measurement on two releases, not a change to
+  the refusal: whether §4.3 narrows is #541's decision, and the measurement it
+  was waiting on is now in.
 - `unverified` `stale-rollover` (#441) — **What an open rollover window does when
   the profile that granted it is set back to zero.** Raised by a review of #504,
   which predicted the old password would keep working; **measured twice on 26ai
