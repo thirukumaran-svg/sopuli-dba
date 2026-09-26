@@ -3547,6 +3547,14 @@ Measured on 26ai, twice: setting a password on an `EXPIRED` account opens no
 window, and it even clears one that was open. The first `IDENTIFIED BY` gives plain
 `OPEN`, and only the second opens the window.
 
+**The window closing and the expiry then failing** cannot be caused by hand on this
+stack, because nothing refuses `PASSWORD EXPIRE` once the close's `ALTER USER` has
+succeeded, so the test suite injects that failure instead. The row is `ERROR` at
+exit 4 with `changed: true`, since the old password is dead, and `summary.changed`
+counts it. The closing line does not. It reads
+`acme_dev_alice's password was not expired on any of 1; 1 failed`, because nothing
+was expired. Before #537 it read `expired … on 1 of 1 targets; 1 failed`.
+
 #### Failures worth causing
 
 | Try | What you get |

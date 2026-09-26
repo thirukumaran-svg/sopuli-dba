@@ -212,6 +212,58 @@ def test_a_failure_after_the_window_closed_is_reported_as_a_change(
     assert found["summary"]["failed"] == 1
 
 
+def test_the_closing_line_does_not_claim_a_failed_expiry(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#537. The row is a change -- its window closed -- and the summary counts
+    it, but no password was expired, so the text line must not say one was."""
+    closed = AccountChange(
+        ROLLOVER_FINISH,
+        changed=True,
+        status="OPEN & IN ROLLOVER",
+        detail="rollover window closed; the old password no longer works",
+    )
+    cause = DriverError("ORA-01031: insufficient privileges", code="ORA-01031")
+    session = FakeSession(
+        "OPEN & IN ROLLOVER", fail=PartialAccountChangeError(cause, completed=(closed,))
+    )
+    monkeypatch.setattr("sopuli.cli._open_session", lambda target, run, config: session)
+
+    result = run(runner, write_config(OFFLINE), "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    last = result.output.rstrip().splitlines()[-1]
+    assert last == f"{ACCOUNT}'s password was not expired on any of 1; 1 failed"
+
+
+def test_closing_only_the_window_of_an_expired_account_still_reads_as_expired(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other side of #537's fix. At `EXPIRED & IN ROLLOVER` no expiry is
+    issued, only the close, and the run is still what left the account expired
+    and nothing else -- so the line keys on the state, not on the action."""
+
+    class WindowOnly(FakeSession):
+        def expire_password(self, account: str) -> tuple[AccountChange, ...]:
+            return (
+                AccountChange(ROLLOVER_FINISH, changed=True, status=self.status, detail="closed"),
+                AccountChange(PASSWORD_EXPIRE, changed=False, status=self.status, detail="already"),
+            )
+
+    session = WindowOnly("EXPIRED & IN ROLLOVER")
+    monkeypatch.setattr("sopuli.cli._open_session", lambda target, run, config: session)
+
+    result = run(runner, write_config(OFFLINE), "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    last = result.output.rstrip().splitlines()[-1]
+    assert last == f"expired {ACCOUNT}'s password on 1 of 1 targets"
+
+
 def test_a_failure_before_anything_changed_is_not(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:

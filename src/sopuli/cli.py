@@ -1596,7 +1596,17 @@ def account_expire_password(
             (record.account, record.target, record.state, record.status, record.detail)
             for record in found
         ],
-        changed=changed,
+        # Targets this run changed and left expired, which is what the closing
+        # line's "expired" claims -- not `changed`, which also counts a row whose
+        # window close committed and whose expiry then failed (#537, #528's defect
+        # for the reset). That row changed the account and expired nothing, and
+        # the summary's `changed` still counts it.
+        #
+        # **Keyed on the state, not on an applied `password_expire`**, because an
+        # account found at `EXPIRED & IN ROLLOVER` has only its window closed: no
+        # expiry is issued, and it is still this run that left it expired and
+        # nothing else, which the closing line has always said.
+        changed=sum(1 for record in found if record.changed and record.state == expire.EXPIRED),
         preview=run.dry_run,
         would_expire=sum(1 for one in found if one.would_expire) if run.dry_run else None,
     )
