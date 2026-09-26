@@ -1773,6 +1773,8 @@ nothing changed
 `SOURCE` moved from `pending` to `current` on its own, because there is no longer a
 pending to apply, and nothing was written.
 
+The same run streams with `--output jsonl` (#535) — §15 has both runs as events.
+
 ### 10.4 `check` — drift, and the exit code that carries it
 
 Change the password behind the tool's back:
@@ -4799,8 +4801,8 @@ only the run's, which is why `vault` is in the block above and
 
 ### Streaming: `--output jsonl`
 
-`creds check` is the one verb that streams (#9): one JSON object per line,
-flushed as each target finishes. With §10's drift in place:
+`creds check` and `creds apply` stream (#9, #535): one JSON object per line,
+flushed as it is written. `creds check` first, with §10's drift in place:
 
 ```bash
 sopuli --config sopuli.yaml creds check --output jsonl ; echo "exit $?"
@@ -4831,6 +4833,86 @@ Three things worth checking by hand, because they are the contract:
   `--config` pointing at a file that is not there, the stream is `run.started`
   then `run.finished` with `exit_code: 9` and `error.category: "config"`.
 
+#### `creds apply --output jsonl`
+
+Stage a password and apply it, streamed. From the tier-1 stack with §6's config:
+
+```bash
+sopuli --config sopuli.yaml creds generate
+sopuli --config sopuli.yaml creds apply --output jsonl ; echo "exit $?"
+```
+
+```
+{"schema_version":"1.4","event":"run.started","seq":0,"ts":"2026-09-26T12:55:57.739823Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","data":{"command":"creds.apply","dry_run":false}}
+{"schema_version":"1.4","event":"plan.resolved","seq":1,"ts":"2026-09-26T12:55:57.739965Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["verify","password_set","vault_promote"],"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user"}}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]}}}
+{"schema_version":"1.4","event":"lock.acquired","seq":2,"ts":"2026-09-26T12:55:58.305433Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":13,"acquired_at":"2026-09-26T12:55:58.294164Z","expires_at":"2026-09-26T13:10:58.294164Z","released":false}}
+{"schema_version":"1.4","event":"vault.read","seq":3,"ts":"2026-09-26T12:55:58.307418Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","data":{"vault":"vault-dev","path":"acme/dev/acme","version":3}}
+{"schema_version":"1.4","event":"target.started","seq":4,"ts":"2026-09-26T12:55:58.307538Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","target":"free-pdb"}
+{"schema_version":"1.4","event":"diagnostic","seq":5,"ts":"2026-09-26T12:55:59.661498Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.4","event":"password.applied","seq":6,"ts":"2026-09-26T12:55:59.661586Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","account":"acme_app_user","target":"free-pdb","data":{"version":3,"outcome":"IN_SYNC"}}
+{"schema_version":"1.4","event":"verification.done","seq":7,"ts":"2026-09-26T12:55:59.661692Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass","latency_ms":null,"lcount":0,"failed_login_attempts_limit":"UNLIMITED","lockout_margin_hit":false,"previous_password_accepted":null}}
+{"schema_version":"1.4","event":"vault.promote","seq":8,"ts":"2026-09-26T12:55:59.669352Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":4}}
+{"schema_version":"1.4","event":"lock.released","seq":9,"ts":"2026-09-26T12:55:59.671666Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":13,"acquired_at":"2026-09-26T12:55:58.294164Z","expires_at":"2026-09-26T13:10:58.294164Z","released":true}}
+{"schema_version":"1.4","event":"target.finished","seq":10,"ts":"2026-09-26T12:55:59.671771Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"IN_SYNC","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user","version":4,"stage":"current"},"actions":[{"kind":"verify","applied":true,"detail":"checked whether the database already has this password"},{"kind":"password_set","applied":true,"detail":"changed and verified by login"},{"kind":"verify","applied":true,"detail":"changed and verified by login"},{"kind":"vault_promote","applied":true,"detail":"promoted `pending` to `current` in v4"}],"verification":{"method":"login","result":"pass","latency_ms":null,"lcount":0,"failed_login_attempts_limit":"UNLIMITED","lockout_margin_hit":false,"previous_password_accepted":null},"rollover":{"active":false,"profile_rollover_time":"0"},"duration_ms":1159}}
+{"schema_version":"1.4","event":"run.finished","seq":11,"ts":"2026-09-26T12:55:59.672032Z","correlation_id":"be07e5d1-1795-4550-a2c3-51e185335111","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
+exit 0
+```
+
+What to look for, in order:
+
+- **The version applied is the version read.** `vault.read` says 3,
+  `password.applied` says 3, and `vault.promote` says the write produced 4 —
+  which is also the `secret.version` the row carries in `target.finished`.
+- **`target.finished` comes after `vault.promote` and `lock.released`**, unlike
+  `creds check`'s. An apply row is not final until its document's promotion is
+  decided, and the event is the row; 03 §5 has the reasoning.
+- **No password anywhere.** Read the value back and grep for it:
+
+  ```bash
+  docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=sopuli-test-root     sopuli-test-vault-1 vault kv get -mount=kv -field=acme_app_user acme/dev/acme
+  ```
+
+  and `grep -c` that value in the saved stream. It came back `0`.
+
+**Run it again** and there is no `password.applied` and no `vault.promote` —
+invariant 9 on the stream. The events that remain between `target.started` and
+`target.finished` are the verification and the release:
+
+```
+{"schema_version":"1.4","event":"target.started","seq":4,"ts":"2026-09-26T12:55:05.995355Z","correlation_id":"01acb9b9-32e5-46b8-9817-b7a8576a414c","target":"free-pdb"}
+{"schema_version":"1.4","event":"verification.done","seq":6,"ts":"2026-09-26T12:55:06.279066Z","correlation_id":"01acb9b9-32e5-46b8-9817-b7a8576a414c","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass","latency_ms":null,"lcount":0,"failed_login_attempts_limit":"UNLIMITED","lockout_margin_hit":false,"previous_password_accepted":null}}
+{"schema_version":"1.4","event":"lock.released","seq":7,"ts":"2026-09-26T12:55:06.284818Z","correlation_id":"01acb9b9-32e5-46b8-9817-b7a8576a414c","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":7,"acquired_at":"2026-09-26T12:55:05.988742Z","expires_at":"2026-09-26T13:10:05.988742Z","released":true}}
+```
+
+`run.finished` there compared equal to `summary` and `exit_code` in a
+`--output json` run of the same estate.
+
+**Failures worth causing:**
+
+- **An empty vault** — run it before `creds generate` has staged anything. The lock
+  is taken and released, `vault.read` says `"version":null`, the row is `ERROR`
+  with "the vault holds no password for this account, at either stage", and
+  `run.finished` says `exit_code: 1`. There is no `password.applied`, because
+  nothing was issued.
+- **A held lock** — plant one as §8's "Making a held lock" does. The stream is
+  `run.started`, `plan.resolved`, then:
+
+  ```
+  {"schema_version":"1.4","event":"lock.denied","seq":2,"ts":"2026-09-26T12:56:19.697278Z","correlation_id":"aacd2f9f-9e91-430d-8eff-65706834e31b","data":{"vault":"vault-dev","path":"acme/dev/acme","reason":"held","holder":{"host":"beta.example.com","pid":1234,"os_user":"someone-else","correlation_id":"11111111-2222-3333-4444-555555555555","command":"creds rotate"},"acquired_at":"2026-09-26T12:00:00Z","expires_at":"2026-09-26T23:59:00Z","expired":false}}
+  {"schema_version":"1.4","event":"run.finished","seq":3,"ts":"2026-09-26T12:56:19.697391Z","correlation_id":"aacd2f9f-9e91-430d-8eff-65706834e31b","data":{"summary":{"total":0,"ok":0,"changed":0,"failed":0},"exit_code":7,"error":{"category":"lock","message":"vault-dev:acme/dev/acme is locked by someone-else@beta.example.com pid 1234 running creds rotate","hint":"wait for it to finish, or coordinate with whoever is running it"}}}
+  ```
+
+  and exit 7, with the usual refusal on stderr. No `target.started`: nothing was
+  dialled. Break the lock afterwards (`sopuli lock break vault-dev:acme/dev/acme
+  --force --confirm`) or every later step in this guide meets it.
+- **`--dry-run`** streams `run.started`, `plan.resolved`, one `vault.read` and
+  `run.finished` — no lock, no target.
+
+A partial apply — one target confirmed, another not — needs two targets, which
+the single-PDB stack does not have. It is covered in
+`tests/test_cli_creds_apply.py`: `password.applied` for both, `vault.promote` for
+only the document that confirmed, exit 4.
+
 **Every other verb refuses it**, because a stream carrying less than the
 document would be a quiet downgrade — `config show` has a `config` section the
 event schema has no home for:
@@ -4841,7 +4923,7 @@ sopuli --config sopuli.yaml config show --output jsonl ; echo "exit $?"
 
 ```
 sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
-  hint: use --output json for the same run as one document; jsonl is offered by: creds check
+  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check
 exit 2
 ```
 

@@ -180,7 +180,7 @@ from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
 from sopuli.lock.inspect import declared_locks, mode_of, reset_region, resolvable_locks, survey
 from sopuli.lock.inspect import discover as discover_locks
 from sopuli.lock.keys import LockKey, acquisition_order, normalise_path, parse_lock_key
-from sopuli.lock.manager import LockableStore, LockManager, describe_holder
+from sopuli.lock.manager import HeldLock, LockableStore, LockManager, describe_holder
 from sopuli.lock.record import current_holder
 from sopuli.lock.takeover import (
     Nothing,
@@ -201,7 +201,12 @@ from sopuli.output.account_list_view import build_result as build_account_list_r
 from sopuli.output.account_list_view import render_account_list
 from sopuli.output.account_list_view import summarise as summarise_account_list
 from sopuli.output.apply_view import build_result as build_apply_result
-from sopuli.output.apply_view import render_apply, render_source_table, repair_invocation
+from sopuli.output.apply_view import (
+    render_apply,
+    render_source_table,
+    repair_invocation,
+    verification_json,
+)
 from sopuli.output.apply_view import summarise as summarise_apply
 from sopuli.output.check_view import build_result, render_check, summarise
 from sopuli.output.color import ColorChoice
@@ -241,6 +246,8 @@ from sopuli.output.lock_view import (
     build_denied_section,
     build_lock_section,
     build_status_section,
+    denied_entry,
+    held_entry,
     render_break,
     render_status,
 )
@@ -5342,6 +5349,10 @@ def creds_apply(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
     document.plan = plan.as_json()
+    # No-ops outside `--output jsonl` (#535), as in `creds check`: nothing here
+    # branches on the mode.
+    emitter = run.emitter()
+    emitter.event(document, "plan.resolved", data=document.plan)
     # `--confirm` already means "proceed without asking" here -- it is what
     # `--source previous` requires -- so the flag answers both gates. Two flags
     # for one word would be the sort of distinction only the implementation cares
@@ -5396,6 +5407,7 @@ def creds_apply(
         command="creds apply",
         selection=describe_selection(selection),
         break_expired=_break_expired(run),
+        observer=_lock_events(run),
     )
 
     try:
@@ -5454,13 +5466,31 @@ def creds_apply(
                 # would fail -- the fence would catch it. It is that a promotion
                 # asserts every target holds this password, and a run stopped part
                 # way through has no standing to assert it.
-                promotions, stolen = _promote_documents(applied, documents, stores, manager=manager)
+                promotions, stolen = _promote_documents(
+                    applied, documents, stores, manager=manager, run=run
+                )
     except LockDeniedError as denied:
         _record_locks(document, manager, denied=denied)
+        emitter.event(document, "lock.denied", data=denied_entry(denied))
         raise
 
     _record_locks(document, manager)
     document.results = [_applied_json(record, promotions) for record in applied]
+    # Here, after the promotion, and not as each target finished -- which is
+    # where `creds check` sends them. An apply row is not final until its
+    # document's promotion is decided: `promoted_to` and the `vault_promote`
+    # action are written on every account the promotion covered, and a redraw can
+    # replace a row after its target was left. 03 §5 promises `target.finished`
+    # *is* the `results[]` entry, so it waits for the entry to exist; the progress
+    # in between is `password.applied` and `verification.done`.
+    for result in document.results:
+        emitter.event(
+            document,
+            "target.finished",
+            account=result["account"],
+            target=result["target"],
+            data=result,
+        )
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
     states = [record.outcome.state for record in applied]
@@ -5697,6 +5727,24 @@ def _record_locks(
     document.diagnostics.extend(lock_diagnostics(manager))
 
 
+def _lock_events(run: Invocation) -> Callable[[str, HeldLock], None]:
+    """What a streamed run says as each lock is taken and let go (#535).
+
+    Handed to the manager rather than called around ``holding()``, because only
+    the manager sees a partial acquisition: two locks taken and released before
+    the third is denied are in ``lock.held[]`` on exit 7, and a stream that
+    reported them only after the fact would put them after the denial that
+    caused their release. The payload is the ``held[]`` entry as of that moment
+    -- 03 §5's rule that event payloads reuse the run schema's shapes.
+    """
+    emitter = run.emitter()
+
+    def observe(event: str, held: HeldLock) -> None:
+        emitter.event(run.document, event, data=held_entry(held))
+
+    return observe
+
+
 def _lock_notices(manager: LockManager) -> list[str]:
     """Lock findings a person reading a terminal has to see (#390).
 
@@ -5791,7 +5839,23 @@ def _read_documents(
     for key in keys:
         with emitter.spinner(f"Reading `{key.store}:{key.path}`"):
             documents[key] = stores[key.store].read(key.path)
+        # Where the document was and which version was read -- never what it
+        # holds (#535). `version: null` is a path with nothing at it.
+        emitter.event(run.document, "vault.read", data=_vault_event(key, documents[key]))
     return documents
+
+
+def _vault_event(key: LockKey, stored: Any) -> dict[str, Any]:
+    """``vault.read``/``vault.write`` payload: the path and a version, no content.
+
+    The same ``vault`` and ``path`` spelling the run document's ``lock.held[]``
+    uses for the same document, so a consumer can join the two on it.
+    """
+    return {
+        "vault": key.store,
+        "path": key.path,
+        "version": None if stored is None else int(stored.version),
+    }
 
 
 def _sources(
@@ -5812,6 +5876,8 @@ def _sources(
             if binding.secret is None or stored is None
             else apply_states.source_for(stored.data, binding.secret, stage=stage)
         )
+        if source is not None:
+            source = replace(source, version=int(stored.version))
         found.append((binding, source))
     return found
 
@@ -5917,6 +5983,7 @@ def _apply_target(
     promoted, so a database that could not be reached cannot cause a password it
     does not have to be advertised to applications.
     """
+    run.emitter().event(run.document, "target.started", target=target.name)
     started = time.monotonic()
     session = None
     try:
@@ -5950,28 +6017,65 @@ def _apply_target(
         # check failing on the third account leaves the first two in the run's
         # results. `_apply_one` lets a lock error through on purpose.
         for binding, source in work:
-            out.append(
-                _apply_one(
-                    binding,
-                    session,
-                    manager=manager,
-                    source=source,
-                    margin=margin,
-                    strategy=strategy,
-                    declared=declared,
-                    selection=selection,
-                    force=force,
-                    requested=requested,
-                    # Resolved per binding rather than per run: two accounts on
-                    # one target can sit on different policies, and only one of
-                    # them may have opted into an attribute (#300).
-                    attributes=apply_states.attributes_for(config, binding),
-                )
+            record = _apply_one(
+                binding,
+                session,
+                manager=manager,
+                source=source,
+                margin=margin,
+                strategy=strategy,
+                declared=declared,
+                selection=selection,
+                force=force,
+                requested=requested,
+                # Resolved per binding rather than per run: two accounts on
+                # one target can sit on different policies, and only one of
+                # them may have opted into an attribute (#300).
+                attributes=apply_states.attributes_for(config, binding),
             )
+            out.append(record)
+            _account_events(record, run)
     finally:
         if session is not None:
             with suppress(Exception):
                 session.close()
+
+
+def _account_events(record: _Applied, run: Invocation) -> None:
+    """One account's progress on the stream, as soon as its target is done with it (#535).
+
+    ``password.applied`` only where the ``ALTER USER`` was issued, carrying the
+    document version the value was read at and the account's state -- and nothing
+    else, which is the event schema's rule rather than restraint here: the
+    schema closes the payload so no later field can carry a value. Then
+    ``verification.done`` with the result's own ``verification`` object, where
+    one was attempted.
+
+    These are what a stream that dies between the database and the vault shows:
+    ``password.applied`` for each changed account and no ``vault.promote`` after
+    it is exactly UC-1 §3's ``pending`` state, readable without a document.
+    """
+    emitter = run.emitter()
+    account, target = record.binding.account, record.binding.target
+    if record.changed:
+        emitter.event(
+            run.document,
+            "password.applied",
+            account=account,
+            target=target,
+            data={
+                "version": None if record.source is None else record.source.version,
+                "outcome": record.outcome.state,
+            },
+        )
+    if record.outcome.verification is not None:
+        emitter.event(
+            run.document,
+            "verification.done",
+            account=account,
+            target=target,
+            data=verification_json(record.outcome.verification),
+        )
 
 
 def _apply_one(
@@ -6041,6 +6145,7 @@ def _apply_one(
     overridden: tuple[guardrails.Refusal, ...] = ()
     caveats: tuple[guardrails.Caveat, ...] = ()
     enforced: tuple[AttributeChange, ...] = ()
+    issued = False
     try:
         user = session.describe_user(binding.account)
         settled = apply_states.settled_before_acting(
@@ -6143,6 +6248,11 @@ def _apply_one(
 
         manager.check(_lock_key(binding))
         session.set_password(user.name, source.value)
+        # From here on the database holds the new password whatever else fails,
+        # and the row has to say so: an error in the re-read or the verification
+        # below used to be reported `changed: false`, which hid a mutated database
+        # from the summary, the document and `password.applied` alike (#535).
+        issued = True
         # Re-read the account rather than reusing what was read before the change:
         # `EXPIRED` clears when a password is set, a rollover window opens, and a
         # lock may have arrived in between. The state reported has to be the one
@@ -6183,7 +6293,7 @@ def _apply_one(
             binding,
             source,
             check_states.Outcome(check_states.ERROR, reported.message),
-            changed=False,
+            changed=issued,
             verified_before=before,
             # Empty where the failure came before the review, which is why both
             # are initialised above rather than assigned only on the path that
@@ -6915,7 +7025,7 @@ def _redraw_estate(
             return applied, None
 
         try:
-            restaged = _restage(wanted, documents, stores, config, manager=manager)
+            restaged = _restage(wanted, documents, stores, config, manager=manager, run=run)
         except LockStolenError as taken:
             # Named apart from `stolen` below: `except ... as` unbinds its target
             # at the end of the block, so reusing the name would leave the
@@ -7090,6 +7200,7 @@ def _restage(
     config: Config,
     *,
     manager: LockManager,
+    run: Invocation,
 ) -> _Restaged:
     """Draw a password for each refused account and stage it, one write per document.
 
@@ -7103,6 +7214,7 @@ def _restage(
     a stale entry would turn every redrawn document's promotion into a
     compare-and-set conflict with this run's own write.
     """
+    emitter = run.emitter()
     drawn: list[tuple[str, LockKey]] = []
     notes: list[Diagnostic] = []
     for key, records in _redraws_by_document(wanted).items():
@@ -7110,6 +7222,16 @@ def _restage(
             _candidate(record.binding, config, name=None, supplied=None, enforce=True)
             for record in records
         )
+        # Sent as each password is drawn, before the write that stages it, so a
+        # write that fails still leaves the draw on the stream -- and never the
+        # value, which this event's closed payload has no room for (#535).
+        for record in records:
+            emitter.event(
+                run.document,
+                "password.generated",
+                account=record.binding.account,
+                data={"vault": key.store, "path": key.path, "stage": PENDING},
+            )
         stored = documents.get(key)
         manager.check(key)
         written = write_credential(
@@ -7119,6 +7241,13 @@ def _restage(
             cas=0 if stored is None else stored.version,
         )
         documents[key] = stores[key.store].read(key.path)
+        # The one write that staged them all, once it has landed (#535). A write
+        # that raised ends the run, and `run.finished` carries why.
+        emitter.event(
+            run.document,
+            "vault.write",
+            data={**_vault_event(key, documents[key]), "stage": PENDING},
+        )
         for record in records:
             drawn.append((record.binding.account, key))
             notes.append(
@@ -7180,6 +7309,7 @@ def _promote_documents(
     stores: Mapping[str, SecretStore],
     *,
     manager: LockManager,
+    run: Invocation,
 ) -> tuple[dict[LockKey, _Promotion], LockStolenError | None]:
     """Promote every document whose targets all confirmed, and only those.
 
@@ -7219,7 +7349,28 @@ def _promote_documents(
         except LockStolenError as stolen:
             return promotions, stolen
         promotions[key] = _write_promotion(key, owing, documents[key], stores[key.store])
+        _promotion_event(key, promotions[key], run)
     return promotions, None
+
+
+def _promotion_event(key: LockKey, promotion: _Promotion, run: Invocation) -> None:
+    """``vault.promote`` for one document whose compare-and-set was attempted (#535).
+
+    Invariant 7's moment, so it is sent for the write and only the write: a
+    document held back because a target did not confirm has no event, and its
+    absence after the ``password.applied`` lines is what says so -- the same
+    reading a stream cut short by a crash gives. ``promoted_to`` is the version
+    the write produced, and ``null`` with an ``error`` is a write the vault
+    refused, which is not the same as one never made.
+    """
+    data: dict[str, Any] = {
+        "vault": key.store,
+        "path": key.path,
+        "promoted_to": promotion.version,
+    }
+    if promotion.error is not None:
+        data["error"] = promotion.error.to_dict()
+    run.emitter().event(run.document, "vault.promote", data=data)
 
 
 def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
@@ -8150,7 +8301,7 @@ def _rotate_estate(
 
     # Step 7. Nothing is promoted that was not confirmed (invariant 7).
     into.promotions, into.stolen = _promote_documents(
-        into.applied, documents, stores, manager=manager
+        into.applied, documents, stores, manager=manager, run=run
     )
     if into.stolen is not None:
         return None

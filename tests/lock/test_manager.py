@@ -586,6 +586,76 @@ def test_releasing_twice_writes_once() -> None:
     assert store.read(lock_path(KEY)).version == 2  # type: ignore[union-attr]
 
 
+# ---------------------------------------------------------------- observer ---
+#
+# What a streamed run says about its locks (#535). Told by the manager rather
+# than worked out by the command, because only the manager sees the order.
+
+
+def watching(store: MemoryStore) -> tuple[LockManager, list[tuple[str, str, bool]]]:
+    seen: list[tuple[str, str, bool]] = []
+    run = manager(store)
+    run.observer = lambda event, held: seen.append((event, held.key.path, held.released))
+    return run, seen
+
+
+def test_the_observer_hears_each_lock_taken_and_let_go() -> None:
+    run, seen = watching(MemoryStore())
+
+    with run.holding([KEY, OTHER]):
+        assert seen == [("lock.acquired", KEY.path, False), ("lock.acquired", OTHER.path, False)]
+
+    assert seen[2:] == [("lock.released", KEY.path, True), ("lock.released", OTHER.path, True)]
+
+
+def test_a_partial_acquisition_is_heard_in_the_order_it_happened() -> None:
+    """The lock taken before the failure is acquired and then released *before*
+    the error leaves -- which is what a command reporting after the fact could not
+    have put in order."""
+
+    class Flaky(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            if path == lock_path(OTHER):
+                raise StoreError("the store went away mid-acquisition")
+            return super().read(path, version=version)
+
+    run, seen = watching(Flaky())
+
+    with pytest.raises(StoreError):
+        run.acquire([KEY, OTHER])
+
+    assert seen == [("lock.acquired", KEY.path, False), ("lock.released", KEY.path, True)]
+
+
+def test_a_release_that_failed_is_not_announced() -> None:
+    """`released: false` stays in the run document, and an event saying otherwise
+    would contradict it."""
+    store = MemoryStore()
+    run, seen = watching(store)
+    run.acquire([KEY])
+    run.held[0].fence = 99  # the store will refuse this compare-and-set
+
+    run.release()
+
+    assert [event for event, _, _ in seen] == ["lock.acquired"]
+
+
+def test_an_observer_that_fails_does_not_stop_the_release() -> None:
+    """Release never raises, and a broken stream is no exception to that."""
+    store = MemoryStore()
+    run = manager(store)
+
+    def broken(event: str, held: Any) -> None:
+        raise BrokenPipeError
+
+    run.observer = broken
+    with run.holding([KEY, OTHER]):
+        pass
+
+    assert record_at(store, KEY)["state"] == "released"
+    assert record_at(store, OTHER)["state"] == "released"
+
+
 # ------------------------------------------------------------ advisory only ---
 
 

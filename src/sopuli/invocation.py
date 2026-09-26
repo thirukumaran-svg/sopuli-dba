@@ -752,13 +752,14 @@ def _wired(contributions: dict[str, list[Contribution]], name: str) -> list[Cont
 #: The verbs that accept ``--output jsonl`` (#9), by :func:`command_path`.
 #:
 #: A verb is here because it streams something the document would otherwise
-#: carry only at exit -- per-target results, as each target finishes. One that
-#: is not refuses the mode rather than accepting it and emitting ``run.started``
-#: and ``run.finished`` with its findings missing: ``jsonl`` and ``json`` are
-#: promised to describe the same run (``03-json-output.md`` §1), and the event
-#: schema has no home for a ``config`` or a ``lock`` section. Adding a verb
-#: means giving it events, not only a line here.
-STREAMING_COMMANDS: frozenset[str] = frozenset({"creds.check"})
+#: carry only at exit -- `check`'s per-target results as each target finishes,
+#: `apply`'s locks, reads, database changes and promotions as they happen (#535).
+#: One that is not refuses the mode rather than accepting it and emitting
+#: ``run.started`` and ``run.finished`` with its findings missing: ``jsonl`` and
+#: ``json`` are promised to describe the same run (``03-json-output.md`` §1), and
+#: the event schema has no home for a ``config`` or a ``constraints`` section.
+#: Adding a verb means giving it events, not only a line here.
+STREAMING_COMMANDS: frozenset[str] = frozenset({"creds.check", "creds.apply"})
 
 
 def check_output_mode(invocation: Invocation) -> None:

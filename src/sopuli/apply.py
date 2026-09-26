@@ -206,6 +206,11 @@ class Source:
     #: underneath a rotation in flight leaves a `pending` that the next `apply`
     #: would move the estate *forward* with, silently undoing the undo.
     pending_staged: bool = False
+    #: The document version the value was read at, where the caller knows it.
+    #: Not read by anything in this module; it is what ``password.applied``
+    #: names as the version it applied (#535), and ``None`` for a caller that
+    #: built a source without a stored document behind it.
+    version: int | None = None
 
 
 #: The stages a run can be asked to apply from, in the order UC-1 §5 lists them.

@@ -68,6 +68,7 @@ from sopuli.lock import (
     lock_path,
 )
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
@@ -2999,3 +3000,292 @@ def test_the_blast_radius_counts_the_narrowed_run(
     result = run(runner, config, "--repair", str(previous), "--output", "json")
 
     assert document(result)["plan"]["blast_radius"]["targets"] == 1
+
+
+# ------------------------------------------------------------------ jsonl ---
+#
+# `creds apply` is the second verb that streams (#535), and the first that
+# changes something. The emitter's own rules -- framing, `seq`, redaction -- are
+# `tests/test_output_jsonl.py`'s; these are about what this verb puts through it,
+# and whether the stream and the document it stands beside describe one run.
+
+EVENT_SCHEMA = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "schemas"
+    / f"sopuli-event-{EVENT_SCHEMA_VERSION}.schema.json"
+)
+
+
+@pytest.fixture
+def events() -> Draft202012Validator:
+    return Draft202012Validator(json.loads(EVENT_SCHEMA.read_text(encoding="utf-8")))
+
+
+def stream(result: Result, events: Draft202012Validator) -> list[dict[str, Any]]:
+    lines = [json.loads(line) for line in result.output.splitlines()]
+    for line in lines:
+        assert [error.message for error in events.iter_errors(line)] == [], line
+    return lines
+
+
+def sequence(lines: list[dict[str, Any]]) -> list[tuple[str, str | None]]:
+    """What happened, in order, without the diagnostics that interleave it."""
+    return [
+        (line["event"], line.get("target") or (line.get("data") or {}).get("path"))
+        for line in lines
+        if line["event"] != "diagnostic"
+    ]
+
+
+def partial_estate(estate: Harness) -> dict[str, Any]:
+    """Alpha confirms and beta never does: one document promotes, one does not."""
+    return estate(
+        per_target={
+            "appdb-alpha": {"ACME_WEB_USER": drifted()},
+            "appdb-beta": {
+                "ACME_WEB_USER": [
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                ]
+            },
+        }
+    )
+
+
+def test_jsonl_streams_a_rotation_in_the_order_it_happened(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """Lock, read under it, one target at a time, promote, let go -- and only
+    then the rows, because a row is not final until its promotion is."""
+    estate()
+    result = run(runner, write_config(CONFIG), "--output", "jsonl")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    lines = stream(result, events)
+    alpha, beta = "apps/acme/appdb-alpha", "apps/acme/appdb-beta"
+    assert sequence(lines) == [
+        ("run.started", None),
+        ("plan.resolved", None),
+        ("lock.acquired", alpha),
+        ("lock.acquired", beta),
+        ("vault.read", alpha),
+        ("vault.read", beta),
+        ("target.started", "appdb-alpha"),
+        ("password.applied", "appdb-alpha"),
+        ("verification.done", "appdb-alpha"),
+        ("target.started", "appdb-beta"),
+        ("password.applied", "appdb-beta"),
+        ("verification.done", "appdb-beta"),
+        ("vault.promote", alpha),
+        ("vault.promote", beta),
+        ("lock.released", alpha),
+        ("lock.released", beta),
+        ("target.finished", "appdb-alpha"),
+        ("target.finished", "appdb-beta"),
+        ("run.finished", None),
+    ]
+    assert [line["seq"] for line in lines] == list(range(len(lines)))
+    assert len({line["correlation_id"] for line in lines}) == 1
+    # The version applied is the one read, not the one the promotion produced --
+    # and not `null`, which is what the first tier-1 run of this printed.
+    read = {
+        line["data"]["path"]: line["data"]["version"]
+        for line in lines
+        if line["event"] == "vault.read"
+    }
+    applied = [line["data"] for line in lines if line["event"] == "password.applied"]
+    assert applied == [
+        {"version": read[alpha], "outcome": "IN_SYNC"},
+        {"version": read[beta], "outcome": "IN_SYNC"},
+    ]
+    assert None not in read.values()
+
+
+def test_a_partial_apply_streams_the_database_change_and_no_promotion(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """The case #535 was written for: a database changed and its document not
+    promoted is `password.applied` with no `vault.promote` after it -- the same
+    reading a stream cut short by a crash gives."""
+    partial_estate(estate)
+    lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl"), events)
+
+    applied = [line["target"] for line in lines if line["event"] == "password.applied"]
+    promoted = [line["data"]["path"] for line in lines if line["event"] == "vault.promote"]
+    assert applied == ["appdb-alpha", "appdb-beta"]
+    assert promoted == ["apps/acme/appdb-alpha"]
+    assert lines[-1]["data"]["exit_code"] == ExitCode.PARTIAL
+
+
+def test_jsonl_and_json_describe_the_same_apply(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """03 §1: a consumer can use either without a second code path. Partial, so
+    the exit code, the promotion and the warnings all have something to agree
+    about -- and the lock section, which the stream carries as events."""
+    config = write_config(CONFIG)
+    partial_estate(estate)
+    lines = stream(run(runner, config, "--output", "jsonl"), events)
+    partial_estate(estate)
+    body = document(run(runner, config, "--output", "json"))
+
+    assert lines[-1]["data"] == {"summary": body["summary"], "exit_code": body["exit_code"]}
+    assert next(line["data"] for line in lines if line["event"] == "plan.resolved") == body["plan"]
+
+    def comparable(entry: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in entry.items() if key != "duration_ms"}
+
+    streamed = [line["data"] for line in lines if line["event"] == "target.finished"]
+    assert [comparable(entry) for entry in streamed] == [
+        comparable(entry) for entry in body["results"]
+    ]
+
+    def locks(entries: list[dict[str, Any]]) -> list[tuple[str, str, bool]]:
+        return [(one["vault"], one["path"], one["released"]) for one in entries]
+
+    released = [line["data"] for line in lines if line["event"] == "lock.released"]
+    assert locks(released) == locks(body["lock"]["held"])
+    streamed_notes = [line["message"] for line in lines if line["event"] == "diagnostic"]
+    assert streamed_notes == [one["message"] for one in body.get("diagnostics", [])]
+
+
+def test_streamed_apply_payloads_are_the_run_schema_shapes(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """03 §5: payloads reuse the run schema's shapes. Checked against its
+    `$defs` here rather than by a cross-file `$ref`, for #534's reason."""
+    estate()
+    lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl"), events)
+    defs = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+
+    def shape(pointer: str) -> Draft202012Validator:
+        return Draft202012Validator({"$defs": defs, "$ref": f"#/$defs/{pointer}"})
+
+    shapes = {
+        "plan.resolved": "plan",
+        "target.finished": "result",
+        "verification.done": "verification",
+        "lock.acquired": "lock/properties/held/items",
+        "lock.released": "lock/properties/held/items",
+    }
+    checks = [
+        (shape(shapes[line["event"]]), line["data"]) for line in lines if line["event"] in shapes
+    ]
+    checks.append((shape("summary"), lines[-1]["data"]["summary"]))
+    # One plan, two of each per-target or per-document event, one summary.
+    assert len(checks) == 1 + 2 * 4 + 1
+    for validator, payload in checks:
+        assert [error.message for error in validator.iter_errors(payload)] == [], payload
+
+
+def test_a_denied_lock_is_streamed_with_its_holder(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """Exit 7's one question -- who holds it -- answered on the stream too,
+    in the run document's own `lock.denied` shape."""
+    harness = estate()
+    plant_lock(harness["store"], ALPHA_LOCK, fresh())
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "jsonl")
+
+    assert isinstance(result.exception, LockDeniedError), result.exception
+    lines = stream(result, events)
+    denied = [line["data"] for line in lines if line["event"] == "lock.denied"]
+    assert len(denied) == 1
+    assert denied[0]["path"] == ALPHA_LOCK.path
+    assert denied[0]["holder"]["correlation_id"] == "01JSOMEBODYELSE"
+    defs = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    shape = Draft202012Validator({"$defs": defs, "$ref": "#/$defs/lock/properties/denied"})
+    assert [error.message for error in shape.iter_errors(denied[0])] == []
+    assert "target.started" not in [line["event"] for line in lines]
+
+
+def test_a_dry_run_streams_its_reads_and_takes_no_lock(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    estate()
+    lines = stream(run(runner, write_config(CONFIG), "--dry-run", "--output", "jsonl"), events)
+
+    assert [event for event, _ in sequence(lines)] == [
+        "run.started",
+        "plan.resolved",
+        "vault.read",
+        "vault.read",
+        "run.finished",
+    ]
+    assert lines[0]["data"]["dry_run"] is True
+
+
+def test_no_event_carries_a_password_not_even_a_redrawn_one(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """04 §6's release-gate grep, on the stream. The redraw is the path worth
+    running: it draws a password this test never chose, stages it and applies
+    it, so the only way to know what to grep for is to read it back."""
+    harness = estate(documents=staged(), set_error=refusal(), refusals=1)
+
+    result = run(runner, write_config(REDRAW_CONFIG), "--output", "jsonl")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    lines = stream(result, events)
+    drawn = stored(harness["store"], REDRAW_DOCUMENT)["DB_CREDENTIALS"]["acme_web_user"]
+    for secret in (LIVE, STAGED, drawn):
+        assert secret not in result.output
+    generated = [line for line in lines if line["event"] == "password.generated"]
+    assert [line["account"] for line in generated] == ["acme_web_user"]
+    assert [line["data"]["stage"] for line in lines if line["event"] == "vault.write"] == [
+        "pending"
+    ]
+
+
+def test_a_failure_after_the_statement_still_reports_the_change(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """The database took the password and the re-read after it failed. The row
+    is `ERROR`, and it is also `changed` -- the database was mutated -- so the
+    document counts it and the stream says `password.applied`. Found by review
+    on #542: the row used to say `changed: false`, hiding exactly the
+    applied-but-not-promoted state the stream exists to show."""
+
+    def fail_after_set(harness: dict[str, Any], event: str) -> None:
+        if event == "describe_user" and any(one.changed for one in harness["sessions"]):
+            raise RuntimeError("ORA-03113: end-of-file on communication channel")
+
+    config = write_config(CONFIG)
+    estate(on_call=fail_after_set)
+    lines = stream(run(runner, config, "--select", "tenant=alpha", "--output", "jsonl"), events)
+    estate(on_call=fail_after_set)
+    body = document(run(runner, config, "--select", "tenant=alpha", "--output", "json"))
+
+    assert [line["target"] for line in lines if line["event"] == "password.applied"] == [
+        "appdb-alpha"
+    ]
+    assert "vault.promote" not in [line["event"] for line in lines]
+    assert body["results"][0]["state"] == "ERROR"
+    assert body["results"][0]["changed"] is True
+    assert body["summary"]["changed"] == 1

@@ -129,7 +129,7 @@ def build_result(
         attributes=attributes,
     )
     if outcome.verification is not None:
-        entry["verification"] = _verification(outcome.verification)
+        entry["verification"] = verification_json(outcome.verification)
     if rollover is not None:
         # Emitted for every account whose password this run *looked at* on the
         # database -- not only the ones with an open window. The absence of a
@@ -269,7 +269,7 @@ def _secret(
     return item
 
 
-def _verification(result: VerifyResult) -> dict[str, Any]:
+def verification_json(result: VerifyResult) -> dict[str, Any]:
     """The ``verification`` object, as `check` emits it.
 
     The **post-change** attempt, where there was one: it is the one UC-1 §5 step

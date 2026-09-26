@@ -70,19 +70,23 @@ def build_lock_section(
         return None
     section: dict[str, Any] = {"mode": manager.mode}
     if manager.held:
-        section["held"] = [_held(one) for one in manager.held]
+        section["held"] = [held_entry(one) for one in manager.held]
     if denied is not None:
-        section["denied"] = _denied(denied)
+        section["denied"] = denied_entry(denied)
     return section
 
 
-def _held(held: HeldLock) -> dict[str, Any]:
+def held_entry(held: HeldLock) -> dict[str, Any]:
     """One lock, with every field the schema requires.
 
     All six are required there because this is written when the run ends, by
     which point there is nothing about its own locks the tool does not know. A
     partial entry would describe a producer that lost track of what it had
     locked.
+
+    Public because it is also the payload of the ``lock.acquired`` and
+    ``lock.released`` events (#535): 03 §5 reuses run-schema shapes rather
+    than restating them, so a streamed lock is this entry as of that moment.
     """
     return {
         "vault": held.key.store,
@@ -94,8 +98,8 @@ def _held(held: HeldLock) -> dict[str, Any]:
     }
 
 
-def _denied(denied: LockDeniedError) -> dict[str, Any]:
-    """The lock that stopped the run.
+def denied_entry(denied: LockDeniedError) -> dict[str, Any]:
+    """The lock that stopped the run -- here, and as ``lock.denied``'s payload (#535).
 
     ``reason`` says how it was lost, and the two ways are not the same event:
     ``held`` read somebody's record, so the holder and the timestamps describe
@@ -516,7 +520,7 @@ def build_denied_section(denied: LockDeniedError, *, mode: str) -> dict[str, Any
     it reports is the same event -- so it goes through the same ``denied``
     producer rather than growing a second shape for one field.
     """
-    return {"mode": mode, "denied": _denied(denied)}
+    return {"mode": mode, "denied": denied_entry(denied)}
 
 
 def render_break(

@@ -4,8 +4,8 @@ Status: draft / sketch, **partly implemented**. The run document, `--output
 text|json`, colour resolution, the `config` section, `diagnostics`, `plan`,
 `results` and four of `invocation.selection`'s six members are real and validated
 against the schema in CI (`sopuli/output/`). **`--output jsonl` exists since #9,
-for the verbs that stream** — `creds check` first, and so far only — and any other
-verb refuses it as a usage error; §5 says what is emitted and why the refusal is
+for the verbs that stream** — `creds check` first, then `creds apply` (#535) — and
+any other verb refuses it as a usage error; §5 says what is emitted and why the refusal is
 the rule. This paragraph called `plan` and `results` unwritten until #392;
 they have been emitted by every `creds` verb for many releases.
 
@@ -21,9 +21,9 @@ place all three go through, and it is called after release so that `released`
 reports the store record rather than the moment (#348). This paragraph said
 `held[]` was still waiting on `creds generate`, "which does not exist", until
 #392 — it had shipped, with a lock, three releases earlier.
-The `lock.*` events are the remaining wait: `--output jsonl` exists (#9), but the
-verbs that take a lock do not stream yet, so their payloads are specified in §5
-and not yet produced by anything.
+The `lock.*` events are emitted by `creds apply` since #535, the first verb that
+both takes a lock and streams; `creds generate` and `creds rotate` still refuse
+`jsonl` until they have events of their own.
 
 **`invocation.selection` is now filled in** (#297). The object has carried
 slots for `applications`, `accounts`, `targets`, `groups`, `all` and `limit`
@@ -42,7 +42,7 @@ a config emits them, `config show` in both its views as well as
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
 Schemas: [`../schemas/sopuli-run-1.30.schema.json`](../schemas/sopuli-run-1.30.schema.json),
-[`../schemas/sopuli-event-1.3.schema.json`](../schemas/sopuli-event-1.3.schema.json)
+[`../schemas/sopuli-event-1.4.schema.json`](../schemas/sopuli-event-1.4.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---
@@ -66,7 +66,8 @@ Three output modes:
 `jsonl` and `json` describe the same run. The last `run.finished` event carries
 the same `summary` and `exit_code` as the `json` document, so a consumer can use
 either without a second code path. **`jsonl` is offered only by a verb that
-streams** — `creds check` today — and refused by the rest; §5 says why.
+streams** — `creds check` and `creds apply` today — and refused by the rest; §5
+says why.
 
 ### Encoding, on every mode
 
@@ -1715,6 +1716,81 @@ just ahead of that target's `target.finished`.
 target share one connection and finish together, so their `target.finished`
 events arrive together once that connection is done.
 
+### `creds apply`
+
+**Streams since #535**, the first verb that changes something. A staged password
+applied and promoted against the tier-1 stack, pasted from the run and trimmed
+only where `…` says so:
+
+```jsonl
+{"schema_version":"1.4","event":"run.started","seq":0,"ts":"2026-09-26T12:55:57.739823Z","correlation_id":"be07e5d1-…","data":{"command":"creds.apply","dry_run":false}}
+{"schema_version":"1.4","event":"plan.resolved","seq":1,"ts":"2026-09-26T12:55:57.739965Z","correlation_id":"be07e5d1-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["verify","password_set","vault_promote"],…}],"blast_radius":{…}}}
+{"schema_version":"1.4","event":"lock.acquired","seq":2,"ts":"2026-09-26T12:55:58.305433Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":13,"acquired_at":"2026-09-26T12:55:58.294164Z","expires_at":"2026-09-26T13:10:58.294164Z","released":false}}
+{"schema_version":"1.4","event":"vault.read","seq":3,"ts":"2026-09-26T12:55:58.307418Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":3}}
+{"schema_version":"1.4","event":"target.started","seq":4,"ts":"2026-09-26T12:55:58.307538Z","correlation_id":"be07e5d1-…","target":"free-pdb"}
+{"schema_version":"1.4","event":"diagnostic","seq":5,"ts":"2026-09-26T12:55:59.661498Z","correlation_id":"be07e5d1-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.4","event":"password.applied","seq":6,"ts":"2026-09-26T12:55:59.661586Z","correlation_id":"be07e5d1-…","account":"acme_app_user","target":"free-pdb","data":{"version":3,"outcome":"IN_SYNC"}}
+{"schema_version":"1.4","event":"verification.done","seq":7,"ts":"2026-09-26T12:55:59.661692Z","correlation_id":"be07e5d1-…","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass",…}}
+{"schema_version":"1.4","event":"vault.promote","seq":8,"ts":"2026-09-26T12:55:59.669352Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":4}}
+{"schema_version":"1.4","event":"lock.released","seq":9,"ts":"2026-09-26T12:55:59.671666Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":13,"acquired_at":"2026-09-26T12:55:58.294164Z","expires_at":"2026-09-26T13:10:58.294164Z","released":true}}
+{"schema_version":"1.4","event":"target.finished","seq":10,"ts":"2026-09-26T12:55:59.671771Z","correlation_id":"be07e5d1-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"IN_SYNC","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user","version":4,"stage":"current"},"actions":[…],"verification":{…},"rollover":{…},"duration_ms":1159}}
+{"schema_version":"1.4","event":"run.finished","seq":11,"ts":"2026-09-26T12:55:59.672032Z","correlation_id":"be07e5d1-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
+```
+
+Read top to bottom, that is UC-1 §3's ordering as it happened: the lock, the
+document read under it (`version` 3, which is what was applied), the target, the
+database changed and verified, *then* the promotion to v4, then the release.
+
+**`target.finished` arrives after the promotion, not as each target finishes**
+— which is where `creds check` sends it, and the one respect in which the two
+verbs' streams differ. This section's rule is that `target.finished.data` *is* the
+`results[]` entry, and an apply row is not final until its document's promotion
+is decided: `promoted_to` and the `vault_promote` action are written on every
+account the promotion covered, and a redraw (UC-1 §6.4) can replace a row after
+its target was left. Sending it early would mean either a row that differs from
+the document or a second event correcting the first. The per-target progress is
+carried by the events in between:
+
+- **`password.applied`**, once per (account, target) whose `ALTER USER` was
+  issued, with the document version the value was read at and the account's
+  state — and nothing else, which event schema 1.4 enforces by closing the
+  payload. That includes an account whose re-read or verification failed
+  *after* the statement: its row is `ERROR` **and** `changed: true`, because
+  the database was mutated (review of #542 found it reported `false`). A
+  re-run that changes nothing sends no `password.applied` at all,
+  only `verification.done`: invariant 9, visible on the stream.
+- **`verification.done`**, with the result's own `verification` object.
+- **`vault.read`**, per document, with its version; `null` is a path with nothing
+  at it. **`vault.write`** and **`password.generated`** appear only on a redraw,
+  naming the path and the stage, never the value.
+- **`vault.promote`**, per document **whose promotion was attempted**, with the
+  version it produced — or `null` and an `error` when the vault refused the
+  write. A document held back because a target did not confirm gets no event,
+  and that absence is the point: `password.applied` lines with no `vault.promote`
+  after them are the database-changed, vault-not-promoted state invariant 7
+  describes, and a stream cut short by a crash between the two reads the same
+  way. That is the case this verb's stream exists for.
+
+**A dry run streams its reads and nothing else** — `run.started`,
+`plan.resolved`, one `vault.read` per document, `run.finished` — because it takes
+no lock and dials no target.
+
+**A lock somebody else holds** is `lock.denied`, then `run.finished` with exit 7
+and the error, from the same stack with a held record planted as
+`local-testing.md` §8 does:
+
+```jsonl
+{"schema_version":"1.4","event":"lock.denied","seq":2,"ts":"2026-09-26T12:56:19.697278Z","correlation_id":"aacd2f9f-…","data":{"vault":"vault-dev","path":"acme/dev/acme","reason":"held","holder":{"host":"beta.example.com","pid":1234,"os_user":"someone-else","correlation_id":"11111111-2222-3333-4444-555555555555","command":"creds rotate"},"acquired_at":"2026-09-26T12:00:00Z","expires_at":"2026-09-26T23:59:00Z","expired":false}}
+{"schema_version":"1.4","event":"run.finished","seq":3,"ts":"2026-09-26T12:56:19.697391Z","correlation_id":"aacd2f9f-…","data":{"summary":{"total":0,"ok":0,"changed":0,"failed":0},"exit_code":7,"error":{"category":"lock","message":"vault-dev:acme/dev/acme is locked by someone-else@beta.example.com pid 1234 running creds rotate","hint":"wait for it to finish, or coordinate with whoever is running it"}}}
+```
+
+**The lock events come from the lock manager, not from around it**, because
+only the manager sees a partial acquisition: two locks taken and given back
+before a third is denied are in `lock.held[]` on exit 7, and a stream that
+reported them afterwards would put them after the denial that caused their
+release. **A release that failed sends no `lock.released`** — the document says
+`released: false`, and an event claiming otherwise would contradict it.
+
 ### Which verbs stream, and why the rest refuse
 
 **Only a verb that has events to stream accepts `--output jsonl`**, and every
@@ -1723,13 +1799,15 @@ other verb refuses it on exit 2 with no events, naming where the value came from
 
 ```
 sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
-  hint: use --output json for the same run as one document; jsonl is offered by: creds check
+  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check
 ```
 
 The alternative was to accept it everywhere and emit `run.started` and
 `run.finished` around nothing, and it is refused for §1's reason: `jsonl` and
 `json` are promised to describe the same run, and the event schema has no home
-for a `config`, `lock`, `targets` or `constraints` section. A stream that
+for a `config`, `targets` or `constraints` section. (`lock` was on that list
+until #535 gave the `lock.*` events a payload; a verb that takes a lock can
+stream now, and `creds apply` does.) A stream that
 silently carried less than the document would be the quiet downgrade §2 refuses
 everywhere else. `STREAMING_COMMANDS` in `sopuli/invocation.py` is the list,
 and adding a verb to it means giving the verb events rather than only a line
@@ -1741,12 +1819,14 @@ reset-password`'s seen path and `policy sample --reveal` are refused under
 refusal checks treat `jsonl` as a machine format too — so the guard survives
 either verb learning to stream.
 
-The three `lock.*` events were in the enum from 1.0 and now have a payload. Each
-carries the store, the path and the fence — `lock.denied` carries the holder
-instead of a fence, matching `lock.denied` in the run document. `account` stays
-on the event as a label, which is what it is: the lock is keyed on the path, and
-two accounts sharing one document contend on one lock. A consumer grouping by
-`account` alone would report that contention as two independent locks.
+The three `lock.*` events were in the enum from 1.0 and have had a payload since
+1.4 (#535). `lock.acquired` and `lock.released` carry a `lock.held[]` entry as of
+that moment — `vault`, `path`, `fence`, the two timestamps and `released` — and
+`lock.denied` carries the run document's `lock.denied` object, holder and all.
+**None of them carries `account`**, which an earlier draft of this paragraph
+kept as a label: the lock is keyed on the path, two accounts sharing one document
+contend on one lock, and naming either would invite a consumer to group by
+account and report that contention as two independent locks.
 
 ---
 
@@ -2128,6 +2208,21 @@ carries the same summary" from prose into something CI checks on every line.
 **Added rather than renamed**, which is the event schema's own practice since
 1.1 and 1.17's reasoning: 1.3 is the first version a build emits, so it is the
 one a consumer will fetch.
+
+**The event schema went 1.3 to 1.4 when `creds apply` began to stream** (#535),
+which is the "comes with the first verb that emits them" #535 named. Every
+constraint is on an event nothing emitted before, so no 1.3 stream fails it:
+`lock.acquired` and `lock.released` must carry a `lock.held[]` entry's six
+fields, `lock.denied` its `vault`, `path` and `reason`; `vault.read` and
+`vault.write` a `vault`, `path` and `version`; `vault.promote` a `promoted_to`;
+`verification.done` its `account`, `target` and `data`. **`password.applied`
+and `password.generated` have closed payloads** — `version` and `outcome` for
+the first, `vault`, `path` and `stage` for the second, and
+`additionalProperties: false` on both. That is the one tightening of an event
+1.3 already constrained, and it is invariant 2 held by the schema rather than by
+the emitter's discipline: a field added later that could carry a password fails
+CI on every line rather than being noticed in review. Added rather than renamed,
+for 1.3's reason.
 
 
 **1.27 became 1.28 when the survey found a third kind of record** (#514). One

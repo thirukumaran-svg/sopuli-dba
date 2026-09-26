@@ -34,7 +34,7 @@ guarantee was actually in force.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
@@ -151,6 +151,15 @@ class LockManager:
     #: Paths whose metadata this run could not set (#390). Read by the
     #: command layer after :meth:`preflight`, never by the lock itself.
     unguarded: list[Unguarded] = field(default_factory=list)
+    #: Told about each lock as it is taken and as it is let go (#535), so a
+    #: streamed run can say so at the moment it happens rather than
+    #: reconstructing it afterwards. Called with ``"lock.acquired"`` or
+    #: ``"lock.released"`` and the lock. **Only a release that worked is
+    #: reported**: one that failed leaves ``released: false`` in the run
+    #: document, and an event claiming the release would contradict it. Never
+    #: allowed to raise into the manager -- it is called from :meth:`release`,
+    #: which must not.
+    observer: Callable[[str, HeldLock], None] | None = None
 
     def __post_init__(self) -> None:
         if self.break_expired and any(
@@ -333,6 +342,7 @@ class LockManager:
                 # immediately is what keeps that from being a swallowed signal.
                 self.release()
                 raise
+            self._observe("lock.acquired", self.held[-1])
 
     def _take(self, key: LockKey) -> HeldLock:
         entry = self._store(key)
@@ -533,6 +543,20 @@ class LockManager:
             except Exception:  # noqa: BLE001 - see the docstring; this is the finally path
                 continue
             self.held[position] = replace(one, released=True)
+            self._observe("lock.released", self.held[position])
+
+    def _observe(self, event: str, held: HeldLock) -> None:
+        """Tell :attr:`observer`, if there is one, and never fail because of it.
+
+        Swallowed rather than raised for :meth:`release`'s reason: it runs on the
+        way out of a run, often with an exception already leaving, and a stream
+        that could not be written must not replace why the run stopped -- nor
+        leave a lock unreleased because reporting an earlier one failed.
+        """
+        if self.observer is None:
+            return
+        with suppress(Exception):
+            self.observer(event, held)
 
     # ----------------------------------------------------------------- innards ---
 
