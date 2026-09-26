@@ -5039,10 +5039,22 @@ waiting before it does:
 ```
 
 Answering anything but `y` ends it at exit 8, with `run.finished` after the
-prompt. (Run from Git Bash with `< /dev/null`, this still prompted rather than
-refusing as "nobody here to ask" — Windows answers `isatty()` true for `NUL`.
-That is older than the stream; it is noted here because this is where you will
-meet it.)
+prompt. With nobody to answer — `< /dev/null`, which Git Bash hands on as `NUL`
+on Windows — it does not prompt at all, and the stream goes straight from the
+plan to the refusal:
+
+```
+{"schema_version":"1.7","event":"run.started","seq":0,"ts":"2026-09-26T18:55:40.368315Z","correlation_id":"586dc395-3088-435b-ade4-7b8f17921c9b","data":{"command":"creds.rotate","dry_run":false}}
+{"schema_version":"1.7","event":"plan.resolved","seq":1,"ts":"2026-09-26T18:55:40.368410Z","correlation_id":"586dc395-3088-435b-ade4-7b8f17921c9b","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["generate","vault_write_pending","verify","password_set","vault_promote"],"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user"}}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]}}}
+{"schema_version":"1.7","event":"run.finished","seq":2,"ts":"2026-09-26T18:55:40.897721Z","correlation_id":"586dc395-3088-435b-ade4-7b8f17921c9b","data":{"summary":{"total":0,"ok":0,"changed":0,"failed":0},"exit_code":8,"error":{"category":"policy","message":"rotating a password needs confirmation, and there is nobody here to ask","hint":"pass --confirm to answer in advance, or --dry-run to see the plan without touching anything"}}}
+sopuli: rotating a password needs confirmation, and there is nobody here to ask
+  hint: pass --confirm to answer in advance, or --dry-run to see the plan without touching anything
+exit 8
+```
+
+Before #549 this prompted on Windows instead, read EOF and aborted without the
+hint: Windows answers `isatty()` true for `NUL`, because it is a character
+device. The terminal check now also asks whether the stream is a console.
 
 A partial apply — one target confirmed, another not — needs two targets, which
 the single-PDB stack does not have. It is covered in

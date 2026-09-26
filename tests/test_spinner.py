@@ -18,6 +18,7 @@ watching it spin -- ``docs/local-testing.md`` §10 carries the real run.
 from __future__ import annotations
 
 import io
+import os
 import sys
 import threading
 import time
@@ -26,6 +27,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from sopuli.output import tty
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.spinner import FRAMES, Spinner, disabled, make
 from sopuli.output.tty import is_a_terminal
@@ -79,6 +81,58 @@ def test_a_closed_stream_is_not_a_terminal() -> None:
 
 def test_an_object_with_no_isatty_is_not_a_terminal() -> None:
     assert is_a_terminal(object()) is False  # type: ignore[arg-type]
+
+
+def test_the_null_device_is_not_a_terminal() -> None:
+    """#549: Windows answers ``isatty()`` true for ``NUL``, a character device.
+
+    A real open of the null device, not a double, because a double is exactly
+    what cannot show the bug: it answers whatever it was told to. On POSIX
+    ``/dev/null`` was never a TTY, so this holds there trivially; on Windows it
+    is the ``GetConsoleMode`` check that makes it hold.
+    """
+    with open(os.devnull, encoding="utf-8") as null:
+        assert is_a_terminal(null) is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="CONOUT$ is a Windows device name")
+def test_on_windows_a_real_console_is_a_terminal() -> None:
+    """The half of #549 that must not regress: a console still counts.
+
+    ``CONOUT$`` is the process's own console output buffer, so this is the one
+    handle ``GetConsoleMode`` is supposed to succeed on. A process with no
+    console attached cannot open it, and has nothing here to test.
+    """
+    try:
+        with open("CONOUT$", "w", encoding="utf-8") as console:
+            answer = is_a_terminal(console)
+    except OSError as exc:
+        pytest.skip(f"no console attached to this process: {exc}")
+
+    assert answer is True
+
+
+def test_on_windows_a_tty_that_is_not_a_console_is_not_a_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Windows branch, reached from any platform."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(tty, "_is_a_windows_console", lambda stream: False)
+
+    assert is_a_terminal(Terminal()) is False
+
+
+def test_on_windows_a_stream_with_no_os_handle_keeps_its_own_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A double has no device to be ``NUL``, so the console check defers to it.
+
+    ``Terminal`` is a ``StringIO``, whose ``fileno()`` raises. The check returns
+    before it touches ``msvcrt``, which is why this runs off Windows too.
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert is_a_terminal(Terminal()) is True
 
 
 # -------------------------------------------------------------- the gate ---

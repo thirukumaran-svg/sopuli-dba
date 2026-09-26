@@ -1209,6 +1209,8 @@ a terminal read one import away from the config layer. The question itself goes
 through `output/tty.py`'s tolerant probe (#416) rather than `stdin.isatty()`,
 because a detached stdin — a scheduler, a service manager — *raises* on being
 asked, and that is precisely the run whose answer must be "nobody is watching".
+On Windows the probe also requires a console, since `isatty()` is true there for
+`NUL` — the stdin a scheduled task is most likely to have (#549).
 The question is never written to stdout: `getpass` puts it on the controlling
 terminal, or on stderr, and stdout carries the run document (J1).
 
