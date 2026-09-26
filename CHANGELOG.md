@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.67.0](https://github.com/villebase/sopuli-dba/compare/v0.66.0...v0.67.0) (2026-09-26)
+
+
+### Features
+
+* **output:** `--output jsonl`, streamed by `creds check` ([#9](https://github.com/villebase/sopuli-dba/issues/9)) ([#534](https://github.com/villebase/sopuli-dba/issues/534)) ([d98fd17](https://github.com/villebase/sopuli-dba/commit/d98fd17cdf1c181a9660d8aa9dd479497862bcfa))
+* **output:** stream `account reset-password` under `--output jsonl` ([#535](https://github.com/villebase/sopuli-dba/issues/535)) ([#546](https://github.com/villebase/sopuli-dba/issues/546)) ([a660276](https://github.com/villebase/sopuli-dba/commit/a660276ba969455c4400107765984e63d99ddb82))
+* **output:** stream `creds apply` under `--output jsonl` ([#535](https://github.com/villebase/sopuli-dba/issues/535)) ([#542](https://github.com/villebase/sopuli-dba/issues/542)) ([95c868b](https://github.com/villebase/sopuli-dba/commit/95c868b678c89e8623484aea7628f9951d1335c2))
+* **output:** stream `creds generate` under `--output jsonl` ([#535](https://github.com/villebase/sopuli-dba/issues/535)) ([#544](https://github.com/villebase/sopuli-dba/issues/544)) ([4a9e7a5](https://github.com/villebase/sopuli-dba/commit/4a9e7a51c69fa2a33e895d563b3fa3c766e0e0d6))
+* **output:** stream `creds rotate` under `--output jsonl` ([#535](https://github.com/villebase/sopuli-dba/issues/535)) ([#543](https://github.com/villebase/sopuli-dba/issues/543)) ([68509a0](https://github.com/villebase/sopuli-dba/commit/68509a05bfc13a8d0c7fd6178451a4ff34e8e350))
+
+
+### Bug Fixes
+
+* **expire:** don't count a close-only partial row as expired in the closing line ([#537](https://github.com/villebase/sopuli-dba/issues/537)) ([#539](https://github.com/villebase/sopuli-dba/issues/539)) ([92d2123](https://github.com/villebase/sopuli-dba/commit/92d21235142b02d0f29598f1f73e50b27bdae910))
+* **oracle:** grant DBA_ROLES and gate role predicates on role_lookup ([#531](https://github.com/villebase/sopuli-dba/issues/531)) ([#533](https://github.com/villebase/sopuli-dba/issues/533)) ([addeb6d](https://github.com/villebase/sopuli-dba/commit/addeb6d07b23475a3f56ea2e76973f63d60b432c))
+* **oracle:** surface dictionary read failures and refuse a read-only rollover finish ([#521](https://github.com/villebase/sopuli-dba/issues/521)) ([#530](https://github.com/villebase/sopuli-dba/issues/530)) ([804f02f](https://github.com/villebase/sopuli-dba/commit/804f02f0f3ae5de0035002165ad05c135c1e4db2))
+* **reset:** report a partly-applied reset as changed, and hand over a live password ([#528](https://github.com/villebase/sopuli-dba/issues/528)) ([#536](https://github.com/villebase/sopuli-dba/issues/536)) ([b38cce7](https://github.com/villebase/sopuli-dba/commit/b38cce7944b9fb3c04e9661e54e1adef4e5a763c))
+
 ## [0.66.0](https://github.com/villebase/sopuli-dba/compare/v0.65.0...v0.66.0) (2026-09-25)
 
 
