@@ -52,8 +52,9 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.lock import Holder, LockKey, LockRecord, lock_path
+from sopuli.lock import Holder, LockDeniedError, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.plan import BlastRadius
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore, StoreError
@@ -1099,4 +1100,260 @@ def test_an_empty_selection_says_so_rather_than_rotating(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert "nothing to rotate" in result.output
+    assert harness["sessions"] == []
+
+
+# ------------------------------------------------------------------ jsonl ---
+#
+# `creds rotate` streams (#535). What is specific to it is the vault-side phase
+# in front of the targets: staging is per document, so those events name a
+# path and no target, and they all come before the first `target.started`.
+
+EVENT_SCHEMA = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "schemas"
+    / f"sopuli-event-{EVENT_SCHEMA_VERSION}.schema.json"
+)
+
+
+@pytest.fixture
+def events() -> Draft202012Validator:
+    return Draft202012Validator(json.loads(EVENT_SCHEMA.read_text(encoding="utf-8")))
+
+
+def stream(text: str, events: Draft202012Validator) -> list[dict[str, Any]]:
+    lines = [json.loads(line) for line in text.splitlines()]
+    for line in lines:
+        assert [error.message for error in events.iter_errors(line)] == [], line
+    return lines
+
+
+def names(lines: list[dict[str, Any]]) -> list[str]:
+    return [line["event"] for line in lines if line["event"] != "diagnostic"]
+
+
+def test_jsonl_streams_the_vault_phase_before_any_target(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """Section 8's order, as it happened: lock, read, stage every document,
+    re-read, then the targets, then the promotion, the read-back and the
+    release -- and the rows last, once each is final."""
+    estate()
+    result = run(runner, write_config(CONFIG), "--output", "jsonl")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    lines = stream(result.stdout, events)
+    alpha, beta = "apps/acme/appdb-alpha", "apps/acme/appdb-beta"
+
+    def stage(path: str) -> list[tuple[str, str | None]]:
+        return [("vault.read", path), ("password.generated", path), ("vault.write", path)]
+
+    assert [
+        (line["event"], line.get("target") or (line.get("data") or {}).get("path"))
+        for line in lines
+        if line["event"] != "diagnostic"
+    ] == [
+        ("run.started", None),
+        ("plan.resolved", None),
+        ("lock.acquired", alpha),
+        ("lock.acquired", beta),
+        ("vault.read", alpha),
+        ("vault.read", beta),
+        *stage(alpha),
+        *stage(beta),
+        ("vault.read", alpha),
+        ("vault.read", beta),
+        ("target.started", "appdb-alpha"),
+        ("password.applied", "appdb-alpha"),
+        ("verification.done", "appdb-alpha"),
+        ("target.started", "appdb-beta"),
+        ("password.applied", "appdb-beta"),
+        ("verification.done", "appdb-beta"),
+        ("vault.promote", alpha),
+        ("vault.promote", beta),
+        ("vault.read", alpha),
+        ("vault.read", beta),
+        ("lock.released", alpha),
+        ("lock.released", beta),
+        ("target.finished", "appdb-alpha"),
+        ("target.finished", "appdb-beta"),
+        ("target.finished", "appdb-alpha"),
+        ("target.finished", "appdb-beta"),
+        ("run.finished", None),
+    ]
+    assert [line["seq"] for line in lines] == list(range(len(lines)))
+    # The version applied is the version staging wrote.
+    written = [line["data"]["version"] for line in lines if line["event"] == "vault.write"]
+    applied = [line["data"]["version"] for line in lines if line["event"] == "password.applied"]
+    assert applied == written
+
+
+def test_jsonl_and_json_describe_the_same_rotation(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    config = write_config(CONFIG)
+    estate()
+    lines = stream(run(runner, config, "--output", "jsonl").stdout, events)
+    estate()
+    body = document(run(runner, config, "--output", "json"))
+
+    assert lines[-1]["data"] == {"summary": body["summary"], "exit_code": body["exit_code"]}
+    assert next(line["data"] for line in lines if line["event"] == "plan.resolved") == body["plan"]
+
+    def comparable(entry: dict[str, Any]) -> dict[str, Any]:
+        # Fresh passwords make fresh versions and stamps in each run; what
+        # must agree is the shape and the story, not the clock.
+        return {key: value for key, value in entry.items() if key != "duration_ms"}
+
+    streamed = [line["data"] for line in lines if line["event"] == "target.finished"]
+    assert [comparable(one) for one in streamed] == [comparable(one) for one in body["results"]]
+    released = [line["data"]["path"] for line in lines if line["event"] == "lock.released"]
+    assert released == [one["path"] for one in body["lock"]["held"]]
+
+
+def test_streamed_rotation_payloads_are_the_run_schema_shapes(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    estate()
+    lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl").stdout, events)
+    defs = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    shapes = {
+        "plan.resolved": "plan",
+        "target.finished": "result",
+        "verification.done": "verification",
+        "lock.acquired": "lock/properties/held/items",
+        "lock.released": "lock/properties/held/items",
+    }
+    checked = 0
+    for line in lines:
+        if line["event"] not in shapes:
+            continue
+        shape = Draft202012Validator({"$defs": defs, "$ref": f"#/$defs/{shapes[line['event']]}"})
+        assert [error.message for error in shape.iter_errors(line["data"])] == [], line
+        checked += 1
+    # One plan, two locks acquired and released, two verifications, four rows.
+    assert checked == 1 + 2 + 2 + 2 + 4
+
+
+def test_no_rotation_event_carries_a_password(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """04 §6's grep, on the one verb that draws, stages, applies and promotes a
+    password in a single run -- read back from the store, since the test never
+    chose it."""
+    harness = estate()
+    result = run(runner, write_config(CONFIG), "--output", "jsonl")
+
+    stream(result.stdout, events)
+    for path in ("apps/acme/appdb-alpha", "apps/acme/appdb-beta"):
+        body = stored(harness["store"], path)
+        for secret in (body["DB_CREDENTIALS"]["acme_web_user"], body["previous"]["acme_web_user"]):
+            assert secret not in result.stdout
+
+
+def test_a_staging_failure_streams_the_refused_write_and_no_target(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """Row 4: nothing reaches a database. The refused write is a `vault.write`
+    with no version and the store's error -- not a gap -- and the staging rows
+    still arrive as `target.finished`."""
+
+    class Refusing(MemoryStore):
+        def write(self, path: str, data: Any, *, cas: int | None = None) -> Any:
+            if path == "apps/acme/appdb-beta" and cas:
+                raise StoreError("permission denied writing the document")
+            return super().write(path, data, cas=cas)
+
+    estate(store=Refusing())
+    lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl").stdout, events)
+
+    writes = [line["data"] for line in lines if line["event"] == "vault.write"]
+    assert [(one["path"], one["version"] is None, "error" in one) for one in writes] == [
+        ("apps/acme/appdb-alpha", False, False),
+        ("apps/acme/appdb-beta", True, True),
+    ]
+    assert "target.started" not in names(lines)
+    assert [line["target"] for line in lines if line["event"] == "target.finished"] == [
+        "appdb-alpha",
+        "appdb-beta",
+    ]
+    assert lines[-1]["data"]["exit_code"] == ExitCode.FAILURE
+
+
+def test_a_prompt_is_announced_on_the_stream_and_confirm_is_not(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`confirmation.required` means somebody is being asked, now. `--confirm`
+    answered in advance, so a stream from that run has nothing to announce."""
+    config = write_config(CONFIG)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    estate()
+    asked = runner.invoke(
+        cli, ["creds", "rotate", "--config", str(config), "--output", "jsonl"], input="y\n"
+    )
+    estate()
+    answered = run(runner, config, "--output", "jsonl")
+
+    # `CliRunner` echoes the typed answer onto stdout, which a terminal would
+    # not; everything the tool itself wrote there is an event.
+    typed = "\n".join(one for one in asked.stdout.splitlines() if one.startswith("{"))
+    prompts = [
+        line["data"]["prompt"]
+        for line in stream(typed, events)
+        if line["event"] == "confirmation.required"
+    ]
+    assert prompts == ["draw a new password for 1 account on 2 targets in `prod` and promote it?"]
+    assert "confirmation.required" not in names(stream(answered.stdout, events))
+    assert asked.exit_code == ExitCode.SUCCESS
+
+
+def test_a_denied_lock_streams_the_holder_and_nothing_after_it(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """Somebody else is rotating: `lock.denied` names them, and nothing is read,
+    staged or dialled after it (review of #543)."""
+    harness = estate()
+    key = LockKey(store="vault-prod", path="apps/acme/appdb-alpha")
+    harness["store"].require_cas(lock_path(key))
+    harness["store"].write(
+        lock_path(key),
+        LockRecord.acquired(
+            correlation_id="01JSOMEBODYELSE",
+            command="creds rotate",
+            holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
+            now=utc_now(),
+        ).to_dict(),
+        cas=0,
+    )
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "jsonl")
+
+    assert isinstance(result.exception, LockDeniedError), result.exception
+    lines = stream(result.stdout, events)
+    assert names(lines) == ["run.started", "plan.resolved", "lock.denied", "run.finished"]
+    assert lines[-2]["data"]["holder"]["correlation_id"] == "01JSOMEBODYELSE"
+    assert lines[-1]["data"]["exit_code"] == ExitCode.LOCK_HELD
     assert harness["sessions"] == []

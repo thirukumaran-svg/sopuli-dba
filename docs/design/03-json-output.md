@@ -4,7 +4,7 @@ Status: draft / sketch, **partly implemented**. The run document, `--output
 text|json`, colour resolution, the `config` section, `diagnostics`, `plan`,
 `results` and four of `invocation.selection`'s six members are real and validated
 against the schema in CI (`sopuli/output/`). **`--output jsonl` exists since #9,
-for the verbs that stream** — `creds check` first, then `creds apply` (#535) — and
+for the verbs that stream** — `creds check` first, then `creds apply` and `creds rotate` (#535) — and
 any other verb refuses it as a usage error; §5 says what is emitted and why the refusal is
 the rule. This paragraph called `plan` and `results` unwritten until #392;
 they have been emitted by every `creds` verb for many releases.
@@ -22,8 +22,8 @@ reports the store record rather than the moment (#348). This paragraph said
 `held[]` was still waiting on `creds generate`, "which does not exist", until
 #392 — it had shipped, with a lock, three releases earlier.
 The `lock.*` events are emitted by `creds apply` since #535, the first verb that
-both takes a lock and streams; `creds generate` and `creds rotate` still refuse
-`jsonl` until they have events of their own.
+both takes a lock and streams, and by `creds rotate` after it; `creds generate`
+still refuses `jsonl` until its `constraints` section has an event of its own.
 
 **`invocation.selection` is now filled in** (#297). The object has carried
 slots for `applications`, `accounts`, `targets`, `groups`, `all` and `limit`
@@ -42,7 +42,7 @@ a config emits them, `config show` in both its views as well as
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
 Schemas: [`../schemas/sopuli-run-1.30.schema.json`](../schemas/sopuli-run-1.30.schema.json),
-[`../schemas/sopuli-event-1.4.schema.json`](../schemas/sopuli-event-1.4.schema.json)
+[`../schemas/sopuli-event-1.5.schema.json`](../schemas/sopuli-event-1.5.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---
@@ -66,7 +66,8 @@ Three output modes:
 `jsonl` and `json` describe the same run. The last `run.finished` event carries
 the same `summary` and `exit_code` as the `json` document, so a consumer can use
 either without a second code path. **`jsonl` is offered only by a verb that
-streams** — `creds check` and `creds apply` today — and refused by the rest; §5
+streams** — `creds check`, `creds apply` and `creds rotate` today — and refused
+by the rest; §5
 says why.
 
 ### Encoding, on every mode
@@ -1791,6 +1792,72 @@ reported them afterwards would put them after the denial that caused their
 release. **A release that failed sends no `lock.released`** — the document says
 `released: false`, and an event claiming otherwise would contradict it.
 
+### `creds rotate`
+
+**Streams since #535**, and it is `apply`'s stream with a vault phase in front of
+it. Against the tier-1 stack, with `--confirm`, trimmed only where `…` says so:
+
+```jsonl
+{"schema_version":"1.5","event":"run.started","seq":0,"ts":"2026-09-26T14:10:11.974415Z","correlation_id":"0306dc38-…","data":{"command":"creds.rotate","dry_run":false}}
+{"schema_version":"1.5","event":"plan.resolved","seq":1,"ts":"2026-09-26T14:10:11.974569Z","correlation_id":"0306dc38-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["generate","vault_write_pending","verify","password_set","vault_promote"],…}],"blast_radius":{…}}}
+{"schema_version":"1.5","event":"lock.acquired","seq":2,"ts":"2026-09-26T14:10:12.493418Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":17,"acquired_at":"2026-09-26T14:10:12.487821Z","expires_at":"2026-09-26T14:25:12.487821Z","released":false}}
+{"schema_version":"1.5","event":"vault.read","seq":3,"ts":"2026-09-26T14:10:12.495419Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":4}}
+{"schema_version":"1.5","event":"diagnostic","seq":4,"ts":"2026-09-26T14:10:13.298561Z","correlation_id":"0306dc38-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable …","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.5","event":"vault.read","seq":5,"ts":"2026-09-26T14:10:13.298639Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":4}}
+{"schema_version":"1.5","event":"password.generated","seq":6,"ts":"2026-09-26T14:10:13.298701Z","correlation_id":"0306dc38-…","account":"acme_app_user","data":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending"}}
+{"schema_version":"1.5","event":"vault.write","seq":7,"ts":"2026-09-26T14:10:13.301380Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":5,"stage":"pending"}}
+{"schema_version":"1.5","event":"vault.read","seq":8,"ts":"2026-09-26T14:10:13.303210Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":5}}
+{"schema_version":"1.5","event":"target.started","seq":9,"ts":"2026-09-26T14:10:13.303317Z","correlation_id":"0306dc38-…","target":"free-pdb"}
+{"schema_version":"1.5","event":"password.applied","seq":10,"ts":"2026-09-26T14:10:14.554989Z","correlation_id":"0306dc38-…","account":"acme_app_user","target":"free-pdb","data":{"version":5,"outcome":"IN_SYNC"}}
+{"schema_version":"1.5","event":"verification.done","seq":11,"ts":"2026-09-26T14:10:14.555063Z","correlation_id":"0306dc38-…","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass",…}}
+{"schema_version":"1.5","event":"vault.promote","seq":12,"ts":"2026-09-26T14:10:14.562842Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":6}}
+{"schema_version":"1.5","event":"vault.read","seq":13,"ts":"2026-09-26T14:10:14.564655Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":6}}
+{"schema_version":"1.5","event":"lock.released","seq":14,"ts":"2026-09-26T14:10:14.567062Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":17,"acquired_at":"2026-09-26T14:10:12.487821Z","expires_at":"2026-09-26T14:25:12.487821Z","released":true}}
+{"schema_version":"1.5","event":"target.finished","seq":15,"ts":"2026-09-26T14:10:14.567175Z","correlation_id":"0306dc38-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"PENDING_APPLY","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending","field":"acme_app_user","version":5},"actions":[{"kind":"vault_write_pending","applied":true,"detail":"staged v5"}]}}
+{"schema_version":"1.5","event":"target.finished","seq":16,"ts":"2026-09-26T14:10:14.567274Z","correlation_id":"0306dc38-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"IN_SYNC","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user","version":6,"stage":"current"},"actions":[…],"verification":{…},"rollover":{…},"duration_ms":1204}}
+{"schema_version":"1.5","event":"run.finished","seq":17,"ts":"2026-09-26T14:10:14.567540Z","correlation_id":"0306dc38-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
+```
+
+**The vault phase is per document and comes first**, which is the grain question
+#535 left to be answered when `rotate` was built. Staging is one compare-and-set
+per secret path, however many targets share it, so its events — a `vault.read`,
+a `password.generated` per account drawn, a `vault.write` — name a `path` and no
+`target`, and every one of them comes before the first `target.started`. That is
+UC-1 §8's own order (stage everything, *then* touch a database), so the stream
+shows it rather than interleaving the two phases per target, which would put a
+database event between two vault writes that happened back to back.
+
+- **`vault.read` appears three times per document**, and each is a real read:
+  under the lock at step 3 (`--max-age-days` is answered from it), just before
+  the staging write (its version is the compare-and-set), and after the
+  promotion — step 8's read-back, which is the one `rotate` has and `apply`
+  does not.
+- **The version applied is the version staged**: `vault.write` says 5,
+  `password.applied` says 5, and the promotion produced 6.
+- **A staging write the vault refused is a `vault.write` with `version: null`
+  and the store's `error`**, not a missing event — it is a per-document finding
+  and the run continues to its refusal. Nothing reaches a database after one, so
+  there is no `target.started`, and the staging rows still arrive as
+  `target.finished`.
+- **The rows come last and in `results[]` order**: the staging rows
+  (`PENDING_APPLY`, one per account and target) and then the applied ones.
+  `apply`'s reason for waiting applies unchanged.
+- **`--finish-rollover` has no event of its own.** Closing a window is reported
+  on the row, and nothing in the event enum names it; adding one is a schema
+  change for the verb that needs it, not this one.
+
+**`confirmation.required` is sent only when somebody is actually asked** — with
+the prompt they were shown in `data.prompt` — so a stream that stops after it is
+a run waiting on a person, which a consumer can tell from a hang. `--confirm`
+answers in advance, so nothing waits and nothing is sent. A prompt that was
+answered with EOF, from the same stack:
+
+```jsonl
+{"schema_version":"1.5","event":"confirmation.required","seq":2,"ts":"2026-09-26T14:10:18.252939Z","correlation_id":"b60184d7-9d90-4e8a-ad31-c3d496eefb67","data":{"prompt":"draw a new password for 1 account on 1 target in `dev` and promote it?"}}
+```
+
+followed by `run.finished` with exit 8.
+
 ### Which verbs stream, and why the rest refuse
 
 **Only a verb that has events to stream accepts `--output jsonl`**, and every
@@ -1799,7 +1866,7 @@ other verb refuses it on exit 2 with no events, naming where the value came from
 
 ```
 sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
-  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check
+  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check, creds rotate
 ```
 
 The alternative was to accept it everywhere and emit `run.started` and
@@ -2223,6 +2290,11 @@ the first, `vault`, `path` and `stage` for the second, and
 the emitter's discipline: a field added later that could carry a password fails
 CI on every line rather than being noticed in review. Added rather than renamed,
 for 1.3's reason.
+
+**The event schema went 1.4 to 1.5 with `creds rotate`** (#535), the first verb
+to emit `confirmation.required`: its `data` must carry the `prompt`. `vault.write`
+may carry an `error` object, for a staging write the vault refused. Both are on
+events nothing emitted under 1.4 in those shapes, so no 1.4 stream fails 1.5.
 
 
 **1.27 became 1.28 when the survey found a third kind of record** (#514). One

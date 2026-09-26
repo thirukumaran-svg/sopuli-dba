@@ -4671,7 +4671,7 @@ def creds_generate(
                         write, stores[write.key.store], authorised=overwrite, out=results
                     )
                     if promote
-                    else _stage(write, stores[write.key.store], out=results)
+                    else _stage(write, stores[write.key.store], out=results, run=run)
                 )
     except LockDeniedError as denied:
         _record_locks(document, manager, denied=denied)
@@ -5033,7 +5033,7 @@ def _promote_document(
 
 
 def _stage(
-    write: DocumentWrite, store: SecretStore, *, out: list[dict[str, Any]]
+    write: DocumentWrite, store: SecretStore, *, out: list[dict[str, Any]], run: Invocation
 ) -> list[tuple[Candidate, str, str]]:
     """Perform one document's write, and report it per account.
 
@@ -5045,15 +5045,45 @@ def _stage(
     exist yet -- which is not a version but an assertion that there is nothing at
     the path, and the one case a merge patch cannot serve.
     """
+    emitter = run.emitter()
     existing = store.read(write.key.path)
+    emitter.event(run.document, "vault.read", data=_vault_event(write.key, existing))
     cas = 0 if existing is None else existing.version
     replaced = _already_pending(existing, write)
 
+    # One per drawn password, ahead of the write that stages it (#535). A
+    # supplied one was not generated, and saying it was would give it the wrong
+    # provenance on the one channel that reports provenance as it happens.
+    for candidate in write.candidates:
+        if not candidate.supplied:
+            emitter.event(
+                run.document,
+                "password.generated",
+                account=candidate.binding.account,
+                data={"vault": write.key.store, "path": write.key.path, "stage": PENDING},
+            )
     try:
         written = write_credential(store, write.key.path, write.patch(stage=PENDING), cas=cas)
     except Exception as error:  # noqa: BLE001 -- a per-document finding
         reported = _as_error(error)
+        # A per-document finding rather than the end of the run, so the stream
+        # says so here: `version: null` with the error, not a missing event.
+        emitter.event(
+            run.document,
+            "vault.write",
+            data={**_vault_event(write.key, None), "stage": PENDING, "error": reported.to_dict()},
+        )
         return _reported(write, FAILED, reported.message, out=out, error=reported)
+    emitter.event(
+        run.document,
+        "vault.write",
+        data={
+            "vault": write.key.store,
+            "path": write.key.path,
+            "version": written.version,
+            "stage": PENDING,
+        },
+    )
 
     return _reported(
         write,
@@ -5476,21 +5506,7 @@ def creds_apply(
 
     _record_locks(document, manager)
     document.results = [_applied_json(record, promotions) for record in applied]
-    # Here, after the promotion, and not as each target finished -- which is
-    # where `creds check` sends them. An apply row is not final until its
-    # document's promotion is decided: `promoted_to` and the `vault_promote`
-    # action are written on every account the promotion covered, and a redraw can
-    # replace a row after its target was left. 03 §5 promises `target.finished`
-    # *is* the `results[]` entry, so it waits for the entry to exist; the progress
-    # in between is `password.applied` and `verification.done`.
-    for result in document.results:
-        emitter.event(
-            document,
-            "target.finished",
-            account=result["account"],
-            target=result["target"],
-            data=result,
-        )
+    _stream_results(run)
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
     states = [record.outcome.state for record in applied]
@@ -5725,6 +5741,28 @@ def _record_locks(
     """
     document.lock = build_lock_section(manager, denied=denied)
     document.diagnostics.extend(lock_diagnostics(manager))
+
+
+def _stream_results(run: Invocation) -> None:
+    """One ``target.finished`` per ``results[]`` entry, once the rows are final (#535).
+
+    After the promotion, and not as each target finished -- which is where
+    `creds check` sends them. A mutating row is not final until its document's
+    promotion is decided: `promoted_to` and the `vault_promote` action are
+    written on every account the promotion covered, and a redraw can replace a
+    row after its target was left. 03 §5 promises `target.finished` *is* the
+    `results[]` entry, so it waits for the entry to exist; the progress in
+    between is `password.applied` and `verification.done`.
+    """
+    emitter = run.emitter()
+    for result in run.document.results or []:
+        emitter.event(
+            run.document,
+            "target.finished",
+            account=result["account"],
+            target=result["target"],
+            data=result,
+        )
 
 
 def _lock_events(run: Invocation) -> Callable[[str, HeldLock], None]:
@@ -8022,6 +8060,9 @@ def creds_rotate(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="rotating a password")
     document.plan = plan.as_json()
+    # No-ops outside `--output jsonl` (#535).
+    emitter = run.emitter()
+    emitter.event(document, "plan.resolved", data=document.plan)
 
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
@@ -8058,7 +8099,7 @@ def creds_rotate(
     # This gate is unconditional, so the setting could only ever make it weaker,
     # and a second prompt on the runs the setting covers would ask the same
     # question twice for the same answer.
-    _confirm_rotation(plan, confirmed=confirm)
+    _confirm_rotation(plan, confirmed=confirm, run=run)
 
     manager = LockManager(
         stores={name: _lockable(name, config, stores) for name in {key.store for key in keys}},
@@ -8066,6 +8107,7 @@ def creds_rotate(
         command="creds rotate",
         selection=describe_selection(selection),
         break_expired=_break_expired(run),
+        observer=_lock_events(run),
     )
 
     sequence = _Rotation()
@@ -8096,6 +8138,7 @@ def creds_rotate(
             )
     except LockDeniedError as denied:
         _record_locks(document, manager, denied=denied)
+        emitter.event(document, "lock.denied", data=denied_entry(denied))
         raise
 
     # **After** `holding` has exited, on every path including the refusals
@@ -8107,12 +8150,17 @@ def creds_rotate(
     # review). One call, one place, and the ordering is now structural rather
     # than a property of where each early return happens to sit.
     _record_locks(document, manager)
+    if refusal is None:
+        document.results = sequence.staged_json + [
+            _applied_json(record, sequence.promotions) for record in sequence.applied
+        ]
+    # Every row, once the lock is let go -- `apply`'s arrangement and for its
+    # reason: a row is final only once the promotion is decided. The staging
+    # rows come first, as they do in `results[]`. Before the refusal return,
+    # because a staging failure is a refusal that still has rows to report.
+    _stream_results(run)
     if refusal is not None:
         return refusal
-
-    document.results = sequence.staged_json + [
-        _applied_json(record, sequence.promotions) for record in sequence.applied
-    ]
     unchecked = _guardrail_caveats(sequence.applied)
     document.diagnostics.extend(unchecked)
     states = [record.outcome.state for record in sequence.applied]
@@ -8264,7 +8312,7 @@ def _rotate_estate(
         except LockStolenError as lost:
             into.stolen = lost
             return None
-        rows = _stage(write, stores[write.key.store], out=into.staged_json)
+        rows = _stage(write, stores[write.key.store], out=into.staged_json, run=run)
         into.staged_rows.extend(rows)
         if any(state == FAILED for _, state, _ in rows):
             into.failures += 1
@@ -8457,7 +8505,7 @@ def _reach(radius: Any) -> str:
     return where
 
 
-def _confirm_rotation(plan: Any, *, confirmed: bool) -> None:
+def _confirm_rotation(plan: Any, *, confirmed: bool, run: Invocation) -> None:
     """Section 8 step 1: print the plan and ask, unless somebody already answered.
 
     The same shape `lock break` has, and for the reasons :func:`_confirm_break`
@@ -8488,12 +8536,14 @@ def _confirm_rotation(plan: Any, *, confirmed: bool) -> None:
                 "without touching anything"
             ),
         )
+    question = f"draw a new password for {_reach(plan.blast_radius)} and promote it?"
+    # Sent only where somebody is actually asked (#535): a stream that stops
+    # here is a run waiting on a person, and a consumer watching it should be
+    # able to tell that from a run that hung. `--confirm` answered in advance,
+    # so nothing is waiting and nothing is sent.
+    run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
     click.echo(render_plan(plan, noun="rotation"), err=True)
-    click.confirm(
-        f"draw a new password for {_reach(plan.blast_radius)} and promote it?",
-        abort=True,
-        err=True,
-    )
+    click.confirm(question, abort=True, err=True)
 
 
 def _preview_rotation(

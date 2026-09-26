@@ -1904,12 +1904,10 @@ caller supplies rather than something the verb acquires.
 **Step 9's audit record is the run document.** `--output json` is the record a
 scheduler keeps, and `creds.rotate` was already in the run schema's command enum;
 the event stream is `--output jsonl`, which `creds check` was the first verb to
-emit (#9) and `creds apply` the first mutating one (#535). `apply` already emits
-`password.applied` and `vault.promote` — the two events where a stream that
-stops tells you the most — through the helpers `rotate` shares with it. `rotate`
-itself does not stream yet and refuses the mode: its staging phase is per
-secret rather than per target, and where those events sit in its stream is its
-own change (#535 names it).
+emit (#9); `creds apply` and then `rotate` followed (#535). `password.applied`
+and `vault.promote` are where a stream that stops tells you the most, and
+`rotate` puts its staging events — per secret, not per target — ahead of the
+first target, in this section's own order (`03-json-output.md` §5).
 
 **Confirmation, and what it is not.** §8 step 1 is "plan + confirm", so `rotate`
 prints the plan to stderr and asks; `--confirm` answers in advance and an
