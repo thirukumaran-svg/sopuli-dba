@@ -1133,6 +1133,32 @@ runtime and invariant 7 protects that window. Nothing reads this value at runtim
 it is fetched once by a person. So the ordering is a choice about *which failure to
 prefer*, not a protocol, and the recovery for either is the same reset run again.
 
+**A failure between §4.1's statements is a third case, and it is decided too** (#528).
+DDL commits as it goes, so a statement that fails after an earlier one ran leaves
+that earlier one done. The row is `ERROR` at exit 4 either way, with `changed: true`
+and the committed statements reported as applied. What happens next depends on
+whether the password was set:
+
+| Committed | Failed | Password | Handed over | Record and notify |
+|---|---|---|---|---|
+| `ACCOUNT UNLOCK` | the set | unchanged, the old one works | **no** | no |
+| the set | the window close | **live**, and the old one may work until the window ends | **yes** | yes |
+
+The first is this section's recoverable failure with one extra step done. The token
+already made would retrieve a value that authenticates nothing, so it is not
+printed. The timed lock is gone, and the row says so rather than calling the
+account untouched.
+
+The second is handed over because withholding it is the lockout this section orders
+the steps to avoid. On the seen path nobody would hold the expired password the
+account now has. On an unseen one the token has already been made, and discarding it
+leaves a live password nobody can fetch. The state it leaves is the one
+`--keep-rollover` leaves on purpose (§4.3), so it is not a new kind of exposure. The
+row still fails, because a reset promised that the old password would stop working
+and it may not have. The record is written because it holds what happened, and a
+password was reset. It has no field for the open window, which lives in the run
+document.
+
 ### 6.5 The seen path, and what narrows it
 
 **`manual` is the one method that shows a working password to somebody who is not

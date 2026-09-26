@@ -42,6 +42,7 @@ from sopuli.driver.protocol import (
     ROLLOVER_FINISH,
     Credential,
     DriverError,
+    PartialAccountChangeError,
 )
 from sopuli.secrets import Secret
 
@@ -424,6 +425,87 @@ def test_an_inadmissible_password_is_refused_before_the_account_is_unlocked(
 
     assert _status(account) == "LOCKED(TIMED)", "the unlock ran before the password was judged"
     assert _logon(live_oracle, OLD) == "ORA-28000"
+
+
+# ----------------------------------------------- a failure half way (#528) ---
+
+
+def _fail_statement(session: Any, monkeypatch: pytest.MonkeyPatch, number: int) -> None:
+    """Make the ``number``-th statement the session issues fail, and only that one.
+
+    Every statement before it goes to the server for real and commits, which is
+    the thing under test: DDL commits as it goes, so what ran before the failure
+    has happened. The failure itself is injected, because the refusals a server
+    gives at that point -- a verify function, `ORA-28007`, a privilege revoked
+    mid-run -- need a profile or a second session this stack does not have, and
+    what the driver must do with any of them is the same.
+    """
+    issued = session._issue
+    count = 0
+
+    def issue(statement: Any) -> None:
+        nonlocal count
+        count += 1
+        if count == number:
+            raise DriverError("ORA-01031: insufficient privileges", code="ORA-01031")
+        issued(statement)
+
+    monkeypatch.setattr(session, "_issue", issue)
+
+
+def test_an_unlock_that_committed_before_the_set_failed_is_reported(
+    account: Any, live_oracle: Environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The unlock is not taken back, so the failure carries it (#528).
+
+    Before this the method only raised, and the command reported a `LOCKED(TIMED)`
+    account as untouched while it was in fact open.
+    """
+    _create(account, profile=LOCKOUT_PROFILE)
+    for _ in range(3):
+        assert _logon(live_oracle, "not-the-password") == "ORA-01017"
+    _fail_statement(account, monkeypatch, 2)
+
+    with pytest.raises(PartialAccountChangeError) as caught:
+        account.reset_password(ACCOUNT, NEW, expire=False)
+
+    assert [change.action for change in caught.value.completed] == [ACCOUNT_UNLOCK]
+    assert caught.value.code == "ORA-01031", "the server's own code survives the wrapping"
+    assert _status(account) == "OPEN", "the unlock the error reports did not happen"
+    assert _logon(live_oracle, OLD) == "ok", "the password was changed by a failed set"
+
+
+def test_a_failed_set_on_an_unlocked_account_is_an_ordinary_failure(
+    account: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing committed, so nothing is claimed: the unlock row is unchanged and
+    a partial error would say otherwise."""
+    _fail_statement(account, monkeypatch, 1)
+
+    with pytest.raises(DriverError) as caught:
+        account.reset_password(ACCOUNT, NEW, expire=False)
+
+    assert not isinstance(caught.value, PartialAccountChangeError)
+
+
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
+def test_a_set_that_committed_before_the_close_failed_is_reported(
+    rollover_account: Any, live_oracle: Environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The serious case: the new password is live and so is the old one.
+
+    Both logons are asserted because both are the point -- the error has to say
+    the password was set, since the caller hands it over on the strength of that
+    (#528), and the old one still working is why the row cannot read as success.
+    """
+    _fail_statement(rollover_account, monkeypatch, 2)
+
+    with pytest.raises(PartialAccountChangeError) as caught:
+        rollover_account.reset_password(ACCOUNT, NEW, expire=False)
+
+    assert [change.action for change in caught.value.completed] == [ACCOUNT_UNLOCK, PASSWORD_SET]
+    assert _logon(live_oracle, NEW.reveal()) == "ok"
+    assert _logon(live_oracle, OLD) == "ok", "the window closed although its statement failed"
 
 
 def test_resetting_an_account_that_does_not_exist_is_an_error(session: Any) -> None:

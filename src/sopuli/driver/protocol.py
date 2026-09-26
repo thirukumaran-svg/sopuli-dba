@@ -959,6 +959,14 @@ class Session(Protocol):
         ``expire`` is true. The refusal belongs at plan time, before a password
         has been drawn or delivered, and this call raises it too rather than
         trusting that they did.
+
+        **A failure after a statement committed raises
+        :class:`PartialAccountChangeError`** (#528), carrying the rows that ran.
+        Two cases, and the caller treats them differently: an unlock followed by
+        a failed set leaves the password unchanged and the account open, and a
+        set followed by a failed close leaves the new password live and the old
+        one working until the window ends. A failure with nothing committed
+        before it is raised as it came.
         """
         ...
 

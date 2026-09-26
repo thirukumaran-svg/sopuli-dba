@@ -3187,6 +3187,80 @@ sopuli: no `delivery:` is configured, so a new password would have nowhere to go
 
 Exit **8**.
 
+#### A reset that fails half way (#528)
+
+A reset is up to three statements (UC-2 §4.1): unlock a timed lock, set the password,
+close the rollover window. DDL commits as it goes, so when a later statement fails the
+earlier ones have already happened. Cause the first case on purpose: a timed-locked
+account on a profile whose verify function refuses every password, so the unlock
+commits and the set is refused by the server. As `SYS`, in the PDB:
+
+```sql
+CREATE OR REPLACE FUNCTION sopuli_refuse_all
+  (username VARCHAR2, password VARCHAR2, old_password VARCHAR2) RETURN BOOLEAN IS
+BEGIN
+  raise_application_error(-20001, 'no new password is acceptable on this profile');
+END;
+/
+CREATE PROFILE sopuli_refusing LIMIT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1/24
+  PASSWORD_VERIFY_FUNCTION sopuli_refuse_all;
+CREATE USER acme_dev_alice IDENTIFIED BY "Old-Pa55word-Alice1";
+GRANT CREATE SESSION TO acme_dev_alice;
+ALTER USER acme_dev_alice PROFILE sopuli_refusing;
+```
+
+Create the user first and move it onto the profile afterwards. The verify function
+runs on `CREATE USER ... IDENTIFIED BY` too, so creating the account on that
+profile fails with `ORA-28003`. Log in wrongly three times until `ACCOUNT_STATUS`
+reads `LOCKED(TIMED)`, then reset, with `vault_wrapped` as the method:
+
+```
+ACCOUNT         TARGET    STATE  WAS            DETAIL
+acme_dev_alice  free-pdb  ERROR  LOCKED(TIMED)  account was locked(timed); unlocked; then: ORA-28003: The password chosen did not meet the required complexity rules set by your organization.
+
+acme_dev_alice was not reset on any of 1; 1 failed
+```
+
+Exit **4**, and **no token is printed**. The password is still the old one, so a
+token would fetch a value that does not log in. Under `--output json` the row
+says what did happen:
+
+```json
+{
+  "state": "ERROR",
+  "changed": true,
+  "actions": [
+    { "kind": "account_unlock", "applied": true, "detail": "account was locked(timed); unlocked" },
+    { "kind": "password_set", "applied": false, "detail": "ORA-28003: The password chosen did not meet the required complexity rules set by your organization." }
+  ],
+  "account_status": "LOCKED(TIMED)",
+  "error": {
+    "category": "policy",
+    "message": "ORA-28003: The password chosen did not meet the required complexity rules set by your organization.",
+    "code": "ORA-28003",
+    "hint": "the profile's password verify function refused this candidate; draw another. The server message usually carries an ORA-20000 saying which rule was broken"
+  }
+}
+```
+
+That is the row alone, with `account`, `target` and `duration_ms` left out.
+
+Before #528 this row read `changed: false` with no actions, while the account was
+now open. `ACCOUNT_STATUS` is `OPEN`, and the old password logs in. Run it again
+and you get the ordinary failure: nothing is locked, so nothing commits before the
+refusal, and the row goes back to `changed: false`.
+
+The other case is the set committing and the window close failing. It cannot be
+caused by hand on this stack, because nothing refuses `EXPIRE PASSWORD ROLLOVER
+PERIOD` once `ALTER USER` has succeeded, so the test suite injects that failure
+instead. There the password **is** handed over, and the record and the notification
+follow, because the password is live and withholding it would leave a password
+nobody holds. The row is still `ERROR` at exit 4, because the old password may work
+until the window ends (UC-2 §6.4).
+
+Clean up with `DROP USER acme_dev_alice CASCADE`, `DROP PROFILE sopuli_refusing` and
+`DROP FUNCTION sopuli_refuse_all`.
+
 #### The safety ratchet, refusing a method
 
 `safety.delivery.allowed_methods` (§10b) now has the consumer #498 said would

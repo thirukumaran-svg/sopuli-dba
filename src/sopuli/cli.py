@@ -150,6 +150,8 @@ from sopuli.driver.protocol import (
     FAIL,
     PASS,
     PASSWORD_EXPIRE,
+    PASSWORD_SET,
+    ROLLOVER_FINISH,
     VERIFY_LOGIN,
     AccountAttributes,
     AccountChange,
@@ -2057,7 +2059,15 @@ def account_reset_password(
 
     body = render_reset(
         [(one.account, one.target, one.state, one.status, one.detail) for one in found],
-        changed=changed,
+        # Targets whose password was set, which is what the closing line's "reset"
+        # claims -- not `changed`, which also counts a row whose unlock committed
+        # and whose set then failed (#528). That row changed the account and reset
+        # nothing, and the summary's `changed` still counts it.
+        changed=sum(
+            1
+            for one in found
+            if any(kind == PASSWORD_SET and applied for kind, applied, _ in one.actions)
+        ),
         preview=run.dry_run,
         would_reset=sum(1 for one in found if one.would_reset) if run.dry_run else None,
     )
@@ -2396,6 +2406,62 @@ class _Reset:
         )
 
 
+#: UC-2 4.1's statements in the order the driver considers them, which is what
+#: names the one a :class:`PartialAccountChangeError` stopped at: the one after
+#: the last row in its ``completed``.
+_RESET_STATEMENTS = (ACCOUNT_UNLOCK, PASSWORD_SET, ROLLOVER_FINISH)
+
+
+def _reset_actions(
+    changes: Sequence[AccountChange], failed: Error | None = None
+) -> tuple[tuple[str, bool, str | None], ...]:
+    """The row's actions: every statement considered, and the one that failed.
+
+    ``failed`` appends the statement after the last completed one, unapplied and
+    carrying the server's message, so a partial row still names all it tried --
+    `_expire_one`'s shape for the same error (#527, #528).
+
+    **Named from the last completed row, not from how many there are** (Copilot's
+    review of #536). The Oracle driver reports the unlock row even where it issued
+    nothing, so a count would work against it today -- but the error does not
+    promise a full prefix, and a driver that left the no-op row out would have its
+    failed close reported as a second `password_set`.
+    """
+    done = tuple((one.action, one.changed, one.detail) for one in changes)
+    if failed is None:
+        return done
+    after = _RESET_STATEMENTS.index(changes[-1].action) + 1 if changes else 0
+    return (*done, (_RESET_STATEMENTS[after], False, failed.message))
+
+
+def _partial_reset(
+    error: PartialAccountChangeError,
+    *,
+    account: str,
+    target: str,
+    status: str | None,
+    started: float,
+) -> _Reset:
+    """The row for a reset that cleared a timed lock and then failed (#528).
+
+    `ERROR` at exit 4 like any failure, but ``changed`` is true and the unlock is
+    reported as applied: the account is open on behalf of a reset that did not
+    happen, and that is what somebody reading the row has to act on.
+    """
+    reported = _as_error(error)
+    return _Reset(
+        account=account,
+        target=target,
+        state=check_states.ERROR,
+        changed=True,
+        detail=f"{error.completed[-1].detail}; then: {reported.message}",
+        status=status,
+        actions=_reset_actions(error.completed, reported),
+        duration_ms=_elapsed(started),
+        error=reported,
+    )
+
+
 def _reset_one(
     target: ExpandedTarget,
     account: str,
@@ -2517,12 +2583,25 @@ def _reset_one(
                 if backend is None
                 else backend.deliver(secret, account=account, target=target.name)
             )
-            changes = session.reset_password(
-                account,
-                secret,
-                expire=decision.expire,
-                keep_rollover=keep_rollover,
-            )
+            try:
+                changes = session.reset_password(
+                    account,
+                    secret,
+                    expire=decision.expire,
+                    keep_rollover=keep_rollover,
+                )
+                partial = None
+            except PartialAccountChangeError as error:
+                if not any(one.action == PASSWORD_SET for one in error.completed):
+                    # The unlock committed and the set did not (#528). The
+                    # account's password is what it was, so on the unseen path the
+                    # token already made retrieves a value that authenticates
+                    # nothing -- 6.4's recoverable failure -- and nothing is handed
+                    # over. What the row must not do is say nothing changed.
+                    return _partial_reset(
+                        error, account=account, target=target.name, status=status, started=started
+                    )
+                changes, partial = error.completed, error
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             reported = _as_error(error)
             return _Reset(
@@ -2544,14 +2623,30 @@ def _reset_one(
         # completion". The boundary's own docstring names that case as the one a
         # document exists for: *a confirmation declined halfway through is
         # exactly when a scheduler wants to know which targets were touched.*
+        #
+        # **A password that is set is handed over, even where closing the window
+        # then failed** (#528, decided there). The new password is live and the
+        # old one still works until the window ends -- the state `--keep-rollover`
+        # leaves on purpose, so not a new exposure. Withholding it would be worse
+        # on both paths: on the seen one nobody would hold an expired password that
+        # is now the account's, and on the unseen one the token already made would
+        # be thrown away. The row is still `ERROR` at exit 4, and the record and
+        # the notification follow, because both hold what happened.
+        unclosed = _as_error(partial) if partial is not None else None
         row = _Reset(
             account=account,
             target=target.name,
-            state=reset.RESET,
+            state=reset.RESET if unclosed is None else check_states.ERROR,
             changed=True,
-            detail=decision.detail,
+            detail=(
+                decision.detail
+                if unclosed is None
+                else "password set; the rollover window was not closed, so the old "
+                f"password may work until it ends: {unclosed.message}"
+            ),
             status=status,
-            actions=tuple((one.action, one.changed, one.detail) for one in changes),
+            actions=_reset_actions(changes, unclosed),
+            error=unclosed,
             delivered=delivery.method,
             handover=receipt.reported() if receipt is not None else None,
             overridden=overridden,

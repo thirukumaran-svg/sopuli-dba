@@ -640,11 +640,21 @@ class OracleSession:
             expire=expire,
         )
 
-        return (
-            self._reset_unlock(state),
-            self._reset_set(state, statement, expire=expire),
-            self._reset_close_window(state, keep=keep_rollover),
-        )
+        # **What committed travels with the failure** (#528). DDL commits as it
+        # goes, so a statement that fails after an earlier one ran cannot take the
+        # earlier one back -- a timed lock already cleared, or a password already
+        # live -- and an exception alone would let the caller report the account
+        # as untouched. `done` is the rows so far; a failure with nothing in it
+        # that changed anything is an ordinary failure and is raised as one.
+        done: tuple[AccountChange, ...] = ()
+        try:
+            done = (self._reset_unlock(state),)
+            done = (*done, self._reset_set(state, statement, expire=expire))
+            return (*done, self._reset_close_window(state, keep=keep_rollover))
+        except DriverError as error:
+            if any(one.changed for one in done):
+                raise PartialAccountChangeError(error, completed=done) from error
+            raise
 
     def _reset_unlock(self, state: UserState) -> AccountChange:
         """§4.1 statement 1 -- the timed lock only.
