@@ -3545,7 +3545,10 @@ Only the window closes, the expiry is not reissued, and the row reports a change
 **Getting back to `OPEN & IN ROLLOVER` takes two `IDENTIFIED BY`s, not one.**
 Measured on 26ai, twice: setting a password on an `EXPIRED` account opens no
 window, and it even clears one that was open. The first `IDENTIFIED BY` gives plain
-`OPEN`, and only the second opens the window.
+`OPEN`, and only the second opens the window. #529 checked it by login too, which
+the status alone cannot settle: every earlier password is `ORA-01017` afterwards,
+the pre-window one included. `EXPIRED(GRACE)` is the exception, and a set from it
+opens a window as from `OPEN` (`sql/oracle/09_reset_from_expired_probe.sql`).
 
 **The window closing and the expiry then failing** cannot be caused by hand on this
 stack, because nothing refuses `PASSWORD EXPIRE` once the close's `ALTER USER` has

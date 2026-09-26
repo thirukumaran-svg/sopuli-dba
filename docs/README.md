@@ -535,6 +535,16 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   tier 2. Until it has one, `use-cases/uc-02-personal-account-passwords.md` §4.3
   still refuses a seen reset on a rollover profile at plan time — now for a
   measured reason rather than an absent one.
+  **Q7 was measured from `OPEN`, and the start state turns out to decide it**
+  (#529, `sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.2.0.0, twice,
+  2026-09-26). From `EXPIRED`, and from `EXPIRED & IN ROLLOVER`, the same
+  statement opens **no** window and leaves every earlier password `ORA-01017`,
+  so the new, expired one is the only password that works. From `EXPIRED(GRACE)`
+  it behaves exactly as from `OPEN`, old password `ORA-28001`. So the exposure
+  depends on whether the old password still authenticates, not on whether the
+  status reads `EXPIRED`. That is a measurement on one release, not a change to
+  the refusal: whether §4.3 narrows is #529's open question, and it waits on the
+  same 21c run.
 - `unverified` `stale-rollover` (#441) — **What an open rollover window does when
   the profile that granted it is set back to zero.** Raised by a review of #504,
   which predicted the old password would keep working; **measured twice on 26ai

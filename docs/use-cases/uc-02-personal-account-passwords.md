@@ -790,6 +790,18 @@ still authenticates, and it is itself a way to set the new one. So on this path
 the expiry that is supposed to end the DBA's exposure leaves a second live
 password behind it for the length of the window.
 
+**That is the answer from `OPEN`, and from `EXPIRED` it is different** (#529,
+`sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.2.0.0, twice). This
+section's motivating account, one whose password expired and whose owner no longer
+knows it, is in the second state. There the same statement opens no window. Every
+earlier password answers `ORA-01017`, including the pre-window one on an account
+that started `EXPIRED & IN ROLLOVER`, and the new, expired password is the only
+one that works. `EXPIRED(GRACE)` behaves as `OPEN` does, because its password still
+authenticates. So on this release the exposure Q7 found depends on whether the old
+password is live, not on what the profile grants. **The refusal below is
+unchanged by this.** It keys on the profile, and narrowing it is a decision that
+needs 21c as well.
+
 **A seen reset of an account whose profile sets a non-zero rollover time is
 therefore still refused at plan time**, naming the account and the profile, before
 any DDL is issued — invariant 4, and now for a measured reason rather than an
