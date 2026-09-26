@@ -28,6 +28,7 @@ from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
 from sopuli.cli import cli
+from sopuli.clock import utc_now
 from sopuli.delivery import Receipt
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
@@ -39,8 +40,11 @@ from sopuli.driver.protocol import (
     UserState,
 )
 from sopuli.exit_codes import ExitCode
+from sopuli.lock import Holder, LockDeniedError, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.secrets import Secret
+from sopuli.store import MemoryStore
 
 ACCOUNT = "acme_dev_alice"
 TARGET = "tier1-oracle"
@@ -358,3 +362,228 @@ def test_the_failed_statement_is_named_from_the_last_that_committed() -> None:
         (ACCOUNT_UNLOCK, True),
         (PASSWORD_SET, False),
     ]
+
+
+# ------------------------------------------------------------------ jsonl ---
+#
+# `account reset-password` streams (#535), unseen paths only: the seen path is
+# refused under every machine format, so `password.displayed` has no emitter by
+# construction. Per target, as `creds check` streams, because a reset row is
+# final when its target is.
+
+EVENT_SCHEMA = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "schemas"
+    / f"sopuli-event-{EVENT_SCHEMA_VERSION}.schema.json"
+)
+
+
+class Succeeding(FakeSession):
+    """A session whose reset commits."""
+
+    def reset_password(self, account: str, secret: Secret, **_: Any) -> tuple[AccountChange, ...]:
+        self.reset.append(account)
+        return (SET,)
+
+
+def _stream(result: Any) -> list[dict[str, Any]]:
+    events = Draft202012Validator(json.loads(EVENT_SCHEMA.read_text(encoding="utf-8")))
+    lines = [json.loads(line) for line in result.stdout.splitlines()]
+    for line in lines:
+        assert [error.message for error in events.iter_errors(line)] == [], line
+    return lines
+
+
+def _names(lines: list[dict[str, Any]]) -> list[str]:
+    return [line["event"] for line in lines if line["event"] != "diagnostic"]
+
+
+def test_an_unseen_reset_streams_the_set_and_the_handover_and_never_the_token(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    _open(monkeypatch, Succeeding("OPEN", DENIED), unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--output", "jsonl")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    lines = _stream(result)
+    assert _names(lines) == [
+        "run.started",
+        "plan.resolved",
+        "target.started",
+        "password.applied",
+        "password.delivered",
+        "target.finished",
+        "run.finished",
+    ]
+    delivered = next(line for line in lines if line["event"] == "password.delivered")
+    assert (delivered["account"], delivered["target"]) == (ACCOUNT, TARGET)
+    assert delivered["data"] == {
+        "method": "vault_wrapped",
+        "handover": {"accessor": "accessor-0001", "expires_at": "2026-09-26T12:15:00Z"},
+    }
+    applied = next(line for line in lines if line["event"] == "password.applied")
+    assert applied["data"] == {"version": None, "outcome": "RESET"}
+    assert TOKEN not in result.stdout, "the wrapping token reached the stream"
+    assert TOKEN in result.stderr, "the password is set and nobody was given it"
+
+
+def test_jsonl_and_json_describe_the_same_reset(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    config = write_config(WRAPPED)
+    _open(monkeypatch, Succeeding("OPEN", DENIED), unseen=True)
+    lines = _stream(_run(runner, config, "--output", "jsonl"))
+    body = json.loads(_run(runner, config, "--output", "json").stdout)
+
+    def comparable(entry: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value for key, value in entry.items() if key not in ("duration_ms", "reset_at")
+        }
+
+    assert lines[-1]["data"] == {"summary": body["summary"], "exit_code": body["exit_code"]}
+    streamed = [line["data"] for line in lines if line["event"] == "target.finished"]
+    assert [comparable(one) for one in streamed] == [comparable(one) for one in body["results"]]
+    defs = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    shape = Draft202012Validator({"$defs": defs, "$ref": "#/$defs/result"})
+    assert [error.message for error in shape.iter_errors(streamed[0])] == []
+
+
+def test_a_partly_applied_reset_streams_the_set_it_made(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """#528's case on the stream: the password is live and was handed over, so
+    both events are there, the row is `ERROR`, and the run is exit 4."""
+    failure = PartialAccountChangeError(DENIED, completed=(UNLOCKED, SET))
+    _open(monkeypatch, FakeSession("LOCKED(TIMED)", failure), unseen=True)
+
+    lines = _stream(_run(runner, write_config(WRAPPED), "--output", "jsonl"))
+
+    assert {"password.applied", "password.delivered"} <= set(_names(lines))
+    finished = next(line for line in lines if line["event"] == "target.finished")
+    assert finished["data"]["state"] == "ERROR"
+    assert lines[-1]["data"]["exit_code"] == ExitCode.PARTIAL
+
+
+def test_a_set_that_failed_streams_no_set_and_no_handover(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The unlock committed and the set did not: nothing was set, and nothing
+    that works was handed over, so neither event is sent."""
+    failure = PartialAccountChangeError(DENIED, completed=(UNLOCKED,))
+    _open(monkeypatch, FakeSession("LOCKED(TIMED)", failure), unseen=True)
+
+    lines = _stream(_run(runner, write_config(WRAPPED), "--output", "jsonl"))
+
+    assert "password.applied" not in _names(lines)
+    assert "password.delivered" not in _names(lines)
+    assert "target.finished" in _names(lines)
+
+
+def test_the_seen_path_is_refused_under_jsonl_and_displays_nothing(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """Invariant 2, guard 2, on the mode added after it: `manual` is refused
+    before a password is drawn, so there is no `password.displayed` to send."""
+    session = Succeeding("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=False)
+
+    result = _run(runner, write_config(MANUAL), "--output", "jsonl")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "password.displayed" not in result.stdout
+    assert session.reset == [], "a password was set on a path that cannot show it"
+
+
+JOURNALLED = WRAPPED + "\nreset_records:\n  vault: vault-dev\n  prefix: sopuli/personal-resets\n"
+
+
+def test_a_journalled_reset_streams_its_lock_taken_and_let_go(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """UC-2 §3.3's lock, keyed on the record path, through the manager's observer
+    -- the only thing that emits `lock.*` (review of #546)."""
+    journal = MemoryStore()
+    monkeypatch.setattr("sopuli.cli._reset_journal", lambda run, config: journal)
+    _open(monkeypatch, Succeeding("OPEN", DENIED), unseen=True)
+
+    lines = _stream(_run(runner, write_config(JOURNALLED), "--output", "jsonl"))
+
+    assert _names(lines) == [
+        "run.started",
+        "plan.resolved",
+        "lock.acquired",
+        "target.started",
+        "password.applied",
+        "password.delivered",
+        "target.finished",
+        "lock.released",
+        "run.finished",
+    ]
+    acquired, released = (
+        line["data"] for line in lines if line["event"] in ("lock.acquired", "lock.released")
+    )
+    assert acquired["path"] == released["path"]
+    assert ACCOUNT in acquired["path"]
+    assert TARGET in acquired["path"]
+    assert (acquired["released"], released["released"]) == (False, True)
+
+
+def test_a_reset_somebody_else_holds_is_streamed_as_denied(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The collision §3.3 keys the lock to prevent: exit 7, the holder named,
+    and no target dialled. The path is read off a clean run rather than
+    re-derived here, so this cannot drift from what the verb locks."""
+    journal = MemoryStore()
+    monkeypatch.setattr("sopuli.cli._reset_journal", lambda run, config: journal)
+    session = Succeeding("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=True)
+    config = write_config(JOURNALLED)
+    first = _stream(_run(runner, config, "--output", "jsonl"))
+    path = next(line["data"]["path"] for line in first if line["event"] == "lock.acquired")
+    key = LockKey(store="vault-dev", path=path)
+    held = journal.read(lock_path(key))
+    assert held is not None
+    journal.write(
+        lock_path(key),
+        LockRecord.acquired(
+            correlation_id="01JSOMEBODYELSE",
+            command="account reset-password",
+            holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
+            now=utc_now(),
+        ).to_dict(),
+        cas=held.version,
+    )
+    session.reset.clear()
+
+    result = _run(runner, config, "--output", "jsonl")
+
+    assert isinstance(result.exception, LockDeniedError), result.exception
+    lines = _stream(result)
+    assert _names(lines) == ["run.started", "plan.resolved", "lock.denied", "run.finished"]
+    assert lines[-2]["data"]["holder"]["correlation_id"] == "01JSOMEBODYELSE"
+    assert lines[-1]["data"]["exit_code"] == ExitCode.LOCK_HELD
+    assert session.reset == []
+
+
+def test_the_seen_path_previews_under_jsonl_and_hands_nothing_over(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The seen path's `--dry-run` is exempt from guards 2 to 4 (#441's sixth
+    guard): a preview prints a plan and never a password, so it streams -- with
+    no `password.*` event at all, because nothing was set, delivered or shown
+    (review of #546)."""
+    session = Succeeding("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=False)
+
+    result = _run(runner, write_config(MANUAL), "--dry-run", "--output", "jsonl")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    names = _names(_stream(result))
+    assert names[0] == "run.started"
+    assert names[-1] == "run.finished"
+    assert "target.finished" in names
+    assert not [name for name in names if name.startswith("password.")]
+    assert session.reset == []

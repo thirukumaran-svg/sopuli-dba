@@ -761,7 +761,7 @@ def _wired(contributions: dict[str, list[Contribution]], name: str) -> list[Cont
 #: the event schema has no home for a ``config`` section.
 #: Adding a verb means giving it events, not only a line here.
 STREAMING_COMMANDS: frozenset[str] = frozenset(
-    {"creds.check", "creds.apply", "creds.rotate", "creds.generate"}
+    {"creds.check", "creds.apply", "creds.rotate", "creds.generate", "account.reset-password"}
 )
 
 

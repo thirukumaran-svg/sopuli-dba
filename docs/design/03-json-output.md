@@ -4,8 +4,8 @@ Status: draft / sketch, **partly implemented**. The run document, `--output
 text|json`, colour resolution, the `config` section, `diagnostics`, `plan`,
 `results` and four of `invocation.selection`'s six members are real and validated
 against the schema in CI (`sopuli/output/`). **`--output jsonl` exists since #9,
-for the verbs that stream** — `creds check` first, then `creds apply`, `creds rotate` and `creds generate`
-(#535) — and
+for the verbs that stream** — `creds check` first, then `creds apply`, `creds rotate`, `creds generate` and
+`account reset-password` (#535) — and
 any other verb refuses it as a usage error; §5 says what is emitted and why the refusal is
 the rule. This paragraph called `plan` and `results` unwritten until #392;
 they have been emitted by every `creds` verb for many releases.
@@ -43,7 +43,7 @@ a config emits them, `config show` in both its views as well as
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
 Schemas: [`../schemas/sopuli-run-1.30.schema.json`](../schemas/sopuli-run-1.30.schema.json),
-[`../schemas/sopuli-event-1.6.schema.json`](../schemas/sopuli-event-1.6.schema.json)
+[`../schemas/sopuli-event-1.7.schema.json`](../schemas/sopuli-event-1.7.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---
@@ -67,8 +67,8 @@ Three output modes:
 `jsonl` and `json` describe the same run. The last `run.finished` event carries
 the same `summary` and `exit_code` as the `json` document, so a consumer can use
 either without a second code path. **`jsonl` is offered only by a verb that
-streams** — `creds check`, `creds apply`, `creds rotate` and `creds generate`
-today — and refused
+streams** — `creds check`, `creds apply`, `creds rotate`, `creds generate` and
+`account reset-password` today — and refused
 by the rest; §5
 says why.
 
@@ -1913,6 +1913,53 @@ preview of `generate` is for: `run.started`, `plan.resolved`,
   (`safety.confirm_environments`), which `generate` shares with `apply`: only
   when somebody is actually asked, with the question in `data.prompt`.
 
+### `account reset-password`
+
+**Streams since #535 — the unseen paths, and the seen path's preview.** A seen
+(`manual`) reset is refused under every machine format before a password is
+drawn — invariant 2's guard 2, which has checked "machine format" rather than
+"JSON" since #9. Its `--dry-run` is exempt, as it is under `json` (#441's sixth
+guard): a preview prints a plan and never a password, so it streams
+`run.started`, `plan.resolved`, `target.started`, `target.finished`, `run.finished` and no `password.*` event at all (review of #546).
+So `password.displayed` has no emitter *by construction* — the one seen-path run
+that can stream is the one that shows nothing — and that is the design rather
+than a gap. A `vault_wrapped` reset against the tier-1 stack, trimmed
+only where `…` says so:
+
+```jsonl
+{"schema_version":"1.7","event":"run.started","seq":0,"ts":"2026-09-26T17:13:35.870495Z","correlation_id":"8ebe1029-…","data":{"command":"account.reset-password","dry_run":false}}
+{"schema_version":"1.7","event":"plan.resolved","seq":1,"ts":"2026-09-26T17:13:35.870664Z","correlation_id":"8ebe1029-…","data":{"units":[{"account":"acme_dev_alice","target":"free-pdb","intent":["password_set"]}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]}}}
+{"schema_version":"1.7","event":"diagnostic","seq":2,"ts":"2026-09-26T17:13:36.478946Z","correlation_id":"8ebe1029-…","level":"warning","message":"no `reset_records:` block is declared, s…","data":{"code":"SOPULI-W024"}}
+{"schema_version":"1.7","event":"target.started","seq":3,"ts":"2026-09-26T17:13:36.479212Z","correlation_id":"8ebe1029-…","target":"free-pdb"}
+{"schema_version":"1.7","event":"diagnostic","seq":4,"ts":"2026-09-26T17:13:37.595170Z","correlation_id":"8ebe1029-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from…","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.7","event":"password.applied","seq":5,"ts":"2026-09-26T17:13:37.595243Z","correlation_id":"8ebe1029-…","account":"acme_dev_alice","target":"free-pdb","data":{"version":null,"outcome":"RESET"}}
+{"schema_version":"1.7","event":"password.delivered","seq":6,"ts":"2026-09-26T17:13:37.595276Z","correlation_id":"8ebe1029-…","account":"acme_dev_alice","target":"free-pdb","data":{"method":"vault_wrapped","handover":{"accessor":"OApZG15TURKJpBT5fJGXjFF0","expires_at":"2026-09-26T17:28:37.542706Z"}}}
+{"schema_version":"1.7","event":"target.finished","seq":7,"ts":"2026-09-26T17:13:37.595303Z","correlation_id":"8ebe1029-…","account":"acme_dev_alice","target":"free-pdb","data":{"account":"acme_dev_alice","target":"free-pdb","state":"RESET","changed":true,"actions":[…],"account_status":"OPEN","delivered":"vault_wrapped","handover":{"accessor":"OApZG15TURKJpBT5fJGXjFF0","expires_at":"2026-09-26T17:28:37.542706Z"},"duration_ms":1111}}
+{"schema_version":"1.7","event":"run.finished","seq":8,"ts":"2026-09-26T17:13:37.595600Z","correlation_id":"8ebe1029-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0},"exit_code":0}}
+```
+
+**Per target, as each finishes** — `creds check`'s grain, not `apply`'s. An
+apply row waits for a promotion decided after every target; a reset row is final
+when its target is, because nothing decided later is written back onto it. So a
+stream that stops on target three has already said what happened on one and two.
+
+- **`password.applied`** where the password was set, with `"version": null`: a
+  reset draws a password and keeps it in no document a version could name.
+- **`password.delivered`** where the row says it was handed over — its first
+  emitter, registered in 1.2 (#444). It carries the `method` and, on an unseen
+  path, the `handover` object the row carries: the accessor that names the
+  hand-over and cannot perform it, and when it expires. **Never the wrapping
+  token**, which goes to stderr under every machine format as it does under
+  `json`, and never the password; event schema 1.7 closes the payload so no
+  later field can carry either.
+- **A partly applied reset** (#528) streams what it did: the password set and
+  handed over, then a row that is `ERROR`, then exit 4. **An unlock that
+  committed and a set that did not** streams neither event — nothing that works
+  was set or handed over.
+- **No `password.generated`**: its payload names the vault path and stage the
+  draw was staged to, and a reset's password is staged nowhere. The
+  `password.delivered` beside it is what says where it went.
+
 ### Which verbs stream, and why the rest refuse
 
 **Only a verb that has events to stream accepts `--output jsonl`**, and every
@@ -1921,7 +1968,7 @@ other verb refuses it on exit 2 with no events, naming where the value came from
 
 ```
 sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
-  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check, creds generate, creds rotate
+  hint: use --output json for the same run as one document; jsonl is offered by: account reset-password, creds apply, creds check, creds generate, creds rotate
 ```
 
 The alternative was to accept it everywhere and emit `run.started` and
@@ -1944,14 +1991,14 @@ consumer all of it.
 
 ```
 sopuli: --output (verb): `lock break` does not stream, so it has no jsonl output
-  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check, creds generate, creds rotate
+  hint: use --output json for the same run as one document; jsonl is offered by: account reset-password, creds apply, creds check, creds generate, creds rotate
 ```
 
-**A verb that refuses the machine formats refuses `jsonl` twice.** `account
+**A path that refuses the machine formats refuses `jsonl` too.** `account
 reset-password`'s seen path and `policy sample --reveal` are refused under
-`--output json`; both verbs are also outside the streaming list, and the
-refusal checks treat `jsonl` as a machine format too — so the guard survives
-either verb learning to stream.
+`--output json`, and the refusal checks treat `jsonl` as a machine format — so
+the guard survived `account reset-password` learning to stream (#535), exactly
+as it was built to. `policy sample` is outside the streaming list as well.
 
 The three `lock.*` events were in the enum from 1.0 and have had a payload since
 1.4 (#535). `lock.acquired` and `lock.released` carry a `lock.held[]` entry as of
@@ -2330,7 +2377,8 @@ extends an artefact already ahead of its stream, and the word is registered with
 the change that knows why the event exists. Neither it nor `password.displayed`
 carries the password, and neither carries the retrieval credential — a consumer
 that wants to tie a stream to a vault's audit log reads `handover.accessor` from
-the run document.
+the run document. (It got its emitter in 1.7, #535, and carries that accessor
+itself now.)
 
 **The event schema went 1.2 to 1.3 when something first emitted it** (#9). Three
 payloads §5 had described since 1.0 became requirements: `run.finished.data`
@@ -2357,6 +2405,15 @@ the first, `vault`, `path` and `stage` for the second, and
 the emitter's discipline: a field added later that could carry a password fails
 CI on every line rather than being noticed in review. Added rather than renamed,
 for 1.3's reason.
+
+**The event schema went 1.6 to 1.7 with `account reset-password`** (#535), the
+first emitter of `password.delivered`. Its payload is closed: `method`, and an
+optional `handover` of exactly the run schema's shape (`accessor`,
+`expires_at`) — `additionalProperties: false` at both levels, for the reason
+1.4 closed `password.applied`'s: the event sits next to a credential, and a
+field added later that could carry it must fail CI rather than a review.
+`password.displayed` keeps no emitter, by construction: the seen path streams
+only as a `--dry-run`, which displays nothing.
 
 **The event schema went 1.4 to 1.5 with `creds rotate`** (#535), the first verb
 to emit `confirmation.required`: its `data` must carry the `prompt`. `vault.write`
@@ -2415,8 +2472,9 @@ change that knows why the event exists is the one that should name it.
 **What records the exposure today is the run document**, which every run has:
 `results[].delivered` says the method was `manual`, and `manual` is by definition
 the path that shows somebody a password. `password.displayed` is what a *stream*
-consumer will read once the verb streams — `--output jsonl` exists since #9, and
-`account reset-password` refuses it until it has events of its own.
+consumer would read — and it never will: `account reset-password` streams since
+#535, but the seen path only as a `--dry-run`, which shows nothing; the real one
+is refused under every machine format. The run document remains what records the exposure.
 
 **1.26 became 1.27 with `sopuli account reset-password`** (#441), UC-2's reset.
 Two additive changes:

@@ -1910,6 +1910,14 @@ def account_reset_password(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     document.plan = plan.as_json()
+    # No-ops outside `--output jsonl` (#535). A seen reset reaches them only as
+    # a `--dry-run`: the real one is refused under every machine format above,
+    # and a preview is exempt from that refusal because it shows no password
+    # (#441's sixth guard). So `password.displayed` has no emitter by
+    # construction -- the one run that could stream the seen path displays
+    # nothing.
+    emitter = run.emitter()
+    emitter.event(document, "plan.resolved", data=document.plan)
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
     # The record path is derived before anything connects, so a name it cannot
@@ -2004,21 +2012,22 @@ def account_reset_password(
                     except LockStolenError as lost:
                         stolen = lost
                         break
-                found.append(
-                    _reset_one(
-                        target,
-                        account,
-                        run,
-                        config,
-                        delivery=delivery,
-                        force=force,
-                        keep_rollover=keep_rollover,
-                        preview=run.dry_run,
-                        record_at=paths.get(target.name),
-                        backend=backends.get(target.name),
-                        channel=channel,
-                    )
+                emitter.event(document, "target.started", target=target.name)
+                one = _reset_one(
+                    target,
+                    account,
+                    run,
+                    config,
+                    delivery=delivery,
+                    force=force,
+                    keep_rollover=keep_rollover,
+                    preview=run.dry_run,
+                    record_at=paths.get(target.name),
+                    backend=backends.get(target.name),
+                    channel=channel,
                 )
+                found.append(one)
+                _reset_events(one, run)
     except LockDeniedError as denied:
         # Exit 7, and nothing was issued: acquisition is all-or-nothing and
         # happens before the first connection, so a reset refused here is a
@@ -2026,6 +2035,7 @@ def account_reset_password(
         # this target, which is the collision §3.3 keys the lock to prevent.
         if manager is not None:
             _record_locks(document, manager, denied=denied)
+        emitter.event(document, "lock.denied", data=denied_entry(denied))
         raise
     except click.Abort:
         # The seen path's prompt, declined. `holding()` has already let the lock
@@ -2110,6 +2120,47 @@ def account_reset_password(
     return "\n\n".join(part for part in (header, body, told, shown) if part)
 
 
+def _reset_events(one: _Reset, run: Invocation) -> None:
+    """One target's reset on the stream, as soon as it is done (#535).
+
+    **Per target, as `creds check` streams, and not at the end as `apply` does.**
+    A reset row is final when its target is: nothing decided afterwards is
+    written back onto it, as a promotion is onto an apply row. So a stream that
+    stops on target three has already said what happened on targets one and two.
+
+    Everything is read off the row's own serialisation, so the events cannot
+    disagree with ``results[]``. ``password.applied`` where the password was
+    set, with no vault version -- a reset draws its password and stores it
+    nowhere a version could name. ``password.delivered`` where the row says it
+    was handed over, carrying the method and, on an unseen path, ``handover``:
+    the accessor that names the hand-over and cannot perform it (#444). The
+    wrapping token itself goes to stderr under every machine format and never
+    reaches this stream; the event schema closes the payload so nothing else can.
+    """
+    emitter = run.emitter()
+    row = one.as_json()
+    if any(kind == PASSWORD_SET and applied for kind, applied, _ in one.actions):
+        emitter.event(
+            run.document,
+            "password.applied",
+            account=one.account,
+            target=one.target,
+            data={"version": None, "outcome": one.state},
+        )
+    if row.get("delivered") is not None:
+        delivered: dict[str, Any] = {"method": row["delivered"]}
+        if "handover" in row:
+            delivered["handover"] = row["handover"]
+        emitter.event(
+            run.document,
+            "password.delivered",
+            account=one.account,
+            target=one.target,
+            data=delivered,
+        )
+    emitter.event(run.document, "target.finished", account=one.account, target=one.target, data=row)
+
+
 def _reset_lock_manager(
     run: Invocation, config: Config, selection: Selection
 ) -> LockManager | None:
@@ -2144,6 +2195,7 @@ def _reset_lock_manager(
         command="account reset-password",
         selection=describe_selection(selection),
         break_expired=_break_expired(run),
+        observer=_lock_events(run),
     )
 
 

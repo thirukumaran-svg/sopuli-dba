@@ -1087,8 +1087,11 @@ implementation violates it:
   `password.delivered` on success, and `password.displayed` for the seen path's
   exposure, which is its own fact and not a variant of the first (#441). Neither
   event carries the password, and the run schema has no property that could.
-  **Both words are registered and neither has an emitter**: `--output jsonl`
-  exists since #9, but `account reset-password` does not stream and refuses it,
+  **`password.delivered` is emitted since #535**, when `account reset-password`
+  learned to stream; **`password.displayed` never will be**, because a seen reset
+  is refused under every machine format, `jsonl` included, and its `--dry-run` —
+  exempt, as under `json` — displays nothing. Before
+  that, both words were registered with no emitter,
   so `password.displayed` arrived with #441 and
   `password.delivered` with #444, each with the change that knows why the event
   exists rather than with the stream that will carry it. What records a delivery

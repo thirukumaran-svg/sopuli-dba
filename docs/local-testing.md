@@ -2666,6 +2666,9 @@ the wrong one hands them a password that does not work on the host you named. Th
 cubbyhole itself always carried the target, so the person unwrapping could tell;
 the DBA holding three tokens could not.
 
+The same run streams with `--output jsonl` (#535) — the token still goes to
+stderr, and §15 shows the events.
+
 #### Fetch it, and then fail to fetch it again
 
 ```bash
@@ -4803,8 +4806,8 @@ only the run's, which is why `vault` is in the block above and
 
 ### Streaming: `--output jsonl`
 
-`creds check`, `creds apply`, `creds rotate` and `creds generate` stream (#9,
-#535): one JSON object per line,
+`creds check`, `creds apply`, `creds rotate`, `creds generate` and `account
+reset-password` stream (#9, #535): one JSON object per line,
 flushed as it is written. `creds check` first, with §10's drift in place:
 
 ```bash
@@ -4910,6 +4913,44 @@ invariant 9 on the stream. The events that remain between `target.started` and
   --force --confirm`) or every later step in this guide meets it.
 - **`--dry-run`** streams `run.started`, `plan.resolved`, one `vault.read` and
   `run.finished` — no lock, no target.
+
+#### `account reset-password --output jsonl`
+
+The unseen path, from the tier-1 stack with the `vault_wrapped` config from
+§10a and `acme_dev_alice` declared in `personal_accounts:`:
+
+```bash
+sopuli --config wrapped.yaml account reset-password --account acme_dev_alice \
+  --output jsonl > reset.jsonl 2> reset.err ; echo "exit $?"
+```
+
+```
+{"schema_version":"1.7","event":"run.started","seq":0,"ts":"2026-09-26T17:13:35.870495Z","correlation_id":"8ebe1029-5cdc-42eb-a1a5-30dee15cf108","data":{"command":"account.reset-password","dry_run":false}}
+{"schema_version":"1.7","event":"plan.resolved","seq":1,"ts":"2026-09-26T17:13:35.870664Z","correlation_id":"8ebe1029-5cdc-42eb-a1a5-30dee15cf108","data":{"units":[{"account":"acme_dev_alice","target":"free-pdb","intent":["password_set"]}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]}}}
+{"schema_version":"1.7","event":"diagnostic","seq":2,"ts":"2026-09-26T17:13:36.478946Z","correlation_id":"8ebe1029-5cdc-42eb-a1a5-30dee15cf108","level":"warning","message":"no `reset_records:` block is declared, so no record of this reset will be written and no advisory lock is taken on the account: the run document and the database are the whole record of it","data":{"code":"SOPULI-W024"}}
+{"schema_version":"1.7","event":"target.started","seq":3,"ts":"2026-09-26T17:13:36.479212Z","correlation_id":"8ebe1029-5cdc-42eb-a1a5-30dee15cf108","target":"free-pdb"}
+{"schema_version":"1.7","event":"diagnostic","seq":4,"ts":"2026-09-26T17:13:37.595170Z","correlation_id":"8ebe1029-5cdc-42eb-a1a5-30dee15cf108","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.7","event":"password.applied","seq":5,"ts":"2026-09-26T17:13:37.595243Z","correlation_id":"8ebe1029-5cdc-42eb-a1a5-30dee15cf108","account":"acme_dev_alice","target":"free-pdb","data":{"version":null,"outcome":"RESET"}}
+{"schema_version":"1.7","event":"password.delivered","seq":6,"ts":"2026-09-26T17:13:37.595276Z","correlation_id":"8ebe1029-5cdc-42eb-a1a5-30dee15cf108","account":"acme_dev_alice","target":"free-pdb","data":{"method":"vault_wrapped","handover":{"accessor":"OApZG15TURKJpBT5fJGXjFF0","expires_at":"2026-09-26T17:28:37.542706Z"}}}
+{"schema_version":"1.7","event":"target.finished","seq":7,"ts":"2026-09-26T17:13:37.595303Z","correlation_id":"8ebe1029-5cdc-42eb-a1a5-30dee15cf108","account":"acme_dev_alice","target":"free-pdb","data":{"account":"acme_dev_alice","target":"free-pdb","state":"RESET","changed":true,"actions":[{"kind":"account_unlock","applied":false,"detail":"the account is not locked"},{"kind":"password_set","applied":true,"detail":"password set"},{"kind":"rollover_finish","applied":false,"detail":"this profile grants no rollover window"}],"account_status":"OPEN","delivered":"vault_wrapped","handover":{"accessor":"OApZG15TURKJpBT5fJGXjFF0","expires_at":"2026-09-26T17:28:37.542706Z"},"duration_ms":1111}}
+{"schema_version":"1.7","event":"run.finished","seq":8,"ts":"2026-09-26T17:13:37.595600Z","correlation_id":"8ebe1029-5cdc-42eb-a1a5-30dee15cf108","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0},"exit_code":0}}
+exit 0
+```
+
+`password.delivered` carries the accessor and the expiry — the same `handover`
+the row carries — and **the token is on stderr, not in the stream**, beside the
+plan and the hand-over instructions it always prints. Grep the stream for the
+token: `0`. Unwrap it and grep both files for the password: `0` and `0`.
+
+**Its `--dry-run` streams** — `run.started`, `plan.resolved`, `target.started`, `target.finished`, `run.finished` — because a preview is exempt from
+guard 2 and shows no password; no `password.*` event appears. **The real seen
+reset is refused**, before anything is drawn or connected:
+
+```
+sopuli: `delivery.method: manual` cannot be used with --output json or --output jsonl
+  hint: json is what gets captured and shipped to log aggregation, so a working password never appears in it -- use the text output, or an unseen delivery method
+exit 2
+```
 
 #### `creds generate --output jsonl`
 
@@ -5018,7 +5059,7 @@ sopuli --config sopuli.yaml config show --output jsonl ; echo "exit $?"
 
 ```
 sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
-  hint: use --output json for the same run as one document; jsonl is offered by: creds apply, creds check, creds generate, creds rotate
+  hint: use --output json for the same run as one document; jsonl is offered by: account reset-password, creds apply, creds check, creds generate, creds rotate
 exit 2
 ```
 
