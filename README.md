@@ -17,6 +17,90 @@ products can be added later.
 
 ---
 
+## Why use it
+
+### The problem it solves
+
+If you've looked after Oracle databases for a while, you probably know this
+picture:
+
+- An application account's password was set years ago, and nobody dares change
+  it. Nobody is sure which application servers, batch jobs and reporting tools
+  have it in a config file, and a single missed one means a 3 a.m. call.
+- When it *does* get changed, it's a planned change window with the application
+  teams on standby. Someone runs `ALTER USER`, someone else edits config files,
+  and everyone hopes the list of places was complete.
+- The one place that was missed keeps trying the old password until
+  `FAILED_LOGIN_ATTEMPTS` locks the account, and then *every* application using it
+  is down.
+- The password has passed through e-mails, tickets, wiki pages and the heads of
+  people who have since left.
+- An auditor asks when this account's password was last changed and who knows it.
+  The honest answers are "a long time ago" and "we're not sure".
+
+The root cause is that **the password lives in too many places, and people have
+to carry it between them.**
+
+### What changes with sopuli-dba
+
+The password is stored in one place: the vault. Applications read it from there
+when they start or reconnect, instead of from a config file. The tool's job is to
+keep the database in agreement with the vault. That gives you:
+
+- **Nobody has to know the password.** The tool draws a random one, writes it to
+  the vault and sets it on the database. No person reads it, types it or pastes it
+  anywhere, so nobody can leak it or take it with them when they leave.
+- **Rotation becomes routine instead of an event.** `sopuli creds rotate`
+  generates, applies, verifies and publishes a new password in one guarded
+  operation. Because nobody has to update config files by hand, you can run it as
+  often as your policy asks: monthly, quarterly, or right after someone who knew
+  the old password leaves.
+- **The new password is published only after it works.** The vault holds the new
+  password as `pending` while the tool sets it on the database and then *logs in
+  with it*. Only when that succeeds is it promoted to `current`, the version
+  applications read. If a run fails partway, nothing is promoted and the new
+  password stays in the vault as `pending`, so running `sopuli creds apply` again
+  finishes the job. That keeps the vault honest, but it does not by itself keep
+  applications running: once a database has the new password, the old one stops
+  working there, unless a rollover window (the next point) keeps it valid.
+- **Applications don't have to switch at the same second.** On Oracle releases
+  with gradual password rollover, the tool can put the account on a profile that
+  keeps the old password valid for a window you choose. Applications pick up the
+  new one as they reconnect, and when the window closes (or when you close it
+  early with `sopuli creds finish-rollover`), only the new password works.
+- **One account on many databases stays consistent.** The same application account
+  on twenty tenant databases, or across dev, test and prod, is one entry in the
+  config file. One command brings them all in line, and `--dry-run` shows exactly
+  what it would do first.
+- **You find out about drift before the applications do.** `sopuli creds check`,
+  run from a scheduler, logs in with the vault's password and reports whether each
+  database still accepts it. If someone changed the password by hand, you hear
+  about it from a report, not from an outage. Before it tries, it reads the
+  account's failed-login count, and does not try if one more failure would come
+  too close to the lockout limit. Reading that count needs one optional grant
+  (`SELECT ON SYS.USER$`); without it the check still runs, and each result says
+  that the lockout guard was unavailable.
+- **You get evidence for the auditor.** Every run can produce a machine-readable
+  report of what was checked and what was changed. `sopuli creds status` shows
+  each account's vault version, how old that password is, and when the database
+  last recorded a password change, and the vault entry itself records when the
+  tool last rotated it and which user on which host ran it. "When was it last
+  changed, and by whom?" gets a real answer.
+
+### What it asks of you
+
+The benefits depend on one thing: **applications have to read the password from
+the vault.** If today they hold it in a properties file, moving them to the vault
+is the first step, and it's work the tool can't do for you. It doesn't have to
+happen all at once, though. You can move one application at a time, and an
+application that already reads from a vault gains everything above as soon as its
+account is in the config file.
+
+For applications on Kubernetes, the vault-to-application step can be automatic:
+see [`docs/scenarios/kubernetes-eso.md`](docs/scenarios/kubernetes-eso.md).
+
+---
+
 ## Status
 
 **Pre-alpha. Do not point this at a production database yet.**
