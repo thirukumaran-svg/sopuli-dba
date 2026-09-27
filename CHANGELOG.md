@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.67.2](https://github.com/villebase/sopuli-dba/compare/v0.67.1...v0.67.2) (2026-09-27)
+
+
+### Bug Fixes
+
+* **check:** keep "the lockout guard is unavailable" on a login that passes ([#558](https://github.com/villebase/sopuli-dba/issues/558)) ([#559](https://github.com/villebase/sopuli-dba/issues/559)) ([090d71b](https://github.com/villebase/sopuli-dba/commit/090d71b689186d7b151f52a4d7b153a12470ff25))
+
 ## [0.67.1](https://github.com/villebase/sopuli-dba/compare/v0.67.0...v0.67.1) (2026-09-26)
 
 
