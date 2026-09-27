@@ -3,10 +3,10 @@ name: scorecard
 # OpenSSF Scorecard (#545): scores the repository on what a security reviewer
 # asks about -- branch protection, pinned dependencies, token permissions,
 # signed releases, a security policy, dangerous workflow patterns. Results go
-# to code scanning as SARIF. Publishing to the OpenSSF API and uploading to code
-# scanning both need a public repository (code scanning on a private one needs
-# GitHub Advanced Security), so both are gated on visibility: while the
-# repository is private, the findings are in the `scorecard-sarif` artifact.
+# to code scanning as SARIF. It needs a public repository, for three reasons:
+# its queries, publishing to the OpenSSF API, and code scanning (which on a
+# private repository needs GitHub Advanced Security). So the job is gated on
+# visibility, and so are the two publishing steps, in case the gate moves.
 
 on:
   push:
@@ -20,6 +20,12 @@ permissions: read-all
 
 jobs:
   analysis:
+    # Private, the job cannot run at all: Scorecard's GraphQL queries are refused
+    # to the workflow's GITHUB_TOKEN ("Resource not accessible by integration",
+    # first run on main after #561). The documented way round is a PAT, which is
+    # the long-lived credential this repository avoids, so the job waits for the
+    # switch to public instead. On a private repository it shows as skipped.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     # A job-level block replaces `read-all` rather than adding to it, so the
     # reads the job needs are restated: `contents` for the checkout on a private
