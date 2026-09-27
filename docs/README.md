@@ -2,7 +2,9 @@
 
 This index is for contributors. **If you arrived here wanting to use the tool,
 start at [getting-started.md](getting-started.md) instead** — the documents below
-are the specification, written in the project's own declarative voice.
+are the specification, written in the project's own declarative voice. Why they
+record rejected options and cite the issue behind each decision is in
+[CONTRIBUTING.md](../CONTRIBUTING.md#how-this-project-is-built-and-what-that-means-for-you).
 
 Pre-alpha. UC-1 is built and the rest of this directory is ahead of the code; each
 document says which of it exists. The SQL in `sql/oracle/` has been executed

@@ -10,13 +10,71 @@ Two documents govern how this project works, and both are binding:
   releases.
 - **[`CLAUDE.md`](CLAUDE.md)** — the working agreement, the design invariants,
   and which design document applies to which kind of change. It is addressed to
-  Claude Code, which does much of the work here, but everything in it applies to
-  any contributor. **Read the invariants before changing behaviour.** Each one
-  exists because getting it wrong breaks something specific, and several of them
-  look like mistakes until you know why.
+  Claude Code, the AI coding agent that writes much of the code here (see the
+  next section), but everything in it applies to any contributor. **Read the
+  invariants before changing behaviour.** Each one exists because getting it
+  wrong breaks something specific, and several of them look like mistakes until
+  you know why.
 
 If you are new to the tool itself rather than to the codebase, start at
 [`docs/getting-started.md`](docs/getting-started.md).
+
+---
+
+## How this project is built, and what that means for you
+
+Much of this project's code is written by AI coding agents. The maintainer
+decides what gets built and how, and reviews and signs off every change. This
+section explains how those two roles fit together, because the process explains
+why the documentation looks the way it does.
+
+### How the pieces fit
+
+- **The design documents and decision records are the specification.**
+  `docs/design/`, `docs/use-cases/` and `docs/decisions/` say what the tool must
+  do and why. Code is written against them, and a change that alters behaviour
+  updates them in the same pull request.
+- **`CLAUDE.md` is the working agreement.** It holds the invariants and says
+  which document applies to which kind of change. It is written for agents, and
+  it binds every contributor the same way.
+- **Open questions wait for the maintainer.** A design question that is not yet
+  answered is a GitHub issue labelled `decision`, and it stays open until the
+  maintainer answers it. An agent that needs one answered stops and asks; that
+  is the rule *surface, do not resolve*, and it applies to you too (see
+  [Before you write code](#before-you-write-code)).
+- **Every review comment is answered.** Every pull request gets a Copilot
+  review. Each comment, Copilot's included, is judged on its merits, then either
+  acted on or declined, with a reply saying which and why (see
+  [Pull requests](#pull-requests)).
+
+### What is expected of you, with or without an agent
+
+The same rules, whoever or whatever typed the change: the documentation moves
+with the code, sample output comes from a real run, an open decision is surfaced
+rather than settled in a diff, and every review comment gets an answer.
+
+**AI-assisted contributions are welcome under those rules, and you are
+accountable for them.** Your `Signed-off-by:` line (see
+[Signing off your commits](#signing-off-your-commits-dco)) certifies that you
+have the right to submit the change under this project's licence. Using an
+agent does not move that responsibility to anyone else. If you sign off a
+change, you are vouching for it, whether you wrote it by hand or directed a
+tool that did.
+
+Some organisations restrict AI-generated code because the copyright position of
+machine-generated output is unsettled in some jurisdictions. This project does
+not claim a legal position on that. What it can say is what happens here: a
+person directs every change, reviews it, and signs it off.
+
+### Why the process is shaped this way
+
+A credential tool maintained largely by agents needs design decisions that
+cannot be silently made again. An agent that meets a rule without its reason
+may "fix" it, and several rules here look like mistakes until you know why.
+That is why the documents record the options that were rejected as carefully
+as the one that was chosen, why a decision cites the issue that made it, and
+why *surface, do not resolve* exists. The length of the documentation is the
+cost of that, and it is paid on purpose.
 
 ---
 
