@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/villebase/sopuli-dba/main/docs/assets/sopuli-dba-logo-glow.png" alt="sopuli-dba logo" width="240">
+  <img src="https://github.com/villebase/sopuli-dba/raw/main/docs/assets/sopuli-dba-logo-glow.png" alt="sopuli-dba logo" width="240">
 </p>
 
 # sopuli-dba
