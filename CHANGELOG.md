@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.67.1](https://github.com/villebase/sopuli-dba/compare/v0.67.0...v0.67.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* **output:** on Windows, count a stream as a terminal only if it is a console ([#549](https://github.com/villebase/sopuli-dba/issues/549)) ([#550](https://github.com/villebase/sopuli-dba/issues/550)) ([e558743](https://github.com/villebase/sopuli-dba/commit/e5587430b90ea5a26c4bd83b7e0811d36df41779))
+
 ## [0.67.0](https://github.com/villebase/sopuli-dba/compare/v0.66.0...v0.67.0) (2026-09-26)
 
 
