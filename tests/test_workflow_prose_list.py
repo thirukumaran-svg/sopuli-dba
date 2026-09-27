@@ -98,13 +98,13 @@ def test_examples_is_not_ignored() -> None:
 # --------------------------------------------------------------- the docs lane ---
 #
 # The prose list is allowed to ignore most of `docs/` only because `ci.yml`'s
-# `docs` job runs the two tier-0 modules that read it (#458). That makes the job
+# `docs` job runs the tier-0 modules that read it (#458). That makes the job
 # load-bearing rather than convenient: delete it, or let it drift out of step with
 # what `test/paths_ignore_probe.py` deselects, and prose-only pull requests go
 # back to reporting green on a broken register — the #457 failure, restored.
 #
 # Nothing else checks this. The probe measures what the *suite* opens and now
-# deliberately excludes these two modules, so it cannot notice that the job which
+# deliberately excludes those modules, so it cannot notice that the job which
 # justifies the exclusion has gone.
 
 PROBE = Path(__file__).resolve().parents[1] / "test" / "paths_ignore_probe.py"
@@ -122,10 +122,11 @@ def _docs_lane_from_probe() -> list[str]:
 #:
 #: Asserting only that the job and the probe *agree* would pass on two empty
 #: lists, or on two lists changed in lockstep to something else entirely -- the
-#: `test_neither_list_is_empty` failure one file over, in a new place. The pair is
+#: `test_neither_list_is_empty` failure one file over, in a new place. The set is
 #: therefore pinned rather than merely cross-checked.
 PROSE_READERS = (
     "tests/test_doc_command_lines.py",
+    "tests/test_readme_links.py",
     "tests/test_verification_register.py",
 )
 

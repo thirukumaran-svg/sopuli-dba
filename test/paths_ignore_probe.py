@@ -4,7 +4,7 @@ workflow's `paths-ignore` list one of them?
 
 **"A skipped lane", not "the suite", and the distinction is #458's.** `ci.yml`'s
 `docs` job runs :data:`DOCS_LANE` on exactly the pull requests where the other
-lanes are skipped, so what those two modules read is covered by CI and is not a
+lanes are skipped, so what those modules read is covered by CI and is not a
 hole in the list. They are deselected below, and a conflict reported here is
 therefore a file that *nothing* would check on a prose-only pull request. Before
 that job existed the two questions had the same answer; they do not any more.
@@ -96,16 +96,18 @@ WATCHED = WATCHED_DIRS + WATCHED_FILES
 #:
 #: **Deselected, and that is the point of the job.** The question this probe asks
 #: is not "does the suite read an ignored file" but "does a *skipped lane* read
-#: one" -- those became different questions when the `docs` job arrived. These two
-#: modules read most of `docs/` by globbing, and they now run on exactly the pull
-#: requests where the other lanes do not, so counting them here would report 21
-#: conflicts that the workflow already covers and leave the list unfixable.
+#: one" -- those became different questions when the `docs` job arrived. These
+#: modules read most of `docs/` and the root `README.md`, and they now run on
+#: exactly the pull requests where the other lanes do not, so counting them here
+#: would report 21 conflicts that the workflow already covers and leave the list
+#: unfixable.
 #:
 #: Adding a test that reads prose means adding it here *and* to the `docs` job, or
 #: this probe goes quiet about whatever it reads.
 DOCS_LANE = (
     "tests/test_verification_register.py",
     "tests/test_doc_command_lines.py",
+    "tests/test_readme_links.py",
 )
 
 WORKFLOWS = (

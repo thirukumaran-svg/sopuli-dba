@@ -165,4 +165,34 @@ what it was used for during the Actions incident in #233.
 - release-please runs on push to `main`, maintains a standing release PR
   with the accumulated changelog and version bump. Merging that PR is the
   explicit act that cuts the tag and GitHub Release.
+- **The same merge publishes to PyPI** (#545). `release-please.yml` carries two
+  more jobs, gated on the action's `release_created` output: `build` checks out
+  the new tag, runs `python -m build` and `twine check --strict`, and uploads
+  `dist/`; `publish` downloads it and hands it to `pypa/gh-action-pypi-publish`
+  through trusted publishing. There is no PyPI token anywhere: `publish` holds an
+  OIDC token PyPI trusts for that one workflow, and `id-token: write` is the only
+  permission it has. On a push that cuts no release, both jobs show as skipped.
+- **They are jobs in this workflow and not a separate one on
+  `release: published`**, which would never run. release-please creates the
+  Release with the workflow's `GITHUB_TOKEN`, and GitHub starts no workflow run
+  for an event that token caused, so a separate workflow fails silently, with no
+  run and no red X. A PAT or App token for release-please would make it fire,
+  and was rejected: it is a long-lived credential, which is exactly what trusted
+  publishing exists to avoid.
+- **The `pypi` environment's approval is the stop point.** `publish` runs in a
+  GitHub environment named `pypi` with required reviewers, so after the release
+  PR merges, a release can still be stopped by not approving it. After approval,
+  it is on PyPI, and PyPI never lets a version number be reused.
+- **Every file on PyPI carries a PEP 740 attestation**, which the publish action
+  generates by default from v1.11. It is a signed statement, logged in
+  Sigstore's transparency log, that the file was built by this workflow in this
+  repository at this commit. `build` and `publish` are separate jobs so that it
+  vouches for exactly what `build` handed over. How to verify a release will be
+  written here from the first real one (#547), not predicted.
+- Outside the repository, and needed once before the first release: the `pypi`
+  environment with required reviewers, and a PyPI trusted publisher with owner
+  `villebase`, repository `sopuli-dba`, workflow `release-please.yml` and
+  environment `pypi`.
+- Every action in every workflow is pinned to a commit SHA, with the tag in a
+  comment beside it.
 - No manual tagging.

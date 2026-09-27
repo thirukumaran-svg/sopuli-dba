@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
+from repo_files import requires_repo
 from sopuli.output.document import SCHEMA_VERSION
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "docs" / "schemas"
@@ -51,6 +52,7 @@ def test_there_are_schemas_to_check() -> None:
     A moved directory or a renamed suffix would otherwise turn every test below
     into a vacuous pass over an empty list -- green, and checking nothing.
     """
+    requires_repo(SCHEMA_DIR)
     assert _schema_files()
 
 
@@ -80,6 +82,7 @@ def test_every_committed_sample_is_covered() -> None:
     A sample committed and not listed would be documentation nobody checks,
     which is the exact failure mode invariant 12 exists to prevent.
     """
+    requires_repo(SCHEMA_DIR)
     samples = {
         path.name for path in SCHEMA_DIR.glob("*.json") if not path.name.endswith(".schema.json")
     }

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/sopuli-dba-logo-glow.png" alt="sopuli-dba logo" width="240">
+  <img src="https://raw.githubusercontent.com/villebase/sopuli-dba/main/docs/assets/sopuli-dba-logo-glow.png" alt="sopuli-dba logo" width="240">
 </p>
 
 # sopuli-dba
@@ -97,7 +97,7 @@ application that already reads from a vault gains everything above as soon as it
 account is in the config file.
 
 For applications on Kubernetes, the vault-to-application step can be automatic:
-see [`docs/scenarios/kubernetes-eso.md`](docs/scenarios/kubernetes-eso.md).
+see [`docs/scenarios/kubernetes-eso.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/kubernetes-eso.md).
 
 ---
 
@@ -110,10 +110,10 @@ see [`docs/scenarios/kubernetes-eso.md`](docs/scenarios/kubernetes-eso.md).
 | **Install** | Nothing is published to PyPI yet — you install from a git checkout. `sopuli --version` and `sopuli about` report the installed distribution's version |
 | **Databases** | Oracle only. Tested against Oracle AI Database 26ai Free 23.26.2.0.0 |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
-| **What works** | Fourteen commands, including a full password rotation from end to end. [`docs/local-testing.md`](docs/local-testing.md) is the by-hand map of exactly what this build can be made to do |
+| **What works** | Fourteen commands, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) is the by-hand map of exactly what this build can be made to do |
 
 If you want the full design picture — every decision, and every question that is
-still open — start at [`docs/README.md`](docs/README.md).
+still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md).
 
 *(Build-status and coverage badges will go here once the repository is public and
 CI runs on it. There are none yet, and a fake one would be worse than none.)*
@@ -184,7 +184,7 @@ error: vault "oci-prod" declares type "oci", but that backend is not installed
        install it with:  pip install "sopuli-dba[oci]"
 ```
 
-The rule and what it costs: [ADR-006](docs/decisions/adr-006-optional-dependencies.md).
+The rule and what it costs: [ADR-006](https://github.com/villebase/sopuli-dba/blob/main/docs/decisions/adr-006-optional-dependencies.md).
 
 > **Status: pre-alpha.** The extras above are declared in `pyproject.toml` and
 > the registry behind them resolves a backend on first use.
@@ -194,7 +194,7 @@ The rule and what it costs: [ADR-006](docs/decisions/adr-006-optional-dependenci
 > and report that this build has no module for them. Nothing is on PyPI yet.
 
 Step-by-step, including your first config file:
-[`docs/getting-started.md`](docs/getting-started.md).
+[`docs/getting-started.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md).
 
 ---
 
@@ -236,7 +236,7 @@ per account per run (twice with `--include-previous`, which also tries the
 previous password), and every result from a login it attempted says that the
 lockout guard was unavailable.
 The grant is not part of the standard install, because it is a broad read.
-[`docs/security-model.md`](docs/security-model.md) §3 explains the trade-off.
+[`docs/security-model.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) §3 explains the trade-off.
 
 **Passwords do not reach your logs.** A password is held in a wrapper type whose
 text form is `***`, so printing one prints the mask, in ordinary output and in a
@@ -255,11 +255,11 @@ the server retains afterwards. A probe plants a canary per execution path and
 sweeps every source a statement's text can come to rest in, on each version;
 that is release gate 2, and its results are the reason two of the tool's design
 rules exist. The findings, per version and with their scope:
-[`docs/design/02-oracle-privileges.md`](docs/design/02-oracle-privileges.md) §4.
+[`docs/design/02-oracle-privileges.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/design/02-oracle-privileges.md) §4.
 
 The longer version, for deciding whether to trust this with a production
-credential: [`docs/security-model.md`](docs/security-model.md).
-To report a security problem privately: [SECURITY.md](SECURITY.md).
+credential: [`docs/security-model.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md).
+To report a security problem privately: [SECURITY.md](https://github.com/villebase/sopuli-dba/blob/main/SECURITY.md).
 
 ---
 
@@ -319,7 +319,7 @@ the tool safe to run from a scheduler.
 
 The full walkthroughs, with the config file these commands read and what to do
 when an answer is not `IN_SYNC`, are in
-[`docs/scenarios/`](docs/scenarios/).
+[`docs/scenarios/`](https://github.com/villebase/sopuli-dba/tree/main/docs/scenarios/).
 
 ---
 
@@ -341,7 +341,7 @@ That is why the documentation is long: it is written so a reviewer, human or not
 can see *why* each rule exists before changing it.
 
 How this works in practice, and what it expects of contributors:
-[CONTRIBUTING.md](CONTRIBUTING.md#how-this-project-is-built-and-what-that-means-for-you).
+[CONTRIBUTING.md](https://github.com/villebase/sopuli-dba/blob/main/CONTRIBUTING.md#how-this-project-is-built-and-what-that-means-for-you).
 
 ---
 
@@ -349,15 +349,15 @@ How this works in practice, and what it expects of contributors:
 
 | Read this | If you want to |
 |---|---|
-| [docs/getting-started.md](docs/getting-started.md) | install the tool, write your first config file, and run one command safely |
-| [docs/scenarios/rotate-and-sync.md](docs/scenarios/rotate-and-sync.md) | follow one password rotation from start to finish |
-| [docs/scenarios/kubernetes-eso.md](docs/scenarios/kubernetes-eso.md) | let applications running in Kubernetes pick up the new password automatically |
-| [examples/](examples/) | three complete config files, commented, from smallest to safety-hardened |
-| [docs/security-model.md](docs/security-model.md) | decide whether to trust this with a production credential |
-| [docs/local-testing.md](docs/local-testing.md) | exercise every command by hand, including the failures worth causing on purpose |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | send a change |
-| [SECURITY.md](SECURITY.md) | report a security problem privately |
-| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | know what is expected of everyone taking part |
-| [docs/README.md](docs/README.md) | read the full design: principles, configuration reference, Oracle privileges, JSON output contract, testing strategy, and every decision record |
+| [docs/getting-started.md](https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md) | install the tool, write your first config file, and run one command safely |
+| [docs/scenarios/rotate-and-sync.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/rotate-and-sync.md) | follow one password rotation from start to finish |
+| [docs/scenarios/kubernetes-eso.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/kubernetes-eso.md) | let applications running in Kubernetes pick up the new password automatically |
+| [examples/](https://github.com/villebase/sopuli-dba/tree/main/examples/) | three complete config files, commented, from smallest to safety-hardened |
+| [docs/security-model.md](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) | decide whether to trust this with a production credential |
+| [docs/local-testing.md](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) | exercise every command by hand, including the failures worth causing on purpose |
+| [CONTRIBUTING.md](https://github.com/villebase/sopuli-dba/blob/main/CONTRIBUTING.md) | send a change |
+| [SECURITY.md](https://github.com/villebase/sopuli-dba/blob/main/SECURITY.md) | report a security problem privately |
+| [CODE_OF_CONDUCT.md](https://github.com/villebase/sopuli-dba/blob/main/CODE_OF_CONDUCT.md) | know what is expected of everyone taking part |
+| [docs/README.md](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md) | read the full design: principles, configuration reference, Oracle privileges, JSON output contract, testing strategy, and every decision record |
 
-Licensed under [Apache 2.0](LICENSE).
+Licensed under [Apache 2.0](https://github.com/villebase/sopuli-dba/blob/main/LICENSE).

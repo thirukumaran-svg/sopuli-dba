@@ -51,6 +51,7 @@ from pathlib import Path
 
 import click
 
+from repo_files import requires_repo
 from sopuli.cli import cli
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -270,6 +271,7 @@ def _options_named(arguments: list[str]) -> list[str]:
 def test_the_scan_finds_the_documents_command_lines() -> None:
     """Guards the parse. A fence regex that stopped matching would find nothing,
     and every test above would pass on an empty list."""
+    requires_repo(DOCS)
     assert len(_documented()) >= 50
 
 

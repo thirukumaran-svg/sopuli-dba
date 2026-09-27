@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
+from repo_files import requires_repo
 from sopuli.config import (
     applications,
     auth,
@@ -168,6 +169,7 @@ def test_the_committed_schema_is_what_the_generator_produces() -> None:
     Without it the published file is a snapshot of what the model looked like
     once, and nothing says when that stopped being true.
     """
+    requires_repo(COMMITTED)
     assert COMMITTED.exists(), f"the schema is not committed -- run: {REGENERATE}"
     assert _committed() == build_schema(), f"the committed schema is stale -- run: {REGENERATE}"
 

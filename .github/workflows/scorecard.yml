@@ -1,0 +1,49 @@
+name: scorecard
+
+# OpenSSF Scorecard (#545): scores the repository on what a security reviewer
+# asks about -- branch protection, pinned dependencies, token permissions,
+# signed releases, a security policy, dangerous workflow patterns. Results go
+# to code scanning as SARIF. Publishing to the OpenSSF API and uploading to code
+# scanning both need a public repository (code scanning on a private one needs
+# GitHub Advanced Security), so both are gated on visibility: while the
+# repository is private, the findings are in the `scorecard-sarif` artifact.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 1"
+  branch_protection_rule:
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    # A job-level block replaces `read-all` rather than adding to it, so the
+    # reads the job needs are restated: `contents` for the checkout on a private
+    # repository, `actions` for Scorecard's own workflow checks.
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: ${{ !github.event.repository.private }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+      - if: ${{ !github.event.repository.private }}
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: results.sarif

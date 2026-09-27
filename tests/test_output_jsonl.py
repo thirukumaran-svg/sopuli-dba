@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
+from repo_files import requires_repo
 from sopuli.output.document import Diagnostic, Error, RunDocument, Summary
 from sopuli.output.emit import EVENT_SCHEMA_VERSION, Emitter, OutputMode
 from sopuli.secrets import Secret
@@ -65,6 +66,7 @@ def jsonl(stream: io.StringIO) -> Emitter:
 
 
 def test_the_published_schema_is_the_one_this_build_emits() -> None:
+    requires_repo(EVENT_SCHEMA)
     assert EVENT_SCHEMA.is_file()
 
 

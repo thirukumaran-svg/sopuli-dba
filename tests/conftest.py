@@ -13,7 +13,7 @@ import ipaddress
 import os
 import sys
 import urllib.parse
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, NoReturn
@@ -21,7 +21,54 @@ from typing import Any, NoReturn
 import pytest
 
 from oracle_harness import Environment, decide_skip, dsn_host, probe, render_matrix
+from repo_files import FROM_SDIST, reason, repo_relative
 from sopuli.store.registry import BACKENDS
+
+# ------------------------------------------------- running from the sdist ---
+#
+# In an extracted sdist, a `FileNotFoundError` for a file the sdist leaves out is
+# a skip naming the file, not a failure. `repo_files` says why and where; in a
+# checkout neither hook changes anything (#545).
+
+
+def _absent_repo_file(error: BaseException | None) -> str | None:
+    """The path ``error`` could not open, if the sdist leaves it out; otherwise
+    ``None``, and the failure stands."""
+    if not isinstance(error, FileNotFoundError) or error.filename is None:
+        return None
+    return repo_relative(error.filename)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(
+    collector: pytest.Collector,
+) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+    """A module that reads an absent file at import is skipped, not an error."""
+    report = yield
+    # pytest keeps the collection's CallInfo on the report (`rep.call`, for its
+    # own `collect_one_node`); the error that failed collection is on it.
+    call = getattr(report, "call", None)
+    if FROM_SDIST and report.failed and call is not None and call.excinfo is not None:
+        path = _absent_repo_file(call.excinfo.value)
+        if path is not None:
+            report.outcome = "skipped"
+            report.longrepr = (str(collector.path), 0, f"Skipped: {reason(path)}")
+    return report
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """A test, or a fixture it needs, that opens an absent file is skipped."""
+    report = yield
+    if FROM_SDIST and call.excinfo is not None:
+        path = _absent_repo_file(call.excinfo.value)
+        if path is not None:
+            report.outcome = "skipped"
+            report.longrepr = (str(item.path), item.location[1] or 0, f"Skipped: {reason(path)}")
+    return report
+
 
 #: Writes a config file and returns its path.
 WriteConfig = Callable[[str], Path]

@@ -49,6 +49,7 @@ from typing import NoReturn
 import pytest
 from _pytest.outcomes import Failed
 
+from repo_files import requires_repo
 from sopuli.driver.oracle.privileges import (
     PREDICATE_READS,
     REQUIRED_PRIVILEGES,
@@ -170,6 +171,7 @@ def scripts(container: str) -> str:
     Copied once per session: the files do not change while the suite runs, and
     `docker cp` per test would be the slowest thing in the module.
     """
+    requires_repo(SCRIPTS)
     _docker("exec", container, "rm", "-rf", REMOTE_DIR)
     _docker("exec", container, "mkdir", "-p", REMOTE_DIR)
     for name in ("00_install.sql", "01_audit_policy.sql", "99_uninstall.sql"):

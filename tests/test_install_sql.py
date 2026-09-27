@@ -36,6 +36,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from repo_files import requires_repo
 from sopuli.driver.oracle.privileges import (
     PREDICATE_READS,
     REQUIRED_PRIVILEGES,
@@ -109,6 +110,7 @@ def test_the_script_exists_and_issues_grants() -> None:
     would make all of them pass. That failure mode is the reason this test is
     here and not a comment: it is the one that reports green.
     """
+    requires_repo(SCRIPT)
     assert SCRIPT.exists()
     assert len(granted()) >= len(required())
 

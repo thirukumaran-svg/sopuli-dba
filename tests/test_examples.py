@@ -33,6 +33,7 @@ import pytest
 from click.testing import CliRunner
 
 from conftest import WriteConfig
+from repo_files import requires_repo
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
 
@@ -50,6 +51,7 @@ EXAMPLE_FILES = [
 
 def test_every_example_file_is_listed() -> None:
     """A new example must be added to EXAMPLE_FILES to be tested at all."""
+    requires_repo(EXAMPLES)
     on_disk = sorted(p.name for p in EXAMPLES.glob("*.yaml"))
     assert on_disk == sorted(EXAMPLE_FILES)
 
@@ -99,6 +101,7 @@ def test_every_example_points_its_editor_at_a_schema_that_exists() -> None:
     *not* checked: those are inside code fences, showing what a reader would write
     next to their own config, and `./` there means their directory rather than ours.
     """
+    requires_repo(EXAMPLES)
     pointer = "# yaml-language-server: $schema="
     checked = 0
     for example in sorted(EXAMPLES.glob("*.yaml")):

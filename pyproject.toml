@@ -12,6 +12,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+authors = [
+  { name = "Ville Rönkkö", email = "320240774+villebase@users.noreply.github.com" },
+]
 keywords = ["oracle", "dba", "credentials", "vault", "rotation"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
@@ -30,6 +33,12 @@ dependencies = [
   # docs/decisions/adr-004-yaml-parser.md.
   "pywin32>=306; sys_platform == 'win32'",
 ]
+
+[project.urls]
+Repository = "https://github.com/villebase/sopuli-dba"
+Documentation = "https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md"
+Changelog = "https://github.com/villebase/sopuli-dba/blob/main/CHANGELOG.md"
+Issues = "https://github.com/villebase/sopuli-dba/issues"
 
 [project.optional-dependencies]
 # ADR-006: every dependency that exists only to reach one vendor is an extra, and
@@ -104,6 +113,15 @@ sopuli = "sopuli.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sopuli"]
+
+# An explicit list rather than whatever the ignore files leave (#545). Hatchling
+# reads only the project's .gitignore, so a local build used to ship files that
+# a *global* git ignore keeps out of the repository -- `.claude/settings.local.json`
+# among them. `tests` stays because downstream packagers build from the sdist
+# and run the suite. Hatchling also adds `.gitignore` to every sdist and has no
+# setting to stop it; it is harmless, being public in the repository anyway.
+[tool.hatch.build.targets.sdist]
+include = ["/src/sopuli", "/tests", "/pyproject.toml", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
