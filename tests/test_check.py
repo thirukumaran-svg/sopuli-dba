@@ -48,6 +48,32 @@ def test_a_password_that_works_is_in_sync() -> None:
     assert "v7" in outcome.detail
 
 
+UNGUARDED = "the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted"
+
+
+def test_a_pass_without_the_lockout_guard_says_so() -> None:
+    """#558: the driver notes a missing `SYS.USER$` grant in the detail, and a
+    pass used to replace it with its own words -- so an unguarded check read
+    exactly like a guarded one."""
+    outcome = check.decide(user(), attempt(PASS, detail=UNGUARDED), version=7)
+
+    assert outcome.state == check.IN_SYNC
+    assert outcome.detail == f"vault v7 verified by login; {UNGUARDED}"
+
+
+def test_a_rollover_pass_without_the_lockout_guard_says_so_too() -> None:
+    outcome = check.decide(user(rollover_active=True), attempt(PASS, detail=UNGUARDED), version=7)
+
+    assert outcome.state == check.ROLLOVER_ACTIVE
+    assert outcome.detail.endswith(f"; {UNGUARDED}")
+
+
+def test_a_guarded_pass_adds_nothing() -> None:
+    outcome = check.decide(user(), attempt(PASS), version=7)
+
+    assert outcome.detail == "vault v7 verified by login"
+
+
 def test_a_password_that_is_rejected_is_drift() -> None:
     outcome = check.decide(user(), attempt(FAIL, detail="ORA-01017"), version=7)
 

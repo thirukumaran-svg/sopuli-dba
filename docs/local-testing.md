@@ -2000,6 +2000,34 @@ stopped it. This needs `SELECT ON SYS.USER$`; `test/oracle-init/` grants it to
 
 Put the account back on `DEFAULT` before continuing.
 
+#### Without the grant, on purpose
+
+Take the grant away and check again. The login still happens, because #86 made
+`check` work without a site-specific grant. The tool then says that nothing was
+guarding it:
+
+```bash
+printf 'revoke select on sys.user$ from system container=all;\nexit\n' \
+  | docker exec -i sopuli-test-oracle-free-1 sqlplus -S "/ as sysdba"
+sopuli --config sopuli.yaml creds check
+```
+```
+ACCOUNT          TARGET    STATE    DETAIL
+acme_app_user    free-pdb  IN_SYNC  vault v4 verified by login; the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted
+acme_batch_user  free-pdb  IN_SYNC  vault v2 verified by login; the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted
+
+all 2 in sync
+```
+
+Exit 0, and `"lcount": null` in `--output json`. Before #558 a pass dropped that
+note, so an unguarded check read exactly like a guarded one. A failing login
+always carried it. From Git Bash on Windows, set `MSYS_NO_PATHCONV=1` first,
+or `"/ as sysdba"` is rewritten as a path and SQL*Plus prints its usage
+instead. Put the grant back
+(`grant select on sys.user$ to system container=all`), because the tier-1 suite
+needs it: `test_release_gate_4_checking_a_drifted_account_never_locks_it`
+fails without it.
+
 ### 10.6 `rotate` — the whole sequence under one lock
 
 `rotate` is `generate` then `apply`, in one run, holding the lock throughout —

@@ -181,6 +181,14 @@ def _from_attempt(user: UserState, verification: VerifyResult, *, version: int |
             verification,
         )
     if verification.result == PASS:
+        # Whatever the driver had to say rides after our own words, and a pass is
+        # the branch where that matters most: a login with no lockout guard (the
+        # optional `SYS.USER$` grant is absent) still passes, and the only place
+        # that says so is this detail. Dropping it made an unguarded check read
+        # exactly like a guarded one, which security-model §3 says it never does
+        # (#558).
+        note = _one_line(verification.detail)
+        suffix = f"; {note}" if note else ""
         # A rollover window makes a `pass` mean less than it usually does: both
         # passwords authenticate, so this cannot tell "the database has the
         # vault's password" from "it still has the previous one and accepts
@@ -189,10 +197,10 @@ def _from_attempt(user: UserState, verification: VerifyResult, *, version: int |
             return Outcome(
                 ROLLOVER_ACTIVE,
                 f"{where}accepted, but a rollover window is open: "
-                f"the previous password still works too",
+                f"the previous password still works too{suffix}",
                 verification,
             )
-        return Outcome(IN_SYNC, f"{where}verified by login", verification)
+        return Outcome(IN_SYNC, f"{where}verified by login{suffix}", verification)
     if verification.result == FAIL:
         detail = _one_line(verification.detail) or "rejected"
         return Outcome(DRIFT, f"{where}{detail}", verification)
