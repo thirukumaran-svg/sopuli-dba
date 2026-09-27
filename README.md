@@ -222,12 +222,21 @@ For most settings the most specific layer wins. For the safety settings it is th
 *safest* layer that wins, wherever it sits. So a subteam's file cannot switch off
 a rule the site-wide file turned on. It can only add more.
 
-**A scheduled check will not lock the account out.** To find out whether the
-vault's password still works, the tool has to try logging in — and a failed login
-counts against Oracle's failed-login limit. So before it tries, it reads how many
-failed attempts the account has already collected. If one more attempt would come
-too close to the limit, it does not try. It reports that it could not check, and
-says why. Checking is never worth locking out the account you were checking on.
+**A scheduled check is guarded against locking the account out.** To find out
+whether the vault's password still works, the tool has to try logging in — and a
+failed login counts against Oracle's failed-login limit. So before it tries, it
+reads how many failed attempts the account has already collected. If one more
+attempt would come too close to the limit, it does not try. It reports that it
+could not check, and says why. Checking is never worth locking out the account
+you were checking on.
+
+That guard needs one optional grant: `SELECT ON SYS.USER$`, which lets the tool
+read the failed-login count. Without it, the check still runs. It logs in once
+per account per run (twice with `--include-previous`, which also tries the
+previous password), and every result from a login it attempted says that the
+lockout guard was unavailable.
+The grant is not part of the standard install, because it is a broad read.
+[`docs/security-model.md`](docs/security-model.md) §3 explains the trade-off.
 
 **Passwords do not reach your logs.** A password is held in a wrapper type whose
 text form is `***`, so printing one prints the mask, in ordinary output and in a
