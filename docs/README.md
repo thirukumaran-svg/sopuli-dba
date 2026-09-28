@@ -427,7 +427,8 @@ three wrong answers.
   same layout, `VGEN_COUNT` 4096 on the wire, every `T:` reproduced, twice). **The
   entry stays `unverified` because 19.3 is the base release and an OCI estate
   runs a later RU, which is unread** — as are 12.1 and 12.2. The route to an RU is
-  #547's OCI session; #565 reads 19.19 first. Blocks
+  #547's OCI session; #565 reads 19.19 first, on an arm64 host because that
+  image is arm64-only and does not start under emulation. Blocks
   `--method hash|both` only — `check`'s default (`login`) no longer waits on
   this (#86). If it does not reproduce on 19c, **both non-login modes go**:
   `both` is login *plus* the verifier comparison, so it cannot survive a

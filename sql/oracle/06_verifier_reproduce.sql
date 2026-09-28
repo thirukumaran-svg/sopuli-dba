@@ -7,7 +7,8 @@
 -- on any 19c release update**, exactly as the layout probe (#431). 11g carries
 -- no 12C verifier and is not a target here. The rollover window opened on 26ai
 -- and 21c; 18c and 19.3 have no rollover feature and the section reports a plain
--- rotation there. 19.19, above the 19.12 floor, is #565.
+-- rotation there. 19.19, above the 19.12 floor, is #565 (an arm64-only image,
+-- which needs an arm64 host: it does not start under emulation on x86).
 --
 -- Part 2 of #90's spike (#432). It does NOT derive anything itself: it sets
 -- known passwords on a throwaway account and prints, for each, the password
@@ -60,7 +61,7 @@
 --
 --      Gradual rollover needs 19.12+/21c+; the 19c base is 19.3 and cannot
 --      open a window (04-testing.md §5) -- measured, above. 19.19, which the
---      same registry carries, can: #565. The two-verifier result is
+--      same registry carries, can, on an arm64 host: #565. The two-verifier result is
 --      therefore measured on 26ai and 21c here and stays to be confirmed on real
 --      19.12+ (maintainer tier), like every other rollover finding.
 --

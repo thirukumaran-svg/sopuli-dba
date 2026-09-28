@@ -10,6 +10,7 @@
 #   docker compose --profile tier2 up -d     # + older Oracle lines, several minutes
 #   docker compose --profile nne   up -d     # Oracle with Native Network Encryption required
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
+#   docker compose --profile oracle19c-ru up -d # 19.19 EE, arm64 hosts only
 #
 # TEARDOWN: use `docker compose --profile '*' down`. A plain `docker compose down` is
 # a SILENT NO-OP here — every service below carries a profiles: key, so with no
@@ -19,10 +20,11 @@
 #
 # Oracle containers are deliberately long-running: tests reset state by dropping and
 # recreating accounts, never by recreating the container. Note that NOTHING HERE
-# ENFORCES THAT — no service but oracle-19c declares a volume, so any teardown
-# discards the database and the next `up` re-initialises from scratch. oracle-19c
-# keeps its datafiles in a named volume because its first start takes tens of
-# minutes; `down -v` is the one form that discards it.
+# ENFORCES THAT — no service but the two 19c ones declares a volume, so any
+# teardown discards the database and the next `up` re-initialises from scratch.
+# oracle-19c and oracle-19c-ru keep their datafiles in named volumes because
+# their first start takes tens of minutes; `down -v` is the one form that
+# discards them.
 
 name: sopuli-test
 
@@ -207,6 +209,53 @@ services:
       retries: 10
       start_period: 3600s
 
+  # ------------------------------------------------- oracle 19.19 (#565) ---
+  # 19.19.0.0.0 Enterprise Edition, from the same registry repository and on the
+  # same terms as oracle-19c above: maintainer-only, never in CI. The one pullable
+  # 19c past 19.12, so the one that can open a gradual-rollover window.
+  #
+  # THE TAG IS linux/arm64 ONLY, AND IT NEEDS AN arm64 HOST. The manifest is a
+  # single-platform one, not a list with an amd64 entry (checked 2026-09-28), and
+  # the build label is RDBMS_19.19.0.0.0DBRU_LINUX.ARM64. Under Docker Desktop's
+  # QEMU emulation on x86 it does not start: DBCA dies at 9% with ORA-00443,
+  # and the PMON trace says ORA-01096: program version (19.0.0.0.0) incompatible
+  # with instance (0.0.0.14.238) -- measured 2026-09-28, two minutes in. That is
+  # emulation failing, not slowness, so waiting longer does not help.
+  #
+  # `platform:` makes the requirement explicit rather than leaving it to a pull
+  # warning. On an arm64 host (Apple Silicon, an OCI Ampere A1 VM) it should run
+  # natively; that is untested, and the service is written by analogy with
+  # oracle-19c above. Record results as 19.19.0.0.0 on arm64.
+  #
+  # Its own profile rather than oracle19c's: two EE instances do not fit side by
+  # side in the maintainer's 7.7 GB Docker Desktop, so `--profile oracle19c` must
+  # not start both. Same init wrapper, same C## prefix, own port and volume.
+  #
+  # `--profile oracle19c-ru down -v` removes this volume and leaves oracle-19c's:
+  # compose scopes `-v` to the selected profile's services (checked 2026-09-28
+  # with a scratch two-profile project). `--profile '*' down -v` takes both.
+  oracle-19c-ru:
+    # sha256:3843234f6fd1ed084b1dd7ad42eeeaa95ad13f12c790810cb368bb58f8ad42ba
+    # (image created 2024-12-11; pulled before 2026-09-28)
+    image: container-registry.oracle.com/database/enterprise:19.19.0.0
+    platform: linux/arm64
+    profiles: [oracle19c-ru]
+    environment:
+      ORACLE_SID: ORCLCDB
+      ORACLE_PDB: ORCLPDB1
+      ORACLE_PWD: sopuli-test
+    ports: ["1527:1521"]
+    volumes:
+      - oracle19c-ru-data:/opt/oracle/oradata
+      - ./oracle-init:/opt/sopuli/oracle-init:ro
+      - ./oracle-init-19c:/opt/oracle/scripts/setup:ro
+    healthcheck:
+      test: ["CMD", "/opt/oracle/checkDBStatus.sh"]
+      interval: 30s
+      timeout: 30s
+      retries: 10
+      start_period: 3600s
+
   # ------------------------------------------------------------------ NNE ---
   # Approximates the OCI constraint locally: the server REQUIRES Native Network
   # Encryption, so a thin-mode connection must fail with DPY-3001. This covers the
@@ -253,5 +302,6 @@ services:
     ports: ["8443:8443"]
 
 volumes:
-  # Only oracle-19c keeps its datafiles; see that service for why.
+  # Only the two 19c services keep their datafiles; see oracle-19c for why.
   oracle19c-data:
+  oracle19c-ru-data:
