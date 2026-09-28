@@ -9,6 +9,7 @@
 #   docker compose --profile tier1 up -d     # + Oracle Free, ~30-60 s to healthy
 #   docker compose --profile tier2 up -d     # + older Oracle lines, several minutes
 #   docker compose --profile nne   up -d     # Oracle with Native Network Encryption required
+#   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
 #
 # TEARDOWN: use `docker compose --profile '*' down`. A plain `docker compose down` is
 # a SILENT NO-OP here — every service below carries a profiles: key, so with no
@@ -18,8 +19,10 @@
 #
 # Oracle containers are deliberately long-running: tests reset state by dropping and
 # recreating accounts, never by recreating the container. Note that NOTHING HERE
-# ENFORCES THAT — no service declares a volume, so any teardown discards the
-# database and the next `up` re-initialises from scratch.
+# ENFORCES THAT — no service but oracle-19c declares a volume, so any teardown
+# discards the database and the next `up` re-initialises from scratch. oracle-19c
+# keeps its datafiles in a named volume because its first start takes tens of
+# minutes; `down -v` is the one form that discards it.
 
 name: sopuli-test
 
@@ -158,6 +161,52 @@ services:
       retries: 60
       start_period: 30s
 
+  # ----------------------------------------------------- oracle 19c (#548) ---
+  # 19.3.0.0.0 Enterprise Edition, Oracle's own prebuilt image. MAINTAINER-ONLY:
+  # pulling it takes an Oracle account, the licence accepted for the
+  # database/enterprise repository, and `docker login container-registry.oracle.com`
+  # -- see docs/local-testing.md. It cannot be redistributed, so it never runs in
+  # CI and the suite skips rather than fails without it.
+  #
+  # Profile `oracle19c`, not `tier3`: tier 3 is the whole maintainer matrix
+  # (04-testing.md §2), most of which is real cloud services no compose file can
+  # start, so `--profile tier3` would promise something this file cannot keep.
+  # A profile named for the one licence-gated service also means nothing that
+  # already exists pulls it by accident. It carries no vault/postgres; combine
+  # it with `--profile tier1` when a run needs the vault.
+  #
+  # 19.3 is the base release: it has no gradual password rollover (19.12+), and
+  # an OCI estate runs a later RU. Record results as 19.3.0.0.0, never "19c".
+  #
+  # The one service here WITH a volume, because first start runs DBCA and takes
+  # tens of minutes (timings in docs/local-testing.md). `down` keeps the volume;
+  # `down -v` throws the database away and the next `up` creates it again.
+  # Init: the same oracle-init/01_test_profiles.sql as tier 2, run once after
+  # DBCA -- but inside ORCLPDB1 rather than CDB$ROOT, through the wrapper in
+  # oracle-init-19c/. This image keeps COMMON_USER_PREFIX = C##, so SOPULI_*
+  # cannot be a common profile here (ORA-65140); the wrapper says why.
+  oracle-19c:
+    # sha256:2df7530ac81566f8659e13d41fda029e5c08a983147e5b372b173476a74ab62e
+    # (pulled 2026-09-26)
+    image: container-registry.oracle.com/database/enterprise:19.3.0.0
+    profiles: [oracle19c]
+    environment:
+      ORACLE_SID: ORCLCDB
+      ORACLE_PDB: ORCLPDB1
+      ORACLE_PWD: sopuli-test
+    ports: ["1526:1521"]
+    volumes:
+      - oracle19c-data:/opt/oracle/oradata
+      - ./oracle-init:/opt/sopuli/oracle-init:ro
+      - ./oracle-init-19c:/opt/oracle/scripts/setup:ro
+    healthcheck:
+      # The image's own check: database role PRIMARY and a PDB open READ WRITE.
+      test: ["CMD", "/opt/oracle/checkDBStatus.sh"]
+      interval: 30s
+      timeout: 30s
+      retries: 10
+      start_period: 3600s
+
   # ------------------------------------------------------------------ NNE ---
   # Approximates the OCI constraint locally: the server REQUIRES Native Network
   # Encryption, so a thin-mode connection must fail with DPY-3001. This covers the
@@ -202,3 +251,7 @@ services:
     image: nagyesta/lowkey-vault:latest
     profiles: [emulators]
     ports: ["8443:8443"]
+
+volumes:
+  # Only oracle-19c keeps its datafiles; see that service for why.
+  oracle19c-data:

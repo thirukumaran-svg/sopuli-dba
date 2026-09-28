@@ -6,10 +6,14 @@ master record. Oracle first, multi-product by design.
 **Status: pre-implementation.** The design documents are complete and decided;
 almost no code exists yet. The SQL in `sql/` has been executed against Oracle 26ai
 Free 23.26.2.0.0, Oracle 21c XE 21.3.0.0.0, Oracle 18c XE 18.4.0.0.0 and Oracle
-11g XE 11.2.0.2.0. Each script carries a `STATUS:` header saying which paths ran
+11g XE 11.2.0.2.0, and the verifier and leak probes against Oracle 19c EE
+19.3.0.0.0 (#548). Each script carries a `STATUS:` header saying which paths ran
 and which are still untried — trust that header, not this line, and update it
-when you run one. 19c is the one still untried, and it is the one that matters
-most: it is what an OCI estate runs, and both #383 and #387 need it answered.
+when you run one. **19.3 is the 19c base release, not what an OCI estate runs.**
+It answered what #383 and #387 needed from 19c (30-byte passwords; no
+`V$SQLSTATS` retention), and a later release update is still unmeasured: 19.19
+is #565, a current RU is #547's OCI session. Say 19.3.0.0.0, never "19c", for
+anything measured on it.
 
 ---
 
@@ -290,15 +294,14 @@ than reasoning:
   `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt‖"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)‖
   salt)`, 4096 sent at logon not stored. Degradation is settled too (#433):
   compare `T:` only, and an account with no `12C` fails at plan time.
-  **Answered on every tier-2 release; still marked because 19c — the release an
-  OCI estate runs, and so the target of interest — is unread (not pullable), and
-  12.1/12.2 are unread too.** Do not treat the tier-2 result as 19c's. Probes:
+  **Answered on every tier-2 release and on 19c 19.3.0.0.0 (#548); still marked
+  because 19.3 is the base release and the RU an OCI estate runs is unread, as
+  are 12.1/12.2.** Do not treat the 19.3 result as a patched 19c's. Probes:
   `sql/oracle/05_verifier_layout_probe.sql`, `06_verifier_reproduce.{sql,py}`
 - whether `ALTER USER` text leaks the password into `V$SQL` or
   `UNIFIED_AUDIT_TRAIL`, per version (unverified: ddl-text-versions) —
-  **answered on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and 11g
-  11.2.0.2.0; unmeasured on 12.1, 12.2 and
-  19c.** `02_password_leak_probe.sql` was run in all three documented positions on
+  **answered on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 19c 19.3.0.0.0, 18c
+  18.4.0.0.0 and 11g 11.2.0.2.0; unmeasured on 12.1, 12.2 and any 19c RU.** `02_password_leak_probe.sql` was run in all three documented positions on
   2026-08-26: unified audit masks the statement at write time, no `V$SQL` cursor
   for the DDL exists at all, and the sole leak is an anonymous PL/SQL block
   carrying the password as a literal — which is invariant 13, now measured rather
@@ -310,7 +313,8 @@ than reasoning:
   retains the plain `ALTER USER` text there, readable by a dictionary reader
   though not by the service account. Decided in #387 — documented, not warned
   about and not refused, because it ages out with the shared pool and one
-  `FLUSH SHARED_POOL` clears it. Do not quote a leak result without its version
+  `FLUSH SHARED_POOL` clears it. 19.3.0.0.0 agrees with 18c and later, all three
+  positions (#548), so the change sits in (11.2, 19.3]. Do not quote a leak result without its version
   (`docs/design/02-oracle-privileges.md` §4 and §8 P8)
 - ~~whether the 23-codebase schema privileges cover `ALTER USER` (P7)~~ —
   **answered: no.** `GRANT ALTER USER ON SCHEMA` gives `ORA-00990`, tested on 26ai
@@ -318,6 +322,10 @@ than reasoning:
   direct grant is the model permanently; do not re-open it as an option
   (`docs/design/02-oracle-privileges.md` §2.1)
 - whether a pullable Oracle 11g XE image exists (T1)
+
+19.3.0.0.0 EE is `test/compose.yaml`'s `oracle-19c`, under `--profile oracle19c`
+only: pulling it takes an Oracle account and the licence accepted on the
+registry, so it is maintainer-only and never in CI (`docs/local-testing.md` §5).
 
 Do not assume any of these. Where the answer is unknown, the code should refuse
 rather than guess — as the deleted package draft did for the T-verifier.

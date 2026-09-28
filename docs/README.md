@@ -423,9 +423,11 @@ three wrong answers.
   Degradation is settled too (#433): the comparison uses `T:` only, an account
   with no `12C` fails at plan time (invariant 4), and the gate is a per-account
   capability (`SPARE4` carries a `T:`), never a version. **All three parts are
-  answered on the tier-2 releases; the entry stays `unverified` because 19c — the
-  release an OCI estate runs, and so the target of interest — is unread, as are
-  12.1 and 12.2, none of them pullable.** Blocks
+  answered on the tier-2 releases and on 19c 19.3.0.0.0** (#548, 2026-09-27: the
+  same layout, `VGEN_COUNT` 4096 on the wire, every `T:` reproduced, twice). **The
+  entry stays `unverified` because 19.3 is the base release and an OCI estate
+  runs a later RU, which is unread** — as are 12.1 and 12.2. The route to an RU is
+  #547's OCI session; #565 reads 19.19 first. Blocks
   `--method hash|both` only — `check`'s default (`login`) no longer waits on
   this (#86). If it does not reproduce on 19c, **both non-login modes go**:
   `both` is login *plus* the verifier comparison, so it cannot survive a
@@ -466,9 +468,12 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   the one leak everywhere is an anonymous PL/SQL block carrying the password as a
   literal — which is now invariant 13, measured rather than reasoned. **11.2
   disagrees**: `V$SQLSTATS` keeps its own copy there, so the *conclusion* is
-  release-dependent even though the reasoning is not (#387). **12.1, 12.2 and 19c
-  are unrun, so the boundary below 18c is unknown** — read the 11.2 result as
-  *11.2 does*, never as *everything older does*.
+  release-dependent even though the reasoning is not (#387). **19c 19.3.0.0.0
+  agrees with 18c and later** (#548, 2026-09-27, all three positions:
+  `V$SQLSTATS` clean for the plain `ALTER USER`), so the change sits somewhere in
+  (11.2, 19.3]. **12.1, 12.2 and every 19c RU are unrun** — read the 11.2 result
+  as *11.2 does*, never as *everything older does*, and the 19.3 one as *19.3
+  does not*.
 - `unverified` `ddl-text-awr` (#387) — **Whether the retained text reaches AWR.**
   `DBA_HIST_SQLTEXT` needs a snapshot taken *before* the sweep, on a database
   where the Diagnostics Pack is enabled. Every image in this stack ships
@@ -489,16 +494,20 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   limit from the probed server version against `LONG_IDENTIFIER_FLOOR = (12, 2)`,
   and **the premise is wrong**: 12.2 raised *identifiers* from 30 bytes to 128
   and passwords did not move with them. #383 measured it — 31 bytes is
-  `ORA-00972` on 21c, 18c and 11.2, and accepted on 26ai — so the floor is
-  somewhere in `(18.4, 23.26]` and `(12, 2)` is below every version ever tested
-  against it.
+  `ORA-00972` on 21c, 18c and 11.2, and accepted on 26ai — and **19c 19.3.0.0.0
+  refuses 31 and 128 the same way** (#548, 2026-09-27), so the floor is somewhere
+  in `(21.3, 23.26]` and `(12, 2)` is below every version ever tested against it.
 
   **This is a live bug, not a latent one**, and saying so is the point of the
   entry: on 21c a policy asking for 40 bytes plans clean, reports
   `constraints: 128 bytes`, and fails with `ORA-00972` mid-`apply` — which is
   invariant 4 violated, the exact thing plan-time refusal exists to prevent.
   #383 closed **without fixing it** because the constant cannot be corrected
-  safely without measuring 19c, and 19c is the release it matters most on. An
+  safely without measuring 19c, and 19c is the release it matters most on. 19.3
+  now reproduces the failure exactly — a 40-character policy plans with
+  `constraints: 128 bytes` and `apply` fails `ORA-00972` (#548) — so what stands
+  between this entry and a fix is choosing the new floor, not another
+  measurement. An
   earlier draft of this entry said "nothing is broken today"; that was wrong, and
   #412's review caught it.
 - `unverified` `pw-changed-source` (#87, #386) — **Whether `SYS.USER$.PTIME` is

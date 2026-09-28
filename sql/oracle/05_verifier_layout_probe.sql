@@ -2,10 +2,11 @@
 -- sopuli-dba : password verifier layout probe   (v1)
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (FREEPDB1), 21c XE 21.3.0.0.0 (XEPDB1),
--- 18c XE 18.4.0.0.0 (XEPDB1) and 11g XE 11.2.0.2.0 on 2026-09-15 (#431), twice
--- each, with the §5 trace step run on all four. **Untried on 19c, 12.1 and
--- 12.2** -- and 19c is the release #431 names first. Nothing below says what 19c
--- stores; read every result as "these four releases do".
+-- 18c XE 18.4.0.0.0 (XEPDB1) and 11g XE 11.2.0.2.0 on 2026-09-15 (#431), and on
+-- 19c EE 19.3.0.0.0 (ORCLPDB1, the prebuilt registry image) on 2026-09-27
+-- (#548), twice each, with the §5 trace step run on all five. **Untried on 12.1
+-- and 12.2, and on any 19c release update** -- 19.3 is the base release and an
+-- OCI estate runs a later RU, so read the 19c line as "19.3 does".
 --
 -- Part 1 of #90's spike (#431). It READS what Oracle stores in SYS.USER$.SPARE4
 -- and SYS.USER$.PASSWORD and names the fields. It derives nothing: whether a
@@ -20,7 +21,8 @@
 --
 --
 -- RESULTS
---   Identical on 26ai, 21c and 18c. 11g differs only by carrying no T: at all.
+--   Identical on 26ai, 21c, 19.3 and 18c. 11g differs only by carrying no T: at
+--   all.
 --
 --   1. SPARE4 LAYOUT. Verifiers are separated by ';', each introduced by a
 --      two-character prefix. The order is S: then T:. There is NO H: in SPARE4
@@ -29,6 +31,7 @@
 --        release   PASSWORD_VERSIONS   SPARE4                       USER$.PASSWORD
 --        26ai      11G 12C             S:<60 hex>;T:<160 hex>  225  (null)
 --        21c       11G 12C             S:<60 hex>;T:<160 hex>  225  (null)
+--        19.3      11G 12C             S:<60 hex>;T:<160 hex>  225  (null)
 --        18c       11G 12C             S:<60 hex>;T:<160 hex>  225  (null)
 --        11g       10G 11G             S:<60 hex>               62  16 hex
 --
@@ -50,6 +53,8 @@
 --              §5  AUTH_VFR_DATA.....ECE896BEF4985CAAB101034505FEB916
 --        18c   §4  T:2D71AE37...EDB6C06E salt=15FEB75DC0A667521C39F9E10C945828
 --              §5  AUTH_VFR_DATA.....15FEB75DC0A667521C39F9E10C945828
+--        19.3  §4  T:E01B4E16...9799C809 salt=D6128551A550E22266133A9C74C0F7BC
+--              §5  AUTH_VFR_DATA.....D6128551A550E22266133A9C74C0F7BC
 --        11g   §4  S:BAFAD5A5...CC93FFDF salt=33B179CB7366EA0029A0
 --              §5  AUTH_VFR_DATA.....33B179CB7366EA0029A0
 --
@@ -59,7 +64,7 @@
 --
 --      THE ITERATION COUNT IS NOT STORED IN SPARE4. Nothing in the 160 hex
 --      varies except digest and salt. The server SENDS it at logon instead, on
---      all three 12.2+ releases:
+--      all four 12.2+ releases (19.3 included, both runs):
 --
 --        AUTH_PBKDF2_VGEN_COUNT  4096   (verifier generation)
 --        AUTH_PBKDF2_SDER_COUNT  3      (session key derivation, not stored)
@@ -70,14 +75,14 @@
 --      #432's question and this file does not attempt it.
 --
 --   2. EVERY SET DRAWS A NEW SALT. Setting the same password again replaces
---      S: and T: completely -- digest and salt both -- on all four releases.
+--      S: and T: completely -- digest and salt both -- on all five releases.
 --      So a stored verifier cannot be compared by equality with one from
 --      another set; any comparison has to regenerate from THIS salt.
 --
 --   3. NORMALISATION -- what can be observed without deriving:
 --      - The client's bytes arrive as sent. §0's DUMP() of the non-ASCII
---        literal is c3,84,...,c3,b6 (UTF-8) on all four under
---        NLS_LANG=AMERICAN_AMERICA.AL32UTF8; all four databases are AL32UTF8.
+--        literal is c3,84,...,c3,b6 (UTF-8) on all five under
+--        NLS_LANG=AMERICAN_AMERICA.AL32UTF8; all five databases are AL32UTF8.
 --        Under any other client charset this is not guaranteed, and #432's
 --        non-ASCII case must pin it the same way.
 --      - S: and T: are salted, so case folding in them is NOT observable here.
@@ -98,7 +103,7 @@
 --        not a verifier sopuli compares (#433).
 --
 --   4. SEC_CASE_SENSITIVE_LOGON. Absent from V$PARAMETER on 26ai and 21c;
---      present and TRUE on 18c and 11g. Flipped to FALSE on 11g only, by hand
+--      present and TRUE on 19.3, 18c and 11g. Flipped to FALSE on 11g only, by hand
 --      (MANUAL STEP below): S: is still regenerated with a fresh salt and the
 --      10G value is unchanged (it was already case-insensitive). So the
 --      parameter changes nothing observable in what is STORED. Whether it
@@ -126,7 +131,7 @@
 --       sopuli-test-oracle-free-1 sqlplus -s / as sysdba \
 --       < sql/oracle/05_verifier_layout_probe.sql
 --
---   The script switches to FREEPDB1 / XEPDB1 itself when it finds one, and
+--   The script switches to FREEPDB1 / XEPDB1 / ORCLPDB1 itself when it finds one, and
 --   stays put on a non-CDB. §5 prints the shell commands for the traced logon;
 --   run them in the same container. Re-running drops and recreates the account.
 --
@@ -152,7 +157,8 @@ SET SERVEROUTPUT ON
 --------------------------------------------------------------------------------
 -- §0  Where this is running
 --------------------------------------------------------------------------------
--- Moves into the one application PDB the test images ship, if there is one. A
+-- Moves into the one application PDB the test images ship, if there is one
+-- (ORCLPDB1 is the 19c EE image's, #548). A
 -- non-CDB has no V$PDBS rows worth using and stays where it is. The statement is
 -- built at runtime so that 11g, which has no V$PDBS, does not fail to parse it.
 DECLARE
@@ -161,7 +167,7 @@ DECLARE
   PRAGMA EXCEPTION_INIT(no_view, -942);
 BEGIN
   EXECUTE IMMEDIATE
-    q'[SELECT MIN(name) FROM v$pdbs WHERE name IN ('FREEPDB1', 'XEPDB1')]'
+    q'[SELECT MIN(name) FROM v$pdbs WHERE name IN ('FREEPDB1', 'XEPDB1', 'ORCLPDB1')]'
     INTO l_pdb;
   IF l_pdb IS NOT NULL THEN
     EXECUTE IMMEDIATE 'ALTER SESSION SET CONTAINER = ' || l_pdb;

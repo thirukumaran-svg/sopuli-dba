@@ -197,6 +197,45 @@
 --     This is the `pop=n` rule in OS-file form -- record it as ABSENT, not as
 --     clean. 21c is the release that shows what a populated one looks like.
 --
+--   2026-09-27, 19c EE 19.3.0.0.0 (container-registry.oracle.com/database/
+--   enterprise:19.3.0.0, test/compose.yaml's oracle-19c), ALL THREE POSITIONS
+--   (#548), with AUDIT_TRAIL = DB,EXTENDED and AUDIT_SYS_OPERATIONS = TRUE set
+--   first -- this image ships NONE too. Mixed-mode auditing (Unified Auditing
+--   not linked in), ORA_SECURECONFIG enabled by default:
+--
+--     position                                   isdba   unified  trad.  leaked
+--     1  ORCLPDB1, svc = SOPULI_SVC  (run twice)  FALSE   3 of 3   3      C3 only
+--     2  ORCLPDB1, svc = SYS AS SYSDBA            TRUE    3 of 3   0      C3 only
+--     3  CDB$ROOT, svc = C##SOPULI_SVC,           FALSE   3 of 3   3      C3 only
+--        test_user = C##SOPULITEST
+--
+--   **V$SQLSTATS is clean for C2 and C4 in every position**, so 11.2's
+--   retention of the plain ALTER USER does not reach 19.3: the boundary #387
+--   left open is now somewhere in (11.2, 19.3], with 12.1 and 12.2 unrun.
+--   Every audit source masks the DDL (`ALTER USER SOPULITEST IDENTIFIED BY *`),
+--   traditional as well as unified.
+--
+--   "3 of 3", not 4: C1 is SYS's CREATE USER, and with AUDIT_SYS_OPERATIONS =
+--   TRUE it goes to the OS trail instead of either database trail. It is there,
+--   masked -- `ACTION :[38] 'CREATE USER sopulitest IDENTIFIED BY *'` -- and
+--   position 2's empty DBA_AUDIT_TRAIL is the same routing, as on 21c.
+--
+--   Section 7 greps after every position: trace directory (up to 135 files),
+--   listener log and client history clean; audit_file_dest (37 files) holds
+--   exactly one verbatim canary, C3, from position 2, in a file whose DDL line
+--   reads `ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'`. Identical to
+--   21c's position 2.
+--
+--   Position 3 could not run as written until test_user existed: CREATE USER
+--   sopulitest in CDB$ROOT is ORA-65096 on any database with the default
+--   COMMON_USER_PREFIX of C##, which this image keeps and the gvenzl images do
+--   not. So every earlier position-3 result was taken on a CDB configured unlike
+--   a production one. The finding does not change; the probe now says which
+--   account it used. AWR was not exercised: this image reports
+--   CONTROL_MANAGEMENT_PACK_ACCESS = DIAGNOSTIC+TUNING, but no snapshot was taken
+--   (see ddl-text-awr in docs/README.md), so DBA_HIST_SQLTEXT reads pop=n here as
+--   everywhere else.
+--
 --   The three checks section 6 and section 7 left manual are now
 --   04_password_leak_extensions.sql, and all three are answered there: a traced
 --   session does NOT capture the password, self-rotation is audited and masks
@@ -226,7 +265,8 @@
 --     1. against the PDB service, svc_user = the account holding ALTER USER
 --     2. against the PDB service, svc_user = sys, svc_conn_as = AS SYSDBA
 --        (no privilege separation -- exercises the audit_file_dest path)
---     3. against the CDB service, common svc_user
+--     3. against the CDB service, common svc_user, and test_user =
+--        C##SOPULITEST unless COMMON_USER_PREFIX is empty (see test_user)
 --
 --   The log file is named for the version and container automatically, so the
 --   three runs do not overwrite each other.
@@ -270,6 +310,16 @@ DEFINE svc_pwd  = CHANGEME_SVC_PASSWORD
 -- cannot connect without a role: `CONNECT sys/...@tns` is ORA-28009, which made
 -- that documented position impossible to run until this existed.
 DEFINE svc_conn_as = ""
+
+-- The throwaway account the canaries are set on. Upper case, because it is
+-- compared against the dictionary as well as used in DDL. Position 3 creates it
+-- in CDB$ROOT, where a database with the default COMMON_USER_PREFIX -- which is
+-- every real CDB, and Oracle's own 19c image -- refuses anything without C##:
+-- `ORA-65096: invalid common user or role name`, measured on 19.3.0.0.0 (#548).
+-- The gvenzl images set the prefix to empty, which is why this was a literal
+-- SOPULITEST until then. So: SOPULITEST for positions 1 and 2, C##SOPULITEST for
+-- position 3 anywhere the prefix is C##.
+DEFINE test_user = SOPULITEST
 
 -- Canaries, one per execution path, so a hit identifies WHICH path leaked.
 --
@@ -560,10 +610,10 @@ PROMPT watermarks taken, this run counts only events after them
 DECLARE
   l_cnt PLS_INTEGER;
 BEGIN
-  SELECT COUNT(*) INTO l_cnt FROM dba_users WHERE username = 'SOPULITEST';
+  SELECT COUNT(*) INTO l_cnt FROM dba_users WHERE username = '&test_user';
   IF l_cnt > 0 THEN
     RAISE_APPLICATION_ERROR(-20001,
-      'SOPULITEST already exists. Drop it by hand and re-run; this script '
+      '&test_user already exists. Drop it by hand and re-run; this script '
       || 'will not touch an account it did not create.');
   END IF;
 END;
@@ -571,7 +621,7 @@ END;
 
 -- C1: created by SYSDBA. sopuli never creates accounts, so this canary tests
 -- the privileged path rather than the tool's path.
-CREATE USER sopulitest IDENTIFIED BY "&c1";
+CREATE USER &test_user IDENTIFIED BY "&c1";
 
 PROMPT
 PROMPT --- switching to &svc_user for the rotations
@@ -592,18 +642,18 @@ PROMPT  captured the statements anyway.
 PROMPT
 
 -- C2: client-issued literal. This is exactly what sopuli sends.
-ALTER USER sopulitest IDENTIFIED BY "&c2";
+ALTER USER &test_user IDENTIFIED BY "&c2";
 
 DECLARE
   l_pwd VARCHAR2(30);
 BEGIN
   -- C3: the complete secret appears as a literal in this block's own text.
-  EXECUTE IMMEDIATE 'ALTER USER sopulitest IDENTIFIED BY "&c3"';
+  EXECUTE IMMEDIATE 'ALTER USER &test_user IDENTIFIED BY "&c3"';
 
   -- C4: assembled at runtime. This block's text contains the two halves but
   -- never the whole. Only the generated DDL carries the complete value.
   l_pwd := '&cpfx' || '4Dq7x';
-  EXECUTE IMMEDIATE 'ALTER USER sopulitest IDENTIFIED BY "' || l_pwd || '"';
+  EXECUTE IMMEDIATE 'ALTER USER &test_user IDENTIFIED BY "' || l_pwd || '"';
 END;
 /
 
@@ -644,7 +694,7 @@ END;
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT ================================================================================
-PROMPT  4a. Audit coverage for SOPULITEST, this run only
+PROMPT  4a. Audit coverage for &test_user, this run only
 PROMPT ================================================================================
 
 DECLARE
@@ -652,10 +702,10 @@ DECLARE
   v_lbl t_str := t_str('UNIFIED_AUDIT_TRAIL', 'DBA_AUDIT_TRAIL');
   v_qry t_str := t_str(
     'SELECT COUNT(*), COUNT(CASE WHEN sql_text IS NOT NULL THEN 1 END) '
-      || 'FROM unified_audit_trail WHERE object_name = ''SOPULITEST'' '
+      || 'FROM unified_audit_trail WHERE object_name = ''&test_user'' '
       || 'AND event_timestamp > TO_TIMESTAMP(''&uat_mark'', ''YYYY-MM-DD HH24:MI:SS.FF6'')',
     'SELECT COUNT(*), COUNT(CASE WHEN sql_text IS NOT NULL THEN 1 END) '
-      || 'FROM dba_audit_trail WHERE obj_name = ''SOPULITEST'' '
+      || 'FROM dba_audit_trail WHERE obj_name = ''&test_user'' '
       || 'AND timestamp > TO_DATE(''&dat_mark'', ''YYYY-MM-DD HH24:MI:SS'')');
   l_rows NUMBER;
   l_txt  NUMBER;
@@ -817,7 +867,7 @@ PROMPT     An empty result here means the DDL was never retained, which is a
 PROMPT     stronger outcome than being retained and masked.
 SELECT sql_id, SUBSTR(sql_text, 1, 400) AS txt
   FROM v$sql
- WHERE UPPER(sql_text) LIKE '%SOPULITEST%'
+ WHERE UPPER(sql_text) LIKE '%&test_user%'
    AND INSTR(sql_text, 'SOPULI_PROBE') = 0
  ORDER BY last_active_time;
 
@@ -847,7 +897,7 @@ SELECT TO_CHAR(event_timestamp, 'HH24:MI:SS.FF3') AS ts,
        dbusername, action_name, object_name,
        SUBSTR(sql_text, 1, 120) AS txt
   FROM unified_audit_trail
- WHERE object_name = 'SOPULITEST'
+ WHERE object_name = '&test_user'
    AND event_timestamp > TO_TIMESTAMP('&uat_mark', 'YYYY-MM-DD HH24:MI:SS.FF6')
  ORDER BY event_timestamp;
 
@@ -860,7 +910,7 @@ SELECT TO_CHAR(timestamp, 'HH24:MI:SS') AS ts,
        username, action_name, obj_name,
        SUBSTR(sql_text, 1, 120) AS txt
   FROM dba_audit_trail
- WHERE obj_name = 'SOPULITEST'
+ WHERE obj_name = '&test_user'
    AND timestamp > TO_DATE('&dat_mark', 'YYYY-MM-DD HH24:MI:SS')
  ORDER BY timestamp;
 
@@ -954,8 +1004,8 @@ DECLARE
   l_ver PLS_INTEGER;
 BEGIN
   BEGIN
-    EXECUTE IMMEDIATE 'DROP USER sopulitest CASCADE';
-    DBMS_OUTPUT.PUT_LINE('dropped SOPULITEST');
+    EXECUTE IMMEDIATE 'DROP USER &test_user CASCADE';
+    DBMS_OUTPUT.PUT_LINE('dropped &test_user');
   EXCEPTION WHEN OTHERS THEN
     DBMS_OUTPUT.PUT_LINE('drop failed -- ' || SQLERRM);
   END;

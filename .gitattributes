@@ -1,0 +1,5 @@
+# Shell scripts run inside Linux containers (test/oracle-init-19c/ is bind-mounted
+# into the 19c image and sourced by bash there), so they must stay LF on a
+# Windows checkout with core.autocrlf=true: a CRLF line makes bash look for a
+# command called "sqlplus" followed by a carriage return.
+*.sh text eol=lf

@@ -300,14 +300,18 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 26ai Free | `sopuli-test-oracle-free-1` | `127.0.0.1:1521/FREEPDB1` | CDB + PDB |
 | 21c XE | `sopuli-test-oracle-xe21-1` | `127.0.0.1:1522/XEPDB1`, root `.../XE` | CDB + PDB |
 | 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` — `DB_PW_CHANGED` is read from `SYS.USER$.PTIME` where the grant exists, and is empty with a `SOPULI-W021` note saying why where it does not (#386) |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other three containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1, 12.2 and 19c are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
+| 19c EE 19.3 | `sopuli-test-oracle-19c-1` | `127.0.0.1:1526/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only** — pull it yourself, below. No rollover (19.12+), so `--strategy rollover` is exit 5 at plan time. The one container with `COMMON_USER_PREFIX = C##`, as a real CDB has |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other four containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1, 12.2 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
-follows. All three images are already on the machine and reach healthy in about a
-minute; the 11g one is the smallest and fastest of the four.
+follows. The three XE images are freely pullable and reach healthy in about a
+minute; the 11g one is the smallest and fastest of them. 19c is the exception on
+both counts — you pull it yourself, and its first start takes a quarter of an
+hour or more (below).
 
 **One Instant Client covers all of them.** Measured 2026-09-08 with the
-23.26.3.0.0 client from §4: 21c, 18c and 11.2 all connect. That is worth knowing
+23.26.3.0.0 client from §4: 21c, 18c and 11.2 all connect, and so does 19.3
+(2026-09-27, #548). That is worth knowing
 before planning an evening, because `00-principles.md` D7 warns that a 23.x
 client reaches 19c and later, which reads like 18c and 11g need a second client
 and a second process. They do not. Note that connecting is not the same as being
@@ -322,6 +326,7 @@ SOPULI_TEST_TIER1=required \
 SOPULI_TEST_ORACLE_DSN=localhost:1522/XEPDB1 \
 SOPULI_TEST_ORACLE_NAME="21c XE" \
 SOPULI_TEST_ORACLE_CONTAINER=sopuli-test-oracle-xe21-1 \
+SOPULI_TEST_ORACLE_PDB_SERVICE=XEPDB1 \
 pytest
 ```
 
@@ -329,7 +334,153 @@ pytest
 shells into a container by name — SQL\*Plus is a *client*, and the only one the
 suite can rely on is inside the container — and it defaults to the tier-1 one. Left
 unset, that module reports on 26ai while everything else reports on 21c, and
-nothing says so.
+nothing says so. `SOPULI_TEST_ORACLE_PDB_SERVICE` is its partner: the same
+module connects to the PDB by service name from *inside* the container, and it
+defaults to tier 1's `freepdb1` — so against any other container, left unset,
+every PDB-mode test fails `ORA-12514` (#548).
+
+### Oracle 19c, which you have to pull yourself
+
+19.3.0.0.0 Enterprise Edition, from Oracle's own registry (#548). It is the
+closest thing to an OCI estate this stack has, and it is **not** a freely
+pullable image: nothing in CI uses it, the suite skips it when it is absent, and
+you cannot redistribute it. One-time setup:
+
+1. An Oracle account (free) — sign in at <https://container-registry.oracle.com>.
+2. Find **Database → enterprise** and accept the licence there. Without this the
+   pull is refused even when logged in; an anonymous tag listing is
+   `UNAUTHORIZED`.
+3. Log Docker in, and **type the password at the prompt**. Never `-p` or
+   `--password`: that puts it in your shell history and the process list, which is
+   invariant 1's reason applied to a tool other than this one.
+
+   ```bash
+   docker login container-registry.oracle.com   # username = your Oracle account email
+   docker pull container-registry.oracle.com/database/enterprise:19.3.0.0
+   ```
+
+   3.6 GB to pull, 12.1 GB unpacked. The registry also carries
+   `enterprise:19.19.0.0`, which is past the 19.12 rollover floor — that one is
+   #565, not this section.
+
+Then, from `test/`:
+
+```bash
+docker compose --profile oracle19c up -d
+docker compose --profile tier1 up -d     # if you want the vault as well
+```
+
+Its own profile, and nothing else pulls it: `tier1`, `tier2` and no profile at
+all leave it alone. **The first start runs DBCA: 23 min 25 s here, and
+15 min 44 s the second time** from an empty volume (Docker Desktop, 8 CPUs,
+7.7 GB; tier 1 was running beside it the second time and not the first, so the spread is not load) before
+`DATABASE IS READY TO USE!` in `docker logs`. The datafiles go to a named volume, so after that a removed and
+recreated container was **28 s** to healthy, and a `docker restart` — which
+shuts the instance down cleanly first — 52 s. `--profile '*' down` keeps the
+volume; `--profile '*' down -v` throws the database away and the next `up` is
+another twenty-odd minutes.
+
+Two things differ from the gvenzl images, and both come from one setting. This
+image keeps `COMMON_USER_PREFIX = C##`, as a real CDB does, where gvenzl sets it
+empty:
+
+- **The test profiles live in the PDB, not the root.**
+  `oracle-init/01_test_profiles.sql` creates `SOPULI_*` profiles in `CDB$ROOT`,
+  and here every one of them was `ORA-65140: invalid common profile name`.
+  `test/oracle-init-19c/` runs the same file inside `ORCLPDB1` instead, which is
+  where the suite connects.
+- **A common account in the root needs `C##`.** `CREATE USER sopulitest` in
+  `CDB$ROOT` is `ORA-65096`, which is why `02_password_leak_probe.sql` now takes
+  `DEFINE test_user` for position 3.
+
+And one shared with them: it ships **`AUDIT_TRAIL = NONE`**. Set it before
+believing any audit result, exactly as on the XE images:
+
+```sql
+alter system set audit_trail=db,extended scope=spfile;
+alter system set audit_sys_operations=true scope=spfile;
+-- then: docker restart sopuli-test-oracle-19c-1
+```
+
+**On Windows, `docker exec … sqlplus / as sysdba` from Git Bash prints
+SQL\*Plus's usage text and exits 1**, because MSYS rewrites the bare `/` into a
+Windows path. `export MSYS_NO_PATHCONV=1` first, or run it from PowerShell.
+
+Everything in §§6–12 works against it with `dsn: "127.0.0.1:1526/ORCLPDB1"` and
+`oracle: { scope: pdb, container: ORCLPDB1 }`. `doctor`:
+
+```
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+ee19-pdb  yes        pdb    ORCLPDB1   READ WRITE  6
+```
+
+The six are `account_lock_state`, `expire_password`, `offline_verify`,
+`password_reuse_policy`, `profile_management` and `role_lookup` — no
+`password_rollover`. §10.10's refusal, on this release:
+
+```
+$ sopuli --config sopuli-19c.yaml creds rotate --strategy rollover --confirm
+sopuli: target "ee19-pdb" does not support password_rollover
+  hint: gradual password rollover needs Oracle 19.12 or later; this release has no such feature and no profile setting adds it -- use `--strategy staged`, or omit `--strategy` and let the target decide
+```
+
+Exit 5. And **#383's bug, on the release it was left open for.** Ask for more
+than 30 bytes and it plans clean, then fails half way:
+
+```
+$ sopuli --config sopuli-19c-40.yaml creds generate
+...
+constraints: 128 bytes in AL32UTF8, from ee19-pdb
+...
+acme_batch_user  vault-dev:acme/test/acme40  staged v1
+
+$ sopuli --config sopuli-19c-40.yaml creds apply
+...
+ACCOUNT          TARGET    STATE  DETAIL
+acme_batch_user  ee19-pdb  ERROR  ORA-00972: identifier is too long
+
+nothing changed, 1 not confirmed
+```
+
+Exit 1. 19.3 accepts 30 bytes and refuses 31, like 21c; the `constraints:` line
+is wrong, and a policy of 30 or fewer is the workaround until the floor is fixed.
+
+The suite:
+
+```bash
+SOPULI_TEST_TIER1=required \
+SOPULI_TEST_ORACLE_DSN=localhost:1526/ORCLPDB1 \
+SOPULI_TEST_ORACLE_NAME="19.3 EE" \
+SOPULI_TEST_ORACLE_CONTAINER=sopuli-test-oracle-19c-1 \
+SOPULI_TEST_ORACLE_PDB_SERVICE=ORCLPDB1 \
+pytest
+```
+```
+capabilities exercised
+                       19.3 EE
+account_lock_state        ok
+common_users              --
+expire_password           ok
+offline_verify            ok
+password_reuse_policy     ok
+password_rollover         --
+profile_management        ok
+role_lookup               ok
+16 tests skipped (capability absent), 0 skipped (environment unavailable)
+```
+
+Green, with no failures. With the container stopped, the same variables and no
+`SOPULI_TEST_TIER1` skip rather than fail, each naming what is missing:
+
+```
+SKIPPED [1] tests\driver\test_oracle_accounts.py:863: environment unavailable: ORA-12541: ORA-12541: Cannot connect. No listener at host 127.0.0.1 port 1526.
+SKIPPED [1] tests\driver\test_oracle_install_script.py:587: container 'sopuli-test-oracle-19c-1' exists but is not running
+```
+
+That is the ordinary tier-1 rule and nothing 19c-specific — with `required` the
+same run fails, which is what a lane that exists to run it wants. **Wait for
+`healthy` after a `start`**: the listener answers before the PDB is open, and a
+run started in that gap fails in the install-script module rather than skipping.
 
 ### Seeing 11.2 keep your password, on purpose
 
@@ -5150,14 +5301,15 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
   before it can. `verify.method` parses in a profile and reaches no consumer.
 - **The `file`, `keyring` and `oci` stores.** Only `hashicorp` exists.
 - **A real wallet without a full Oracle install**, per §12.
-- **19c, and anything above tier 2.** The whole tier-2 matrix is done — 21c
-  (#380), 18c (#381) and 11g (#382) — and §5's *Running all of this against a
-  different Oracle version* is the map. 19c is tier 3, needs a real OCI tenancy
-  or a built 19c, and is now what two open questions turn on: the password byte
-  limit (#383) and whether the `ALTER USER` text survives in `V$SQLSTATS` —
-  measured true on 11.2 and false on 18c and later, with 12.1, 12.2 and 19c
-  unmeasured in between, so #387 decided what to do about 11.2 and left the
-  boundary open.
+- **A 19c release update, and anything else above tier 2.** The whole tier-2
+  matrix is done — 21c (#380), 18c (#381) and 11g (#382) — and so is **19.3**,
+  the 19c base release (#548), which answered both open questions that turned on
+  19c: the password byte limit is 30 bytes there (#383), and the `ALTER USER`
+  text does not survive in `V$SQLSTATS` (#387; 11.2 is still the only release
+  that keeps it, with 12.1 and 12.2 unmeasured). §5's *Running all of this
+  against a different Oracle version* is the map, including the 19c container.
+  What is left is a *patched* 19c: 19.19 with rollover (#565), and a current RU,
+  which needs the OCI tenancy (#547).
 
 When those land, this document should grow with them — it is meant to stay a
 complete map of what can be exercised by hand, and a stale one is worse than none.

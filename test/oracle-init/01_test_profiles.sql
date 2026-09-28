@@ -116,9 +116,10 @@ BEGIN
 EXCEPTION
   WHEN OTHERS THEN
     BEGIN
-      -- A non-CDB has no CONTAINER clause to give.
+      -- A non-CDB has no CONTAINER clause to give, and a PDB (oracle-19c, whose
+      -- init runs there) cannot grant to ALL.
       EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO SYSTEM';
-      DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ to SYSTEM (non-CDB)');
+      DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ to SYSTEM (this container only)');
     EXCEPTION
       WHEN OTHERS THEN
         DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ not granted (' || SQLERRM

@@ -80,7 +80,14 @@ SYS_PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 #: required context; the PDB needs a service name, because the container is
 #: decided by the service and there is no `ALTER SESSION SET CONTAINER` anywhere.
 ROOT = "/ as sysdba"
-PDB = f"sys/{SYS_PASSWORD}@localhost:1521/freepdb1 as sysdba"
+
+#: The PDB's service name, as seen from inside the container -- so always port
+#: 1521, whatever the host maps it to. Defaults to tier 1's; a lane pointed at
+#: another container names its own (`XEPDB1` on 21c/18c XE, `ORCLPDB1` on the
+#: 19c EE image). Hard-coded to `freepdb1` until #548, which made every PDB-mode
+#: test here fail with `ORA-12514` on any container but tier 1's.
+PDB_SERVICE = os.environ.get("SOPULI_TEST_ORACLE_PDB_SERVICE", "freepdb1")
+PDB = f"sys/{SYS_PASSWORD}@localhost:1521/{PDB_SERVICE} as sysdba"
 
 #: Where the scripts are copied to inside the container. Copied rather than
 #: bind-mounted so this module works against any running container, however it

@@ -2,10 +2,12 @@
 -- sopuli-dba : password verifier reproduction probe   (v1)
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (FREEPDB1), 21c XE 21.3.0.0.0 (XEPDB1)
--- and 18c XE 18.4.0.0.0 (XEPDB1) on 2026-09-15 (#432), twice each. **Untried on
--- 19c, 12.1 and 12.2**, exactly as the layout probe (#431). 11g carries no 12C
--- verifier and is not a target here. The rollover window opened on 26ai and 21c;
--- 18c has no rollover feature and the section reports a plain rotation there.
+-- and 18c XE 18.4.0.0.0 (XEPDB1) on 2026-09-15 (#432), and on 19c EE 19.3.0.0.0
+-- (ORCLPDB1) on 2026-09-27 (#548), twice each. **Untried on 12.1 and 12.2, and
+-- on any 19c release update**, exactly as the layout probe (#431). 11g carries
+-- no 12C verifier and is not a target here. The rollover window opened on 26ai
+-- and 21c; 18c and 19.3 have no rollover feature and the section reports a plain
+-- rotation there. 19.19, above the 19.12 floor, is #565.
 --
 -- Part 2 of #90's spike (#432). It does NOT derive anything itself: it sets
 -- known passwords on a throwaway account and prints, for each, the password
@@ -19,12 +21,12 @@
 -- and a throwaway profile, and prints passwords next to their verifiers.
 --
 --
--- RESULTS  (26ai / 21c / 18c, both runs)
+-- RESULTS  (26ai / 21c / 19.3 / 18c, both runs)
 --
 --   1. EVERY STORED T: REPRODUCES BYTE-FOR-BYTE. The Python companion prints
 --      MATCH for every applied case, on all three releases:
 --
---        label     pw bytes   result (26ai)      21c / 18c
+--        label     pw bytes   result (26ai)      21c / 19.3 / 18c
 --        ascii           12   MATCH              MATCH
 --        symbols         15   MATCH              MATCH
 --        nonascii        16   MATCH              MATCH   (12 chars, Ä Ö Ω are 2 bytes)
@@ -53,9 +55,12 @@
 --      `--include-previous` tells current from previous by which prefix the
 --      vault value reproduces -- not by drift. On 18c, with no rollover feature,
 --      DURING shows one verifier (= new): a plain rotation, honestly reported.
+--      19.3 is the same as 18c, both runs: the profile resource is ORA-02376
+--      there, so no window opens and DURING shows T: = new.
 --
---      Gradual rollover needs 19.12+/21c+; the buildable 19c base is 19.3 and
---      cannot open a window (04-testing.md §5). The two-verifier result is
+--      Gradual rollover needs 19.12+/21c+; the 19c base is 19.3 and cannot
+--      open a window (04-testing.md §5) -- measured, above. 19.19, which the
+--      same registry carries, can: #565. The two-verifier result is
 --      therefore measured on 26ai and 21c here and stays to be confirmed on real
 --      19.12+ (maintainer tier), like every other rollover finding.
 --
@@ -92,7 +97,7 @@ DECLARE
   PRAGMA EXCEPTION_INIT(no_view, -942);
 BEGIN
   EXECUTE IMMEDIATE
-    q'[SELECT MIN(name) FROM v$pdbs WHERE name IN ('FREEPDB1', 'XEPDB1')]'
+    q'[SELECT MIN(name) FROM v$pdbs WHERE name IN ('FREEPDB1', 'XEPDB1', 'ORCLPDB1')]'
     INTO l_pdb;
   IF l_pdb IS NOT NULL THEN
     EXECUTE IMMEDIATE 'ALTER SESSION SET CONTAINER = ' || l_pdb;

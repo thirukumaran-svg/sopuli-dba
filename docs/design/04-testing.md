@@ -18,7 +18,7 @@ Three consequences, and they are easier to design for now than to retrofit:
    contributor's PR cannot go green on their own machine, they stop contributing.
 2. Everything version-specific must **skip, not fail**, when its environment is
    absent. A skipped test reports *why* it skipped.
-3. The versions only the maintainer can run — built 19c, 11.2, real OCI — form a
+3. The versions only the maintainer can run — 19c EE, 11.2, real OCI — form a
    **pre-release matrix**, not a per-commit one.
 
 This is also why the matrix is capability-driven rather than version-driven (§3).
@@ -76,8 +76,8 @@ limitation in D7.
 
 | Environment | How | Why it cannot be public |
 |---|---|---|
-| Oracle 19c EE | built from `oracle/docker-images` + downloaded binaries | not redistributable |
-| Oracle 19.12+ | patched 19c — needs a support licence | rollover is unavailable on the buildable 19.3 base |
+| Oracle 19c EE 19.3.0.0.0 | **preferred:** Oracle's prebuilt `container-registry.oracle.com/database/enterprise:19.3.0.0`, as `test/compose.yaml`'s `oracle-19c` service under `--profile oracle19c` (#548). Fallback: built from `oracle/docker-images` + downloaded binaries | pulling it takes an Oracle account and the repository's licence accepted on the registry website; not redistributable either way |
+| Oracle 19.12+ | patched 19c. The same registry repository also carries `enterprise:19.19.0.0` — the only other 19c tag there (checked 2026-09-27, #548) — which is above the 19.12 rollover floor and so the one pullable 19c that can open a window. **Not yet run** (#565). Anything newer needs a support licence or an OCI Base Database Service VM | rollover is unavailable on the 19.3 base, prebuilt or built |
 | Real 19c / 26ai / ADB | personal OCI tenancy | NNE, thick mode, Autonomous behaviour |
 | OCI Vault | personal OCI tenancy | no faithful local emulator |
 
@@ -92,7 +92,7 @@ release is cut.
 
 ### Two Oracle behaviours containers do not give you
 
-- **Gradual password rollover** needs 19.12+. The buildable 19c base is 19.3.
+- **Gradual password rollover** needs 19.12+. The 19c base — prebuilt or built — is 19.3.
   Rollover therefore gets tested on 23ai Free (public tier), on 21c XE (tier 2,
   and the *only* thing between them — run 2026-09-08 for #380: `apply` opens the
   window, `status` and `check --include-previous` report it rather than calling it
@@ -240,7 +240,7 @@ section's base cell plays with its import blocker.
 | 0 | every PR commit | public CI (`ci.yml`) | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, `lock status` and `lock break` with the store handed in — including the live/expired/nothing matrix, which is a comparison rather than a container and a sleep — and the install-shape assertions in §3 |
 | 1 | every PR | public CI (`tier1.yml`, #184) | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
 | 2 | nightly | public CI | < 30 min | 21c XE, 18c XE, 11g XE, PostgreSQL matrix; fault injection |
-| 3 | pre-release | maintainer | manual | built 19c, real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
+| 3 | pre-release | maintainer | manual | 19c EE (`--profile oracle19c`), real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
 
 **The tier-1 lane installs Oracle Instant Client, and has to** (#184). D3 makes
 thick mode mandatory — thin mode has no Native Network Encryption — so a runner
@@ -346,10 +346,10 @@ Carried over from UC-1 §11, with the environment each one needs:
 | **Lockout regression**: profile with `FAILED_LOGIN_ATTEMPTS 3`, run `check` against a drifted account 5×, assert the account never locks | any |
 | Verify-function: profile with `ora12c_strong_verify_function` and a violating policy — bounded regeneration, then a clear error carrying the server message. **Assert on the error, never on `DBA_PROFILES`**: in a PDB a *common* profile's `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` rather than the function name, so a dictionary check reports an unconfigured profile while the function is in fact enforcing (`ORA-28003` + `ORA-20000`). Measured for #317: a profile created *in* the PDB answers with the function's name, so a fixture that builds one locally can read it back — which is why `creds generate` reports three states and not two | any |
 | Password reuse: `PASSWORD_REUSE_MAX`, assert no blind retry on ORA-28007 | any |
-| **30-byte password limit** — a policy asking for more must be refused at *plan* time, not by `ORA-00972` mid-`apply`. Measured 2026-09-08 (#380): 31 bytes is refused on 11g XE, 18c XE **and 21c XE**, and accepted on 26ai. The two halves of the old wording do not travel together — see the next row — and `sopuli/driver/oracle/limits.py` keys the limit to 12.2, which is wrong on every line below 23ai (#383) | 21c XE / 18c XE / 11g XE |
-| 10G/11G verifiers, and no `T:` — so `--method hash` must refuse rather than guess. Measured 2026-09-08: `SYS.USER$.SPARE4` carries `S:` alone on 11g and `S:` plus `T:` on 18c, 21c and 26ai (#382, #90). The field layout and salt offsets behind that were read 2026-09-15 by `sql/oracle/05_verifier_layout_probe.sql` (#431), and `06_verifier_reproduce.{sql,py}` regenerated every stored `T:`/`t:` digest client-side the same day (#432). #433 confirmed the refusal: 11g's absent `12C` (and a forced `10G 11G 12C` account on 18c) fix the rule that `hash` compares `12C` only and fails at plan time when there is none | 11g XE, 18c XE |
+| **30-byte password limit** — a policy asking for more must be refused at *plan* time, not by `ORA-00972` mid-`apply`. Measured 2026-09-08 (#380): 31 bytes is refused on 11g XE, 18c XE **and 21c XE**, and accepted on 26ai; **19c 19.3.0.0.0 refuses it too** (2026-09-27, #548), and a 40-character policy there fails mid-`apply` exactly as on 21c. The two halves of the old wording do not travel together — see the next row — and `sopuli/driver/oracle/limits.py` keys the limit to 12.2, which is wrong on every line below 23ai (#383) | 21c XE / 19.3 EE / 18c XE / 11g XE |
+| 10G/11G verifiers, and no `T:` — so `--method hash` must refuse rather than guess. Measured 2026-09-08: `SYS.USER$.SPARE4` carries `S:` alone on 11g and `S:` plus `T:` on 18c, 21c and 26ai, and on 19.3 EE (2026-09-27, #548) (#382, #90). The field layout and salt offsets behind that were read 2026-09-15 by `sql/oracle/05_verifier_layout_probe.sql` (#431), and `06_verifier_reproduce.{sql,py}` regenerated every stored `T:`/`t:` digest client-side the same day (#432). #433 confirmed the refusal: 11g's absent `12C` (and a forced `10G 11G 12C` account on 18c) fix the rule that `hash` compares `12C` only and fails at plan time when there is none | 11g XE, 18c XE |
 | **The non-CDB shape**, which is not a missing capability but a different set of questions Oracle will answer. `SYS_CONTEXT('USERENV','CON_NAME')` *raises* (`ORA-02003`) rather than answering NULL; `DBA_USERS` has no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or `COMMON`; `USER_SYS_PRIVS` has no `COMMON`; there are no audit policies. Each of those took something down that had nothing to do with containers — the privilege audit blanked a whole target row while exiting 0 (#382) | 11g XE |
-| **DDL text retention is not uniform** (unverified: ddl-text-versions). `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and not on 18c, 21c or 26ai, so invariant 13's *conclusion* is release-dependent even though its reasoning is not. Decided in #387: documented, not warned about and not refused — which is only defensible while the table saying so is accurate, so a release claimed as supported gets `02_password_leak_probe.sql` run against it. 12.1, 12.2 and 19c are unmeasured, and the boundary below 18c is therefore unknown | every version claimed |
+| **DDL text retention is not uniform** (unverified: ddl-text-versions). `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and not on 18c, 19.3, 21c or 26ai, so invariant 13's *conclusion* is release-dependent even though its reasoning is not. Decided in #387: documented, not warned about and not refused — which is only defensible while the table saying so is accurate, so a release claimed as supported gets `02_password_leak_probe.sql` run against it. 19.3.0.0.0 does not retain it either (#548), so the boundary is somewhere in (11.2, 19.3]; 12.1, 12.2 and every 19c RU are unmeasured | every version claimed |
 | Common user + `CONTAINER=ALL`, and refusal outside `CDB$ROOT` | any CDB |
 | Rollover: both passwords valid during the window; `finish-rollover` ends it | 23ai Free, real 19.12+ |
 | Rollover *absent*: `--strategy rollover` fails at plan time, not execution. **Measured on 18c 2026-09-08 (#381), and it had never run anywhere before that** — `test_a_release_without_rollover_refuses_at_plan_time` carries `@requires_no_capability(password_rollover)`, so on 26ai, the only server the suite had ever met, it skipped every time. Exit 5 under `--dry-run`, `error.category` `capability`, `error.target_capability` `password_rollover`, the `plan` emitted beside the refusal, and `doctor` reporting 5 capabilities rather than 6 one command earlier | 18c XE, 11g XE |
@@ -495,7 +495,7 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 
    | Open | Why it blocks a claim |
    |---|---|
-   | **19c** unrun | what an OCI estate runs, and not redistributable as a container. Two open questions turn on it: the password byte limit (#383) and whether 11.2's `V$SQLSTATS` retention reaches it (#387) |
+   | **19c RUs** unrun | what an OCI estate runs. **19.3.0.0.0 is run** (#548, 2026-09-27, all three positions, the `oracle-19c` container): C3 the only leak, `V$SQLSTATS` clean for the plain `ALTER USER`, every audit source masked, `adump` identical to 21c's. It answered both questions that turned on 19c — the byte limit is 30 (#383) and 11.2's retention does not reach it (#387) — but 19.3 is the base release, so a later RU is still unmeasured. 19.19 is #565; a current RU is #547's OCI session |
    | **12.1 and 12.2** unrun (unverified: ddl-text-versions) | so **the boundary is unknown.** 11.2 retains the DDL text and 18.4 does not, and nothing measures where between them that changed. Read the 11.2 result as *11.2 does*, never as *everything older does* |
    | **AWR / `DBA_HIST_SQLTEXT`** untested (unverified: ddl-text-awr) | needs a snapshot taken before the sweep, on a database where the Diagnostics Pack is enabled — so a licensed EE, not any XE image. Untested, not clean. **The only row here that #407 could not close**, and the reason is the one that keeps it open: every image in this stack ships `control_management_pack_access = NONE` |
 
