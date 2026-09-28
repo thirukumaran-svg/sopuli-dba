@@ -4,7 +4,14 @@
 -- STATUS: run on 26ai Free 23.26.2.0.0 (FREEPDB1) and 21c XE 21.3.0.0.0
 -- (XEPDB1) on 2026-09-11 (#407), and re-run on both after the review of #410
 -- changed what §3 measures. Every finding below is from the later runs.
--- Untried on 18c, 11.2, 12.x and 19c.
+-- Run on 19c EE 19.3.0.0.0 (ORCLPDB1) on 2026-09-28 (#479), twice, with
+-- AUDIT_TRAIL = DB,EXTENDED, AUDIT_SYS_OPERATIONS = TRUE and 01_audit_policy.sql
+-- enabled first. It matches 21c: 6a is masked (`IDENTIFIED BY * REPLACE *`) and
+-- attributed to SOPULITEST, and 6b is masked (`IDENTIFIED BY VALUES *`) in both
+-- trails. Under trace, C8 alone reaches the trace directory, one file per run, and
+-- the direct DDL is printed as `ALTER USER sopulitest IDE`. adump is populated (29
+-- files, 594 ACTION lines) and holds no canary.
+-- Untried on 18c, 11.2 and 12.x.
 --
 -- The three checks `02_password_leak_probe.sql` §6 and §7 described and left for
 -- somebody to do by hand. Nobody did, for six weeks, which is the argument for

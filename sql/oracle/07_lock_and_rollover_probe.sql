@@ -22,9 +22,14 @@
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
 -- as SYSTEM, 2026-09-16, and on 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim),
--- XEPDB1, as SYSTEM, 2026-09-26 (#461), twice -- results in RESULTS below. 18c,
--- 11.2 and 19c UNRUN. On a release with no rollover (18c, 11.2) section 7 reports ABSENT and
--- the script STOPS there; Q1-Q5 run on every line.
+-- XEPDB1, as SYSTEM, 2026-09-26 (#461), twice -- results in RESULTS below.
+-- 19c EE 19.3.0.0.0, ORCLPDB1, as SYSTEM, 2026-09-28 (#479), twice: Q1-Q5 as
+-- on 26ai (ACCOUNT UNLOCK on an unlocked account resets LCOUNT 2 -> 0,
+-- IDENTIFIED BY leaves it at 2, both combined clause orders accepted), then
+-- section 7 reports ABSENT, since 19.3 has no rollover. 18c and 11.2 UNRUN. On a
+-- release with no rollover section 7 reports ABSENT and the script STOPS there;
+-- Q1-Q5 run on every line. STOPPING also skips the cleanup, so SOPULI_H4_USER
+-- is left behind; the next run drops it first.
 --
 -- THROWAWAY DATABASES ONLY. Creates and drops an account, deliberately locks
 -- it, and plants known passwords.

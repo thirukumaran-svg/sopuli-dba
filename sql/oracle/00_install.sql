@@ -21,7 +21,14 @@
 --         are fixed here: SYS_CONTEXT('USERENV','CON_NAME') RAISES on a
 --         non-CDB (ORA-02003) rather than answering NULL, and section 7's
 --         report selected DBA_SYS_PRIVS.COMMON, a 12.1 column, which failed
---         the whole install AFTER every grant had been made. Untried on 19c.
+--         the whole install AFTER every grant had been made.
+--         Confirmed on 19c EE 19.3.0.0.0 (2026-09-28, #479), by hand as
+--         SYSDBA, in both modes that matter on a real CDB: PDB mode in ORCLPDB1
+--         with a non-default name (ACME_SVC, grant_pwfile=Y), create and then
+--         already-exists; and COMMON mode in CDB$ROOT with the C## prefix this
+--         image keeps (grant_set_container=Y), where every system privilege
+--         reported COMMON = YES. Section 7's over-grant query was empty in
+--         each. A patched 19c is unmeasured.
 --         Review before running; try a throwaway DB first.
 --
 --         grant_pwfile (position 6) added and run on the same release

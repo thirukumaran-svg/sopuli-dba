@@ -19,7 +19,11 @@
 --         audit policies arrived in 12.1 and section 0 stops with ORA-20020
 --         naming the release and the traditional-auditing statement to use
 --         instead. Before that it produced four ORA-00942s and left the
---         reader to work out why. Untried on 19c.
+--         reader to work out why.
+--         Confirmed on 19c EE 19.3.0.0.0 (2026-09-28, #479) in ORCLPDB1
+--         (svc_user ACME_SVC, create then already-exists) and in CDB$ROOT
+--         (C##SOPULI_SVC), with AUDIT_TRAIL = DB,EXTENDED set first -- this
+--         image ships NONE, like the gvenzl ones.
 --
 -- The service account holds ALTER USER, which has no object scope. Unified
 -- auditing is therefore not housekeeping — it is the compensating control for

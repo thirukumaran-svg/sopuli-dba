@@ -14,7 +14,11 @@
 --         Confirmed on 18c XE 18.4.0.0.0 (2026-09-08, #381), same route.
 --         Confirmed on 11g XE 11.2.0.2.0 (2026-09-08, #382) for the account
 --         and its grants. The keep_audit paths are untestable there --
---         there are no audit policies to keep or drop. Untried on 19c.
+--         there are no audit policies to keep or drop.
+--         Confirmed on 19c EE 19.3.0.0.0 (2026-09-28, #479): a PDB install
+--         with `ACME_SVC N`, which dropped the account and both policies, and
+--         a COMMON install in CDB$ROOT with `C##SOPULI_SVC Y`, which dropped the
+--         account and left the policies.
 --
 -- Removes the service account and the audit policies. Does NOT change any
 -- application account's password — whatever the tool last applied stays in

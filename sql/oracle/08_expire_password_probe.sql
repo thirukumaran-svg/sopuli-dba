@@ -29,9 +29,13 @@
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
 -- as SYSTEM, 2026-09-25 -- three times, the last two identical and clean (the
--- first hit trap 6 below and is not counted). 21c, 18c, 11.2 and 19c UNRUN. On a
--- release with no rollover (18c, 11.2) section 5 reports ABSENT and the script
--- stops there; E1-E5 are written to run on every line, which is untried.
+-- first hit trap 6 below and is not counted). 19c EE 19.3.0.0.0, ORCLPDB1, as
+-- SYSTEM, 2026-09-28 (#479), twice: E1-E5 identical to 26ai in every status,
+-- except that E3's grace-period login sends ORA-28002 where 26ai sends
+-- ORA-28098. Section 5 then reports ABSENT (no rollover), so E6-E9 are
+-- unmeasured there. 21c, 18c and 11.2 UNRUN. On a release with no rollover
+-- section 5 reports ABSENT and the script stops there -- before its cleanup,
+-- so the four SOPULI_EX_* accounts are left behind and the next run drops them.
 --
 -- THROWAWAY DATABASES ONLY. Creates and drops accounts and a profile, locks
 -- accounts, expires them, and plants known passwords.

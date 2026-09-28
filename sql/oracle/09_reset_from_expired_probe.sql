@@ -36,7 +36,9 @@
 -- Run on 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim), XEPDB1, as SYSTEM,
 -- 2026-09-26 (#461) -- twice, and identical to 26ai in every status and every
 -- login check in the results table; the setup's grace-period logins send a
--- different warning code (RESULTS). 18c and 11.2 have no rollover and stop at section 0. 19c UNRUN.
+-- different warning code (RESULTS). 18c and 11.2 have no rollover and stop at section 0.
+-- 19c EE 19.3.0.0.0 (2026-09-28, #479, twice) stops at section 0 the same way:
+-- no SOPULI_ROLLOVER, so every section is ABSENT. A 19.12+ release is unrun.
 --
 -- THROWAWAY DATABASES ONLY. Creates and drops accounts and a profile, expires
 -- them, and plants known passwords.

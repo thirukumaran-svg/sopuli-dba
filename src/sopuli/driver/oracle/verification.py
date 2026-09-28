@@ -49,6 +49,15 @@ as ``connection.warning`` -- ``ORA-28098`` where the profile limits
 ``PASSWORD_GRACE_TIME``, ``ORA-28011`` where it does not. ``ORA-28002`` was not
 produced in either shape.
 
+**On 19.3.0.0.0 the code is the documented one, and the shape is the same**
+(2026-09-28, #479, twice, thick mode): the login succeeds and
+``connection.warning`` carries ``ORA-28002: the password will expire within 1
+days``, on a profile that limits ``PASSWORD_GRACE_TIME``. 21c sends ``ORA-28002``
+too, seen in SQL*Plus by ``09_reset_from_expired_probe.sql``, though not through
+this driver. So which code arrives depends on the release, and *how* it arrives
+did not change between 19.3 and 26ai: neither raises. :func:`warning_detail`
+treats the code as data and formats either.
+
 Two things follow, and neither is fixed here:
 
 * :data:`PASSWORD_IN_GRACE` and its arm of :func:`result_for` are **unreachable
@@ -82,10 +91,11 @@ UNLIMITED = "UNLIMITED"
 
 ACCOUNT_LOCKED = "ORA-28000"
 PASSWORD_EXPIRED = "ORA-28001"
-#: **Unreachable on 26ai 23.26.2.0.0** -- a grace-period login succeeds and the
-#: notice arrives as ``connection.warning`` carrying ``ORA-28098`` or
-#: ``ORA-28011``, neither of which is this. Kept because the code exists and the
-#: older lines are unmeasured; see the module docstring, #309 and #322.
+#: **Unreachable as an exception on 26ai 23.26.2.0.0 and on 19.3.0.0.0** -- a
+#: grace-period login succeeds and the notice arrives as ``connection.warning``:
+#: ``ORA-28098`` or ``ORA-28011`` on 26ai, and this very code on 19.3, still as a
+#: warning rather than raised. Kept because 18c and 11.2 are unmeasured, and 21c
+#: only in SQL*Plus; see the module docstring, #309 and #322.
 PASSWORD_IN_GRACE = "ORA-28002"
 INVALID_CREDENTIALS = "ORA-01017"
 

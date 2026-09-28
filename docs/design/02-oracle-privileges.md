@@ -293,6 +293,20 @@ What ADB takes away is permanent rather than a version gap:
   documentation's rules for `ADMIN`'s own password did not apply to a created
   user on this release. The reuse limits make UC-1 §8's rollback fail with
   `ORA-28007` (#568).
+- **No retention claim either way.** `02_password_leak_probe.sql`, which is
+  gate 2's evidence (`04-testing.md` §6), sweeps `V$SQLSTATS`, the OS audit files
+  and the trace directory as `SYSDBA`. ADB has no `SYSDBA` and no OS access, so
+  the sweep can't run there, and its `SYSDBA` positions are **inapplicable**
+  rather than unrun. §4's surface table names the releases it was measured on,
+  and ADB is not among them for that reason. It must not borrow 26ai's result
+  because both are 26ai.
+- **`db_version` is the base release**, `23.0.0.0.0`, because it is
+  `V$INSTANCE.VERSION`, and that column has carried only the base release since
+  18c. 19.3 reports `19.0.0.0.0` in the same column, with `VERSION_FULL`
+  `19.3.0.0.0`. `doctor` displays it as `scope.db_version`. The one thing that
+  *decides* anything with it is `driver/oracle/limits.py`'s password-limit floor,
+  which compares the first two components only, so the zeros change nothing
+  (#479).
 - **Not tried:** whether `ADMIN` can grant `SELECT ON SYS.V_$PWFILE_USERS`
   (§4 check 3), and whether `01_audit_policy.sql` runs on ADB, where unified
   auditing is on by default.
@@ -441,13 +455,22 @@ which is still unread; 12.1/12.2 are unread too. #90 is three parts:
       `11G 12C`, so 10G and 12C co-occur only on 12.1–19c. Nothing depends on
       this; it is recorded so a future `10G`-handling assumption is not made
       about the newest target.
+    - **19.3.0.0.0 (2026-09-28, #479):** with no `ALLOWED_LOGON_VERSION_SERVER`
+      set, a fresh account is `11G 12C`, with `SPARE4` holding `S:` and `T:` and
+      no 10G hash. With `ALLOWED_LOGON_VERSION_SERVER = 11` it is `10G 11G 12C`,
+      and the 10G hash lands in `SYS.USER$.PASSWORD` exactly as on 18c. So on 19c
+      the co-occurrence is real, but only where a site lowered the logon version.
+      A patched 19c is unmeasured.
 
   How the three-verifier account was produced, for a maintainer re-run (not a
-  repeatable public probe — it needs a server config change and a restart):
-  append `SQLNET.ALLOWED_LOGON_VERSION_SERVER = 8` to the server `sqlnet.ora`
-  (`$ORACLE_HOME/network/admin/sqlnet.ora`), restart the instance, then
-  `CREATE USER … IDENTIFIED BY …`; `PASSWORD_VERSIONS` reads `10G 11G 12C`.
-  Restore the file and restart afterwards. It worked on 18c and not on 26ai.
+  repeatable public probe, because it needs a server config change): append
+  `SQLNET.ALLOWED_LOGON_VERSION_SERVER = 8` to the server `sqlnet.ora`
+  (`$ORACLE_HOME/network/admin/sqlnet.ora`), then `CREATE USER … IDENTIFIED BY
+  …`; `PASSWORD_VERSIONS` reads `10G 11G 12C`. On 19.3 no restart was needed:
+  a new SYSDBA session read the edited file and the next `CREATE USER` got the
+  10G verifier. On 18c the recipe included a restart, and whether that one
+  needed it was not tested. Restore the file afterwards. The recipe worked on
+  18c and 19.3 and not on 26ai.
 
 Since the derivation reproduces and degradation is settled, `--method hash|both`
 is now a mechanical implementation on the tier-2 releases. Were it ever to fail
