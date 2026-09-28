@@ -78,7 +78,7 @@ limitation in D7.
 |---|---|---|
 | Oracle 19c EE 19.3.0.0.0 | **preferred:** Oracle's prebuilt `container-registry.oracle.com/database/enterprise:19.3.0.0`, as `test/compose.yaml`'s `oracle-19c` service under `--profile oracle19c` (#548). Fallback: built from `oracle/docker-images` + downloaded binaries | pulling it takes an Oracle account and the repository's licence accepted on the registry website; not redistributable either way |
 | Oracle 19.12+ | patched 19c. The same registry repository also carries `enterprise:19.19.0.0` — the only other 19c tag there (checked 2026-09-27, #548) — which is above the 19.12 rollover floor and so the one pullable 19c that can open a window. **It is a linux/arm64-only image and needs an arm64 host**: under QEMU on the x86 maintainer machine the instance does not start (`ORA-01096` from PMON, 2026-09-28), so it is `test/compose.yaml`'s `oracle-19c-ru` for an arm64 Docker host and **not yet run** (#565). Anything newer needs a support licence or an OCI Base Database Service VM | rollover is unavailable on the 19.3 base, prebuilt or built |
-| Real 19c / 26ai / ADB | personal OCI tenancy | NNE, thick mode, Autonomous behaviour |
+| Real 19c / 26ai / ADB | personal OCI tenancy | NNE, thick mode, Autonomous behaviour. ADB serverless 26ai 23.26.3.3.0 run 2026-09-28 (#479): the install script, a rotation and its `changed: false` re-run, the verify function and reuse limits, and a rollover window with `finish-rollover`. `local-testing.md` §14 has the output |
 | OCI Vault | personal OCI tenancy | no faithful local emulator |
 
 ### Emulators — smoke tests only

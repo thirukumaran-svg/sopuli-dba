@@ -30,6 +30,14 @@
 --         one the sixth COLUMN/NEW_VALUE line exists for. The report section
 --         lists SYS.V_$PWFILE_USERS under Y and not under N.
 --
+--         Confirmed on an Autonomous Database (serverless, 26ai 23.26.3.3.0,
+--         2026-09-28, #479): PDB mode, run as ADMIN rather than SYSDBA, with
+--         tablespace DATA and every optional grant N. The mode check accepted
+--         the generated container name, every grant succeeded, and section 7's
+--         over-grant query was empty. grant_user_dollar=Y cannot succeed there:
+--         ADMIN itself gets ORA-00942 on SYS.USER$ (#478). V$PWFILE_USERS
+--         (position 6) untried on ADB.
+--
 --         SELECT ON SYS.DBA_ROLES added 2026-09-25 (#531) and run on 26ai Free
 --         23.26.2.0.0 in all three modes, through
 --         tests/driver/test_oracle_install_script.py, and by hand in PDB mode;

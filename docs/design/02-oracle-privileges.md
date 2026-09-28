@@ -1,6 +1,8 @@
 # sopuli-dba — Oracle privileges and grants
 
-Status: draft / sketch. **The SQL in `sql/oracle/` is unrun and untested.**
+Status: the SQL in `sql/oracle/` has been run, per script and per release, and
+**each script's own `STATUS:` header says where** and what is still untried.
+Trust that header over any summary, including this one.
 Depends on: `00-principles.md`, `../use-cases/uc-01-app-credential-sync.md`
 
 ---
@@ -264,6 +266,36 @@ Recommendation: common user when one DBA team owns the CDB, which is the usual
 case. Per-PDB local users when PDBs have different owners — there the isolation
 is worth the extra provisioning, and the tool's config already models targets
 individually.
+
+### Autonomous Database — PDB mode, as `ADMIN`, and no `SYS.USER$`
+
+An Autonomous Database is a PDB whose container name is generated (a long prefix
+and the database name, e.g. `G…_ACMEDB`), and `ADMIN` is its most privileged
+account. It is not `SYSDBA`. **`00_install.sql` runs there unchanged in PDB
+mode, run as `ADMIN`** (measured 2026-09-28 on ADB serverless 26ai 23.26.3.3.0,
+#479). The mode check accepts the generated name, all eight grants in §2's base
+set succeed, and the report's "should not appear" query is empty. `doctor
+--check-privileges` then flags nothing beyond the optional grants. Use the PDB
+tablespace ADB provides, `DATA`, as the third argument.
+
+What ADB takes away is permanent rather than a version gap:
+
+- **No `SYS.USER$`.** `ADMIN` gets `ORA-00942` on it (#478), so
+  `grant_user_dollar=Y` has nothing to grant. That means no `check --method hash`
+  on ADB, no `LCOUNT` guard, and `offline_verify_available: false` in `doctor`.
+  None of this is evidence about the verifier layout, because nothing was read.
+  The `PTIME` fallback is not needed there, since `PASSWORD_CHANGE_DATE` exists.
+- **`DEFAULT` is ADB's own profile**, and every created user gets it:
+  `PASSWORD_VERIFY_FUNCTION CLOUD_VERIFY_FUNCTION`, `PASSWORD_REUSE_MAX 4`,
+  `PASSWORD_REUSE_TIME 1`, `PASSWORD_ROLLOVER_TIME 0`. The verify function is
+  reported as `SOPULI-W016`, and it refused a ten-character password with
+  `ORA-28003`. It accepted forty, so the 30-character upper bound in the ADB
+  documentation's rules for `ADMIN`'s own password did not apply to a created
+  user on this release. The reuse limits make UC-1 §8's rollback fail with
+  `ORA-28007` (#568).
+- **Not tried:** whether `ADMIN` can grant `SELECT ON SYS.V_$PWFILE_USERS`
+  (§4 check 3), and whether `01_audit_policy.sql` runs on ADB, where unified
+  auditing is on by default.
 
 ### `check`'s default method, and the optional `SYS.USER$` grant
 

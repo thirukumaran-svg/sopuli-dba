@@ -4862,6 +4862,148 @@ targets:
     admin: { username: ADMIN, auth: prompt }
 ```
 
+`ADMIN` works, but it is ADB's most privileged account. A service account holds
+only `02-oracle-privileges.md` §2's grants, and installing one is below.
+
+### An Autonomous Database end to end (#479)
+
+Everything in this subsection was run on 2026-09-28 against an ADB serverless,
+26ai `23.26.3.3.0`, with mutual TLS. The database's name and its generated
+container are replaced with `acme` placeholders below; everything else is
+pasted.
+
+**The service account.** In SQL\*Plus as `ADMIN`, with `TNS_ADMIN` pointing at
+the unzipped wallet, run the install in PDB mode with ADB's `DATA` tablespace:
+
+```
+SQL> @sql/oracle/00_install.sql PDB SOPULI_SVC DATA N N N
+...
+[check] session container is valid for mode=PDB
+PL/SQL procedure successfully completed.
+[1] account SOPULI_SVC
+created SOPULI_SVC (random password, expired - set it now)
+...
+--- things that should NOT appear above
+no rows selected
+```
+
+Every grant succeeds. Then set its password with SQL\*Plus's `PASSWORD
+SOPULI_SVC`, which prompts and never echoes, and put the same value in the vault.
+`grant_user_dollar` has to stay `N`, because `ADMIN` cannot read `SYS.USER$`
+either (#478):
+
+```
+SQL> select count(*) from sys.user$ where rownum = 1;
+ORA-00942: table or view "SYS"."USER$" does not exist
+```
+
+**The target.** The container is the name `SYS_CONTEXT('USERENV','CON_NAME')`
+gives, and the admin password comes from the vault like any unattended source:
+
+```yaml
+targets:
+  - name: adb-acme
+    type: oracle
+    environment: dev
+    vault: vault-dev
+    dsn: "acmedb_tp"
+    admin:
+      username: SOPULI_SVC
+      auth: { method: vault, secret: "ops/sopuli/adb#password" }
+    oracle: { scope: pdb, container: GXXXXXXXXXXXXXX_ACME }
+```
+
+```
+TARGET    REACHABLE  SCOPE  CONTAINER             OPEN MODE   CAPABILITIES
+adb-acme  yes        pdb    GXXXXXXXXXXXXXX_ACME  READ WRITE  6
+```
+
+The six are `account_lock_state`, `expire_password`, `password_reuse_policy`,
+`password_rollover`, `profile_management` and `role_lookup`. Two are absent:
+`offline_verify`, which is the `SYS.USER$` probe, and `common_users`, because a
+PDB-local service account has no common `ALTER USER`.
+`db_version` in the JSON reads `23.0.0.0.0`, although `V$VERSION` says
+`23.26.3.3.0`.
+
+**A rotation, then the same run again.** §10.2 and §10.3 behave as they do
+locally. The second `apply` is invariant 9 holding on ADB:
+
+```
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  adb-acme  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+```
+```
+acme_app_user  adb-acme  IN_SYNC  the vault's password is already accepted; nothing to change
+
+nothing changed
+```
+
+Every run on ADB also carries the `password_file` note (`SOPULI-W018`), because
+`V$PWFILE_USERS` was not granted. Whether `ADMIN` can grant it there is untried.
+
+**ADB's `DEFAULT` profile judges the password.** Every created user gets it,
+and it names `CLOUD_VERIFY_FUNCTION`, so `generate` says so up front:
+
+```
+constraints: 128 bytes in AL32UTF8, from adb-acme
+
+1 note:
+  adb-acme: profile "DEFAULT" names the verify function CLOUD_VERIFY_FUNCTION, which this run cannot evaluate: a password it accepts here may still be refused with ORA-28003 when it is applied (ACME_APP_USER)
+```
+
+The note is earned. A 40-character policy was accepted, but a 10-character one
+plans clean and is refused at `apply`, exit 1, with nothing promoted:
+
+```
+acme_app_user  adb-acme  ERROR  ORA-28003: The password chosen did not meet the required complexity rules set by your organization.
+
+nothing changed, 1 not confirmed
+```
+
+**§10.7's rollback does not work on `DEFAULT`.** The profile also sets
+`PASSWORD_REUSE_MAX 4` and `PASSWORD_REUSE_TIME 1`, and `previous` is a password
+the account held one change ago:
+
+```
+$ sopuli --config sopuli-adb.yaml creds apply --source previous --confirm
+acme_app_user  adb-acme  ERROR  ORA-28007: The password cannot be reused.
+
+nothing rolled back, 1 not confirmed
+```
+
+It fails safely, and `check` afterwards is `IN_SYNC` against `current`. Nothing
+warns beforehand, though, and #568 is the decision about that. On ADB the way
+back is a rollover window, below, not a rollback. Before you can even get this
+far, a `pending` left over from a failed `apply` makes the rollback refuse with
+`PENDING_APPLY`, exactly as §10.7 says. Clear it with a good `generate` and
+`apply` first.
+
+**§10.9's rollover works unchanged.** `ADMIN` can create the profile
+(`CREATE PROFILE sopuli_rollover LIMIT PASSWORD_ROLLOVER_TIME 1/24`), and it
+inherits `DEFAULT`'s verify function. With `account: { profile:
+SOPULI_ROLLOVER }` in the policy, one `apply` assigns it and opens the window:
+
+```
+ACCOUNT        TARGET    STATE            DETAIL
+acme_app_user  adb-acme  ROLLOVER_ACTIVE  changed and verified; a rollover window is open, so the previous password authenticates until it closes
+```
+```
+ACCOUNT        TARGET    WINDOW
+acme_app_user  adb-acme  open, 59m left
+
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  adb-acme  IN_SYNC  rollover window closed, 59m early
+
+1 closed
+```
+
+A second `finish-rollover` reports `no rollover window was open on any of 1`.
+
+**Clean up** as `ADMIN`: `DROP USER acme_app_user; DROP USER sopuli_svc; DROP
+PROFILE sopuli_rollover;`.
+
 ### "Wallet" means two different things, and ADB uses both words for one zip
 
 This is the part that will cost you an afternoon if nobody says it, so:

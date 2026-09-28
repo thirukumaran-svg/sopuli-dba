@@ -446,9 +446,11 @@ three wrong answers.
   certificates and no credential, so `auth: external` against an unmodified one
   has nothing to log in with — `docs/local-testing.md` §14 presented it as the
   one path to a real wallet that skips `mkstore`, and an operator following that
-  got a login failure. What is untried is the repair. Nobody has run sopuli
-  against an ADB at all, so the `mkstore` line in §14 is Oracle's documented
-  syntax rather than a command anybody here has watched succeed. Nothing in the
+  got a login failure. What is untried is the repair. sopuli *has* now run
+  against an ADB with a vault-held password (#479, §14's *An Autonomous Database
+  end to end*), but never with `auth: external`, so the `mkstore` line in §14 is
+  still Oracle's documented syntax rather than a command anybody here has watched
+  succeed. Nothing in the
   default path depends on it: the password sources are unaffected, and §14's
   example now uses one.
 **Password text retained by Oracle** is three entries rather than one, and the
