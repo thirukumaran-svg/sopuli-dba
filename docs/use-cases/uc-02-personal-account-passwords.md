@@ -334,7 +334,7 @@ a metadata record, and nowhere at all:
 
 | Question | Answered by | Why there |
 |---|---|---|
-| **when** the password last changed | the **database** — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant otherwise (#386), and 12.1 and 12.2 unmeasured on the fallback (unverified: pw-changed-source) | it is the only thing that knows about a change the tool did not make, and on the seen path there is *always* one (§3.2) |
+| **when** the password last changed | the **database** — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant otherwise (#386), and 12.1 unmeasured on the fallback (unverified: pw-changed-source) | it is the only thing that knows about a change the tool did not make, and on the seen path there is *always* one (§3.2) |
 | **who** reset it, by **which path**, and **where** it was delivered | a **metadata record** in a store, written where an estate configures one (§3.1) | the database cannot know any of it, and the run document answers only for whoever kept that run's output |
 | **what to roll back to** | **nothing** | rollback is not a UC-2 operation: the recovery for a lost personal password is another reset |
 | **where the lock lives** | the metadata record's own path (§3.3) | it is the one location that exists on the seen path and the unseen one alike, and in both of the unseen path's delivery forms |
@@ -588,8 +588,8 @@ Three absences, and they are not the same absence:
   already distinguishes the causes: a release with no
   `DBA_USERS.PASSWORD_CHANGE_DATE` and no `SELECT ON SYS.USER$` to read `PTIME`
   instead, which a grant fixes, or a value that could not be read, which is worth
-  investigating (`03-json-output.md`). 12.1 and 12.2 would take the fallback and
-  are unmeasured (unverified: pw-changed-source).
+  investigating (`03-json-output.md`). 12.2.0.1.0 takes the fallback (#572); 12.1
+  would too and is unmeasured (unverified: pw-changed-source).
 
 **None of the three is a refusal**, and that is a deliberate departure from this
 codebase's usual reflex. Invariant 4 refuses at plan time when a command needs a
@@ -665,7 +665,8 @@ disagrees — UC-1 §6.1 said to escape an embedded `"` until #457 corrected it:
 - **what the direct DDL leaves behind is release-dependent.** For the unseen
   path's statement it is measured: on 26ai, 21c and 18c no `V$SQL` cursor exists at
   all; on 11.2 `V$SQLSTATS` keeps the text until the shared pool ages it out
-  (#387); 12.1, 12.2 and 19c are unrun (unverified: ddl-text-versions). **This is
+  (#387); 12.2.0.1.0 and 19.3.0.0.0 keep nothing, as 18c does (#572, #548), and
+  12.1 and a patched 19c are unrun (unverified: ddl-text-versions). **This is
   the limit of the unseen path's claim.** The claim is about the tool: it puts the
   value in none of its own output. On 11.2 the database itself keeps the statement
   where a dictionary reader — which a DBA usually is — can read it until the shared
@@ -1416,7 +1417,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 | # | Question | Issue |
 |---|---|---|
 | ~~H1~~ | ~~Where is a personal account declared, so invariant 5 still whitelists it?~~ | **closed** — a `personal_accounts:` section, holding names or a predicate over a profile or role. The predicate amends invariant 5's first sentence and leaves its second intact, because it never widens what a mutating verb may touch: a reset names its account and `account list` resolves the rule. The stated cost is that membership is a profile assignment or a role grant rather than a commit somebody reads; the keys and validators are #467 (§2) · #449 |
-| ~~H2~~ | ~~With no vault as master, what is recorded about a reset, and where?~~ | **closed** — three places, not one. The **database** answers *when* (`PASSWORD_CHANGE_DATE`, `PTIME` behind the grant, with 12.1 and 12.2 unmeasured on that fallback (unverified: pw-changed-source)), which is a divergence from Q9 and §3.2 says why: on the seen path the owner is required to change the password, so a record's own timestamp is designed to go stale. A **metadata record**, written wherever a store is configured, answers *who*, *which path* and *where it was delivered*, never a value — and its path is what Q2's lock finally has to key on. **Nothing** answers *what to roll back to*, because rollback is not a UC-2 operation. A reset with no store configured warns and runs; the keys, schema and validators are #468 (§3) · #450 |
+| ~~H2~~ | ~~With no vault as master, what is recorded about a reset, and where?~~ | **closed** — three places, not one. The **database** answers *when* (`PASSWORD_CHANGE_DATE`, `PTIME` behind the grant, with 12.1 unmeasured on that fallback (unverified: pw-changed-source)), which is a divergence from Q9 and §3.2 says why: on the seen path the owner is required to change the password, so a record's own timestamp is designed to go stale. A **metadata record**, written wherever a store is configured, answers *who*, *which path* and *where it was delivered*, never a value — and its path is what Q2's lock finally has to key on. **Nothing** answers *what to roll back to*, because rollback is not a UC-2 operation. A reset with no store configured warns and runs; the keys, schema and validators are #468 (§3) · #450 |
 | ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, the configuration's own word for what is being managed, whichever key declares it (`accounts:`, an `applications:` entry, or H1's `personal_accounts:`); the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; suspending an account is `account suspend`, named that way to avoid a second sense of `lock` and specified in #463; and listing is `account list`, which H1 earned (§2) · #451 |
 | ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |

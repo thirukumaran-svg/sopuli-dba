@@ -61,11 +61,12 @@ What is **not** deferred, and is worth saying because it looks like an omission:
 there is no ``offline_verify`` path in :meth:`Session.verify_password` beyond a
 method name. Whether the ``T:`` verifier in ``SYS.USER$.SPARE4`` can be
 reproduced client-side is #90: it reproduces byte-for-byte on the releases
-measured (26ai, 21c, 18c -- #432), and degradation is settled (#433) -- compare
+measured (26ai, 21c, 18c -- #432; 19.3 -- #548; 12.2 -- #572), and
+degradation is settled (#433) -- compare
 the ``12C`` verifier only, and an account without one fails at plan time
 (invariant 4) rather than falling back to a weaker verifier. It stays open
 (unverified: t-verifier) until 19c -- the release an OCI estate runs -- is
-confirmed, 12.1 and 12.2 being unread too. Should it fail there then
+confirmed on a current RU, 12.1 being unread too. Should it fail there then
 ``--method hash`` **and ``--method both``** are dropped from the CLI entirely --
 ``both`` is login plus that same comparison, so it cannot outlive it. So the
 vocabulary is representable -- it is the run document's, and the document was
@@ -594,7 +595,8 @@ class UserState:
       present on 21c and 26ai (measured 2026-09-08, #386) and on 19c
       (19.24.0.0.0, measured 2026-09-17); below it the value is
       ``SYS.USER$.PTIME``, behind the optional grant, and ``None`` without
-      it. 12.1 and 12.2 are unmeasured (unverified: pw-changed-source).
+      it. 12.2.0.1.0 takes that path too (#572); 12.1 is unmeasured
+      (unverified: pw-changed-source).
       Nothing gates on it (Q9 made `--max-age-days` read the vault's
       ``rotated_at`` and only that), so reporting nothing costs nothing and
       guessing would be all cost -- but *saying* nothing did cost something,

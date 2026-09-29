@@ -3,8 +3,11 @@
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (FREEPDB1), 21c XE 21.3.0.0.0 (XEPDB1)
 -- and 18c XE 18.4.0.0.0 (XEPDB1) on 2026-09-15 (#432), and on 19c EE 19.3.0.0.0
--- (ORCLPDB1) on 2026-09-27 (#548), twice each. **Untried on 12.1 and 12.2, and
--- on any 19c release update**, exactly as the layout probe (#431). 11g carries
+-- (ORCLPDB1) on 2026-09-27 (#548), twice each, and on 12c EE 12.2.0.1.0
+-- (ORCLPDB1, a WE8DEC database) on 2026-09-29 (#572), four times -- the first
+-- two before the §1 CONVERT fix, which is what found it. The fixed script was
+-- then re-run on 26ai to confirm CONVERT is a no-op on AL32UTF8. **Untried on
+-- 12.1, and on any 19c release update**, exactly as the layout probe (#431). 11g carries
 -- no 12C verifier and is not a target here. The rollover window opened on 26ai
 -- and 21c; 18c and 19.3 have no rollover feature and the section reports a plain
 -- rotation there. 19.19, above the 19.12 floor, is #565 (an arm64-only image,
@@ -22,12 +25,12 @@
 -- and a throwaway profile, and prints passwords next to their verifiers.
 --
 --
--- RESULTS  (26ai / 21c / 19.3 / 18c, both runs)
+-- RESULTS  (26ai / 21c / 19.3 / 18c / 12.2, both runs)
 --
 --   1. EVERY STORED T: REPRODUCES BYTE-FOR-BYTE. The Python companion prints
---      MATCH for every applied case, on all three releases:
+--      MATCH for every applied case, on all five releases:
 --
---        label     pw bytes   result (26ai)      21c / 19.3 / 18c
+--        label     pw bytes   result (26ai)      21c / 19.3 / 18c / 12.2
 --        ascii           12   MATCH              MATCH
 --        symbols         15   MATCH              MATCH
 --        nonascii        16   MATCH              MATCH   (12 chars, Ä Ö Ω are 2 bytes)
@@ -35,7 +38,15 @@
 --        len128         128   MATCH              rejected by server (ORA-00972)
 --
 --      The password is fed as raw UTF-8 with no case folding or normalisation:
---      the non-ASCII case matches on the multibyte input unchanged. The 128-byte
+--      the non-ASCII case matches on the multibyte input unchanged -- on an
+--      AL32UTF8 database. **On any other character set it is the UTF-8 of the
+--      password after the server converted it to that set** (12.2.0.1.0's
+--      WE8DEC image, #572): WE8DEC has no Ω, so the account's password became
+--      'Äcme-Pröbe-¿9', and the stored T: reproduced from that string's UTF-8
+--      (16 bytes, the ¿ being 2) and from nothing else tried. §1 now CONVERTs to
+--      AL32UTF8 before emitting, which is a no-op where the two agree. What it
+--      means for the tool: `limits.py` has no codec for WE8DEC and measures in
+--      ASCII there, so no password the tool would set can take that path. The 128-byte
 --      case is accepted and reproduces on 26ai and is rejected at DDL below 23ai
 --      (#383/#380: the limit is 30 bytes there) -- and that rejection is read
 --      from the server (SPARE4 did not change), not assumed from the version, so
@@ -57,7 +68,7 @@
 --      vault value reproduces -- not by drift. On 18c, with no rollover feature,
 --      DURING shows one verifier (= new): a plain rotation, honestly reported.
 --      19.3 is the same as 18c, both runs: the profile resource is ORA-02376
---      there, so no window opens and DURING shows T: = new.
+--      there, so no window opens and DURING shows T: = new. So is 12.2.0.1.0.
 --
 --      Gradual rollover needs 19.12+/21c+; the 19c base is 19.3 and cannot
 --      open a window (04-testing.md §5) -- measured, above. 19.19, which the
@@ -136,8 +147,17 @@ ALTER USER acme_kdf_user IDENTIFIED BY "P@55-w0rd_#9=+.";
 SELECT 'RESULT|symbols|1|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('P@55-w0rd_#9=+.'))
        || '|' || spare4 FROM sys.user$ WHERE name = 'ACME_KDF_USER';
 
+-- CONVERT to AL32UTF8 before the cast, because the server hashes the UTF-8 of
+-- the password AS THE DATABASE HOLDS IT -- after conversion to the database
+-- character set, not as the client sent it. On AL32UTF8 the two are the same
+-- bytes and CONVERT is a no-op. On 12.2.0.1.0's WE8DEC image (#572) they are
+-- not: WE8DEC has no Ω, the server stores 'Äcme-Pröbe-¿9', and the verifier
+-- reproduced from the UTF-8 of THAT string and from nothing else tried -- not
+-- the WE8DEC bytes (what a bare CAST_TO_RAW emits there), not the client's
+-- UTF-8 with the Ω, not UTF-16. Measured twice.
 ALTER USER acme_kdf_user IDENTIFIED BY "Äcme-Pröbe-Ω9";
-SELECT 'RESULT|nonascii|1|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('Äcme-Pröbe-Ω9'))
+SELECT 'RESULT|nonascii|1|'
+       || RAWTOHEX(UTL_RAW.CAST_TO_RAW(CONVERT('Äcme-Pröbe-Ω9', 'AL32UTF8')))
        || '|' || spare4 FROM sys.user$ WHERE name = 'ACME_KDF_USER';
 
 -- Two fixed lengths, attempted on every release: 30 bytes (accepted everywhere)

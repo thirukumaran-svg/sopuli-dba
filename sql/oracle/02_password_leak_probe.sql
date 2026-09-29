@@ -211,7 +211,8 @@
 --
 --   **V$SQLSTATS is clean for C2 and C4 in every position**, so 11.2's
 --   retention of the plain ALTER USER does not reach 19.3: the boundary #387
---   left open is now somewhere in (11.2, 19.3], with 12.1 and 12.2 unrun.
+--   left open is now somewhere in (11.2, 19.3], with 12.1 and 12.2 unrun
+--   (12.2 since run, below: the interval is now (11.2, 12.2]).
 --   Every audit source masks the DDL (`ALTER USER SOPULITEST IDENTIFIED BY *`),
 --   traditional as well as unified.
 --
@@ -235,6 +236,50 @@
 --   CONTROL_MANAGEMENT_PACK_ACCESS = DIAGNOSTIC+TUNING, but no snapshot was taken
 --   (see ddl-text-awr in docs/README.md), so DBA_HIST_SQLTEXT reads pop=n here as
 --   everywhere else.
+--
+--   2026-09-29, 12c EE 12.2.0.1.0 (container-registry.oracle.com/database/
+--   enterprise:12.2.0.1-slim, test/compose.yaml's oracle-12c), ALL THREE
+--   POSITIONS (#572), with AUDIT_TRAIL = DB,EXTENDED set first (this image ships
+--   DB) and AUDIT_SYS_OPERATIONS = TRUE (which it ships). Mixed-mode auditing
+--   (Unified Auditing not linked in); ORA_SECURECONFIG NOT enabled on this image,
+--   unlike 19.3's -- the enabled unified policies were SOPULI_POL, left by the
+--   suite's install-script tests, and this probe's own:
+--
+--     position                                   isdba   unified  trad.  leaked
+--     1  ORCLPDB1, svc = SOPULI_SVC  (run twice)  FALSE   3 of 3   3      C3 only
+--     2  ORCLPDB1, svc = SYS AS SYSDBA (twice)    TRUE    3 of 3   0      C3 only
+--     3  CDB$ROOT, svc = C##SOPULI_SVC,           FALSE   4 of 4   3      C3 only
+--        test_user = C##SOPULITEST (six runs)
+--
+--   **V$SQLSTATS is clean for C2 and C4 in every position**, as on 18c and
+--   19.3, so the boundary #387 left open narrows to (11.2, 12.2] -- 12.1 is the
+--   one release in it still unrun. Every audit source masks the DDL,
+--   traditional and unified. Position 3's fourth unified event is C1, which in
+--   the root is captured there too.
+--
+--   Position 3 reported V$SQL_BIND_CAPTURE *** LEAK *** C1(1) in two of its six
+--   runs, and it is this probe reading itself, triaged from section 5's owner
+--   column: a recursive cursor the root rewrote the DBA_HIST_SQLTEXT sweep into,
+--     SELECT /*+ NO_STATEMENT_QUEUING RESULT_CACHE (SYSOBJ=TRUE) */ SQL_TEXT,
+--       CON_ID FROM NO_OBJECT_LINK("SYS"."AWR_ROOT_SQLTEXT") ... AND
+--       INSTR(UPPER("AWR_ROOT_SQLTEXT"."SQL_TEXT"),UPPER(:1))>0
+--   carrying the sweep's bind and not its /* SOPULI_PROBE */ marker. c_notme in
+--   section 4b now excludes that shape too. Both occurrences came before a
+--   FLUSH SHARED_POOL and none of the three runs after it captured the cursor
+--   at all, so the widened filter is checked against the recorded text rather
+--   than seen suppressing a live capture.
+--
+--   Section 7 greps after all runs: trace directory (611 files), listener log
+--   and client history clean; audit_file_dest (468 files) holds C3 once per
+--   position-2 run and no other numbered canary, and every ALTER/CREATE USER
+--   ACTION line in it is masked (`IDENTIFIED BY *`). Identical to 21c and 19.3.
+--   DBA_HIST_SQLTEXT reads pop=y here -- this image carries AWR snapshots -- but
+--   none was taken after planting, so its clean is not an answer to
+--   ddl-text-awr either.
+--
+--   Also found on 12.2 and fixed: section 2's "traditional privilege opts" line
+--   read DBA_PRIV_AUDIT_OPTS.AUDIT_OPTION, a column that view does not have
+--   (it is PRIVILEGE), and printed ORA-00904.
 --
 --   The three checks section 6 and section 7 left manual are now
 --   04_password_leak_extensions.sql, and all three are answered there: a traced
@@ -535,8 +580,12 @@ DECLARE
   v_qry t_str := t_str(
     'SELECT LISTAGG(audit_option, '', '') WITHIN GROUP (ORDER BY audit_option) '
       || 'FROM dba_stmt_audit_opts WHERE audit_option LIKE ''%USER%''',
-    'SELECT LISTAGG(audit_option, '', '') WITHIN GROUP (ORDER BY audit_option) '
-      || 'FROM dba_priv_audit_opts WHERE audit_option LIKE ''%USER%''',
+    -- PRIVILEGE, not AUDIT_OPTION: the two views name the column differently.
+    -- This read AUDIT_OPTION until 12.2.0.1.0 (#572) printed the ORA-00904 it
+    -- had presumably been giving on every release -- the row is a report, so
+    -- nothing downstream noticed.
+    'SELECT LISTAGG(privilege, '', '') WITHIN GROUP (ORDER BY privilege) '
+      || 'FROM dba_priv_audit_opts WHERE privilege LIKE ''%USER%''',
     'SELECT LISTAGG(policy_name, '', '') WITHIN GROUP (ORDER BY policy_name) '
       || 'FROM audit_unified_enabled_policies');
   l_out VARCHAR2(4000);
@@ -758,9 +807,18 @@ DECLARE
   v_sfx t_str := t_str('1Aq7x', '2Bq7x', '3Cq7x', '4Dq7x');
   c_pfx CONSTANT VARCHAR2(30) := '&cpfx';
 
-  -- excludes cursors belonging to this sweep
-  c_notme CONSTANT VARCHAR2(300) :=
-    'sql_id NOT IN (SELECT sql_id FROM v$sql WHERE INSTR(sql_text, ''SOPULI_PROBE'') > 0)';
+  -- Excludes cursors belonging to this sweep: its own, by marker, and the
+  -- recursive cursor a CDB root rewrites one into. Measured on 12.2.0.1.0,
+  -- position 3 (#572): the DBA_HIST_SQLTEXT sweep, run in CDB$ROOT, spawned
+  --   SELECT /*+ NO_STATEMENT_QUEUING RESULT_CACHE (SYSOBJ=TRUE) */ SQL_TEXT,CON_ID
+  --     FROM NO_OBJECT_LINK("SYS"."AWR_ROOT_SQLTEXT") ...
+  --    WHERE ... AND INSTR(UPPER("AWR_ROOT_SQLTEXT"."SQL_TEXT"),UPPER(:1))>0
+  -- which carries the sweep's canary bind and not its marker, and was reported
+  -- as a C1 leak. Matched on that shape, which nothing sopuli issues has -- and
+  -- DDL cannot carry a bind at all, so no rotation can hide behind it.
+  c_notme CONSTANT VARCHAR2(400) :=
+    'sql_id NOT IN (SELECT sql_id FROM v$sql WHERE INSTR(sql_text, ''SOPULI_PROBE'') > 0'
+    || ' OR (sql_text LIKE ''%NO_OBJECT_LINK(%'' AND sql_text LIKE ''%UPPER(:1))>0%''))';
 
   l_cnt   NUMBER;
   l_pop   NUMBER;

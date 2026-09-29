@@ -345,9 +345,9 @@ before you rotate there.** The same test on 11g XE 11.2.0.2.0 found the plain
 `ALTER USER … IDENTIFIED BY "<password>"` — the statement this tool issues, not a
 wrapper — retained verbatim in `V$SQLSTATS`. `V$SQL` holds no cursor for it there
 either, exactly as on every other release; `V$SQLSTATS` keeps its own copy, and
-that copy outlives the cursor. 18c, 21c and 26ai retain nothing. Where 12.1, 12.2
-and 19c fall has not been measured, so read this as *11.2 does* rather than
-*everything older does*.
+that copy outlives the cursor. 12.2.0.1.0, 18c, 19.3.0.0.0, 21c and 26ai retain
+nothing (#548, #572). Where 12.1 and a patched 19c fall has not been measured, so
+read this as *11.2 does* rather than *everything older does*.
 
 This is not an artefact of the test. A real `sopuli creds apply` was run against
 11.2 the ordinary way, and the password it generated — written to the vault and

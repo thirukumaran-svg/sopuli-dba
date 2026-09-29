@@ -302,17 +302,19 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` — `DB_PW_CHANGED` is read from `SYS.USER$.PTIME` where the grant exists, and is empty with a `SOPULI-W021` note saying why where it does not (#386) |
 | 19c EE 19.3 | `sopuli-test-oracle-19c-1` | `127.0.0.1:1526/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only** — pull it yourself, below. No rollover (19.12+), so `--strategy rollover` is exit 5 at plan time. The one container with `COMMON_USER_PREFIX = C##`, as a real CDB has |
 | 19c EE 19.19 | `sopuli-test-oracle-19c-ru-1` | `127.0.0.1:1527/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only and arm64 hosts only** — below. Does not start under emulation on x86; unrun on arm64, so its capabilities are unmeasured. `C##` prefix, as 19.3 |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other four containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1, 12.2 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
+| 12c EE 12.2 | `sopuli-test-oracle-12c-1` | `127.0.0.1:1528/ORCLPDB1.localdomain`, root `.../ORCLCDB.localdomain` | CDB + PDB, **maintainer-only** — below. The service names carry `.localdomain`; a bare `ORCLPDB1` is `ORA-12514`. No rollover. **`WE8DEC`**, the one non-Unicode database in the stack. `C##` prefix, as 19.3. `DB_PW_CHANGED` through `SYS.USER$.PTIME`, as on 18c |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
 follows. The three XE images are freely pullable and reach healthy in about a
 minute; the 11g one is the smallest and fastest of them. 19c is the exception on
 both counts — you pull it yourself, and its first start takes a quarter of an
-hour or more (below).
+hour or more (below). 12.2 is pulled the same way and is up in a minute and a
+half, but needs one `docker exec` before it reports healthy (below).
 
 **One Instant Client covers all of them.** Measured 2026-09-08 with the
-23.26.3.0.0 client from §4: 21c, 18c and 11.2 all connect, and so does 19.3
-(2026-09-27, #548). That is worth knowing
+23.26.3.0.0 client from §4: 21c, 18c and 11.2 all connect, and so do 19.3
+(2026-09-27, #548) and 12.2 (2026-09-29, #572). That is worth knowing
 before planning an evening, because `00-principles.md` D7 warns that a 23.x
 client reaches 19c and later, which reads like 18c and 11g need a second client
 and a second process. They do not. Note that connecting is not the same as being
@@ -481,6 +483,135 @@ That is the ordinary tier-1 rule and nothing 19c-specific — with `required` th
 same run fails, which is what a lane that exists to run it wants. **Wait for
 `healthy` after a `start`**: the listener answers before the PDB is open, and a
 run started in that gap fails in the install-script module rather than skipping.
+
+### Oracle 12.2, which you also pull yourself
+
+12.2.0.1.0 Enterprise Edition, from the same registry repository and on the same
+terms as 19.3 — the account, the licence accepted, `docker login` with the
+password typed at the prompt (#572). It is `test/compose.yaml`'s `oracle-12c`,
+port 1528, under `--profile oracle12c`:
+
+```bash
+docker pull container-registry.oracle.com/database/enterprise:12.2.0.1-slim   # 3.75 GB unpacked
+cd test
+docker compose --profile oracle12c up -d
+```
+
+It is a 2017 image and nothing like the 19c ones inside. **There is no DBCA**: the
+first start untars prebuilt datafiles: the database is open in about 30 s, and
+its PDB service reaches the listener **89 s** after `up` on an empty volume here.
+**It then stays `starting`**, and turns `unhealthy` once the start period is
+spent, until you run the init script once — the healthcheck requires the marker
+the script writes last, so `healthy` means ready for the suite rather than
+merely open. The image has no hook to run it for you:
+
+```bash
+docker exec sopuli-test-oracle-12c-1 bash /opt/sopuli/oracle-init-12c/init.sh
+```
+```
+password file written: /u01/app/oracle/product/12.2.0/dbhome_1/dbs/orapwORCLCDB (format 12)
+created tablespace USERS in CDB$ROOT
+...
+profiles created    : SOPULI_LOCKOUT, SOPULI_REUSE, SOPULI_STRONG
+rollover supported  : no
+init complete: /ORCL/.sopuli-init-12c-done written, the healthcheck will now pass
+```
+
+`healthy` followed 3 s later (93 s after `up`). The marker lives in the volume,
+so a container recreated on it was healthy in 90 s with no second run; a
+`docker restart` was 73 s. `down -v` discards it with the database, and the
+next `up` needs the script again.
+
+It fixes the three things that make this image unlike a database you would
+connect to, and each cost a run to find:
+
+- **No password file.** The image's own setup runs `orapwd` in the 12.2 format,
+  which enforces complexity, and `sopuli-test` has no digit. `docker logs` says
+  `ERROR : config DB failed` — and the database comes up **open anyway**, with
+  every remote `AS SYSDBA` refused; the image's own healthcheck called that healthy. That line stays in the log on
+  every first start; the init script is what answers it.
+- **No `USERS` tablespace in `CDB$ROOT`**, which a DBCA-built CDB has.
+  `00_install.sql`'s COMMON mode defaults to it and failed `ORA-00959`.
+- **No test profiles**, as on every Oracle service; created in the PDB, since
+  this image keeps the `C##` prefix too.
+
+Three things that are simply different, and that the init script leaves alone:
+
+- **The service names end in `.localdomain`.** `127.0.0.1:1528/ORCLPDB1` is
+  `ORA-12514`; use `ORCLPDB1.localdomain`. `oracle: { container: ORCLPDB1 }`
+  stays the bare name — that one is the container, not the service.
+- **The database is `WE8DEC`.** Not a problem for the tool: `limits.py` has no
+  codec for it and measures in ASCII, which every generated password is. It *is*
+  why the verifier probe found that Oracle hashes the password as the database
+  stores it rather than as the client sent it (`06_verifier_reproduce.sql`).
+- **`AUDIT_TRAIL` ships as `DB`**, and `AUDIT_SYS_OPERATIONS` as `TRUE`. Set
+  `db,extended` and restart before believing an audit result, as on the others.
+  `ORA_SECURECONFIG` is not enabled on this image, unlike 19.3's.
+
+`doctor`, with §6's config pointed at `dsn: "127.0.0.1:1528/ORCLPDB1.localdomain"`
+and `oracle: { scope: pdb, container: ORCLPDB1 }`:
+
+```
+client
+  tns_admin         (unset)
+  instant_client    23.26.3.0.0
+  reaches           19.1 and later
+
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+ee12-pdb  yes        pdb    ORCLPDB1   READ WRITE  6
+```
+
+The same six as 19.3, rollover absent — and the `reaches 19.1 and later` line
+beside a 12.2 target it just reached, which is the support statement and not a
+measurement. `generate`, `apply`, `check` and `rotate` run clean, a second
+`apply` reports `nothing changed`, and `--strategy rollover` is exit 5 at plan
+time with the same message as 19.3. **#383's bug is here too, on the release the
+floor is keyed to**:
+
+```
+$ sopuli --config sopuli-12c-40.yaml creds generate
+...
+constraints: 128 bytes in WE8DEC, from ee12-pdb
+...
+$ sopuli --config sopuli-12c-40.yaml creds apply
+...
+ACCOUNT          TARGET    STATE  DETAIL
+acme_batch_user  ee12-pdb  ERROR  ORA-00972: identifier is too long
+
+nothing changed, 1 not confirmed
+```
+
+Exit 1. 12.2 accepts 30 bytes and refuses 31, as 18c, 19.3 and 21c do.
+
+The suite:
+
+```bash
+SOPULI_TEST_TIER1=required \
+SOPULI_TEST_ORACLE_DSN=localhost:1528/ORCLPDB1.localdomain \
+SOPULI_TEST_ORACLE_NAME="12.2 EE" \
+SOPULI_TEST_ORACLE_CONTAINER=sopuli-test-oracle-12c-1 \
+SOPULI_TEST_ORACLE_PDB_SERVICE=ORCLPDB1.localdomain \
+pytest
+```
+```
+capabilities exercised
+                       12.2 EE
+account_lock_state        ok
+common_users              --
+expire_password           ok
+offline_verify            ok
+password_reuse_policy     ok
+password_rollover         --
+profile_management        ok
+role_lookup               ok
+16 tests skipped (capability absent), 0 skipped (environment unavailable)
+```
+
+Green on a freshly initialised container, no failures. The first run was not: it
+found the missing `USERS` tablespace above, and a test that asserted the database
+character set was `AL32UTF8` — true of every other image, and a fact about the
+images rather than the tool, so the test now compares against what the database
+reports.
 
 ### Oracle 19.19, which needs an arm64 machine
 
@@ -5501,8 +5632,9 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
   the 19c base release (#548), which answered both open questions that turned on
   19c: the password byte limit is 30 bytes there (#383), and the `ALTER USER`
   text does not survive in `V$SQLSTATS` (#387; 11.2 is still the only release
-  that keeps it, with 12.1 and 12.2 unmeasured). §5's *Running all of this
-  against a different Oracle version* is the map, including the 19c container.
+  that keeps it — **12.2.0.1.0** does not either (#572), leaving 12.1 the one
+  release unmeasured). §5's *Running all of this against a different Oracle
+  version* is the map, including the 19c and 12.2 containers.
   What is left is a *patched* 19c: 19.19 with rollover (#565), whose image is
   arm64-only and does not start on an x86 machine, and a current RU, which needs
   the OCI tenancy (#547).

@@ -29,6 +29,14 @@
 --         image keeps (grant_set_container=Y), where every system privilege
 --         reported COMMON = YES. Section 7's over-grant query was empty in
 --         each. A patched 19c is unmeasured.
+--         Confirmed on 12c EE 12.2.0.1.0 (2026-09-29, #572), by hand as
+--         SYSDBA -- PDB mode in ORCLPDB1 (SOPULI_SVC, grant_pwfile=Y) and
+--         COMMON mode in CDB$ROOT (C##SOPULI_SVC, grant_set_container=Y) --
+--         and through tests/driver/test_oracle_install_script.py. COMMON mode
+--         first failed there with ORA-00959: that image's root has no USERS
+--         tablespace, which is the image rather than the release;
+--         test/oracle-init-12c/init.sh creates one, and a site whose root has
+--         none passes its own tablespace as parameter 3.
 --         Review before running; try a throwaway DB first.
 --
 --         grant_pwfile (position 6) added and run on the same release

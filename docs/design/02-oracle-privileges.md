@@ -343,8 +343,9 @@ When present, the grant is probed as a capability at plan time (invariant 3,
 - **`check --method hash`**, if it ships at all — see below.
 - **The password change date where `DBA_USERS` has no column for it** (#386).
   `DBA_USERS.PASSWORD_CHANGE_DATE` is `ORA-00904` on 18c and 11.2, and present on
-  19c (19.24.0.0.0, measured 2026-09-17), which never takes this path as a result
-  (12.1 and 12.2 unmeasured); where it is absent, `SELECT PTIME FROM SYS.USER$` supplies
+  19c (19.24.0.0.0, measured 2026-09-17), which never takes this path as a result.
+  12.2.0.1.0 has no such column either (2026-09-29, #572) and takes the path,
+  as 18c does; 12.1 is unmeasured. Where it is absent, `SELECT PTIME FROM SYS.USER$` supplies
   the same value, measured equal to the column to the second on the releases
   that have both. Display only — `creds status`'s `DB_PW_CHANGED` and the run
   document's `password_age_days` — and never read where the column exists.
@@ -375,26 +376,28 @@ grant (#124) — but hash mode itself is not independent of the grant.** The `T:
 does not touch, *and* read from `SPARE4`, which needs `SELECT ON SYS.USER$`. So
 `hash` mode requires the grant even though the derivation does not. The layout is
 read, the derivation reproduces, and the degradation rule is settled — on the
-tier-2 releases and on **19c 19.3.0.0.0** (#548). 19c is the pre-release target
-of interest, but 19.3 is its base release and an OCI estate runs a later RU,
-which is still unread; 12.1/12.2 are unread too. #90 is three parts:
+tier-2 releases, on **19c 19.3.0.0.0** (#548) and on **12c 12.2.0.1.0** (#572).
+19c is the pre-release target of interest, but 19.3 is its base release and an
+OCI estate runs a later RU, which is still unread; 12.1 is unread too. #90 is
+three parts:
 
 - **The layout — read on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and
-  11g 11.2.0.2.0 (#431), 2026-09-15, and on 19c 19.3.0.0.0 (#548), 2026-09-27;
-  unread on any 19c RU, 12.1 and 12.2.** `SPARE4`
-  is `S:<60 hex>;T:<160 hex>` on the four 12.2+ releases and `S:<60 hex>` alone
+  11g 11.2.0.2.0 (#431), 2026-09-15, on 19c 19.3.0.0.0 (#548), 2026-09-27, and
+  on 12.2.0.1.0 (#572), 2026-09-29; unread on any 19c RU and 12.1.** `SPARE4`
+  is `S:<60 hex>;T:<160 hex>` on the five 12.2+ releases and `S:<60 hex>` alone
   on 11g. There is no `H:` in `SPARE4` on any of them; 11g's 10G value is
   `USER$.PASSWORD`. `T:` is a 64-byte digest followed by a 16-byte salt, `S:` a
   20-byte digest followed by a 10-byte salt. The salt offsets are measured
   rather than assumed: the `AUTH_VFR_DATA` a traced logon receives equals those
   trailing bytes, twice on every release. **The iteration count is not stored**
-  — the server sends `AUTH_PBKDF2_VGEN_COUNT` = 4096 at logon, on all four
+  — the server sends `AUTH_PBKDF2_VGEN_COUNT` = 4096 at logon, on all five
   12.2+ releases. Every `ALTER USER` draws a fresh salt, including one to the
   same password, so a stored verifier can only ever be compared by regenerating
   from *its* salt. Field table, normalisation notes and the probe:
   `sql/oracle/05_verifier_layout_probe.sql`.
-- **Reproduction — confirmed on 26ai, 21c and 18c (#432), 2026-09-15, and on
-  19.3.0.0.0 (#548), 2026-09-27, twice each; not on any 19c RU.** The stored `T:` digest regenerates byte-for-byte from the password:
+- **Reproduction — confirmed on 26ai, 21c and 18c (#432), 2026-09-15, on
+  19.3.0.0.0 (#548), 2026-09-27, and on 12.2.0.1.0 (#572), 2026-09-29, at least
+  twice each; not on any 19c RU or 12.1.** The stored `T:` digest regenerates byte-for-byte from the password:
 
   ```
   salt   = the last 16 bytes of the T: blob (its 32 trailing hex characters)
@@ -403,7 +406,14 @@ which is still unread; 12.1/12.2 are unread too. #90 is three parts:
   ```
 
   The password is fed as raw UTF-8 with no case folding and no normalisation —
-  the non-ASCII case reproduces on the multibyte input unchanged, and a 128-byte
+  the non-ASCII case reproduces on the multibyte input unchanged. **"The
+  password" means the one the database holds**, after conversion to its
+  character set: on 12.2's WE8DEC image `Ω` does not survive that conversion,
+  the account's password became `…¿9`, and the verifier reproduced from the
+  UTF-8 of *that* (#572). On AL32UTF8 the two are the same string. The tool is
+  unaffected — `limits.py` measures an unmapped set like WE8DEC in ASCII, so
+  no password it sets can reach the lossy path — but a `hash` implementation
+  must not assume the vault's string is the one hashed on such a database. A 128-byte
   password reproduces on 26ai (it is rejected at DDL below 23ai, the 30-byte
   limit of #383, which the probe reads from the server rather than a version).
   4096 is the count the
@@ -461,6 +471,10 @@ which is still unread; 12.1/12.2 are unread too. #90 is three parts:
       and the 10G hash lands in `SYS.USER$.PASSWORD` exactly as on 18c. So on 19c
       the co-occurrence is real, but only where a site lowered the logon version.
       A patched 19c is unmeasured.
+    - **12.2.0.1.0 (2026-09-29, #572):** identical to 19.3 — `11G 12C` by
+      default, `10G 11G 12C` with `ALLOWED_LOGON_VERSION_SERVER = 11` and the
+      16-hex 10G hash in `SYS.USER$.PASSWORD`, `SPARE4` unchanged at 225
+      characters. No restart needed. 12.1 is unmeasured.
 
   How the three-verifier account was produced, for a maintainer re-run (not a
   repeatable public probe, because it needs a server config change): append
@@ -470,7 +484,8 @@ which is still unread; 12.1/12.2 are unread too. #90 is three parts:
   a new SYSDBA session read the edited file and the next `CREATE USER` got the
   10G verifier. On 18c the recipe included a restart, and whether that one
   needed it was not tested. Restore the file afterwards. The recipe worked on
-  18c and 19.3 and not on 26ai.
+  18c, 19.3 and 12.2 and not on 26ai. (On 12.2's image the server's
+  `sqlnet.ora` is under `$ORACLE_HOME/admin/ORCLCDB`, its `TNS_ADMIN`.)
 
 Since the derivation reproduces and degradation is settled, `--method hash|both`
 is now a mechanical implementation on the tier-2 releases. Were it ever to fail
@@ -1026,27 +1041,28 @@ long as the shared pool keeps the entry, and removable in one statement. It is
 smaller than "the password is on disk" and larger than nothing, which is why it is
 documented rather than warned about or refused.
 
-**The boundary is unmeasured** (unverified: ddl-text-versions). 11.2 retains;
-**19.3.0.0.0 does not** (2026-09-27, #548, all three positions, `V$SQLSTATS`
-clean for the plain `ALTER USER`), and neither do 18.4, 21.3 or 26ai. Where
-between 11.2 and 19.3 the behaviour changed is not known, because 12.1 and 12.2
-have no pullable image and have not been run — and 19.3 is the base release,
-not the release update an OCI estate runs, so it says *19.3 does not* rather
-than *19c does not*. Read the 11.2 row as *11.2 retains* and not as *everything
-before 18c retains* — the second is plausible and unevidenced. The password byte
-limit (#383) (unverified: password-byte-limit) is the other version question;
-19.3 answers 30 bytes, as 21c does. The `04-testing.md` §6 gate 2 records what
+**The boundary is narrowed to one release, not closed** (unverified:
+ddl-text-versions). 11.2 retains; **12.2.0.1.0 does not** (2026-09-29, #572, all
+three positions, `V$SQLSTATS` clean for the plain `ALTER USER`), and neither do
+18.4, **19.3.0.0.0** (2026-09-27, #548), 21.3 or 26ai. So the behaviour changed
+somewhere in (11.2, 12.2]; 12.1 has no pullable image and has not been run, and
+19.3 is the base release rather than the release update an OCI estate runs, so
+it says *19.3 does not* rather than *19c does not*. Read the 11.2 row as *11.2
+retains* and not as *everything before 12.2 retains* — the second is plausible
+and, for 12.1, unevidenced. The password byte limit (#383) (unverified:
+password-byte-limit) is the other version question; 19.3 and 12.2 both answer
+30 bytes, as 21c does. The `04-testing.md` §6 gate 2 records what
 is open. A row that names only 26ai means only 26ai.
 
-| Surface | 26ai 23.26.2.0.0, `CDB$ROOT` and PDB; 21c 21.3, 19c 19.3 and 18c 18.4 in a PDB (19.3 in `CDB$ROOT` too); 11g 11.2 non-CDB | Action |
+| Surface | 26ai 23.26.2.0.0, `CDB$ROOT` and PDB; 21c 21.3, 19c 19.3, 18c 18.4 and 12c 12.2.0.1 in a PDB (19.3 and 12.2 in `CDB$ROOT` too); 11g 11.2 non-CDB | Action |
 |---|---|---|
-| `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` — the `CREATE/ALTER USER` statement itself | **no cursor for the DDL exists at all** on 26ai, 21c, 19.3 and 18c. Not masked — absent. Holds for client-issued DDL and for DDL run via `EXECUTE IMMEDIATE` alike. **On 11.2 it does not hold**: `V$SQL` still has no cursor for the DDL, but `V$SQLSTATS` keeps its own copy and that copy outlives it, so the plain `ALTER USER … IDENTIFIED BY` sopuli issues is readable verbatim (measured 2026-09-08, #382). The service account cannot read the view (`ORA-00942`); a dictionary reader can. It ages out under ordinary shared-pool turnover and `ALTER SYSTEM FLUSH SHARED_POOL` clears it at once (2026-09-09, #387). **19.3.0.0.0 does not retain it** (2026-09-27, #548): `V$SQLSTATS` clean for the plain `ALTER USER` in all three positions, so the change happened somewhere in (11.2, 19.3]. **Unmeasured on 12.1, 12.2 and any 19c RU** | 11.2: documented, not warned about and not refused — P8 in §8, and `../security-model.md` §5 is what an operator is told. Elsewhere: nothing to do, and re-run the probe on every version claimed as supported — this is a retention behaviour and not a documented guarantee, which is exactly how 11.2 came to differ |
+| `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` — the `CREATE/ALTER USER` statement itself | **no cursor for the DDL exists at all** on 26ai, 21c, 19.3, 18c and 12.2. Not masked — absent. Holds for client-issued DDL and for DDL run via `EXECUTE IMMEDIATE` alike. **On 11.2 it does not hold**: `V$SQL` still has no cursor for the DDL, but `V$SQLSTATS` keeps its own copy and that copy outlives it, so the plain `ALTER USER … IDENTIFIED BY` sopuli issues is readable verbatim (measured 2026-09-08, #382). The service account cannot read the view (`ORA-00942`); a dictionary reader can. It ages out under ordinary shared-pool turnover and `ALTER SYSTEM FLUSH SHARED_POOL` clears it at once (2026-09-09, #387). **19.3.0.0.0 does not retain it** (2026-09-27, #548): `V$SQLSTATS` clean for the plain `ALTER USER` in all three positions, and **nor does 12.2.0.1.0** (2026-09-29, #572, all three positions), so the change happened somewhere in (11.2, 12.2]. **Unmeasured on 12.1 and any 19c RU** | 11.2: documented, not warned about and not refused — P8 in §8, and `../security-model.md` §5 is what an operator is told. Elsewhere: nothing to do, and re-run the probe on every version claimed as supported — this is a retention behaviour and not a documented guarantee, which is exactly how 11.2 came to differ |
 | **An anonymous PL/SQL block carrying the password as a literal** | **leaks in full** into `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` and `V$DB_OBJECT_CACHE`. Oracle's protection is keyed to the `CREATE/ALTER USER` statement; a block that merely *contains* one is an ordinary block, and the block's own text is retained verbatim | **the tool never builds one.** Issue `ALTER USER` directly — invariant 13 |
 | Unified audit `SQL_TEXT` | **masked to `IDENTIFIED BY *`, at write time.** Confirmed in the base table `AUDSYS.AUD$UNIFIED` as well as in `UNIFIED_AUDIT_TRAIL` | keep verifying the base table rather than the view: view-level redaction alone would be bypassable by anyone holding `SELECT ANY DICTIONARY` |
 | AWR — `DBA_HIST_SQLTEXT` | **untested** (unverified: ddl-text-awr). It reported `pop=y` in one FREEPDB1 run and `pop=n` in the next, and no snapshot was taken before the sweep, so "clean" here is an absence of evidence. Snapshots *were* taken on 11g XE for #387 and captured nothing whatsoever, `control_management_pack_access` being `NONE` on XE — which measures the image and leaves the question exactly where it was | take an AWR snapshot on a database where the pack is enabled, then re-run the sweep. Needs the Diagnostics Pack, and therefore a licensed EE rather than any XE image. Stays untested until then — not clean |
 | `V$SQL_BIND_CAPTURE` — bind values in SQL *predicates* | sampled at hard parse and retained in clear. Does not apply to rotation, since DDL cannot take binds | constrains `check --method hash` if verifier comparison ever moves server-side: **never bind a password or a verifier into a predicate** — invariant 14 |
 | SQL trace / 10046 | **run, and the assumption it replaces was the pessimistic one** (#407, 2026-09-11, 26ai 23.26.2.0.0 and 21c 21.3.0.0.0). A session traced at level 12 does **not** capture the password: the cursor is written truncated, `ALTER USER sopulitest IDE`, stopping one character into `IDENTIFIED`. Five traced sessions across the two releases, every one identical. The wrapped form is the exception and leaks in full, which is invariant 13 on a fifth surface. This row said "untested — assume not redacted" until the greps were actually run | nothing to do, and the pessimism is retired rather than confirmed. Re-run `04_password_leak_extensions.sql` on any release added to the matrix: this is retention behaviour, not a documented guarantee, and that is precisely how 11.2 came to differ on the row above |
-| OS audit files (`audit_file_dest`) — the SYSDBA path | **clean on 21c, 18c and 11.2 in position 1** (2026-09-08, #380, #381, #382), all three with `AUDIT_SYS_OPERATIONS = TRUE` and 11.2 across 835 files. **Position 2 — `svc_user = sys`, the position this row exists for — was run on 21c only** (2026-09-11, #407), so read the masked OS-file result below as *21c*, and position 1's clean sweep as the thing that covers 18c and 11.2. The verdict does not change on 21c:  the DDL is written to the OS file *masked*, `ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'`, and the only verbatim canary in 646 `ACTION` lines is the PL/SQL wrapper. Note what it took to get a trustworthy answer — the grep as written matched the canary *prefix*, which the probe's own SQL text contains, so it reported a leak in the one place a leak would matter most. Fixed to match the numbered canaries; a run before 2026-09-08 that reported a hit here was reading the probe | answered on 11.2 through 21c, and on **19.3.0.0.0 in all three positions** (2026-09-27, #548): position 2 is identical to 21c's — the DDL written masked, `ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'`, and C3 the only verbatim canary. **On 26ai it is not clean, it is absent** — see the row below |
+| OS audit files (`audit_file_dest`) — the SYSDBA path | **clean on 21c, 18c and 11.2 in position 1** (2026-09-08, #380, #381, #382), all three with `AUDIT_SYS_OPERATIONS = TRUE` and 11.2 across 835 files. **Position 2 — `svc_user = sys`, the position this row exists for — was run on 21c only** (2026-09-11, #407), so read the masked OS-file result below as *21c*, and position 1's clean sweep as the thing that covers 18c and 11.2. The verdict does not change on 21c:  the DDL is written to the OS file *masked*, `ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'`, and the only verbatim canary in 646 `ACTION` lines is the PL/SQL wrapper. Note what it took to get a trustworthy answer — the grep as written matched the canary *prefix*, which the probe's own SQL text contains, so it reported a leak in the one place a leak would matter most. Fixed to match the numbered canaries; a run before 2026-09-08 that reported a hit here was reading the probe | answered on 11.2 through 21c, and on **19.3.0.0.0 in all three positions** (2026-09-27, #548): position 2 is identical to 21c's — the DDL written masked, `ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'`, and C3 the only verbatim canary. The same on **12.2.0.1.0 in all three positions** (2026-09-29, #572), across 468 files. **On 26ai it is not clean, it is absent** — see the row below |
 | OS audit files on **23ai and later** | **the surface is gone, and a clean grep there measures nothing** (#407, 2026-09-11, 26ai 23.26.2.0.0). `AUDIT_SYS_OPERATIONS = TRUE` is accepted and writes nothing useful: `audit_file_dest` held five files, each a session header plus one `ACTION` line, all five the same internal call, and **no `CREATE`, `ALTER` or `DROP USER` text reached it at all** — no file so much as names the test account. Traditional auditing is desupported on 23ai+, and this parameter belongs to it | read it as `pop=n` in OS-file form, exactly as the sweep labels an empty column `INCONCLUSIVE` rather than clean. There is nothing here to protect on 23ai+, which is a different claim from "we looked and found nothing", and the difference is the one this whole table is organised around |
 | **Self-rotation** — `IDENTIFIED BY … REPLACE …` | **audited and masked on both secrets** (#407, 2026-09-11, 26ai and 21c). The statement is recorded as `ALTER USER sopulitest IDENTIFIED BY * REPLACE *`, attributed to the account itself rather than to a service account, by the `ACTIONS ALTER USER` unified policy on both releases and by traditional `AUDIT USER` on 21c. The `REPLACE` clause carries the account's *current* password, and it is masked with the same `*` | the worry was that this path exercises no `ALTER USER` privilege, so *privilege* auditing could miss what *statement* auditing catches. It does not: **"rotations are audited" holds for the self-rotation path too**, which UC-1b needed before it could claim it. The path itself is still not this build |
 | **`IDENTIFIED BY VALUES`** — the verifier | **masked** (#407, 2026-09-11, 26ai and 21c): `ALTER USER sopulitest IDENTIFIED BY VALUES *` in the trail, and under a level-12 trace the DDL truncates at the same character the password form does — `len=44` declared, `ALTER USER sopulitest IDE` printed. No raw verifier appears in any trace file or OS audit file on either release. Oracle masks a verifier the way it masks a password, which was a separate question and had never been asked | so a restore-from-verifier path, if one is ever added, does not widen the *audit* exposure. It stays offline-crackable wherever the verifier itself can be read, which is ADR-001's question and not this one. Needs `SELECT ON SYS.USER$`; where that is withheld, 6b is **unanswered** rather than clean. And the finding is about the DDL, not about every way of reaching it: a verifier written as a *literal* into a PL/SQL block leaks like any other literal — invariant 13 does not stop applying because the secret changed shape |

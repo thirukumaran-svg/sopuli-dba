@@ -11,6 +11,7 @@
 #   docker compose --profile nne   up -d     # Oracle with Native Network Encryption required
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
 #   docker compose --profile oracle19c-ru up -d # 19.19 EE, arm64 hosts only
+#   docker compose --profile oracle12c up -d # 12.2.0.1 EE, maintainer-only
 #
 # TEARDOWN: use `docker compose --profile '*' down`. A plain `docker compose down` is
 # a SILENT NO-OP here — every service below carries a profiles: key, so with no
@@ -20,11 +21,11 @@
 #
 # Oracle containers are deliberately long-running: tests reset state by dropping and
 # recreating accounts, never by recreating the container. Note that NOTHING HERE
-# ENFORCES THAT — no service but the two 19c ones declares a volume, so any
-# teardown discards the database and the next `up` re-initialises from scratch.
-# oracle-19c and oracle-19c-ru keep their datafiles in named volumes because
-# their first start takes tens of minutes; `down -v` is the one form that
-# discards them.
+# ENFORCES THAT — no service but the two 19c ones and 12.2 declares a volume, so
+# any teardown discards the database and the next `up` re-initialises from
+# scratch. oracle-19c and oracle-19c-ru keep their datafiles in named volumes
+# because their first start takes tens of minutes, and oracle-12c because its
+# one-time init lives in them; `down -v` is the one form that discards them.
 
 name: sopuli-test
 
@@ -256,6 +257,65 @@ services:
       retries: 10
       start_period: 3600s
 
+  # ----------------------------------------------------- oracle 12.2 (#572) ---
+  # 12.2.0.1 Enterprise Edition, Oracle's own prebuilt "-slim" image, on the same
+  # terms as oracle-19c: maintainer-only, never in CI, pulled after `docker login
+  # container-registry.oracle.com` with the licence accepted. The only 12.x the
+  # stack can start; 12.1 stays unmeasured.
+  #
+  # A much older image than the 19c ones (built 2017-08-17), and it differs in
+  # every knob:
+  #   - DB_SID / DB_PDB / DB_PASSWD, not ORACLE_SID / ORACLE_PDB / ORACLE_PWD;
+  #   - no DBCA: first start untars prebuilt datafiles into /ORCL, so it is
+  #     minutes rather than tens of minutes (timings in docs/local-testing.md);
+  #   - service names carry DB_DOMAIN, default `localdomain`, so the PDB is
+  #     ORCLPDB1.localdomain and a bare ORCLPDB1 is ORA-12514;
+  #   - NO user-script hook. oracle-init-12c/init.sh is run once, by hand, with
+  #     the docker exec in docs/local-testing.md: it writes a password file the
+  #     image's own setup refused to (OPW-00029 -- `sopuli-test` has no digit),
+  #     creates the USERS tablespace this image's root lacks, and applies the
+  #     test profiles in the PDB;
+  #   - a WE8DEC database, not AL32UTF8 -- the only non-Unicode one in the stack.
+  #
+  # The volume is /ORCL, the image's own: setupDB.sh finds the datafiles there
+  # on a recreated container and starts the existing database instead of
+  # untarring a new one. Record results as 12.2.0.1.0, never "12c".
+  oracle-12c:
+    # sha256:68dbe7251bddcc3d70827845bcdc8687eef66471e6e8ea37419eb73f61e4748b
+    # (image created 2017-08-17; pulled 2026-09-29)
+    image: container-registry.oracle.com/database/enterprise:12.2.0.1-slim
+    profiles: [oracle12c]
+    environment:
+      DB_SID: ORCLCDB
+      DB_PDB: ORCLPDB1
+      DB_PASSWD: sopuli-test
+      # The image sets ORACLE_HOME but not these two -- its scripts get them from
+      # ~/.bashrc, which `docker exec` does not read. Without them the suite's
+      # `docker exec <container> sqlplus` finds no sqlplus, and `/ as sysdba`
+      # attaches to SID ORCL, which does not exist.
+      ORACLE_SID: ORCLCDB
+      PATH: /u01/app/oracle/product/12.2.0/dbhome_1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    ports: ["1528:1521"]
+    volumes:
+      - oracle12c-data:/ORCL
+      - ./oracle-init:/opt/sopuli/oracle-init:ro
+      - ./oracle-init-12c:/opt/sopuli/oracle-init-12c:ro
+    healthcheck:
+      # Three conditions, so that `healthy` means ready for the suite:
+      #   - the image's own check, V$INSTANCE.STATUS = OPEN;
+      #   - the PDB's service registered. The image starts the listener after
+      #     the database, so the instance is OPEN about a minute before PMON's
+      #     next registration and a client meanwhile gets ORA-12514 -- measured
+      #     2026-09-29, "The listener supports no services" with the PDB READ WRITE;
+      #   - oracle-init-12c/init.sh has completed, which it marks in the /ORCL
+      #     volume as its last step. Until then this stays `starting`, and turns
+      #     `unhealthy` once start_period is spent -- the signal to run it.
+      test: ["CMD-SHELL", "test -f /ORCL/.sopuli-init-12c-done && /bin/bash /home/oracle/setup/healthcheck.sh && lsnrctl status | grep -qi 'Service \"orclpdb1'"]
+      interval: 30s
+      timeout: 30s
+      retries: 10
+      start_period: 1800s
+
   # ------------------------------------------------------------------ NNE ---
   # Approximates the OCI constraint locally: the server REQUIRES Native Network
   # Encryption, so a thin-mode connection must fail with DPY-3001. This covers the
@@ -302,6 +362,7 @@ services:
     ports: ["8443:8443"]
 
 volumes:
-  # Only the two 19c services keep their datafiles; see oracle-19c for why.
+  # Only the two 19c services and 12.2 keep their datafiles; see oracle-19c for why.
   oracle19c-data:
   oracle19c-ru-data:
+  oracle12c-data:

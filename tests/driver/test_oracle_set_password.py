@@ -30,7 +30,13 @@ import pytest
 
 from oracle_harness import Environment
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
-from sopuli.driver.oracle.limits import LEGACY_MAX_BYTES, MODERN_MAX_BYTES, max_bytes
+from sopuli.driver.oracle.limits import (
+    CODECS,
+    FALLBACK,
+    LEGACY_MAX_BYTES,
+    MODERN_MAX_BYTES,
+    max_bytes,
+)
 from sopuli.driver.protocol import Credential, DriverError
 from sopuli.secrets import Secret
 
@@ -212,8 +218,14 @@ def test_reusing_the_current_password_arrives_as_policy(strict_account: Any) -> 
 def test_the_byte_limit_is_this_database_s_own(session: Any) -> None:
     """Resolved from the target rather than hard-coded, which is the test's name.
 
-    The character set is measured and the same on all four releases in the
-    matrix: `AL32UTF8` on 26ai, 21c, 18c and 11g (2026-09-08).
+    **The character set is asserted against what the database says, not against
+    a constant.** It was `AL32UTF8` on 26ai, 21c, 18c and 11g (2026-09-08), and
+    this asserted that literally until 12.2.0.1.0's registry image (#572) turned
+    out to be `WE8DEC` in both the root and the PDB -- a character set
+    :data:`CODECS` does not map, so the tool measures in ASCII there, which is
+    `limits.py`'s deliberate fallback rather than a fault. The constant was a
+    fact about the images, not about the tool; what this test is named for is
+    that the limit comes from the target.
 
     **`max_bytes` is asserted against the tool's own rule and not the server's**,
     and the difference is a live bug rather than a subtlety. `limits.max_bytes`
@@ -230,9 +242,14 @@ def test_the_byte_limit_is_this_database_s_own(session: Any) -> None:
     without 19c.
     """
     limit = session.byte_limit()
+    with session.connection.cursor() as cursor:
+        cursor.execute(
+            "select value from nls_database_parameters where parameter = 'NLS_CHARACTERSET'"
+        )
+        (reported,) = cursor.fetchone()
 
-    assert limit.charset == "AL32UTF8"
-    assert limit.encoding == "utf-8"
+    assert limit.charset == reported
+    assert limit.encoding == CODECS.get(reported, FALLBACK)
     assert limit.max_bytes == max_bytes(session.scope().db_version)
     assert limit.max_bytes in (LEGACY_MAX_BYTES, MODERN_MAX_BYTES)
 

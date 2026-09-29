@@ -7,14 +7,14 @@ master record. Oracle first, multi-product by design.
 almost no code exists yet. The SQL in `sql/` has been executed against Oracle 26ai
 Free 23.26.2.0.0, Oracle 21c XE 21.3.0.0.0, Oracle 18c XE 18.4.0.0.0 and Oracle
 11g XE 11.2.0.2.0, and the verifier and leak probes against Oracle 19c EE
-19.3.0.0.0 (#548). Each script carries a `STATUS:` header saying which paths ran
+19.3.0.0.0 (#548) and Oracle 12c EE 12.2.0.1.0 (#572). Each script carries a `STATUS:` header saying which paths ran
 and which are still untried — trust that header, not this line, and update it
 when you run one. **19.3 is the 19c base release, not what an OCI estate runs.**
 It answered what #383 and #387 needed from 19c (30-byte passwords; no
 `V$SQLSTATS` retention), and a later release update is still unmeasured: 19.19
 is #565 (its image is arm64-only and needs an arm64 host), a current RU is #547's
 OCI session. Say 19.3.0.0.0, never "19c", for
-anything measured on it.
+anything measured on it — and 12.2.0.1.0, never "12c": 12.1 is still unmeasured.
 
 ---
 
@@ -295,14 +295,19 @@ than reasoning:
   `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt‖"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)‖
   salt)`, 4096 sent at logon not stored. Degradation is settled too (#433):
   compare `T:` only, and an account with no `12C` fails at plan time.
-  **Answered on every tier-2 release and on 19c 19.3.0.0.0 (#548); still marked
-  because 19.3 is the base release and the RU an OCI estate runs is unread, as
-  are 12.1/12.2.** Do not treat the 19.3 result as a patched 19c's. Probes:
+  **Answered on every tier-2 release, on 19c 19.3.0.0.0 (#548) and on 12.2.0.1.0
+  (#572); still marked because 19.3 is the base release and the RU an OCI estate
+  runs is unread, as is 12.1.** One refinement from 12.2's WE8DEC image:
+  `pw_utf8` is the UTF-8 of the password *as the database holds it*, after
+  conversion to the database character set — identical on AL32UTF8, lossy where
+  the set cannot represent a character. Do not treat the 19.3 result as a patched
+  19c's. Probes:
   `sql/oracle/05_verifier_layout_probe.sql`, `06_verifier_reproduce.{sql,py}`
 - whether `ALTER USER` text leaks the password into `V$SQL` or
   `UNIFIED_AUDIT_TRAIL`, per version (unverified: ddl-text-versions) —
   **answered on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 19c 19.3.0.0.0, 18c
-  18.4.0.0.0 and 11g 11.2.0.2.0; unmeasured on 12.1, 12.2 and any 19c RU.** `02_password_leak_probe.sql` was run in all three documented positions on
+  18.4.0.0.0, 12c 12.2.0.1.0 and 11g 11.2.0.2.0; unmeasured on 12.1 and any 19c
+  RU.** `02_password_leak_probe.sql` was run in all three documented positions on
   2026-08-26: unified audit masks the statement at write time, no `V$SQL` cursor
   for the DDL exists at all, and the sole leak is an anonymous PL/SQL block
   carrying the password as a literal — which is invariant 13, now measured rather
@@ -315,7 +320,8 @@ than reasoning:
   though not by the service account. Decided in #387 — documented, not warned
   about and not refused, because it ages out with the shared pool and one
   `FLUSH SHARED_POOL` clears it. 19.3.0.0.0 agrees with 18c and later, all three
-  positions (#548), so the change sits in (11.2, 19.3]. Do not quote a leak result without its version
+  positions (#548), and so does 12.2.0.1.0 (#572), so the change sits in
+  (11.2, 12.2] — 12.1 is the one release left in it. Do not quote a leak result without its version
   (`docs/design/02-oracle-privileges.md` §4 and §8 P8)
 - ~~whether the 23-codebase schema privileges cover `ALTER USER` (P7)~~ —
   **answered: no.** `GRANT ALTER USER ON SCHEMA` gives `ORA-00990`, tested on 26ai
@@ -327,6 +333,9 @@ than reasoning:
 19.3.0.0.0 EE is `test/compose.yaml`'s `oracle-19c`, under `--profile oracle19c`
 only: pulling it takes an Oracle account and the licence accepted on the
 registry, so it is maintainer-only and never in CI (`docs/local-testing.md` §5).
+12.2.0.1.0 EE is `oracle-12c`, under `--profile oracle12c`, on the same terms —
+plus one `docker exec` after its first start, because that image has no
+user-script hook.
 
 Do not assume any of these. Where the answer is unknown, the code should refuse
 rather than guess — as the deleted package draft did for the T-verifier.

@@ -23,7 +23,10 @@ THE DERIVATION (measured; parameters confirmed in #431):
   - The password is fed as its raw UTF-8 bytes, with no case folding and no
     Unicode normalisation -- the non-ASCII case reproduces on exactly the bytes
     the client sent (#431 measured those bytes as UTF-8 under an AL32UTF8
-    database). No password containing ``"`` reaches here: invariant 11 rejects
+    database). Under any other database character set it is the UTF-8 of the
+    password as the server stored it, after conversion to that set, which can
+    lose characters (12.2.0.1.0's WE8DEC image, #572); the SQL half emits those
+    bytes, so nothing here changes. No password containing ``"`` reaches here: invariant 11 rejects
     it before a driver would.
   - 4096 is the iteration count Oracle sends at logon as
     ``AUTH_PBKDF2_VGEN_COUNT`` on 26ai, 21c and 18c (#431). It is *not* stored

@@ -30,6 +30,9 @@ there, which no other release in the matrix does.
 and maintainer-only: see `docs/local-testing.md` §5 before pulling it.
 **19.19 EE added 2026-09-28** (#565), profile `oracle19c-ru` — **arm64 hosts
 only**; on x86 it does not start under emulation, and it is unrun on arm64.
+**12.2.0.1 EE added 2026-09-29** (#572), profile `oracle12c`, maintainer-only on
+the same terms as 19.3, plus a one-time `docker exec` after its first start —
+see `docs/local-testing.md` §5.
 `nne` and `emulators` are still unrun.
 Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testing.md).
 
@@ -42,6 +45,7 @@ docker compose --profile tier2 up -d      # + 21c/18c/11g XE + toxiproxy, minute
 docker compose --profile nne   up -d      # Oracle requiring Native Network Encryption
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
 docker compose --profile oracle19c-ru up -d  # 19.19 EE, arm64 hosts only; fails under emulation on x86
+docker compose --profile oracle12c up -d  # 12.2.0.1 EE, maintainer-only; run its init.sh once, then healthy
 docker compose --profile '*'   down       # tear down EVERYTHING — see below
 ```
 
@@ -56,7 +60,7 @@ up a tier can never tear something down.
 Oracle containers are deliberately long-running. Tests reset state by dropping
 and recreating accounts, never by recreating the container — startup dominates
 everything else. **Nothing in this file enforces that**: no service declares a
-volume but the two 19c ones, so any teardown discards the database and the next
+volume but the two 19c ones and 12.2, so any teardown discards the database and the next
 `up` re-initialises from scratch.
 
 ## Teardown, which is not what you would guess
@@ -74,10 +78,12 @@ excluded by a profile.
 | `docker compose down --remove-orphans` | also a no-op |
 | `docker compose --profile tier0 down` | removes *only* tier0's services. Leaves Oracle running and then cannot remove the network — `Resource is still in use`. A half-torn-down stack that does not announce itself |
 
-`-v` matters for exactly two services. `oracle-19c` and `oracle-19c-ru` are the
-only ones with named volumes (`oracle19c-data`, `oracle19c-ru-data`), because their
-databases take tens of minutes to create; `--profile '*' down` keeps both and the
-next `up` is a restart, and `--profile '*' down -v` throws both away.
+`-v` matters for exactly three services. `oracle-19c` and `oracle-19c-ru` have
+named volumes (`oracle19c-data`, `oracle19c-ru-data`) because their databases take
+tens of minutes to create; `oracle-12c` has one (`oracle12c-data`) because its
+one-time init — the password file, a `USERS` tablespace, the profiles — lives in
+the datafiles. `--profile '*' down` keeps all three and the next `up` is a
+restart, and `--profile '*' down -v` throws them away.
 `-v` is scoped to the selected profile, so `--profile oracle19c-ru down -v` removes
 only the 19.19 volume and leaves 19.3's (checked 2026-09-28 with a scratch
 two-profile project). Every other service loses its state on any `down`, with or
@@ -94,6 +100,7 @@ without `-v`.
 | oracle-nne | 1525 | NNE required; thin mode must fail with `DPY-3001` |
 | oracle-19c | 1526 | **19.3.0.0.0 EE, `--profile oracle19c` only**, maintainer-only (Oracle account + licence acceptance to pull, never in CI). CDB `ORCLCDB`, PDB `ORCLPDB1`; `SYSTEM` / `sopuli-test`. No rollover (19.12+). Named volume, so it survives `down` |
 | oracle-19c-ru | 1527 | **19.19.0.0.0 EE, `--profile oracle19c-ru` only**, same terms as oracle-19c. **The image is linux/arm64 only and needs an arm64 host**: under QEMU on x86 DBCA dies with `ORA-00443` / `ORA-01096` (#565). The one pullable 19c past 19.12, so the one that can open a rollover window. Untested on arm64 so far. Named volume, so it survives `down` |
+| oracle-12c | 1528 | **12.2.0.1.0 EE, `--profile oracle12c` only**, same terms as oracle-19c. CDB `ORCLCDB`, PDB service **`ORCLPDB1.localdomain`** (this image appends `DB_DOMAIN`; a bare `ORCLPDB1` is `ORA-12514`); `SYSTEM` / `sopuli-test`. **`WE8DEC`, not `AL32UTF8`**. No rollover. Run `test/oracle-init-12c/init.sh` once after the first start — the image has no user-script hook. Named volume, so it survives `down` |
 | toxiproxy | 8474 | fault injection in front of DB and vault |
 
 ## Before trusting any of this

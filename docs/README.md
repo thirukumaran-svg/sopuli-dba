@@ -338,7 +338,7 @@ holds the wrapping token (H9, #496).
 **H2 is decided** (#450): what a reset records lives in three places rather than
 one. The **database** answers *when* the password last changed
 — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant,
-12.1 and 12.2 unmeasured on that fallback (unverified: pw-changed-source). That
+12.1 unmeasured on that fallback (unverified: pw-changed-source). That
 diverges from Q9 deliberately: on the seen path the owner is required to change the
 password at first logon, so a record's own timestamp is designed to be overtaken by
 a change the tool never sees — and reading a timestamp is not invariant 6's
@@ -423,10 +423,13 @@ three wrong answers.
   Degradation is settled too (#433): the comparison uses `T:` only, an account
   with no `12C` fails at plan time (invariant 4), and the gate is a per-account
   capability (`SPARE4` carries a `T:`), never a version. **All three parts are
-  answered on the tier-2 releases and on 19c 19.3.0.0.0** (#548, 2026-09-27: the
-  same layout, `VGEN_COUNT` 4096 on the wire, every `T:` reproduced, twice). **The
+  answered on the tier-2 releases, on 19c 19.3.0.0.0** (#548, 2026-09-27: the
+  same layout, `VGEN_COUNT` 4096 on the wire, every `T:` reproduced, twice) **and
+  on 12c 12.2.0.1.0** (#572, 2026-09-29, the same again — and on a WE8DEC
+  database, which showed that `pw_utf8` is the password *as the database holds
+  it*, after conversion to its character set). **The
   entry stays `unverified` because 19.3 is the base release and an OCI estate
-  runs a later RU, which is unread** — as are 12.1 and 12.2. The route to an RU is
+  runs a later RU, which is unread** — as is 12.1. The route to an RU is
   #547's OCI session; #565 reads 19.19 first, on an arm64 host because that
   image is arm64-only and does not start under emulation. Blocks
   `--method hash|both` only — `check`'s default (`login`) no longer waits on
@@ -473,10 +476,11 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   disagrees**: `V$SQLSTATS` keeps its own copy there, so the *conclusion* is
   release-dependent even though the reasoning is not (#387). **19c 19.3.0.0.0
   agrees with 18c and later** (#548, 2026-09-27, all three positions:
-  `V$SQLSTATS` clean for the plain `ALTER USER`), so the change sits somewhere in
-  (11.2, 19.3]. **12.1, 12.2 and every 19c RU are unrun** — read the 11.2 result
-  as *11.2 does*, never as *everything older does*, and the 19.3 one as *19.3
-  does not*.
+  `V$SQLSTATS` clean for the plain `ALTER USER`), and **so does 12c 12.2.0.1.0**
+  (#572, 2026-09-29, all three positions), so the change sits somewhere in
+  (11.2, 12.2]. **12.1 and every 19c RU are unrun** — read the 11.2 result as
+  *11.2 does*, never as *everything older does*, and the 19.3 one as *19.3 does
+  not*.
 - `unverified` `ddl-text-awr` (#387) — **Whether the retained text reaches AWR.**
   `DBA_HIST_SQLTEXT` needs a snapshot taken *before* the sweep, on a database
   where the Diagnostics Pack is enabled. Every image in this stack ships
@@ -498,7 +502,10 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   and **the premise is wrong**: 12.2 raised *identifiers* from 30 bytes to 128
   and passwords did not move with them. #383 measured it — 31 bytes is
   `ORA-00972` on 21c, 18c and 11.2, and accepted on 26ai — and **19c 19.3.0.0.0
-  refuses 31 and 128 the same way** (#548, 2026-09-27), so the floor is somewhere
+  refuses 31 and 128 the same way** (#548, 2026-09-27), as does **12c
+  12.2.0.1.0**, the release the floor is keyed to (#572, 2026-09-29: 30 bytes
+  accepted, 31 `ORA-00972`, and a 40-character policy planned with
+  `constraints: 128 bytes in WE8DEC` and failed in `apply`), so the floor is somewhere
   in `(21.3, 23.26]` and `(12, 2)` is below every version ever tested against it.
 
   **This is a live bug, not a latent one**, and saying so is the point of the
@@ -530,10 +537,15 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   `ALTER USER … IDENTIFIED BY` on 19c is inferred from 26ai and 21c rather than
   seen, and the tier-1 test that would pin it has not run on that release.
 
-  **12.1 and 12.2 would take the fallback and are unmeasured**, and that is what
-  keeps this entry open. Purely a display question — Q9 decided `--max-age-days`
-  reads only the vault — and the tier-1 test pinning `PTIME` equal to the column
-  fails on any release where the two part, so running the suite there settles it.
+  **12.2.0.1.0 takes the fallback**, measured 2026-09-29 (#572): no
+  `PASSWORD_CHANGE_DATE` column, and the suite's
+  `test_password_change_date_tracks_a_rotation` passed there through `PTIME` —
+  the value the driver read moved with `ALTER USER … IDENTIFIED BY`. The test
+  comparing `PTIME` with the column skipped, having no column to compare with, so
+  on 12.2 `PTIME` is shown to track a rotation rather than shown equal to anything.
+  **12.1 would take the fallback too and is unmeasured**, and that is what keeps
+  this entry open. Purely a display question — Q9 decided `--max-age-days` reads
+  only the vault.
 - `verified` `expire-rollover` (#438, #461) — **What `ALTER USER … IDENTIFIED BY …
   PASSWORD EXPIRE` does to an account whose profile sets `PASSWORD_ROLLOVER_TIME`.**
   UC-2's **seen** (`manual`) reset is that one statement; its default, unseen reset

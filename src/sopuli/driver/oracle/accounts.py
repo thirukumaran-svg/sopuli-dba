@@ -82,9 +82,9 @@ measured 2026-09-08 on 26ai, 21c, 18c and 11.2: ``PTIME`` equals
 ``PASSWORD_CHANGE_DATE`` to the second where both exist, moves on ``ALTER USER
 ... IDENTIFIED BY`` where only it exists, and ``CTIME`` beside it does not move.
 See :data:`PTIME_QUERY` for the rules that keep the two from disagreeing, and
-:func:`_password_changed` for what is reported when neither answers. 12.1 and
-12.2 would take the fallback too and are unmeasured (unverified:
-pw-changed-source).
+:func:`_password_changed` for what is reported when neither answers. 12.2.0.1.0
+takes the fallback, and ``PTIME`` moved with a rotation there (#572); 12.1 would
+take it too and is unmeasured (unverified: pw-changed-source).
 
 **``EXPIRED(GRACE)`` is a value of ``ACCOUNT_STATUS``, and it contains the token
 ``EXPIRED``.** Measured 2026-09-02, later than the four above, because #309 turned

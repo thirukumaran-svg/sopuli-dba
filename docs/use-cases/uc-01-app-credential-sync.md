@@ -1543,9 +1543,10 @@ rather than drift. An account with no `12C` verifier (11g, or any account whose
 `PASSWORD_VERSIONS` lacks it) has nothing to compare, so an explicit
 `--method hash` or `--method both` fails at plan time naming the capability and
 the target (invariant 4) rather than falling back to a weaker verifier or
-silently to `login` (#433). Unconfirmed on 19c — the release an OCI estate runs,
-and so the target of interest — with 12.1 and 12.2 also unread; if the
-derivation goes wrong there, the method is dropped from the CLI.
+silently to `login` (#433). Confirmed on 19.3.0.0.0 (#548) and 12.2.0.1.0
+(#572), unconfirmed on a patched 19c — the release an OCI estate runs, and so
+the target of interest — with 12.1 also unread; if the derivation goes wrong
+there, the method is dropped from the CLI.
 
 Trade-offs to document honestly if it does ship:
 
@@ -2022,8 +2023,9 @@ first two together.**
   — and adding to P1's binding list would have changed the driver protocol,
   `doctor`, the schema and the skip vocabulary to report a display column.
 
-12.1 and 12.2 would take the fallback and are unmeasured (unverified:
-pw-changed-source) — see `docs/README.md`'s "Verify before implementing".
+12.2.0.1.0 takes the fallback, and `PTIME` tracked a rotation there (#572); 12.1
+would take it too and is unmeasured (unverified: pw-changed-source) — see
+`docs/README.md`'s "Verify before implementing".
 
 ---
 

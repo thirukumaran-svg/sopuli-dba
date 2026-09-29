@@ -4,9 +4,17 @@
 -- STATUS: run on 26ai Free 23.26.2.0.0 (FREEPDB1), 21c XE 21.3.0.0.0 (XEPDB1),
 -- 18c XE 18.4.0.0.0 (XEPDB1) and 11g XE 11.2.0.2.0 on 2026-09-15 (#431), and on
 -- 19c EE 19.3.0.0.0 (ORCLPDB1, the prebuilt registry image) on 2026-09-27
--- (#548), twice each, with the §5 trace step run on all five. **Untried on 12.1
--- and 12.2, and on any 19c release update** -- 19.3 is the base release and an
--- OCI estate runs a later RU, so read the 19c line as "19.3 does".
+-- (#548), twice each, with the §5 trace step run on all five. Run on 12c EE
+-- 12.2.0.1.0 (ORCLPDB1, the registry's 12.2.0.1-slim image) on 2026-09-29
+-- (#572), three times, the §5 trace after the second and third: identical to
+-- 19.3 in every row of the tables below. **Untried on 12.1, and on any 19c
+-- release update** -- 19.3 is the base release and an OCI estate runs a later
+-- RU, so read the 19c line as "19.3 does".
+--
+-- 12.2's image is WE8DEC, not AL32UTF8, so §0's byte dump reads
+-- `c4,63,6d,...,f6,...` there -- one byte per non-ASCII character, and Ω, which
+-- WE8DEC lacks, replaced. The layout is unaffected; what the digest is computed
+-- over is 06_verifier_reproduce.sql's question, and is answered there.
 --
 -- Part 1 of #90's spike (#431). It READS what Oracle stores in SYS.USER$.SPARE4
 -- and SYS.USER$.PASSWORD and names the fields. It derives nothing: whether a
@@ -21,8 +29,10 @@
 --
 --
 -- RESULTS
---   Identical on 26ai, 21c, 19.3 and 18c. 11g differs only by carrying no T: at
---   all.
+--   Identical on 26ai, 21c, 19.3, 18c and 12.2. 11g differs only by carrying no
+--   T: at all. (On 12.2's image §5's printed command needs the service name
+--   ORCLPDB1.localdomain: that image appends DB_DOMAIN, and a bare ORCLPDB1 is
+--   ORA-12514.)
 --
 --   1. SPARE4 LAYOUT. Verifiers are separated by ';', each introduced by a
 --      two-character prefix. The order is S: then T:. There is NO H: in SPARE4
@@ -32,6 +42,7 @@
 --        26ai      11G 12C             S:<60 hex>;T:<160 hex>  225  (null)
 --        21c       11G 12C             S:<60 hex>;T:<160 hex>  225  (null)
 --        19.3      11G 12C             S:<60 hex>;T:<160 hex>  225  (null)
+--        12.2      11G 12C             S:<60 hex>;T:<160 hex>  225  (null)
 --        18c       11G 12C             S:<60 hex>;T:<160 hex>  225  (null)
 --        11g       10G 11G             S:<60 hex>               62  16 hex
 --
@@ -55,6 +66,8 @@
 --              §5  AUTH_VFR_DATA.....15FEB75DC0A667521C39F9E10C945828
 --        19.3  §4  T:E01B4E16...9799C809 salt=D6128551A550E22266133A9C74C0F7BC
 --              §5  AUTH_VFR_DATA.....D6128551A550E22266133A9C74C0F7BC
+--        12.2  §4  T:A1E5A872...208001FF salt=4B2E12A0D80FC1AB5A8DA8A85919FF1D
+--              §5  AUTH_VFR_DATA.....4B2E12A0D80FC1AB5A8DA8A85919FF1D
 --        11g   §4  S:BAFAD5A5...CC93FFDF salt=33B179CB7366EA0029A0
 --              §5  AUTH_VFR_DATA.....33B179CB7366EA0029A0
 --
@@ -64,7 +77,7 @@
 --
 --      THE ITERATION COUNT IS NOT STORED IN SPARE4. Nothing in the 160 hex
 --      varies except digest and salt. The server SENDS it at logon instead, on
---      all four 12.2+ releases (19.3 included, both runs):
+--      all five 12.2+ releases (19.3 and 12.2.0.1.0 included, every run):
 --
 --        AUTH_PBKDF2_VGEN_COUNT  4096   (verifier generation)
 --        AUTH_PBKDF2_SDER_COUNT  3      (session key derivation, not stored)
