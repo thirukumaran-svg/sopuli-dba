@@ -510,7 +510,28 @@ ORA-01096: program version (19.0.0.0.0) incompatible with instance (0.0.0.14.238
 That is emulation failing, not being slow; waiting does not help. Run it on an
 arm64 Docker host — Apple Silicon, or an OCI Ampere A1 VM — where it should run
 natively. **Nobody has done that yet (#565)**, so treat the service as a sketch
-by analogy with `oracle-19c` until someone does. Clean up a failed attempt with
+by analogy with `oracle-19c` until someone does.
+
+`test/oci-a1/` holds the OCI route. `new-a1-host.ps1 -CompartmentName <name>`
+creates an Always Free A1 VM whose security list admits SSH from your address
+and nothing else, and `setup-oracle-19c.sh`, run on the VM, installs Docker,
+starts `oracle-19c-ru` with the listener on loopback, and times it to healthy;
+you reach it through `ssh -N -L 1527:127.0.0.1:1527`. **Only the first half has
+run.** The network is created and reused, and then every launch so far has met
+this, in eu-frankfurt-1 on 2026-09-28 and 2026-09-29:
+
+```
+Launching sopuli-a1 in MlnO:EU-FRANKFURT-1-AD-1 (waits for RUNNING, a few minutes) ...
+  MlnO:EU-FRANKFURT-1-AD-1 is out of A1 capacity.
+Launching sopuli-a1 in MlnO:EU-FRANKFURT-1-AD-2 (waits for RUNNING, a few minutes) ...
+  MlnO:EU-FRANKFURT-1-AD-2 is out of A1 capacity.
+Launching sopuli-a1 in MlnO:EU-FRANKFURT-1-AD-3 (waits for RUNNING, a few minutes) ...
+  MlnO:EU-FRANKFURT-1-AD-3 is out of A1 capacity.
+Every availability domain was out of A1 capacity. Nothing launched; the network stays for the next try.
+```
+
+so `setup-oracle-19c.sh` is unrun. `-Teardown` removes everything the first
+script made. On any host, clean up a failed container with
 `docker compose --profile oracle19c-ru down -v`, which removes this volume and
 leaves 19.3's alone.
 
