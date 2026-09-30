@@ -646,6 +646,26 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   `sopuli-dba[hashicorp]` rather than in base — ADR-005 said base until #130 made
   "base can import none of the backends' clients" a testable rule (ADR-006,
   E2).
+- `unverified` `nne-oci-default` (#575) — **Whether OCI's Base Database Service and Exadata Cloud require Native Network Encryption as provisioned.**
+  One of D3's three reasons for thick mode (`design/00-principles.md`, *Why
+  thick mode*). Oracle documents a default `sqlnet.ora` that sets
+  `SQLNET.ENCRYPTION_SERVER` to require it, and nothing here has read one or
+  watched a thin-mode connection be refused by it — the local `nne` compose
+  profile approximates it and is itself unrun. #575 measures **Base Database
+  Service**: the shipped `sqlnet.ora`, the thin-mode refusal and its exact
+  error, and a thick connection's negotiated encryption. **Exadata Cloud is
+  cited from Oracle's documentation and no run of it is planned**, so when this
+  entry settles, the Exadata half of each marked sentence has to be reworded as
+  documented rather than measured instead of losing its qualifier. Blocks
+  nothing: D3 holds on either of its other two reasons.
+- `unverified` `adb-thin-mode` (#575) — **Whether Autonomous Database uses TLS rather than Native Network Encryption, and accepts a python-oracledb thin-mode connection.**
+  Oracle documents both, and #574 corrected the documents on that basis after
+  they had said OCI-hosted databases require NNE. The tool has reached ADB
+  serverless 26ai 23.26.3.3.0 (#479), always in thick mode, so neither the
+  absence of NNE nor a thin-mode connection has been observed here. #575 runs
+  the thin connection against that instance as the contrast to the Base
+  Database one. Blocks nothing, and changes no behaviour whichever way it
+  lands: the tool has one mode.
 
 ## Next use cases
 

@@ -140,10 +140,16 @@ sopuli, version 0.58.0
 ### 2c. Install Oracle Instant Client
 
 **This one is mandatory and there is no configuration that avoids it.** The
-Oracle driver can run in two modes. Thin mode needs no Oracle libraries but does
-not support Native Network Encryption, which Oracle Cloud databases require. So
+Oracle driver can run in two modes. Thin mode needs no Oracle libraries, but it
+cannot do three things this tool needs: Native Network Encryption, which a
+database can be configured to require; a connection to Oracle 11.2; and a logon
+through an external password store (`auth: external`). So
 this tool always uses thick mode, and thick mode needs Oracle's client libraries
 present on the machine.
+
+(If your database is an Autonomous Database, it is not the first of those that
+applies to you — Autonomous encrypts with TLS, not Native Network Encryption
+(unverified: adb-thin-mode). The client is needed all the same.)
 
 Download **Basic** from Oracle's Instant Client downloads page. (Take
 **SQL\*Plus** as well if you want a command-line SQL client for sanity checks;

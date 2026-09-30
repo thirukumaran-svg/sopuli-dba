@@ -223,8 +223,9 @@ RULES: dict[str, _Rule] = {
         "config",
         exit_code=ExitCode.CONFIG_INVALID,
         hint=(
-            "this ran in thin mode, which sopuli never uses deliberately: thin mode has no "
-            "Native Network Encryption, which OCI-hosted databases require (D3). "
+            "this ran in thin mode, which sopuli never uses deliberately (D3): thin mode "
+            "has no Native Network Encryption, cannot reach a database older than 12.1, "
+            "and cannot log on through an external password store. "
             "Instant Client is missing or thick-mode initialisation did not happen"
         ),
     ),

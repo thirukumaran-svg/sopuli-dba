@@ -166,9 +166,12 @@ counted as an answer.
   exist independently in many PDBs
 - **Application containers** (application root + application PDBs) — a distinct
   scope, not the same as CDB root
-- **Autonomous / OCI-hosted** — Native Network Encryption forces a thick-mode
-  client (python-oracledb thick / godror). This is a runtime prerequisite, not a
-  configuration option.
+- **OCI database services** — two different things on the wire. Autonomous
+  Database encrypts with TLS or mutual TLS over TCPS and uses no Native Network
+  Encryption (unverified: adb-thin-mode); Base Database Service and Exadata Cloud
+  are where NNE is required (unverified: nne-oci-default).
+  The client is thick-mode for both (python-oracledb thick / godror), which is a
+  runtime prerequisite, not a configuration option — see *Why thick mode* below.
 - **RAC / Data Guard** — connect via service, not SID; on a physical standby the
   driver must detect `OPEN MODE = READ ONLY` and refuse write operations up front
   rather than failing mid-statement.
@@ -765,14 +768,42 @@ exit 1, the same as an unreachable target; a degraded one and a skewed clock
 warn, because `doctor` must not refuse to survey an estate over a condition the
 person running it did not create.
 
+### Why thick mode (D3)
+
+Three independent reasons, and any one of them would be enough:
+
+1. **Native Network Encryption.** python-oracledb thin mode does not implement
+   it, and a server that requires it refuses the connection. That is Base
+   Database Service and Exadata Cloud, whose default `sqlnet.ora` sets
+   `SQLNET.ENCRYPTION_SERVER` to require it, and any on-prem database configured
+   the same way. **The OCI half is Oracle's documented default and has not been
+   measured here** (unverified: nne-oci-default): #575 is the Base Database run, and
+   no Exadata run is planned.
+2. **Oracle 11.2.** Thin mode connects only to 12.1 and later, and 11.2 is a
+   release this tool supports.
+3. **`auth: external`.** A wallet-based `/@alias` logon through an external
+   password store needs the Oracle client libraries.
+
+**Autonomous Database is not on that list.** It encrypts with TLS or mutual TLS
+over TCPS and does not use NNE at all, and Oracle documents thin-mode
+connections to it — cited, not yet run here (unverified: adb-thin-mode). The tool
+still reaches it in thick mode, because there is one
+mode and not one per target; what is wrong is saying that "OCI-hosted databases
+require NNE", which this document used to.
+
+**SQLcl connecting "thin" to an NNE-required database is not a counter-example.**
+That is JDBC thin, a separate pure-Java driver that implements NNE. It says
+nothing about python-oracledb's thin mode, which does not.
+
+None of this reopens D3: thick mode, always, on every target.
+
 ### Why macOS is best-effort rather than supported or excluded (D5)
 
 The obvious blocker turned out not to exist. Oracle ships **Instant Client for
 macOS ARM64** — 23.26.x, notarized DMGs, with SQL\*Plus and the OCI libraries —
 so thick-mode drivers work on Apple Silicon. Intel macOS has its own 19.x line.
-Thin mode remains unusable for this tool on every platform, since python-oracledb
-still does not support Native Network Encryption in thin mode, but that is not a
-macOS-specific problem.
+Thin mode remains unusable for this tool on every platform, for the three
+reasons above, but that is not a macOS-specific problem.
 
 What actually argues against a supported tier:
 
@@ -983,7 +1014,7 @@ somebody typing, the other is a deployed artefact a scheduler is running.
 |---|---|---|---|
 | D1 | Binary name | `sopuli` (project `sopuli-dba`) | decided |
 | D2 | CLI grammar | noun-verb: `sopuli creds rotate`, `sopuli target list` | decided |
-| D3 | Implementation language | Python with python-oracledb in thick mode. Thin mode cannot be used: it still does not support Native Network Encryption, which OCI-hosted databases require. Since Instant Client is therefore mandatory at runtime, Go's single-binary advantage does not apply, and Python's readability matters more for reviewing AI-assisted code. | decided |
+| D3 | Implementation language | Python with python-oracledb in thick mode. Thin mode cannot be used, for three independent reasons: it does not support Native Network Encryption, which Base Database Service, Exadata Cloud and NNE-enforcing on-prem databases require (unverified: nne-oci-default) (Autonomous does not — it uses TLS (unverified: adb-thin-mode)); it connects only to 12.1 and later, and 11.2 is supported; and `auth: external` needs the Oracle client libraries. Since Instant Client is therefore mandatory at runtime, Go's single-binary advantage does not apply, and Python's readability matters more for reviewing AI-assisted code. | decided |
 | D4 | Config format | YAML only; JSON accepted since it is valid YAML | decided |
 | D5 | macOS tier | Best-effort and untested: portable code, no support claim, no macOS CI. See the rationale under P4 — the blocker is the absence of a local Oracle database for testing, not the client, which now exists for Apple Silicon. | decided |
 | D6 | Plugin model for drivers/stores | in-tree first; entry-point plugin API only after a second driver exists | decided |

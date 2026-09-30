@@ -46,8 +46,9 @@ Issues = "https://github.com/villebase/sopuli-dba/issues"
 # one is the oldest release known to carry the API the backend uses, and the
 # tested version is whatever CI resolves.
 oracle = [
-  # D3: thick mode, because thin mode has no Native Network Encryption and
-  # OCI-hosted databases require it. Instant Client is a runtime prerequisite
+  # D3: thick mode, because thin mode has no Native Network Encryption, cannot
+  # reach 11.2, and cannot log on through an external password store.
+  # Instant Client is a runtime prerequisite
   # either way, which is why reaching Oracle was already a per-site condition
   # before this extra named it.
   #

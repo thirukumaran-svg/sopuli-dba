@@ -410,6 +410,7 @@ def oracle_target() -> Iterator[Environment]:
     connection = None
     try:
         # Thick mode, always (D3): thin mode has no Native Network Encryption,
+        # no 11.2 and no external authentication,
         # so a harness that quietly used it would be exercising a configuration
         # the tool cannot run in.
         #

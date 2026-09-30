@@ -116,8 +116,9 @@ jobs:
       # without one.
       - run: pip install -e ".[dev,all]"
 
-      # D3: thick mode is mandatory, because thin mode has no Native Network
-      # Encryption and OCI-hosted databases require it. So Instant Client is a
+      # D3: thick mode is mandatory. Thin mode has no Native Network Encryption,
+      # cannot reach 11.2, and cannot log on through an external password store
+      # (00-principles.md, "Why thick mode"). So Instant Client is a
       # runtime prerequisite here exactly as it is for an operator, and a lane
       # without it would skip every driver test while reporting green.
       #

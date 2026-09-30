@@ -6,8 +6,9 @@ not on this machine. None of it imports ``oracledb`` -- :mod:`.session` does
 that -- which is what keeps every rule below tier 0, testable on a laptop with
 no client and no database.
 
-**Thick mode is not an option** (D3). Thin mode still has no Native Network
-Encryption, which OCI-hosted databases require, so Instant Client is a runtime
+**Thick mode is not an option** (D3). Thin mode has no Native Network
+Encryption, cannot reach 11.2, and cannot log on through an external password
+store, so Instant Client is a runtime
 prerequisite on every platform rather than a way to make things faster. That
 makes a missing client an ordinary operational condition -- the single most
 likely first-run failure this tool has -- and P4 requires it be diagnosable with

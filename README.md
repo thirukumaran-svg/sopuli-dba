@@ -168,7 +168,8 @@ carry version constraints — the OCI SDK pins `cryptography` and `pyOpenSSL` �
 that a site with no OCI should not inherit.
 
 **Oracle needs Instant Client too.** `sopuli-dba[oracle]` installs the driver;
-thick mode is required for Native Network Encryption, so Instant Client is a
+thick mode is required — for Native Network Encryption, for Oracle 11.2 and for
+`auth: external` — so Instant Client is a
 runtime prerequisite on every platform. `sopuli doctor` checks for it, and
 reports which backends are installed against which your config declares.
 

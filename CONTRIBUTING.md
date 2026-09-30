@@ -124,7 +124,8 @@ that number lands in every `--output json` run document.
 
 **Oracle Instant Client is a runtime prerequisite** for anything that reaches a
 database. `python-oracledb` runs in thick mode here, because thin mode does not
-support Native Network Encryption.
+support Native Network Encryption, cannot reach Oracle 11.2, and cannot log on
+through an external password store (`auth: external`).
 [`docs/getting-started.md`](docs/getting-started.md) §2c has the install steps.
 
 ---

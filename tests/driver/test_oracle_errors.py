@@ -255,6 +255,22 @@ def test_the_client_library_is_a_local_problem_the_reader_can_fix() -> None:
         assert "Instant Client" in found.hint
 
 
+def test_the_thin_mode_hint_gives_the_reasons_and_does_not_blame_oci() -> None:
+    """D3 has three reasons and the hint names all three (#574).
+
+    What it must not say is that OCI-hosted databases require Native Network
+    Encryption: an Autonomous Database uses TLS, and the operator most likely to
+    read this hint is one pointing the tool at exactly that.
+    """
+    hint = classify("DPY-3001", "…").hint
+    assert hint is not None
+    assert "Native Network Encryption" in hint
+    assert "12.1" in hint
+    assert "external password store" in hint
+    assert "OCI" not in hint
+    assert "Autonomous" not in hint
+
+
 # ------------------------------------------------------------ the fallbacks ---
 
 

@@ -101,12 +101,16 @@ release is cut.
   `changed: false`, all identical to 26ai) and on real OCI 19c (maintainer tier).
   19.12 to 19.x itself is still covered nowhere but the tenancy. The prebuilt
   19.19 image would cover it, but only on an arm64 host (#565).
-- **Native Network Encryption**, the thing that forces thick mode, is properly
+- **Native Network Encryption**, one of the three things that force thick mode
+  (`00-principles.md`, *Why thick mode*), is properly
   exercised only against a real NNE-required server. It can be **approximated
   locally**: set `SQLNET.ENCRYPTION_SERVER = required` in a container's
   `sqlnet.ora` and assert that a thin-mode connection fails with `DPY-3001` and
   that the tool's diagnostics say something useful. That covers the failure path;
-  the success path still needs real OCI.
+  the success path still needs a real server that enforces it — Base Database
+  Service (unverified: nne-oci-default), **not** Autonomous, which encrypts with
+  TLS (unverified: adb-thin-mode) and would prove nothing about NNE. Neither has
+  been run (#575).
 
 ---
 
@@ -245,7 +249,8 @@ section's base cell plays with its import blocker.
 | 3 | pre-release | maintainer | manual | 19c EE (`--profile oracle19c`), real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
 
 **The tier-1 lane installs Oracle Instant Client, and has to** (#184). D3 makes
-thick mode mandatory — thin mode has no Native Network Encryption — so a runner
+thick mode mandatory — thin mode has no Native Network Encryption, no 11.2 and no
+external authentication — so a runner
 without the client would skip every driver test while reporting green. Basic Lite
 is a free download needing no account, which keeps §1's rule intact: a fork can
 do exactly what the lane does.
