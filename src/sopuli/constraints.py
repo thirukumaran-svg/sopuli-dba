@@ -69,6 +69,7 @@ __all__ = [
     "UNKNOWN",
     "UNLIMITED",
     "UNREAD",
+    "reuse_restricted",
     "survey",
 ]
 
@@ -161,7 +162,19 @@ class AccountConstraints:
         here, and the report names both values so a reader can apply the rule
         they know.
         """
-        return _restricts(self.reuse_max) or _restricts(self.reuse_time)
+        return reuse_restricted(self.reuse_max, self.reuse_time)
+
+
+def reuse_restricted(reuse_max: str | None, reuse_time: str | None) -> bool:
+    """Whether a profile's two ``PASSWORD_REUSE_*`` values restrict reuse at all.
+
+    Public because two readings need the same answer: a `generate` report reads
+    it off :class:`AccountConstraints`, and a rollback in `apply` off the
+    :class:`~sopuli.driver.protocol.UserState` it already holds (#568). A value
+    that was not read restricts nothing here -- this is a reporting test, and a
+    warning built on a limit nobody read would be inventing its own subject.
+    """
+    return _restricts(reuse_max) or _restricts(reuse_time)
 
 
 def _restricts(value: str | None) -> bool:

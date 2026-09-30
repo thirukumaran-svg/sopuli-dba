@@ -292,7 +292,8 @@ What ADB takes away is permanent rather than a version gap:
   `ORA-28003`. It accepted forty, so the 30-character upper bound in the ADB
   documentation's rules for `ADMIN`'s own password did not apply to a created
   user on this release. The reuse limits make UC-1 §8's rollback fail with
-  `ORA-28007` (#568).
+  `ORA-28007` (#568), which the rollback reports as `SOPULI-W028`; the way back
+  there is a rollover window, from a profile `ADMIN` can create.
 - **No retention claim either way.** `02_password_leak_probe.sql`, which is
   gate 2's evidence (`04-testing.md` §6), sweeps `V$SQLSTATS`, the OS audit files
   and the trace directory as `SYSDBA`. ADB has no `SYSDBA` and no OS access, so

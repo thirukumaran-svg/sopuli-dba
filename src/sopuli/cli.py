@@ -111,7 +111,7 @@ from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
-from sopuli.constraints import AccountConstraints, Constraints
+from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import Handover, Receipt
 from sopuli.diagnostics import (
     CONSTRAINTS_UNREAD,
@@ -133,6 +133,7 @@ from sopuli.diagnostics import (
     notification_unsent,
     promotion_withheld,
     reset_record_unwritten,
+    rollback_reuse,
     unlistable_stores,
     vault_diagnostics,
     wallet_diagnostics,
@@ -5399,7 +5400,10 @@ def creds_apply(
     Rollback is bounded to one generation, because that is all the stage
     vocabulary can address (Q3, issue #84). It needs `--confirm`, and it refuses
     where a password is staged -- rolling back under a rotation in flight leaves
-    a `pending` that the next run would move the estate forward with.
+    a `pending` that the next run would move the estate forward with. A profile
+    that restricts password reuse usually refuses it, since `previous` is a
+    password the account has held: the run says so (SOPULI-W028), and on such a
+    profile the way back is a rollover window rather than a rollback.
 
     **The rollover regime is chosen per account, and refused as a whole.** Where
     the database has gradual password rollover and the account's profile grants a
@@ -5640,6 +5644,10 @@ def creds_apply(
     _stream_results(run)
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
+    reuse_notices = rollback_reuse(
+        [(record.binding.target, record.reuse) for record in applied if record.reuse is not None]
+    )
+    document.diagnostics.extend(reuse_notices)
     states = [record.outcome.state for record in applied]
     # `mutated`, not `changed`: an account this run unlocked and did not need to
     # re-password changed, and a summary counting only the DDL would call a run
@@ -5708,7 +5716,10 @@ def creds_apply(
     # terminal -- and a guardrail that did not run, reported only in JSON, is
     # reported to nobody who ran this by hand.
     notes = render_notices(
-        repair_notes + [one.message for one in unchecked] + _lock_notices(manager)
+        repair_notes
+        + [one.message for one in reuse_notices]
+        + [one.message for one in unchecked]
+        + _lock_notices(manager)
     )
     return "\n".join([f"{_header(plan, sources)}\n\n{table}", *notes])
 
@@ -5762,6 +5773,11 @@ class _Applied:
     #: How many *extra* passwords this account was given, over the one the run
     #: arrived with (#312). Zero on every ordinary run.
     redraws: int = 0
+    #: The account as read before a **rollback** statement, where its profile
+    #: restricts reuse (#568); ``None`` on every other row. Carried to the end of
+    #: the run rather than reported here, because the warning is grouped per
+    #: profile and one account cannot see the others on it.
+    reuse: UserState | None = None
 
     @property
     def mutated(self) -> bool:
@@ -6251,6 +6267,20 @@ def _account_events(record: _Applied, run: Invocation) -> None:
         )
 
 
+#: What to do about a rollback whose value the server refused (#568).
+#:
+#: Replaces the driver's own hint, which is written for a drawn password and says
+#: to draw another -- the one thing a rollback cannot do, since `previous` is the
+#: only value it has. Worded for both refusals rather than keyed on `ORA-28007`:
+#: a verify function tightened since the rotation refuses `previous` too, and
+#: naming a vendor code here would put product knowledge in the command layer.
+ROLLBACK_REFUSED_HINT = (
+    "a rollback has only the value `previous` holds to send, so nothing was retried and "
+    "`current` still holds what the database has. Where the profile restricts reuse, the "
+    "way back from a rotation is a rollover window rather than a rollback (UC-1 section 6.3)"
+)
+
+
 def _apply_one(
     binding: Binding,
     session: Any,
@@ -6319,6 +6349,7 @@ def _apply_one(
     caveats: tuple[guardrails.Caveat, ...] = ()
     enforced: tuple[AttributeChange, ...] = ()
     issued = False
+    reuse: UserState | None = None
     try:
         user = session.describe_user(binding.account)
         settled = apply_states.settled_before_acting(
@@ -6419,6 +6450,13 @@ def _apply_one(
                 duration_ms=_elapsed(started),
             )
 
+        if source.stage == PREVIOUS and reuse_restricted(
+            user.password_reuse_max, user.password_reuse_time
+        ):
+            # #568. Here and not earlier: a rollback that turned out to be in
+            # place already, or that the guardrails turned away, never met the
+            # reuse history, and a warning about a statement nobody sent is noise.
+            reuse = user
         manager.check(_lock_key(binding))
         session.set_password(user.name, source.value)
         # From here on the database holds the new password whatever else fails,
@@ -6462,6 +6500,11 @@ def _apply_one(
         raise
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _as_error(error)
+        refused = getattr(error, "regenerate", False)
+        if refused and source is not None and source.stage == PREVIOUS:
+            # The driver's hint for a refused value is "draw another", which a
+            # rollback cannot do: it has one value to send and it sent it (#568).
+            reported = replace(reported, hint=ROLLBACK_REFUSED_HINT)
         return _Applied(
             binding,
             source,
@@ -6481,7 +6524,8 @@ def _apply_one(
             # Asked of the exception, which is the only place the answer exists:
             # `_as_error` builds the run document's `Error` and keeps what the
             # contract emits, and this is a question the tool asks itself (#312).
-            refused=getattr(error, "regenerate", False),
+            refused=refused,
+            reuse=reuse,
         )
 
     return _Applied(
@@ -6495,6 +6539,7 @@ def _apply_one(
         caveats=caveats,
         attributes=enforced,
         duration_ms=_elapsed(started),
+        reuse=reuse,
     )
 
 
@@ -7269,6 +7314,15 @@ def _wants_redraw(
             drawn=record.redraws + 1,
         )
         reason = decision.reason if not decision.allowed else _no_policy_for(config, record.binding)
+        if record.source is not None and record.source.stage == PREVIOUS:
+            # Ahead of whatever `may_redraw` said, which asks about `pending`'s
+            # origin and so answered a rollback with "no record of where that
+            # password came from" -- true of the key and false of the value,
+            # which is `previous` and whose provenance is not in doubt (#568).
+            reason = (
+                "a rollback has only the value `previous` holds, "
+                "and drawing another would not be one"
+            )
         if reason is None:
             wanted.append(record)
             continue

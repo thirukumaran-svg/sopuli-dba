@@ -46,6 +46,7 @@ from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.constraints import NAMED, POLICY, UNKNOWN, AccountConstraints, Constraints
 from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
+from sopuli.driver.protocol import UserState
 from sopuli.install_shape import INSTALLED, InstallShape
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager, Unguarded
@@ -423,6 +424,25 @@ NOTIFICATION_UNSENT = "SOPULI-W026"
 #: one withholds the promotion again, for ever.
 PROMOTION_WITHHELD = "SOPULI-W027"
 
+#: A rollback applied `previous` to an account whose profile restricts password
+#: reuse (#568). `previous` is, by construction, a password the account held one
+#: change ago whenever this tool made that change, so it is the value most likely
+#: of any to be in the reuse history -- which is `ORA-28007`, measured on ADB's
+#: own `DEFAULT` (`4` / `1`) and on tier 1's `SOPULI_REUSE` (`5` / `UNLIMITED`).
+#:
+#: **Its own code rather than** :data:`PASSWORD_REUSE_ENFORCED` **widened**,
+#: because that code's registry sentence says only `--from-stdin` produces it, and
+#: this module's docstring is plain that changing what an emitted code means is a
+#: lie rather than a bump. A consumer that branched on W017 as "a supplied
+#: password" would be told something false about a rollback.
+#:
+#: Reported rather than refused, and the values reported rather than interpreted,
+#: which is UC-1 §4's rule and the decision #568 took: when both limits are
+#: numbers, whether the reuse is allowed depends on changes made outside the tool,
+#: which it cannot see. Raised on every rollback that reaches the statement on
+#: such a profile, whichever way the statement went.
+ROLLBACK_REUSE_RESTRICTED = "SOPULI-W028"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -625,6 +645,17 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "scope were still changed. The run exits 4 like one whose targets failed, and "
             "the remedy differs: a wider run that covers the named pairs, not the same "
             "narrowed one again."
+        ),
+        ROLLBACK_REUSE_RESTRICTED: (
+            "A rollback (`creds apply --source previous`) applied `previous` to an "
+            "account whose profile restricts password reuse. `previous` is normally a "
+            "password the account held one change ago, so the server is likely to refuse "
+            "it with ORA-28007; where one limit is UNLIMITED and the other a number, a "
+            "password the account has held is never accepted again. The two values are "
+            "reported rather than interpreted, because the rule also counts changes made "
+            "outside this tool. Raised whichever way the statement went. On such a "
+            "profile the way back from a rotation is a rollover window "
+            "(`PASSWORD_ROLLOVER_TIME`, UC-1 §6.3), not a rollback."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -849,6 +880,45 @@ def guardrail_diagnostics(caveats: Sequence[tuple[str, Caveat]]) -> list[Diagnos
                     f"{target}: guardrail check `{check}` did not run: {reason}"
                     + (f" -- {remedy}" if remedy else "")
                     + f" ({_accounts(names)})"
+                ),
+            )
+        )
+    return notices
+
+
+def rollback_reuse(readings: Sequence[tuple[str, UserState]]) -> list[Diagnostic]:
+    """A rollback against a profile that restricts reuse, as a warning (#568).
+
+    ``readings`` is (target, account state) pairs for the rollbacks that reached
+    the statement, in the order the run produced them. The caller passes only
+    those whose profile restricts reuse -- :func:`~sopuli.constraints.reuse_restricted`
+    is the test -- because which pairs were rollbacks is the command's knowledge.
+
+    **One entry per (target, profile)**, on :func:`_profile_notices`' reasoning:
+    the limits belong to the profile, so forty accounts on ADB's ``DEFAULT``
+    would otherwise be told the same thing forty times.
+    """
+    grouped: dict[tuple[str, str], list[UserState]] = {}
+    for target, state in readings:
+        grouped.setdefault((target, state.profile or ""), []).append(state)
+
+    notices: list[Diagnostic] = []
+    for (target, profile), group in grouped.items():
+        names = [one.name for one in group]
+        first = group[0]
+        notices.append(
+            Diagnostic(
+                level="warning",
+                code=ROLLBACK_REUSE_RESTRICTED,
+                target=target,
+                account=names[0] if len(names) == 1 else None,
+                message=(
+                    f'{target}: profile "{profile}" restricts password reuse '
+                    f"(PASSWORD_REUSE_MAX {first.password_reuse_max}, PASSWORD_REUSE_TIME "
+                    f"{first.password_reuse_time}), and a rollback applies a password the "
+                    f"account has normally held before, so ORA-28007 is likely; on this "
+                    f"profile the way back from a rotation is the rollover window a "
+                    f"PASSWORD_ROLLOVER_TIME opens, not a rollback ({_accounts(names)})"
                 ),
             )
         )

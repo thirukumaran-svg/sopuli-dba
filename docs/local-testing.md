@@ -2537,6 +2537,55 @@ Exercise this at least once. It is the reason a promotion moves the old `current
 into `previous` rather than overwriting it, and the reason invariant 7's ordering is
 worth the extra vault write.
 
+**Then watch a profile refuse it** (#568). `SOPULI_REUSE` restricts reuse, and
+`previous` is a password the account held one change ago. Put an account on it,
+add `acme_reuse_user` to the `acme` application's `accounts:` in §6's file, rotate
+twice so there is a `previous` the tool set, and roll back:
+
+```sql
+CREATE USER acme_reuse_user IDENTIFIED BY "Placeholder#1" PROFILE sopuli_reuse;
+GRANT CREATE SESSION TO acme_reuse_user;
+```
+
+```bash
+sopuli --config sopuli.yaml creds rotate --account acme_reuse_user --confirm
+sopuli --config sopuli.yaml creds rotate --account acme_reuse_user --confirm
+sopuli --config sopuli.yaml creds apply --account acme_reuse_user --source previous --confirm ; echo "exit $?"
+```
+
+```
+ACCOUNT          TARGET    STATE  DETAIL
+acme_reuse_user  free-pdb  ERROR  ORA-28007: The password cannot be reused.
+
+nothing rolled back, 1 not confirmed
+
+1 note:
+  free-pdb: profile "SOPULI_REUSE" restricts password reuse (PASSWORD_REUSE_MAX 5, PASSWORD_REUSE_TIME UNLIMITED), and a rollback applies a password the account has normally held before, so ORA-28007 is likely; on this profile the way back from a rotation is the rollover window a PASSWORD_ROLLOVER_TIME opens, not a rollback (ACME_REUSE_USER)
+exit 1
+```
+
+It fails safely: nothing is promoted, and `creds check` afterwards is `IN_SYNC`
+against `current`. The note is `SOPULI-W028`, and it is a report rather than a
+prediction. It fires on every rollback that reaches the statement on a profile
+whose limits are not both `UNLIMITED`, including one that succeeds, because when
+both limits are numbers the outcome depends on changes the tool cannot see.
+Under `--output json` the row's `error.hint` says why nothing was retried. A
+rollback has no other value to send, so it is never redrawn, and
+`password_not_redrawn` says so rather than blaming the document's provenance.
+
+`ALTER USER acme_reuse_user PROFILE DEFAULT` and the same rollback goes through
+with no note, since the container's `DEFAULT` leaves both limits `UNLIMITED`:
+
+```
+ACCOUNT          TARGET    STATE    DETAIL
+acme_reuse_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 rolled back, 1 promoted to `current`
+```
+
+On a reuse-restricted estate, recovery is §10.9's rollover window, opened by the
+rotation itself. It is not this command.
+
 ### 10.8 `--promote`, and the refusal in front of it
 
 `creds generate --promote` writes `current` directly, for adopting an account whose
@@ -5262,9 +5311,10 @@ acme_app_user  adb-acme  ERROR  ORA-28007: The password cannot be reused.
 nothing rolled back, 1 not confirmed
 ```
 
-It fails safely, and `check` afterwards is `IN_SYNC` against `current`. Nothing
-warns beforehand, though, and #568 is the decision about that. On ADB the way
-back is a rollover window, below, not a rollback. Before you can even get this
+It fails safely, and `check` afterwards is `IN_SYNC` against `current`. That
+output predates #568. A build since then adds `SOPULI-W028` naming the profile's
+two reuse limits, as §10.7 shows on tier 1; it has not been re-run on ADB. On ADB
+the way back is a rollover window, below, not a rollback. Before you can even get this
 far, a `pending` left over from a failed `apply` makes the rollback refuse with
 `PENDING_APPLY`, exactly as §10.7 says. Clear it with a good `generate` and
 `apply` first.

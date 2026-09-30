@@ -2839,6 +2839,143 @@ def test_a_rollback_dry_run_needs_no_confirmation(
     assert harness["sessions"] == []
 
 
+# ------------------------------------------ the rollback and reuse (#568) ---
+
+
+def _reusing(**limits: str) -> dict[str, UserState | None]:
+    """ACME_WEB_USER on a profile with the given reuse limits.
+
+    `5` / `UNLIMITED` by default, which is the tier-1 `SOPULI_REUSE` fixture and
+    the regime where a password the account has held is never accepted again.
+    """
+    fields = {"password_reuse_max": "5", "password_reuse_time": "UNLIMITED", **limits}
+    return {"ACME_WEB_USER": user(profile="SOPULI_REUSE", **fields)}
+
+
+def _rollback(runner: CliRunner, config: Path, *extra: str) -> Any:
+    return run(
+        runner, config, "--select", "tenant=alpha", "--source", "previous", "--confirm", *extra
+    )
+
+
+def _coded(emitted: Mapping[str, Any], code: str) -> list[dict[str, Any]]:
+    return [one for one in emitted.get("diagnostics", []) if one.get("code") == code]
+
+
+def test_a_refused_rollback_on_a_reuse_profile_says_why_and_draws_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#568, as measured on ADB and on tier 1's `SOPULI_REUSE`. The profile is
+    reported with both values, the row's hint does not tell the operator to draw
+    another, and the redraw's refusal gives the rollback's reason rather than
+    "no record of where that password came from", which described `pending`'s
+    provenance key and not the value that was refused."""
+    harness = estate(documents=_rolled(), users=_reusing(), set_error=refusal("ORA-28007"))
+
+    result = _rollback(runner, write_config(CONFIG), "--output", "json")
+    emitted = document(result)
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert harness["sessions"][0].attempted == [("ACME_WEB_USER", "The-One-Before-2025")]
+    body = stored(harness["store"], "apps/acme/appdb-alpha")
+    assert body["DB_CREDENTIALS"]["acme_web_user"] == LIVE
+    assert body["previous"]["acme_web_user"] == "The-One-Before-2025"
+
+    (warned,) = _coded(emitted, "SOPULI-W028")
+    assert "SOPULI_REUSE" in warned["message"]
+    assert "PASSWORD_REUSE_MAX 5" in warned["message"]
+    assert "PASSWORD_REUSE_TIME UNLIMITED" in warned["message"]
+    assert warned["target"] == "appdb-alpha"
+
+    (row,) = emitted["results"]
+    assert row["error"]["code"] == "ORA-28007"
+    assert "draw another" not in row["error"]["hint"]
+    assert "rollover window" in row["error"]["hint"]
+
+    (declined,) = _coded(emitted, "password_not_redrawn")
+    assert "rollback" in declined["message"]
+    assert not _coded(emitted, "password_redrawn")
+
+
+def test_the_reuse_warning_is_printed_as_well_as_serialised(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#309's rule: a warning only in `diagnostics[]` is invisible to the person
+    who ran the rollback by hand, and they are who it is for."""
+    estate(documents=_rolled(), users=_reusing(), set_error=refusal("ORA-28007"))
+
+    result = _rollback(runner, write_config(CONFIG))
+
+    assert 'profile "SOPULI_REUSE" restricts password reuse' in result.output
+
+
+def test_a_rollback_the_profile_allowed_still_carries_the_warning(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Reported, never interpreted (UC-1 §4). With both limits numbers the rule
+    counts changes this tool cannot see, so the warning does not claim to know
+    the outcome and is not withdrawn when the statement succeeds."""
+    estate(
+        documents=_rolled(),
+        users=_reusing(password_reuse_max="1", password_reuse_time="1"),
+        answers={"ACME_WEB_USER": drifted()},
+    )
+
+    emitted = document(_rollback(runner, write_config(CONFIG), "--output", "json"))
+
+    assert emitted["exit_code"] == ExitCode.SUCCESS
+    assert len(_coded(emitted, "SOPULI-W028")) == 1
+
+
+def test_a_rollback_on_an_unrestricted_profile_carries_no_reuse_warning(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Both limits `UNLIMITED` is Oracle's own `DEFAULT` outside ADB, and the
+    regime where a rollback always works -- a warning there would be one every
+    reader learns to skip."""
+    estate(
+        documents=_rolled(),
+        users=_reusing(password_reuse_max="UNLIMITED", password_reuse_time="UNLIMITED"),
+        answers={"ACME_WEB_USER": drifted()},
+    )
+
+    emitted = document(_rollback(runner, write_config(CONFIG), "--output", "json"))
+
+    assert not _coded(emitted, "SOPULI-W028")
+
+
+def test_a_forward_apply_on_a_reuse_profile_carries_no_reuse_warning(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A staged `pending` is a fresh draw and cannot be in the history, which is
+    `SOPULI-W017`'s reasoning and the reason the rollback has a code of its own."""
+    estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        users=_reusing(),
+    )
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert not _coded(document(result), "SOPULI-W028")
+
+
+def test_a_rollback_already_in_place_is_not_warned_about(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """No statement, so no reuse history was consulted: the warning is about the
+    `ALTER USER` a run sends, not about the profile an account happens to sit on."""
+    estate(documents=_rolled(), users=_reusing(), answers={"ACME_WEB_USER": passes()})
+
+    emitted = document(_rollback(runner, write_config(CONFIG), "--output", "json"))
+
+    assert not _coded(emitted, "SOPULI-W028")
+
+
 # ------------------------------------------------------ the other two stages ---
 
 

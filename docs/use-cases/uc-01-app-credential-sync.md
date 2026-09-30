@@ -305,7 +305,8 @@ The other three names in step 2 cannot bind anything, and are read so the run ca
 - **`PASSWORD_REUSE_*`** history is hashed, so the two resource values are
   reported and never interpreted. The warning fires only under `--from-stdin`:
   fresh randomness cannot collide with a history, and a supplied password is
-  whatever an external system dictated;
+  whatever an external system dictated. A rollback is the other case where the
+  value is not fresh, and §5 reports it under its own code (#568);
 - **`PASSWORD_VERSIONS`** is which verifiers the account holds, reported as a
   fact. Which of them a later rotation regenerates is the server's own
   configuration and not this tool's.
@@ -808,6 +809,36 @@ rotation in flight leaves the `pending` there, and the next `apply` moves the
 estate forward with it — undoing the undo, unattended, at whatever hour that run
 happens. Reported per account as `PENDING_APPLY`, the same word
 `creds finish-rollover` uses for the same fact.
+
+**A profile that restricts reuse usually refuses a rollback** (#568). `previous`
+is, by construction, the password the account held one change ago, whenever this
+tool made that change — so where `PASSWORD_REUSE_MAX` or `PASSWORD_REUSE_TIME`
+is anything but `UNLIMITED`, the value is the one most likely of any to be in the
+history, and the statement is likely to fail with `ORA-28007` — certain where
+one limit is `UNLIMITED` and the other a number, and dependent on elapsed time
+and intervening changes where both are numbers. Measured on ADB, whose own
+`DEFAULT` carries `4` / `1`, and on tier 1's `SOPULI_REUSE` (`5` / `UNLIMITED`):
+both refused, both failed safely, and `check` afterwards was `IN_SYNC` against
+`current`.
+
+The run says so, and does not refuse in advance. Every rollback that reaches the
+statement on such a profile carries `SOPULI-W028`, one per target and profile,
+naming both values, whichever way the statement went. Reported rather than
+interpreted, which is §4's rule for the same two values: when both are numbers,
+Oracle's rule also counts the changes made outside the tool, which it cannot
+see, so a plan-time refusal would sometimes refuse a rollback that would have
+worked. A refused rollback is never redrawn — `previous` is the only value it
+has — and its row's hint says that rather than the driver's "draw another".
+
+**On such a profile, the way back is a rollover window, not a rollback.** A
+profile with `PASSWORD_ROLLOVER_TIME` makes every rotation open one (§6.3): the
+old password keeps authenticating until `finish-rollover` or the window's end,
+which is exactly the escape hatch a rollback would have been, and it involves no
+reuse because nothing is set back. An estate whose baseline restricts reuse —
+CIS-style profiles set both limits — should plan its recovery around that
+window rather than around `--source previous`. The window is only there if it
+was opened by the rotation, though, so the decision has to be made before
+rotating, not after something breaks.
 
 Rollback stays bounded to one generation, which is Q3 (#84) and not this
 issue's to reopen: OCI holds exactly one `PREVIOUS`, and §7's stage vocabulary
@@ -1979,7 +2010,10 @@ vault still holds `previous`. That bound is the decision, not the example (Q3,
 settled in #84): OCI holds exactly one `PREVIOUS`, and `01-configuration.md` §7's
 stage vocabulary — `current` / `pending` / `previous` — has nothing to address an
 older generation with. Recovery further back is a matter of reading the store's
-own version history, which not every backend has.
+own version history, which not every backend has. Nor does every profile allow
+it: one that restricts password reuse is likely to refuse `previous` with
+`ORA-28007`, and there the escape hatch is a rollover window opened by the rotation itself (§5,
+#568).
 
 ---
 
