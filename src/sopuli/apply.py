@@ -53,7 +53,13 @@ and the unit of the commit is the document, which is the one place `check`'s
 per-target grouping and `generate`'s per-document grouping have to meet. A
 document is promoted only when every (account, target) pair belonging to the
 accounts *in that document* confirmed -- so a run touching two documents may
-promote one and not the other, which is `apply --repair`'s whole premise later.
+promote one and not the other.
+
+**Every pair the configuration declares, not only the ones this run visited**
+(#406). The pairs a selector excluded are found by ``cli._left_out`` from the
+config and the document, and a document with any is held back rather than
+promoted on the strength of a subset; :func:`summarise_document` is then only
+asked about a run that covered everything the promotion needs.
 """
 
 from __future__ import annotations

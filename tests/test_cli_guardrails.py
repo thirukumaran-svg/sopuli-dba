@@ -654,7 +654,18 @@ def test_force_clears_a_named_account_too(
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         }
     )
-    result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--force")
+    # Both accounts are named: they share a document and both have a password
+    # staged, so a run narrowed to one of them would not promote it (#406), and
+    # this test is about the guardrail rather than the gate.
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--account",
+        "acme_web_user",
+        "--account",
+        "acme_batch_user",
+        "--force",
+    )
 
     assert result.exit_code == ExitCode.SUCCESS
     assert "ACME_WEB_USER" in changed(harness)

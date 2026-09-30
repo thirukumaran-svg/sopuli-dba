@@ -2128,6 +2128,106 @@ pending to apply, and nothing was written.
 
 The same run streams with `--output jsonl` (#535) — §15 has both runs as events.
 
+### 10.3a Narrowing an apply, and the promotion it will not make (#406)
+
+A selector narrows what `apply` changes. It does not narrow what a promotion
+needs: every target the credential is declared on, and every sibling in the
+same document with a `pending` of its own, has to confirm **in the run that
+promotes** (UC-1 §5, *the promotion gate*). A narrowed run changes what it was
+pointed at and then withholds the promotion. This is worth causing on purpose,
+because the exit 4 it produces is not a failure.
+
+**Two accounts in one document.** Add `acme_batch_user` to the application in §6,
+and give each account its own pointer — `validate` refuses two accounts behind a
+bare `#{account}`, and says so:
+
+```yaml
+    accounts:
+      - acme_app_user
+      - acme_batch_user
+    secret_template: "vault-dev:acme/{env}/{application}#DB_CREDENTIALS/{account}"
+```
+
+Stage both with `sopuli --config sopuli.yaml creds generate`, then apply one:
+
+```bash
+sopuli --config sopuli.yaml creds apply --account acme_batch_user ; echo "exit $?"
+```
+
+```
+Plan: 1 account x 1 target = 1 apply   [dev]
+
+ACCOUNT          TARGET    INTENT                               SECRET
+acme_batch_user  free-pdb  verify, password_set, vault_promote  vault-dev:acme/dev/acme
+
+ACCOUNT          TARGET    SECRET                   SOURCE
+acme_batch_user  free-pdb  vault-dev:acme/dev/acme  pending
+
+ACCOUNT          TARGET    STATE    DETAIL
+acme_batch_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 changed
+repair with: sopuli creds apply --config sopuli.yaml
+
+1 note:
+  vault-dev:acme/dev/acme cannot be promoted by this run: the promotion also needs acme_app_user on free-pdb, which this run's selection left out -- run `creds apply` without the narrowing to finish
+exit 4
+```
+
+The database changed and the vault did not: `acme_batch_user` now holds its
+`pending` value and `current` still says the old one. The `repair with:` line has
+**dropped** the `--account` rather than echoing it back, because the narrow run is
+the one that withholds the promotion. Run it:
+
+```
+ACCOUNT          TARGET    STATE    DETAIL
+acme_app_user    free-pdb  IN_SYNC  changed and verified by login
+acme_batch_user  free-pdb  IN_SYNC  the vault's `pending` is already accepted; nothing to change
+
+1 changed, 1 promoted to `current`
+exit 0
+```
+
+and once more, for invariant 9: both rows `the vault's password is already
+accepted; nothing to change`, then `nothing changed`, exit 0.
+
+Under `--output json` the narrowed run carries the code that tells this exit 4
+from a failed target's:
+
+```
+4 [{'level': 'warning', 'message': "vault-dev:acme/dev/acme cannot be promoted by this run: the promotion also needs acme_app_user on free-pdb, which this run's selection left out -- run `creds apply` without the narrowing to finish", 'code': 'SOPULI-W027'}, ...]
+```
+
+`--dry-run` prints the same note under `nothing was applied (--dry-run)` and exits
+0, which is the place to find out before anything changes.
+
+**One account on two targets.** Take the account back out, and declare a second
+target that is the same PDB under another name — a copy of `free-pdb` called
+`free-pdb-b` with `dsn: "localhost:1521/FREEPDB1"` is enough, because the gate
+reads the config and asks no database. With a fresh `pending` staged:
+
+```bash
+sopuli --config two-targets.yaml creds apply --target free-pdb ; echo "exit $?"
+```
+
+```
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 changed
+repair with: sopuli creds apply --config two-targets.yaml
+
+1 note:
+  vault-dev:acme/dev/acme cannot be promoted by this run: the promotion also needs acme_app_user on free-pdb-b, which this run's selection left out -- run `creds apply` without the narrowing to finish
+exit 4
+```
+
+Before #406 this run printed `1 changed, 1 promoted to current` and exited 0,
+with `free-pdb-b` never asked. The wider run finishes it — `nothing changed, 1
+promoted to current`, exit 0 — because the two "targets" are one database here
+and the password is already on both; against two real databases it would change
+the second one first.
+
 ### 10.4 `check` — drift, and the exit code that carries it
 
 Change the password behind the tool's back:
@@ -2401,6 +2501,23 @@ rotation: staged 1 document, promoted 1 document
 
 That `INTENT` column is the whole use case in one row, and it is worth reading once
 in that order. The same run streams with `--output jsonl` (#535); §15 has it.
+
+**A narrowed rotation is refused rather than withheld** (#406). With the
+two-target config from §10.3a:
+
+```bash
+sopuli --config two-targets.yaml creds rotate --target free-pdb --confirm ; echo "exit $?"
+```
+
+```
+sopuli: this rotation is narrower than the promotion it would owe: vault-dev:acme/dev/acme also needs acme_app_user on free-pdb-b
+  hint: widen the selection to cover them, or stage with `creds generate` and roll out with `creds apply` one target at a time
+exit 8
+```
+
+Nothing was staged. `apply` narrowed the same way changes what it was pointed at
+and waits, because that is a staged rollout; a rotation would draw a password and
+stop halfway by construction.
 
 ### 10.7 Rolling back
 

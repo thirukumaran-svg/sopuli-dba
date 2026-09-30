@@ -184,6 +184,14 @@ something specific.
    Written here rather than left to be discovered in a diff, as invariant 9's
    scope rule is, and a second exception is a decision rather than an
    implementation detail.
+
+   **"Every target" is every target the configuration declares, not every
+   target this run visited** (decided in #406). A run narrowed by a selector
+   still changes what it was pointed at and then withholds the promotion
+   (`SOPULI-W027`, exit 4); `rotate` refuses up front instead. Counting only the
+   visited pairs let `apply --target` promote a credential whose other target
+   still held the old password, with nothing having failed. UC-1 §5's
+   *promotion gate* says which pairs a promotion needs.
 8. **Every mutating command supports `--dry-run` and prints a plan first.**
 9. **Idempotency:** running a **convergent** command twice must report
    `changed: false` the second time and emit no mutation audit record.

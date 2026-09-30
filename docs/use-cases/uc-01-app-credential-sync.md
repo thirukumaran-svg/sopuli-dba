@@ -500,10 +500,48 @@ sopuli creds apply --application orders-app
 
 - All succeeded → promote in the vault: `previous = current`, `current = pending`,
   clear `pending`, stamp `rotated_at`/`rotated_by`. Exit 0.
+- The run was narrower than the promotion → do **not** promote, and exit 4. See
+  *The promotion gate* below.
 - Some failed → do **not** promote. `pending` stays. Report per-target status and
   exit 4 (partial). The remedy is `apply` again — narrowed by `--repair FILE`
   where the run's document was captured — and it is safe to re-run either way.
 - All failed → nothing changed anywhere. Exit 1.
+
+**The promotion gate, stated once (decided in #406).** A secret document is
+promoted only when every (account, target) pair it needs has confirmed **in this
+run**, and the pairs it needs are counted over the **configuration**, not over
+what the run was narrowed to:
+
+- **every target the same credential is declared on** — same document, same ref,
+  so one promotion moves the password every one of them is supposed to hold;
+- **on a forward promotion, every pair of every sibling account in the document
+  that has a `pending` of its own.** Its staged password may already be on its
+  database, which is exactly what an earlier partial run leaves, and a promotion
+  that skipped it would strand it there, database ahead of `current`. A sibling
+  with nothing staged has no rotation in flight and is not needed, which is what
+  keeps `--account` able to rotate one account in a shared document;
+- a rollback (`--source previous`) asks only the first. It refuses where
+  anything is staged, and a sibling's `previous` is not a rollback anybody asked
+  for.
+
+A run narrowed past any of those — `--target`, `--select`, `--account` or
+`--repair` — still changes the databases it was pointed at, because that is how
+a rollout is staged target by target, and then **withholds the promotion**:
+`pending` stays, the run exits 4, and `SOPULI-W027` names the pairs it left out.
+The remedy is a run wide enough to include them, so the `repair with:` line on
+that run drops the selectors rather than echoing them back. It costs one login
+per pair the narrow run already converged, and reports `changed: false` for
+each. An account a guardrail skipped is inside the run, not outside it (#286
+decides what a skip means).
+
+**Why, when nothing failed.** Before #406 the gate counted only the pairs the
+run had visited, so `apply --target appdb-alpha` promoted an account whose other
+target still held the old password: the state invariant 7 exists to prevent,
+reached by a selector rather than by a failure, behind an exit 0. The two
+alternatives were leaving it and documenting the exception, and re-verifying the
+excluded pairs before promoting; the second connects to targets the operator
+deliberately excluded and costs the same logins as the wider run, so the gate
+refuses instead and asks for that run.
 
 **Multi-target atomicity.** There is no distributed transaction across databases.
 The tool is explicit about this: it applies target by target, and the vault
@@ -998,12 +1036,14 @@ that does not resolve is an invocation that did not resolve. Exit 9 was the
 alternative and was declined in #391 — it means *fix your configuration*, and the
 configuration here is fine.
 
-**The promotion still commits per document, over this run's scope.** A repair
-narrowed to one of a document's two accounts promotes that document once its own
-pairs confirm, without re-verifying the sibling the earlier run already applied.
-That is not new and not specific to this flag — `--account` has always narrowed
-within a document the same way — but `--repair` is the flag that makes it
-ordinary, so it is written down here rather than left to be discovered.
+**A repair of a rotation is the DDL, not the promotion** (#406). A repair
+narrowed to one of a document's two accounts changes that account and then
+withholds the promotion, because the sibling the earlier run already applied
+still has its `pending` staged and nothing in this run asked its database
+anything — §5's promotion gate. So a partial rotation takes two runs to finish:
+`--repair` for the pairs that failed, then `apply` without the narrowing, which
+spends one login on each converged pair and promotes. A repair from `current` —
+drift, with nothing staged — has nothing to promote and still finishes in one.
 
 **Exit 4 names the invocation that repairs it, and that part shipped.** A partial
 run's closing line says what to type, narrowed the way that run was narrowed and
@@ -1613,6 +1653,16 @@ CDB's PDBs. A target the tool has not reached since the last rotation is
 therefore selected by age exactly like one it has, which is the trade §9 makes
 visible rather than hides: `status`'s `DB_PW_CHANGED` column is where that gap
 shows up, not in what `rotate` selects.
+
+**A rotation narrower than its promotion is refused before anything is
+staged** (#406). §5's promotion gate, asked of `rotate` up front: a selector that
+leaves out another target of a credential being rotated, or a sibling in the same
+document with a `pending` of its own, exits 8 naming the pairs. `apply` narrowed
+the same way changes what it was pointed at and withholds the promotion, because
+that is how a rollout is staged; a rotation has no such reading — it would draw a
+password, put it on part of the estate and stop at case 7 by construction, on
+every run. To rotate part of an estate at a time, `creds generate` then
+`creds apply` per target, and a final `apply` to promote.
 
 ```
 sopuli creds rotate --application orders-app

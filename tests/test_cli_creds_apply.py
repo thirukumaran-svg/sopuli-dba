@@ -25,17 +25,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli import apply, check
 from sopuli.admin import Resolved
-from sopuli.cli import cli
+from sopuli.cli import _left_out, cli
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.errors import ArgumentError
+from sopuli.config.loading import build_config
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
-from sopuli.diagnostics import LOCK_TAKEN_OVER, REPAIR_DOCUMENT_STALE
+from sopuli.diagnostics import LOCK_TAKEN_OVER, PROMOTION_WITHHELD, REPAIR_DOCUMENT_STALE
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.oracle.errors import classify
 from sopuli.driver.protocol import (
@@ -257,6 +259,16 @@ applications:
     accounts: [acme_web_user]
     secret_template: "apps/acme/db#DB_CREDENTIALS/{account}"
 """
+
+#: `REDRAW_CONFIG` with a label per target, so a `--select` can narrow inside the
+#: one document both targets share (#406).
+LABELLED_SHARED_CONFIG = REDRAW_CONFIG.replace(
+    "    dsn: db-prod.example.com:1521/alpha.pdb.example.com\n",
+    "    dsn: db-prod.example.com:1521/alpha.pdb.example.com\n    labels: { tenant: alpha }\n",
+).replace(
+    "    dsn: db-prod.example.com:1521/beta.pdb.example.com\n",
+    "    dsn: db-prod.example.com:1521/beta.pdb.example.com\n    labels: { tenant: beta }\n",
+)
 
 #: The document `REDRAW_CONFIG` writes, staged the way #311's `generate` leaves it.
 REDRAW_DOCUMENT = "apps/acme/db"
@@ -1938,6 +1950,294 @@ def test_one_account_failing_holds_back_its_sibling_too(
     assert stored(harness["store"], "apps/acme/db")["pending"]["acme_web_user"] == STAGED
 
 
+# ------------------------------------- a run narrower than its promotion (#406) ---
+
+
+def _both_staged() -> dict[str, dict[str, Any]]:
+    return {
+        "apps/acme/db": {
+            "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+            "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+        }
+    }
+
+
+def test_a_run_narrowed_to_one_target_changes_it_and_does_not_promote(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Invariant 7, against a selector rather than against a failure.
+
+    One account on two targets sharing one document. `--target` reaches one of
+    them, and nothing fails -- which is what made this promote before #406, with
+    the other database still holding the old password. Asserted on the stored
+    document, per this file's rule.
+    """
+    harness = estate(documents=staged())
+    config = write_config(REDRAW_CONFIG)
+
+    result = run(runner, config, "--target", "appdb-alpha")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    changed = [name for session in harness["sessions"] for name, _ in session.changed]
+    assert changed == ["ACME_WEB_USER"]
+    after = stored(harness["store"], REDRAW_DOCUMENT)
+    assert after["DB_CREDENTIALS"] == {"acme_web_user": LIVE}
+    assert after["pending"] == {"acme_web_user": STAGED}
+    assert "acme_web_user on appdb-beta" in result.output
+
+
+def test_the_withheld_promotion_names_the_wider_run_as_its_remedy(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#264's line echoes the selectors, and here that would be the invocation
+    that withholds the promotion again."""
+    estate(documents=staged())
+    config = write_config(LABELLED_SHARED_CONFIG)
+
+    result = run(runner, config, "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    remedy = result.output.split("repair with: ")[1].splitlines()[0]
+    assert remedy == f"sopuli creds apply --config {config}"
+
+
+def test_the_wider_run_finishes_what_the_narrow_one_left(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    harness = estate(documents=staged())
+    config = write_config(REDRAW_CONFIG)
+    run(runner, config, "--target", "appdb-alpha")
+
+    result = run(runner, config)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    after = stored(harness["store"], REDRAW_DOCUMENT)
+    assert after["DB_CREDENTIALS"] == {"acme_web_user": STAGED}
+    assert after["pending"] == {}
+
+
+def test_a_sibling_with_a_staged_password_holds_the_promotion_back(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """Narrowing *within* a shared document, which is the case #406 was opened on.
+
+    The sibling's `pending` may already be on its database -- an earlier partial
+    run leaves exactly that -- and promoting past it would strand it there behind
+    an exit 0. The code is what tells this exit 4 from a failed target's.
+    """
+    harness = estate(
+        documents=_both_staged(),
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+
+    result = run(
+        runner, write_config(SHARED_CONFIG), "--account", "acme_batch_user", "--output", "json"
+    )
+
+    found = document(result)
+    assert not list(validator.iter_errors(found))
+    assert found["exit_code"] == ExitCode.PARTIAL
+    assert [one["code"] for one in found["diagnostics"]] == [PROMOTION_WITHHELD]
+    assert "acme_web_user on appdb-alpha" in found["diagnostics"][0]["message"]
+    assert found["results"][0]["state"] == check.IN_SYNC
+    assert "promoted_to" not in found["results"][0]
+    staged_before = _both_staged()["apps/acme/db"]["pending"]
+    assert stored(harness["store"], "apps/acme/db")["pending"] == staged_before
+
+
+def test_a_sibling_with_nothing_staged_is_not_needed(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """What keeps `--account` able to rotate one account in a shared document:
+    a sibling with no rotation in flight has nothing for a promotion to strand."""
+    harness = estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_batch_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+
+    result = run(runner, write_config(SHARED_CONFIG), "--account", "acme_batch_user")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    after = stored(harness["store"], "apps/acme/db")
+    assert after["DB_CREDENTIALS"] == {"acme_web_user": LIVE, "acme_batch_user": STAGED}
+
+
+def test_a_dry_run_says_the_promotion_would_be_withheld(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate(documents=staged())
+
+    result = run(runner, write_config(REDRAW_CONFIG), "--target", "appdb-alpha", "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "acme_web_user on appdb-beta" in result.output
+
+
+def test_a_rollback_narrowed_to_one_target_does_not_swap_the_vault(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A rollback *is* a promotion, of the other neighbour, so the same gate
+    stands in front of it."""
+    body = {
+        "DB_CREDENTIALS": {"acme_web_user": STAGED},
+        "previous": {"acme_web_user": LIVE},
+    }
+    harness = estate(documents={REDRAW_DOCUMENT: body})
+
+    result = run(
+        runner,
+        write_config(REDRAW_CONFIG),
+        "--target",
+        "appdb-alpha",
+        "--source",
+        "previous",
+        "--confirm",
+    )
+
+    assert result.exit_code == ExitCode.PARTIAL
+    after = stored(harness["store"], REDRAW_DOCUMENT)
+    assert after["DB_CREDENTIALS"] == {"acme_web_user": STAGED}
+    assert after["previous"] == {"acme_web_user": LIVE}
+
+
+def test_a_rotation_narrower_than_its_promotion_is_refused_before_staging(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`apply` changes what it was pointed at and waits; `rotate` would draw a
+    password, put it on half the estate and stop there by construction. So the
+    same test is a refusal, and nothing is written -- asserted on the version."""
+    harness = estate(documents={REDRAW_DOCUMENT: {"DB_CREDENTIALS": {"acme_web_user": LIVE}}})
+    before = harness["store"].read(REDRAW_DOCUMENT).version
+
+    result = runner.invoke(
+        cli,
+        [
+            "creds",
+            "rotate",
+            "--config",
+            str(write_config(REDRAW_CONFIG)),
+            "--target",
+            "appdb-alpha",
+            "--confirm",
+        ],
+    )
+
+    # The boundary that turns this into exit 8 is `main`'s, which `CliRunner`
+    # does not go through -- the rollback refusal above is asserted the same way.
+    assert isinstance(result.exception, RefusedError)
+    assert "acme_web_user on appdb-beta" in str(result.exception)
+    assert harness["store"].read(REDRAW_DOCUMENT).version == before
+    assert harness["sessions"] == []
+
+
+#: `REDRAW_CONFIG` with beta's store left to a default nobody set, so the binding
+#: the gate is asked about has no store at all (found in review on #578).
+STORELESS_BETA_CONFIG = REDRAW_CONFIG.replace(
+    "    dsn: db-prod.example.com:1521/beta.pdb.example.com\n    environment: prod\n"
+    "    vault: vault-prod\n",
+    "    dsn: db-prod.example.com:1521/beta.pdb.example.com\n    environment: prod\n",
+)
+
+
+def test_an_excluded_binding_with_no_store_holds_the_promotion_back(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Its store might resolve only when it is selected, so "no store" is not
+    evidence that it lives in another document. The gate fails closed."""
+    assert STORELESS_BETA_CONFIG != REDRAW_CONFIG
+    harness = estate(documents=staged())
+
+    result = run(runner, write_config(STORELESS_BETA_CONFIG), "--target", "appdb-alpha")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "acme_web_user on appdb-beta" in result.output
+    assert stored(harness["store"], REDRAW_DOCUMENT)["pending"] == {"acme_web_user": STAGED}
+
+
+def test_an_unused_default_store_does_not_refuse_a_narrowed_run(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`SOPULI_VAULT` naming an undeclared store is wrong only for a run that
+    needed the default, and this one does not: the gate reads the whole estate,
+    and reading it must not add a refusal the selected run would never meet."""
+    monkeypatch.setenv("SOPULI_VAULT", "nosuch")
+    estate(documents=staged())
+
+    result = run(runner, write_config(STORELESS_BETA_CONFIG), "--target", "appdb-alpha")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "nosuch" not in result.output
+
+
+def test_the_same_credential_spelled_differently_is_still_the_same_credential() -> None:
+    """Two targets can address one value with refs that are not equal as
+    strings -- an explicit store prefix on one of them. A rollback compares the
+    credential and not the spelling (found in review on #578)."""
+    config = build_config(yaml.safe_load(REDRAW_CONFIG))
+    alpha, beta = config.bindings
+    assert alpha.secret is not None
+    assert beta.secret is not None
+    beta = replace(beta, secret=replace(beta.secret, vault="vault-prod", path="apps//acme/db"))
+    estate_ = replace(config, bindings=(alpha, beta))
+
+    found = _left_out([alpha], [(alpha, False)], {}, estate_)
+
+    assert [(one.account, one.target) for bindings in found.values() for one in bindings] == [
+        ("acme_web_user", "appdb-beta")
+    ]
+
+
+def test_a_sibling_that_is_not_due_is_not_visited_by_the_rotation(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--max-age-days` drops an account from the rotation without dropping it
+    from the selection. A sibling that is not due and has a `pending` of its own
+    is as unvisited as one a selector excluded (found in review on #578)."""
+    recent = to_rfc3339(utc_now() - timedelta(days=1))
+    old = to_rfc3339(utc_now() - timedelta(days=60))
+    harness = estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+                "rotated_at": {"acme_web_user": recent, "acme_batch_user": old},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+    )
+    before = harness["store"].read("apps/acme/db").version
+
+    result = runner.invoke(
+        cli,
+        [
+            "creds",
+            "rotate",
+            "--config",
+            str(write_config(SHARED_CONFIG)),
+            "--max-age-days",
+            "30",
+            "--confirm",
+        ],
+    )
+
+    assert isinstance(result.exception, RefusedError)
+    assert "acme_web_user on appdb-alpha" in str(result.exception)
+    assert harness["store"].read("apps/acme/db").version == before
+
+
 # -------------------------------------------------------------- the failures ---
 
 
@@ -2805,6 +3105,11 @@ def test_repair_narrows_to_the_pairs_that_did_not_confirm(
     confirmed one of them. Asserted on what the session was asked to change,
     not on the summary -- a command can report the right count and still have
     dialled the target it was supposed to skip.
+
+    **Exit 4, and that is #406.** The account the repair skipped still has its
+    `pending` staged, so the document is not promoted by a run that never asked
+    its database anything; the narrowing buys the login and the promotion waits
+    for a run wide enough to earn it.
     """
     harness = estate(
         documents={
@@ -2828,7 +3133,7 @@ def test_repair_narrows_to_the_pairs_that_did_not_confirm(
 
     result = run(runner, config, "--repair", str(previous))
 
-    assert result.exit_code == ExitCode.SUCCESS
+    assert result.exit_code == ExitCode.PARTIAL
     changed = [name for session in harness["sessions"] for name, _ in session.changed]
     assert changed == ["ACME_BATCH_USER"]
 
@@ -2931,7 +3236,7 @@ def test_a_stale_document_warns_and_proceeds(
         documents={
             "apps/acme/db": {
                 "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
-                "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+                "pending": {"acme_batch_user": STAGED},
             }
         },
         users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
@@ -2962,7 +3267,7 @@ def test_a_stale_document_carries_its_code_into_the_document(
         documents={
             "apps/acme/db": {
                 "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
-                "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+                "pending": {"acme_batch_user": STAGED},
             }
         },
         users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},

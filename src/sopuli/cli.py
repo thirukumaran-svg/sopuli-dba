@@ -131,6 +131,7 @@ from sopuli.diagnostics import (
     no_reset_journal,
     no_reset_record,
     notification_unsent,
+    promotion_withheld,
     reset_record_unwritten,
     unlistable_stores,
     vault_diagnostics,
@@ -5425,6 +5426,14 @@ def creds_apply(
     promotion lands they are fetching a password part of the estate no longer
     has. Re-running is the remedy and is safe.
 
+    **A run narrower than its promotion does not promote.** Every target the
+    config declares for a credential being promoted must confirm in this run,
+    and so must a sibling account in the same document that has a password
+    staged. A selector that leaves any of them out still changes the databases
+    it names -- that is how a rollout is staged -- and then leaves `pending`
+    where it is and exits 4, naming what it left out. Run apply without the
+    narrowing to finish.
+
     **`--repair FILE` narrows that re-run to what the last one left behind.**
     It reads a previous run's document -- an apply that exited 4, or a check
     that exited 3 -- and acts only on the (account, target) pairs it reported as
@@ -5448,6 +5457,10 @@ def creds_apply(
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
+    # The whole declared estate, kept beside the narrowed one: the promotion gate
+    # is asked about pairs this run was told to leave out (#406), and the filtered
+    # config has forgotten them.
+    estate = _declared_estate(run.config)
     config = filter_estate(run.config, selection)
     # After the selectors, so the two compose as *and* the way every pair of
     # selectors does, and so `refuse_unknown` still judges names against the
@@ -5512,7 +5525,13 @@ def creds_apply(
         # are still *read*, because which stage an account would be applied from
         # is the thing worth reviewing and a read needs no lock -- `check` runs
         # its whole survey without one.
-        sources = _sources(bindings, _read_documents(keys, stores, run=run), stage=source_stage)
+        previewed = _read_documents(keys, stores, run=run)
+        sources = _sources(bindings, previewed, stage=source_stage)
+        # Said in the preview as well as in the run, because "would this promote"
+        # is what somebody previewing a narrowed apply is asking (#406).
+        withheld = _withheld(_left_out(bindings, _owing(sources), previewed, estate))
+        document.diagnostics.extend(withheld)
+        repair_notes.extend(one.message for one in withheld)
         # The pre-flight runs here too, and it is the combination worth having:
         # `--dry-run --preflight` is "show me the plan, and tell me whether it
         # would work". Skipping it under a dry run would make the flag silently
@@ -5551,6 +5570,15 @@ def creds_apply(
             # a different one.
             documents = _read_documents(keys, stores, run=run)
             sources = _sources(bindings, documents, stage=source_stage)
+            # Decided before the first statement and from the config and the
+            # document alone, so the run says what it will not do before it does
+            # the rest (#406). The databases are still changed: a narrowed apply
+            # is how a rollout is staged target by target, and it is the promotion
+            # that has to wait for the last of them.
+            left_out = _left_out(bindings, _owing(sources), documents, estate)
+            withheld = _withheld(left_out)
+            document.diagnostics.extend(withheld)
+            repair_notes.extend(one.message for one in withheld)
             findings = _preflight(
                 _surveyable(sources), run, config, strategy=strategy, full=preflight_all
             )
@@ -5600,7 +5628,7 @@ def creds_apply(
                 # asserts every target holds this password, and a run stopped part
                 # way through has no standing to assert it.
                 promotions, stolen = _promote_documents(
-                    applied, documents, stores, manager=manager, run=run
+                    applied, documents, stores, manager=manager, run=run, left_out=left_out
                 )
     except LockDeniedError as denied:
         _record_locks(document, manager, denied=denied)
@@ -5652,9 +5680,13 @@ def creds_apply(
     # #264's line says "run this again", which is the one thing not to do while
     # somebody else holds this estate's lock. `stopped` says what happened
     # instead, and `render_apply` refuses to print both.
+    # One exception to "narrowed the way this run was narrowed": a promotion
+    # withheld because the run was too narrow (#406) is finished only by a wider
+    # one, so echoing the selectors back would name the invocation that withholds
+    # it again.
     repair = (
         repair_invocation(
-            selectors=selectors,
+            selectors=() if left_out else selectors,
             config_paths=[str(path) for path in run.config_paths],
             profile=run.profile,
             source=source_stage,
@@ -7451,6 +7483,7 @@ def _promote_documents(
     *,
     manager: LockManager,
     run: Invocation,
+    left_out: Mapping[LockKey, Sequence[Binding]] | None = None,
 ) -> tuple[dict[LockKey, _Promotion], LockStolenError | None]:
     """Promote every document whose targets all confirmed, and only those.
 
@@ -7458,6 +7491,11 @@ def _promote_documents(
     groupings meet: results arrive per (account, target) and the commit is per
     document, so the gate is *every pair belonging to the accounts in this
     document*.
+
+    **Every pair the config declares, not every pair this run visited** (#406).
+    ``left_out`` is the pairs the promotion needs and a selector excluded
+    (:func:`_left_out`); a document with any is not promoted however well the
+    run's own pairs went, because a run cannot confirm a target it never asked.
 
     A document nobody staged into is not promoted and is not a failure -- a run
     that read `current` is a repair, and the vault already holds what it should.
@@ -7478,6 +7516,13 @@ def _promote_documents(
         if not owing:
             promotions[key] = _Promotion(None, "the vault already holds what was applied")
             continue
+        if left_out is not None and left_out.get(key):
+            promotions[key] = _Promotion(
+                None,
+                "this run was narrower than the promotion, so the vault was left as it was",
+                promotable=True,
+            )
+            continue
         if not apply_states.summarise_document(record.outcome.state for record in records):
             promotions[key] = _Promotion(
                 None,
@@ -7492,6 +7537,132 @@ def _promote_documents(
         promotions[key] = _write_promotion(key, owing, documents[key], stores[key.store])
         _promotion_event(key, promotions[key], run)
     return promotions, None
+
+
+def _owing(sources: Sequence[tuple[Binding, Source | None]]) -> list[tuple[Binding, bool]]:
+    """The bindings whose stage owes the vault a write, and whether it is a forward one.
+
+    ``True`` for a ``pending`` being promoted and ``False`` for a ``previous``
+    being rolled back. :func:`_left_out` asks more of the first.
+    """
+    return [
+        (binding, source.stage == PENDING)
+        for binding, source in sources
+        if source is not None and apply_states.promotes(source.stage)
+    ]
+
+
+def _left_out(
+    scope: Sequence[Binding],
+    owing: Sequence[tuple[Binding, bool]],
+    documents: Mapping[LockKey, Any],
+    estate: Config,
+) -> dict[LockKey, list[Binding]]:
+    """The pairs a promotion needs and this run was narrowed past, per document (#406).
+
+    Invariant 7 says every target confirms before the vault promotes, and UC-1 §5
+    says *every target for every account in that document*. A run narrowed by a
+    selector visits fewer pairs than that, and until #406 the gate counted only
+    the pairs it had visited: `--target appdb-alpha` promoted an account whose
+    other target still held the old password, with nothing having failed.
+
+    Two kinds of pair are needed, and both are read from the config and the
+    document without a login:
+
+    * **the same credential on another target.** Same document, same ref, so one
+      promotion moves the password every one of them is supposed to hold;
+    * **a sibling account with a `pending` of its own**, on a forward promotion.
+      A staged password may already be on that sibling's database -- that is what
+      an earlier partial run leaves -- and a promotion that skips it strands it
+      there, database ahead of `current`, behind a run that exited 0. A sibling
+      with nothing staged has no rotation in flight and is not needed, which is
+      what keeps `--account` able to rotate one account in a shared document.
+
+    A rollback asks only the first. It refuses where anything is staged, and a
+    sibling's `previous` is not a rollback somebody asked for.
+
+    ``scope`` is every binding the run selected, including the ones that owe
+    nothing, so an account applied from `current` or skipped by a guardrail is in
+    the run rather than left out of it (#286 keeps deciding what a skip means).
+
+    **"The same credential" is the same place in the same document**: the lock
+    key, then the field and the decoded pointer -- not the whole ref, whose raw
+    spelling can differ between two targets that address one value (found in
+    review on #578).
+
+    **An excluded binding with no store is counted, not skipped**, where its path
+    is one being promoted. Its store may resolve only when it is selected, so
+    "no store here" is not evidence that it lives somewhere else, and the gate
+    fails closed on it rather than promoting past it (also #578).
+    """
+    visited = {(binding.account, binding.target) for binding in scope}
+    credentials: dict[LockKey, set[tuple[str | None, tuple[str, ...]]]] = {}
+    forward: set[LockKey] = set()
+    for binding, is_forward in owing:
+        if binding.secret is None or binding.vault is None:
+            continue
+        key = _lock_key(binding)
+        credentials.setdefault(key, set()).add(_credential_at(binding.secret))
+        if is_forward:
+            forward.add(key)
+    by_path: dict[str, list[LockKey]] = {}
+    for key in credentials:
+        by_path.setdefault(key.path, []).append(key)
+
+    found: dict[LockKey, list[Binding]] = {}
+    for binding in estate.bindings:
+        if binding.secret is None or (binding.account, binding.target) in visited:
+            continue
+        if binding.vault is None:
+            for key in by_path.get(normalise_path(binding.secret.path), []):
+                found.setdefault(key, []).append(binding)
+            continue
+        key = _lock_key(binding)
+        if key not in credentials:
+            continue
+        if _credential_at(binding.secret) in credentials[key] or (
+            key in forward and _has_pending(binding, documents)
+        ):
+            found.setdefault(key, []).append(binding)
+    return found
+
+
+def _credential_at(ref: SecretRef) -> tuple[str | None, tuple[str, ...]]:
+    """Where in its document a ref's value lives: the field and the decoded pointer."""
+    return ref.field, ref.pointer_segments
+
+
+def _declared_estate(config: Config) -> Config:
+    """Every binding the file declares, with the stores that resolve without asking.
+
+    For the promotion gate only (#406), which needs the pairs a selector left out.
+    **It never refuses** (found in review on #578): `binding_stores.complete`
+    rejects a `SOPULI_VAULT` that names an undeclared store, which is right for a
+    run that needs the default and wrong for one that is refused over a binding
+    it excluded. Where completing would refuse, the bindings are returned as
+    loaded, and the ones left without a store are counted by :func:`_left_out`
+    rather than dropped.
+    """
+    try:
+        return binding_stores.complete(config, env=os.environ)
+    except ConfigError:
+        return config
+
+
+def _has_pending(binding: Binding, documents: Mapping[LockKey, Any]) -> bool:
+    """Whether the document holds a staged password for this account."""
+    stored = _stored_document(binding, documents)
+    if stored is None or binding.secret is None:
+        return False
+    return apply_states.source_for(stored.data, binding.secret, stage=PENDING) is not None
+
+
+def _withheld(left_out: Mapping[LockKey, Sequence[Binding]]) -> list[Diagnostic]:
+    """``SOPULI-W027`` for each document :func:`_left_out` found pairs for."""
+    return [
+        promotion_withheld(str(key), [(one.account, one.target) for one in bindings])
+        for key, bindings in left_out.items()
+    ]
 
 
 def _promotion_event(key: LockKey, promotion: _Promotion, run: Invocation) -> None:
@@ -8127,6 +8298,12 @@ def creds_rotate(
     password. The run says which accounts, carries `SOPULI-W012` and exits 4:
     nothing needs undoing, and the place to look is the vault, not a database.
 
+    **A rotation narrower than its promotion is refused**, before anything is
+    staged: a selector that leaves out another target of a credential being
+    rotated, or a sibling in the same document with a password staged, exits 8
+    naming them. To roll out part of an estate at a time, use `creds generate`
+    and then `creds apply` per target.
+
     **`--finish-rollover` runs at the end of the run, not per target.** That is
     what makes it different from `--strategy direct`, which closes each window as
     it opens it. Here every window stays open until every target has been applied
@@ -8325,6 +8502,44 @@ def creds_rotate(
     return "\n".join([f"{header}\n\n{table}", *notes])
 
 
+def _refuse_narrow_rotation(
+    rotating: Sequence[Binding],
+    documents: Mapping[LockKey, Any],
+    run: Invocation,
+) -> None:
+    """Refuse a rotation that could not promote what it is about to stage (#406).
+
+    `creds apply` narrowed past a pair still changes the databases it was pointed
+    at and withholds the promotion, because that is how a rollout is staged. A
+    *rotation* has no such reading: it would draw a password, put it on part of
+    the estate, and end at UC-1 §8 case 7 by construction, on every run. So the
+    same test (:func:`_left_out`) is a refusal here, before anything is staged,
+    and the way to rotate part of an estate at a time stays `creds generate`
+    followed by `creds apply` per target.
+
+    **The visited set is what is due, not what was selected** (found in review on
+    #578). `--max-age-days` drops an account from the rotation without dropping
+    it from the selection, so a sibling with a `pending` of its own that is not
+    due is exactly as unvisited as one a selector excluded.
+    """
+    left_out = _left_out(
+        rotating, [(binding, True) for binding in rotating], documents, _declared_estate(run.config)
+    )
+    if not left_out:
+        return
+    named = "; ".join(
+        f"{key} also needs " + ", ".join(f"{one.account} on {one.target}" for one in bindings)
+        for key, bindings in left_out.items()
+    )
+    raise RefusedError(
+        f"this rotation is narrower than the promotion it would owe: {named}",
+        hint=(
+            "widen the selection to cover them, or stage with `creds generate` and "
+            "roll out with `creds apply` one target at a time"
+        ),
+    )
+
+
 @dataclass
 class _Rotation:
     """What the sequence accumulated, so the caller can report a run that stopped.
@@ -8391,6 +8606,7 @@ def _rotate_estate(
     if not rotating:
         document.finish(ExitCode.SUCCESS, Summary(total=len(into.selections)))
         return _nothing_due(plan, into.selections, max_age_days)
+    _refuse_narrow_rotation(rotating, documents, run)
 
     # Step 3, and unconditional. Every account about to be rotated, rather than
     # only those the vault already holds something for: there is no `pending`
@@ -8682,6 +8898,8 @@ def _preview_rotation(
     if not rotating:
         document.finish(ExitCode.SUCCESS, Summary(total=len(selections)))
         return _nothing_due(plan, selections, max_age_days)
+    # A refusal under `--dry-run` is still a refusal, as the pre-flight's is.
+    _refuse_narrow_rotation(rotating, documents, run)
 
     findings = _preflight(rotating, run, config, strategy=strategy, full=True)
     document.diagnostics.extend(_preflight_diagnostics(findings))

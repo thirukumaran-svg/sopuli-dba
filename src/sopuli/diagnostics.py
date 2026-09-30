@@ -412,6 +412,17 @@ RESET_RECORD_UNWRITTEN = "SOPULI-W025"
 #: remedy is to tell the person directly today and fix the URL afterwards.
 NOTIFICATION_UNSENT = "SOPULI-W026"
 
+#: A document was not promoted because this run was narrower than the promotion
+#: (#406). Invariant 7 asks that every target confirm before `current` moves, and
+#: a run cannot confirm a pair it was told to leave out.
+#:
+#: **Its own code for `SOPULI-W011`'s reason**: the run exits 4, and so does one
+#: whose targets failed, and the two want different next moves. A failed target
+#: is repaired by the same narrowed run again; this is finished only by a run
+#: wide enough to include the pairs the message names, and repeating the narrow
+#: one withholds the promotion again, for ever.
+PROMOTION_WITHHELD = "SOPULI-W027"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -606,6 +617,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             '"a password is ready"), so what is lost is that somebody has to be told '
             "another way. A revoked webhook is the usual cause; the URL is not repeated in "
             "the message, because it is itself a credential."
+        ),
+        PROMOTION_WITHHELD: (
+            "A secret document was not promoted because this run was narrowed past pairs "
+            "the promotion needs: the same credential on a target outside the run, or a "
+            "sibling account in the document with a `pending` of its own. The databases in "
+            "scope were still changed. The run exits 4 like one whose targets failed, and "
+            "the remedy differs: a wider run that covers the named pairs, not the same "
+            "narrowed one again."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -990,6 +1009,25 @@ def notification_unsent(account: str, target: str, reason: str) -> Diagnostic:
             f"the password for {account} on {target} was delivered and the notification "
             f"could not be sent, so nobody has been told it is waiting -- tell them another "
             f"way today and look at `delivery.notify.webhook.url` afterwards: {reason}"
+        ),
+    )
+
+
+def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagnostic:
+    """One document this run may not promote, and the pairs that would let it (#406).
+
+    ``pairs`` is (account, target), and every one is named rather than counted:
+    what the reader does next is widen the run until it covers them, and "3
+    pairs" does not say which way to widen it.
+    """
+    named = ", ".join(f"{account} on {target}" for account, target in pairs)
+    return Diagnostic(
+        level="warning",
+        code=PROMOTION_WITHHELD,
+        message=(
+            f"{document} cannot be promoted by this run: the promotion also needs {named}, "
+            "which this run's selection left out -- run `creds apply` without the narrowing "
+            "to finish"
         ),
     )
 
