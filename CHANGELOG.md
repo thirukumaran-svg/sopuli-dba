@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.67.3](https://github.com/villebase/sopuli-dba/compare/v0.67.2...v0.67.3) (2026-10-01)
+
+
+### Bug Fixes
+
+* **apply:** say why a rollback meets a reuse-restricted profile ([#568](https://github.com/villebase/sopuli-dba/issues/568)) ([#579](https://github.com/villebase/sopuli-dba/issues/579)) ([753420c](https://github.com/villebase/sopuli-dba/commit/753420ced17f725691c4fd41191fd2b1834ca9dd))
+* **apply:** withhold a promotion the run was narrowed past ([#406](https://github.com/villebase/sopuli-dba/issues/406)) ([#578](https://github.com/villebase/sopuli-dba/issues/578)) ([32baed6](https://github.com/villebase/sopuli-dba/commit/32baed6d479c1411beabaa43f969218117de7cb0))
+* **oracle:** give thick mode its three reasons and stop saying OCI requires NNE ([#574](https://github.com/villebase/sopuli-dba/issues/574)) ([#576](https://github.com/villebase/sopuli-dba/issues/576)) ([2f000f1](https://github.com/villebase/sopuli-dba/commit/2f000f118b01502b5c5310dba3a75d2c99a158de))
+
 ## [0.67.2](https://github.com/villebase/sopuli-dba/compare/v0.67.1...v0.67.2) (2026-09-27)
 
 
