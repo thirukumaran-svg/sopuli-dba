@@ -331,13 +331,17 @@ gaining a second exemption: a verb that draws fresh randomness has nothing to
 converge on, which admits `creds generate` and this one by one sentence.
 Convergence on a request id or on account state was refused because both key on a
 record an estate need not configure — and account state is not a signal on the
-unseen path, which issues no `PASSWORD EXPIRE`). Open: on the unseen path, what
-happens to the stored copy and how the DBA is shown unable to read it (H8, #459);
-and, raised by the delivery section itself, what "unseen" guarantees when the DBA
-holds the wrapping token (H9, #496). Both stay open; whatever answers them is
-measured by the principle UC-2 §1 now states — attribution, not access, and only
-where the database audits `ALTER USER` and logons — and whether a reset checks
-that condition is H10 (#591).
+unseen path, which issues no `PASSWORD EXPIRE`). **H8 and H9 are decided** (#459,
+#496), both by the principle UC-2 §1 states: the unseen path guarantees
+attribution, not access, and only where the database audits `ALTER USER` and
+logons. The name may be left in any durable record the DBA does not control —
+the database audit or Vault's audit device, not the reset record, which the DBA's
+own run writes — so the Vault methods also need an audit device on the Vault.
+`vault_wrapped` meets it through #519's accessor, which finds the wrap and the
+unwrap in that device, and a redirected token is where it stops; `vault_path`
+refuses at plan time if the DBA's token holds `read` or `root` on the person's path;
+and how long a `vault_path` copy lives moved to #447. Open: whether a reset checks
+the audit condition, H10 (#591).
 **H2 is decided** (#450): what a reset records lives in three places rather than
 one. The **database** answers *when* the password last changed
 — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant,
@@ -792,7 +796,10 @@ that retrieves it" counts as secret-bearing, so a wrapping token and a one-time
 link are refused in a notify template rather than rendered — the rule is about
 *reach* rather than about *value*, and a token that holds no password still
 produces one. What that leaves open is where such a credential does travel, which
-is H9 (#496): today, nowhere the tool carries.
+is H9 (#496), decided: nowhere the tool carries. The hand-over is out of band; an
+unwrap the person did not make is attributable through the accessor where Vault
+has an audit device; and no device, or a redirected token, is where that stops
+(UC-2 §6.8).
 
 **The restriction axis is not a `delivery:` key**, which is the one thing in this
 map that is easy to file in the wrong place. **H6 is decided** (#453):
@@ -830,10 +837,10 @@ built, and everything below that is implementation rather than decision. **H7
 (#454) is closed** too — a reset draws fresh randomness, so it is outside
 invariant 9 rather than an exception to it, and reports `changed: true` with a
 warning naming what it replaced, which is what #441 needed before it could report
-anything at all. Three UC-2 decisions remain and none blocks this table: H8
-(#459), the stored copy's lifetime; H9 (#496), what "unseen" guarantees when
-the DBA holds the wrapping token — which the delivery section raised about itself;
-and H10 (#591), whether a reset checks the audit condition §1's guarantee rests on.
+anything at all. H8 (#459) and H9 (#496) are closed, both decided by
+UC-2 §1's principle — attribution, not access — and one UC-2 decision remains, which blocks
+nothing in this table: H10 (#591), whether a reset checks the audit condition that
+principle rests on.
 
 **Each block is a schema minor bump** — 1.4 became 1.5 with the record, 1.5 became
 1.6 with `delivery:` and 1.6 became 1.7 with `safety.delivery.allowed_methods`, and

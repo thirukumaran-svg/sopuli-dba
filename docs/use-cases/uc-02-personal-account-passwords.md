@@ -29,17 +29,17 @@ a reset takes decides almost everything else in this document:
 **The unseen path is the default**, and it is what the tool exists to make possible:
 a DBA resets a password without ever seeing it, and the tool puts the value in none
 of its own output. Nothing needs expiring, because nobody but the person is meant
-ever to know it — §4.1 and H8 say where that intent meets its limits.
+ever to know it — §4.1 and §6.6 say where that intent meets its limits.
 
-**"Never sees it" and "cannot obtain it" are different promises**, and §6.8 (H9)
-is where the difference bites. On the default method the DBA holds a *wrapping
+**"Never sees it" and "cannot obtain it" are different promises**, and the
+attribution guarantee below is what the difference leaves. On the default method the DBA holds a *wrapping
 token*, and a token is something that can be unwrapped. What the single use buys is
 that doing so is **detectable** — the person's fetch fails, and somebody knows —
 rather than prevented. This section claims the first promise and not the second,
 which is a narrower claim than the table above used to imply.
 
 **What the unseen path guarantees, and on what condition** (accepted as the
-principle on #459 and #496, both of which stay open). It does not defend against a privileged DBA, and could not: whoever can
+principle on #459 and #496, which then decided H8 and H9 by it). It does not defend against a privileged DBA, and could not: whoever can
 reset a personal account's password can also connect *as* that person, by
 `ALTER USER person GRANT CONNECT THROUGH dba` — which needs only `ALTER USER`, the
 privilege this tool's service account is built around — and connect with their own
@@ -72,8 +72,54 @@ password is not.
 **The condition is stated, not checked.** The tool creates no audit policy and
 reads none. Whether a reset should check that one is enabled, and warn, refuse or
 record what it found, is H10 (#591). Not measured: whether a DBA who also holds
-`AUDIT SYSTEM` can disable the policy first; and every release but 26ai. H8 and H9
-are still open, and this sentence is the yardstick their answers are measured by.
+`AUDIT SYSTEM` can disable the policy first; and every release but 26ai.
+
+**Where the name is left: any durable record the DBA does not control** (decided
+on #459 and #496) — the database's audit trail or Vault's audit device — not the
+database trail alone. That reading is forced rather than chosen. On the database
+trail alone the default method would fail its own principle: a DBA who unwraps a
+token and logs in as the person leaves a database trail naming only the person.
+And it would ask more of the unseen path than the database gives the other two
+routes, which it names the DBA on only where audit is configured.
+
+**This tool's own reset record is not such a record**, and neither is the run
+document. Both are written by the DBA's own run with the DBA's own store
+credentials, and `by` is the run reporting who ran it. A DBA who means to act as
+the person can leave the record unwritten (§3.4 lets a reset succeed without one)
+or rewrite it afterwards. What the record carries is an **index** into the
+evidence, never the evidence.
+
+So **the Vault methods carry a second condition, the Vault half of the first**:
+the Vault the handover goes through must have an audit device enabled. Without
+one, nothing independent records the hand-over at all. Measured on the tier-1
+Vault (2.0.4, 2026-10-01, a file device enabled for the run and removed after):
+
+- **`vault_wrapped` meets it by inference.** The audit device records the wrap
+  under the DBA's own identity (`display_name`, policies), and its response
+  carries the HMAC of the wrapping token's accessor. It records the unwrap under
+  that **same** accessor HMAC, with policy `response-wrapping` and no identity,
+  only a remote address. `sys/audit-hash` on the plaintext accessor that
+  `results[].handover` and the record's `delivery.to` carry (#519) reproduces the
+  HMAC and finds both entries. So the device alone shows that a token issued to
+  this DBA was unwrapped, by somebody. An unwrap the person did not make also fails
+  their own fetch. That it was the DBA who unwrapped is the inference, and it holds
+  only for as long as the token went to nobody else. **A redirected token is
+  where it stops.** One piped into a CI log or a file can be unwrapped by whoever
+  reads it, with no name attached — and if they unwrap first, the evidence points
+  at the DBA rather than at them. #518 accepted the redirect so that a hand-over
+  can run unattended, and this does not reverse it; it says where the guarantee
+  stops (§6.6).
+- **`vault_path` meets it directly**, because the device records an
+  authenticated request under the caller's identity, as the wrap entry above
+  shows, so a read of the person's path names its reader. The tool still checks
+  before writing that the DBA's token cannot read the path (§6.6), because a
+  guarantee that records a read is weaker than one that prevents it.
+
+The Vault half is stated, not checked, like the database half, and it is part of
+H10 (#591). Two facts from the same run bear on it there. A token scoped to the
+DBA's job gets `403` on `sys/audit`, so it cannot even see whether a device
+exists. And a token that can write `sys/audit` can disable the device — the probe
+did, to clean up — which is the Vault form of the `AUDIT SYSTEM` question above.
 
 **The seen path is the traditional one**, and it is not the default. The DBA
 generates the password, sees it, and sends it on. **That is a deliberate,
@@ -96,7 +142,9 @@ confirmation before it runs (§2).
 from UC-1. `docs/README.md` puts it as *a password is handed over, not synced*.
 Nothing reads the value to stay in step with it, so no store is master of it. On
 the unseen path a store does hold it for the person to fetch, and that is
-transport, not mastery; what happens to that copy afterwards is H8 (#459).
+transport, not mastery; how long that copy lives is per method (§6.6) — on
+`vault_wrapped` nothing outlives the unwrap, and on `vault_path` it is #447's to
+settle.
 Invariants 6 and 7 therefore have nothing to govern here (§7). **That does not
 make the database a source of truth either**: the tool reads account state from
 it, as UC-1 does, and never a password. §3.2 makes that boundary precise, because
@@ -642,7 +690,7 @@ entry would have its priorities backwards.
   a UC-2 operation — the recovery for a lost personal password is another reset.
   Stated rather than implied, which is what #450 asked for.
 - **The unseen path's store copy is not a record.** It exists for the person to
-  fetch; whether it outlives the fetch is H8 (#459), and the tool never reads it
+  fetch; whether it outlives the fetch is per method (§6.6), and the tool never reads it
   back as history. A record and a handover in the same store are two objects with
   two lifetimes, and conflating them is how the handover copy would end up living
   as long as the audit trail.
@@ -901,8 +949,8 @@ each would look attractive again from a distance:
   `IDENTIFIED BY`, and the owner is under no obligation to change what they were
   given, so `PASSWORD_CHANGE_DATE` stays at `reset_at` and cannot tell *fetched and
   in use* from *never fetched*. The only thing that could is reading the handover
-  copy back, which §3.5 says the tool never does and whose lifetime is H8 (#459),
-  still open.
+  copy back, which §3.5 says the tool never does and whose lifetime is per method
+  (§6.6) — for `vault_path`, still #447's to settle.
 
 Both would also refuse the recovery this document specifies. §6.4 says of either
 ordering failure that *the recovery for either is the same reset run again*, and
@@ -1049,7 +1097,7 @@ guarantee one layer down: it has a field per placeholder and none for a password
 a token or a link, so the renderer cannot emit what it was never handed.
 `01-configuration.md` §1 has the grammar.
 
-What that leaves open is the subject of H9 below.
+Where such a credential does travel is §6.8.
 
 ### 6.2 The methods
 
@@ -1266,7 +1314,11 @@ this subsection, because the config key makes them look interchangeable.
   the path's policy says so. Identity rather than bearer, which is the opposite
   trade: interception needs the person's own credentials, and nothing makes the
   read single-use, so **the value persists as a live credential** until something
-  removes it. What that something is, is H8 (#459).
+  removes it. What that something is — the next reset overwriting it, or a
+  destroy on a clock, since KV has no after-first-read hook — is #447's to
+  settle; H8 moved it there (#459). §1's principle narrows it without deciding
+  it: a copy that persists keeps the one unattributable route open for as long
+  as it exists, and the password is worth something beyond the one database.
 - **`one_time_link`** — one use, like the wrapping token, and a bearer credential
   for the same reason: the URL carries its own decryption key in the fragment
   (#445). It adds a third party to the trust story, which the two Vault forms do
@@ -1294,7 +1346,8 @@ and the third has no counterpart on the seen path:
   password. The cost is stated rather than hidden: a redirect to a file outlives
   the token. What makes it a different trade is the object — fifteen single-use
   minutes whose one use is detectable, against a password good until somebody's
-  first logon.
+  first logon. **It is also where §1's attribution guarantee stops** (H9, #496):
+  whoever reads the redirect can unwrap with no name attached.
 - **Under `--output json` it goes to stderr**, because stdout is carrying the
   document. `manual` is *refused* with `--output json`; this is not, because the
   document is what makes a scheduled reset auditable and taking it away would make
@@ -1302,8 +1355,21 @@ and the third has no counterpart on the seen path:
 
 **"The DBA never sees it" has to be true of the store, not asserted.** A DBA whose
 store token can read the person's path could read the password back, and the unseen
-path's reason for skipping expiry would be gone. Whether the tool probes for that,
-and what it does when the answer is yes, is H8 (#459).
+path's reason for skipping expiry would be gone. **Decided** (H8, #459): the tool
+checks. Before writing, `vault_path` asks Vault for the DBA token's capabilities
+on the person's path (`sys/capabilities-self`) and **refuses at plan time if they
+include `read` or `root`**, naming the path and the policy (invariant 4). `root`
+is not a refinement: a root-policy token answers `["root"]` and never lists
+`read`, so a check for `read` alone would admit the one token that can read
+everything (measured on the tier-1 Vault, 2.0.4: a root token `["root"]`, a token
+scoped to the write `["create","update"]`, and one also granted read
+`["create","read","update"]`). It neither
+proceeds on documentation alone, which would let a misconfigured policy silently
+turn an unseen reset into a seen one that was never expired, nor degrades to the
+seen path, which would swap one guarantee for another without being asked. Built
+with #447. On `vault_wrapped` the question does not arise, because the DBA's token
+never holds the wrapping token's cubbyhole — what the DBA holds is the token
+itself, and §1 says what that is worth.
 
 ### 6.7 Reusable by UC-4
 
@@ -1318,26 +1384,27 @@ That is a constraint on the implementation rather than an aspiration: a method t
 reached for the reset record (§3) or for `seen`/`expired` would not survive being
 called by a use case that does neither.
 
-### 6.8 What is still open
+### 6.8 Where a retrieval credential travels, and restricting methods
 
-**H9 is new, and this section raises it rather than settling it.** §6.1 settles that
-a retrieval credential never travels the notify channel. It does not settle where it
-*does* travel, and the honest answer today is: nowhere the tool carries. The
-wrapping token comes back to the DBA's terminal, and the handover to the person is
-out of band.
+§6.1 settles that a retrieval credential never travels the notify channel. Where it
+*does* travel is **nowhere the tool carries**: the wrapping token comes back to the
+DBA's terminal, and the handover to the person is out of band.
 
-That is not obviously wrong — a single-use token is a *detectable* interception, so
-a DBA who unwraps it is caught by the person's failed fetch rather than trusted not
-to. But it changes what §1 claims. "The DBA never sees the password" stays literally
-true, and "the DBA cannot obtain it" does not. Those are different promises, and the
-use case currently makes the second while describing the first.
+**That is decided, not merely current** (H9, #496). "The DBA never sees the
+password" stays literally true, and "the DBA cannot obtain it" does not — the token
+is a bearer credential. What the method promises instead is §1's: an unwrap the
+person did not make is detectable through their failed fetch. Where Vault has an
+audit device enabled, it is also attributable: the device records the wrap under
+the DBA's identity and the unwrap under the same accessor HMAC, and #519's
+accessor is what finds both. Without a device, or once a token has been
+redirected to somewhere other people read, that stops, and §1 and §6.6 say so.
 
-So: **H9 — on `vault_wrapped`, the DBA holds the token; what does "unseen"
-guarantee, and is there a channel the tool should carry it by instead?** It
-interacts with H8 (#459), since both are about the difference between a guarantee
-that is enforced and one that is asserted. Registered in §9 and tracked as **#496**;
-it blocks no delivery method, because every one of them can be built against the
-text above.
+Two stronger answers were refused. **Making `vault_path` the default** fails §6.2's
+availability argument unchanged: it needs human-identity auth and a templated policy
+the tool does not create, and an estate that cannot use the default falls back to
+`manual`, the seen path. **A second, "trusted" notify channel** for retrieval
+credentials would rest on a trust level declared in configuration — an assertion by
+whoever wrote the file, which is the shape of guarantee §6.6 refuses for the store.
 
 The shared notify channel is #442, the config block is #440 and the ratchet is #498.
 
@@ -1365,7 +1432,7 @@ marked inert in the registry until one does.
 | 1 | no secret in `argv` | binds unchanged, including every store credential |
 | 2 | redaction at the serialiser | binds, and §3's metadata record is inside it rather than an exception to it: it holds no password in any representation, not a hash and not a verifier. A **Vault** write is already a permitted plaintext path, so the Vault forms of the unseen path need no widening; the other stores (#445, #446, `smtp_encrypted`) are not automatically one, and #456 says how each keeps the invariant. **The seen path's display is now the invariant's fourth permitted path** (#439), under the five guards in §6 — allowed because the exposure is deliberate, witnessed and expired, rather than because it is harmless, which is the third exception's argument and does not carry here |
 | 3 | branch on capability, not version | binds — rollover (§4.3) is a capability |
-| 4 | unavailable capability fails at plan time | binds — §4.3's seen-path refusal, §5's refusal of a deliberate `LOCKED`, §4.4's guardrails, and possibly H8's store check. §3.4's three absences are deliberately **not** on that list, and it says why: a reset needs none of them to do what it is for |
+| 4 | unavailable capability fails at plan time | binds — §4.3's seen-path refusal, §5's refusal of a deliberate `LOCKED`, §4.4's guardrails, and `vault_path`'s store-capability check (§6.6, #447). §3.4's three absences are deliberately **not** on that list, and it says why: a reset needs none of them to do what it is for |
 | 5 | the config is the whitelist | binds, with H1's amendment (#449): a personal account is declared in `personal_accounts:` by name or by predicate, and a predicate never widens what a mutating verb may touch — the second sentence, that selectors cannot extend the declared set, is untouched (§2) |
 | 6 | vault is master | nothing to govern — no master (§1). H2 (#450) makes the database authoritative for **when** a password last changed, which is not a breach of this: invariant 6 governs the value, and a timestamp about the account is not one (§3.2) |
 | 7 | never promote before confirmation | nothing to govern — no promotion (§1) |
@@ -1395,7 +1462,8 @@ where invariant 13's assertion already lives for UC-1.
 What a test must show, once there is something to test:
 
 - **unseen:** after a reset the account is not `EXPIRED`; the value is retrievable
-  by the owner's identity or wrapping token and by nothing the DBA holds (H8); the
+  by the owner's identity or wrapping token, and on `vault_path` by nothing the
+  DBA's token can read (§6.6); the
   statement sent carries no `PASSWORD EXPIRE`; the password appears in no output of
   the tool at all;
 - **seen:** the reset does not run without confirmation; afterwards
@@ -1460,8 +1528,8 @@ Tests declare the capabilities they need and skip with a reason when absent
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
 | ~~H6~~ | ~~Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union?~~ | **closed** — `safety.delivery.allowed_methods`, ratcheting by **intersection**. Fail-closed: a method added in a later release is unusable until an estate names it, where a `forbidden_methods` union would have permitted it everywhere on upgrade. It costs a fourth ratchet shape, declared per setting as `safe_bool` already is, since both keys would be lists of strings and the type cannot say which merges how. Unset means no constraint; two layers with disjoint lists refuse at plan time naming both; and there is no `forbidden_methods`, now or later · #453 |
 | ~~H7~~ | ~~A reset never converges: a second invariant-9 exemption, or a convergent verb?~~ | **closed** — neither, as asked. The reset reports `changed: true` every run and warns what it replaced, and invariant 9 is restated as a **scope** rule rather than gaining a second exemption: a verb that draws fresh randomness has nothing to converge on, which admits `creds generate` and this one by the same sentence and will admit UC-4's account creation without another argument. Convergence on a request id or on account state was refused for one reason each — the key is a record an estate need not configure and which is missing in exactly the runs somebody retries, and account state does not exist on the unseen path, which issues no `PASSWORD EXPIRE`. The stated cost is that an unattended retry delivers twice, and the warning is what carries it (§4.5) · #454 |
-| H8 | On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it? | #459 |
-| H9 | On `vault_wrapped`, the DBA holds the token — so what does "unseen" guarantee, and is there a channel the tool should carry a retrieval credential by instead? | #496, raised by §6.8 |
+| ~~H8~~ | ~~On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it?~~ | **closed** — split by method. On `vault_wrapped` nothing persists: the unwrap is the last read, measured (#444). On `vault_path` the tool **checks and refuses**: before writing it asks Vault for the DBA token's capabilities on the person's path and refuses at plan time if they include `read` or `root` — a root token reports only `root` — rather than documenting the requirement or degrading to the seen path (§6.6). How long a `vault_path` copy lives — until the next reset, or destroyed on a clock — moved to #447, where the method is designed · #459 |
+| ~~H9~~ | ~~On `vault_wrapped`, the DBA holds the token — so what does "unseen" guarantee, and is there a channel the tool should carry a retrieval credential by instead?~~ | **closed** — attribution, not access (§1). Any durable record the DBA does not control counts: the database audit or Vault's audit device — not the reset record, which the DBA's own run writes and which is only an index. Read that way, an unwrap the person did not make is detectable, and attributable where Vault has an audit device (measured: wrap under the DBA's identity, unwrap under the same accessor HMAC, found through #519's accessor). **No device, or a redirected token, is where it stops** — #518's no-terminal decision stands. No second channel: `vault_path` as default fails §6.2's availability argument, and a "trusted" notify channel would be a trust level asserted in configuration (§6.8) · #496 |
 | H10 | §1's attribution guarantee holds only where the database audits `ALTER USER` and logons. Does a reset check that, and warn, refuse or record what it found? | #591, raised by §1 |
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it, and `force_expire: true` required. `CLAUDE.md` invariant 2 gains a fourth exception, justified by the exposure being deliberate, witnessed and expired rather than harmless — so the narrowing is stricter than `--reveal`'s, not equal to it · #439 |
 
