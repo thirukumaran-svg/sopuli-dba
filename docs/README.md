@@ -334,7 +334,10 @@ record an estate need not configure — and account state is not a signal on the
 unseen path, which issues no `PASSWORD EXPIRE`). Open: on the unseen path, what
 happens to the stored copy and how the DBA is shown unable to read it (H8, #459);
 and, raised by the delivery section itself, what "unseen" guarantees when the DBA
-holds the wrapping token (H9, #496).
+holds the wrapping token (H9, #496). Both stay open; whatever answers them is
+measured by the principle UC-2 §1 now states — attribution, not access, and only
+where the database audits `ALTER USER` and logons — and whether a reset checks
+that condition is H10 (#591).
 **H2 is decided** (#450): what a reset records lives in three places rather than
 one. The **database** answers *when* the password last changed
 — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant,
@@ -715,8 +718,8 @@ cannot be a mode of UC-1:
 **Now specified** as [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md)
 (#438), both parts: the reset in #457 and delivery in #456. The paragraphs above are the
 argument for the use case existing; the document is where it is specified, and
-its questions are H1–H9, the last of which the delivery section raised about
-itself. One correction to the paragraphs above: expiring
+its questions are H1–H10: H9 the delivery section raised about itself, and H10
+the principle §1 states. One correction to the paragraphs above: expiring
 deliberately is the point only on the **seen** path, where the DBA knows the
 password — a deliberate exposure that the owner's first logon ends. The default,
 unseen path writes it to a store meant for its owner alone and expires nothing;
@@ -827,9 +830,10 @@ built, and everything below that is implementation rather than decision. **H7
 (#454) is closed** too — a reset draws fresh randomness, so it is outside
 invariant 9 rather than an exception to it, and reports `changed: true` with a
 warning naming what it replaced, which is what #441 needed before it could report
-anything at all. Two UC-2 decisions remain and neither blocks this table: H8
-(#459), the stored copy's lifetime; and H9 (#496), what "unseen" guarantees when
-the DBA holds the wrapping token — which the delivery section raised about itself.
+anything at all. Three UC-2 decisions remain and none blocks this table: H8
+(#459), the stored copy's lifetime; H9 (#496), what "unseen" guarantees when
+the DBA holds the wrapping token — which the delivery section raised about itself;
+and H10 (#591), whether a reset checks the audit condition §1's guarantee rests on.
 
 **Each block is a schema minor bump** — 1.4 became 1.5 with the record, 1.5 became
 1.6 with `delivery:` and 1.6 became 1.7 with `safety.delivery.allowed_methods`, and

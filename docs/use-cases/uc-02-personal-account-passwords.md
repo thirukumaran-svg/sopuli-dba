@@ -38,6 +38,43 @@ that doing so is **detectable** — the person's fetch fails, and somebody knows
 rather than prevented. This section claims the first promise and not the second,
 which is a narrower claim than the table above used to imply.
 
+**What the unseen path guarantees, and on what condition** (accepted as the
+principle on #459 and #496, both of which stay open). It does not defend against a privileged DBA, and could not: whoever can
+reset a personal account's password can also connect *as* that person, by
+`ALTER USER person GRANT CONNECT THROUGH dba` — which needs only `ALTER USER`, the
+privilege this tool's service account is built around — and connect with their own
+password. Measured, not taken from the documentation: on 26ai 23.26.2.0.0 the
+grant succeeds with `CREATE SESSION` and `ALTER USER` and nothing else, the session
+reports `USER` as the person and `PROXY_USER` as the DBA, and the same privilege
+revokes the grant again, leaving `DBA_PROXIES` empty
+(`sql/oracle/11_proxy_connect_probe.sql`, #589). So the guarantee is about
+*attribution*, not access:
+
+> **Where the database audits `ALTER USER` and logons, the unseen path guarantees
+> that the DBA cannot act as the person without leaving their own name behind.
+> Where it does not, the unseen path only keeps the password from being usable
+> beyond that one database.**
+
+The condition is the measured part. A reset to a known value and a proxy session
+both point at the DBA — but only in an audit trail: the proxy grant can be revoked,
+and a reset leaves `PASSWORD_CHANGE_DATE` and a person locked out, neither of which
+says who did it. With no unified audit policy enabled
+— FREEPDB1's default — the same probe found the grant, the proxy logon and the
+revoke recorded **nowhere**; with a `LOGON, ALTER USER` policy, every step was
+recorded, and the proxy logon names the DBA in `DBPROXY_USERNAME`. Knowing the
+person's actual password is the one route on which the record names only the person,
+and closing that route is what "unseen" is for. On a database that audits neither,
+the DBA can already act as the person there without a trace, and what the unseen
+path still protects is the password's value *elsewhere* — on the person's other
+targets, and wherever they reused it — because a proxy grant is per database and a
+password is not.
+
+**The condition is stated, not checked.** The tool creates no audit policy and
+reads none. Whether a reset should check that one is enabled, and warn, refuse or
+record what it found, is H10 (#591). Not measured: whether a DBA who also holds
+`AUDIT SYSTEM` can disable the policy first; and every release but 26ai. H8 and H9
+are still open, and this sentence is the yardstick their answers are measured by.
+
 **The seen path is the traditional one**, and it is not the default. The DBA
 generates the password, sees it, and sends it on. **That is a deliberate,
 time-limited exposure, not the same guarantee by another route**: until the owner's
@@ -1425,6 +1462,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 | ~~H7~~ | ~~A reset never converges: a second invariant-9 exemption, or a convergent verb?~~ | **closed** — neither, as asked. The reset reports `changed: true` every run and warns what it replaced, and invariant 9 is restated as a **scope** rule rather than gaining a second exemption: a verb that draws fresh randomness has nothing to converge on, which admits `creds generate` and this one by the same sentence and will admit UC-4's account creation without another argument. Convergence on a request id or on account state was refused for one reason each — the key is a record an estate need not configure and which is missing in exactly the runs somebody retries, and account state does not exist on the unseen path, which issues no `PASSWORD EXPIRE`. The stated cost is that an unattended retry delivers twice, and the warning is what carries it (§4.5) · #454 |
 | H8 | On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it? | #459 |
 | H9 | On `vault_wrapped`, the DBA holds the token — so what does "unseen" guarantee, and is there a channel the tool should carry a retrieval credential by instead? | #496, raised by §6.8 |
+| H10 | §1's attribution guarantee holds only where the database audits `ALTER USER` and logons. Does a reset check that, and warn, refuse or record what it found? | #591, raised by §1 |
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it, and `force_expire: true` required. `CLAUDE.md` invariant 2 gains a fourth exception, justified by the exposure being deliberate, witnessed and expired rather than harmless — so the narrowing is stricter than `--reveal`'s, not equal to it · #439 |
 
 Deliberately not a question with an issue: §4.4's collision between guardrail
