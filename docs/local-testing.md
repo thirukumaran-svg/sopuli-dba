@@ -318,6 +318,7 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` — `DB_PW_CHANGED` is read from `SYS.USER$.PTIME` where the grant exists, and is empty with a `SOPULI-W021` note saying why where it does not (#386) |
 | 19c EE 19.3 | `sopuli-test-oracle-19c-1` | `127.0.0.1:1526/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only** — pull it yourself, below. No rollover (19.12+), so `--strategy rollover` is exit 5 at plan time. The one container with `COMMON_USER_PREFIX = C##`, as a real CDB has |
 | 19c EE 19.19 | `sopuli-test-oracle-19c-ru-1` | `127.0.0.1:1527/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only and arm64 hosts only** — below. Does not start under emulation on x86; unrun on arm64, so its capabilities are unmeasured. `C##` prefix, as 19.3 |
+| 19c EE 19.32 | not a container: an OCI DB system | `127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com` through a Bastion session (`-Connect`); the root's service name is generated per system | CDB + PDB, **maintainer-only and billed by the hour** — below (#581). Running since 2026-10-01; nothing has been measured on it yet |
 | 12c EE 12.2 | `sopuli-test-oracle-12c-1` | `127.0.0.1:1528/ORCLPDB1.localdomain`, root `.../ORCLCDB.localdomain` | CDB + PDB, **maintainer-only** — below. The service names carry `.localdomain`; a bare `ORCLPDB1` is `ORA-12514`. No rollover. **`WE8DEC`**, the one non-Unicode database in the stack. `C##` prefix, as 19.3. `DB_PW_CHANGED` through `SYS.USER$.PTIME`, as on 18c |
 | 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
 
@@ -655,32 +656,198 @@ ORA-01096: program version (19.0.0.0.0) incompatible with instance (0.0.0.14.238
 ```
 
 That is emulation failing, not being slow; waiting does not help. Run it on an
-arm64 Docker host — Apple Silicon, or an OCI Ampere A1 VM — where it should run
-natively. **Nobody has done that yet (#565)**, so treat the service as a sketch
-by analogy with `oracle-19c` until someone does.
-
-`test/oci-a1/` holds the OCI route. `new-a1-host.ps1 -CompartmentName <name>`
-creates an Always Free A1 VM whose security list admits SSH from your address
-and nothing else, and `setup-oracle-19c.sh`, run on the VM, installs Docker,
-starts `oracle-19c-ru` with the listener on loopback, and times it to healthy;
-you reach it through `ssh -N -L 1527:127.0.0.1:1527`. **Only the first half has
-run.** The network is created and reused, and then every launch so far has met
-this, in eu-frankfurt-1 on 2026-09-28 and 2026-09-29:
-
-```
-Launching sopuli-a1 in MlnO:EU-FRANKFURT-1-AD-1 (waits for RUNNING, a few minutes) ...
-  MlnO:EU-FRANKFURT-1-AD-1 is out of A1 capacity.
-Launching sopuli-a1 in MlnO:EU-FRANKFURT-1-AD-2 (waits for RUNNING, a few minutes) ...
-  MlnO:EU-FRANKFURT-1-AD-2 is out of A1 capacity.
-Launching sopuli-a1 in MlnO:EU-FRANKFURT-1-AD-3 (waits for RUNNING, a few minutes) ...
-  MlnO:EU-FRANKFURT-1-AD-3 is out of A1 capacity.
-Every availability domain was out of A1 capacity. Nothing launched; the network stays for the next try.
-```
-
-so `setup-oracle-19c.sh` is unrun. `-Teardown` removes everything the first
-script made. On any host, clean up a failed container with
+arm64 Docker host such as Apple Silicon, where it should run natively. **Nobody
+has done that**, so treat the service as a sketch by analogy with `oracle-19c`.
+No issue tracks it any more. #565 was closed in favour of the route below, after
+an OCI Ampere A1 host for it could not be launched for lack of capacity (#571).
+On any host, clean up a failed container with
 `docker compose --profile oracle19c-ru down -v`, which removes this volume and
 leaves 19.3's alone.
+
+### A current 19c release update: an OCI Base Database Service DB system
+
+An OCI estate runs a recent 19c RU, and no pullable image is one. A Base
+Database Service DB system is (#581). It is **not a container and not free**:
+it bills per ECPU-hour while its node runs, and for its storage until it is
+terminated. So it is maintainer-only, needs a Pay As You Go tenancy, and never
+runs in CI.
+
+`test/oci-dbcs/new-db-system.ps1 -CompartmentName <name>` creates the smallest
+DB system the tenancy offers, and nothing else:
+
+- a single-node `VM.BaseDB.x86` with 4 ECPU (the shape's minimum), LVM storage
+  at 256 GB, Enterprise Edition and no automatic backups;
+- CDB `ORCLCDB` and PDB `ORCLPDB1`;
+- a VCN of its own, whose security list admits SSH from your address only, and
+  the listener from inside the VCN only;
+- on first `-Connect`, an OCI Bastion in the same subnet, admitting your address
+  only.
+
+The 19c release is the newest explicit one that `oci db version list` offers, and
+the plan names it.
+
+**Run it from an interactive PowerShell window**, not through an agent or a
+`!` command. It asks for the SYS password at a prompt, twice, and hands it to
+the OCI CLI only inside a `--from-json` file that is deleted afterwards. That is
+invariant 1's reason, applied to our own tooling. Without a terminal to type
+into, it refuses up front:
+
+```
+Creating a DB system prompts for the SYS password; run this from an interactive terminal.
+```
+
+The first run, on 2026-10-01 in eu-frankfurt-1 (your address and the OCIDs
+elided):
+
+```
+Plan, compartment '<name>' (ocid1.compartment.oc1..…):
+  network    sopuli-19c-vcn 10.0.0.0/16, sopuli-19c-public 10.0.0.0/24, sopuli-19c-igw  (create)
+  ingress    tcp/22 from <your address>/32 only, tcp/1521 from inside the VCN, ICMP 3/4 for path MTU
+  DB system  sopuli-19c  VM.BaseDB.x86  4 ECPU  LVM 256 GB  single node  (create)
+  database   19.32.0.0  ENTERPRISE_EDITION  LICENSE_INCLUDED  CDB ORCLCDB, PDB ORCLPDB1, no automatic backups
+  AD         MlnO:EU-FRANKFURT-1-AD-1
+  host       sopuli-19c   ssh key C:\Users\<you>\.ssh\id_ed25519.pub
+  cost       bills per ECPU-hour while the node runs, and for storage until -Teardown
+
+Proceed? [y/N]: y
+SYS / SYSTEM / PDB admin password: ************************
+Again: ************************
+Creating VCN sopuli-19c-vcn ...
+Creating internet gateway sopuli-19c-igw ...
+Creating security list sopuli-19c-ssh-only ...
+Creating subnet sopuli-19c-public ...
+Validating the request (opc-dry-run) ...
+Launching sopuli-19c in MlnO:EU-FRANKFURT-1-AD-1 ...
+```
+
+**Provisioning took 43 minutes**: launched at 10:02, `AVAILABLE` by 10:45. The
+script polls once a minute in the meantime, and Ctrl-C is safe: a re-run finds
+the DB system by name and tag and goes on waiting. When it is up:
+
+```
+Ready: sopuli-19c  ocid1.dbsystem.oc1.eu-frankfurt-1.…
+  version    19.32.0.0  ENTERPRISE_EDITION
+  node       sopuli-19c  public <public IP>  private 10.0.0.111  (AVAILABLE)
+  SSH        from <your address>/32 only; user 'opc'
+
+Reach the listener through a Bastion session, never through the internet:
+  ./new-db-system.ps1 -CompartmentName <name> -Connect
+  # PDB  127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com
+  # CDB  127.0.0.1:1529/ORCLCDB_x3w_fra.pub.sopulidb.oraclevcn.com
+  # sopuli: oracle: { scope: pdb, container: ORCLPDB1 }
+
+Stop it between sessions (-Stop) and remove it when done (-Teardown).
+```
+
+Three things in that report you could not guess:
+
+- **The service names carry the subnet's domain, and the CDB's is a generated
+  unique name rather than `ORCLCDB`.** The `_x3w_fra` part differs on every DB
+  system. Copy both names from the report. The PDB's is stable, because the
+  script fixes the DNS labels.
+- **Port 1529 is the local end of the session's tunnel**, because 1521–1528 are
+  taken by this stack's containers. The listener itself is on 1521, and is never
+  reachable from the internet.
+- **SSH needs an agent, or a passphrase typed at a prompt.** Git Bash's `ssh`
+  under `BatchMode` was refused even though the server accepted the key, because
+  nothing could type the key's passphrase. Windows' own
+  `C:\Windows\System32\OpenSSH\ssh.exe` signed through the running `ssh-agent`
+  service and got in. An interactive `ssh` that prompts for the passphrase works
+  with either client. This applies to `opc@` on the node and to the Bastion
+  session alike.
+
+#### Reaching the listener: a Bastion session, not `ssh -L` to the node
+
+**`ssh -L` through the node does not work, and fails quietly.** OCI hardens the
+DB node's sshd:
+
+```
+$ ssh opc@<public IP> 'sudo sshd -T | grep -iE "^(allowtcpforwarding|disableforwarding)"'
+allowtcpforwarding no
+disableforwarding yes
+```
+
+A tunnel to it still *opens*. The local port accepts a TCP connection, which is
+why a socket test calls it working, and then every database login through it dies:
+
+```
+OperationalError DPY-6005: cannot connect to database (CONNECTION_ID=…).
+DPY-4011: the database or network closed the connection
+[WinError 10054] An existing connection was forcibly closed by the remote host
+```
+
+That is thin mode. Thick mode gets `ORA-12547: TNS:lost contact`, and nothing
+reaches the listener log. This is the failure worth causing on purpose: it looks
+like an NNE refusal, and it is not one. A TCP connect to the tunnel's local
+end proves nothing; only a login does. The first version of this section printed
+that tunnel and called it checked.
+
+`-Connect` uses OCI's own way in instead. It creates a Bastion in the DB
+system's subnet on first use, admitting your address only, then opens a
+port-forwarding session to the listener and prints the command OCI hands back:
+
+```
+PS> .\test\oci-dbcs\new-db-system.ps1 -CompartmentName <name> -Connect
+Creating bastion sopuli19cbastion in sopuli-19c's subnet, admitting <your address>/32 only ...
+Opening a 3-hour port-forwarding session to 10.0.0.111:1521 ...
+
+Session sopuli-19c-20261001123607 is ACTIVE for three hours. Leave this running:
+  ssh -i "C:\Users\<you>\.ssh\id_ed25519" -N -L 1529:10.0.0.111:1521 -p 22 ocid1.bastionsession.oc1.eu-frankfurt-1.…@host.bastion.eu-frankfurt-1.oci.oraclecloud.com
+  # then 127.0.0.1:1529 is the listener; the service names are in the Ready report
+```
+
+Run that `ssh` and leave it running; a login through it then reaches the database.
+A session lasts three hours, the bastion's maximum here. Run `-Connect` again for a
+new one; a re-run reuses the bastion and updates its allow-list if your address
+has moved. The Bastion service itself carries no charge. `-Teardown` deletes it
+before the subnet.
+
+Logged in as SYS on the node itself, the database reports:
+
+```
+Oracle Database 19c Enterprise Edition Release 19.0.0.0.0 - Production
+Version 19.32.0.0.0
+
+PDB$SEED READ ONLY
+ORCLPDB1 READ WRITE
+```
+
+So record anything measured on it as **19.32.0.0.0**, never "19c". Nothing in
+the script logs in to the database or edits `sqlnet.ora`, so #575 can read the
+network encryption settings exactly as Oracle ships them.
+
+**Stop it between sessions.** A stopped node stops the ECPU charge, but storage
+still bills.
+
+```
+PS> .\test\oci-dbcs\new-db-system.ps1 -CompartmentName <name> -Stop
+Asking sopuli-19c's node (AVAILABLE) to stop; waits for STOPPED, several minutes ...
+STOPPED after 06:58.
+ECPU billing has stopped; storage still bills until -Teardown.
+PS> .\test\oci-dbcs\new-db-system.ps1 -CompartmentName <name> -Stop
+sopuli-19c's node is already STOPPED. Nothing done.
+PS> .\test\oci-dbcs\new-db-system.ps1 -CompartmentName <name> -Start
+Asking sopuli-19c's node (STOPPED) to start; waits for AVAILABLE, several minutes ...
+AVAILABLE after 04:54.
+```
+
+The database comes back up with the node: the banner and `ORCLPDB1 READ WRITE`
+above were read after that start. `-Teardown` terminates the DB system, deletes
+the bastion, and then removes the network in reverse order. **It deletes only
+what it made.** Every subnet, internet gateway and non-default security list in
+the VCN must carry the script's name and `purpose` tag, or nothing is deleted at
+all. Add an untagged security list to the VCN and run it to see the refusal:
+
+```
+sopuli-19c-vcn holds resources this script did not create, so nothing has been deleted:
+  security list 'somebody-elses-list' (ocid1.securitylist.oc1.eu-frankfurt-1.…)
+Remove or move them first, then re-run -Teardown.
+```
+
+The database goes with it, and there are no backups to restore from. The
+refusal above has been run; it was checked against the real VCN with one
+untagged list added, and the list removed again afterwards. **`-Teardown` has not been run against this DB system
+yet.**
 
 ### Seeing 11.2 keep your password, on purpose
 
@@ -5824,9 +5991,9 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
   that keeps it — **12.2.0.1.0** does not either (#572), leaving 12.1 the one
   release unmeasured). §5's *Running all of this against a different Oracle
   version* is the map, including the 19c and 12.2 containers.
-  What is left is a *patched* 19c: 19.19 with rollover (#565), whose image is
-  arm64-only and does not start on an x86 machine, and a current RU, which needs
-  the OCI tenancy (#547).
+  What is left is a *patched* 19c. §5's DB system runs 19.32.0.0.0 (#581),
+  and nothing has been measured on it yet. The 19.19 image is arm64-only and
+  has never been run.
 
 When those land, this document should grow with them — it is meant to stay a
 complete map of what can be exercised by hand, and a stale one is worse than none.

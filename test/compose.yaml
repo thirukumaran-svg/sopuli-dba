@@ -210,7 +210,7 @@ services:
       retries: 10
       start_period: 3600s
 
-  # ------------------------------------------------- oracle 19.19 (#565) ---
+  # ------------------------------------------- oracle 19.19 (#565, closed) ---
   # 19.19.0.0.0 Enterprise Edition, from the same registry repository and on the
   # same terms as oracle-19c above: maintainer-only, never in CI. The one pullable
   # 19c past 19.12, so the one that can open a gradual-rollover window.
@@ -224,9 +224,10 @@ services:
   # emulation failing, not slowness, so waiting longer does not help.
   #
   # `platform:` makes the requirement explicit rather than leaving it to a pull
-  # warning. On an arm64 host (Apple Silicon, an OCI Ampere A1 VM) it should run
-  # natively; that is untested, and the service is written by analogy with
-  # oracle-19c above. Record results as 19.19.0.0.0 on arm64.
+  # warning. On an arm64 host such as Apple Silicon it should run natively; that
+  # is untested, the service is written by analogy with oracle-19c above, and no
+  # issue tracks it since #565 closed in favour of an OCI DB system (#581).
+  # Record results as 19.19.0.0.0 on arm64.
   #
   # Its own profile rather than oracle19c's: two EE instances do not fit side by
   # side in the maintainer's 7.7 GB Docker Desktop, so `--profile oracle19c` must

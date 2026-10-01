@@ -429,9 +429,9 @@ three wrong answers.
   database, which showed that `pw_utf8` is the password *as the database holds
   it*, after conversion to its character set). **The
   entry stays `unverified` because 19.3 is the base release and an OCI estate
-  runs a later RU, which is unread** — as is 12.1. The route to an RU is
-  #547's OCI session; #565 reads 19.19 first, on an arm64 host because that
-  image is arm64-only and does not start under emulation. Blocks
+  runs a later RU, which is unread** — as is 12.1. The route to an RU is the
+  OCI DB system #581 creates, on 19.32.0.0.0, which is up and has read nothing
+  yet. Blocks
   `--method hash|both` only — `check`'s default (`login`) no longer waits on
   this (#86). If it does not reproduce on 19c, **both non-login modes go**:
   `both` is login *plus* the verifier comparison, so it cannot survive a

@@ -78,7 +78,7 @@ limitation in D7.
 |---|---|---|
 | Oracle 19c EE 19.3.0.0.0 | **preferred:** Oracle's prebuilt `container-registry.oracle.com/database/enterprise:19.3.0.0`, as `test/compose.yaml`'s `oracle-19c` service under `--profile oracle19c` (#548). Fallback: built from `oracle/docker-images` + downloaded binaries | pulling it takes an Oracle account and the repository's licence accepted on the registry website; not redistributable either way |
 | Oracle 12c EE 12.2.0.1.0 | Oracle's prebuilt `container-registry.oracle.com/database/enterprise:12.2.0.1-slim`, as `test/compose.yaml`'s `oracle-12c` under `--profile oracle12c` (#572). A 2017 image, and unlike the 19c ones in three ways that matter: no DBCA (it untars prebuilt datafiles; open in about 30 s, the PDB service registered at 95 s), no user-script hook (`test/oracle-init-12c/init.sh` is run once by hand, and the healthcheck waits for it), and a **`WE8DEC`** database rather than `AL32UTF8`. Service names carry `.localdomain`. 12.1 has no known image | the same registry terms as 19.3 |
-| Oracle 19.12+ | patched 19c. The same registry repository also carries `enterprise:19.19.0.0` — the only other 19c tag there (checked 2026-09-27, #548) — which is above the 19.12 rollover floor and so the one pullable 19c that can open a window. **It is a linux/arm64-only image and needs an arm64 host**: under QEMU on the x86 maintainer machine the instance does not start (`ORA-01096` from PMON, 2026-09-28), so it is `test/compose.yaml`'s `oracle-19c-ru` for an arm64 Docker host and **not yet run** (#565). Anything newer needs a support licence or an OCI Base Database Service VM | rollover is unavailable on the 19.3 base, prebuilt or built |
+| Oracle 19.12+ | patched 19c. The same registry repository also carries `enterprise:19.19.0.0` — the only other 19c tag there (checked 2026-09-27, #548) — which is above the 19.12 rollover floor and so the one pullable 19c that can open a window. **It is a linux/arm64-only image and needs an arm64 host**: under QEMU on the x86 maintainer machine the instance does not start (`ORA-01096` from PMON, 2026-09-28), so it is `test/compose.yaml`'s `oracle-19c-ru` for an arm64 Docker host and **never run**: #565 closed when no OCI A1 host could be launched. A current RU is an OCI Base Database Service DB system, created by `test/oci-dbcs/new-db-system.ps1`: **19.32.0.0.0**, up since 2026-10-01, with nothing measured on it yet (#581) | rollover is unavailable on the 19.3 base, prebuilt or built; the DB system bills by the hour |
 | Real 19c / 26ai / ADB | personal OCI tenancy | NNE, thick mode, Autonomous behaviour. ADB serverless 26ai 23.26.3.3.0 run 2026-09-28 (#479): the install script, a rotation and its `changed: false` re-run, the verify function and reuse limits, and a rollover window with `finish-rollover`. `local-testing.md` §14 has the output |
 | OCI Vault | personal OCI tenancy | no faithful local emulator |
 
@@ -99,8 +99,9 @@ release is cut.
   window, `status` and `check --include-previous` report it rather than calling it
   drift, `finish-rollover` closes it early and a second run reports
   `changed: false`, all identical to 26ai) and on real OCI 19c (maintainer tier).
-  19.12 to 19.x itself is still covered nowhere but the tenancy. The prebuilt
-  19.19 image would cover it, but only on an arm64 host (#565).
+  19.12 to 19.x itself is still covered nowhere but the tenancy. The DB system
+  #581 creates runs 19.32.0.0.0 and is where it will be covered; the prebuilt
+  19.19 image would also cover it, but only on an arm64 host.
 - **Native Network Encryption**, one of the three things that force thick mode
   (`00-principles.md`, *Why thick mode*), is properly
   exercised only against a real NNE-required server. It can be **approximated
@@ -502,7 +503,7 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 
    | Open | Why it blocks a claim |
    |---|---|
-   | **19c RUs** unrun | what an OCI estate runs. **19.3.0.0.0 is run** (#548, 2026-09-27, all three positions, the `oracle-19c` container): C3 the only leak, `V$SQLSTATS` clean for the plain `ALTER USER`, every audit source masked, `adump` identical to 21c's. It answered both questions that turned on 19c — the byte limit is 30 (#383) and 11.2's retention does not reach it (#387) — but 19.3 is the base release, so a later RU is still unmeasured. 19.19 is #565; a current RU is #547's OCI session |
+   | **19c RUs** unrun | what an OCI estate runs. **19.3.0.0.0 is run** (#548, 2026-09-27, all three positions, the `oracle-19c` container): C3 the only leak, `V$SQLSTATS` clean for the plain `ALTER USER`, every audit source masked, `adump` identical to 21c's. It answered both questions that turned on 19c — the byte limit is 30 (#383) and 11.2's retention does not reach it (#387) — but 19.3 is the base release, so a later RU is still unmeasured. The route is an OCI DB system on 19.32.0.0.0 (#581), which is up and has measured nothing yet |
    | **12.1** unrun (unverified: ddl-text-versions) | so **the boundary is narrowed, not found.** 11.2 retains the DDL text and **12.2.0.1.0 does not** (#572, 2026-09-29, all three positions, the `oracle-12c` container: C3 the only leak, every audit source masked, `adump` identical to 21c's), so the change is in (11.2, 12.2] and 12.1 is the one release left in it, with no known image. Read the 11.2 result as *11.2 does*, never as *everything older does* |
    | **AWR / `DBA_HIST_SQLTEXT`** untested (unverified: ddl-text-awr) | needs a snapshot taken before the sweep, on a database where the Diagnostics Pack is enabled — so a licensed EE, not any XE image. Untested, not clean. **The only row here that #407 could not close**, and the reason is the one that keeps it open: every image in this stack ships `control_management_pack_access = NONE` |
 

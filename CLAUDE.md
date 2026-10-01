@@ -11,9 +11,9 @@ Free 23.26.2.0.0, Oracle 21c XE 21.3.0.0.0, Oracle 18c XE 18.4.0.0.0 and Oracle
 and which are still untried — trust that header, not this line, and update it
 when you run one. **19.3 is the 19c base release, not what an OCI estate runs.**
 It answered what #383 and #387 needed from 19c (30-byte passwords; no
-`V$SQLSTATS` retention), and a later release update is still unmeasured: 19.19
-is #565 (its image is arm64-only and needs an arm64 host), a current RU is #547's
-OCI session. Say 19.3.0.0.0, never "19c", for
+`V$SQLSTATS` retention), and a later release update is still unmeasured: the
+route is an OCI Base Database Service DB system on 19.32.0.0.0 (#581), which is
+up and has measured nothing yet. Say 19.3.0.0.0, never "19c", for
 anything measured on it — and 12.2.0.1.0, never "12c": 12.1 is still unmeasured.
 
 ---

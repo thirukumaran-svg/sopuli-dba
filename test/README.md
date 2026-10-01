@@ -30,6 +30,8 @@ there, which no other release in the matrix does.
 and maintainer-only: see `docs/local-testing.md` §5 before pulling it.
 **19.19 EE added 2026-09-28** (#565), profile `oracle19c-ru` — **arm64 hosts
 only**; on x86 it does not start under emulation, and it is unrun on arm64.
+A current RU is an OCI DB system instead, not a compose service: 19.32.0.0.0,
+from `oci-dbcs/new-db-system.ps1` (#581).
 **12.2.0.1 EE added 2026-09-29** (#572), profile `oracle12c`, maintainer-only on
 the same terms as 19.3, plus a one-time `docker exec` after its first start —
 see `docs/local-testing.md` §5.
