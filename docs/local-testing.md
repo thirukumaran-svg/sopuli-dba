@@ -875,6 +875,28 @@ Deleting VCN sopuli-19c-vcn ...
 Removed.
 ```
 
+**What it cost: €1.33** for the whole of #581's run, on 2026-10-01 from about
+08:00 to 11:00 UTC: create, every measurement, a stop and a start, and teardown.
+That is from Cost Analysis afterwards, as the script's header asks, not an
+estimate. By the hour (UTC), from its CSV export:
+
+| Hour | Database | Every other service |
+|---|---|---|
+| 08:00 | €0.30 | €0 |
+| 09:00 | €0.60 | €0 |
+| 10:00 | €0.41 | €0 |
+| 11:00 | €0.02 | €0 |
+| Total | **€1.33** | €0 |
+
+So **about €0.60 for an hour of a running 4-ECPU system** — 09:00 is the one
+hour it ran throughout. All of the charge is under *Database*. The *Block
+Storage*, *Compute* and *Virtual Cloud Network* columns are zero, so the 256 GB
+of storage is billed as part of the DB system rather than as a volume of its own,
+and the bastion and the network cost nothing. The rows after 11:00 are zero as
+well, so nothing went on billing after `-Teardown`. One run is one data point:
+Cost Analysis shows it in the tenancy's currency, and the price is Oracle's to
+change.
+
 ### Seeing 11.2 keep your password, on purpose
 
 Worth twenty minutes if you run 11.2 anywhere, because it is the one place this
