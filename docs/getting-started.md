@@ -148,8 +148,8 @@ this tool always uses thick mode, and thick mode needs Oracle's client libraries
 present on the machine.
 
 (If your database is an Autonomous Database, it is not the first of those that
-applies to you — Autonomous encrypts with TLS, not Native Network Encryption
-(unverified: adb-thin-mode). The client is needed all the same.)
+applies to you — Autonomous encrypts with TLS, not Native Network Encryption.
+The client is needed all the same.)
 
 Download **Basic** from Oracle's Instant Client downloads page. (Take
 **SQL\*Plus** as well if you want a command-line SQL client for sanity checks;

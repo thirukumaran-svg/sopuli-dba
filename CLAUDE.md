@@ -471,14 +471,17 @@ when the request succeeded.
 
 Python 3.11+, `python-oracledb` in **thick mode** (D3), for three independent
 reasons: thin mode does not support Native Network Encryption, which Base
-Database Service, Exadata Cloud (unverified: nne-oci-default) and any on-prem
-database that enforces it require; it connects only to 12.1 and later, and 11.2
-is supported; and `auth: external` needs the Oracle client libraries.
+Database Service, Exadata Cloud and any on-prem database that enforces it
+require; it connects only to 12.1 and later, and 11.2 is supported; and
+`auth: external` needs the Oracle client libraries.
 **Autonomous Database is not one of the reasons** — it encrypts with TLS, not
-NNE (unverified: adb-thin-mode), so do not write "OCI-hosted databases require
-NNE". Instant Client is therefore a runtime prerequisite on every platform.
-`docs/design/00-principles.md`, *Why thick mode*, has the long form, and both
-service claims are Oracle's documentation rather than a measurement (#575).
+NNE, so do not write "OCI-hosted databases require NNE". Instant Client is
+therefore a runtime prerequisite on every platform.
+`docs/design/00-principles.md`, *Why thick mode*, has the long form. Both
+service claims are measured (#575): Base Database Service on 19.32.0.0.0, where
+thin is refused with `DPY-3001`, and ADB serverless 23.26.3.3.0, where thin
+connects over TCPS with no NNE negotiated. **Exadata Cloud is Oracle's
+documentation, not a measurement** — no run of it is planned.
 
 - `ruff` for lint and format, `mypy` for types, `pytest` for tests
 - Type hints on anything public

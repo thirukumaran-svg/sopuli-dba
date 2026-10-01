@@ -168,8 +168,9 @@ counted as an answer.
   scope, not the same as CDB root
 - **OCI database services** — two different things on the wire. Autonomous
   Database encrypts with TLS or mutual TLS over TCPS and uses no Native Network
-  Encryption (unverified: adb-thin-mode); Base Database Service and Exadata Cloud
-  are where NNE is required (unverified: nne-oci-default).
+  Encryption; Base Database Service and Exadata Cloud are where NNE is
+  required. Measured for Autonomous and Base Database (#575); Exadata Cloud is
+  Oracle's documentation, not measured here.
   The client is thick-mode for both (python-oracledb thick / godror), which is a
   runtime prerequisite, not a configuration option — see *Why thick mode* below.
 - **RAC / Data Guard** — connect via service, not SID; on a physical standby the
@@ -776,17 +777,20 @@ Three independent reasons, and any one of them would be enough:
    it, and a server that requires it refuses the connection. That is Base
    Database Service and Exadata Cloud, whose default `sqlnet.ora` sets
    `SQLNET.ENCRYPTION_SERVER` to require it, and any on-prem database configured
-   the same way. **The OCI half is Oracle's documented default and has not been
-   measured here** (unverified: nne-oci-default): #575 is the Base Database run, and
-   no Exadata run is planned.
+   the same way. **Measured for Base Database Service** on 19.32.0.0.0 (#575):
+   the shipped `sqlnet.ora` sets both `SQLNET.ENCRYPTION_SERVER` and
+   `SQLNET.CRYPTO_CHECKSUM_SERVER` to `REQUIRED`, and thin is refused with
+   `DPY-3001`. **Exadata Cloud is Oracle's documented default, not measured
+   here**, and no Exadata run is planned.
 2. **Oracle 11.2.** Thin mode connects only to 12.1 and later, and 11.2 is a
    release this tool supports.
 3. **`auth: external`.** A wallet-based `/@alias` logon through an external
    password store needs the Oracle client libraries.
 
 **Autonomous Database is not on that list.** It encrypts with TLS or mutual TLS
-over TCPS and does not use NNE at all, and Oracle documents thin-mode
-connections to it — cited, not yet run here (unverified: adb-thin-mode). The tool
+over TCPS and does not use NNE at all — measured on ADB serverless 23.26.3.3.0
+(#575), where a thin connection succeeds through the wallet and neither mode
+negotiates an NNE algorithm. The tool
 still reaches it in thick mode, because there is one
 mode and not one per target; what is wrong is saying that "OCI-hosted databases
 require NNE", which this document used to.
@@ -1014,7 +1018,7 @@ somebody typing, the other is a deployed artefact a scheduler is running.
 |---|---|---|---|
 | D1 | Binary name | `sopuli` (project `sopuli-dba`) | decided |
 | D2 | CLI grammar | noun-verb: `sopuli creds rotate`, `sopuli target list` | decided |
-| D3 | Implementation language | Python with python-oracledb in thick mode. Thin mode cannot be used, for three independent reasons: it does not support Native Network Encryption, which Base Database Service, Exadata Cloud and NNE-enforcing on-prem databases require (unverified: nne-oci-default) (Autonomous does not — it uses TLS (unverified: adb-thin-mode)); it connects only to 12.1 and later, and 11.2 is supported; and `auth: external` needs the Oracle client libraries. Since Instant Client is therefore mandatory at runtime, Go's single-binary advantage does not apply, and Python's readability matters more for reviewing AI-assisted code. | decided |
+| D3 | Implementation language | Python with python-oracledb in thick mode. Thin mode cannot be used, for three independent reasons: it does not support Native Network Encryption, which Base Database Service, Exadata Cloud and NNE-enforcing on-prem databases require (Autonomous does not — it uses TLS; both measured in #575, Exadata documented only); it connects only to 12.1 and later, and 11.2 is supported; and `auth: external` needs the Oracle client libraries. Since Instant Client is therefore mandatory at runtime, Go's single-binary advantage does not apply, and Python's readability matters more for reviewing AI-assisted code. | decided |
 | D4 | Config format | YAML only; JSON accepted since it is valid YAML | decided |
 | D5 | macOS tier | Best-effort and untested: portable code, no support claim, no macOS CI. See the rationale under P4 — the blocker is the absence of a local Oracle database for testing, not the client, which now exists for Apple Silicon. | decided |
 | D6 | Plugin model for drivers/stores | in-tree first; entry-point plugin API only after a second driver exists | decided |

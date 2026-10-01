@@ -73,7 +73,7 @@ OCI Vault as a secret store does not exist — see §14.
 | **Windows laptop** | the primary target. The ACL permission checks, the console encoding and the wallet report all behave differently here, and Windows is where the bugs have been |
 | **WSL** | the POSIX side of the same checks — file modes instead of ACLs. Cheap second opinion, and closer to where this would run scheduled |
 | **Docker** | Oracle and Vault. Neither needs installing on the host |
-| **OCI** | the only place a service that enforces Native Network Encryption (Base Database Service (unverified: nne-oci-default) — not ADB, which uses TLS (unverified: adb-thin-mode)) and a real ADB wallet can be exercised — and note that an ADB wallet is TLS certificates, not a credential store (§14) |
+| **OCI** | the only place a service that enforces Native Network Encryption (Base Database Service — not ADB, which uses TLS; both measured, §14) and a real ADB wallet can be exercised — and note that an ADB wallet is TLS certificates, not a credential store (§14) |
 
 Run through §§3–12 on Windows first, then repeat §§6–12 in WSL. The interesting
 differences are called out as they come.
@@ -5351,11 +5351,11 @@ Two halves, and only one exists.
 
 **A database in OCI — supported.** Which service it is matters on the wire and
 not in the config. Autonomous Database encrypts with TLS or mutual TLS and uses
-no Native Network Encryption at all (unverified: adb-thin-mode); Base Database
-Service and Exadata Cloud are where NNE is required — by Oracle's documented
-default `sqlnet.ora` (unverified: nne-oci-default). The Base Database half has
-been measured, below (#581); the Autonomous half has not, and #575 is that run.
-Thick mode reaches both. Point a
+no Native Network Encryption at all; Base Database Service and Exadata Cloud are
+where NNE is required, by their default `sqlnet.ora`. Both halves are measured
+below (#575): Base Database on 19.32.0.0.0 (#581) and Autonomous on 23.26.3.3.0.
+Exadata Cloud is Oracle's documentation, not a measurement. Thick mode reaches
+both. Point a
 target at it exactly like any other:
 
 ```yaml
@@ -5629,6 +5629,63 @@ A second `finish-rollover` reports `no rollover window was open on any of 1`.
 **Clean up** as `ADMIN`: `DROP USER acme_app_user; DROP USER sopuli_svc; DROP
 PROFILE sopuli_rollover;`.
 
+### Thin mode reaches ADB, and NNE is not why the tool is thick there (#575)
+
+The tool never runs thin, so this is a probe and not a verb: twenty lines of
+python-oracledb that connect as `ADMIN` to the `_high` service, then read back
+the server version, `SYS_CONTEXT('USERENV','NETWORK_PROTOCOL')` and the
+session's own `V$SESSION_CONNECT_INFO` rows. Run on 2026-10-01 against the same
+instance as above, with python-oracledb 4.0.2 and Instant Client 23.26.3.0.0,
+`TNS_ADMIN` unset and the wallet passed as `config_dir`. Twice in each mode,
+identical both times. Thin:
+
+```
+connection.thin = True
+server: 23.26.3.3.0
+NETWORK_PROTOCOL: tcps
+client_driver: python-oracledb thn : 4.0.2
+   Authentication service for Linux: Version 23.26.3.3.0 - Production
+   Crypto-checksumming service for Linux: Version 23.26.3.3.0 - Production
+   Encryption service for Linux: Version 23.26.3.3.0 - Production
+   TCP/IP NT Protocol Adapter for Linux: Version 23.26.3.3.0 - Production
+```
+
+Thick:
+
+```
+connection.thin = False
+server: 23.26.3.3.0
+NETWORK_PROTOCOL: tcps
+client_driver: python-oracledb thk : 4.0.2
+   Crypto-checksumming service for Linux: Version 23.26.3.3.0 - Production
+   Encryption service for Linux: Version 23.26.3.3.0 - Production
+   TCP/IP NT Protocol Adapter for Linux: Version 23.26.3.3.0 - Production
+```
+
+**Read the banners by what is missing.** `Encryption service` and
+`Crypto-checksumming service` are there in both, which looks like NNE and is
+not: a local tier-1 26ai with no NNE in its `sqlnet.ora` lists the same lines,
+over plain `tcp`, in both modes. What NNE adds is an *adapter* row naming the
+algorithm — compare the Base Database run above, with `AES256 Encryption service
+adapter` and `SHA256 Crypto-checksumming service adapter`. ADB has none, so the
+encryption on that session is TLS and nothing else.
+
+**Thin needs the wallet's download password**, which thick does not.
+Thick reads `cwallet.sso`, the auto-login copy; thin reads `ewallet.pem`, whose
+private key is encrypted with the password chosen when the zip was downloaded,
+and has to be given it as `wallet_password`. A wallet whose password nobody kept
+can be replaced without touching the database — generating one rotates
+nothing:
+
+```bash
+oci db autonomous-database generate-wallet --from-json file://gw.json --file wallet.zip
+```
+
+with the database's OCID, the new password and `"generateType": "SINGLE"` in
+`gw.json`, so the password stays off the command line. The `sqlnet.ora` in a
+fresh zip says `DIRECTORY="?/network/admin"`; point it at the unzipped
+directory before thick mode will find the wallet.
+
 ### "Wallet" means two different things, and ADB uses both words for one zip
 
 This is the part that will cost you an afternoon if nobody says it, so:
@@ -5683,9 +5740,8 @@ controlled by an ACL or a private endpoint — there is no wallet in the picture
 Copy the connect descriptor out of the OCI console and put it straight in `dsn:`,
 and leave `TNS_ADMIN` unset.
 
-**Locally you can approximate the NNE constraint** — Base Database's
-(unverified: nne-oci-default), which an ADB does not have
-(unverified: adb-thin-mode) — without OCI:
+**Locally you can approximate the NNE constraint** — Base Database's, which an
+ADB does not have (both measured above) — without OCI:
 
 ```bash
 docker compose --profile nne up -d      # Oracle on 1525, NNE required

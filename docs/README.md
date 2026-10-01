@@ -652,32 +652,32 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   `sopuli-dba[hashicorp]` rather than in base — ADR-005 said base until #130 made
   "base can import none of the backends' clients" a testable rule (ADR-006,
   E2).
-- `unverified` `nne-oci-default` (#575) — **Whether OCI's Base Database Service and Exadata Cloud require Native Network Encryption as provisioned.**
+- `verified` `nne-oci-default` (#575) — **Whether OCI's Base Database Service and Exadata Cloud require Native Network Encryption as provisioned.**
   One of D3's three reasons for thick mode (`design/00-principles.md`, *Why
-  thick mode*). Oracle documents a default `sqlnet.ora` that sets
-  `SQLNET.ENCRYPTION_SERVER` to require it, and nothing here has read one or
-  watched a thin-mode connection be refused by it — the local `nne` compose
-  profile approximates it and is itself unrun. #575 measures **Base Database
-  Service**: the shipped `sqlnet.ora`, the thin-mode refusal and its exact
-  error, and a thick connection's negotiated encryption. **That half is now
-  measured** on a 19.32.0.0.0 DB system (#581, 2026-10-01, `local-testing.md`
-  §14): `SQLNET.ENCRYPTION_SERVER=REQUIRED` and
-  `SQLNET.CRYPTO_CHECKSUM_SERVER=REQUIRED` as shipped, thin refused with
-  `DPY-3001`, and thick negotiating AES256 and SHA256. The entry stays
-  `unverified` until #575 flips it, with the markers and the Exadata rewording
-  its done-when lists. **Exadata Cloud is
-  cited from Oracle's documentation and no run of it is planned**, so when this
-  entry settles, the Exadata half of each marked sentence has to be reworded as
-  documented rather than measured instead of losing its qualifier. Blocks
-  nothing: D3 holds on either of its other two reasons.
-- `unverified` `adb-thin-mode` (#575) — **Whether Autonomous Database uses TLS rather than Native Network Encryption, and accepts a python-oracledb thin-mode connection.**
-  Oracle documents both, and #574 corrected the documents on that basis after
-  they had said OCI-hosted databases require NNE. The tool has reached ADB
-  serverless 26ai 23.26.3.3.0 (#479), always in thick mode, so neither the
-  absence of NNE nor a thin-mode connection has been observed here. #575 runs
-  the thin connection against that instance as the contrast to the Base
-  Database one. Blocks nothing, and changes no behaviour whichever way it
-  lands: the tool has one mode.
+  thick mode*). **Answered for Base Database Service: yes**, on a 19.32.0.0.0
+  DB system (#581, 2026-10-01, `local-testing.md` §14). The shipped
+  `sqlnet.ora`, untouched, sets `SQLNET.ENCRYPTION_SERVER=REQUIRED` and
+  `SQLNET.CRYPTO_CHECKSUM_SERVER=REQUIRED`; a thin connection is refused with
+  `DPY-3001`; a thick one negotiates AES256 and SHA256 with no client-side
+  configuration. **Exadata Cloud is not part of the answer**: it is cited from
+  Oracle's documentation, no run of it is planned, and every sentence that
+  names it beside Base Database says *documented, not measured* for that half
+  rather than carrying a marker. The local `nne` compose profile is still
+  unrun and still only an approximation. Blocked nothing: D3 holds on either of
+  its other two reasons.
+- `verified` `adb-thin-mode` (#575) — **Whether Autonomous Database uses TLS rather than Native Network Encryption, and accepts a python-oracledb thin-mode connection.**
+  **Answered: both**, on the ADB serverless instance #479 used, 26ai
+  23.26.3.3.0 with mutual TLS required (2026-10-01, `local-testing.md` §14).
+  python-oracledb 4.0.2 in thin mode connects through the wallet
+  (`connection.thin` is `True`, the server records the driver as `thn`), over
+  `tcps`, twice out of two. No NNE is negotiated in either mode: the session's
+  `V$SESSION_CONNECT_INFO` lists the encryption and checksumming *services*
+  but no algorithm *adapter*, and a local 26ai with no NNE configured lists
+  exactly the same lines — the adapter rows are what 19.32's required NNE adds.
+  One thing the run found that the citation did not say: thin mode needs the
+  wallet's **download password**, because it reads the encrypted
+  `ewallet.pem` rather than the auto-login `cwallet.sso`. Changes no
+  behaviour: the tool has one mode, and it is thick.
 
 ## Next use cases
 
