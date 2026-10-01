@@ -11,6 +11,22 @@
 -- trails. Under trace, C8 alone reaches the trace directory, one file per run, and
 -- the direct DDL is printed as `ALTER USER sopulitest IDE`. adump is populated (29
 -- files, 594 ACTION lines) and holds no canary.
+-- Run on 19c EE 19.32.0.0.0 (ORCLPDB1, an OCI Base Database Service DB system)
+-- on 2026-10-01 (#581), twice, with AUDIT_TRAIL = DB,EXTENDED,
+-- AUDIT_SYS_OPERATIONS = TRUE (as shipped), 01_audit_policy.sql, and AUDIT
+-- USER / AUDIT ALTER USER BY ACCESS restored after 02's §8 had removed them --
+-- the first run, without that, printed an empty traditional trail, which is
+-- this file's own HOW TO RUN warning come true. sys_user was a throwaway common
+-- user granted SYSDBA, not SYS, and SOPULITEST had its own profile (§0). 6a is
+-- masked (`IDENTIFIED BY * REPLACE *`) and attributed to SOPULITEST in both
+-- trails. 6b is masked (`IDENTIFIED BY VALUES *`) in the unified trail, and is
+-- in NEITHER DBA_AUDIT_TRAIL NOR adump -- so its traditional half is absent,
+-- not clean, and that differs from 19.3's "both trails". Cause not established:
+-- the SYSDBA login not being SYS and the statement being recursive (EXECUTE
+-- IMMEDIATE, which AUDIT_SYS_OPERATIONS does not cover) are both candidates.
+-- Under trace, C8 alone reaches the trace directory, one file per run, and the
+-- direct DDL is printed as `ALTER USER sopulitest IDE`, as on 19.3. adump is
+-- populated (18221 ACTION lines) and holds no canary of this file's.
 -- Untried on 18c, 11.2 and 12.x.
 --
 -- The three checks `02_password_leak_probe.sql` §6 and §7 described and left for
@@ -221,7 +237,27 @@ EXCEPTION WHEN OTHERS THEN
 END;
 /
 
-CREATE USER sopulitest IDENTIFIED BY "&c1";
+-- Its own profile, verify function off and reuse unlimited. An OCI Base
+-- Database DB system ships a DEFAULT enforcing ORA12C_STRONG_VERIFY_FUNCTION
+-- (19.32.0.0.0, 2026-10-01, #581), and this file's canaries cannot satisfy it:
+-- 6a's self-rotation hands the function the old password too, and it then
+-- wants the new one to differ in 8 characters, which canaries sharing a
+-- 12-character prefix never do. So the function-enabled case is measured by
+-- 02_password_leak_probe.sql for the service-account path, and NOT for
+-- self-rotation. On a DEFAULT without a function this changes nothing.
+DECLARE
+BEGIN
+  EXECUTE IMMEDIATE 'DROP PROFILE sopuli_ext_prof';
+EXCEPTION WHEN OTHERS THEN
+  IF SQLCODE != -2380 THEN
+    RAISE;
+  END IF;
+END;
+/
+CREATE PROFILE sopuli_ext_prof LIMIT PASSWORD_VERIFY_FUNCTION NULL
+  PASSWORD_REUSE_MAX UNLIMITED PASSWORD_REUSE_TIME UNLIMITED
+  FAILED_LOGIN_ATTEMPTS UNLIMITED;
+CREATE USER sopulitest IDENTIFIED BY "&c1" PROFILE sopuli_ext_prof;
 GRANT CREATE SESSION, ALTER SESSION TO sopulitest;
 GRANT ALTER SESSION TO &svc_user;
 
@@ -532,6 +568,8 @@ DECLARE
 BEGIN
   EXECUTE IMMEDIATE 'DROP USER sopulitest CASCADE';
   DBMS_OUTPUT.PUT_LINE('dropped SOPULITEST');
+  EXECUTE IMMEDIATE 'DROP PROFILE sopuli_ext_prof';
+  DBMS_OUTPUT.PUT_LINE('dropped SOPULI_EXT_PROF');
 EXCEPTION WHEN OTHERS THEN
   DBMS_OUTPUT.PUT_LINE('drop failed -- ' || SQLERRM);
 END;

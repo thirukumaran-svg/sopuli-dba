@@ -4035,8 +4035,8 @@ def creds_check(
 
     **Login is the only method, and there is no --method flag.** Q1 was decided
     in issue #86: `login`, unconditionally. Hash mode depends on reproducing
-    Oracle's 12C verifier client-side, which is still unverified (issue #90) and
-    may never ship, and a flag with one legal value would advertise a choice
+    Oracle's 12C verifier client-side. That reproduces (issue #90), but hash
+    mode is not built, and a flag with one legal value would advertise a choice
     that does not exist.
 
     **Locking an account would be worse than the drift this detects**, so all of
@@ -4058,12 +4058,12 @@ def creds_check(
 
     Help text stays ASCII throughout, which is P4's rule.
     """
-    # The "still unverified (issue #90)" sentence above is a register entry
-    # (unverified: t-verifier), and the marker sits here rather than in the
-    # docstring because this docstring IS `creds check --help`. A marker is an
-    # internal bookkeeping token; putting one in front of an operator would be
-    # the same mistake as a debug string in a user-facing message. If hash mode
-    # is ever settled, the help text three paragraphs up changes with it.
+    # The "That reproduces (issue #90)" sentence above follows the register
+    # entry t-verifier, settled 2026-10-01 for 19c (#581). Markers live in
+    # comments like this one rather than in the docstring, because this
+    # docstring IS `creds check --help`, and a bookkeeping token in front of an
+    # operator would be the same mistake as a debug string in a user-facing
+    # message. When hash mode is built, the help text above changes with it.
     document = run.document
 
     selection = selected(selectors, targets, accounts, groups, applications)

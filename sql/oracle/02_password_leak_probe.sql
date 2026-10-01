@@ -277,6 +277,61 @@
 --   none was taken after planting, so its clean is not an answer to
 --   ddl-text-awr either.
 --
+--   2026-10-01, 19c EE 19.32.0.0.0 on an OCI Base Database Service DB system
+--   (VM.BaseDB.x86, test/oci-dbcs/new-db-system.ps1), ALL THREE POSITIONS
+--   (#581) -- the first release update past the 19.3 base measured anywhere.
+--   Mixed-mode auditing (Unified Auditing not linked in), ORA_SECURECONFIG and
+--   ORA_LOGON_FAILURES enabled, AUDIT_SYS_OPERATIONS = TRUE, and the DEFAULT
+--   profile enforcing ORA12C_STRONG_VERIFY_FUNCTION, all as provisioned. That
+--   function is why the canaries gained their '#_' tail (§0).
+--
+--   Run first as shipped, AUDIT_TRAIL = DB, position 1 only:
+--
+--     UNIFIED_AUDIT_TRAIL   events=4  with sql_text=4   clean
+--     DBA_AUDIT_TRAIL       events=3  with sql_text=0   pop=n, proves nothing
+--     leaks: C3 only; V$SQLSTATS, V$SQL_BIND_CAPTURE and every audit source
+--            with text clean
+--
+--   So on the setting an OCI estate actually runs, the traditional trail
+--   records that the rotation happened and not what it said. Then AUDIT_TRAIL
+--   = DB,EXTENDED and a restart, as for 19.3 and 12.2:
+--
+--     position                                   isdba   unified  trad.  leaked
+--     1  ORCLPDB1, svc = SOPULI_SVC               FALSE   4 of 4   3      C3 only
+--     2  ORCLPDB1, svc = SYSDBA (see below)       TRUE    4 of 4   0      C3 only
+--     3  CDB$ROOT, svc = C##SOPULI_SVC,           FALSE   4 of 4   3      C3 only
+--        test_user = C##SOPULITEST
+--
+--   **V$SQLSTATS is clean for C2 and C4 in every position, and so is
+--   V$SQL_BIND_CAPTURE** -- the verify function receiving the clear password
+--   on each ALTER USER left it in no bind capture. Every audit source masks
+--   the DDL. C3 appears in V$SQL* twice in position 3 rather than once.
+--
+--   SYS's password was not available to the run, so sys_user was a throwaway
+--   common user granted SYSDBA (C##SOPULI_PROBE), and position 2's service
+--   account was the same user AS SYSDBA: a SYS session, isdba=TRUE. That moves
+--   one count and nothing else. C1, the CREATE USER by sys_user, is "4 of 4"
+--   rather than 19.3's "3 of 3" because a non-SYS SYSDBA login is audited by
+--   ORA_SECURECONFIG under its own DBUSERNAME, where SYS's went only to the OS
+--   trail. Every ALTER USER by the service account was captured by both
+--   SOPULI_PROBE_POL and ORA_SECURECONFIG.
+--
+--   Section 7 greps: trace directory (498 files), listener log and client
+--   history clean; audit_file_dest (251 files) holds C3 once per position-2
+--   run and no other numbered canary, and every CREATE/ALTER USER ACTION line
+--   in it is masked. Identical to 21c, 19.3 and 12.2.
+--
+--   AWR, the question every other run here had to leave (ddl-text-awr): the DB
+--   system ships CONTROL_MANAGEMENT_PACK_ACCESS = DIAGNOSTIC+TUNING. Straight
+--   after a position-1 run, one CDB$ROOT snapshot at flush level ALL put C3
+--   verbatim into DBA_HIST_SQLTEXT and AWR_ROOT_SQLTEXT (command_type 47, con
+--   3), with nothing colored; C1, C2 and C4 reached neither, and a second
+--   snapshot with C3's cursor colored changed nothing about them. AWR retention
+--   there is 8 days. So invariant 13's leak reaches disk, not just the shared
+--   pool. The sweep's DBA_HIST_SQLTEXT row reads before any snapshot, so it
+--   says pop=n or clean on its own; the snapshot and re-sweep are
+--   10_awr_snapshot_probe.sql, run straight after this file.
+--
 --   Also found on 12.2 and fixed: section 2's "traditional privilege opts" line
 --   read DBA_PRIV_AUDIT_OPTS.AUDIT_OPTION, a column that view does not have
 --   (it is PRIVILEGE), and printed ORA-00904.
@@ -385,12 +440,18 @@ DEFINE test_user = SOPULITEST
 -- probe query assembles the full string inside PL/SQL, so the probe's own SQL
 -- text can never match itself.
 --
--- 17 bytes, alphanumeric: fits the 30-byte limit on 11.2 and the alnum_safe
--- charset default, so no quoting question is mixed into this test.
+-- 19 bytes: fits the 30-byte limit on 11.2. The '#_' tail exists because an
+-- OCI Base Database DB system enforces ORA12C_STRONG_VERIFY_FUNCTION on DEFAULT
+-- out of the box, which wants two specials; the 17-byte alphanumeric canaries
+-- were ORA-28003 there and TEST_USER was never created (19.32.0.0.0,
+-- 2026-10-01, #581). Satisfying the function rather than switching it off is
+-- deliberate: it receives the clear password on every ALTER USER, so a run
+-- with it enabled is the one an estate needs. '#' and '_' need no quoting
+-- inside "", so no quoting question is mixed into this test.
 DEFINE cpfx = S0puliCanary
-DEFINE c1   = S0puliCanary1Aq7x
-DEFINE c2   = S0puliCanary2Bq7x
-DEFINE c3   = S0puliCanary3Cq7x
+DEFINE c1   = S0puliCanary1Aq7x#_
+DEFINE c2   = S0puliCanary2Bq7x#_
+DEFINE c3   = S0puliCanary3Cq7x#_
 
 SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED
 SET LINESIZE 200
@@ -701,7 +762,7 @@ BEGIN
 
   -- C4: assembled at runtime. This block's text contains the two halves but
   -- never the whole. Only the generated DDL carries the complete value.
-  l_pwd := '&cpfx' || '4Dq7x';
+  l_pwd := '&cpfx' || '4Dq7x#_';
   EXECUTE IMMEDIATE 'ALTER USER &test_user IDENTIFIED BY "' || l_pwd || '"';
 END;
 /
@@ -804,7 +865,7 @@ DECLARE
 
   v     t_probes;
   n     PLS_INTEGER := 0;
-  v_sfx t_str := t_str('1Aq7x', '2Bq7x', '3Cq7x', '4Dq7x');
+  v_sfx t_str := t_str('1Aq7x#_', '2Bq7x#_', '3Cq7x#_', '4Dq7x#_');
   c_pfx CONSTANT VARCHAR2(30) := '&cpfx';
 
   -- Excludes cursors belonging to this sweep: its own, by marker, and the

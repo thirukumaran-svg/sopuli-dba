@@ -7,9 +7,13 @@
 -- (#548), twice each, with the §5 trace step run on all five. Run on 12c EE
 -- 12.2.0.1.0 (ORCLPDB1, the registry's 12.2.0.1-slim image) on 2026-09-29
 -- (#572), three times, the §5 trace after the second and third: identical to
--- 19.3 in every row of the tables below. **Untried on 12.1, and on any 19c
--- release update** -- 19.3 is the base release and an OCI estate runs a later
--- RU, so read the 19c line as "19.3 does".
+-- 19.3 in every row of the tables below. Run on 19c EE 19.32.0.0.0 (ORCLPDB1,
+-- an OCI Base Database Service DB system) on 2026-10-01 (#581), twice: §0-§4
+-- identical to 19.3 -- 11G and 12C, no 10G, len=225, a fresh salt on every
+-- rotation. §5 could not be observed there: the DB system requires NNE, so the
+-- AUTH_ exchange is encrypted in the client trace (see §5). That is the first
+-- release update past 19.3 read anywhere; **untried on 12.1**, and an RU is not
+-- every RU, so name the release when quoting it.
 --
 -- 12.2's image is WE8DEC, not AL32UTF8, so §0's byte dump reads
 -- `c4,63,6d,...,f6,...` there -- one byte per non-ASCII character, and Ω, which
@@ -207,10 +211,21 @@ SELECT 'non-ascii literal bytes   ' || DUMP('Äcme-Pröbe-1', 16) FROM dual;
 --------------------------------------------------------------------------------
 -- §1  The account
 --------------------------------------------------------------------------------
+-- Its own profile, because the passwords below ARE the measurement -- case,
+-- non-ASCII bytes, lengths -- and a DEFAULT profile that enforces
+-- ORA12C_STRONG_VERIFY_FUNCTION and PASSWORD_REUSE_MAX refuses several of them
+-- (ORA-28003, ORA-28007). An OCI Base Database DB system ships exactly that
+-- DEFAULT (19.32.0.0.0, 2026-10-01, #581). The verifier's layout does not depend
+-- on the profile, and what the verify function does with the clear password is
+-- 02_password_leak_probe.sql's question, measured there with it enabled.
 WHENEVER SQLERROR CONTINUE
 DROP USER acme_vfr_user CASCADE;
+DROP PROFILE acme_vfr_prof;
 WHENEVER SQLERROR EXIT FAILURE
-CREATE USER acme_vfr_user IDENTIFIED BY "Acme-Probe-1";
+CREATE PROFILE acme_vfr_prof LIMIT PASSWORD_VERIFY_FUNCTION NULL
+  PASSWORD_REUSE_MAX UNLIMITED PASSWORD_REUSE_TIME UNLIMITED
+  FAILED_LOGIN_ATTEMPTS UNLIMITED;
+CREATE USER acme_vfr_user IDENTIFIED BY "Acme-Probe-1" PROFILE acme_vfr_prof;
 GRANT CREATE SESSION TO acme_vfr_user;
 
 --------------------------------------------------------------------------------
@@ -310,19 +325,34 @@ SELECT 'len=' || LENGTH(spare4) || ' 10G=[' || password || ']' || CHR(10)
 -- The trace is a hex dump eight bytes to a line, so a key name is split across
 -- lines at a different offset in every packet. The pipeline rejoins the ASCII
 -- column before matching; grepping the file directly misses the key.
+--
+-- The dump's function name differs by client: nsbasic_brc on the releases this
+-- was first run on, nsprecv/nspsend on 19.32.0.0.0's (#581), where a grep for
+-- nsbasic_brc alone matched nothing and would have read as "not sent". Both are
+-- matched. The service name carries DB_DOMAIN when there is one: a bare DB_NAME
+-- is ORA-12514 there.
+--
+-- REQUIRED NNE HIDES ALL OF THIS. On a server with SQLNET.ENCRYPTION_SERVER =
+-- REQUIRED -- an OCI Base Database DB system as provisioned -- everything after
+-- the connect packet is encrypted, the AUTH_ keys never appear in the trace,
+-- and an empty result means nothing. Measured on 19.32.0.0.0 (#581): the dumps
+-- held DESCRIPTION and SERVICE_NAME in clear and no AUTH_ string at all.
 PROMPT
 PROMPT == §5  run these in the same container, then compare with §4's salt=
 SELECT '  mkdir -p /tmp/vfrtns && printf ''DIAG_ADR_ENABLED=OFF\nTRACE_LEVEL_CLIENT=16\nTRACE_DIRECTORY_CLIENT=/tmp/vfrtns\n'' > /tmp/vfrtns/sqlnet.ora'
   FROM dual;
 SELECT '  echo exit | TNS_ADMIN=/tmp/vfrtns sqlplus -s -L ''acme_vfr_user/"Acme-Probe-1"@//localhost:1521/'
-       || SYS_CONTEXT('USERENV', 'DB_NAME') || ''''
+       || SYS_CONTEXT('USERENV', 'DB_NAME')
+       || NVL2(SYS_CONTEXT('USERENV', 'DB_DOMAIN'), '.' || SYS_CONTEXT('USERENV', 'DB_DOMAIN'), NULL)
+       || ''''
   FROM dual;
-SELECT '  grep -h ''nsbasic_brc: '' /tmp/vfrtns/*.trc | sed -n ''s/.*|\(.\{1,8\}\)|$/\1/p'' | tr -d ''\n'' \' FROM dual;
+SELECT '  grep -hE ''(nsbasic_brc|nsprecv): '' /tmp/vfrtns/*.trc | sed -n ''s/.*|\(.\{1,8\}\)|$/\1/p'' | tr -d ''\n'' \' FROM dual;
 SELECT '    | grep -oE ''AUTH_(VFR_DATA|PBKDF2_[A-Z_]+)\.{1,8}[0-9A-F]+'' | sort -u' FROM dual;
 PROMPT
 PROMPT  Expect AUTH_VFR_DATA = §4's T: salt on 12.2+, or its S: salt on 11g, plus
 PROMPT  AUTH_PBKDF2_VGEN_COUNT / SDER_COUNT / CSK_SALT on 12.2+ only.
+PROMPT  Nothing at all under required NNE: the exchange is encrypted (see above).
 PROMPT
-PROMPT  Clean up afterwards:  DROP USER acme_vfr_user CASCADE;  rm -rf /tmp/vfrtns
+PROMPT  Clean up afterwards:  DROP USER acme_vfr_user CASCADE;  DROP PROFILE acme_vfr_prof;  rm -rf /tmp/vfrtns
 
 EXIT

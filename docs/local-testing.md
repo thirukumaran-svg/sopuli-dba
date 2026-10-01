@@ -318,9 +318,9 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` — `DB_PW_CHANGED` is read from `SYS.USER$.PTIME` where the grant exists, and is empty with a `SOPULI-W021` note saying why where it does not (#386) |
 | 19c EE 19.3 | `sopuli-test-oracle-19c-1` | `127.0.0.1:1526/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only** — pull it yourself, below. No rollover (19.12+), so `--strategy rollover` is exit 5 at plan time. The one container with `COMMON_USER_PREFIX = C##`, as a real CDB has |
 | 19c EE 19.19 | `sopuli-test-oracle-19c-ru-1` | `127.0.0.1:1527/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only and arm64 hosts only** — below. Does not start under emulation on x86; unrun on arm64, so its capabilities are unmeasured. `C##` prefix, as 19.3 |
-| 19c EE 19.32 | not a container: an OCI DB system | `127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com` through a Bastion session (`-Connect`); the root's service name is generated per system | CDB + PDB, **maintainer-only and billed by the hour** — below (#581). Running since 2026-10-01; nothing has been measured on it yet |
+| 19c EE 19.32 | not a container: an OCI DB system | `127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com` through a Bastion session (`-Connect`); the root's service name is generated per system | CDB + PDB, **maintainer-only and billed by the hour** — below (#581). Six capabilities, rollover included; NNE required, so thick mode only. Measured 2026-10-01 — §14 has the tool's run, the scripts' headers the probes |
 | 12c EE 12.2 | `sopuli-test-oracle-12c-1` | `127.0.0.1:1528/ORCLPDB1.localdomain`, root `.../ORCLCDB.localdomain` | CDB + PDB, **maintainer-only** — below. The service names carry `.localdomain`; a bare `ORCLPDB1` is `ORA-12514`. No rollover. **`WE8DEC`**, the one non-Unicode database in the stack. `C##` prefix, as 19.3. `DB_PW_CHANGED` through `SYS.USER$.PTIME`, as on 18c |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 is unmeasured and 19.32.0.0.0 is the only 19c release update measured (#581). See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
 follows. The three XE images are freely pullable and reach healthy in about a
@@ -5353,8 +5353,9 @@ Two halves, and only one exists.
 not in the config. Autonomous Database encrypts with TLS or mutual TLS and uses
 no Native Network Encryption at all (unverified: adb-thin-mode); Base Database
 Service and Exadata Cloud are where NNE is required — by Oracle's documented
-default `sqlnet.ora` (unverified: nne-oci-default). Neither has been measured here:
-#575 is the run. Thick mode reaches both. Point a
+default `sqlnet.ora` (unverified: nne-oci-default). The Base Database half has
+been measured, below (#581); the Autonomous half has not, and #575 is that run.
+Thick mode reaches both. Point a
 target at it exactly like any other:
 
 ```yaml
@@ -5369,6 +5370,124 @@ targets:
 
 `ADMIN` works, but it is ADB's most privileged account. A service account holds
 only `02-oracle-privileges.md` §2's grants, and installing one is below.
+
+### A Base Database Service DB system end to end (#581)
+
+Run on 2026-10-01 against §5's DB system, **19c EE 19.32.0.0.0**, through a
+Bastion session on `127.0.0.1:1529`. The admin account was `SOPULI_SVC` as
+`00_install.sql` creates it, not `SYSTEM`, so this is the least-privilege path.
+
+**NNE is required as shipped.** The server's `sqlnet.ora`, untouched:
+
+```
+SQLNET.ENCRYPTION_SERVER=REQUIRED
+SQLNET.CRYPTO_CHECKSUM_SERVER=REQUIRED
+SQLNET.ENCRYPTION_TYPES_SERVER=(AES256,AES192,AES128)
+SQLNET.CRYPTO_CHECKSUM_TYPES_SERVER=(SHA256,SHA384,SHA512,SHA1)
+```
+
+So a thin-mode client is refused, and this is the exact error:
+
+```
+OperationalError DPY-6005: cannot connect to database (CONNECTION_ID=…).
+DPY-3001: Native Network Encryption and Data Integrity is only supported in python-oracledb thick mode
+```
+
+and a thick one negotiates, with no client-side configuration at all
+(`TNS_ADMIN` unset; Instant Client 23.26.3.0.0):
+
+```
+TCP/IP NT Protocol Adapter for Linux: Version 19.0.0.0.0 - Production
+Encryption service for Linux: Version 19.0.1.0.0 - Production
+AES256 Encryption service adapter for Linux: Version 19.0.1.0.0 - Production
+Crypto-checksumming service for Linux: Version 19.0.1.0.0 - Production
+SHA256 Crypto-checksumming service adapter for Linux: Version 19.0.1.0.0 - Production
+```
+
+That is D3's NNE reason, measured rather than cited, for Base Database Service.
+Exadata Cloud is still cited only. If a login fails with `DPY-4011` or
+`ORA-12547` instead, look at the route before NNE: §5 has the `ssh -L` trap that
+produces exactly that.
+
+**The DB system's `DEFAULT` profile is not a container's.** It enforces
+`ORA12C_STRONG_VERIFY_FUNCTION`, `FAILED_LOGIN_ATTEMPTS 3`, `PASSWORD_LIFE_TIME
+60` and `PASSWORD_REUSE_MAX 5`. Three things follow, all met on this run:
+
+- `00_install.sql` failed on it until #581 fixed its random password, which had
+  one lowercase letter and no special character (`ORA-28003`);
+- `generate` says it cannot evaluate the function, and means it:
+
+  ```
+  1 note:
+    oci-pdb: profile "DEFAULT" names the verify function ORA12C_STRONG_VERIFY_FUNCTION, which this run cannot evaluate: a password it accepts here may still be refused with ORA-28003 when it is applied (ACME_BATCH_USER)
+  ```
+
+  A policy of `require: { special: 1 }` is not enough for that function, which wants
+  two of each class. This run's 24-character password happened to pass;
+- `check` spends a login against an account that locks after three failures, and
+  without `SELECT ON SYS.USER$` it says its guard is off:
+
+  ```
+  acme_batch_user  oci-pdb  ROLLOVER_ACTIVE  vault v2 accepted, but a rollover window is open: the previous password still works too; the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted
+  ```
+
+**Rollover, §10.9 on a real 19c release update.** `doctor` probes the feature
+from the database rather than the version:
+
+```
+TARGET   REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+oci-pdb  yes        pdb    ORCLPDB1   READ WRITE  6
+```
+
+The six are `account_lock_state`, `expire_password`, `password_reuse_policy`,
+**`password_rollover`**, `profile_management` and `role_lookup`. 19.3 also shows
+six, but with `offline_verify` in rollover's place. `offline_verify` is absent
+here only because this `SOPULI_SVC` was installed with `grant_user_dollar=N`.
+
+`SOPULI_ROLLOVER` was created in the PDB exactly as `test/oracle-init/` creates it
+(`PASSWORD_ROLLOVER_TIME 1/24`), inheriting everything else from that
+`DEFAULT`. `apply` opens a window, and a second `apply` leaves it alone:
+
+```
+ACCOUNT          TARGET   STATE            DETAIL
+acme_batch_user  oci-pdb  ROLLOVER_ACTIVE  changed and verified; a rollover window is open, so the previous password authenticates until it closes
+
+1 changed, 1 promoted to `current`
+```
+```
+ACCOUNT          TARGET   STATE            DETAIL
+acme_batch_user  oci-pdb  ROLLOVER_ACTIVE  the vault's password is already accepted, and a rollover window is open: the previous password still works too
+
+nothing changed
+```
+
+`finish-rollover` closes it, and a second run finds nothing to close. **Read the
+window's length as wrong:**
+
+```
+ACCOUNT          TARGET   WINDOW
+acme_batch_user  oci-pdb  open, 3599d23h left
+
+ACCOUNT          TARGET   STATE    DETAIL
+acme_batch_user  oci-pdb  IN_SYNC  rollover window closed, 3599d23h early
+
+1 closed
+```
+```
+ACCOUNT          TARGET   WINDOW
+acme_batch_user  oci-pdb  none open
+
+ACCOUNT          TARGET   STATE    DETAIL
+acme_batch_user  oci-pdb  IN_SYNC  no rollover window is open
+
+no rollover window was open on any of 1
+```
+
+The window was one hour. 19.32.0.0.0 renders `PASSWORD_ROLLOVER_TIME` in seconds (`1/24`
+reads back as `3600`, `1` as `86400`, and `0` as `-1`), and the tool reads the
+number as days. Opening and closing the window go by `ACCOUNT_STATUS` and are
+right; the length, `status`'s `ROLLOVER` column (`3600d configured`) and the
+derived window end are wrong by a factor of 86400. That is #583.
 
 ### An Autonomous Database end to end (#479)
 
@@ -5991,9 +6110,9 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
   that keeps it — **12.2.0.1.0** does not either (#572), leaving 12.1 the one
   release unmeasured). §5's *Running all of this against a different Oracle
   version* is the map, including the 19c and 12.2 containers.
-  What is left is a *patched* 19c. §5's DB system runs 19.32.0.0.0 (#581),
-  and nothing has been measured on it yet. The 19.19 image is arm64-only and
-  has never been run.
+  A *patched* 19c is §5's DB system, **19.32.0.0.0** (#581): the leak and
+  verifier probes and §10.9 have run there, and §14 has the tool's run. One RU is
+  not every RU. The 19.19 image is arm64-only and has never been run.
 
 When those land, this document should grow with them — it is meant to stay a
 complete map of what can be exercised by hand, and a stale one is worse than none.

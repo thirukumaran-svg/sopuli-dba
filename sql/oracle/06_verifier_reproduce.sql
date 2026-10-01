@@ -6,12 +6,17 @@
 -- (ORCLPDB1) on 2026-09-27 (#548), twice each, and on 12c EE 12.2.0.1.0
 -- (ORCLPDB1, a WE8DEC database) on 2026-09-29 (#572), four times -- the first
 -- two before the §1 CONVERT fix, which is what found it. The fixed script was
--- then re-run on 26ai to confirm CONVERT is a no-op on AL32UTF8. **Untried on
--- 12.1, and on any 19c release update**, exactly as the layout probe (#431). 11g carries
--- no 12C verifier and is not a target here. The rollover window opened on 26ai
--- and 21c; 18c and 19.3 have no rollover feature and the section reports a plain
--- rotation there. A current RU above the 19.12 floor is the OCI DB system on
--- 19.32.0.0.0 (#581), not yet run; the 19.19 image is arm64-only and unrun.
+-- then re-run on 26ai to confirm CONVERT is a no-op on AL32UTF8. Run on 19c EE
+-- 19.32.0.0.0 (ORCLPDB1, an OCI Base Database Service DB system) on 2026-10-01
+-- (#581): ALL REPRODUCED -- ascii, symbols, nonascii and len30 MATCH, len128
+-- rejected by the server, and the rollover window OPENED, with T: = old and
+-- t: = new during it. The first release update past 19.3 run anywhere, and the
+-- first 19c where a window opens. **Untried on 12.1.** 11g carries no 12C
+-- verifier and is not a target here. The rollover window opened on 26ai, 21c
+-- and 19.32; 18c, 19.3 and 12.2 have no rollover feature and the section
+-- reports a plain rotation there. The node's python3 was 3.6, too old for the
+-- .py (`from __future__ import annotations`), so its sqlplus output was copied
+-- back and checked with 3.13.
 --
 -- Part 2 of #90's spike (#432). It does NOT derive anything itself: it sets
 -- known passwords on a throwaway account and prints, for each, the password
@@ -71,10 +76,12 @@
 --      there, so no window opens and DURING shows T: = new. So is 12.2.0.1.0.
 --
 --      Gradual rollover needs 19.12+/21c+; the 19c base is 19.3 and cannot
---      open a window (04-testing.md §5) -- measured, above. 19.32.0.0.0, the
---      OCI DB system #581 creates, can, and is not yet run. The two-verifier result is
---      therefore measured on 26ai and 21c here and stays to be confirmed on real
---      19.12+ (maintainer tier), like every other rollover finding.
+--      open a window (04-testing.md §5) -- measured, above. 19.32.0.0.0 can,
+--      and does the same as 26ai and 21c (#581, 2026-10-01):
+--        BEFORE  1 verifier(s): T: = old
+--        DURING  2 verifier(s): T: = old, t: = new
+--        AFTER   1 verifier(s): T: = new
+--      So the two-verifier result holds on a real 19c release update too.
 --
 --   INVARIANT 14. This reproduction is entirely client-side: the verifier is
 --   read with a SELECT and compared in Python. If a server-side form is ever
@@ -135,10 +142,21 @@ SELECT '== release ' || version || ', container '
 -- reported as "rejected", never as a reproduction failure -- and the length
 -- limit is read off the server rather than inferred from a version number,
 -- which is what #383 keeps open.
+-- Its own profile, because the passwords below ARE the measurement -- case,
+-- non-ASCII bytes, the length limit -- and a DEFAULT profile that enforces
+-- ORA12C_STRONG_VERIFY_FUNCTION and PASSWORD_REUSE_MAX refuses several of them
+-- (ORA-28003, ORA-28007). An OCI Base Database DB system ships exactly that
+-- DEFAULT (19.32.0.0.0, 2026-10-01, #581). The verifier's layout does not depend
+-- on the profile, and what the verify function does with the clear password is
+-- 02_password_leak_probe.sql's question, measured there with it enabled.
 WHENEVER SQLERROR CONTINUE
 DROP USER acme_kdf_user CASCADE;
+DROP PROFILE acme_kdf_prof;
 WHENEVER SQLERROR EXIT FAILURE
-CREATE USER acme_kdf_user IDENTIFIED BY "Acme-Probe-1";
+CREATE PROFILE acme_kdf_prof LIMIT PASSWORD_VERIFY_FUNCTION NULL
+  PASSWORD_REUSE_MAX UNLIMITED PASSWORD_REUSE_TIME UNLIMITED
+  FAILED_LOGIN_ATTEMPTS UNLIMITED;
+CREATE USER acme_kdf_user IDENTIFIED BY "Acme-Probe-1" PROFILE acme_kdf_prof;
 
 SELECT 'RESULT|ascii|1|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('Acme-Probe-1'))
        || '|' || spare4 FROM sys.user$ WHERE name = 'ACME_KDF_USER';
@@ -182,6 +200,7 @@ SELECT 'RESULT|len128|' || CASE WHEN spare4 = '&prev' THEN '0' ELSE '1' END
 WHENEVER SQLERROR EXIT FAILURE
 
 DROP USER acme_kdf_user CASCADE;
+DROP PROFILE acme_kdf_prof;
 
 --------------------------------------------------------------------------------
 -- §2  Rollover window

@@ -7,14 +7,16 @@ master record. Oracle first, multi-product by design.
 almost no code exists yet. The SQL in `sql/` has been executed against Oracle 26ai
 Free 23.26.2.0.0, Oracle 21c XE 21.3.0.0.0, Oracle 18c XE 18.4.0.0.0 and Oracle
 11g XE 11.2.0.2.0, and the verifier and leak probes against Oracle 19c EE
-19.3.0.0.0 (#548) and Oracle 12c EE 12.2.0.1.0 (#572). Each script carries a `STATUS:` header saying which paths ran
+19.3.0.0.0 (#548), Oracle 12c EE 12.2.0.1.0 (#572) and Oracle 19c EE
+19.32.0.0.0 on an OCI Base Database Service DB system (#581). Each script carries a `STATUS:` header saying which paths ran
 and which are still untried — trust that header, not this line, and update it
 when you run one. **19.3 is the 19c base release, not what an OCI estate runs.**
 It answered what #383 and #387 needed from 19c (30-byte passwords; no
-`V$SQLSTATS` retention), and a later release update is still unmeasured: the
-route is an OCI Base Database Service DB system on 19.32.0.0.0 (#581), which is
-up and has measured nothing yet. Say 19.3.0.0.0, never "19c", for
-anything measured on it — and 12.2.0.1.0, never "12c": 12.1 is still unmeasured.
+`V$SQLSTATS` retention). **19.32.0.0.0 is the first release update measured**
+(#581, 2026-10-01): the leak probes, the verifier probes and a rollover window
+end to end, all agreeing with 19.3 and 26ai where they overlap. One RU is still
+not every RU. Say 19.3.0.0.0 or 19.32.0.0.0, never "19c", for
+anything measured on either — and 12.2.0.1.0, never "12c": 12.1 is still unmeasured.
 
 ---
 
@@ -303,19 +305,22 @@ than reasoning:
   `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt‖"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)‖
   salt)`, 4096 sent at logon not stored. Degradation is settled too (#433):
   compare `T:` only, and an account with no `12C` fails at plan time.
-  **Answered on every tier-2 release, on 19c 19.3.0.0.0 (#548) and on 12.2.0.1.0
-  (#572); still marked because 19.3 is the base release and the RU an OCI estate
-  runs is unread, as is 12.1.** One refinement from 12.2's WE8DEC image:
+  **Answered on every tier-2 release, on 19c 19.3.0.0.0 (#548), on 12.2.0.1.0
+  (#572) and on 19c 19.32.0.0.0 (#581) -- the first release update, where the
+  two-verifier rollover result (`T:` old, `t:` new) holds too.** **Settled for
+  19c** (register entry `t-verifier`, 2026-10-01); 12.1 is unread. 19.32's wire
+  step could not be observed — the DB system requires NNE, so the `AUTH_`
+  exchange is encrypted in a client trace — and 4096 is shown there by the
+  reproduction. One refinement from 12.2's WE8DEC image:
   `pw_utf8` is the UTF-8 of the password *as the database holds it*, after
   conversion to the database character set — identical on AL32UTF8, lossy where
-  the set cannot represent a character. Do not treat the 19.3 result as a patched
-  19c's. Probes:
+  the set cannot represent a character. Probes:
   `sql/oracle/05_verifier_layout_probe.sql`, `06_verifier_reproduce.{sql,py}`
 - whether `ALTER USER` text leaks the password into `V$SQL` or
   `UNIFIED_AUDIT_TRAIL`, per version (unverified: ddl-text-versions) —
-  **answered on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 19c 19.3.0.0.0, 18c
-  18.4.0.0.0, 12c 12.2.0.1.0 and 11g 11.2.0.2.0; unmeasured on 12.1 and any 19c
-  RU.** `02_password_leak_probe.sql` was run in all three documented positions on
+  **answered on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 19c 19.32.0.0.0 and
+  19.3.0.0.0, 18c 18.4.0.0.0, 12c 12.2.0.1.0 and 11g 11.2.0.2.0; unmeasured on
+  12.1.** `02_password_leak_probe.sql` was run in all three documented positions on
   2026-08-26: unified audit masks the statement at write time, no `V$SQL` cursor
   for the DDL exists at all, and the sole leak is an anonymous PL/SQL block
   carrying the password as a literal — which is invariant 13, now measured rather
@@ -328,7 +333,8 @@ than reasoning:
   though not by the service account. Decided in #387 — documented, not warned
   about and not refused, because it ages out with the shared pool and one
   `FLUSH SHARED_POOL` clears it. 19.3.0.0.0 agrees with 18c and later, all three
-  positions (#548), and so does 12.2.0.1.0 (#572), so the change sits in
+  positions (#548), and so do 12.2.0.1.0 (#572) and 19.32.0.0.0 (#581, where
+  `V$SQL_BIND_CAPTURE` is clean too with the verify function enabled), so the change sits in
   (11.2, 12.2] — 12.1 is the one release left in it. Do not quote a leak result without its version
   (`docs/design/02-oracle-privileges.md` §4 and §8 P8)
 - ~~whether the 23-codebase schema privileges cover `ALTER USER` (P7)~~ —

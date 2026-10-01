@@ -28,7 +28,19 @@
 --         already-exists; and COMMON mode in CDB$ROOT with the C## prefix this
 --         image keeps (grant_set_container=Y), where every system privilege
 --         reported COMMON = YES. Section 7's over-grant query was empty in
---         each. A patched 19c is unmeasured.
+--         each.
+--         Confirmed on 19c EE 19.32.0.0.0 (2026-10-01, #581), an OCI Base
+--         Database Service DB system, by hand as SYSDBA: PDB mode in ORCLPDB1
+--         (SOPULI_SVC, tablespace USERS, grant_pwfile=Y) and COMMON mode in
+--         CDB$ROOT (C##SOPULI_SVC, grant_set_container=Y, every system
+--         privilege COMMON = YES); section 7's over-grant query empty in each.
+--         It did NOT run there as written: the DB system's DEFAULT profile
+--         enforces ORA12C_STRONG_VERIFY_FUNCTION, and section 1's random
+--         password ('X' string + 'aA1') was ORA-28003 "must contain 2 or more
+--         lowercase characters", having created nothing. Section 1's tail
+--         now satisfies the function; see the comment there. Pass COMMON mode
+--         the bare name: it adds C## itself, so C##SOPULI_SVC gives
+--         C##C##SOPULI_SVC.
 --         Confirmed on 12c EE 12.2.0.1.0 (2026-09-29, #572), by hand as
 --         SYSDBA -- PDB mode in ORCLPDB1 (SOPULI_SVC, grant_pwfile=Y) and
 --         COMMON mode in CDB$ROOT (C##SOPULI_SVC, grant_set_container=Y) --
@@ -236,15 +248,16 @@ END;
 -- DBA sets a real one. Store that password in the vault, or use an Oracle
 -- Wallet / external authentication and never give it a usable password at all.
 --
--- **27 + 3 = 30 bytes, and the 30 is a ceiling rather than a preference.**
--- Oracle raised the password limit past 30 bytes at 23ai; every earlier line
--- still refuses a 31st with `ORA-00972: identifier is too long`, and refuses it
--- from inside this block, so the script fails at step 1 having created nothing.
--- Measured 2026-09-08 (#380): 31 bytes is accepted on 26ai 23.26.2.0.0 and
--- rejected on 21c XE 21.3, 18c XE 18.4 and 11g XE 11.2. The script ran only on
--- 26ai until now, which is why a 31-byte password looked fine.
--- `aA1` is appended rather than left to chance because `STRING('X', n)` draws
--- from uppercase and digits only, and a verify function wants a lowercase too.
+-- **22 + 8 = 30 bytes, and the 30 is a ceiling rather than a preference.**
+-- A 31st byte is `ORA-00972: identifier is too long` on every release measured
+-- below 23ai, and refused from inside this block, so the script fails at step 1
+-- having created nothing. Measured 2026-09-08 (#380): 31 bytes is accepted on
+-- 26ai 23.26.2.0.0 and rejected on 21c XE 21.3, 18c XE 18.4 and 11g XE 11.2,
+-- and later on 19.3 and 12.2 (#548, #572). Where the limit changed is #383's
+-- open question; this stays at 30 so as not to answer it.
+-- The fixed tail is appended rather than left to chance because `STRING('X', n)`
+-- draws from uppercase and digits only, and a verify function wants more -- see
+-- the statement below. It was `aA1`, 27 + 3, until #581.
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT [1] account &eff_user
@@ -253,8 +266,13 @@ DECLARE
 BEGIN
   SELECT COUNT(*) INTO l_cnt FROM dba_users WHERE username = UPPER('&eff_user');
   IF l_cnt = 0 THEN
+    -- 30 bytes (see above). The fixed tail carries two
+    -- of every class ORA12C_STRONG_VERIFY_FUNCTION counts -- upper, lower,
+    -- digit, special -- because an OCI Base Database DB system enforces it on
+    -- DEFAULT out of the box, and the old 'aA1' tail was ORA-28003 there
+    -- (19.32.0.0.0, 2026-10-01, #581). '#' and '_' need no quoting inside "".
     EXECUTE IMMEDIATE 'CREATE USER &eff_user IDENTIFIED BY "'
-                   || DBMS_RANDOM.STRING('X', 27) || 'aA1" '
+                   || DBMS_RANDOM.STRING('X', 22) || 'aaBB22#_" '
                    || 'DEFAULT TABLESPACE &svc_tablespace '
                    || 'PASSWORD EXPIRE' || '&cont_all';
     DBMS_OUTPUT.PUT_LINE('created &eff_user (random password, expired - set it now)');

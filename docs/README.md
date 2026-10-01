@@ -414,7 +414,7 @@ issues whose verification is still outstanding: the decision was taken and the
 measurement was not. A reader who resolves these against the issue tracker gets
 three wrong answers.
 
-- `unverified` `t-verifier` (#90) — **Whether a client can regenerate the `T:` (12C) verifier in `SYS.USER$.SPARE4`.**
+- `verified` `t-verifier` (#90) — **Whether a client can regenerate the `T:` (12C) verifier in `SYS.USER$.SPARE4`.**
   The layout is read (#431) and the derivation reproduces byte-for-byte (#432),
   both on 26ai, 21c and 18c: `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt ‖
   "AUTH_PBKDF2_SPEEDY_KEY", 4096, 64) ‖ salt)`, and a rollover window's two
@@ -427,16 +427,16 @@ three wrong answers.
   same layout, `VGEN_COUNT` 4096 on the wire, every `T:` reproduced, twice) **and
   on 12c 12.2.0.1.0** (#572, 2026-09-29, the same again — and on a WE8DEC
   database, which showed that `pw_utf8` is the password *as the database holds
-  it*, after conversion to its character set). **The
-  entry stays `unverified` because 19.3 is the base release and an OCI estate
-  runs a later RU, which is unread** — as is 12.1. The route to an RU is the
-  OCI DB system #581 creates, on 19.32.0.0.0, which is up and has read nothing
-  yet. Blocks
-  `--method hash|both` only — `check`'s default (`login`) no longer waits on
-  this (#86). If it does not reproduce on 19c, **both non-login modes go**:
-  `both` is login *plus* the verifier comparison, so it cannot survive a
-  negative result either, and a mode that silently degraded to `login` would
-  report a stronger check than it performed.
+  it*, after conversion to its character set), **and on 19c 19.32.0.0.0** (#581,
+  2026-10-01, an OCI Base Database Service DB system and the first release update
+  read: the same layout, every `T:` reproduced, and a rollover window's `T:` old
+  and `t:` new). One step there could not be observed: the DB system requires
+  NNE, so `VGEN_COUNT` is encrypted on the wire, and 4096 is shown only by the
+  reproduction succeeding. **Settled for 19c, 2026-10-01**: a base release and a
+  release update both reproduce, and the maintainer judged one RU enough (#581).
+  **12.1 is still unread**, and the derivation is not claimed there. What this
+  unblocks is `--method hash|both` being *built*; neither exists yet, and
+  `check`'s default (`login`) never waited on this (#86).
 - `unverified` `lcount-grant` (#124) — **Whether `SELECT_CATALOG_ROLE` via
   `SYS.KU$_USER_VIEW` exposes `LCOUNT` without `SPARE4`** — a narrower alternative to `SELECT ON SYS.USER$`
   for the `LCOUNT` guard, from a blog post rather than Oracle documentation.
@@ -477,17 +477,23 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   release-dependent even though the reasoning is not (#387). **19c 19.3.0.0.0
   agrees with 18c and later** (#548, 2026-09-27, all three positions:
   `V$SQLSTATS` clean for the plain `ALTER USER`), and **so does 12c 12.2.0.1.0**
-  (#572, 2026-09-29, all three positions), so the change sits somewhere in
-  (11.2, 12.2]. **12.1 and every 19c RU are unrun** — read the 11.2 result as
-  *11.2 does*, never as *everything older does*, and the 19.3 one as *19.3 does
-  not*.
+  (#572, 2026-09-29, all three positions), and **so does 19c 19.32.0.0.0**, the
+  first release update measured (#581, 2026-10-01, all three positions, with the
+  stock verify function enabled), so the change sits somewhere in (11.2, 12.2].
+  **12.1 is unrun** — read the 11.2 result as *11.2 does*, never as *everything
+  older does*.
 - `unverified` `ddl-text-awr` (#387) — **Whether the retained text reaches AWR.**
   `DBA_HIST_SQLTEXT` needs a snapshot taken *before* the sweep, on a database
   where the Diagnostics Pack is enabled. Every image in this stack ships
   `control_management_pack_access = NONE`, so two snapshots taken on 11g XE
   captured nothing whatsoever and the clean result measured the image rather than
-  the release. Needs a licensed EE. **Untested, not clean** — the one row #407
-  could not close.
+  the release. **Half answered on 19.32.0.0.0** (#581, 2026-10-01), an OCI DB
+  system with `DIAGNOSTIC+TUNING`: one uncolored snapshot put the wrapped literal
+  (C3) verbatim into `DBA_HIST_SQLTEXT`, kept 8 days, while the `ALTER USER`
+  sopuli issues (C2) reached nothing, having no cursor to capture. **Open: 11.2**,
+  where the plain `ALTER USER` *is* retained in `V$SQLSTATS` and whether it
+  reaches AWR needs an 11.2 with the pack. That is why this stays `unverified`
+  rather than being called settled by the release that never retains it.
 - `verified` `ddl-text-trace` (#407) — **Whether a traced session captures the
   password.** Answered 2026-09-11 on 26ai and 21c, and it retires the pessimistic
   assumption rather than confirming it: at 10046 level 12 the cursor is written
@@ -653,7 +659,13 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   watched a thin-mode connection be refused by it — the local `nne` compose
   profile approximates it and is itself unrun. #575 measures **Base Database
   Service**: the shipped `sqlnet.ora`, the thin-mode refusal and its exact
-  error, and a thick connection's negotiated encryption. **Exadata Cloud is
+  error, and a thick connection's negotiated encryption. **That half is now
+  measured** on a 19.32.0.0.0 DB system (#581, 2026-10-01, `local-testing.md`
+  §14): `SQLNET.ENCRYPTION_SERVER=REQUIRED` and
+  `SQLNET.CRYPTO_CHECKSUM_SERVER=REQUIRED` as shipped, thin refused with
+  `DPY-3001`, and thick negotiating AES256 and SHA256. The entry stays
+  `unverified` until #575 flips it, with the markers and the Exadata rewording
+  its done-when lists. **Exadata Cloud is
   cited from Oracle's documentation and no run of it is planned**, so when this
   entry settles, the Exadata half of each marked sentence has to be reworded as
   documented rather than measured instead of losing its qualifier. Blocks

@@ -1560,7 +1560,7 @@ sopuli creds check --application orders-app
 **As shipped (#248):** the selectors, `--include-previous`, `--lockout-margin`
 and `--output`. There is **no `--method` flag**, and its absence is the decision
 rather than an omission — Q1 (#86) made `login` unconditional, hash mode depends
-on #90 and may never ship, and a flag with one legal value advertises a choice
+on #90 (now reproduced, and not built), and a flag with one legal value advertises a choice
 that does not exist. It arrives with hash mode or not at all. `--application`,
 `--account`, `--target` and `--group` are the selectors this command shares with
 every other verb and are not built yet; `--select` is.
@@ -1614,10 +1614,10 @@ rather than drift. An account with no `12C` verifier (11g, or any account whose
 `PASSWORD_VERSIONS` lacks it) has nothing to compare, so an explicit
 `--method hash` or `--method both` fails at plan time naming the capability and
 the target (invariant 4) rather than falling back to a weaker verifier or
-silently to `login` (#433). Confirmed on 19.3.0.0.0 (#548) and 12.2.0.1.0
-(#572), unconfirmed on a patched 19c — the release an OCI estate runs, and so
-the target of interest — with 12.1 also unread; if the derivation goes wrong
-there, the method is dropped from the CLI.
+silently to `login` (#433). Confirmed on 19.3.0.0.0 (#548), 12.2.0.1.0 (#572)
+and 19.32.0.0.0 (#581), a release update and so the release an OCI estate runs,
+which settles it for 19c (register entry `t-verifier`). 12.1 is unread; if the
+derivation went wrong there, the method would be dropped from the CLI.
 
 Trade-offs to document honestly if it does ship:
 
