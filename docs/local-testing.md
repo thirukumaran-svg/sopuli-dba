@@ -846,8 +846,34 @@ Remove or move them first, then re-run -Teardown.
 
 The database goes with it, and there are no backups to restore from. The
 refusal above has been run; it was checked against the real VCN with one
-untagged list added, and the list removed again afterwards. **`-Teardown` has not been run against this DB system
-yet.**
+untagged list added, and the list removed again afterwards.
+
+**`-Teardown` has been run against this DB system** (2026-10-01), and its
+first attempt failed before deleting anything. `db system terminate` waits on
+its *work request*, whose states are `SUCCEEDED` and `FAILED`, and the CLI
+rejects `--wait-for-state TERMINATED` there as a usage error — unlike `compute
+instance terminate`, where that is the right state. The script now waits on the
+request, then reads the DB system back and refuses to touch the bastion or the
+network unless it says `TERMINATED`. A re-run while the DB system is still
+`TERMINATING` — after a timeout, or an interrupted run — refuses before deleting
+anything, rather than seeing no DB system and removing the network under it.
+That refusal is written and **unrun**: it needs a terminate caught mid-way. The
+re-run, OCIDs shortened:
+
+```
+Teardown in compartment '<name>':
+  DB system sopuli-19c  ocid1.dbsystem.oc1.eu-frankfurt-1.…  -- database and storage with it, no backups
+  bastion   sopuli19cbastion  ocid1.bastion.oc1.eu-frankfurt-1.…  -- its sessions with it
+  network   sopuli-19c-vcn  ocid1.vcn.oc1.eu-frankfurt-1.…  -- subnet, security list, gateway, VCN
+Terminating sopuli-19c (waits for its work request, can take half an hour) ...
+Terminated after 00:18:20.
+Deleting bastion sopuli19cbastion ...
+Deleting subnet sopuli-19c-public ...
+Deleting internet gateway sopuli-19c-igw ...
+Deleting security list sopuli-19c-ssh-only ...
+Deleting VCN sopuli-19c-vcn ...
+Removed.
+```
 
 ### Seeing 11.2 keep your password, on purpose
 
