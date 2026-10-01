@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.67.4](https://github.com/villebase/sopuli-dba/compare/v0.67.3...v0.67.4) (2026-10-01)
+
+
+### Bug Fixes
+
+* **rollover:** read PASSWORD_ROLLOVER_TIME in seconds as well as days ([#583](https://github.com/villebase/sopuli-dba/issues/583)) ([#587](https://github.com/villebase/sopuli-dba/issues/587)) ([9c66017](https://github.com/villebase/sopuli-dba/commit/9c66017591b931773311d57eb060611e69e5c8d8))
+
 ## [0.67.3](https://github.com/villebase/sopuli-dba/compare/v0.67.2...v0.67.3) (2026-10-01)
 
 
