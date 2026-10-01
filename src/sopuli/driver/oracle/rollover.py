@@ -18,7 +18,9 @@ wrong by reasoning.
 **The limit is a fraction of a day, not a count.** ``PASSWORD_ROLLOVER_TIME
 1/24`` reads back as the string ``.0416``. Anything parsing it as an integer --
 which is the obvious thing to do beside ``FAILED_LOGIN_ATTEMPTS`` -- refuses a
-correctly configured profile.
+correctly configured profile. **And it is not always days**: 19.32.0.0.0 reads
+the same profile back as ``3600``, in seconds (#583), which :func:`days` tells
+apart by range.
 
 **Finishing a window that is not open is accepted silently.** The server returns
 no error, so invariant 9's ``changed: false`` on a second run is *the tool's*
@@ -45,10 +47,23 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
-#: What ``PASSWORD_ROLLOVER_TIME`` reads as when rollover is switched off. The
+#: What ``PASSWORD_ROLLOVER_TIME`` means when rollover is switched off. The
 #: resource exists on every release that has the feature, so its *presence* is
-#: the capability (#177) and its *value* is whether this profile uses it.
+#: the capability (#177) and its *value* is whether this profile uses it. 26ai
+#: reads "off" back as ``0`` and 19.32.0.0.0 as ``-1`` (#583); :func:`days`
+#: returns this for both.
 DISABLED = 0.0
+
+#: Oracle bounds the resource at one hour to 60 days, and renders it in days on
+#: 26ai (``1/24`` reads ``.0416``) but in **seconds** on 19.32.0.0.0 (``1/24``
+#: reads ``3600``, ``7`` reads ``604800``; #583). The two renderings of that
+#: range do not overlap -- days ``(0, 60]``, seconds ``[3600, 5184000]`` -- so
+#: the value says which unit it is in, and nothing here asks which release
+#: produced it (invariant 3).
+MAX_DAYS = 60.0
+SECONDS_PER_DAY = 86400.0
+MIN_SECONDS = 3600.0
+MAX_SECONDS = MAX_DAYS * SECONDS_PER_DAY
 
 
 def days(limit: str | None) -> float | None:
@@ -58,6 +73,12 @@ def days(limit: str | None) -> float | None:
     ``1/24`` reads back as ``.0416``. ``UNLIMITED`` is not a value this resource
     takes, and anything else unparseable is ``None`` rather than a guess -- a
     window length nobody can read is not a window length of zero.
+
+    **The unit is read off the value** (#583, decided there): zero or below is
+    off and returns :data:`DISABLED`; ``(0, 60]`` is days; ``[3600, 5184000]``
+    is seconds and is converted. Anything else -- between the two ranges, or past
+    the larger -- is a value no profile can hold, so it is ``None`` rather than
+    a guess at which unit somebody meant.
 
     **Non-finite values are unreadable too**, which is not obvious because
     ``float()`` accepts them: ``float("inf")`` and ``float("1e400")`` both give
@@ -72,7 +93,15 @@ def days(limit: str | None) -> float | None:
         value = float(limit)
     except ValueError:
         return None
-    return value if math.isfinite(value) else None
+    if not math.isfinite(value):
+        return None
+    if value <= DISABLED:
+        return DISABLED
+    if value <= MAX_DAYS:
+        return value
+    if MIN_SECONDS <= value <= MAX_SECONDS:
+        return value / SECONDS_PER_DAY
+    return None
 
 
 def is_enabled(limit: str | None) -> bool:
@@ -103,11 +132,11 @@ def window_end(changed_at: datetime | None, limit: str | None) -> datetime | Non
     ``PASSWORD_CHANGE_DATE`` does not exist (#87) -- and where rollover does not
     exist either, so the pair are never both wanted.
 
-    **Fails closed rather than raising.** A number can be finite, parseable and
-    still too large for a ``timedelta`` -- ``1e10`` days overflows -- and this is
-    a field derived for a *report*. Crashing ``describe_user`` because a profile
-    holds an absurd limit would take out the command that was going to tell
-    somebody about it.
+    **Fails closed rather than raising.** :func:`days` already caps the value at
+    60, so an overflow cannot reach here today; the guard stays because this is
+    a field derived for a *report*, and a cap is easier to loosen than to
+    notice. Crashing ``describe_user`` because a profile holds an absurd limit
+    would take out the command that was going to tell somebody about it.
     """
     value = days(limit)
     if changed_at is None or value is None or value <= DISABLED:

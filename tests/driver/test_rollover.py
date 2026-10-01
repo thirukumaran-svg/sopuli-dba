@@ -1,8 +1,11 @@
 """Rollover: the profile check, the window, the DDL we refuse to issue. Tier 0.
 
-Every literal here was read off 26ai Free 23.26.2.0.0 — in particular `.0416`,
+The days literals were read off 26ai Free 23.26.2.0.0 — in particular `.0416`,
 which is what `PASSWORD_ROLLOVER_TIME 1/24` reads back as and which the obvious
-implementation gets wrong.
+implementation gets wrong. The seconds literals (`3600`, `86400`, `604800`) and
+off's `-1` were read off 19c EE 19.32.0.0.0 on an OCI Base Database Service DB
+system (#583). `5184000` and `60` are the 60-day ceiling in each unit, derived
+from Oracle's documented bound rather than read back.
 """
 
 from __future__ import annotations
@@ -119,12 +122,60 @@ def test_a_non_finite_limit_is_unreadable_rather_than_a_window(limit: str) -> No
     assert window_end(CHANGED, limit) is None
 
 
-def test_a_limit_too_large_for_a_timedelta_fails_closed() -> None:
-    """Finite, parseable, and still not usable: `timedelta(days=1e10)` overflows.
+def test_a_limit_no_profile_can_hold_is_unreadable() -> None:
+    """Finite, parseable, and outside both renderings of Oracle's one-hour to
+    60-day bound. It used to count as a window whose end could not be expressed
+    (`timedelta(days=1e10)` overflows); since #583 it is not a window at all,
+    because no unit makes it one."""
+    assert days("1e10") is None
+    assert not is_enabled("1e10")
+    assert window_end(CHANGED, "1e10") is None
 
-    This value is derived for a *report*, so crashing `describe_user` over an
-    absurd profile limit would take out the command that was going to tell
-    somebody about it.
-    """
-    assert is_enabled("1e10"), "it is a positive number, so the profile does grant a window"
-    assert window_end(CHANGED, "1e10") is None, "but the end of it cannot be expressed"
+
+# ------------------------------------------- 19.32.0.0.0 reads it in seconds ---
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected_days"),
+    [
+        # Each one read back on 19.32.0.0.0 (#583) from a profile created as:
+        ("3600", 1 / 24),  # 1/24
+        ("86400", 1.0),  # 1
+        ("604800", 7.0),  # 7
+        ("5184000", 60.0),  # 60, the ceiling
+        # and the same profiles as 26ai renders them:
+        (ONE_HOUR, 0.0416),
+        ("1", 1.0),
+        ("7", 7.0),
+        ("60", 60.0),
+    ],
+)
+def test_the_unit_is_read_off_the_value(limit: str, expected_days: float) -> None:
+    """One hour to 60 days is `(0, 60]` in days and `[3600, 5184000]` in seconds,
+    and the two do not overlap -- so the value names its own unit, and nothing
+    asks which release sent it (invariant 3). Read as days, `3600` was a 150-day
+    window, and `finish-rollover` said `3599d23h left` of a one-hour one."""
+    assert days(limit) == pytest.approx(expected_days)
+    assert is_enabled(limit)
+
+
+def test_a_seconds_window_ends_an_hour_after_the_change() -> None:
+    """What #583 got wrong in the run document: `window_end` was 3600 days out."""
+    assert window_end(CHANGED, "3600") == CHANGED + timedelta(hours=1)
+
+
+@pytest.mark.parametrize("limit", ["-1", "0", "-1.0"])
+def test_off_is_disabled_in_both_renderings(limit: str) -> None:
+    """26ai reads "off" as `0` and 19.32.0.0.0 as `-1`. Both are DISABLED by
+    rule now, where `-1` used to be disabled only because it is not above zero."""
+    assert days(limit) == 0.0
+    assert not is_enabled(limit)
+    assert window_end(CHANGED, limit) is None
+
+
+@pytest.mark.parametrize("limit", ["61", "120", "3599", "5184001", "604800000"])
+def test_a_value_between_or_beyond_the_two_ranges_is_unreadable(limit: str) -> None:
+    """Above 60 days and below an hour of seconds, or past 60 days of seconds:
+    no profile holds it, so guessing a unit would be inventing a window."""
+    assert days(limit) is None
+    assert not is_enabled(limit)

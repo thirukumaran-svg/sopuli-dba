@@ -5487,15 +5487,32 @@ acme_batch_user  oci-pdb  ROLLOVER_ACTIVE  the vault's password is already accep
 nothing changed
 ```
 
-`finish-rollover` closes it, and a second run finds nothing to close. **Read the
-window's length as wrong:**
+`finish-rollover` closes it, and a second run finds nothing to close.
+
+**19.32.0.0.0 reads the limit in seconds.** `1/24` reads back as `3600`, `1` as
+`86400`, and `0` (off) as `-1`, where 26ai reads `.0416`, `1` and `0`. The first
+run here read every value as days, and showed a one-hour window as `open,
+3599d23h left` and `3600d configured`. Opening and closing went by
+`ACCOUNT_STATUS` and were right throughout. Since #583 the tool reads the unit
+off the value: Oracle bounds the limit at one hour to 60 days, which is `(0, 60]`
+in days and `[3600, 5184000]` in seconds, and the two do not overlap. Re-run on a
+fresh 19.32.0.0.0 DB system the same day, where `SOPULI_ROLLOVER` again read back
+as `3600`:
+
+```
+ACCOUNT          TARGET   STATE            VAULT_V  AGE  DB_PW_CHANGED  PROFILE  ROLLOVER
+acme_batch_user  oci-pdb  UNVERIFIABLE  2        0d   2026-10-01     DEFAULT  not configured
+```
+
+That is `DEFAULT`'s `-1`, which is now off by rule rather than because it is not
+above zero. After `apply`, `finish-rollover`, and the second run:
 
 ```
 ACCOUNT          TARGET   WINDOW
-acme_batch_user  oci-pdb  open, 3599d23h left
+acme_batch_user  oci-pdb  open, 58m left
 
 ACCOUNT          TARGET   STATE    DETAIL
-acme_batch_user  oci-pdb  IN_SYNC  rollover window closed, 3599d23h early
+acme_batch_user  oci-pdb  IN_SYNC  rollover window closed, 58m early
 
 1 closed
 ```
@@ -5509,11 +5526,17 @@ acme_batch_user  oci-pdb  IN_SYNC  no rollover window is open
 no rollover window was open on any of 1
 ```
 
-The window was one hour. 19.32.0.0.0 renders `PASSWORD_ROLLOVER_TIME` in seconds (`1/24`
-reads back as `3600`, `1` as `86400`, and `0` as `-1`), and the tool reads the
-number as days. Opening and closing the window go by `ACCOUNT_STATUS` and are
-right; the length, `status`'s `ROLLOVER` column (`3600d configured`) and the
-derived window end are wrong by a factor of 86400. That is #583.
+and `status` afterwards:
+
+```
+ACCOUNT          TARGET   STATE         VAULT_V  AGE  DB_PW_CHANGED  PROFILE          ROLLOVER
+acme_batch_user  oci-pdb  UNVERIFIABLE  4        0d   2026-10-01     SOPULI_ROLLOVER  1h configured
+```
+
+The run document still carries the profile's limit as Oracle spells it --
+`"profile_rollover_time": "3600"` here, `".0416"` on 26ai -- because that field
+is a reading, not a length. Anything that wants the length should not parse it
+without the same range rule.
 
 ### An Autonomous Database end to end (#479)
 

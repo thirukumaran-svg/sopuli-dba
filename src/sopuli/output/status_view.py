@@ -365,7 +365,8 @@ def _rollover_cell(user: UserState | None) -> Cell | str:
 
 
 def _hours(days: float) -> str:
-    """A rollover limit as an operator would say it. Oracle stores it in days."""
+    """A rollover limit as an operator would say it, from :func:`rollover_days`'s
+    days -- which a release reading the limit in seconds has been converted to."""
     hours = days * 24
     if hours >= 24 and hours % 24 == 0:
         return f"{int(days)}d"

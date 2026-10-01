@@ -104,9 +104,10 @@ release is cut.
   `doctor` probes `password_rollover` present, `apply` opens the window,
   `status` and `check --include-previous` report it, an `apply` re-run reports
   nothing changed, and `finish-rollover` closes it and then reports no window
-  open. What it found: the window's *length* is reported wrong there, because
-  19.32.0.0.0 renders `PASSWORD_ROLLOVER_TIME` in seconds and the tool reads days
-  (#583).
+  open. What it found: 19.32.0.0.0 renders `PASSWORD_ROLLOVER_TIME` in seconds
+  where 26ai renders days, and the window's length was reported 86400 times too
+  long. Fixed by reading the unit off the value (#583), and re-run on a fresh
+  19.32.0.0.0 DB system the same day: `58m left`, `1h configured`.
 - **Native Network Encryption**, one of the three things that force thick mode
   (`00-principles.md`, *Why thick mode*), is properly
   exercised only against a real NNE-required server. It can be **approximated
@@ -368,7 +369,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | **The non-CDB shape**, which is not a missing capability but a different set of questions Oracle will answer. `SYS_CONTEXT('USERENV','CON_NAME')` *raises* (`ORA-02003`) rather than answering NULL; `DBA_USERS` has no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or `COMMON`; `USER_SYS_PRIVS` has no `COMMON`; there are no audit policies. Each of those took something down that had nothing to do with containers — the privilege audit blanked a whole target row while exiting 0 (#382) | 11g XE |
 | **DDL text retention is not uniform** (unverified: ddl-text-versions). `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and not on 18c, 19.3, 21c or 26ai, so invariant 13's *conclusion* is release-dependent even though its reasoning is not. Decided in #387: documented, not warned about and not refused — which is only defensible while the table saying so is accurate, so a release claimed as supported gets `02_password_leak_probe.sql` run against it. 19.3.0.0.0 does not retain it either (#548), nor does 12.2.0.1.0 (#572), nor 19.32.0.0.0, the first release update measured (#581), so the boundary is somewhere in (11.2, 12.2]; 12.1 is unmeasured | every version claimed |
 | Common user + `CONTAINER=ALL`, and refusal outside `CDB$ROOT` | any CDB |
-| Rollover: both passwords valid during the window; `finish-rollover` ends it | 23ai Free, real 19.12+ (19.32.0.0.0, #581: the window opens and closes; its displayed length is #583) |
+| Rollover: both passwords valid during the window; `finish-rollover` ends it | 23ai Free, real 19.12+ (19.32.0.0.0, #581: the window opens and closes, and since #583 its length reads right) |
 | Rollover *absent*: `--strategy rollover` fails at plan time, not execution. **Measured on 18c 2026-09-08 (#381), and it had never run anywhere before that** — `test_a_release_without_rollover_refuses_at_plan_time` carries `@requires_no_capability(password_rollover)`, so on 26ai, the only server the suite had ever met, it skipped every time. Exit 5 under `--dry-run`, `error.category` `capability`, `error.target_capability` `password_rollover`, the `plan` emitted beside the refusal, and `doctor` reporting 5 capabilities rather than 6 one command earlier | 18c XE, 11g XE |
 | `DBA_USERS` columns do not arrive together, and a fallback that assumes they do gives up a guardrail. `ORACLE_MAINTAINED` is present from 12.1 and `PASSWORD_CHANGE_DATE` only from 19c, so 18c has one and not the other (measured 2026-09-08, #381; the 19c end confirmed on 19.24.0.0.0, 2026-09-17). Narrowing on the first `ORA-00904` made 18c answer as 11.2 and read `vendor_maintained` as `None`, which silently switched guardrail check 2 off on a release that can answer it. Three query shapes now, all projecting the same columns | 18c XE, 11g XE |
 | Standby refusal: `OPEN MODE = READ ONLY` detected before any DDL | real OCI |
