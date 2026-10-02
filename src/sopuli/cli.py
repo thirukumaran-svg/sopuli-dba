@@ -817,7 +817,11 @@ def doctor(
     # expanded targets and their bindings, so there is nothing here for it to
     # narrow anyway -- and reporting a store as absent because nobody selected a
     # target that happened to use it would be alarming and wrong.
-    vaults = vault_survey(config.vaults, env=os.environ, token_file=run.vault_token_file)
+    # Into the run's own client map (#489), so a target whose admin credential
+    # lives in a surveyed store reuses this login rather than making a second.
+    vaults = vault_survey(
+        config.vaults, env=os.environ, token_file=run.vault_token_file, cache=run.stores
+    )
     document.vaults = [build_vault(report, error=_vault_error(report)) for report in vaults]
     document.diagnostics.extend(vault_diagnostics(vaults))
 

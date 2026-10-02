@@ -41,7 +41,7 @@ from pathlib import Path
 from sopuli.clock import Skew
 from sopuli.config.model import Vault
 from sopuli.lock.record import CLOCK_SKEW
-from sopuli.store.protocol import UNREACHABLE, StoreHealth
+from sopuli.store.protocol import UNREACHABLE, SecretStore, StoreHealth
 from sopuli.store.registry import connect
 
 
@@ -83,6 +83,7 @@ def survey(
     env: Mapping[str, str],
     token_file: Path | None = None,
     tolerance: timedelta = CLOCK_SKEW,
+    cache: dict[str, SecretStore] | None = None,
 ) -> tuple[VaultReport, ...]:
     """Ask every store in ``vaults`` how it is, in configuration order.
 
@@ -98,9 +99,31 @@ def survey(
     ``tolerance`` is :data:`~sopuli.lock.record.CLOCK_SKEW` by default and is an
     argument so a test can state the boundary it is asserting rather than
     importing the same constant and comparing it with itself.
+
+    ``cache`` is the run's own client map (:attr:`sopuli.invocation.Invocation.
+    stores`), the one :func:`sopuli.cli._stores_for` reads and fills (#489).
+    Without it `doctor` authenticated twice to a store that is both surveyed here
+    and named by a target's ``method: vault`` admin ref -- two logins in the
+    store's audit log for one run, which reads as somebody else's before it reads
+    as a bug. A client this survey opens goes into it, and one already there is
+    used rather than dialled again. Reuse is safe for ``_stores_for``'s reason:
+    both build the client with the same :func:`~sopuli.store.registry.connect`
+    call from the same ``vaults:`` entry and token file, so a cached one is not
+    merely similar but identical in construction.
+
+    **Only a store that connected is cached.** One that failed is not, so a later
+    reader tries it again and reports its own failure where it meets it -- a
+    target's admin credential, say -- rather than inheriting this survey's. The
+    cost is a second failed attempt against a store that is already broken,
+    which a negative cache would save at the price of every later reader's error
+    pointing back here instead of at its own cause.
+
+    The report is unchanged: what goes into the cache is a client, and
+    :class:`VaultReport` stays a description of health (#216).
     """
     return tuple(
-        _examine(vault, env=env, token_file=token_file, tolerance=tolerance) for vault in vaults
+        _examine(vault, env=env, token_file=token_file, tolerance=tolerance, cache=cache)
+        for vault in vaults
     )
 
 
@@ -110,6 +133,7 @@ def _examine(
     env: Mapping[str, str],
     token_file: Path | None,
     tolerance: timedelta,
+    cache: dict[str, SecretStore] | None = None,
 ) -> VaultReport:
     """One store: open it, ask it, and never raise.
 
@@ -132,7 +156,15 @@ def _examine(
     """
     started = time.monotonic()
     try:
-        health = connect(vault, env=env, token_file=token_file).health()
+        store = None if cache is None else cache.get(vault.name)
+        if store is None:
+            store = connect(vault, env=env, token_file=token_file)
+            if cache is not None:
+                # Cached on connecting rather than on a healthy answer: the login
+                # is what a second open would repeat, and a reader meeting a store
+                # that then answers badly reports that itself.
+                cache[vault.name] = store
+        health = store.health()
     except Exception as error:  # noqa: BLE001 -- a per-vault finding, never a crash
         return VaultReport(
             name=vault.name,

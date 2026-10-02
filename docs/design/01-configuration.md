@@ -1112,7 +1112,12 @@ authenticating from a wallet builds no store client, because the `vault` branch
 is the only caller and the supplier is a function; an estate of thirty-four
 targets sharing one vault authenticates once rather than thirty-four times,
 which is also the difference between one entry in that vault's audit log and
-thirty-four.
+thirty-four. **"Once per run" counts `doctor`'s `vaults` survey too** (#489).
+The survey opens every declared store and puts each client it opened into the
+run's client map, the one every other reader takes its stores from, so an admin
+credential in a surveyed store reuses that login. A store the survey could
+not open is not cached: the admin credential tries it again and reports its own
+failure on its own target.
 
 A `{placeholder}` in that ref is rendered from a **target set's** dimensions, like
 every other string a template writes. On an explicit target it is an error, because

@@ -25,6 +25,7 @@ import pytest
 
 from sopuli.config.model import Vault
 from sopuli.lock.record import CLOCK_SKEW
+from sopuli.store import MemoryStore, SecretStore
 from sopuli.store.protocol import OK, UNREACHABLE
 from sopuli.store.survey import survey
 
@@ -233,3 +234,70 @@ def test_an_exception_carrying_no_message_does_not_break_the_survey(
 
     assert report.health.status == UNREACHABLE
     assert report.health.detail == "RuntimeError"
+
+
+# ------------------------------------------------- the run's client map (#489) ---
+
+
+def _counting(monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> list[str]:
+    """Substitute `connect` with one that records each store it opens."""
+    opened: list[str] = []
+
+    def fake_connect(vault: Vault, **_: object) -> MemoryStore:
+        opened.append(vault.name)
+        if fail:
+            raise RuntimeError("refused")
+        return MemoryStore()
+
+    monkeypatch.setattr("sopuli.store.survey.connect", fake_connect)
+    return opened
+
+
+def test_a_store_the_survey_opens_goes_into_the_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """So the next reader in the same `doctor` run -- a target's `method: vault`
+    admin credential -- reuses this login rather than making a second."""
+    opened = _counting(monkeypatch)
+    cache: dict[str, SecretStore] = {}
+
+    (report,) = survey([vault()], env={}, cache=cache)
+
+    assert report.reachable
+    assert opened == ["vault-prod"]
+    assert list(cache) == ["vault-prod"]
+
+
+def test_a_store_already_in_the_cache_is_not_opened_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cache is read as well as filled, which is `_stores_for`'s contract."""
+    opened = _counting(monkeypatch)
+    cache: dict[str, SecretStore] = {"vault-prod": MemoryStore()}
+
+    (report,) = survey([vault()], env={}, cache=cache)
+
+    assert report.reachable
+    assert opened == []
+
+
+def test_a_store_that_could_not_be_opened_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later reader tries it again and reports its own failure, rather than
+    inheriting this survey's or finding nothing where a client should be."""
+    _counting(monkeypatch, fail=True)
+    cache: dict[str, SecretStore] = {}
+
+    (report,) = survey([vault()], env={}, cache=cache)
+
+    assert not report.reachable
+    assert cache == {}
+
+
+def test_without_a_cache_nothing_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every caller but `doctor` passes none, and opens one client per store."""
+    opened = _counting(monkeypatch)
+
+    survey([vault(), vault(name="vault-other")], env={})
+    survey([vault()], env={})
+
+    assert opened == ["vault-prod", "vault-other", "vault-prod"]

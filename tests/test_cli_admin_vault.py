@@ -453,3 +453,79 @@ def test_one_store_serving_both_halves_is_opened_once(
     runner.invoke(cli, ["creds", "check", "--config", str(config)])
 
     assert opened == ["vault-dev"]
+
+
+# ------------------------------------- the survey and the admin ref (#489) ---
+
+
+def _surveyed(monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> dict[str, Any]:
+    """`connect` substituted in **both** places a `doctor` run opens a store.
+
+    The `estate` fixture replaces the survey outright, which is right for every
+    test above and is exactly what hid #489: the double open was between the
+    survey and the admin reader, so a test of it has to let both run and count
+    them on one list.
+    """
+    opened: list[str] = []
+    seen: list[Credential] = []
+    store = MemoryStore()
+    store.write("ops/dba", {"password": STORED}, cas=0)
+
+    def fake_connect(vault: Any, **_: Any) -> SecretStore:
+        opened.append(vault.name)
+        if fail and vault.name == "vault-dev":
+            raise RuntimeError("vault-dev refused the login")
+        return store
+
+    class FakeDriver:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def connect(self, target: Any, credential: Credential) -> FakeSession:
+            seen.append(credential)
+            return FakeSession()
+
+    class FakeModule:
+        OracleDriver = FakeDriver
+
+    monkeypatch.setattr("sopuli.cli.connect", fake_connect)
+    monkeypatch.setattr("sopuli.store.survey.connect", fake_connect)
+    monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+    return {"opened": opened, "seen": seen}
+
+
+def test_the_survey_and_the_admin_ref_share_one_login(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#489: `vault-dev` is surveyed and is where the admin credential lives.
+    One authentication for both, not one each -- a vault's audit log showing
+    twice the logins a `doctor` schedule accounts for reads as a compromise
+    before it reads as a bug."""
+    harness = _surveyed(monkeypatch)
+    config = write_config(VAULT_ADMIN)
+
+    result = _doctor(runner, config, "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert harness["opened"].count("vault-dev") == 1
+    # The other declared store is still surveyed, once.
+    assert harness["opened"].count("vault-other") == 1
+    assert [one.secret.reveal() for one in harness["seen"] if one.secret] == [STORED]
+
+
+def test_a_store_the_survey_could_not_open_is_tried_again_for_the_admin_ref(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not cached on failure, so the target's row carries its own failure
+    rather than an absent client or a pointer back to the `vaults` section."""
+    harness = _surveyed(monkeypatch, fail=True)
+    config = write_config(VAULT_ADMIN)
+
+    result = _doctor(runner, config, "--output", "json")
+    emitted = json.loads(result.output)
+
+    assert harness["opened"].count("vault-dev") == 2
+    assert harness["seen"] == []
+    (target,) = emitted["targets"]
+    assert target["reachable"] is False
+    assert "refused the login" in target["error"]["message"]

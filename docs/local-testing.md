@@ -1879,7 +1879,23 @@ resolved through the target's own `vault:`; a prefix would override that, and
 
 The store is opened only if this method is used, and once per run however many
 targets share it — so an estate of thirty-four PDBs in one vault authenticates
-once.
+once. **That includes `doctor`'s own `vaults` survey** (#489): the survey opens
+every declared store, and until #489 the admin credential then opened the same
+one again. With `method: token` that cost nothing visible, because opening a
+token client sends no request. With a method that logs in, it was a second login
+in the vault's audit log. Measured on 2026-10-02 with a file audit device on the
+tier-1 Vault, this config's store switched to `auth: { method: userpass, … }`,
+two runs each:
+
+```
+main:   update auth/userpass/login/…  2 per run
+#489:   update auth/userpass/login/…  1 per run
+```
+
+Both runs also make one `read auth/token/lookup-self` (the survey's health
+check) and one `read kv/data/ops/dba` (the credential). A store the survey could
+not open is not reused: the admin credential tries it again, and the target's
+row reports that attempt's own failure.
 
 #### Failures worth causing
 
