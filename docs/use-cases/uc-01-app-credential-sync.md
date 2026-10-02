@@ -923,6 +923,17 @@ running says so rather than being silently skipped, and refusing over it would
 mean an estate that will not grant the audit view could never run a pre-flight at
 all.
 
+**"Says so" means in the text as well as in the document** (#606). A survey that
+refuses prints every finding in its table, caveats included. A survey that passes
+prints no table, so its caveats are added to the run's notes: one note per target,
+naming what could not be established and the server's reason, with the accounts
+that share a cause on one line. They print on every such run, `--dry-run` or not,
+and `rotate`'s pre-flight prints them the same way. Leaving them JSON-only was
+considered and declined. It holds for a real run, whose own statements meet the
+same cause and name it per account. It fails for `--dry-run --preflight`, where
+nothing runs afterwards and a clean "nothing was applied" would answer "would it
+work" without saying part of the question went unasked.
+
 **`--dry-run --preflight` surveys too.** It writes nothing and needs no lock, and
 "show me the plan, and tell me whether it would work" is the invocation somebody
 reaches for first — a flag that silently meant nothing there would be a trap.

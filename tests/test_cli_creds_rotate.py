@@ -561,6 +561,20 @@ def test_dry_run_still_flies_the_preflight(
     assert "nothing was written" in result.output
 
 
+@pytest.mark.parametrize("mode", [(), ("--dry-run",)], ids=["run", "dry-run"])
+def test_a_preflight_caveat_is_printed_in_the_text(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, mode: tuple[str, ...]
+) -> None:
+    """#606, which applies to `rotate`'s unconditional pre-flight as it does to
+    `apply --preflight`."""
+    estate(audits={"appdb-alpha": RuntimeError("ORA-00942: table or view does not exist")})
+
+    result = run(runner, write_config(CONFIG), *mode)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "pre-flight on appdb-alpha could not establish" in result.output
+
+
 # -------------------------------------------------------- §8 step 1, confirm ---
 
 

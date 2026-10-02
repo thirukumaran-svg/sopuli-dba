@@ -259,7 +259,7 @@ from sopuli.output.notices import render_notices
 from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
-from sopuli.output.preflight_view import render_preflight
+from sopuli.output.preflight_view import caveat_notes, render_preflight
 from sopuli.output.reset_view import build_result as build_reset_result
 from sopuli.output.reset_view import render as render_reset
 from sopuli.output.reset_view import render_password
@@ -5668,6 +5668,9 @@ def creds_apply(
             return _refuse_preflight(
                 findings, document, header=_header(plan, sources), notes=repair_notes
             )
+        # #606: a survey that passed with a check missing says so here as well
+        # as in `diagnostics[]`. A refusal has already printed them in its table.
+        repair_notes.extend(caveat_notes(findings))
         document.finish(ExitCode.SUCCESS, Summary(total=len(sources)))
         return "\n".join(
             [
@@ -5724,6 +5727,7 @@ def creds_apply(
                 return _refuse_preflight(
                     findings, document, header=_header(plan, sources), notes=repair_notes
                 )
+            repair_notes.extend(caveat_notes(findings))
             applied, stolen = _apply_estate(
                 sources,
                 run,
@@ -8743,7 +8747,9 @@ def creds_rotate(
     header = _rotation_header(plan, sequence.selections, max_age_days)
     # See `apply`'s: a warning that cannot be seen in the default output is not
     # surfaced.
-    notes = render_notices([one.message for one in unchecked] + _lock_notices(manager))
+    notes = render_notices(
+        sequence.caveats + [one.message for one in unchecked] + _lock_notices(manager)
+    )
     return "\n".join([f"{header}\n\n{table}", *notes])
 
 
@@ -8810,6 +8816,8 @@ class _Rotation:
     #: for, which is not the same fact as zero.
     closed: int | None = None
     stolen: LockStolenError | None = None
+    #: The pre-flight's caveats as notes (#606), for the end of the run.
+    caveats: list[str] = field(default_factory=list)
 
 
 def _rotate_estate(
@@ -8862,6 +8870,8 @@ def _rotate_estate(
         return _refuse_preflight(
             findings, document, header=_rotation_header(plan, into.selections, max_age_days)
         )
+    # #606, and `apply`'s rule: printed at the end with the run's other notes.
+    into.caveats = caveat_notes(findings)
 
     # Step 4 -- `creds generate`'s write, behind the fence it uses.
     writes = staging.group(
@@ -8890,7 +8900,12 @@ def _rotate_estate(
         )
         header = _rotation_header(plan, into.selections, max_age_days)
         body = render_generate(into.staged_rows)
-        return f"{header}\n\n{body}\n\nnothing was applied to any database"
+        return "\n".join(
+            [
+                f"{header}\n\n{body}\n\nnothing was applied to any database",
+                *render_notices(into.caveats),
+            ]
+        )
 
     # Re-read: staging bumped every version this run wrote, and the promotion at
     # step 7 compare-and-sets against the version it is promoting from.
@@ -9152,7 +9167,10 @@ def _preview_rotation(
         return _refuse_preflight(findings, document, header=header)
 
     document.finish(ExitCode.SUCCESS, Summary(total=len(rotating)))
-    return f"{header}\n\nnothing was rotated (--dry-run)"
+    # #606: a survey that passed with a check missing says so in the text too.
+    return "\n".join(
+        [f"{header}\n\nnothing was rotated (--dry-run)", *render_notices(caveat_notes(findings))]
+    )
 
 
 def _rotation_header(

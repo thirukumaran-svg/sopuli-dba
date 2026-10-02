@@ -9,7 +9,7 @@ counts, and never what merely appeared in the table.
 from __future__ import annotations
 
 from sopuli import preflight
-from sopuli.output.preflight_view import render_preflight
+from sopuli.output.preflight_view import caveat_notes, render_preflight
 
 
 def blocking(target: str = "appdb-alpha") -> preflight.Finding:
@@ -70,3 +70,60 @@ def test_the_account_column_is_filled_only_where_the_check_is_about_one() -> Non
     rendered = render_preflight(findings)
 
     assert "acme_web_user" in rendered
+
+
+# ------------------------------------------- a survey that passed, #606 ---
+
+
+def test_a_caveat_becomes_one_note_naming_its_target() -> None:
+    notes = caveat_notes([caveat()])
+
+    assert len(notes) == 1
+    assert "appdb-alpha" in notes[0]
+    assert "the audit could not be read" in notes[0]
+
+
+def test_a_blocking_finding_is_not_a_caveat_note() -> None:
+    """A refusal prints every finding in its table; a note as well would say it
+    twice."""
+    assert caveat_notes([blocking()]) == []
+
+
+def test_one_cause_over_many_accounts_is_one_line_naming_them() -> None:
+    """An estate that will not grant `DBA_PROFILES` meets this once per account
+    moving profile, and twenty identical lines would hide the one that differs."""
+    findings = [
+        preflight.Finding(
+            "appdb-alpha",
+            preflight.PROFILE,
+            "could not establish whether profile 'P' exists here: ORA-00942",
+            account=name,
+            blocking=False,
+        )
+        for name in ("acme_web_user", "acme_batch_user")
+    ]
+
+    (note,) = caveat_notes([*findings, caveat()])
+
+    assert note.count("ORA-00942") == 1
+    assert "acme_web_user, acme_batch_user: could not establish" in note
+    assert "the audit could not be read" in note
+
+
+def test_each_target_gets_its_own_note() -> None:
+    """The note leads with the target because that is where the grant is fixed."""
+    assert len(caveat_notes([caveat(), caveat("appdb-beta")])) == 2
+
+
+def test_a_multi_line_server_message_stays_inside_its_note() -> None:
+    """26ai appends a URL on a second line of its own message (#322)."""
+    finding = preflight.Finding(
+        "appdb-alpha",
+        preflight.PRIVILEGES,
+        "the privilege audit could not be read: ORA-00942: no table\nHelp: https://example.com",
+        blocking=False,
+    )
+
+    (note,) = caveat_notes([finding])
+
+    assert note.splitlines()[-1] == "    Help: https://example.com"

@@ -1772,6 +1772,22 @@ def test_an_unreadable_audit_is_a_caveat_and_not_a_refusal(
     assert "could not be read" in found["diagnostics"][0]["message"]
 
 
+@pytest.mark.parametrize("mode", [(), ("--dry-run",)], ids=["run", "dry-run"])
+def test_an_unreadable_audit_is_printed_in_the_text_as_well(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, mode: tuple[str, ...]
+) -> None:
+    """#606: a survey that passed with a check missing must not read, in a
+    terminal, like one that made every check -- least of all under `--dry-run`,
+    where nothing runs afterwards to meet the cause."""
+    estate(audits={"appdb-alpha": RuntimeError("ORA-00942: table or view does not exist")})
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--preflight", *mode)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "pre-flight on appdb-alpha could not establish" in result.output
+    assert "ORA-00942" in result.output
+
+
 def test_a_missing_account_refuses_a_preflighted_run(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

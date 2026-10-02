@@ -24,7 +24,7 @@ from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.preflight import Finding
 
-__all__ = ["render_preflight"]
+__all__ = ["caveat_notes", "render_preflight"]
 
 _TARGET = 28
 _CHECK = 12
@@ -100,3 +100,43 @@ def _verdict(findings: Sequence[Finding]) -> str:
         was = "1 check could not" if caveats == 1 else f"{caveats} checks could not"
         line = f"{line} ({was} be established)"
     return line
+
+
+def caveat_notes(findings: Sequence[Finding]) -> list[str]:
+    """The checks a passing survey could not make, as run-level notes (#606).
+
+    For the run the survey **let through**. A refusal already prints every
+    finding in :func:`render_preflight`'s table, caveats included, so a caller
+    asks for these only once :func:`sopuli.preflight.refusal` has said no -- and
+    without them a pre-flight that passed with a check missing would read in a
+    terminal exactly like one that made every check, which is #309's
+    invisibility on the invocation whose whole question is "would it work".
+
+    **One note per target, not one per finding.** An estate that will not grant
+    the view meets this on every run and on every target, and a profile that
+    could not be looked up is a finding per account moving onto it: twenty
+    accounts are one cause, so findings with the same message are one line
+    naming all of their accounts. The note leads with the target because that is
+    where the missing grant is fixed.
+
+    Empty when nothing was a caveat, so a clean survey adds nothing to the output.
+    """
+    by_target: dict[str, dict[str, list[str]]] = {}
+    for one in findings:
+        if one.blocking:
+            continue
+        messages = by_target.setdefault(one.target, {})
+        accounts = messages.setdefault(one.message, [])
+        if one.account is not None and one.account not in accounts:
+            accounts.append(one.account)
+
+    notes = []
+    for target, messages in by_target.items():
+        lines = [f"pre-flight on {target} could not establish these, either way:"]
+        for message, accounts in messages.items():
+            first, *rest = message.splitlines() or [""]
+            lead = f"{', '.join(accounts)}: " if accounts else ""
+            lines.append(f"  {lead}{first}")
+            lines.extend(f"    {line}" for line in rest)
+        notes.append("\n".join(lines))
+    return notes

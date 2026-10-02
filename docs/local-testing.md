@@ -3217,6 +3217,87 @@ out: **`CAPABILITIES` reads 5 on 18c and 6 on 21c and 26ai.** The missing one is
 `password_rollover`, and `--output json` names them under
 `targets[].scope.capabilities`.
 
+### 10.11 A pre-flight that could not check everything (#606)
+
+Some survey checks can fail to *run* rather than fail. The privilege audit
+could not be read, or whether a profile exists could not be established. These
+are caveats, not refusals (UC-1 §5): the run goes ahead. Before #606 a survey
+that passed with one printed nothing about it in text, so `--dry-run --preflight`
+read exactly like a survey that had made every check.
+
+Missing grants don't produce this: the audit reads them fine and refuses, with
+exit 1. To cause a caveat, the audit's own read has to fail. On tier-1 26ai,
+make a scratch admin holding the grants the audit wants, then point a private
+`SESSION_PRIVS` synonym at nothing. A private synonym wins over the public one,
+for this account only:
+
+```bash
+export MSYS_NO_PATHCONV=1
+cat <<'SQL' | docker exec -i sopuli-test-oracle-free-1 sqlplus -S "/ as sysdba"
+alter session set container=FREEPDB1;
+create profile acme606_prof limit failed_login_attempts 10;
+create user acme606_user identified by "Initial606Pw";
+grant create session to acme606_user;
+create user sopuli606 identified by "Admin606Pw";
+grant create session, alter user to sopuli606;
+grant select on sys.dba_users to sopuli606;
+grant select on sys.dba_profiles to sopuli606;
+grant select on sys.dba_role_privs to sopuli606;
+grant select on sys.v_$database to sopuli606;
+grant select on sys.v_$instance to sopuli606;
+create synonym sopuli606.session_privs for sopuli606.no_such_view_606;
+exit
+SQL
+```
+
+The config is §6's file with `admin: { username: SOPULI606, auth: { method: env } }`,
+the one account `acme606_user`, a `secret_template` of
+`"vault-dev:acme/{env}/r606#{account}"`, and a policy whose `account.profile`
+is `acme606_prof`. Use `SOPULI_DB_ADMIN_PASSWORD=Admin606Pw`, and stage a
+`pending` with `creds generate` first. Run on 2026-10-02:
+
+```
+$ sopuli --config sopuli.yaml creds apply --dry-run --preflight
+Plan: 1 account x 1 target = 1 apply   [dev]
+
+ACCOUNT       TARGET    INTENT                                              SECRET
+acme606_user  free-pdb  attribute_set, verify, password_set, vault_promote  vault-dev:acme/dev/r606
+
+ACCOUNT       TARGET    SECRET                   SOURCE
+acme606_user  free-pdb  vault-dev:acme/dev/r606  pending
+
+nothing was applied (--dry-run)
+
+1 note:
+  pre-flight on free-pdb could not establish these, either way:
+    the privilege audit could not be read: ORA-00980: synonym translation is no longer valid
+```
+
+Exit 0. The note is one per target. When several accounts share one cause, they
+share one line, led by their names. A real `apply --preflight` prints the same
+note at the end, with the run's other notes. So do `creds rotate --dry-run` and a
+real `creds rotate`, whose pre-flight is unconditional. `--output json` is
+unchanged by #606: a `level: "warning"` diagnostic,
+`"privileges: the privilege audit could not be read: ..."`, with no code.
+
+A survey that *refuses* doesn't print the note. Its table already lists every
+finding, caveats included, and its verdict counts them: "(1 check could not be
+established)".
+
+Clean up afterwards:
+
+```bash
+cat <<'SQL' | docker exec -i sopuli-test-oracle-free-1 sqlplus -S "/ as sysdba"
+alter session set container=FREEPDB1;
+drop user sopuli606 cascade;
+drop user acme606_user cascade;
+drop profile acme606_prof;
+exit
+SQL
+docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=sopuli-test-root \
+  sopuli-test-vault-1 vault kv metadata delete kv/acme/dev/r606
+```
+
 ---
 
 ## 10a. The UC-2 verbs
