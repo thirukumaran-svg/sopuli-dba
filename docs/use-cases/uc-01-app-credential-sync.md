@@ -833,6 +833,18 @@ see, so a plan-time refusal would sometimes refuse a rollback that would have
 worked. A refused rollback is never redrawn — `previous` is the only value it
 has — and its row's hint says that rather than the driver's "draw another".
 
+**Under `--preflight` it is said before anything is sent** (#580). The survey
+already reads each account's state, profile limits included, so a rollback on a
+reuse-restricted profile raises the same `SOPULI-W028` there — under `--dry-run
+--preflight`, which is "show me the plan and tell me whether it would work", and
+in a real run, where the run does not raise it a second time for the same target
+and profile. Raised ahead of the statement it is a prediction: it cannot know
+that an account turns out to hold the password already, which the run's own
+reading does. Nor is it raised where the run would first move the account to
+another profile: the limits read are then not the ones the statement meets, and
+the run's own reading covers it. A plain `--dry-run` still connects to nothing,
+and so cannot say it.
+
 **On such a profile, the way back is a rollover window, not a rollback.** A
 profile with `PASSWORD_ROLLOVER_TIME` makes every rotation open one (§6.3): the
 old password keeps authenticating until `finish-rollover` or the window's end,

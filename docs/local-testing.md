@@ -2975,13 +2975,44 @@ exit 1
 ```
 
 It fails safely: nothing is promoted, and `creds check` afterwards is `IN_SYNC`
-against `current`. The note is `SOPULI-W028`, and it is a report rather than a
+against `current`. The note is `SOPULI-W028`, and on this run it is a report rather than a
 prediction. It fires on every rollback that reaches the statement on a profile
 whose limits are not both `UNLIMITED`, including one that succeeds, because when
 both limits are numbers the outcome depends on changes the tool cannot see.
 Under `--output json` the row's `error.hint` says why nothing was retried. A
 rollback has no other value to send, so it is never redrawn, and
 `password_not_redrawn` says so rather than blaming the document's provenance.
+
+**Ask first, with `--dry-run --preflight`** (#580). A plain `--dry-run` reads
+the vault and connects to nothing, so it cannot see the profile and says
+nothing. With `--preflight` the survey reads the account's state, profile limits
+included, and the warning appears before anything is sent. Run on 2026-10-02
+against tier-1 26ai:
+
+```
+$ sopuli --config sopuli.yaml creds apply --account acme_reuse_user --source previous --dry-run --preflight
+Plan: 1 account x 1 target = 1 apply   [dev]
+
+ACCOUNT          TARGET    INTENT                               SECRET
+acme_reuse_user  free-pdb  verify, password_set, vault_promote  vault-dev:acme/dev/reuse580
+
+ACCOUNT          TARGET    SECRET                       SOURCE
+acme_reuse_user  free-pdb  vault-dev:acme/dev/reuse580  previous
+
+nothing was applied (--dry-run)
+
+1 note:
+  free-pdb: profile "SOPULI_REUSE" restricts password reuse (PASSWORD_REUSE_MAX 5, PASSWORD_REUSE_TIME UNLIMITED), and a rollback applies a password the account has normally held before, so ORA-28007 is likely; on this profile the way back from a rotation is the rollover window a PASSWORD_ROLLOVER_TIME opens, not a rollback (ACME_REUSE_USER)
+```
+
+Exit 0, and no `--confirm` is needed for a preview. (The secret path is
+`reuse580` because this run used its own document; yours is whatever §6's
+template gives.) Raised this early, it is a prediction: it cannot know that an
+account already holds `previous`, which the run's own reading would. A real
+rollback with `--preflight` prints the same single note under its `ORA-28007`
+row. The survey raised it, so the run does not raise it a second time:
+`diagnostics[]` carries one `SOPULI-W028`, ahead of `password_not_redrawn`
+rather than after it.
 
 `ALTER USER acme_reuse_user PROFILE DEFAULT` and the same rollback goes through
 with no note, since the container's `DEFAULT` leaves both limits `UNLIMITED`:

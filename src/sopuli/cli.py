@@ -65,7 +65,7 @@ import importlib
 import os
 import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -5644,10 +5644,22 @@ def creds_apply(
         # would work". Skipping it under a dry run would make the flag silently
         # mean nothing on the invocation somebody would reach for first. It
         # writes nothing and needs no lock, which is why it can.
+        foreseen: list[tuple[str, UserState]] = []
         findings = _preflight(
-            _surveyable(sources), run, config, strategy=strategy, full=preflight_all
+            _surveyable(sources),
+            run,
+            config,
+            strategy=strategy,
+            full=preflight_all,
+            rollbacks=_rolling_back(sources),
+            reuse=foreseen,
         )
         document.diagnostics.extend(_preflight_diagnostics(findings))
+        # #580: the warning the run would raise after the statement, raised
+        # before it -- which is the whole point of asking under `--preflight`.
+        reuse_ahead = rollback_reuse(foreseen)
+        document.diagnostics.extend(reuse_ahead)
+        repair_notes.extend(one.message for one in reuse_ahead)
         if preflight.refusal(findings) is not None:
             return _refuse_preflight(
                 findings, document, header=_header(plan, sources), notes=repair_notes
@@ -5660,6 +5672,7 @@ def creds_apply(
             ]
         )
 
+    foreseen = []
     manager = LockManager(
         stores={name: _lockable(name, config, stores) for name in {key.store for key in keys}},
         correlation_id=document.correlation_id,
@@ -5687,9 +5700,18 @@ def creds_apply(
             document.diagnostics.extend(withheld)
             repair_notes.extend(one.message for one in withheld)
             findings = _preflight(
-                _surveyable(sources), run, config, strategy=strategy, full=preflight_all
+                _surveyable(sources),
+                run,
+                config,
+                strategy=strategy,
+                full=preflight_all,
+                rollbacks=_rolling_back(sources),
+                reuse=foreseen,
             )
             document.diagnostics.extend(_preflight_diagnostics(findings))
+            reuse_ahead = rollback_reuse(foreseen)
+            document.diagnostics.extend(reuse_ahead)
+            repair_notes.extend(one.message for one in reuse_ahead)
             if preflight.refusal(findings) is not None:
                 # Before the first mutation and inside the lock, so the estate
                 # cannot change between the survey and the run it was surveying
@@ -5747,8 +5769,18 @@ def creds_apply(
     _stream_results(run)
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
+    # A (target, profile) the pre-flight already warned about is not warned about
+    # again (#580): the same code twice in one document would read as two
+    # problems. The run's own reading still covers every pair the pre-flight did
+    # not see -- all of them, when `--preflight` was not passed.
+    warned = {(target, state.profile) for target, state in foreseen}
     reuse_notices = rollback_reuse(
-        [(record.binding.target, record.reuse) for record in applied if record.reuse is not None]
+        [
+            (record.binding.target, record.reuse)
+            for record in applied
+            if record.reuse is not None
+            and (record.binding.target, record.reuse.profile) not in warned
+        ]
     )
     document.diagnostics.extend(reuse_notices)
     states = [record.outcome.state for record in applied]
@@ -6916,6 +6948,19 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
     return driver.connect(target, credential.credential)
 
 
+def _rolling_back(sources: Sequence[tuple[Binding, Source | None]]) -> frozenset[tuple[str, str]]:
+    """The (target, account) pairs this run would apply from ``previous`` (#580).
+
+    The pre-flight is not told the stage otherwise, and a rollback is the one
+    case whose reuse history it has a reason to read.
+    """
+    return frozenset(
+        (binding.target, binding.account)
+        for binding, source in sources
+        if source is not None and source.stage == PREVIOUS
+    )
+
+
 def _surveyable(sources: Sequence[tuple[Binding, Source | None]]) -> list[Binding]:
     """The accounts `apply` asks a pre-flight about: the ones it has work for.
 
@@ -6934,6 +6979,8 @@ def _preflight(
     *,
     strategy: str | None,
     full: bool,
+    rollbacks: Collection[tuple[str, str]] = (),
+    reuse: list[tuple[str, UserState]] | None = None,
 ) -> list[Finding]:
     """UC-1 §8 step 3: ask the estate before anything is written (#262, #283).
 
@@ -6976,6 +7023,15 @@ def _preflight(
     there is no `pending` anywhere, and a first-ever rotation has no `current`
     either, so filtering on what the vault already holds would skip the whole
     estate on exactly the run whose pre-flight matters most.
+
+    **A rollback on a reuse-restricted profile is reported, not found** (#580).
+    ``rollbacks`` names the (target, account) pairs the caller would apply from
+    ``previous``, and each one whose profile restricts reuse is appended to
+    ``reuse`` -- read off the ``describe_user`` this survey already makes, so it
+    costs no extra round trip. It goes out rather than into the findings because
+    it is ``SOPULI-W028``, a warning with a code of its own, and #568 chose to
+    report it rather than refuse: a finding would be the second spelling of one
+    warning, and a blocking one would be the refusal that was not chosen.
     """
     if strategy is None and not full:
         return []
@@ -7000,7 +7056,16 @@ def _preflight(
             if strategy is not None:
                 _check_strategy(session, bindings, strategy=strategy, target=name, config=config)
             if full:
-                findings.extend(_preflight_target(session, by_target[name], bindings, config))
+                findings.extend(
+                    _preflight_target(
+                        session,
+                        by_target[name],
+                        bindings,
+                        config,
+                        rollbacks=rollbacks,
+                        reuse=reuse,
+                    )
+                )
         finally:
             with suppress(Exception):
                 session.close()
@@ -7008,7 +7073,13 @@ def _preflight(
 
 
 def _preflight_target(
-    session: Any, target: ExpandedTarget, bindings: Sequence[Binding], config: Config
+    session: Any,
+    target: ExpandedTarget,
+    bindings: Sequence[Binding],
+    config: Config,
+    *,
+    rollbacks: Collection[tuple[str, str]] = (),
+    reuse: list[tuple[str, UserState]] | None = None,
 ) -> tuple[Finding, ...]:
     """One reachable target, against §8's remaining checks.
 
@@ -7102,6 +7173,19 @@ def _preflight_target(
         # question is whether this run's *move* can land, and an account already
         # there is not moving.
         moving = strategies.moves_profile(state, apply_states.attributes_for(config, binding))
+
+        # #580. Only where the account stays on the profile read here: a move
+        # lands before the password does, so these limits are not the ones the
+        # statement meets, and the destination's are not read. The run's own
+        # W028, taken from the account as re-read after the move, still covers it.
+        if (
+            reuse is not None
+            and moving is None
+            and (target.name, binding.account) in rollbacks
+            and reuse_restricted(state.password_reuse_max, state.password_reuse_time)
+        ):
+            reuse.append((target.name, state))
+
         if moving is None:
             continue
         try:
@@ -7213,7 +7297,7 @@ def _refuse_preflight(
     )
     blocking = sum(1 for one in findings if one.blocking)
     document.finish(ExitCode.FAILURE, Summary(total=len(findings), failed=blocking))
-    return f"{header}\n\n{render_preflight(findings)}"
+    return "\n".join([f"{header}\n\n{render_preflight(findings)}", *render_notices(notes)])
 
 
 def _check_strategy(

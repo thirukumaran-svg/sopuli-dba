@@ -2976,6 +2976,131 @@ def test_a_rollback_already_in_place_is_not_warned_about(
     assert not _coded(emitted, "SOPULI-W028")
 
 
+# ----------------------------------- the reuse warning, ahead of time (#580) ---
+
+
+def test_a_preflight_preview_warns_about_a_reuse_profile_before_anything_runs(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--dry-run --preflight` is "show me the plan, and tell me whether it would
+    work", and the profile was already in hand: the survey reads it with
+    `describe_user`. So the warning the run raises after the statement is raised
+    here, before one is sent -- printed, and in the document."""
+    harness = estate(documents=_rolled(), users=_reusing())
+
+    text = _rollback(runner, write_config(CONFIG), "--dry-run", "--preflight")
+    emitted = document(
+        _rollback(runner, write_config(CONFIG), "--dry-run", "--preflight", "--output", "json")
+    )
+
+    assert text.exit_code == ExitCode.SUCCESS
+    assert 'profile "SOPULI_REUSE" restricts password reuse' in text.output
+    (warned,) = _coded(emitted, "SOPULI-W028")
+    assert warned["target"] == "appdb-alpha"
+    assert "PASSWORD_REUSE_MAX 5" in warned["message"]
+    assert all(session.attempted == [] for session in harness["sessions"])
+
+
+def test_a_plain_preview_still_connects_to_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A `--dry-run` without `--preflight` costs no logins, and that stays true:
+    it cannot see the profile, so it says nothing about it."""
+    harness = estate(documents=_rolled(), users=_reusing())
+
+    emitted = document(_rollback(runner, write_config(CONFIG), "--dry-run", "--output", "json"))
+
+    assert harness["sessions"] == []
+    assert not _coded(emitted, "SOPULI-W028")
+
+
+def test_a_preflight_preview_of_a_forward_apply_carries_no_reuse_warning(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The survey is told which pairs are rollbacks; a fresh `pending` on the
+    same profile is not one."""
+    estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        users=_reusing(),
+    )
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--dry-run",
+        "--preflight",
+        "--output",
+        "json",
+    )
+
+    assert not _coded(document(result), "SOPULI-W028")
+
+
+def test_a_preflight_run_warns_once_not_twice(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """With `--preflight` the survey warns before the statement and the run would
+    warn again after it. One (target, profile), one warning."""
+    estate(documents=_rolled(), users=_reusing(), set_error=refusal("ORA-28007"))
+
+    result = _rollback(runner, write_config(CONFIG), "--preflight", "--output", "json")
+    text = _rollback(runner, write_config(CONFIG), "--preflight")
+
+    assert len(_coded(document(result), "SOPULI-W028")) == 1
+    assert text.output.count('profile "SOPULI_REUSE" restricts password reuse') == 1
+
+
+def test_a_preflight_refusal_still_prints_the_reuse_warning(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A blocking finding beside W028 refuses the run, and the refusal is where
+    somebody is already reading -- so the warning is printed there too, not only
+    serialised. `_refuse_preflight` took the notes and dropped them (#580's
+    review, and #391's stale `--repair` note before it)."""
+    read_only = Scope(type="pdb", container="ALPHA", read_write=False, open_mode="READ ONLY")
+    for extra in (("--dry-run",), ()):
+        harness = estate(documents=_rolled(), users=_reusing(), scopes={"appdb-alpha": read_only})
+
+        result = _rollback(runner, write_config(CONFIG), "--preflight", *extra)
+
+        assert result.exit_code == ExitCode.FAILURE, extra
+        assert 'profile "SOPULI_REUSE" restricts password reuse' in result.output, extra
+        assert all(session.changed == [] for session in harness["sessions"])
+
+
+def test_no_reuse_warning_ahead_of_a_profile_move(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The policy moves the account onto `ACME_APP_PROF` before the password, so
+    the restricted profile read now is not the one the statement meets, and the
+    destination's limits are not read. No prediction rather than a false one."""
+    estate(documents=_rolled(), users=_reusing())
+
+    emitted = document(
+        run(
+            runner,
+            write_config(ASSIGNING_CONFIG),
+            "--select",
+            "tenant=alpha",
+            "--source",
+            "previous",
+            "--dry-run",
+            "--preflight",
+            "--output",
+            "json",
+        )
+    )
+
+    assert not _coded(emitted, "SOPULI-W028")
+
+
 # ------------------------------------------------------ the other two stages ---
 
 
