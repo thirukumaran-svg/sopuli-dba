@@ -1056,7 +1056,8 @@ agree. Read the 11.2 row as *11.2 retains* and not as *everything before 12.2
 retains* — the second is plausible and, for 12.1, unevidenced. The password
 byte limit (#383) (unverified: password-byte-limit) is the other version
 question; 19.3 and 12.2 both answer 30 bytes, as 21c does, and 19.32 accepts 30
-and refuses 128 (31 not tried). The `04-testing.md` §6 gate 2 records what
+and refuses 128 (31 not tried). Since #595 the tool keys the limit to 23 rather
+than 12.2, which agrees with every one of those. The `04-testing.md` §6 gate 2 records what
 is open. A row that names only 26ai means only 26ai.
 
 | Surface | 26ai 23.26.2.0.0, `CDB$ROOT` and PDB; 21c 21.3, 19c 19.3 and 19.32, 18c 18.4 and 12c 12.2.0.1 in a PDB (19.3, 19.32 and 12.2 in `CDB$ROOT` too); 11g 11.2 non-CDB | Action |

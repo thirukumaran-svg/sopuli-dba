@@ -81,10 +81,16 @@ def test_no_environment_at_all_is_an_environment_skip() -> None:
 
 @pytest.mark.parametrize(
     ("version", "expected"),
-    [("11.2.0.2.0", 30), ("12.1.0.2.0", 30), ("12.2.0.1.0", 128), ("23.26.2.0.0", 128)],
+    [
+        ("11.2.0.2.0", 30),
+        ("12.2.0.1.0", 30),
+        ("19.32.0.0.0", 30),
+        ("21.3.0.0.0", 30),
+        ("23.26.2.0.0", 128),
+    ],
 )
 def test_the_byte_limit_follows_the_version(version: str, expected: int) -> None:
-    """30 below 12.2, 128 from 12.2. No dictionary view states it, and #171
+    """30 below 23, 128 from 23 (#595). No dictionary view states it, and #171
     makes it a required argument -- so a tier-1 test cannot build a statement
     without knowing it."""
     assert environment(version=version).max_password_bytes == expected

@@ -333,7 +333,7 @@ def admissible(secret: Secret, limit: ByteLimit) -> None:
     """Refuse ``secret`` unless it can go in a statement against this target.
 
     ``limit`` is required, and that is the point of it being an argument at all:
-    a maximum password length is 30 bytes below 12.2 and 128 from 12.2, measured
+    a maximum password length is 30 bytes below 23 and 128 from 23, measured
     in the *database* character set, and invariant 3 says the answer comes from
     asking the database rather than from a version in a file. Making it
     mandatory means a statement cannot be built by somebody who never found out.

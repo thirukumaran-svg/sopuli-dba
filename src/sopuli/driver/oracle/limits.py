@@ -51,10 +51,19 @@ from sopuli.passwords import ByteLimit
 #: The *database* character set (§8), not the session's.
 CHARSET_QUERY = "select value from nls_database_parameters where parameter = 'NLS_CHARACTERSET'"
 
-#: 128 bytes from 12.2, 30 below it.
+#: 128 bytes from 23, 30 below it (#383, #595).
+#:
+#: **Not 12.2**, which is where this floor used to be and why it was called
+#: ``LONG_IDENTIFIER_FLOOR``: 12.2 raised *identifiers* from 30 bytes to 128, and
+#: passwords did not move with them. A 31st byte is ``ORA-00972`` on 11.2, 12.2,
+#: 18.4, 19.3 and 21.3, and 19.32 refuses 128; 26ai 23.26 accepts 128. So the
+#: floor is somewhere in (21.3, 23.26], and ``23`` is the only one this module can
+#: express: the version it is compared against is ``V$INSTANCE.VERSION``, which is
+#: the *base* release on 18c and later, so every 23ai and 26ai reads
+#: ``23.0.0.0.0``. A 23ai before 23.26 is unmeasured and indistinguishable here.
 MODERN_MAX_BYTES = 128
 LEGACY_MAX_BYTES = 30
-LONG_IDENTIFIER_FLOOR = (12, 2)
+LONG_PASSWORD_FLOOR = (23, 0)
 
 #: Oracle's character sets, as Python codecs. Deliberately short: these are the
 #: ones a supported release is actually installed with, and an entry is cheap to
@@ -83,7 +92,7 @@ def max_bytes(db_version: str | None) -> int:
     an over-long one anyway, so the cost of being wrong the other way is an
     error rather than a weaker credential.
     """
-    return LEGACY_MAX_BYTES if _below(db_version, LONG_IDENTIFIER_FLOOR) else MODERN_MAX_BYTES
+    return LEGACY_MAX_BYTES if _below(db_version, LONG_PASSWORD_FLOOR) else MODERN_MAX_BYTES
 
 
 def _below(version: str | None, floor: tuple[int, int]) -> bool:

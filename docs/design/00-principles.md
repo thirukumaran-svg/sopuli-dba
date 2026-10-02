@@ -179,7 +179,12 @@ counted as an answer.
 
 ### Version-dependent behaviour to detect at runtime, never assume
 
-- Max password length: 30 bytes (< 12.2) vs 128 bytes (12.2+)
+- Max password length: the tool enforces 30 bytes below 23 and 128 from 23
+  (#595). That is its rule, not a measured Oracle maximum on every release: a
+  31st byte is refused on 11.2, 12.2, 18c, 19.3 and 21c and 128 accepted on 26ai,
+  while 12.1 and a 23ai before 23.26 are unmeasured (unverified:
+  password-byte-limit). **Not 12.2**, the old key, which raised identifiers and
+  left passwords at 30
 - Password verifiers present (`DBA_USERS.PASSWORD_VERSIONS`: 10G/11G/12C) and
   `SQLNET.ALLOWED_LOGON_VERSION_SERVER` — a generated password longer than 30
   bytes silently breaks clients still relying on 10G/11G verifiers

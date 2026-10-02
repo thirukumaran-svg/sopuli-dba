@@ -95,8 +95,9 @@ def probe(env: Environment, connect) -> Environment:
 
         # Byte limit is version-dependent and worth knowing explicitly, because
         # a generated password longer than the target allows fails late and
-        # confusingly. 30 bytes below 12.2, 128 from 12.2.
-        env.max_password_bytes = 30 if _below(env.version, "12.2") else 128
+        # confusingly. 30 bytes below 23, 128 from 23 (#595) -- not 12.2, which
+        # raised identifiers and left passwords at 30.
+        env.max_password_bytes = 30 if _below(env.version, "23.0") else 128
 
         for name, sql in PROBES.items():
             try:

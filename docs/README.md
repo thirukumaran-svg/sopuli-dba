@@ -510,29 +510,32 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   answered in the same run (masked on 21c; no user-management DDL reaches it at
   all on 23ai+), as were self-rotation and `IDENTIFIED BY VALUES` — both masked.
 - `unverified` `password-byte-limit` (#383) — **What the maximum password length
-  actually is, on every release between 12.2 and 23ai.** `limits.py` derives the
+  actually is, on every release from 12.1 to 23ai.** `limits.py` derived the
   limit from the probed server version against `LONG_IDENTIFIER_FLOOR = (12, 2)`,
-  and **the premise is wrong**: 12.2 raised *identifiers* from 30 bytes to 128
+  and **the premise was wrong**: 12.2 raised *identifiers* from 30 bytes to 128
   and passwords did not move with them. #383 measured it — 31 bytes is
   `ORA-00972` on 21c, 18c and 11.2, and accepted on 26ai — and **19c 19.3.0.0.0
   refuses 31 and 128 the same way** (#548, 2026-09-27), as does **12c
   12.2.0.1.0**, the release the floor is keyed to (#572, 2026-09-29: 30 bytes
   accepted, 31 `ORA-00972`, and a 40-character policy planned with
   `constraints: 128 bytes in WE8DEC` and failed in `apply`), so the floor is somewhere
-  in `(21.3, 23.26]` and `(12, 2)` is below every version ever tested against it.
+  in `(21.3, 23.26]` and `(12, 2)` was below every version ever tested against it.
 
-  **This is a live bug, not a latent one**, and saying so is the point of the
-  entry: on 21c a policy asking for 40 bytes plans clean, reports
-  `constraints: 128 bytes`, and fails with `ORA-00972` mid-`apply` — which is
-  invariant 4 violated, the exact thing plan-time refusal exists to prevent.
-  #383 closed **without fixing it** because the constant cannot be corrected
-  safely without measuring 19c, and 19c is the release it matters most on. 19.3
-  now reproduces the failure exactly — a 40-character policy plans with
-  `constraints: 128 bytes` and `apply` fails `ORA-00972` (#548) — so what stands
-  between this entry and a fix is choosing the new floor, not another
-  measurement. An
-  earlier draft of this entry said "nothing is broken today"; that was wrong, and
-  #412's review caught it.
+  **Fixed in #595**: the floor is now `LONG_PASSWORD_FLOOR = (23, 0)`. Until
+  then this was a live bug: on 21c, 19.3 and 12.2 a policy asking for 40 bytes
+  planned clean, reported `constraints: 128 bytes`, and failed with `ORA-00972`
+  mid-`apply`, which violated invariant 4. #383 closed without fixing it. On
+  21c XE a 40-character policy is now refused by `creds generate` at plan time,
+  exit 9, and a 30-character one generates, applies and checks clean.
+  `23` is the only floor the tool can express rather than a choice among
+  several, because `V$INSTANCE.VERSION` reads the base release: every 23ai and
+  26ai reads `23.0.0.0.0`.
+
+  **What keeps the entry `unverified`** is what no release in the stack can
+  answer. A 23ai before 23.26 is unmeasured and reads the same as 26ai. 12.1 is
+  unmeasured, though it falls under the 30-byte rule, which is the safe
+  direction. And whether the legacy limit is 30 *bytes* or 30 *characters* has
+  only been run with ASCII, which every password §8 draws is.
 - `unverified` `pw-changed-source` (#87, #386) — **Whether `SYS.USER$.PTIME` is
   the password change date on the releases nobody has run.** Measured 2026-09-08:
   `DBA_USERS.PASSWORD_CHANGE_DATE` is present on 26ai and 21c and `ORA-00904` on

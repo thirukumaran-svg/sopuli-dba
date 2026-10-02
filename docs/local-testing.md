@@ -323,7 +323,32 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 is unmeasured and 19.32.0.0.0 is the only 19c release update measured (#581). See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
-follows. The three XE images are freely pullable and reach healthy in about a
+follows.
+
+**The password byte limit is the one difference you meet in §10 without looking
+for it.** The tool enforces 30 bytes below 23 and 128 from it (#595), so on
+these containers a policy asking for more than 30 is refused at plan time. That
+is its rule rather than a measurement of every release: a 31st byte is
+`ORA-00972` on 11.2, 12.2, 18c, 19.3 and 21c, 19.32 was only tried at 30 and
+128, and 12.1 and an early 23ai are unmeasured. Against
+21c XE, with `length: 40` and the account created as in §5:
+
+```
+$ sopuli --config sopuli-21c-40.yaml creds generate --dry-run
+sopuli: a 40-character password needs at least 40 bytes in utf-8, but the target's limit is 30
+  hint: §8 measures the limit in bytes and `length:` in characters -- lower `length:` for this target, or narrow the estate this policy covers
+```
+
+Exit 9, with or without `--dry-run`, and nothing is written. At `length: 30` the
+same target generates, applies and checks clean, and the constraint line reads
+the target's real limit:
+
+```
+constraints: 30 bytes in AL32UTF8, from xe21-pdb
+```
+
+Against 26ai the 40-character config plans clean with `constraints: 128 bytes in
+AL32UTF8, from free-pdb`. The three XE images are freely pullable and reach healthy in about a
 minute; the 11g one is the smallest and fastest of them. 19c is the exception on
 both counts — you pull it yourself, and its first start takes a quarter of an
 hour or more (below). 12.2 is pulled the same way and is up in a minute and a
@@ -461,8 +486,9 @@ acme_batch_user  ee19-pdb  ERROR  ORA-00972: identifier is too long
 nothing changed, 1 not confirmed
 ```
 
-Exit 1. 19.3 accepts 30 bytes and refuses 31, like 21c; the `constraints:` line
-is wrong, and a policy of 30 or fewer is the workaround until the floor is fixed.
+Exit 1. 19.3 accepts 30 bytes and refuses 31, like 21c. That sample is from
+before #595: the `constraints:` line was wrong, and since the floor moved to 23
+the same config is refused by `generate` at plan time, as on 21c below.
 
 The suite:
 
@@ -598,7 +624,10 @@ acme_batch_user  ee12-pdb  ERROR  ORA-00972: identifier is too long
 nothing changed, 1 not confirmed
 ```
 
-Exit 1. 12.2 accepts 30 bytes and refuses 31, as 18c, 19.3 and 21c do.
+Exit 1. 12.2 accepts 30 bytes and refuses 31, as 18c, 19.3 and 21c do. That
+is the pre-#595 build; this one refuses the 40-character policy at plan time, as
+the 21c sample under *Running all of this against a different Oracle version*
+shows.
 
 The suite:
 

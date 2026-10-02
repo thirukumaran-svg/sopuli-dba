@@ -313,7 +313,7 @@ def test_an_empty_password_is_refused() -> None:
 
 
 def test_the_byte_limit_is_the_targets_and_is_measured_in_its_character_set() -> None:
-    """30 bytes below 12.2, 128 from 12.2, counted in the database character set.
+    """30 bytes below 23, 128 from 23, counted in the database character set.
 
     The same password is admissible against one target and not another, which is
     the whole reason the limit is an argument rather than a constant -- and why

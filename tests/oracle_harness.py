@@ -72,14 +72,14 @@ class Environment:
 
     @property
     def max_password_bytes(self) -> int:
-        """30 bytes below 12.2, 128 from 12.2.
+        """30 bytes below 23, 128 from 23 (#595).
 
         Read off the version rather than probed, because there is no dictionary
         view that states it -- and it is the one number a tier-1 test needs in
         order to build a statement at all (#171 makes the limit a required
         argument).
         """
-        return 30 if below(self.version, (12, 2)) else 128
+        return 30 if below(self.version, (23, 0)) else 128
 
 
 def below(version: str | None, floor: tuple[int, int]) -> bool:
