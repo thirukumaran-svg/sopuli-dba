@@ -52,6 +52,7 @@ from sopuli.driver.oracle.accounts import (
     resolve_name,
     resolve_profile,
     resolve_role,
+    stored_verifiers,
 )
 from sopuli.driver.oracle.capabilities import assert_scope, observe, require_read_write
 from sopuli.driver.oracle.client import (
@@ -83,13 +84,24 @@ from sopuli.driver.oracle.verification import (
     skipped_detail,
     warning_detail,
 )
+from sopuli.driver.oracle.verifier import (
+    CURRENT,
+    NO_MATCH,
+    NO_VERIFIER,
+    PREVIOUS,
+    Malformed12cVerifierError,
+    NotComparableError,
+    compare,
+)
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     ACCOUNT_LOCK_STATE,
     ACCOUNT_UNLOCK,
     ATTRIBUTE_SET,
     EXPIRE_PASSWORD,
+    FAIL,
     OFFLINE_VERIFY,
+    PASS,
     PASSWORD_EXPIRE,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
@@ -98,6 +110,7 @@ from sopuli.driver.protocol import (
     ROLLOVER_FINISH,
     SKIPPED,
     UNAVAILABLE,
+    VERIFY_HASH,
     VERIFY_LOGIN,
     AccountAttributes,
     AccountChange,
@@ -121,6 +134,23 @@ from sopuli.secrets import Secret
 #: from one thread -- ``tests/lock/test_manager.py`` already runs a manager from
 #: two. Cheap insurance against a failure that would be unreproducible.
 _INITIALISING = threading.Lock()
+
+#: What a ``hash`` comparison reports, by which verifier the password reproduced.
+#: Every one says no login was attempted, because that is the difference between
+#: this result and a ``login`` one with the same word in ``result``.
+_HASH_DETAIL = {
+    CURRENT: (
+        "the vault value reproduces the account's current 12C verifier; no login was attempted"
+    ),
+    PREVIOUS: (
+        "the vault value reproduces the previous password's 12C verifier: a rollover "
+        "window is open, and it authenticates until the window closes; "
+        "no login was attempted"
+    ),
+    NO_MATCH: (
+        "the vault value reproduces none of the account's 12C verifiers; no login was attempted"
+    ),
+}
 
 #: Whether thick mode is up. python-oracledb tolerates a second
 #: ``init_oracle_client`` with identical arguments and raises on a differing
@@ -979,13 +1009,15 @@ class OracleSession:
         so in ``detail`` rather than letting an absent guard read like a
         satisfied one.
         """
+        if method == VERIFY_HASH:
+            return self._compare_verifier(account, secret)
         if method != VERIFY_LOGIN:
             raise UnsupportedCapabilityError(
                 f"verification method {method!r}",
                 target=self.target.name,
                 hint=(
-                    "only `login` exists in this build; whether `hash` ever ships depends "
-                    "on #90, which is open"
+                    "`login` and `hash` exist in this build; `both` arrives with "
+                    "`check --method` (#437)"
                 ),
             )
 
@@ -1046,6 +1078,90 @@ class OracleSession:
             failed_login_limit=state.failed_login_limit,
             detail=detail or None,
             warning=warning,
+        )
+
+    def _compare_verifier(self, account: str, secret: Secret) -> VerifyResult:
+        """``method="hash"``: compare with the stored 12C verifier, and log in as nobody (#437).
+
+        **No authentication attempt**, so none of ``login``'s guards apply: no
+        counter moves, nothing is spent, and the lockout margin has nothing to
+        protect. A locked account is compared like any other -- UC-1 §7 names that
+        as hash mode's point -- and its lock is still reported, by ``check``
+        from the account's status, where it has always come from.
+
+        **Four refusals, each an** :class:`UnsupportedCapabilityError` **naming
+        the target**, and none falls back to anything (#433, invariant 4):
+
+        * the session cannot read ``SYS.USER$``, so there is no verifier to read;
+        * the account has no 12C verifier -- 11g, or ``PASSWORD_VERSIONS``
+          without ``12C`` -- and comparing ``S:`` or 10G instead would report a
+          check stronger than the one made;
+        * a ``T:``/``t:`` token is not the 160 hex characters every release read
+          has stored, so the format is one the comparison was never measured on;
+        * the database character set cannot hold the password exactly, so the
+          server hashed a converted copy that cannot be reproduced (#572).
+
+        A pass says which verifier the password reproduced, because during a
+        rollover window that is the one thing a login cannot tell: both passwords
+        authenticate, and only ``t:`` is the current one.
+        """
+        if not self.scope().supports(OFFLINE_VERIFY):
+            raise UnsupportedCapabilityError(
+                OFFLINE_VERIFY,
+                target=self.target.name,
+                hint=(
+                    "`hash` compares the account's stored verifier, which is in SYS.USER$ "
+                    "and needs the optional `GRANT SELECT ON SYS.USER$` "
+                    "(02-oracle-privileges.md §2) -- grant it, or verify by `login`"
+                ),
+            )
+
+        with self.connection.cursor() as cursor:
+            state = login_state(cursor, account)
+            if state is None:
+                return VerifyResult(
+                    method=VERIFY_HASH,
+                    result=UNAVAILABLE,
+                    detail=f'there is no account "{account}" on this target',
+                )
+            spare4 = stored_verifiers(cursor, state.name)
+            counter = failed_logins(cursor, state.name)
+
+        try:
+            answer = compare(secret, spare4, limit=self.byte_limit())
+        except NotComparableError as error:
+            raise UnsupportedCapabilityError(
+                f"a hash comparison of this password for {state.name}",
+                target=self.target.name,
+                hint=f"{error}; verify by `login`, which the server converts for itself",
+            ) from error
+        except Malformed12cVerifierError as error:
+            raise UnsupportedCapabilityError(
+                f"a readable 12C verifier for {state.name}",
+                target=self.target.name,
+                hint=(
+                    f"{error} -- this release stores a format the comparison was never "
+                    "measured against, so it refuses rather than guess; verify by `login`"
+                ),
+            ) from error
+        if answer == NO_VERIFIER:
+            raise UnsupportedCapabilityError(
+                f"a 12C verifier for {state.name}",
+                target=self.target.name,
+                hint=(
+                    "`hash` compares the 12C verifier and only it -- the older ones are "
+                    "weaker than a login, so they are never a fallback (#433); verify "
+                    "by `login`, or reset the password where 12C is allowed so the "
+                    "account gets one"
+                ),
+            )
+
+        return VerifyResult(
+            method=VERIFY_HASH,
+            result=FAIL if answer == NO_MATCH else PASS,
+            failed_logins=counter,
+            failed_login_limit=state.failed_login_limit,
+            detail=_HASH_DETAIL[answer],
         )
 
     def _attempt(self, name: str, secret: Secret) -> tuple[str, str | None, str | None]:

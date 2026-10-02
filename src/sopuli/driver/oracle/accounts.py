@@ -350,6 +350,17 @@ LCOUNT_QUERY = "select lcount from sys.user$ where name = :name"
 #: spelling ``DBA_USERS`` gave back.
 PTIME_QUERY = "select ptime from sys.user$ where name = :name"
 
+#: The account's stored password verifiers, for ``check --method hash`` (#437).
+#: Behind the same optional grant as :data:`LCOUNT_QUERY`, and gated on the same
+#: capability.
+#:
+#: **The account name is the only bind**, and that is invariant 14 rather than
+#: style: the comparison happens client-side in
+#: :mod:`sopuli.driver.oracle.verifier`, so neither the password nor a verifier
+#: derived from it is ever sent to the server, where ``V$SQL_BIND_CAPTURE`` would
+#: keep it in clear. ``WHERE spare4 = :v`` is the shape this exists to rule out.
+SPARE4_QUERY = "select spare4 from sys.user$ where name = :name"
+
 FAILED_LOGIN_ATTEMPTS = "FAILED_LOGIN_ATTEMPTS"
 PASSWORD_ROLLOVER_TIME = "PASSWORD_ROLLOVER_TIME"
 PASSWORD_REUSE_MAX = "PASSWORD_REUSE_MAX"
@@ -948,3 +959,14 @@ def failed_logins(cursor: Cursor, name: str) -> int | None:
     # protect.
     row = read(cursor, LCOUNT_QUERY, name=name)
     return int(row[0]) if row and row[0] is not None else None
+
+
+def stored_verifiers(cursor: Cursor, name: str) -> str | None:
+    """``SYS.USER$.SPARE4`` for ``name``, or ``None`` where it could not be read.
+
+    Bound unchanged, for :func:`failed_logins`' reason. ``None`` covers both the
+    grant being absent and an empty column; the caller checks the capability
+    first, so here it means the account has no verifier stored there at all.
+    """
+    row = read(cursor, SPARE4_QUERY, name=name)
+    return str(row[0]) if row and row[0] is not None else None

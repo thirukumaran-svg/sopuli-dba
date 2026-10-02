@@ -178,9 +178,9 @@ VERIFY_BOTH = "both"
 VERIFY_NONE = "none"
 
 #: The run document's ``verification.method``. ``login`` is what `check` defaults
-#: to, unconditionally (Q1, #86); the other two exist in the vocabulary and are
-#: refused by a driver that cannot honour them, which is #90's outcome either
-#: way.
+#: to, unconditionally (Q1, #86). The Oracle driver honours ``hash`` since #437,
+#: by comparing the stored 12C verifier; ``both`` arrives with `check --method`,
+#: and a driver that cannot honour a method refuses it rather than doing another.
 VERIFY_METHODS = (VERIFY_LOGIN, VERIFY_HASH, VERIFY_BOTH, VERIFY_NONE)
 
 PASS = "pass"
@@ -1164,7 +1164,11 @@ class Session(Protocol):
         protects.
 
         ``method`` is one of :data:`VERIFY_METHODS`; ``login`` is the default
-        unconditionally (Q1, #86). A driver that cannot honour a method raises
+        unconditionally (Q1, #86). ``hash`` compares a stored verifier and makes
+        no attempt, so ``lockout_margin`` and ``attempts`` do not apply to it, and
+        a driver refuses it -- naming the target -- where it has nothing to
+        compare rather than comparing something weaker (#433, #437). A driver
+        that cannot honour a method raises
         :class:`UnsupportedCapabilityError` rather than quietly doing a
         different one -- the distinction between "verified by hash" and
         "verified by logging in" is the difference between no lockout risk and

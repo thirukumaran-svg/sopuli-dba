@@ -57,6 +57,11 @@ PERMITTED = {
         "than a KV put (#444)"
     ),
     "passwords.py": "generation's own validation, which never leaves the process",
+    "driver/oracle/verifier.py": (
+        "`check --method hash`'s comparison (#437) -- `passwords.py`'s reason: the "
+        "password is hashed in the process and compared there, and neither it nor the "
+        "derived digest is sent anywhere. Invariant 14 is why it is here and not in SQL"
+    ),
     "store/credentials.py": "the vault write -- invariant 2's first exception",
     "store/hashicorp/_auth.py": "the vault login, which is the write's other half",
     "store/hashicorp/_transport.py": "the token on the wire, for the same reason",

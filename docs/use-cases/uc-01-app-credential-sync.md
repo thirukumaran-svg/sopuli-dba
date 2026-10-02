@@ -1561,7 +1561,9 @@ sopuli creds check --application orders-app
 and `--output`. There is **no `--method` flag**, and its absence is the decision
 rather than an omission — Q1 (#86) made `login` unconditional, hash mode depends
 on #90 (now reproduced, and not built), and a flag with one legal value advertises a choice
-that does not exist. It arrives with hash mode or not at all. `--application`,
+that does not exist. It arrives with hash mode or not at all. The driver's half
+of hash mode is built (#437, `02-oracle-privileges.md` §2), and the flag is the
+other half. `--application`,
 `--account`, `--target` and `--group` are the selectors this command shares with
 every other verb and are not built yet; `--select` is.
 

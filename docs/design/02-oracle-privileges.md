@@ -492,7 +492,18 @@ the first release update read. 12.1 is still unread. #90 is three parts:
   `sqlnet.ora` is under `$ORACLE_HOME/admin/ORCLCDB`, its `TNS_ADMIN`.)
 
 Since the derivation reproduces and degradation is settled, `--method hash|both`
-is now a mechanical implementation on the tier-2 releases. Were it ever to fail
+is now a mechanical implementation on the tier-2 releases. **The driver half is
+built (#437):** `verify_password(method="hash")` reads `SPARE4`, binds the
+account name and nothing else, and compares in
+`src/sopuli/driver/oracle/verifier.py`. It refuses, naming the target, where the
+session cannot read `SYS.USER$` or the account has no `12C` verifier, and also
+where a `T:`/`t:` token is not the measured 160 hex characters. It also refuses
+where the database character set cannot hold the vault value exactly: the server
+hashed a converted copy (the WE8DEC case above), and a mismatch reported there
+would be false drift. During a window,
+it reports which of the two verifiers the password reproduced. The
+`check --method` flag, its plan-time refusals and `both` are the second half, and
+are not built. Were it ever to fail
 on a release not yet read (12.1, or a later RU — 19.3 and 19.32 reproduce), both non-login modes would leave the
 CLI entirely — `both` is login plus this same comparison, and a `both` that
 silently degraded to `login` would report a stronger check than it performed.
