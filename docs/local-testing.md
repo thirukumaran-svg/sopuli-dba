@@ -2848,9 +2848,46 @@ grant: the capability probe gets `ORA-00942` from both. `--method both
 
 **Type the password correctly**, because a wrong one hides all of this. The
 pre-flight passes over a target whose admin login fails, so the run reports it
-as an `ERROR` row with exit 1. A wrong password is `ORA-01017`. An empty answer,
-such as a paste the hidden prompt did not take, is `DPY-4001: no credentials
-specified`. Both happened on the first attempt at this run.
+as an `ERROR` row with exit 1. A wrong password is `ORA-01017`. Both a wrong and
+an empty answer happened on the first attempt at this run, and the empty one
+came back as `DPY-4001: no credentials specified` under `connectivity`, which
+sent the reader to the listener.
+
+**An empty answer is now refused before anything is sent** (#601) — pressing
+Enter, or a paste the hidden prompt did not take. Oracle has no empty password,
+so one can never authenticate, and sending it only cost a connection and,
+against a password-authenticated admin account, a failed login on its lockout
+counter. Against tier-1 26ai, with `free-pdb` set to `admin: { username: SYSTEM,
+auth: prompt }` and the prompt answered with nothing:
+
+```
+$ sopuli --config sopuli-prompt.yaml creds check
+password for SYSTEM on free-pdb:
+Plan: 1 account x 1 target = 1 check   [dev]
+
+ACCOUNT        TARGET    INTENT  SECRET
+acme_app_user  free-pdb  verify  vault-dev:acme/dev/acme
+
+ACCOUNT        TARGET    STATE  DETAIL
+acme_app_user  free-pdb  ERROR  target 'free-pdb' asked for its admin password, and the answer was empty
+
+1 failed
+```
+
+Exit 1, a per-target finding as the no-terminal refusal is — still an `ERROR`
+row rather than the exit 5 above, because no capability can be probed without a
+login, but now one that points at the right place. Under `--output json` the
+row's error is `"category": "config"`, which is what an empty `method: env`
+variable and an empty vault path already are, since in all three there was
+nothing to send; its hint reads `nothing was sent to the database -- an empty
+password can never authenticate; run it again and type the password, or check
+that a paste reached the hidden prompt`. A later target sharing the credential
+asks again rather than inheriting the empty answer. A password of spaces is an
+answer and is sent: Oracle can hold one quoted.
+
+That run had the prompt answered from code, because the environment that ran it
+has no console for `getpass` to read (#486); the lines are what the command
+printed.
 
 ### 10.6 `rotate` — the whole sequence under one lock
 

@@ -297,6 +297,56 @@ def test_one_target_set_is_asked_once() -> None:
     assert len(ask.lines) == 1
 
 
+def test_an_empty_answer_is_refused_before_anything_is_sent() -> None:
+    """#601: Oracle has no empty password, so one can never authenticate. Sent,
+    it came back as `DPY-4001` under `connectivity` -- the wrong place to look
+    for one keystroke at the operator's own terminal. Refused here instead, as
+    an empty `method: env` variable is: `config`, exit 9, naming the target."""
+    prompt = PasswordPrompt(ask=lambda _: "")
+
+    with pytest.raises(AdminCredentialError) as caught:
+        prompt(target(name="adb-acme", admin=admin("prompt")), "ADMIN")
+
+    assert not isinstance(caught.value, NobodyToAskError)
+    assert "'adb-acme'" in str(caught.value)
+    assert "answer was empty" in str(caught.value)
+    assert caught.value.exit_code == ExitCode.CONFIG_INVALID
+    assert caught.value.category == "config"
+    assert "nothing was sent" in (caught.value.hint or "")
+    assert "type the password" in (caught.value.hint or "")
+    assert "paste" in (caught.value.hint or "")
+
+
+def test_an_empty_answer_is_not_cached() -> None:
+    """A later target sharing the credential asks again rather than inheriting
+    the empty answer -- the second attempt is the operator's chance to type it."""
+    answers = iter(["", "typed"])
+    lines: list[str] = []
+
+    def ask(line: str) -> str:
+        lines.append(line)
+        return next(answers)
+
+    prompt = PasswordPrompt(ask=ask)
+    first = target(name="appdb-qa-alpha", admin=admin("prompt"), target_set="appdb")
+    second = target(name="appdb-qa-beta", admin=admin("prompt"), target_set="appdb")
+
+    with pytest.raises(AdminCredentialError):
+        prompt(first, "C##SOPULI_SVC")
+    answer = prompt(second, "C##SOPULI_SVC")
+
+    assert answer.reveal() == "typed"
+    assert len(lines) == 2
+
+
+def test_whitespace_is_an_answer() -> None:
+    """Oracle can hold a quoted password of spaces, so only the empty string is
+    refused -- anything else is the database's to judge."""
+    prompt = PasswordPrompt(ask=lambda _: "   ")
+
+    assert prompt(target(admin=admin("prompt")), "SYSTEM").reveal() == "   "
+
+
 def test_two_explicit_targets_are_asked_twice_even_when_identical() -> None:
     """Two acts of writing it down, so two credentials as far as the file says.
     The conservative side: an extra prompt is an annoyance, a shared prompt

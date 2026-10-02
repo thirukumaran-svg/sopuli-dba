@@ -301,6 +301,36 @@ def test_without_a_terminal_the_target_is_refused_and_nobody_is_asked(
     assert "nobody here to ask" in document["targets"][0]["error"]["message"]
 
 
+def test_an_empty_answer_never_reaches_the_driver(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    estate: Callable[..., list[Credential]],
+    monkeypatch: pytest.MonkeyPatch,
+    watching: Callable[[bool], None],
+) -> None:
+    """#601: Enter on its own, or a paste the hidden prompt did not take. Sent,
+    it was `DPY-4001` under `connectivity`; refused, it is a `config` finding on
+    the target and no connection is opened -- `seen` is the driver's side of
+    "nothing was sent"."""
+    watching(True)
+    seen = estate()
+    monkeypatch.setattr("sopuli.invocation.getpass.getpass", lambda line: "")
+    config = write_config(PROMPT_TARGET)
+
+    result = _doctor(runner, config)
+    document = json.loads(result.output)
+    error = document["targets"][0]["error"]
+
+    assert seen == []
+    assert document["targets"][0]["reachable"] is False
+    assert error["category"] == "config"
+    assert "answer was empty" in error["message"]
+    # The hint is the actionable half, and the emitted document is where a
+    # reader meets it.
+    assert "nothing was sent" in error["hint"]
+    assert "paste" in error["hint"]
+
+
 def test_the_password_is_not_in_the_document(
     runner: CliRunner,
     write_config: WriteConfig,

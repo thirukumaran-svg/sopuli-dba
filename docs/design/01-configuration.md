@@ -1276,6 +1276,19 @@ included — and it is wrapped once, at that boundary, rather than by each
 supplier. Invariant 2's argument applies to itself here: a supplier that forgot
 would put a bare `str` where `repr` prints it in full.
 
+**An empty answer is refused there, before anything is sent, and is not cached**
+(#601). Oracle has no empty password, so one can never authenticate; sent, it
+came back as `DPY-4001` under `connectivity`, which points the reader at the
+listener for what was one keystroke at their own terminal, and it costs a failed
+login against a password-authenticated admin account's lockout counter. The
+refusal is an `AdminCredentialError` — `config`, the class an empty `method: env`
+variable and an empty vault path already raise, since all three mean *there was
+nothing to send* — and it lands as a per-target finding, as the no-terminal
+refusal does. It is refused rather than re-asked, because a refusal cannot loop;
+not caching it means a later target sharing the credential asks again, which is
+the re-ask within a run. **Only `""` is empty**: whitespace is an answer, because
+Oracle can hold a quoted password of spaces.
+
 **`SOPULI_DB_ADMIN_USER` outranks a target's `username:`** (P3: the environment
 is layer 3, the file is layer 4) and is **ignored under `external`**. The
 asymmetry with the refusal above is deliberate: a `username:` written beside a

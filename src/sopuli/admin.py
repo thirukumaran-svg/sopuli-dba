@@ -223,6 +223,20 @@ class PasswordPrompt:
     terminal read does; wrapping it here means a supplier cannot forget to, and
     invariant 2's guarantee holds for the prompt source the way it holds for the
     other three -- structurally, rather than because each caller remembered.
+
+    **An empty answer is refused here, and not cached** (#601). Oracle has no
+    empty password, so one can never authenticate, and sending it bought a
+    ``DPY-4001`` reported as ``connectivity`` -- which sends the reader to the
+    listener for what was one keystroke at their own terminal -- and, on a
+    password-authenticated admin account, possibly a failed login against its
+    lockout counter. It is refused as an :class:`AdminCredentialError`, which is
+    what an empty ``method: env`` variable and an empty vault path already are:
+    there was nothing to send. Not cached, so a later target sharing the
+    credential asks again rather than inheriting the empty one.
+
+    **Whitespace is an answer**, not an empty one. Oracle can hold a quoted
+    password of spaces, and a refusal of one would be this tool deciding what
+    the database may store.
     """
 
     ask: Asker
@@ -231,7 +245,19 @@ class PasswordPrompt:
     def __call__(self, target: ExpandedTarget, username: str | None) -> Secret:
         key = prompt_key(target, username)
         if key not in self._answers:
-            self._answers[key] = Secret(self.ask(self.line(target, username)))
+            answer = self.ask(self.line(target, username))
+            if not answer:
+                raise AdminCredentialError(
+                    f"target {target.name!r} asked for its admin password, and the "
+                    f"answer was empty",
+                    at=_at(target, "auth"),
+                    hint=(
+                        "nothing was sent to the database -- an empty password can never "
+                        "authenticate; run it again and type the password, or check that "
+                        "a paste reached the hidden prompt"
+                    ),
+                )
+            self._answers[key] = Secret(answer)
         return self._answers[key]
 
     @staticmethod
