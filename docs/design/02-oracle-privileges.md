@@ -283,6 +283,10 @@ What ADB takes away is permanent rather than a version gap:
 - **No `SYS.USER$`.** `ADMIN` gets `ORA-00942` on it (#478), so
   `grant_user_dollar=Y` has nothing to grant. That means no `check --method hash`
   on ADB, no `LCOUNT` guard, and `offline_verify_available: false` in `doctor`.
+  The driver's refusal says so in ADB's terms rather than advising a grant
+  (#437). It reads `SYS_CONTEXT('USERENV','CLOUD_SERVICE')`, which answered
+  `OLTP` here on 2026-10-02, NULL on 26ai Free, 21c and 18c XE, and
+  `ORA-02003` on 11g XE.
   None of this is evidence about the verifier layout, because nothing was read.
   The `PTIME` fallback is not needed there, since `PASSWORD_CHANGE_DATE` exists.
 - **`DEFAULT` is ADB's own profile**, and every created user gets it:
@@ -501,9 +505,15 @@ where a `T:`/`t:` token is not the measured 160 hex characters. It also refuses
 where the database character set cannot hold the vault value exactly: the server
 hashed a converted copy (the WE8DEC case above), and a mismatch reported there
 would be false drift. During a window,
-it reports which of the two verifiers the password reproduced. The
-`check --method` flag, its plan-time refusals and `both` are the second half, and
-are not built. Were it ever to fail
+it reports which of the two verifiers the password reproduced.
+`verify_password(method="both")` compares first and logs in only when the
+comparison passed, so a mismatch spends no lockout budget (decided in #437).
+`require_verifier` makes every one of those refusals without comparing anything
+it reports, so a caller can refuse at plan time. Each refusal names a capability
+rather than describing one: `offline_verify`, `verifier_12c`,
+`verifier_12c_format` or `verifier_charset`. On Autonomous Database the
+`offline_verify` refusal says no account there can read `SYS.USER$`, and does not
+advise a grant. The `check --method` flag is the CLI half. Were it ever to fail
 on a release not yet read (12.1, or a later RU — 19.3 and 19.32 reproduce), both non-login modes would leave the
 CLI entirely — `both` is login plus this same comparison, and a `both` that
 silently degraded to `login` would report a stronger check than it performed.

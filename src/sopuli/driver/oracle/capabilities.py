@@ -163,9 +163,11 @@ CONTAINER_NAME = "select sys_context('userenv','con_name') from dual"
 #: ``ORA-02003`` from :data:`CONTAINER_NAME` is not a failure and not an absent
 #: capability. It is 11.2 saying it has never heard of containers, and from
 #: :data:`APPLICATION_ROOT` or :data:`APPLICATION_PDB` it is a release before 12.2
-#: saying it has never heard of *application* containers. Those are the only two
-#: questions in this module where that code carries information -- one fact each,
-#: and the same conclusion.
+#: saying it has never heard of *application* containers. From
+#: :data:`CLOUD_SERVICE` it is 11.2 saying it is not a cloud service (#437). Those
+#: are the only questions in this module where that code carries information --
+#: one ``USERENV`` attribute each, and the same conclusion: the release has not
+#: got it, so the answer is no.
 #:
 #: Enumerated here rather than caught loosely, because the whole argument of
 #: :data:`ABSENT_CODES` is that a code meaning something in one place must not be
@@ -189,6 +191,18 @@ YES = "YES"
 #: The root's own name. A session here can alter a common user; anywhere else
 #: cannot, and Oracle says so with ``ORA-65040`` rather than a privilege error.
 ROOT_CONTAINER = "CDB$ROOT"
+
+#: Which Autonomous Database service this is, or nothing (#437). Needs no grant.
+#: Measured: ``OLTP`` on ADB serverless 23.26.3.3.0 (2026-10-02); NULL on 26ai
+#: Free 23.26.2.0.0, 21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0; ``ORA-02003`` on
+#: 11g XE 11.2.0.2.0. 12.2 and 19c are unmeasured, and either answer reads as no.
+#: Oracle documents other values for other ADB workloads, which is why
+#: :func:`cloud_service_of` reports the value rather than testing for ``OLTP``.
+#:
+#: **Asked only where a refusal needs it**, never in :func:`observe`: it decides
+#: the wording of one message, and a query on every connection to every release
+#: is the wrong price for that.
+CLOUD_SERVICE = "select sys_context('userenv','cloud_service') from dual"
 
 DATABASE_FACTS = "select db_unique_name, open_mode from v$database"
 
@@ -265,6 +279,16 @@ def container_of(cursor: Cursor) -> str | None:
     to report, and that is a fact rather than a gap.
     """
     return _userenv(cursor, CONTAINER_NAME)
+
+
+def cloud_service_of(cursor: Cursor) -> str | None:
+    """The Autonomous Database service this session is on, or ``None``.
+
+    Non-``None`` means Autonomous: the attribute is set only there. On ADB no
+    account can read ``SYS.USER$`` -- not even ``ADMIN`` (#478) -- so a refusal
+    that told an operator to grant it would be advice nobody can follow.
+    """
+    return _userenv(cursor, CLOUD_SERVICE)
 
 
 def application_of(cursor: Cursor) -> str | None:

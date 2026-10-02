@@ -178,9 +178,10 @@ VERIFY_BOTH = "both"
 VERIFY_NONE = "none"
 
 #: The run document's ``verification.method``. ``login`` is what `check` defaults
-#: to, unconditionally (Q1, #86). The Oracle driver honours ``hash`` since #437,
-#: by comparing the stored 12C verifier; ``both`` arrives with `check --method`,
-#: and a driver that cannot honour a method refuses it rather than doing another.
+#: to, unconditionally (Q1, #86). The Oracle driver honours ``hash`` by comparing
+#: the stored 12C verifier, and ``both`` by comparing first and logging in only if
+#: that passed (#437). A driver that cannot honour a method refuses it rather than
+#: doing another.
 VERIFY_METHODS = (VERIFY_LOGIN, VERIFY_HASH, VERIFY_BOTH, VERIFY_NONE)
 
 PASS = "pass"
@@ -1177,6 +1178,22 @@ class Session(Protocol):
         **One attempt, and no retry** (UC-1 §7 mitigation 1). This signature
         takes one secret and returns one result for that reason: there is no
         shape here for a back-off loop to hide in.
+        """
+        ...
+
+    def require_verifier(self, account: str, secret: Secret) -> None:
+        """Refuse ``check --method hash`` or ``both`` for ``account``, or say nothing.
+
+        Asked at plan time, before any account is checked, so an explicit method
+        a target cannot honour fails as :class:`UnsupportedCapabilityError`,
+        exit 5, naming the target (invariant 4) rather than as a row partway
+        through a run. ``secret`` is the value about to be compared, because one
+        refusal is about it rather than about the account: a database character
+        set that cannot hold it means the server hashed a converted copy.
+
+        A missing account says nothing; the run reports it per account. On the
+        protocol as of #437, which is when it acquired a caller -- the rule
+        ``require_rollover`` arrived by (#262).
         """
         ...
 

@@ -220,7 +220,7 @@ def test_hash_passes_on_the_right_password_without_a_login(account: Any) -> None
     assert result.result == PASS
     assert result.detail is not None
     assert "current 12C verifier" in result.detail
-    assert "no login was attempted" in result.detail
+    assert "no login attempted" in result.detail
 
 
 @pytest.mark.requires_capability(OFFLINE_VERIFY)
@@ -309,17 +309,48 @@ def test_hash_refuses_an_account_with_no_12c_verifier(account: Any) -> None:
     with pytest.raises(UnsupportedCapabilityError) as refused:
         account.verify_password(ACCOUNT, Secret(CORRECT), method="hash")
 
-    assert "12C verifier" in refused.value.capability
+    assert refused.value.capability == "verifier_12c", "a name a consumer branches on"
     assert refused.value.target == "tier1-oracle"
+    assert ACCOUNT.upper() in (refused.value.hint or ""), "the account is in the hint"
 
 
-def _offline_session(session_module: Any, capabilities: frozenset[str]) -> Any:
-    """A session with a scope and nothing behind it: the refusals below happen
-    before anything would reach a server."""
+class _Cursor:
+    """Answers `CLOUD_SERVICE` and nothing else, which is all a refusal reads."""
+
+    def __init__(self, cloud_service: str | None) -> None:
+        self.cloud_service = cloud_service
+        self.executed: list[str] = []
+
+    def __enter__(self) -> Any:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def execute(self, statement: str, binds: Any = None) -> None:
+        self.executed.append(statement)
+
+    def fetchone(self) -> Any:
+        return (self.cloud_service,)
+
+
+class _Connection:
+    def __init__(self, cloud_service: str | None = None) -> None:
+        self.opened = _Cursor(cloud_service)
+
+    def cursor(self) -> _Cursor:
+        return self.opened
+
+
+def _offline_session(
+    session_module: Any, capabilities: frozenset[str], *, cloud_service: str | None = None
+) -> Any:
+    """A session with a scope and no server behind it. The refusals below happen
+    before anything but `CLOUD_SERVICE` would be asked."""
     from sopuli.driver.protocol import Scope
 
     offline = session_module.OracleSession(
-        connection=object(),
+        connection=_Connection(cloud_service),
         target=ExpandedTarget(
             target=Target(name="orders-pdb", type="oracle", dsn="db.example.com:1521/orders"),
             index=0,
@@ -330,19 +361,40 @@ def _offline_session(session_module: Any, capabilities: frozenset[str]) -> Any:
     return offline
 
 
+@pytest.mark.parametrize("method", ["hash", "both"])
 def test_hash_without_the_sys_user_grant_is_refused_naming_the_target(
-    session_module: Any,
+    session_module: Any, method: str
 ) -> None:
     """The branch every live test above skips: without `SELECT ON SYS.USER$`
-    there is no verifier to read, and `login` is not substituted for it."""
+    there is no verifier to read, and `login` is not substituted for it --
+    `both` included, which would otherwise have a login half to fall back on."""
     offline = _offline_session(session_module, frozenset())
 
     with pytest.raises(UnsupportedCapabilityError) as refused:
-        offline.verify_password(ACCOUNT, Secret(CORRECT), method="hash")
+        offline.verify_password(ACCOUNT, Secret(CORRECT), method=method)
 
     assert refused.value.capability == OFFLINE_VERIFY
     assert refused.value.target == "orders-pdb"
     assert "GRANT SELECT ON SYS.USER$" in (refused.value.hint or "")
+
+
+def test_on_autonomous_database_the_refusal_does_not_advise_a_grant(
+    session_module: Any,
+) -> None:
+    """#437, decided 2026-10-02: on ADB no account can read `SYS.USER$`, `ADMIN`
+    included (#478), so "grant it" is advice nobody there can follow.
+    `CLOUD_SERVICE` read `OLTP` on ADB serverless 23.26.3.3.0, and it is what tells
+    the two apart: the capability probe gets `ORA-00942` from both."""
+    offline = _offline_session(session_module, frozenset(), cloud_service="OLTP")
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        offline.require_verifier(ACCOUNT, Secret(CORRECT))
+
+    hint = refused.value.hint or ""
+    assert refused.value.target == "orders-pdb"
+    assert "Autonomous Database (OLTP)" in hint
+    assert "GRANT" not in hint
+    assert "cloud_service" in offline.connection.opened.executed[0]
 
 
 def test_hash_of_a_password_the_character_set_cannot_hold_is_refused(
@@ -358,14 +410,6 @@ def test_hash_of_a_password_the_character_set_cannot_hold_is_refused(
     offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
     offline._limit = ByteLimit(max_bytes=30, encoding="ascii", charset="WE8DEC")
 
-    class _Cursor:
-        def __enter__(self) -> Any:
-            return self
-
-        def __exit__(self, *_: object) -> None:
-            return None
-
-    offline.connection = type("_Connection", (), {"cursor": lambda self: _Cursor()})()
     monkeypatch.setattr(
         session_module,
         "login_state",
@@ -378,16 +422,61 @@ def test_hash_of_a_password_the_character_set_cannot_hold_is_refused(
     with pytest.raises(UnsupportedCapabilityError) as refused:
         offline.verify_password(ACCOUNT, Secret("Corr3ct-Pa55-wΩrd"), method="hash")
 
+    assert refused.value.capability == "verifier_charset"
     assert refused.value.target == "orders-pdb"
     assert "WE8DEC" in (refused.value.hint or "")
     assert "Ω" not in str(refused.value) + (refused.value.hint or "")
 
 
-def test_both_is_still_refused_rather_than_faked(account: Any) -> None:
-    """`both` is login plus the comparison, and arrives with `check --method`. A
-    driver that quietly did one of the two would report a check it did not make."""
-    with pytest.raises(UnsupportedCapabilityError):
-        account.verify_password(ACCOUNT, Secret(CORRECT), method="both")
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_both_compares_and_then_logs_in(guarded_account: Any) -> None:
+    """The strongest answer: the verifier matches, and the account can log in."""
+    _needs_12c(guarded_account)
+
+    result = guarded_account.verify_password(ACCOUNT, Secret(CORRECT), method="both")
+
+    assert result.method == "both"
+    assert result.result == PASS
+    assert "matches the account's 12C verifier" in (result.detail or "")
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_both_does_not_spend_a_login_the_comparison_already_answered(
+    guarded_account: Any,
+) -> None:
+    """#437, decided 2026-10-02: a mismatch is `fail` from the comparison alone.
+    Five of them against `FAILED_LOGIN_ATTEMPTS 3` leave the counter at zero,
+    which a login half would not."""
+    _needs_12c(guarded_account)
+
+    results = [
+        guarded_account.verify_password(ACCOUNT, Secret(WRONG), method="both") for _ in range(5)
+    ]
+
+    assert all(r.result == FAIL for r in results)
+    assert all(r.method == "both" for r in results)
+    assert "the login half was not spent" in (results[-1].detail or "")
+    assert results[-1].failed_logins == 0
+    assert "LOCKED" not in _status(guarded_account)
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_require_verifier_says_nothing_where_the_comparison_can_run(account: Any) -> None:
+    """The plan-time half. Silent here, and raising on 11g, where the refusal
+    test above runs instead."""
+    _needs_12c(account)
+
+    assert account.require_verifier(ACCOUNT, Secret(WRONG)) is None
+
+
+def test_require_verifier_passes_over_a_missing_account(session: Any) -> None:
+    """`ACCOUNT_MISSING` is a per-account state the run reports; refusing the
+    whole estate over one would turn the finding into a failure."""
+    _drop(session)
+
+    if OFFLINE_VERIFY not in session.scope().capabilities:
+        pytest.skip("no SYS.USER$ read here, so the capability refusal comes first")
+    assert session.require_verifier(ACCOUNT, Secret(CORRECT)) is None
 
 
 # ---------------------------------------------------------- release gate 4 ---

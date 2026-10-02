@@ -328,6 +328,9 @@ class _Session:
     ) -> VerifyResult:
         return VerifyResult(method=method, result=protocol.PASS)
 
+    def require_verifier(self, account: str, secret: Secret) -> None:
+        return None
+
     def require_rollover(self, account: str) -> None:
         return None
 
