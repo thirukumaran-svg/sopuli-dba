@@ -4752,7 +4752,7 @@ def creds_generate(
             name=policy_name,
             supplied=supplied,
             enforce=not no_policy_check,
-            limits=limits.limits,
+            readings=limits.readings,
         )
         for binding in bindings
     ]
@@ -4896,7 +4896,7 @@ def _candidate(
     name: str | None,
     supplied: Secret | None,
     enforce: bool,
-    limits: Sequence[ByteLimit] = (),
+    readings: Sequence[tuple[str, ByteLimit]] = (),
 ) -> Candidate:
     """One account's password, drawn or validated against its policy.
 
@@ -4906,7 +4906,7 @@ def _candidate(
     before the file's chain is consulted -- so it wins over an application entry
     and still goes through the same dangling-name check every policy name gets.
 
-    ``limits`` is every answered target's, resolved once for the run by
+    ``readings`` is every answered target's limit, resolved once for the run by
     :func:`_constraints_for` and passed in rather than read here: they are a
     property of the *targets*, not of the binding, and a function called once per
     account is the wrong place to open a connection. Empty is the documented
@@ -4917,7 +4917,7 @@ def _candidate(
     effective = binding if name is None else replace(binding, policy=name)
     chosen, policy = staging.policy_for(config, effective)
     return staging.candidate_for(
-        binding, policy, name=chosen, limits=limits, supplied=supplied, enforce=enforce
+        binding, policy, name=chosen, readings=readings, supplied=supplied, enforce=enforce
     )
 
 

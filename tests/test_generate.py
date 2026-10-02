@@ -417,7 +417,14 @@ def test_a_supplied_password_must_satisfy_every_target_not_the_smallest() -> Non
     """
     with pytest.raises(ConfigError):
         generate.candidate_for(
-            BINDING, WIDE, name="p", limits=(UNICODE, WESTERN), supplied=Secret("ab中z")
+            BINDING,
+            WIDE,
+            name="p",
+            readings=(
+                ("unicode", UNICODE),
+                ("western", WESTERN),
+            ),
+            supplied=Secret("ab中z"),
         )
 
 
@@ -425,7 +432,7 @@ def test_the_same_password_is_accepted_where_every_target_can_hold_it() -> None:
     """The control, so the test above is measuring the character set and not the
     password."""
     found = generate.candidate_for(
-        BINDING, WIDE, name="p", limits=(UNICODE,), supplied=Secret("ab中z")
+        BINDING, WIDE, name="p", readings=(("unicode", UNICODE),), supplied=Secret("ab中z")
     )
 
     assert found.supplied is True
@@ -439,7 +446,11 @@ def test_one_violation_is_reported_once_however_many_targets_report_it() -> None
         BINDING,
         policy,
         name="p",
-        limits=(LEGACY, WESTERN, UNICODE),
+        readings=(
+            ("legacy", LEGACY),
+            ("western", WESTERN),
+            ("unicode", UNICODE),
+        ),
         supplied=Secret("short"),
         enforce=False,
     )
@@ -454,7 +465,15 @@ def test_a_drawn_password_is_bound_by_the_count_and_not_the_encoding() -> None:
     the comparison."""
     policy = PasswordPolicy(length=40, charset="alnum", first_char="alpha")
 
-    found = generate.candidate_for(BINDING, policy, name="p", limits=(UNICODE, WESTERN))
+    found = generate.candidate_for(
+        BINDING,
+        policy,
+        name="p",
+        readings=(
+            ("unicode", UNICODE),
+            ("western", WESTERN),
+        ),
+    )
 
     assert len(found.value.reveal()) == 40
 
@@ -464,4 +483,70 @@ def test_a_drawn_password_is_refused_where_no_target_can_hold_it() -> None:
     policy = PasswordPolicy(length=40, charset="alnum", first_char="alpha")
 
     with pytest.raises(PasswordPolicyError):
-        generate.candidate_for(BINDING, policy, name="p", limits=(UNICODE, LEGACY))
+        generate.candidate_for(
+            BINDING,
+            policy,
+            name="p",
+            readings=(
+                ("unicode", UNICODE),
+                ("legacy", LEGACY),
+            ),
+        )
+
+
+def test_a_drawn_refusal_names_the_target_whose_limit_governed() -> None:
+    """Invariant 4 asks for the capability *and the target* (#598). In an estate
+    "the target's limit" could be any of them, so the message names the one the
+    draw was bound by -- and its hint points there too."""
+    policy = PasswordPolicy(length=40, charset="alnum", first_char="alpha")
+
+    with pytest.raises(PasswordPolicyError) as caught:
+        generate.candidate_for(
+            BINDING,
+            policy,
+            name="p",
+            readings=(("db-unicode", UNICODE), ("db-legacy", LEGACY)),
+        )
+
+    assert "the limit on 'db-legacy' is 30" in str(caught.value)
+    assert "for 'db-legacy'" in (caught.value.hint or "")
+
+
+def test_a_drawn_refusal_names_the_first_of_equally_strict_targets() -> None:
+    """Ties keep the first reading, as `strictest_target` does, so the refusal and
+    the constraint line name the same target."""
+    policy = PasswordPolicy(length=40, charset="alnum", first_char="alpha")
+
+    with pytest.raises(PasswordPolicyError) as caught:
+        generate.candidate_for(
+            BINDING,
+            policy,
+            name="p",
+            readings=(("db-unicode", UNICODE), ("db-one", LEGACY), ("db-two", LEGACY)),
+        )
+
+    assert "'db-one'" in str(caught.value)
+    assert "'db-two'" not in str(caught.value)
+
+
+def test_a_supplied_password_names_each_target_that_refuses_it() -> None:
+    """`--from-stdin` is checked against every target's limit, so each violation
+    says which target it came from -- and two targets refusing it are two
+    violations, not one merged into "the target"."""
+    policy = PasswordPolicy(length=4, charset="custom", allow="abz中", first_char="alpha")
+    narrow = ByteLimit(max_bytes=4, encoding="utf-8", charset="AL32UTF8")
+
+    found = generate.candidate_for(
+        BINDING,
+        policy,
+        name="p",
+        readings=(("db-western", WESTERN), ("db-narrow", narrow), ("db-unicode", UNICODE)),
+        supplied=Secret("ab中z"),
+        enforce=False,
+    )
+
+    details = [violation.detail for violation in found.accepted_violations]
+    assert details == [
+        "cannot be represented in cp1252 on 'db-western'",
+        "is 6 bytes in utf-8, the limit on 'db-narrow' is 4",
+    ]

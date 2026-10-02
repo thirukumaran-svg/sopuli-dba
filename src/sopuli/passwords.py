@@ -184,7 +184,11 @@ def properties(candidate: Secret, policy: PasswordPolicy, *, limit: ByteLimit | 
 
 
 def check(
-    candidate: Secret, policy: PasswordPolicy, *, limit: ByteLimit | None
+    candidate: Secret,
+    policy: PasswordPolicy,
+    *,
+    limit: ByteLimit | None,
+    target: str | None = None,
 ) -> tuple[Violation, ...]:
     """Every way ``candidate`` fails ``policy``, in a stable order.
 
@@ -196,6 +200,12 @@ def check(
     exactly it. A password an external system dictated is not weaker for being
     longer, and refusing it would block the migration case ``--from-stdin`` exists
     for; too *short* is a violation.
+
+    ``target`` names where ``limit`` was read, and only the byte rules use it
+    (#598). It is not on :class:`ByteLimit` because a limit is a fact about a
+    character set, and ``policy sample --max-bytes`` builds one that came from no
+    target at all. Two targets that refuse the same password therefore report two
+    violations rather than one, which is the point: each says where it applies.
     """
     text = candidate.reveal()
     allowed = charsets.alphabet(policy)
@@ -232,7 +242,7 @@ def check(
             )
         )
 
-    found.extend(_byte_violations(text, limit))
+    found.extend(_byte_violations(text, limit, target))
     return tuple(found)
 
 
@@ -241,7 +251,7 @@ def _starts_with_a_letter(text: str) -> bool:
     return bool(text) and charsets.class_of(text[0]) in ("upper", "lower")
 
 
-def _byte_violations(text: str, limit: ByteLimit | None) -> list[Violation]:
+def _byte_violations(text: str, limit: ByteLimit | None, target: str | None) -> list[Violation]:
     """The two ways a target's byte limit refuses a password.
 
     Unrepresentable comes first and is not a length problem at all: a password
@@ -252,20 +262,24 @@ def _byte_violations(text: str, limit: ByteLimit | None) -> list[Violation]:
     if limit is None:
         return []
     if not limit.encodable(text):
-        return [Violation(ENCODING, f"cannot be represented in {limit.encoding}")]
+        return [Violation(ENCODING, f"cannot be represented in {limit.encoding}{_on(target)}")]
     width = limit.width(text)
     if width > limit.max_bytes:
         return [
             Violation(
                 BYTE_LENGTH,
-                f"is {width} bytes in {limit.encoding}, the target's limit is {limit.max_bytes}",
+                f"is {width} bytes in {limit.encoding}, {_whose(target)} is {limit.max_bytes}",
             )
         ]
     return []
 
 
 def generate(
-    policy: PasswordPolicy, *, limit: ByteLimit | None, attempts: int = MAX_ATTEMPTS
+    policy: PasswordPolicy,
+    *,
+    limit: ByteLimit | None,
+    target: str | None = None,
+    attempts: int = MAX_ATTEMPTS,
 ) -> Secret:
     """A compliant password, drawn from a CSPRNG (UC-1 §4 step 3).
 
@@ -279,6 +293,10 @@ def generate(
     produces an error naming the reason rather than a thousand wasted draws and a
     timeout (invariant 4: fail at plan time, naming what is wrong).
 
+    ``target`` names the target ``limit`` was read from, so a refusal the limit
+    caused can say which one -- in an estate, "the target's limit" could be any
+    of twenty (#598). ``None`` where the limit came from no target.
+
     Raises :class:`PasswordPolicyError` where a valid policy cannot produce a
     password, and a plain :class:`~sopuli.config.errors.ConfigError` -- its base --
     where the policy is not a valid one at all, which only a policy built in code
@@ -286,13 +304,13 @@ def generate(
     both, and both exit 2.
     """
     length = _required_length(policy)
-    allowed = _usable_alphabet(policy, limit)
-    _reject_impossible(policy, allowed, length, limit)
+    allowed = _usable_alphabet(policy, limit, target)
+    _reject_impossible(policy, allowed, length, limit, target)
 
     last: tuple[Violation, ...] = ()
     for _ in range(attempts):
         candidate = Secret("".join(secure_choice(allowed) for _ in range(length)))
-        last = check(candidate, policy, limit=limit)
+        last = check(candidate, policy, limit=limit, target=target)
         if not last:
             return candidate
 
@@ -324,7 +342,7 @@ def _required_length(policy: PasswordPolicy) -> int:
     return policy.length
 
 
-def _usable_alphabet(policy: PasswordPolicy, limit: ByteLimit | None) -> str:
+def _usable_alphabet(policy: PasswordPolicy, limit: ByteLimit | None, target: str | None) -> str:
     """The alphabet, refused up front if it cannot produce anything usable."""
     allowed = charsets.alphabet(policy)
     if not allowed:
@@ -340,7 +358,7 @@ def _usable_alphabet(policy: PasswordPolicy, limit: ByteLimit | None) -> str:
         if unusable:
             raise PasswordPolicyError(
                 f"{unusable} of this charset's {len(allowed)} characters cannot be "
-                f"represented in {limit.encoding}",
+                f"represented in {limit.encoding}{_on(target)}",
                 hint=(
                     "the target's character set cannot store passwords built from this "
                     "alphabet -- narrow `allow:`, or use a named charset, which is ASCII"
@@ -350,7 +368,11 @@ def _usable_alphabet(policy: PasswordPolicy, limit: ByteLimit | None) -> str:
 
 
 def _reject_impossible(
-    policy: PasswordPolicy, allowed: str, length: int, limit: ByteLimit | None
+    policy: PasswordPolicy,
+    allowed: str,
+    length: int,
+    limit: ByteLimit | None,
+    target: str | None,
 ) -> None:
     """The redraws that could never succeed, refused before any of them happen.
 
@@ -390,12 +412,23 @@ def _reject_impossible(
     if length * narrowest > limit.max_bytes:
         raise PasswordPolicyError(
             f"a {length}-character password needs at least {length * narrowest} bytes in "
-            f"{limit.encoding}, but the target's limit is {limit.max_bytes}",
+            f"{limit.encoding}, but {_whose(target)} is {limit.max_bytes}",
             hint=(
                 "§8 measures the limit in bytes and `length:` in characters -- lower "
-                "`length:` for this target, or narrow the estate this policy covers"
+                f"`length:` for {'this target' if target is None else repr(target)}, "
+                "or narrow the estate this policy covers"
             ),
         )
+
+
+def _whose(target: str | None) -> str:
+    """Whose byte limit a message is quoting: the named target's where one is known."""
+    return "the target's limit" if target is None else f"the limit on {target!r}"
+
+
+def _on(target: str | None) -> str:
+    """Where an encoding refusal applies, as a suffix -- nothing where unknown."""
+    return "" if target is None else f" on {target!r}"
 
 
 def _describe(violations: tuple[Violation, ...]) -> str:

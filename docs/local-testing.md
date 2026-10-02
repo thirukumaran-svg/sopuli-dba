@@ -335,13 +335,26 @@ is its rule rather than a measurement of every release: a 31st byte is
 
 ```
 $ sopuli --config sopuli-21c-40.yaml creds generate --dry-run
-sopuli: a 40-character password needs at least 40 bytes in utf-8, but the target's limit is 30
-  hint: §8 measures the limit in bytes and `length:` in characters -- lower `length:` for this target, or narrow the estate this policy covers
+sopuli: a 40-character password needs at least 40 bytes in utf-8, but the limit on 'xe21-pdb' is 30
+  hint: §8 measures the limit in bytes and `length:` in characters -- lower `length:` for 'xe21-pdb', or narrow the estate this policy covers
 ```
 
-Exit 9, with or without `--dry-run`, and nothing is written. At `length: 30` the
-same target generates, applies and checks clean, and the constraint line reads
-the target's real limit:
+Exit 9, with or without `--dry-run`, and nothing is written. **The refusal names
+the target** (#598), which matters once there is more than one: put `free-pdb`
+and `xe21-pdb` in the same file and the message is word for word the one above,
+because the strictest limit governs the draw and it is 21c's. Where several
+targets share the strictest limit it names the first, as the `constraints:` line
+does. A password given on `--from-stdin` is checked against *every* target, so
+each byte violation names its own — a 133-character one against that pair:
+
+```
+$ python -c "print('A1#'+'b'*130, end='')" | sopuli --config sopuli-estate-40.yaml creds generate --from-stdin --dry-run
+sopuli: the supplied password for 'acme_app_user' violates policy 'long'
+  hint: byte_length (is 133 bytes in utf-8, the limit on 'free-pdb' is 128); byte_length (is 133 bytes in utf-8, the limit on 'xe21-pdb' is 30) -- fix the password, or pass `--no-policy-check`, which records in the audit event what it let through
+```
+
+At `length: 30` the same target generates, applies and checks clean, and the
+constraint line reads the target's real limit:
 
 ```
 constraints: 30 bytes in AL32UTF8, from xe21-pdb

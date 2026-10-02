@@ -264,6 +264,20 @@ def test_a_length_that_cannot_fit_the_targets_bytes_is_refused_at_plan_time() ->
     assert "`length:`" in rendered
 
 
+def test_a_byte_limit_refusal_names_its_target_where_one_is_given() -> None:
+    """#598: the caller knows which target the limit came from, and the message
+    says so. Without one -- `policy sample --max-bytes` -- it stays generic."""
+    with pytest.raises(PasswordPolicyError) as caught:
+        generate(
+            policy(length=40),
+            limit=ByteLimit(max_bytes=30, encoding="utf-8"),
+            target="xe21-pdb",
+        )
+
+    assert "but the limit on 'xe21-pdb' is 30" in str(caught.value)
+    assert "lower `length:` for 'xe21-pdb'" in (caught.value.hint or "")
+
+
 def test_an_alphabet_the_target_cannot_store_is_refused() -> None:
     """A US7ASCII database cannot hold `é` at all, so no candidate drawn from this
     alphabet could ever be set."""

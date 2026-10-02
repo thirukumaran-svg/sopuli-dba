@@ -271,26 +271,39 @@ def policy_for(config: Config, binding: Binding) -> tuple[str, PasswordPolicy]:
     return chosen, found.password
 
 
-def _smallest(limits: Sequence[ByteLimit]) -> ByteLimit | None:
-    """The tightest byte count among ``limits``, or ``None`` where there are none."""
-    return min(limits, key=lambda limit: limit.max_bytes, default=None)
+def _smallest(
+    readings: Sequence[tuple[str, ByteLimit]],
+) -> tuple[str | None, ByteLimit | None]:
+    """The target with the tightest byte count and its limit, or ``(None, None)``.
+
+    Ties keep the first reading, as :attr:`sopuli.constraints.Constraints.
+    strictest_target` does -- so the target a refusal names is the one the
+    constraint line names.
+    """
+    found = min(readings, key=lambda pair: pair[1].max_bytes, default=None)
+    return (None, None) if found is None else found
 
 
 def _every_violation(
-    supplied: Secret, policy: PasswordPolicy, limits: Sequence[ByteLimit]
+    supplied: Secret, policy: PasswordPolicy, readings: Sequence[tuple[str, ByteLimit]]
 ) -> tuple[Violation, ...]:
     """Every way ``supplied`` fails the policy at *any* target, each reported once.
 
-    With no limits this is one ordinary :func:`sopuli.passwords.check` -- the
+    With no readings this is one ordinary :func:`sopuli.passwords.check` -- the
     policy's own rules, and no byte rule to apply, which is the offline and
     unreachable case.
+
+    "Once" is per distinct violation, and a byte violation names its target
+    (#598), so two targets that cannot hold the password report twice -- each
+    with the target it came from -- while a policy rule that every target agrees
+    about is still reported once.
     """
-    if not limits:
+    if not readings:
         return check(supplied, policy, limit=None)
 
     seen: dict[Violation, None] = {}
-    for limit in limits:
-        for violation in check(supplied, policy, limit=limit):
+    for target, limit in readings:
+        for violation in check(supplied, policy, limit=limit, target=target):
             seen.setdefault(violation, None)
     return tuple(seen)
 
@@ -300,7 +313,7 @@ def candidate_for(
     policy: PasswordPolicy,
     *,
     name: str,
-    limits: Sequence[ByteLimit] = (),
+    readings: Sequence[tuple[str, ByteLimit]] = (),
     supplied: Secret | None = None,
     enforce: bool = True,
 ) -> Candidate:
@@ -326,7 +339,8 @@ def candidate_for(
     the tool drew the value itself, and a flag that silently changed the
     generator would be a different feature wearing this one's name.
 
-    ``limits`` is every target's, and the two paths use it differently for a
+    ``readings`` is every answered target's limit, paired with the target so a
+    refusal can name it (#598), and the two paths use it differently for a
     reason :mod:`sopuli.constraints` sets out: a **drawn** password is ASCII by
     §8, so only the smallest byte count can bind it, while a **supplied** one is
     whatever an external system dictated and has to satisfy every target it will
@@ -341,13 +355,14 @@ def candidate_for(
     distinct problem once however many targets report it.
     """
     if supplied is None:
+        target, limit = _smallest(readings)
         return Candidate(
             binding=binding,
-            value=draw_password(policy, limit=_smallest(limits)),
+            value=draw_password(policy, limit=limit, target=target),
             policy=name,
         )
 
-    violations = _every_violation(supplied, policy, limits)
+    violations = _every_violation(supplied, policy, readings)
     if violations and enforce:
         raise _refused(binding, name, violations)
     return Candidate(

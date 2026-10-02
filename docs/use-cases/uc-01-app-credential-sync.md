@@ -291,7 +291,10 @@ binds it: the byte limit, counted in the target's character set. That is the
 *deterministic* constraint — a password too long in bytes, or holding characters
 the target will not accept, fails identically for every account in the selection
 and one policy fix ends it, which is exactly the class of refusal that can be
-moved from `apply` to here.
+moved from `apply` to here. The refusal names the target whose limit governed —
+the first, where several share the strictest. When a supplied password is
+refused, each violation names the target it came from (#598), since in an estate
+"the target" is not an answer invariant 4 accepts.
 
 The other three names in step 2 cannot bind anything, and are read so the run can
 **say** they are there:
