@@ -2723,6 +2723,122 @@ instead. Put the grant back
 needs it: `test_release_gate_4_checking_a_drifted_account_never_locks_it`
 fails without it.
 
+### 10.5a `--method hash` and `both` — checking without spending a login
+
+`--method hash` compares the vault's password with the account's stored 12C
+verifier in `SYS.USER$.SPARE4`, client-side, and logs in as nobody (#437). It needs
+the same `SELECT ON SYS.USER$` grant as the lockout guard. `--method both`
+compares first and logs in only when the comparison passed. Against the account
+from §10.3:
+
+```
+$ sopuli --config sopuli.yaml creds check --method hash
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  free-pdb  IN_SYNC  vault v2 verified by hash; matches the account's current 12C verifier, with no login attempted
+
+all 1 in sync
+```
+```
+$ sopuli --config sopuli.yaml creds check --method both
+ACCOUNT        TARGET    STATE    DETAIL
+acme_app_user  free-pdb  IN_SYNC  vault v2 verified by both; matches the account's 12C verifier and logs in
+
+all 1 in sync
+```
+
+**The point is the drifted case**, so repeat §10.5's setup: `SOPULI_LOCKOUT`
+(`FAILED_LOGIN_ATTEMPTS 3`) and a password changed out of band. Then run the check
+five times with `hash` and once with `both`:
+
+```
+$ sopuli --config sopuli.yaml creds check --method hash
+ACCOUNT        TARGET    STATE  DETAIL
+acme_app_user  free-pdb  DRIFT  vault v2 matches none of the account's 12C verifiers, with no login attempted
+
+1 drift
+```
+```
+$ sopuli --config sopuli.yaml creds check --method both
+ACCOUNT        TARGET    STATE  DETAIL
+acme_app_user  free-pdb  DRIFT  vault v2 matches none of the account's 12C verifiers, so the login half was not spent
+
+1 drift
+```
+
+Exit 3 each time, and afterwards `SYS.USER$.LCOUNT` for the account is still `0`
+and `ACCOUNT_STATUS` is still `OPEN`: six drifted checks against a three-attempt
+profile, and nothing counted. Under `login` the second would already have been
+refused by the margin. `both` reports the comparison's `fail` without logging in
+— decided in #437 — because a login can no longer change the answer.
+
+**A locked account is still compared**, which a login cannot do. Lock it and
+check with each method:
+
+```
+$ sopuli --config sopuli.yaml creds check --method login
+acme_app_user  free-pdb  LOCKED  account is locked; the password was not tried
+
+$ sopuli --config sopuli.yaml creds check --method hash
+acme_app_user  free-pdb  LOCKED  account is locked; vault v2 matches the account's current 12C verifier, with no login attempted
+
+$ sopuli --config sopuli.yaml creds check --method both
+acme_app_user  free-pdb  LOCKED  account is locked; vault v2 matches the account's 12C verifier; the account is locked (LOCKED); no login was attempted
+```
+
+All three exit 0 with `1 unverifiable`, and the state is the lock every time:
+it is the more urgent fact. What `hash` adds is the half after the semicolon,
+which says whether unlocking would be enough. `both` makes the comparison and
+then has its login declined by the lock, and says both.
+
+**An explicit method the estate cannot honour is refused before anything is
+checked**, exit 5, naming the target. Against 11g XE, whose accounts carry no 12C
+verifier:
+
+```
+$ sopuli --config sopuli-11g.yaml creds check --method hash
+sopuli: target "xe11" does not support verifier_12c
+  hint: ACME_APP_USER has no 12C verifier (PASSWORD_VERSIONS 10G 11G), and the comparison uses 12C and only 12C -- the older ones are weaker than a login, so they are never a fallback (#433); verify by `login`, or reset the password where 12C is allowed so the account gets one
+```
+
+Under `--output json` the document has no `results` and carries
+`"target_capability": "verifier_12c"` in `error`. The same refusal comes back for
+`--method both`, which never quietly becomes `login`.
+
+Take the `SYS.USER$` grant away as in §10.5's *Without the grant* and the refusal
+names the capability the probe uses:
+
+```
+$ sopuli --config sopuli.yaml creds check --method hash
+sopuli: target "free-pdb" does not support offline_verify
+  hint: `hash` compares the account's stored verifier, which is in SYS.USER$ and needs the optional `GRANT SELECT ON SYS.USER$` (02-oracle-privileges.md §2) -- grant it, or verify by `login`
+```
+
+Exit 5. Put the grant back afterwards, because the tier-1 suite needs it.
+
+**On Autonomous Database the same refusal says so instead of advising a grant**,
+because no account there can read `SYS.USER$`, `ADMIN` included (#478). Run on
+2026-10-02 against the ADB serverless 23.26.3.3.0 in §14, with `ADMIN` behind
+`auth: prompt`:
+
+```
+$ sopuli --config adb.yaml creds check --method hash
+password for ADMIN on adb-acme:
+sopuli: target "adb-acme" does not support offline_verify
+  hint: this is Autonomous Database (OLTP), where no account can read SYS.USER$ -- not even ADMIN -- so `hash` cannot run here; verify by `login`
+```
+
+Exit 5. `OLTP` is what `SYS_CONTEXT('USERENV','CLOUD_SERVICE')` reports there,
+and it is the only thing that tells ADB from an ordinary target missing the
+grant: the capability probe gets `ORA-00942` from both. `--method both
+--output json` gives the same refusal, with `"exit_code": 5`, `"category":
+"capability"`, `"target_capability": "offline_verify"`, and no `results`.
+
+**Type the password correctly**, because a wrong one hides all of this. The
+pre-flight passes over a target whose admin login fails, so the run reports it
+as an `ERROR` row with exit 1. A wrong password is `ORA-01017`. An empty answer,
+such as a paste the hidden prompt did not take, is `DPY-4001: no credentials
+specified`. Both happened on the first attempt at this run.
+
 ### 10.6 `rotate` — the whole sequence under one lock
 
 `rotate` is `generate` then `apply`, in one run, holding the lock throughout —
@@ -6251,11 +6367,8 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
 - **`--output jsonl` on any verb but `creds check`.** The mode exists (§15), and
   the verbs that take a lock or change a password -- whose events are the most
   interesting ones -- do not stream yet, so they refuse it.
-- **`--method hash`**, verification without a login attempt. The spike behind it
-  is done — the layout is read (#431), the derivation reproduces (#432), and
-  degradation on an account with no `T:` is settled (#433), all on the tier-2
-  releases — but no product code ships it yet, and it waits on 19c confirmation
-  before it can. `verify.method` parses in a profile and reaches no consumer.
+- **A profile's `verify.method`.** It parses, and reaches no consumer: `check`
+  takes `--method` from the command line only (§10.5a, #437).
 - **The `file`, `keyring` and `oci` stores.** Only `hashicorp` exists.
 - **A real wallet without a full Oracle install**, per §12.
 - **A 19c release update, and anything else above tier 2.** The whole tier-2

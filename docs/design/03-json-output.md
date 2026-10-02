@@ -453,6 +453,16 @@ emitted by anything. A capability refusal now carries `category: "capability"`,
 exit 5, and the capability's name in its own field, which is what a consumer
 branches on instead of parsing it back out of prose.
 
+**The field holds a name, never a sentence**, and `creds check --method
+hash|both` (#437) added the first names that are about an *account* rather than
+a target: `verifier_12c` (the account has no 12C verifier), `verifier_12c_format`
+(a `T:`/`t:` token in a format never measured) and `verifier_charset` (the
+database character set cannot hold the vault value). The account is named in
+`error.hint`, which is where per-account detail goes. Beside them is
+`offline_verify`, the probe's own name for a `SYS.USER$` this session cannot
+read, and on Autonomous Database the hint says so in ADB's terms rather than
+advising a grant nobody there can make.
+
 **A pre-flight refusal is the other new producer** (#283): `category` is the kind
 of problem that stopped it — `connectivity`, `authorization` or `database` —
 `message` says how many were found over how many targets and names the first, and

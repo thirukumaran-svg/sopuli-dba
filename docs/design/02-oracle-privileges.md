@@ -287,6 +287,8 @@ What ADB takes away is permanent rather than a version gap:
   (#437). It reads `SYS_CONTEXT('USERENV','CLOUD_SERVICE')`, which answered
   `OLTP` here on 2026-10-02, NULL on 26ai Free, 21c and 18c XE, and
   `ORA-02003` on 11g XE.
+  An explicit `check --method hash` or `both` there is refused in those words,
+  at plan time.
   None of this is evidence about the verifier layout, because nothing was read.
   The `PTIME` fallback is not needed there, since `PASSWORD_CHANGE_DATE` exists.
 - **`DEFAULT` is ADB's own profile**, and every created user gets it:
@@ -345,7 +347,7 @@ When present, the grant is probed as a capability at plan time (invariant 3,
   mitigations (1/3/6 — never retry, reset on success, `ACCOUNT_STATUS`
   reporting), and `check` must report the guard's absence plainly rather than
   silently run a weaker version of it.
-- **`check --method hash`**, if it ships at all — see below.
+- **`check --method hash`** (#437) — see below.
 - **The password change date where `DBA_USERS` has no column for it** (#386).
   `DBA_USERS.PASSWORD_CHANGE_DATE` is `ORA-00904` on 18c and 11.2, and present on
   19c (19.24.0.0.0, measured 2026-09-17), which never takes this path as a result.
@@ -513,7 +515,10 @@ it reports, so a caller can refuse at plan time. Each refusal names a capability
 rather than describing one: `offline_verify`, `verifier_12c`,
 `verifier_12c_format` or `verifier_charset`. On Autonomous Database the
 `offline_verify` refusal says no account there can read `SYS.USER$`, and does not
-advise a grant. The `check --method` flag is the CLI half. Were it ever to fail
+advise a grant. **The CLI half is built too:** `creds check --method hash|both`
+asks every target `require_verifier` before any account is checked, so each of
+those refusals is exit 5 naming the target, at plan time, with the name in
+`error.target_capability` and the account in the hint. Were it ever to fail
 on a release not yet read (12.1, or a later RU — 19.3 and 19.32 reproduce), both non-login modes would leave the
 CLI entirely — `both` is login plus this same comparison, and a `both` that
 silently degraded to `login` would report a stronger check than it performed.

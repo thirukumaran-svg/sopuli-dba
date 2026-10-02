@@ -535,16 +535,14 @@ applications:
         secret_template: "tenants/_shared#DB_CREDENTIALS/{account}"
 ```
 
-Both `ci` and `scheduled` above assume `--method hash` exists. It doesn't yet:
-`check`'s **default** is `login` unconditionally regardless of profile
-(`02-oracle-privileges.md` §2, decided in #86), and `hash` itself is still an
-open spike (#90). These examples are not yet buildable as written — the tool
-does not silently substitute `login` for a `method:` it doesn't recognise, any
-more than it would for a typo. If #90 comes back negative, `hash` is removed
-from the CLI surface entirely and these two examples need editing to
-`method: login`, guarded by `LCOUNT` where the optional `SYS.USER$` grant is
-present — the unattended win there is `--lockout-margin`, not skipping the
-login attempt.
+Both `ci` and `scheduled` above set `method: hash`, and **a profile's `method`
+reaches no consumer**. The value is valid and recognised, and nothing reads it:
+`check`'s default is `login` unconditionally, regardless of profile
+(`02-oracle-privileges.md` §2, decided in #86). A caller who wants the
+comparison passes `--method hash` on the command line (#437). Running one of
+these profiles without the flag verifies by `login`. That is the documented
+default rather than a substitution, but it is not what the profile appears to
+ask for, so a scheduled job should pass the flag explicitly.
 
 ### Why not the inline form
 

@@ -154,6 +154,8 @@ from sopuli.driver.protocol import (
     PASSWORD_EXPIRE,
     PASSWORD_SET,
     ROLLOVER_FINISH,
+    VERIFY_BOTH,
+    VERIFY_HASH,
     VERIFY_LOGIN,
     AccountAttributes,
     AccountChange,
@@ -4011,6 +4013,16 @@ def creds_group() -> None:
     show_default=True,
     help="Refuse to attempt a login within this many tries of the lockout limit.",
 )
+@click.option(
+    "--method",
+    type=click.Choice([VERIFY_LOGIN, VERIFY_HASH, VERIFY_BOTH]),
+    default=VERIFY_LOGIN,
+    show_default=True,
+    help=(
+        "login: log in as the account. hash: compare the stored 12C verifier, with "
+        "no login. both: compare, then log in only if the comparison passed."
+    ),
+)
 @global_options
 def creds_check(
     selectors: tuple[str, ...],
@@ -4020,6 +4032,7 @@ def creds_check(
     applications: tuple[str, ...],
     include_previous: bool,
     lockout_margin: int,
+    method: str,
     run: Invocation,
 ) -> str:
     """Check whether the vault's password works against each database.
@@ -4033,11 +4046,18 @@ def creds_check(
     target that could not be reached is exit 1 and never exit 3, or a broken
     check would page the same person as a real one.
 
-    **Login is the only method, and there is no --method flag.** Q1 was decided
-    in issue #86: `login`, unconditionally. Hash mode depends on reproducing
-    Oracle's 12C verifier client-side. That reproduces (issue #90), but hash
-    mode is not built, and a flag with one legal value would advertise a choice
-    that does not exist.
+    **--method login is the default, unconditionally** (Q1, issue #86).
+    --method hash compares the vault's password with the account's stored 12C
+    verifier and logs in as nobody, so it spends nothing against the lockout
+    counter. It needs the optional `SELECT ON SYS.USER$` grant, which no
+    account can hold on Autonomous Database. --method both compares first and
+    logs in only if the comparison passed, so a value already shown wrong is
+    never tried (issue #437).
+
+    **An explicit hash or both is refused before anything is checked** where it
+    cannot be honoured: no grant, an account with no 12C verifier, or a
+    password the database character set cannot hold. That is exit 5, naming the
+    target, and never a quiet fall-back to login.
 
     **Locking an account would be worse than the drift this detects**, so all of
     UC-1's runtime mitigations are in place. One attempt per account per run and
@@ -4058,12 +4078,11 @@ def creds_check(
 
     Help text stays ASCII throughout, which is P4's rule.
     """
-    # The "That reproduces (issue #90)" sentence above follows the register
-    # entry t-verifier, settled 2026-10-01 for 19c (#581). Markers live in
-    # comments like this one rather than in the docstring, because this
-    # docstring IS `creds check --help`, and a bookkeeping token in front of an
-    # operator would be the same mistake as a debug string in a user-facing
-    # message. When hash mode is built, the help text above changes with it.
+    # --method hash rests on the register entry t-verifier, settled 2026-10-01
+    # for 19c (#581). Markers live in comments like this one rather than in the
+    # docstring, because this docstring IS `creds check --help`, and a
+    # bookkeeping token in front of an operator would be the same mistake as a
+    # debug string in a user-facing message.
     document = run.document
 
     selection = selected(selectors, targets, accounts, groups, applications)
@@ -4097,6 +4116,9 @@ def creds_check(
     )
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
 
+    if method != VERIFY_LOGIN:
+        _refuse_uncomparable(by_target, config, run, stores=stores, previous=include_previous)
+
     rows: list[tuple[Binding, check_states.Outcome]] = []
     results: list[dict[str, Any]] = []
     # Collected beside `results` and by the same out-parameter idiom: one is what
@@ -4115,6 +4137,7 @@ def creds_check(
                 stores=stores,
                 margin=lockout_margin,
                 previous=include_previous,
+                method=method,
                 results=results,
                 notices=notices,
             )
@@ -4139,6 +4162,65 @@ def creds_check(
     return "\n".join([render_plan(plan, noun="check"), "", render_check(rows, notices=notices)])
 
 
+def _refuse_uncomparable(
+    by_target: Mapping[str, ExpandedTarget],
+    config: Config,
+    run: Invocation,
+    *,
+    stores: Mapping[str, SecretStore],
+    previous: bool,
+) -> None:
+    """Refuse an explicit ``--method hash`` or ``both`` before anything is checked.
+
+    Invariant 4, and ``rotate --strategy``'s shape (#262): every target is asked
+    up front whether it can compare each account's password, and the first that
+    cannot ends the run with exit 5 naming it. A refusal found on the fifth
+    target of twenty, after four had already been checked, would be the generic
+    mid-run error the invariant forbids.
+
+    One more connection per target, made only under an explicit non-default
+    method. **A target that cannot be reached is passed over** rather than
+    refused here: the run that follows reports it as the ``ERROR`` row it always
+    has, which is exit 1 and a finding, and an unreachable target says nothing
+    about whether it could compare. A missing account or an empty ref is passed
+    over for the same reason -- each is a state the run reports per account.
+
+    **Every value the run will compare is asked about**, so under
+    ``--include-previous`` the previous one too. One refusal is about the value
+    rather than the account -- a character set that cannot hold it -- and a
+    previous value it caught only after the current one had been checked would
+    be an ``ERROR`` row and exit 1, the mid-run failure this exists to prevent
+    (Copilot on #600).
+    """
+    for target_name, bindings in _grouped(config.bindings).items():
+        target = by_target[target_name]
+        session = None
+        try:
+            try:
+                module = resolve_driver(target.target)
+                credential = _admin_credential(target, run, config)
+                driver = module.OracleDriver(
+                    env=os.environ,
+                    correlation_id=run.document.correlation_id,
+                    timeouts=_timeouts(run),
+                    client_lib_dir=config.runtime.oracle.client_lib_dir,
+                )
+                session = driver.connect(target, credential.credential)
+            except Exception:  # noqa: BLE001 -- the run reports it, per target
+                continue
+            for binding in bindings:
+                values = [_stored_credential(binding, stores)]
+                if previous:
+                    values.append(_previous_stored(binding, stores))
+                for stored in values:
+                    if stored is not None:
+                        session.require_verifier(binding.account, stored.value)
+        finally:
+            if session is not None:
+                with suppress(Exception):
+                    session.close()
+
+
 def _grouped(bindings: Sequence[Binding]) -> dict[str, list[Binding]]:
     """Bindings by target, in estate order.
 
@@ -4161,6 +4243,7 @@ def _check_target(
     stores: Mapping[str, SecretStore],
     margin: int,
     previous: bool,
+    method: str,
     results: list[dict[str, Any]],
     notices: list[str],
 ) -> list[tuple[Binding, check_states.Outcome]]:
@@ -4198,6 +4281,7 @@ def _check_target(
                     stores=stores,
                     margin=margin,
                     previous=previous,
+                    method=method,
                     out=results,
                     notices=notices,
                 )
@@ -4233,6 +4317,7 @@ def _check_one(
     stores: Mapping[str, SecretStore],
     margin: int,
     previous: bool,
+    method: str,
     out: list[dict[str, Any]],
     notices: list[str],
 ) -> tuple[Binding, check_states.Outcome]:
@@ -4263,7 +4348,13 @@ def _check_one(
         # checks narrow for the branch below -- and read in the order they
         # matter: no account, no stored password, or an account whose status
         # already settles the answer.
-        if user is None or stored is None or _settled_by_status(user):
+        # Status settles a `login` without trying, because a login would be
+        # refused by the lock and could not tell a right password from a wrong
+        # one. A comparison is not refused by anything, so `hash` and `both` still
+        # make it, and the account is still reported LOCKED or EXPIRED -- with what
+        # the comparison found beside it (UC-1 §7, Copilot on #600).
+        settled = user is not None and method == VERIFY_LOGIN and _settled_by_status(user)
+        if user is None or stored is None or settled:
             outcome = check_states.decide(user, None)
             if stored is None and user is not None and not _settled_by_status(user):
                 outcome = check_states.Outcome(
@@ -4280,14 +4371,20 @@ def _check_one(
             verification = session.verify_password(
                 user.name,
                 stored.value,
-                method=VERIFY_LOGIN,
+                method=method,
                 lockout_margin=margin,
                 attempts=budget,
             )
             outcome = check_states.decide(user, verification, version=stored.version)
             if previous:
                 accepted = _previous_accepted(
-                    binding, user, session, stores=stores, margin=margin, budget=budget
+                    binding,
+                    user,
+                    session,
+                    stores=stores,
+                    margin=margin,
+                    budget=budget,
+                    method=method,
                 )
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _as_error(error)
@@ -4390,6 +4487,7 @@ def _previous_accepted(
     stores: Mapping[str, SecretStore],
     margin: int,
     budget: int,
+    method: str,
 ) -> bool | None:
     """Whether the vault's *previous* password still authenticates.
 
@@ -4410,16 +4508,13 @@ def _previous_accepted(
     folding it into `DRIFT` would page somebody over a credential that is doing
     what a rollover window is supposed to make it do.
     """
-    ref = binding.secret
-    if ref is None or binding.vault is None:
-        return None
-    stored = read_secret(stores[binding.vault], replace(ref, stage=PREVIOUS))
+    stored = _previous_stored(binding, stores)
     if stored is None:
         return None
     result = session.verify_password(
         user.name,
         stored.value,
-        method=VERIFY_LOGIN,
+        method=method,
         lockout_margin=margin,
         attempts=budget,
     )
@@ -4429,6 +4524,14 @@ def _previous_accepted(
     if result.result not in (PASS, FAIL):
         return None
     return bool(result.result == PASS)
+
+
+def _previous_stored(binding: Binding, stores: Mapping[str, SecretStore]) -> Any:
+    """The vault's ``previous`` value for ``binding``, or ``None`` where there is none."""
+    ref = binding.secret
+    if ref is None or binding.vault is None:
+        return None
+    return read_secret(stores[binding.vault], replace(ref, stage=PREVIOUS))
 
 
 def _nothing_to_compare(binding: Binding) -> str:

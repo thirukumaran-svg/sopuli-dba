@@ -848,8 +848,9 @@ Three decisions inside the spine are worth stating here, because none of them is
 readable off the flag list:
 
 - **The database is asked before it is changed.** Invariant 9 names `apply` as
-  the convergent verb, and with `--method hash` unavailable (#86, #90) a login is
-  the only way to know whether a change is needed. So each account is verified
+  the convergent verb, and `apply` verifies by login: `check --method hash`
+  (#437) does not reach it, so a login is how `apply` knows whether a change is
+  needed. So each account is verified
   first, under §7's mitigations and with both logins budgeted as one run's worth
   of attempts, and a password that already works is left alone. A `pass` under an
   open rollover window is still a reason not to act: re-applying would restart the
@@ -1557,13 +1558,11 @@ sopuli creds check --application orders-app
                    [--output json]
 ```
 
-**As shipped (#248):** the selectors, `--include-previous`, `--lockout-margin`
-and `--output`. There is **no `--method` flag**, and its absence is the decision
-rather than an omission — Q1 (#86) made `login` unconditional, hash mode depends
-on #90 (now reproduced, and not built), and a flag with one legal value advertises a choice
-that does not exist. It arrives with hash mode or not at all. The driver's half
-of hash mode is built (#437, `02-oracle-privileges.md` §2), and the flag is the
-other half. `--application`,
+**As shipped (#248, #437):** the selectors, `--include-previous`,
+`--lockout-margin`, `--method` and `--output`. `--method` defaults to `login`
+unconditionally (Q1, #86). `hash` and `both` arrived with #437, once #90 had
+reproduced the verifier, and an explicit one the estate cannot honour is refused
+at plan time (below). `--application`,
 `--account`, `--target` and `--group` are the selectors this command shares with
 every other verb and are not built yet; `--select` is.
 
@@ -1587,7 +1586,7 @@ drift it was detecting. Mitigations, all of which must be in place:
 3. **Reset on success.** A successful login resets the counter, which is why the
    happy path is self-cleaning.
 4. **Offer hash mode** (below) as the safe alternative for high-frequency
-   checks, if it ships at all — see #90.
+   checks: `--method hash`, built in #437 on #90's derivation.
 5. Document the interaction with `PASSWORD_LOCK_TIME` and with profiles that set
    `FAILED_LOGIN_ATTEMPTS UNLIMITED`. (A documentation item, not a runtime
    check — excluded from the "1/3/6" runtime set above and below.)
@@ -1598,17 +1597,32 @@ drift it was detecting. Mitigations, all of which must be in place:
    separately and surfaces `LOCKED` / `LOCKED (TIMED)` / `EXPIRED` as their own
    states rather than folding them into `DRIFT`.
 
-### `--method hash` — verification without a login attempt, if it ships at all
+### `--method hash` — verification without a login attempt
 
-**Unresolved — tracked in #90, not part of the default path.** `check`
-defaults to `login` unconditionally (Q1 — decided in #86); hash mode is an
-opt-in extra that may not exist at all, not a fallback the default depends on.
+**Built (#437); not part of the default path.** `check` defaults to `login`
+unconditionally (Q1 — decided in #86); hash mode is an opt-in extra, not a
+fallback the default depends on.
+
+**`--method both` compares first** (decided in #437, 2026-10-02). A mismatch is
+reported as drift from the comparison alone and no login is attempted, because
+spending lockout budget on a value already shown to be wrong buys nothing. Only
+a value that matches goes on to the ordinary guarded login, and the row says
+which half answered.
+
+**On Autonomous Database the refusal says so in its own words** (decided in
+#437). No account there can read `SYS.USER$`, `ADMIN` included (#478), so the
+no-grant message's advice to grant it would be advice nobody can follow. The
+capability probe cannot tell the two apart, since both answer `ORA-00942`, so
+the refusal reads `SYS_CONTEXT('USERENV','CLOUD_SERVICE')`: `OLTP` on ADB
+serverless 23.26.3.3.0, NULL on 26ai Free, 21c and 18c, and `ORA-02003` on 11.2.
 
 Oracle stores a salted PBKDF2-SHA512 verifier (the `12C` verifier in
-`SYS.USER$.SPARE4`). Given read access to that column, the tool could derive
-the verifier from the vault password and compare — **no authentication
-attempt, no failed-login counter, no lockout risk** — and it would work even
-for locked accounts. The `T:` verifier can be reproduced client-side — measured
+`SYS.USER$.SPARE4`). Given read access to that column, the tool derives the
+verifier from the vault password and compares — **no authentication attempt, no
+failed-login counter, no lockout risk** — and it works on locked and expired
+accounts too. Those are still reported as `LOCKED` or `EXPIRED`, because the
+status is the more urgent fact, with what the comparison found beside it, so an
+operator can tell whether unlocking would be enough. The `T:` verifier can be reproduced client-side — measured
 in #432 on 26ai, 21c and 18c (`02-oracle-privileges.md` §2), which is what makes
 this method possible at all; a rollover window's two verifiers (`T:` previous,
 `t:` current) are told apart the same way, so this reports `ROLLOVER_ACTIVE`
@@ -1616,12 +1630,14 @@ rather than drift. An account with no `12C` verifier (11g, or any account whose
 `PASSWORD_VERSIONS` lacks it) has nothing to compare, so an explicit
 `--method hash` or `--method both` fails at plan time naming the capability and
 the target (invariant 4) rather than falling back to a weaker verifier or
-silently to `login` (#433). Confirmed on 19.3.0.0.0 (#548), 12.2.0.1.0 (#572)
+silently to `login` (#433). The pre-flight asks about every value the run will
+compare, including the previous one under `--include-previous`, because the
+character-set refusal is about the value. Confirmed on 19.3.0.0.0 (#548), 12.2.0.1.0 (#572)
 and 19.32.0.0.0 (#581), a release update and so the release an OCI estate runs,
 which settles it for 19c (register entry `t-verifier`). 12.1 is unread; if the
 derivation went wrong there, the method would be dropped from the CLI.
 
-Trade-offs to document honestly if it does ship:
+Trade-offs, stated because it shipped:
 
 - requires the same optional `SELECT ON SYS.USER$` grant as the `LCOUNT` guard
   (`02-oracle-privileges.md` §2), which some sites will not grant. Where no

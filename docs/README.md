@@ -442,8 +442,8 @@ three wrong answers.
   reproduction succeeding. **Settled for 19c, 2026-10-01**: a base release and a
   release update both reproduce, and the maintainer judged one RU enough (#581).
   **12.1 is still unread**, and the derivation is not claimed there. What this
-  unblocks is `--method hash|both` being *built*; neither exists yet, and
-  `check`'s default (`login`) never waited on this (#86).
+  unblocked is `--method hash|both`, built in #437; `check`'s default (`login`)
+  never waited on this (#86).
 - `unverified` `lcount-grant` (#124) — **Whether `SELECT_CATALOG_ROLE` via
   `SYS.KU$_USER_VIEW` exposes `LCOUNT` without `SPARE4`** — a narrower alternative to `SELECT ON SYS.USER$`
   for the `LCOUNT` guard, from a blog post rather than Oracle documentation.

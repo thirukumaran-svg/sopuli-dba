@@ -151,10 +151,18 @@ def decide(
     # read from `DBA_USERS`, need no site-specific grant, and are the *cause* of
     # what a login attempt would have seen -- so reporting the symptom instead
     # would send somebody to the vault over an account that is simply locked.
-    if user.locked:
-        return Outcome(LOCKED, f"account is {user.status.lower()}; the password was not tried")
-    if user.expired:
-        return Outcome(EXPIRED, f"account is {user.status.lower()}; the password was not tried")
+    #
+    # A comparison (`--method hash`, #437) is not refused by a lock, so it can
+    # have run anyway. The state is still the status -- the lock is still the more
+    # urgent fact -- and what the comparison found rides after it, so an operator
+    # can tell whether unlocking would be enough.
+    if user.locked or user.expired:
+        state = LOCKED if user.locked else EXPIRED
+        found = None if verification is None else _one_line(verification.detail)
+        if found is None:
+            return Outcome(state, f"account is {user.status.lower()}; the password was not tried")
+        where = "" if version is None else f"vault v{version} "
+        return Outcome(state, f"account is {user.status.lower()}; {where}{found}", verification)
 
     if verification is None:
         return Outcome(UNVERIFIABLE, "nothing was attempted")
@@ -200,7 +208,7 @@ def _from_attempt(user: UserState, verification: VerifyResult, *, version: int |
                 f"the previous password still works too{suffix}",
                 verification,
             )
-        return Outcome(IN_SYNC, f"{where}verified by login{suffix}", verification)
+        return Outcome(IN_SYNC, f"{where}verified by {verification.method}{suffix}", verification)
     if verification.result == FAIL:
         detail = _one_line(verification.detail) or "rejected"
         return Outcome(DRIFT, f"{where}{detail}", verification)
