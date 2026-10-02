@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.68.0](https://github.com/villebase/sopuli-dba/compare/v0.67.4...v0.68.0) (2026-10-02)
+
+
+### Features
+
+* **cli:** creds check --method login|hash|both ([#437](https://github.com/villebase/sopuli-dba/issues/437)) ([#600](https://github.com/villebase/sopuli-dba/issues/600)) ([a91fdf7](https://github.com/villebase/sopuli-dba/commit/a91fdf75f9e6b268211a614576c0a239d731b757))
+* **oracle:** both, plan-time require_verifier and ADB's own refusal ([#437](https://github.com/villebase/sopuli-dba/issues/437)) ([#599](https://github.com/villebase/sopuli-dba/issues/599)) ([8a7efea](https://github.com/villebase/sopuli-dba/commit/8a7efeaecf3abe5c72cb236f5f33b5eba85ca24d))
+* **oracle:** compare a password with the stored 12C verifier ([#437](https://github.com/villebase/sopuli-dba/issues/437)) ([#597](https://github.com/villebase/sopuli-dba/issues/597)) ([4f88fbe](https://github.com/villebase/sopuli-dba/commit/4f88fbe538bc94139d1656e1b36c56f14426ca78))
+
+
+### Bug Fixes
+
+* **oracle:** key the password byte limit to 23, not 12.2 ([#595](https://github.com/villebase/sopuli-dba/issues/595)) ([#596](https://github.com/villebase/sopuli-dba/issues/596)) ([273cba0](https://github.com/villebase/sopuli-dba/commit/273cba05c926ecafa499bb89567517356ae496db))
+
 ## [0.67.4](https://github.com/villebase/sopuli-dba/compare/v0.67.3...v0.67.4) (2026-10-01)
 
 
