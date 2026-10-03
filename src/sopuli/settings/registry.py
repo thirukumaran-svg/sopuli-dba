@@ -518,6 +518,17 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 builtin=False,
             ),
             _setting(
+                # Whether anybody can answer a prompt (#610). Profile-only: it is
+                # a property of where a run is invoked from, like the `db.*`
+                # timeouts. `false` makes every confirmation gate refuse with
+                # exit 8 unless `--confirm` answered it in advance. No built-in:
+                # unset means "ask whether stdin is a terminal".
+                "confirm",
+                type=bool,
+                layers=(Layer.PROFILE,),
+                policy=MergePolicy.OVERRIDE,
+            ),
+            _setting(
                 # No built-in: an unset max_targets is no limit, which is not the
                 # same claim as a default limit the tool chose.
                 "safety.max_targets",

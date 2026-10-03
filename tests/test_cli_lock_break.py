@@ -601,3 +601,23 @@ def test_a_dry_run_does_not_claim_a_lock_was_taken(
 
     codes = [one.get("code") for one in json.loads(result.output).get("diagnostics", [])]
     assert LOCK_TAKEN_OVER not in codes
+
+
+def test_a_profile_that_cannot_answer_refuses_even_at_a_terminal(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    with_locks: Stores,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`confirm: false` refuses before the prompt, and the lock is untouched (#610)."""
+    store = with_locks((PROD, held(ago=LAPSED)))
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    config = write_config(CONFIG + "profiles:\n  ci:\n    confirm: false\n")
+
+    result = run(runner, config, str(PROD), "--profile", "ci", input="y\n")
+
+    assert refused(result) == ExitCode.ABORTED
+    assert "profiles.ci.confirm" in str(getattr(result.exception, "hint", ""))
+    stored = store.read(lock_path(PROD))
+    assert stored is not None
+    assert stored.version == 1

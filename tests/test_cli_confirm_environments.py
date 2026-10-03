@@ -506,3 +506,94 @@ def test_readonly_still_outranks_it(
 
     assert isinstance(result.exception, RefusedError)
     assert "safety.readonly" in str(result.exception)
+
+
+# ------------------------------------------------ a profile's `confirm:` (#610) ---
+
+#: The guarded estate with a profile that says nobody can answer.
+PROFILED = CONFIG + "profiles:\n  ci:\n    confirm: false\n  desk:\n    confirm: true\n"
+
+
+@pytest.mark.parametrize("argv", VERBS)
+def test_a_profile_that_cannot_answer_refuses_even_at_a_terminal(
+    argv: list[str],
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`confirm: false` makes a gated run refuse with exit 8 (P5). A terminal is
+    faked, so the refusal is the profile's rather than the missing stdin's."""
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    harness = estate()
+    before = versions(harness)
+    result = run(
+        runner, argv, write_config(PROFILED), "--select", "tenant=alpha", "--profile", "ci"
+    )
+
+    assert isinstance(result.exception, RefusedError)
+    assert result.exception.exit_code == ExitCode.ABORTED
+    assert "profiles.ci.confirm" in str(result.exception.hint)
+    assert versions(harness) == before
+    assert issued(harness) == []
+
+
+@pytest.mark.parametrize("argv", VERBS)
+def test_confirm_answers_a_profile_that_cannot(
+    argv: list[str], runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--confirm` is the yes given in advance, so nothing is left to ask."""
+    estate()
+    result = run(
+        runner,
+        argv,
+        write_config(PROFILED),
+        "--select",
+        "tenant=alpha",
+        "--profile",
+        "ci",
+        "--confirm",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+
+
+def test_a_profile_that_can_answer_still_needs_a_terminal(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`confirm: true` cannot make a prompt answerable where there is no stdin."""
+    estate()
+    result = run(
+        runner,
+        ["creds", "apply"],
+        write_config(PROFILED),
+        "--select",
+        "tenant=alpha",
+        "--profile",
+        "desk",
+    )
+
+    assert isinstance(result.exception, RefusedError)
+    assert "profile" not in str(result.exception)
+
+
+def test_the_profile_answer_is_reported(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A setting that changed a run appears in `invocation.options`."""
+    estate()
+    result = run(
+        runner,
+        ["creds", "apply"],
+        write_config(PROFILED),
+        "--select",
+        "tenant=beta",
+        "--profile",
+        "ci",
+        "--output",
+        "json",
+    )
+
+    options = json.loads(result.output)["invocation"]["options"]
+    assert options["confirm"]["value"] is False
+    assert options["confirm"]["source_detail"] == "profiles.ci.confirm"

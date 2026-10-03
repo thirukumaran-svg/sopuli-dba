@@ -177,6 +177,7 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
     if profile is not None:
         at = f"profiles.{profile.name}"
         found.append(("output", profile.output, f"{at}.output", Layer.PROFILE))
+        found.append(("confirm", profile.confirm, f"{at}.confirm", Layer.PROFILE))
         found.extend(_safety(profile.safety, at=at, layer=Layer.PROFILE))
         found.extend(_locking(profile.locking, at=at, layer=Layer.PROFILE))
         found.extend(_db(profile.db, at=at, layer=Layer.PROFILE))

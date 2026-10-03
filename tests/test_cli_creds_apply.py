@@ -2782,6 +2782,24 @@ def test_a_rollback_without_confirm_is_refused(
     assert result.exit_code != ExitCode.SUCCESS
 
 
+def test_a_rollback_under_a_profile_that_cannot_answer_is_refused(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`confirm: false` refuses the rollback gate even at a terminal (#610)."""
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    harness = estate(documents=_rolled())
+    config = write_config(CONFIG + "profiles:\n  ci:\n    confirm: false\n")
+    result = run(
+        runner, config, "--select", "tenant=alpha", "--source", "previous", "--profile", "ci"
+    )
+
+    assert harness["sessions"] == []
+    assert "profiles.ci.confirm" in str(getattr(result.exception, "hint", ""))
+
+
 def test_a_rollback_with_no_previous_says_so(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

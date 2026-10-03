@@ -1800,7 +1800,7 @@ A closed list. Anything else is a validation error.
 | `verify.lockout_margin` | how close to `FAILED_LOGIN_ATTEMPTS` to stop trying |
 | `safety.*` | `max_targets`, `confirm_environments`, `readonly` |
 | `locking.break_expired` | may an unattended run take over an expired lock (#83)? The profile is where this belongs: it is a property of running without anybody watching |
-| `confirm` | whether interactive confirmation is possible at all |
+| `confirm` | whether interactive confirmation is possible at all. `false` makes every gate that would prompt refuse with exit 8 instead, even at a terminal; `--confirm` still answers in advance, except for the seen reset, which then cannot run. Unset means "ask if stdin is a terminal" |
 | `output` | `text` \| `json` \| `jsonl` |
 | `log_level`, `log_file` | |
 | `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs. `connect_timeout_s` defaults to 30 s — a connection that times out has applied nothing. `query_timeout_s` defaults to **no bound**, deliberately: a call timeout cancels the round trip without undoing what the server did with it, and `ALTER USER` is not transactional, so an imposed default turns a slow success into a run that cannot say whether the password changed. Invariant 7 has no answer for that state; an operator may still set one. **Both are consulted** (#360): `_timeouts()` in `sopuli/cli.py` resolves the pair and hands them to every driver the tool builds, so a profile narrowing either changes what the connection does. Wiring `query_timeout_s` did not change what the tool *imposes* — the built-in is still no bound, for the reason above — only what an operator can reach on purpose. This row has been wrong twice: it once said neither key was consulted, and then that only one was, while `connect_timeout_s` had a reader that was reading a mapping the name was never put into. Which is why the claim now lives in the registry and in `tests/settings/test_settings_are_wired.py` (#358) rather than in this sentence |
@@ -1900,12 +1900,12 @@ Rejected at validation, with a message naming the key:
    in `defaults.profile` is reported against that key; one typed on the command
    line has no line to point at, so it is reported against the file.
 
-**Not every key a profile may write is a setting.** `verify.*`, `confirm`,
-`log_level`, `log_file` and `rotation.strategy` are parsed and validated, and
+**Not every key a profile may write is a setting.** `verify.*`, `log_level`,
+`log_file` and `rotation.strategy` are parsed and validated, and
 reach nothing, because nothing consumes them. They join the resolver with their
 consumers, which is the rule `sopuli/settings/registry.py` states. Layer 3
-supplies `output`, `safety.*`, `locking.break_expired`, `vaults.<name>.*`,
-`db.connect_timeout_s` and `db.query_timeout_s`. A profile's `vault` is read
+supplies `output`, `confirm`, `safety.*`, `locking.break_expired`,
+`vaults.<name>.*`, `db.connect_timeout_s` and `db.query_timeout_s`. A profile's `vault` is read
 too, outside the resolver: it is the store a binding or an admin credential
 falls back to when nothing more specific names one (§3a). A profile writing an
 unconsumed key is not an error and does not appear in `invocation.options`,

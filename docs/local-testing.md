@@ -1461,6 +1461,7 @@ unattended
 ...
 
 settings
+  confirm                     = false                  [profiles.unattended.confirm]
   db.connect_timeout_s        = 60                     [profiles.unattended.db.connect_timeout_s]
   db.query_timeout_s          = 0                      [built-in default]
   locking.break_expired       = true                   [profiles.unattended.locking.break_expired]
@@ -1478,11 +1479,24 @@ Two things to read out of that. `--output text` on the command line beat the
 profile's `output: json`, which is precedence working — drop the flag and the
 source reads `[profiles.unattended.output]`.
 
-And `confirm`, `rotation.strategy` and `verify.method` are **absent from the list
+And `rotation.strategy` and `verify.method` are **absent from the list
 entirely**. They validate, they appear in `config show`, and nothing reads them
-yet — deliberately (`sopuli/settings/registry.py`: a setting arrives with its
-consumer), but it means a profile can look like it configures something it does
-not. `--explain` is how you tell, and it is worth checking before trusting one.
+(`sopuli/settings/registry.py`: a setting arrives with its consumer), so a
+profile can look like it configures something it does not. `--explain` is how
+you tell, and it is worth checking before trusting one.
+
+`confirm: false` says nobody is there to answer a prompt. Every gate that would
+prompt refuses instead, even at a terminal:
+
+```bash
+sopuli --config sopuli.yaml --profile unattended creds rotate
+```
+```
+sopuli: rotating a password needs confirmation, and the active profile says nobody is here to answer
+  hint: `confirm: false` is set at profiles.unattended.confirm -- pass --confirm to answer in advance, or --dry-run to see the plan without touching anything
+```
+
+Exit 8. `--confirm` answers it in advance, and `--dry-run` is never gated.
 
 ### Password policy
 

@@ -1897,6 +1897,17 @@ def account_reset_password(
         confirm_given=confirm,
         preview=run.dry_run,
     )
+    if delivery.is_seen and not run.dry_run:
+        # Asked here rather than at the prompt, which comes after the password
+        # is set: a refusal there would leave a changed password nobody saw.
+        _refuse_if_profile_unattended(
+            run,
+            action="a seen reset",
+            hint=(
+                "`delivery.method: manual` always asks and --confirm cannot answer it -- "
+                "run it under a profile that can be answered, or use an unseen delivery method"
+            ),
+        )
 
     selection = selected(selectors, targets, (), groups, ())
     refuse_unknown(run.config, selection)
@@ -3623,7 +3634,7 @@ def lock_break(
         if isinstance(outcome, Nothing) or run.dry_run:
             return _report_plan(run, outcome, paths=paths, mode=mode)
 
-        _confirm_break(outcome, paths=paths, mode=mode, confirmed=confirm)
+        _confirm_break(outcome, paths=paths, mode=mode, confirmed=confirm, run=run)
         new_version = break_lock(outcome, entry.store)
     except LockDeniedError as exc:
         # The same `denied` object a rotation would emit, for the same reason:
@@ -3667,7 +3678,9 @@ def _nothing_to_break(outcome: Nothing) -> str:
     return f"nothing to break at {outcome.key}: the path has no held record"
 
 
-def _confirm_break(outcome: Take, *, paths: Sequence[Path], mode: str, confirmed: bool) -> None:
+def _confirm_break(
+    outcome: Take, *, paths: Sequence[Path], mode: str, confirmed: bool, run: Invocation
+) -> None:
     """Print the plan and ask, unless somebody already answered.
 
     Invariant 8's "prints a plan first", and the plan goes to **stderr**: under
@@ -3684,6 +3697,7 @@ def _confirm_break(outcome: Take, *, paths: Sequence[Path], mode: str, confirmed
     """
     if confirmed:
         return
+    _refuse_if_profile_unattended(run, action="breaking a lock")
     if not _can_prompt():
         raise RefusedError(
             "breaking a lock needs confirmation, and there is nobody here to ask",
@@ -3744,6 +3758,7 @@ def _confirm_environments(
     demand = confirmation_demanded(run.resolved, plan.blast_radius)
     if demand is None or confirmed:
         return
+    _refuse_if_profile_unattended(run, action=action)
     if not _can_prompt():
         refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
     question = f"{action} in `{demand.named}`?"
@@ -3775,13 +3790,35 @@ def _with_estate_safety(run: Invocation, config: Config) -> Invocation:
     return replace(run, resolved=for_estate(run.resolved, config))
 
 
+def _refuse_if_profile_unattended(run: Invocation, *, action: str, hint: str | None = None) -> None:
+    """Refuse a gated run whose profile says nobody can answer (#610).
+
+    A profile's `confirm: false` declares the run unattended, so a gate that
+    would prompt refuses instead, with exit 8 -- `00-principles.md` P5. It is
+    asked before :func:`_can_prompt`, because a profile written for a scheduler
+    must refuse the same way when somebody happens to run it at a terminal.
+    Each caller asks it only where `--confirm` has not already answered.
+    """
+    answer = run.resolved.get("confirm")
+    if answer is None or answer.value is not False:
+        return
+    raise RefusedError(
+        f"{action} needs confirmation, and the active profile says nobody is here to answer",
+        hint=hint
+        or (
+            f"`confirm: false` is set at {answer.location} -- pass --confirm to answer "
+            "in advance, or --dry-run to see the plan without touching anything"
+        ),
+    )
+
+
 def _can_prompt() -> bool:
     """Whether there is somebody at a terminal to answer.
 
-    Not a flag and not a profile key — a run is unattended when nobody could have
-    been asked, which is what `invocation.actor.unattended` already says in the
-    document (`01-configuration.md` §5). A profile's `confirm:` is parsed and
-    waiting for a consumer; wiring it into the resolver is its own change.
+    A run is unattended when nobody could have been asked, which is what
+    `invocation.actor.unattended` already says in the document
+    (`01-configuration.md` §5). A profile's `confirm: false` says the same in
+    writing, and :func:`_refuse_if_profile_unattended` asks it first.
 
     Asks :func:`~sopuli.output.tty.is_a_terminal` rather than `isatty()` directly
     (#419). The bare call raises `ValueError` on a closed or detached stdin, and
@@ -5566,7 +5603,7 @@ def creds_apply(
     """
     document = run.document
     refuse_if_readonly(run.resolved, action="applying a password")
-    _confirm_rollback(source_stage, confirmed=confirm, previewing=run.dry_run)
+    _confirm_rollback(source_stage, confirmed=confirm, previewing=run.dry_run, run=run)
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
@@ -5959,7 +5996,9 @@ class _Promotion:
     error: Error | None = None
 
 
-def _confirm_rollback(stage: str | None, *, confirmed: bool, previewing: bool) -> None:
+def _confirm_rollback(
+    stage: str | None, *, confirmed: bool, previewing: bool, run: Invocation
+) -> None:
     """Ask before a rollback, or refuse where nobody can be asked.
 
     UC-1 section 8 puts `--confirm` on this operation and only this one, and the
@@ -5977,6 +6016,7 @@ def _confirm_rollback(stage: str | None, *, confirmed: bool, previewing: bool) -
     """
     if stage != PREVIOUS or confirmed or previewing:
         return
+    _refuse_if_profile_unattended(run, action="rolling back")
     if not _can_prompt():
         raise RefusedError(
             "rolling back needs confirmation, and there is nobody here to ask",
@@ -9102,6 +9142,7 @@ def _confirm_rotation(plan: Any, *, confirmed: bool, run: Invocation) -> None:
     """
     if confirmed:
         return
+    _refuse_if_profile_unattended(run, action="rotating a password")
     if not _can_prompt():
         raise RefusedError(
             "rotating a password needs confirmation, and there is nobody here to ask",

@@ -162,6 +162,7 @@ GLOBAL_PARAMS = (
 #: needs the answer while the file is still being built. Same two contributions,
 #: same resolver, so there is nothing for them to disagree about.
 RESOLVED_SETTINGS = (
+    "confirm",
     "db.connect_timeout_s",
     "db.query_timeout_s",
     "locking.break_expired",

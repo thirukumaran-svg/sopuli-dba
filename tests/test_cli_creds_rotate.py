@@ -1371,3 +1371,22 @@ def test_a_denied_lock_streams_the_holder_and_nothing_after_it(
     assert lines[-2]["data"]["holder"]["correlation_id"] == "01JSOMEBODYELSE"
     assert lines[-1]["data"]["exit_code"] == ExitCode.LOCK_HELD
     assert harness["sessions"] == []
+
+
+def test_a_profile_that_cannot_answer_refuses_even_at_a_terminal(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rotate's gate is unconditional, and `confirm: false` refuses it (#610)."""
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    estate()
+    config = write_config(CONFIG + "profiles:\n  ci:\n    confirm: false\n")
+
+    refused = runner.invoke(cli, ["creds", "rotate", "--config", str(config), "--profile", "ci"])
+    answered = run(runner, config, "--profile", "ci")
+
+    assert "the active profile says nobody is here to answer" in str(refused.exception)
+    assert getattr(refused.exception, "exit_code", None) == ExitCode.ABORTED
+    assert answered.exit_code == ExitCode.SUCCESS, answered.output

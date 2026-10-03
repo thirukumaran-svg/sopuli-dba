@@ -34,6 +34,7 @@ from sopuli.delivery.vault_wrapped import NotWrappableError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockStolenError
 from sopuli.lock.manager import LockManager
+from sopuli.safety import RefusedError
 from sopuli.store import StoreError
 from sopuli.store.hashicorp.kv2 import Kv2Store
 
@@ -1375,3 +1376,22 @@ def test_a_missing_webhook_url_refuses_before_the_password_changes(
     assert "SOPULI_NOTIFY_WEBHOOK" in str(result.exception) + str(
         getattr(result.exception, "hint", "")
     )
+
+
+def test_a_profile_that_cannot_answer_refuses_a_seen_reset_before_connecting(
+    runner: CliRunner, write_config: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A profile's `confirm: false` refuses the seen path at plan time (#610).
+
+    At a terminal, so the refusal is the profile's and not guard 3's. The target
+    is unroutable, so reaching the driver would fail differently: exit 8 with the
+    profile's message shows the run stopped before any password was drawn.
+    """
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
+    config = write_config(OFFLINE + "\nprofiles:\n  ci:\n    confirm: false\n")
+
+    result = run(runner, config, "--account", ACCOUNT, "--profile", "ci")
+
+    assert isinstance(result.exception, RefusedError)
+    assert result.exception.exit_code == ExitCode.ABORTED
+    assert "the active profile says nobody is here to answer" in str(result.exception)

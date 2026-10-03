@@ -317,9 +317,9 @@ def test_nothing_shared_omits_the_key_rather_than_emitting_an_empty_array() -> N
 
 
 def test_confirmation_required_is_not_emitted_at_all() -> None:
-    """Optional in the schema, and answering it needs a profile's `confirm:`
-    wired into the resolver -- which `cli._can_prompt` records as its own change.
-    Emitting `false` would claim the run passed a gate that does not exist."""
+    """Optional in the schema, and not answerable here: whether a run is asked
+    depends on `--confirm`, the profile's `confirm:` and stdin, none of which the
+    plan sees. Emitting `false` would claim the run passed no gate."""
     assert "confirmation_required" not in plan_over(accounts=ACCOUNTS).as_json()
 
 
