@@ -81,7 +81,7 @@ ROOT = Path(__file__).resolve().parent.parent
 #:
 #: **Today this catches nothing, and that is the correct state**, measured on the
 #: run that added it: the only tests reading either root file are the `DOCS_LANE`
-#: pair below, which are deselected, so the measured suite opens neither. It is a
+#: modules below, which are deselected, so the measured suite opens neither. It is a
 #: guard against the *next* test that reads one -- which the old tuple could not
 #: have reported however far the list drifted.
 #:
@@ -107,6 +107,7 @@ WATCHED = WATCHED_DIRS + WATCHED_FILES
 DOCS_LANE = (
     "tests/test_verification_register.py",
     "tests/test_doc_command_lines.py",
+    "tests/test_doc_lists.py",
     "tests/test_readme_links.py",
 )
 

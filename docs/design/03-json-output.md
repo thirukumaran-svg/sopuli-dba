@@ -192,6 +192,7 @@ output anticipated. `config show` arrived first and has no states at all, so the
 rule applies to it in the same form against the fields its `config` section
 emits. Implemented in `sopuli/output/palette.py`:
 
+<!-- checked-list: state-roles -->
 | Role | What it marks | The field behind it |
 |---|---|---|
 | `heading` | a section name, a column heading | structure, not data |
@@ -199,9 +200,9 @@ emits. Implemented in `sopuli/output/palette.py`:
 | `notable` | an overridden target, a `non_production` store, a warning | `overridden`, `non_production` |
 | `production` | the `prod` environment wherever it appears | `environment` |
 | `good` | a state a reader can stop reading at | `state` = `IN_SYNC` |
-| `attention` | something true that a person has to act on, the run being fine | `state` ∈ `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY` |
+| `attention` | something true that a person has to act on, the run being fine | `state` ∈ `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET` |
 | `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED` |
-| `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED` |
+| `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED`, `DECLARED` |
 
 The same four roles carry a second vocabulary — a store's health — rather than
 growing a palette of their own:
@@ -217,7 +218,7 @@ growing a palette of their own:
 | `targets[].reachable` = `false` | `bad` | |
 
 **Two rules a reader will otherwise take as inconsistency.** `IN_SYNC` is
-coloured and `reachable: true` is not, because a result state is one of eleven
+coloured and `reachable: true` is not, because a result state is one of many
 with no norm — cyan says *this row is done* — while reachability has two values
 and an overwhelming one, so painting the common one would make the single `no`
 ordinary again. That is `config show`'s argument for painting `prod` and no other
@@ -291,26 +292,39 @@ unchanged, which is precisely what the UTF-8 streams make safe.
 
 ## 2. The run document
 
+<!-- checked-list: run-document -->
 ```
 {
   schema_version, tool, command,
-  invocation { correlation_id, timing, actor, dry_run, profile, selection, options },
+  invocation { correlation_id, started_at, finished_at, duration_ms, actor,
+               dry_run, profile, config_files[], selection, options },
   config     { sources[], resolved, declared | targets[] + bindings[] },
+  policy     { name, length, charset, first_char, require, limit, samples[] },
   plan       { units[], shared_secrets[], confirmation_required, blast_radius },
-  lock       { mode, held[], denied, found[] },
-  results    [ { account, target, scope, secret, state, changed, actions[],
-                 verification, rollover, error, warnings[] } ],
+  lock       { mode, held[], found[], broken, denied },
+  results    [ { account, target, scope, secret, state, delivered, handover,
+                 account_status, changed, actions[], verification, rollover,
+                 password_age_days, started_at, duration_ms, error, warnings[],
+                 overridden[], redraws, declared_by, reset_at } ],
   targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
                  error, warnings[] } ],
   install    { backends[], drivers[] },
   wallet     { required_by[], tns_admin, directory, from_sqlnet, readable,
                files[], unreadable[], auto_login, insecure[] },
-  summary    { total, ok, changed, drift, unverifiable, skipped, failed, by_state },
+  vaults     [ { vault, type, status, detail, version, authenticated, skew_ms,
+                 error, … } ],
+  constraints { source, max_password_bytes, character_set, strictest_target,
+                targets[], accounts[] },
+  summary    { total, ok, changed, unchanged, drift, unverifiable, skipped,
+               failed, by_state },
   diagnostics[],
   error      { category, message, hint },
   exit_code
 }
 ```
+
+`tests/test_doc_lists.py` checks the top-level keys and the `results[]` keys of
+this sketch against the schema. The other objects are abridged.
 
 Several parts of it are worth explaining, because they encode decisions rather
 than just data.
@@ -1416,9 +1430,10 @@ than a run-level diagnostic so that it survives whatever a consumer filters
 Enums are part of the contract. Adding a value is a minor version bump; removing
 or renaming one is major.
 
+<!-- checked-list: enum state -->
 **`state`** — `IN_SYNC`, `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`,
 `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `UNVERIFIABLE`, `SKIPPED`, `ERROR`,
-`VAULT_ONLY`
+`VAULT_ONLY`, `DECLARED`, `RESET`
 
 **`VAULT_ONLY` is what `creds generate --promote` reports** (#257): the vault
 holds this password and no database has been asked. None of the other values
@@ -1441,9 +1456,10 @@ vault and converges them — but a consumer counting rotations in progress must 
 count these, and `check` looking for a `pending` here would find nothing and be
 right.
 
+<!-- checked-list: enum action_kind -->
 **`action_kind`** — `none`, `generate`, `vault_write_pending`, `vault_promote`,
 `vault_rollback`, `password_set`, `rollover_start`, `rollover_finish`,
-`account_unlock`, `attribute_set`, `verify`
+`account_unlock`, `account_lock`, `password_expire`, `attribute_set`, `verify`
 
 The action list is a readable trace of the UC-1 §8 sequence. A completed rotation
 of one account against one target reads:

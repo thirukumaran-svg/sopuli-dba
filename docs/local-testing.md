@@ -27,16 +27,16 @@ reference this guide only skims.
 
 ## 1. What actually exists, before you plan an evening around it
 
-`sopuli --help` lists five nouns, and the implemented surface is **fourteen
-commands**:
+These are the commands this build has:
 
+<!-- checked-list: commands -->
 ```
-sopuli config validate      sopuli creds generate         sopuli lock status
-sopuli config show          sopuli creds apply            sopuli lock break
-sopuli target list          sopuli creds check            sopuli doctor
-sopuli policy sample        sopuli creds rotate           sopuli about
-                            sopuli creds status
-                            sopuli creds finish-rollover
+sopuli config validate      sopuli creds generate         sopuli account list
+sopuli config show          sopuli creds apply            sopuli account suspend
+sopuli target list          sopuli creds check            sopuli account reset-password
+sopuli policy sample        sopuli creds rotate           sopuli account expire-password
+sopuli lock status          sopuli creds status           sopuli doctor
+sopuli lock break           sopuli creds finish-rollover  sopuli about
 ```
 
 **UC-1 is built.** You can rotate a credential end to end against the local
@@ -315,10 +315,10 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 |---|---|---|---|
 | 26ai Free | `sopuli-test-oracle-free-1` | `127.0.0.1:1521/FREEPDB1` | CDB + PDB |
 | 21c XE | `sopuli-test-oracle-xe21-1` | `127.0.0.1:1522/XEPDB1`, root `.../XE` | CDB + PDB |
-| 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` — `DB_PW_CHANGED` is read from `SYS.USER$.PTIME` where the grant exists, and is empty with a `SOPULI-W021` note saying why where it does not (#386) |
+| 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (`password_rollover` is absent), and no `PASSWORD_CHANGE_DATE` — `DB_PW_CHANGED` is read from `SYS.USER$.PTIME` where the grant exists, and is empty with a `SOPULI-W021` note saying why where it does not (#386) |
 | 19c EE 19.3 | `sopuli-test-oracle-19c-1` | `127.0.0.1:1526/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only** — pull it yourself, below. No rollover (19.12+), so `--strategy rollover` is exit 5 at plan time. The one container with `COMMON_USER_PREFIX = C##`, as a real CDB has |
 | 19c EE 19.19 | `sopuli-test-oracle-19c-ru-1` | `127.0.0.1:1527/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only and arm64 hosts only** — below. Does not start under emulation on x86; unrun on arm64, so its capabilities are unmeasured. `C##` prefix, as 19.3 |
-| 19c EE 19.32 | not a container: an OCI DB system | `127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com` through a Bastion session (`-Connect`); the root's service name is generated per system | CDB + PDB, **maintainer-only and billed by the hour** — below (#581). Six capabilities, rollover included; NNE required, so thick mode only. Measured 2026-10-01 — §14 has the tool's run, the scripts' headers the probes |
+| 19c EE 19.32 | not a container: an OCI DB system | `127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com` through a Bastion session (`-Connect`); the root's service name is generated per system | CDB + PDB, **maintainer-only and billed by the hour** — below (#581). Rollover is available; NNE required, so thick mode only. Measured 2026-10-01 — §14 has the tool's run, the scripts' headers the probes |
 | 12c EE 12.2 | `sopuli-test-oracle-12c-1` | `127.0.0.1:1528/ORCLPDB1.localdomain`, root `.../ORCLCDB.localdomain` | CDB + PDB, **maintainer-only** — below. The service names carry `.localdomain`; a bare `ORCLPDB1` is `ORA-12514`. No rollover. **`WE8DEC`**, the one non-Unicode database in the stack. `C##` prefix, as 19.3. `DB_PW_CHANGED` through `SYS.USER$.PTIME`, as on 18c |
 | 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 is unmeasured and 19.32.0.0.0 is the only 19c release update measured (#581). See [`security-model.md`](security-model.md) §5 and #387 |
 
@@ -2036,12 +2036,13 @@ the capability refusals are all decided from it, before the first connection.
 The `STATE` column is coloured, and nothing else in a result table is. Four
 meanings, decided in #395:
 
+<!-- checked-list: state-colours -->
 | Looks like | Means | States |
 |---|---|---|
 | cyan | nothing to do | `IN_SYNC` |
-| yellow | somebody has to act, the run is fine | `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY` |
+| yellow | somebody has to act, the run is fine | `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET` |
 | red, bold | the tool could not do the job, or the estate is not in a state it can | `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED` |
-| dim | nothing could be concluded | `UNVERIFIABLE`, `SKIPPED` |
+| dim | nothing could be concluded | `UNVERIFIABLE`, `SKIPPED`, `DECLARED` |
 
 **Converged is cyan and not green on purpose.** Green against yellow is the one
 pairing a red-green colour-blind reader cannot separate, and `IN_SYNC` against
@@ -2228,7 +2229,7 @@ else is *absent* rather than empty, and the colours say exactly that without a
 word of explanation.
 
 **`yes` is not coloured and `IN_SYNC` is**, which looks inconsistent until you
-see why. A result state is one of eleven with no norm, so cyan means "this row is
+see why. A result state is one of many with no norm, so cyan means "this row is
 done". Reachability has two values and almost always the same one — painting
 `yes` would colour the whole column and make the single `no` ordinary again. Same
 reason `config show` paints `prod` and no other environment.
@@ -4859,8 +4860,8 @@ sopuli: target "free-pdb-svc" does not support role_lookup
 
 Exit **5**, the capability exit code. Before #531 the same run said `target
 'free-pdb-svc' has no role 'ACME_DEV_TEAM'` and exited 1, blaming the file for
-the missing grant. `doctor` shows it too: that target reports 5 capabilities
-rather than 6, with `role_lookup` absent. Nothing else changes. `creds` and the
+the missing grant. `doctor` shows it too: that target reports one capability
+fewer, with `role_lookup` absent. Nothing else changes. `creds` and the
 mutating `account` verbs never read `DBA_ROLES`, so an older install keeps
 working for everything but this listing.
 
