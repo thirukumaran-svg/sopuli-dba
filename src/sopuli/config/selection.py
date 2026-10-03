@@ -179,7 +179,7 @@ def parse_selector(values: Sequence[str]) -> Pairs:
     A key given twice is refused rather than resolved. ``--select env=dev,env=qa``
     is either a typo or a wish for "dev *or* qa", and a match that can only
     ever be a conjunction would silently answer the second reading with an
-    empty estate. C2 leaves set membership open; this refuses to pretend.
+    empty estate. C2 has no set membership; this refuses to pretend.
     """
     seen: dict[str, str] = {}
     for value in values:

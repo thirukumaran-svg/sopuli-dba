@@ -78,7 +78,7 @@ cross-key rules, whose errors have to name the offending key — is listed in
 
 ## Conventions
 
-- Binary name `sopuli`, project name `sopuli-dba` (open decision D1)
+- Binary name `sopuli`, project name `sopuli-dba` (D1)
 - CLI grammar is noun-verb: `sopuli creds rotate`, `sopuli config validate` (D2)
 - Anything marked **open decision** or **open question** is a real fork in the
   road, not a placeholder — decide it before writing the code that depends on it
@@ -112,312 +112,124 @@ cross-key rules, whose errors have to name the offending key — is listed in
   issue did and remove the marker. The rule above about user-visible text
   applies to these markers too.
 
-## Consolidated open decisions
+## Decision register
 
-**Principles (00): all decided.** Binary `sopuli` (D1); noun-verb CLI (D2);
-Python with python-oracledb thick mode (D3); YAML config (D4); macOS best-effort
-and untested (D5); drivers in-tree until there is a second one (D6); Oracle 11.2
-stays in scope, unreachable from Apple Silicon (D7); click as the CLI framework
-(D8); vendor clients are install extras (D9).
+This table is the one place that says whether a decision is open. Each row names
+the document that raises the question. That document's own table keeps the
+question and the reasoning. `tests/test_decision_register.py` checks those tables
+against this one:
 
-**Packaging (130): all decided**, in
-[ADR-006](decisions/adr-006-optional-dependencies.md). Every dependency that
-exists only to reach one vendor is an install extra; base carries the CLI
-framework, the YAML parser, `pywin32` on Windows and sopuli itself, and **opens
-no sockets** — a testable property, not a slogan. ~~Does the rule bind database
-drivers as well as stores~~ (E1 — **decided: yes.** `python-oracledb` is
-`sopuli-dba[oracle]`; binding stores and not drivers would read as arbitrary, and
-D3's Instant Client prerequisite already makes reaching Oracle a per-site
-condition), ~~is the HashiCorp store base or an extra~~ (E2 — **decided: an
-extra.** #103 landed on the HTTP API, so there is no vendor client — but `httpx`
-is still a network client, and rule 3 names the installed dependency set —
-`httpx`, the OCI SDK, `python-oracledb` — precisely so a test can hold it.
-`httpx` ships in `sopuli-dba[hashicorp]` and ADR-005's consequence is amended),
-~~does `sopuli-dba[all]` exist~~ (E3 —
-**decided: yes**, CI and the test matrix need one name that means everything;
-user-facing install instructions recommend the extras a site actually has, never
-`all` as the default line), ~~does `config validate` fail or warn on a
-configured-but-uninstalled backend~~ (E4 — **decided: warn.** The config is
-valid; the install is incomplete. A validator that calls a good file broken is
-less trustworthy for the case it exists to serve), ~~which exit code and
-category~~ (E5 — **decided: `config`, exit 9.** `capability` names what a
-*target* cannot do; a missing backend is fixed locally by the person reading the
-message. It carries an `error.code` so a consumer can branch without parsing
-prose), ~~does `doctor` always list install shape~~ (E6 — **decided: always.**
-Its output is audit evidence as often as it is a diagnostic, and a section that
-appears only on mismatch cannot be quoted as proof that there was none). The
-documents that cite the rule are updated with it: `01-configuration.md` §3a has
-what a declared-but-uninstalled `type:` does and §9/§10 have the warning,
-`03-json-output.md` §3 has `SOPULI-20001` and `SOPULI-W003`, `04-testing.md` §3
-makes install shape a dimension of the matrix, and the root `README.md` leads
-with the install matrix. `pyproject.toml` and the registry's lazy import landed
-in #134, with `SOPULI-20001` and `SOPULI-W003` as the first codes anything
-actually emits, and `doctor`'s install-shape section landed in #214 as
-`install` in schema 1.13 — every registry entry on every run, so *installed and
-not configured* is reportable and a clean run can be quoted as evidence.
+- a row whose question is struck through there (`~~…~~`) must be `decided`
+  here, and the other way round;
+- a `deferred` row must say there what it is deferred to;
+- `00-principles.md` has a status column, and it must match;
+- every ADR is `decided` and says `Status: **accepted**`.
 
-**Configuration (01):** ~~naming of the binding section~~ (C1 — **decided:
-`applications`, with an inline single-application form**), label selector syntax
-(C2), template expressiveness (C3), per-account overrides (C4), config encryption
-(C5, proposed out of scope), mirrored vault writes (C6), ~~target-set nesting
-depth~~ (C7 — **decided: two levels, write a second set**), ~~labels on explicit
-targets~~ (C8 — **decided: allowed**), ~~how the file points at vault auth
-material and the database admin credential~~ (C9 — **decided in #27**: one
-grammar, two vocabularies. A vault's secret-bearing keys are each a MaterialRef,
-one of `env` / `file`, so the config has nowhere to hold a credential; the admin
-credential names one of P2's four sources, with `external` constraining the DSN to
-a TNS alias; `oracle.scope` adopts the run document's vocabulary and is an
-assertion checked on connect), ~~what profiles are for~~ (C10 —
-**decided: run context, not target selection**), composable profiles (C11,
-proposed no), a built-in `interactive` profile (C12, leaning no), ~~whether `vault:`
-under `defaults`/`profiles` is a name or a block~~ (C13 — **decided in #31: a
-name, everywhere.** Settings *of* a store are reached by naming it under
-`vaults:`, which `defaults:` and a profile may each carry as partial entries;
-this is `01-configuration.md` §6's `SOPULI_VAULT` /
-`SOPULI_VAULT__VAULT_DEV__ADDR` pair written in the
-file. A layer may set every reach setting a store has, but not `type` and not the
-guardrails `non_production` and `locking`. Implemented in #136 for the layers the
-file supplies, which corrected one word: `defaults.vaults:` is layer 5 and so
-fills gaps rather than patching — only a profile, at layer 3, is above the
-declaration. A profile's block was applied in #153, in the same pass, and the environment's half in #154 — `SOPULI_VAULT__VAULT_DEV__ADDR` at layer 2 and `VAULT_ADDR` and friends at layer 3, with an ambiguous store-name-to-variable mapping refused rather than resolved, and the unnamed `SOPULI_VAULT_ADDR` bound to the store `defaults.vault` names rather than to whichever store a binding happened to reach), ~~the `@version=` and `@stage=` vocabularies in a
-SecretRef and who owns them~~ (C14 — **decided in #40: the tool owns both.**
-`stage` is `current` / `pending` / `previous`, any case in, lower case out;
-`version` is a whole number from 1; neither may hold a `{token}`. OCI's rotation
-states turned out to be a fixed Oracle-defined set rather than user-definable
-labels, so there was no backend vocabulary to defer to and the run schema is
-ratified as written), ~~a binding names a secret and no store, anywhere: refuse,
-warn, or leave it to plan time~~ (C15 — **decided in #118: mostly plan time.**
-`_vault_for` resolving to `None` is not always wrong — a profile's `vault:` or
-`SOPULI_VAULT` can still complete it, and neither is consulted while bindings
-are built once at load — so it is left alone, shown as `-` by `config show
---resolved`, and caught exactly by the first command that needs a store.
-Refused at load only for the narrower case nothing at run time can ever
-complete: `vaults:` declaring no store at all, so there is nothing for a
-profile or `SOPULI_VAULT` to name), ~~what does `--vault-token` take~~ (C16 —
-**decided in #145: a path, under a different name.** `--vault-token-file PATH`
-hoists §3a's `token: { file: … }` onto the command line, and a bare
-`--vault-token` is **refused** with a message naming invariant 1 and all four
-working sources — refused rather than absent, because Vault's own CLI accepts
-`-token=` and somebody will try it, and refused rather than ignored, because a
-flag that parsed and did nothing is a plan that looks like it accounted for auth
-and did not. The crux is that P5's "or a vault ref" escape cannot apply to vault
-auth itself: a ref is resolved *by* an authenticated store, which is P2's
-bootstrap problem one layer earlier. Reusing the MaterialRef grammar
-(`--vault-token env:NAME`) was rejected as a semantic collision rather than mere
-cleverness — two identical-looking grammars with opposite resolution order.
-`--vault-token-stdin` is deferred because `--from-stdin` claims the pipe, and the
-rule it will have to satisfy is banked in P5 now. Recorded in
-[ADR-007](decisions/adr-007-vault-token-flag.md), which also confirms `vault
-login` as the human bootstrap and gives the flag's file P4's permission check),
-~~P5 requires confirmation by default on `environment: prod` and over
-`max_targets`, and §9 forbids a built-in that joins a ratchet~~ (C17 —
-**decided in #294: §9 governs and P5 is reworded.** Confirmation is opt-in
-through `safety.confirm_environments` alone. A built-in `[prod]` is an
-unremovable floor under the union ratchet — §9 illustrates that trap with
-`confirm` itself — and the blast-radius trigger would prompt on every
-multi-target mutation for an estate that configured nothing, while reading a
-*ceiling* as a confirmation threshold. Both are **declined rather than
-deferred**, so a `prod` target no layer listed is not prompted for by design, and
-`tests/test_cli_confirm_environments.py` fails if either returns. `creds rotate`
-and `lock break` confirm unconditionally and were never part of the question).
+The statuses are:
 
-**Oracle privileges (02):** common `C##` service user or per-PDB local as the
-documented default (P1), ~~grant `SELECT ON SYS.USER$` by default~~ (P2 —
-**decided in #86: no.** Optional, capability-probed grant instead — `check`
-defaults to `login` unconditionally either way. Whether to *recommend* the
-grant, and whether `SELECT_CATALOG_ROLE`/`KU$_USER_VIEW` is a narrower
-alternative, is not decided (open: #124)), ~~whether `--force` exists~~ (P3 — **decided in #89: yes**, one flag overriding
-`02-oracle-privileges.md` §4's account checks 2–5 and nothing else. `DBSNMP` is
-the case: rotating its
-password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a tool with no
-override does not prevent that rotation — it moves it to SQL\*Plus, where nothing
-records it. Per-check flags were rejected as a growing flag surface for a rare
-case. It never overrides the config whitelist, and it is deliberately **not a
-setting**, which is what keeps it structurally unable to relax `readonly`,
-`max_targets`, `confirm_environments` or `dry_run`),
-one service account per database or per application (P4),
-does `doctor` fail or warn on over-granted privileges (P5), keep 11.2 support
-(P6). *(~~P7 — do the 23-codebase schema privileges cover `ALTER USER`~~ — is
-answered: **no**, `ORA-00990`, tested on 26ai 23.26.2.0.0 with a succeeding
-`SELECT ANY TABLE ON SCHEMA` as the control. The direct grant is the permanent
-model and ADR-001's P7 revisit trigger is closed. ~~P8 — 11.2 retains the
-`ALTER USER` text in `V$SQLSTATS`; document it, warn, or refuse~~ — is answered
-in #387: **document it**. The exposure needs a dictionary grant the service
-account does not have, and it is a window rather than a record — it ages out with
-the shared pool and one `FLUSH SHARED_POOL` clears it. A runtime warning would
-have had to branch on a version number, since nothing can probe the fact; refusing
-would have reversed D7 and moved the rotation to SQL\*Plus, which retains the same
-text. The boundary between 11.2 and 18.4 stays unmeasured.)*
+- `open`: not answered. Do not write code that depends on it. Ask first.
+- `decided`: answered. The answer is the rule.
+- `deferred`: answered as "not now". The document's row says what would reopen
+  it.
 
-**JSON output (03):** buffering policy for `--output json` (J1), always emit
-`plan` (J2), warning code registry (J3), host/pid in output (J4), OpenTelemetry
-(J5), resumable streams (J6). *~~Does a usage error emit a run document~~
-resolved 2026-08-13 in issue #8: no — a run document describes a run, and a run
-begins when the invocation resolves. Exit 2 is the only code that never produces
-one; P5 gained exit 9 so that an invalid config file, which has a perfectly good
-invocation, stops sharing a code with a bad command line (J7).* *~~Which library
-renders text tables~~ decided
-2026-08-11 in [ADR-003](decisions/adr-003-text-tables.md): none — `click` plus
-the standard library, on dependency weight and on keeping output independent of
-the terminal. `config show --resolved` was the first command with real results
-to display, which is what the decision was waiting for.*
+Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
+`UC-1` and `UC-2` are the two use-case documents; `ADR` is the file in
+`decisions/` with that number, and `ADR-006` rows are sections of
+[ADR-006](decisions/adr-006-optional-dependencies.md).
 
-**Testing (04):** testcontainers or compose (T2), LocalStack tier (T3), OCI Vault
-cost in a test loop (T4), real standby for the read-only refusal (T6), Oracle
-reset strategy (T7). *T1 resolved 2026-08-08: the 11g XE image exists and works,
-so 11.2 stays tier 2. T5 resolved 2026-08-09: GitHub Actions, tier 0 wired in
-`.github/workflows/ci.yml`.*
+| ID | Where | Question | Status | Answer | Issue |
+|---|---|---|---|---|---|
+| D1 | 00 | Binary name | decided | `sopuli`; the project is `sopuli-dba` | |
+| D2 | 00 | CLI grammar | decided | noun-verb: `sopuli creds rotate` | |
+| D3 | 00 | Implementation language | decided | Python, `python-oracledb` in thick mode | |
+| D4 | 00 | Config format | decided | YAML; JSON is accepted because it is valid YAML | |
+| D5 | 00 | macOS tier | decided | best effort, untested, no macOS CI | |
+| D6 | 00 | Plugin model for drivers and stores | decided | in-tree until a second driver exists | |
+| D7 | 00 | Minimum Oracle version | decided | 11.2 stays in scope | |
+| D8 | 00 | CLI framework | decided | click | |
+| D9 | 00 | Dependency layering | decided | vendor clients are install extras | #130 |
+| D10 | 00 | Which confirmation triggers are built in | decided | none; `safety.confirm_environments` only | #294 |
+| E1 | ADR-006 | Does the extras rule bind database drivers? | decided | yes; `python-oracledb` is `sopuli-dba[oracle]` | #130 |
+| E2 | ADR-006 | Is the HashiCorp store base or an extra? | decided | an extra, `sopuli-dba[hashicorp]` | #130 |
+| E3 | ADR-006 | Does `sopuli-dba[all]` exist? | decided | yes, for CI; not the recommended install | #130 |
+| E4 | ADR-006 | Configured but uninstalled backend: fail or warn? | decided | warn | #130 |
+| E5 | ADR-006 | Exit code and category for a missing backend | decided | `config`, exit 9, with an `error.code` | #130 |
+| E6 | ADR-006 | Does `doctor` always list the install shape? | decided | always | #214 |
+| E7 | ADR-006 | Where a notify channel's client goes | decided | a fourth extra category, `sopuli-dba[notify]` | #442 |
+| C1 | 01 | Name of the binding section | decided | `applications`, with an inline form | |
+| C2 | 01 | Selector syntax | decided | `--select k=v` over labels, and `match:` in groups | #615 |
+| C3 | 01 | Arbitrary expressions in secret templates? | decided | no; a fixed token list plus labels | #615 |
+| C4 | 01 | Per-account overrides in an application entry | open | per-label cases are covered; per-account is not | |
+| C5 | 01 | Config encryption at rest | decided | out of scope; the config holds no secrets | #615 |
+| C6 | 01 | Several vaults for one application (mirror writes) | deferred | to a later use case | |
+| C7 | 01 | More than two `target_sets` nesting levels? | decided | no; write a second set | |
+| C8 | 01 | Labels on explicit `targets:`? | decided | allowed | |
+| C9 | 01 | How the file points at vault auth and the admin credential | decided | one grammar, two vocabularies | #27 |
+| C10 | 01 | What profiles are for | decided | run context, not target selection | |
+| C11 | 01 | Composable `--profile`? | decided | no; one active profile | #615 |
+| C12 | 01 | A built-in `interactive` profile? | decided | no | #615 |
+| C13 | 01 | `vault:` under `defaults:` and profiles: a name or a block? | decided | a name, everywhere | #31 |
+| C14 | 01 | `@version=` and `@stage=` vocabularies | decided | the tool owns both | #40 |
+| C15 | 01 | A binding with a secret and no store | decided | caught at plan time | #118 |
+| C16 | 01 | What `--vault-token` takes | decided | refused; `--vault-token-file PATH` instead | #145 |
+| C17 | 01 | P5's built-in confirmation against `01-configuration.md` §9's ratchet rule | decided | §9 governs; P5 is reworded | #294 |
+| P1 | 02 | Default service user: common `C##` or per-PDB local? | decided | common; per-PDB is documented | #615 |
+| P2 | 02 | Grant `SELECT ON SYS.USER$` by default? | decided | no; an optional, probed grant | #86 |
+| P3 | 02 | Does `--force` exist? | decided | yes; it overrides account checks 2–5 only | #89 |
+| P4 | 02 | One service account per database or per application? | decided | per database | #615 |
+| P5 | 02 | Does `doctor` fail or warn on over-grants? | decided | warn | #213 |
+| P6 | 02 | Keep 11.2 support? | decided | keep (D7) | #615 |
+| P7 | 02 | Do schema privileges cover `ALTER USER`? | decided | no, `ORA-00990` | |
+| P8 | 02 | 11.2 keeps the `ALTER USER` text in `V$SQLSTATS` | decided | document it | #387 |
+| J1 | 03 | Does `--output json` print nothing until the end? | decided | yes; `jsonl` streams | #615 |
+| J2 | 03 | `plan` in every run? | decided | in every command that plans | #615 |
+| J3 | 03 | Machine-readable warning codes | open | codes exist; how numbers are allocated is open | |
+| J4 | 03 | Host and pid in the output | decided | `invocation.actor.host`; no pid | #615 |
+| J5 | 03 | OpenTelemetry export | deferred | later; `correlation_id` serves until then | |
+| J6 | 03 | Resumable event stream after a crash? | decided | no; run again | #615 |
+| J7 | 03 | A run document on a usage error? | decided | no; exit 2 never emits one | #8 |
+| T1 | 04 | Does an 11g XE image exist? | decided | yes | #1 |
+| T2 | 04 | testcontainers or compose? | decided | compose | #174 |
+| T3 | 04 | Is LocalStack Secrets Manager in the community tier? | open | | |
+| T4 | 04 | Does OCI Vault cost matter in a test loop? | open | | |
+| T5 | 04 | Public CI provider | decided | GitHub Actions | |
+| T6 | 04 | A real Data Guard standby for the read-only test? | deferred | until a driver bug needs it | |
+| T7 | 04 | Snapshot and restore for Oracle resets | deferred | drop and recreate until tier 2 is too slow | |
+| Q1 | UC-1 | `check`'s default method | decided | `login` | #86 |
+| Q2 | UC-1 | Where the advisory lock lives | decided | in the vault, per secret path | #83 |
+| Q3 | UC-1 | Generations of `previous` | decided | one | #84 |
+| Q4 | UC-1 | Does the tool alter a profile? | decided | never | #88 |
+| Q5 | UC-1 | Notification on drift | decided | out of scope; exit 3 and JSON | #615 |
+| Q6 | UC-1 | Self-rotation mode | deferred | to UC-1b | |
+| Q7 | UC-1 | One secret per account or per application | decided | per application, a field per account | #85 |
+| Q8 | UC-1 | Does `apply` create a missing account? | decided | no; account creation is UC-4 | #615 |
+| Q9 | UC-1 | Time source for password age | decided | the vault's `rotated_at` | #87 |
+| H1 | UC-2 | Where a personal account is declared | decided | `personal_accounts:`, by name or predicate | #449 |
+| H2 | UC-2 | What a reset records, and where | decided | the database, a metadata record, nothing for rollback | #450 |
+| H3 | UC-2 | The noun and the verbs | decided | `account reset-password`, `account expire-password` | #451 |
+| H4 | UC-2 | Verify, unlock, or end a rollover window? | decided | no verify; unlock timed locks; end the window | #455 |
+| H5 | UC-2 | Is self-service part of UC-2? | decided | no | #452 |
+| H6 | UC-2 | How an estate restricts delivery methods | decided | `allowed_methods`, by intersection | #453 |
+| H7 | UC-2 | A reset never converges | decided | outside invariant 9 by scope | #454 |
+| H8 | UC-2 | The stored copy on the unseen path | decided | split by method | #459 |
+| H9 | UC-2 | What "unseen" guarantees on `vault_wrapped` | decided | attribution, not access | #496 |
+| H10 | UC-2 | Does a reset check that the database audits it? | open | | #591 |
+| ADR-001 | ADR | Oracle privilege model | decided | direct `ALTER USER`, no definer-rights package | |
+| ADR-002 | ADR | CLI framework | decided | click | |
+| ADR-003 | ADR | Text tables | decided | click only, formatted by hand | #15 |
+| ADR-004 | ADR | YAML parser | decided | PyYAML, hardened | |
+| ADR-005 | ADR | HashiCorp Vault client | decided | the HTTP API over `httpx` | #103 |
+| ADR-006 | ADR | Optional dependencies | decided | vendor clients are extras; base opens no sockets | #130 |
+| ADR-007 | ADR | The vault token flag | decided | `--vault-token-file PATH` | #145 |
+| ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
+| — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
+| — | — | Should `doctor` check that a TNS alias resolves? | open | | #240 |
+| — | — | `auth: prompt` with no terminal never exits 8 | open | | #481 |
+| — | — | The reset lock when journal and delivery are different vaults | open | | #516 |
+| — | — | Narrow the seen reset's rollover refusal | open | | #541 |
+| — | — | Is logging to a file needed? | open | | #629 |
 
-**UC-1:** ~~default verification method and the privilege it implies~~ (Q1 —
-**decided in #86: `login`, unconditionally**, independent of profile. The
-earlier "hash under an unattended profile" leaning assumed hash mode existed
-and its grant was default; neither holds. The `LCOUNT` guard and `--method
-hash` both depend on the same optional, capability-probed `SELECT ON
-SYS.USER$` grant instead — see 02 P2, also #86), ~~where the advisory lock
-lives~~ (Q2 — **decided in #83: in the vault**, one
-CAS-guarded record per *secret path*, with a fencing token re-checked before
-every mutation. `DBMS_LOCK` was rejected: its one advantage is release on session
-death, and a stalled session is still alive, so it does not prevent the failure
-that matters — a run waking from a stall and applying a stale plan. Fencing does,
-and it costs no widened grant set. Stores without `cas` refuse mutations unless
-configured `locking: advisory-only`), ~~how many `previous` generations to keep~~ (Q3 —
-**decided in #84: exactly one**, plus whatever the store's native versioning
-gives for free. C14 settled it: OCI holds exactly one `PREVIOUS`, and a closed
-three-stage vocabulary has nothing to address an older generation with),
-~~whether the tool ever alters a profile~~ (Q4 — **decided in #88: never**, in
-any credential-sync verb. A profile is shared, so editing one reaches accounts
-nobody selected, and the config whitelists accounts rather than profiles, so
-invariant 5 has no way to constrain it. The tool reports the `ALTER PROFILE` an
-operator would run and issues none; `02-oracle-privileges.md` §3 keeps the
-privilege off the service account and `doctor` flags it as an over-grant. An
-`--allow-profile-change` opt-in was rejected because a flag cannot conjure a
-privilege — the grant would sit on every installation whether or not anyone used
-it — and altering a profile only where declared accounts use it exclusively was
-rejected as a race, on a question `DEFAULT` almost always answers no. Creating
-and altering profiles is UC-4's to decide, for its own principal), drift
-notification (Q5),
-self-rotation mode (Q6), ~~one-secret-per-account vs one-secret-per-app~~ (Q7 —
-**decided in #85: one secret per application**, a field per account, as the
-documented *default*; per-account stays fully supported. An application's accounts
-rotate together far more often than separately, and the per-account layout
-multiplies paths by accounts across every tenant and environment. Nothing about
-the lock or the write path changes shape, because Q2 already keyed the lock on the
-path and the merge patch already writes one field without touching its siblings —
-so the account remains the unit of work even in a shared document. The payload
-follows one rule: every root-level key mirrors the shape of the current-stage
-container. The one real cost is that a shared document cannot use native version
-staging, because an OCI or AWSSM stage is per secret),
-account creation scope (Q8), ~~authoritative time source for password age~~ (Q9 —
-**decided in #87: vault `rotated_at`**, unconditionally; `status` shows the
-database's own timestamp beside it rather than folding the two into one number.
-Settles the aggregation question option 2 would have raised — one vault age
-per secret path, however many targets share it, needs no rule for "oldest,
-newest, or any" the way N database ages would have. The database column stays
-purely informational: a target the tool has never reached still looks exactly
-as fresh as the vault says, and nothing currently reads that column to decide
-anything, which is the cost this option accepts over option 3's thresholded
-`diagnostics[]` warning).
-
-**UC-2 (personal account passwords).** Two paths: an **unseen** default, where the
-DBA never sees the password, the tool writes it to a store meant for its owner
-alone, and nothing is expired — owner-only by the store's access control on an
-identity-scoped path (#447), and only as far as its delivery on a wrapping token,
-which is a bearer credential (#444, UC-2 §6.6) — and a **seen** `manual` path, which is
-a deliberate exposure until the owner's first logon: non-default, confirmed,
-always expired. Decided on review of #457, and **how its one plaintext emission is
-narrowed is now decided too** (#439): five structural guards, invariant 2's fourth
-exception. ~~Is self-service in scope~~ (H5, #452 — **closed:**
-self-service means the owner fetching the password from a secure store, not
-resetting through the tool). ~~How an estate
-restricts delivery methods~~ (H6, #453 — **closed:** `safety.delivery.allowed_methods`,
-ratcheting by **intersection**, so a layer may only narrow the set. Fail-closed:
-a method a later release adds is unusable until an estate names it, where the
-`forbidden_methods` union would have permitted it everywhere on upgrade. It costs
-a fourth ratchet shape, declared per setting the way `safe_bool` already is, and
-there is no `forbidden_methods` now or later; built in #498). ~~A reset never
-converges~~ (H7, #454 — **closed:** it reports `changed: true` every run and warns
-what it replaced, and invariant 9 is restated as a **scope** rule rather than
-gaining a second exemption: a verb that draws fresh randomness has nothing to
-converge on, which admits `creds generate` and this one by one sentence.
-Convergence on a request id or on account state was refused because both key on a
-record an estate need not configure — and account state is not a signal on the
-unseen path, which issues no `PASSWORD EXPIRE`). **H8 and H9 are decided** (#459,
-#496), both by the principle UC-2 §1 states: the unseen path guarantees
-attribution, not access, and only where the database audits `ALTER USER` and
-logons. The name may be left in any durable record the DBA does not control —
-the database audit or Vault's audit device, not the reset record, which the DBA's
-own run writes — so the Vault methods also need an audit device on the Vault.
-`vault_wrapped` meets it through #519's accessor, which finds the wrap and the
-unwrap in that device, and a redirected token is where it stops; `vault_path`
-refuses at plan time if the DBA's token holds `read` or `root` on the person's path;
-and how long a `vault_path` copy lives moved to #447. Open: whether a reset checks
-the audit condition, H10 (#591).
-**H2 is decided** (#450): what a reset records lives in three places rather than
-one. The **database** answers *when* the password last changed
-— `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant,
-12.1 unmeasured on that fallback (unverified: pw-changed-source). That
-diverges from Q9 deliberately: on the seen path the owner is required to change the
-password at first logon, so a record's own timestamp is designed to be overtaken by
-a change the tool never sees — and reading a timestamp is not invariant 6's
-business, because invariant 6 governs the value. A **metadata record**, written
-wherever a store is configured and never where one is not, answers *who* reset it,
-by *which path*, and *where it was delivered*, and holds no password in any
-representation; its path is what Q2's lock keys on, which is the first key UC-2 has
-had, since the wrapping-token form writes no secret path and `manual` writes nothing
-at all. **Nothing** answers *what to roll back to*: rollback is not a UC-2
-operation. A reset with no store configured warns at plan time and runs, because
-requiring one would take `manual` away from the estates it exists for. The keys,
-schema and validators are **#468**, split out in #467's shape. **H4 is
-decided** (#455): a reset never verifies a delivered password and reports
-`ACCOUNT_STATUS` instead, unlocks `LOCKED(TIMED)` by default while refusing a
-deliberate `LOCKED` at plan time, and ends an open rollover window by default with
-a flag to keep it — each measured on 26ai before it was decided. **H3 is decided**
-(#451): the noun is `account` — the configuration's own word for what is being
-managed, which settled the vocabulary and not the file; the file is
-`personal_accounts:`, decided in H1 below — and the verbs are `reset-password` and
-`expire-password`; suspending an account is `account suspend` — named that way to
-avoid a second sense of `lock`, which already means the advisory locks `lock break`
-takes, and specified in #463 — and the listing verb is `account list`, which H1 earns.
-**H1 is decided** (#449): a personal account is declared in a `personal_accounts:`
-section of its own, by name or by a **predicate** over a profile or a role. The
-predicate amends invariant 5's first sentence — what counts as *declared* — and
-leaves the second intact, because it never widens what a mutating verb may touch:
-`account list` resolves it, while a reset names its account and refuses any name
-the predicate does not admit. The cost is that predicate membership is controlled
-by whoever assigns the profile or grants the role, rather than by whoever reviews
-the file. The delivery
-section is written (#456), and H6's amendment to invariant 10 landed with #453. **How the seen path's
-one plaintext emission is narrowed is decided** (#439): it prints, under five
-structural guards — one reveal site, refused with `--output json`/`jsonl`, refused
-unless stdout is a terminal, confirmed every time with `--confirm` *not* answering
-it, and `force_expire: true` required. `CLAUDE.md` invariant 2 carries a fourth
-exception for it, and says why its justification is weaker than the third's and its
-narrowing therefore stricter. See
-[use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) §9.
-
-### Settled
-
-**The privilege model is direct `ALTER USER`.** The definer-rights package was
-drafted and rejected: the operator is a DBA who already holds SYSDBA, so the
-package constrains someone who is not actually constrained, while adding a
-per-PDB install, a second whitelist to keep in sync with the tool's config, and
-version skew as a new failure mode. Recorded in
-[ADR-001](decisions/adr-001-privilege-model.md). It named two triggers for
-revisiting; **P7 is now closed** — schema privileges do not cover `ALTER USER`
-(`ORA-00990`) — so an unattended scheduled runner is the only one left, and it is
-about credential custody rather than a narrower grant being available.
-
-### Settle these next
-
-1. **C1–C6** — the configuration questions, since the YAML schema is the next
-   thing that becomes code.
-*(T1 was here and is now answered: the image exists, 11.2 support costs nothing.
-Q2 was here too and is answered in #83: the lock lives in the vault, keyed on the
-secret path, fenced by the vault's own version counter. Building it is #94–#97.
-Q1 + P2 was here too and is answered in #86: `check` defaults to `login`
-unconditionally, and `SELECT ON SYS.USER$` is optional rather than granted by
-default. What's left of it is deferred, not settled here — see #90 and #124
-below.)*
+Closed decision issues with no ID are not listed here.
 
 ## Verify before implementing
 

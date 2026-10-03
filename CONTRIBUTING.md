@@ -38,8 +38,8 @@ why the documentation looks the way it does.
   which document applies to which kind of change. It is written for agents, and
   it binds every contributor the same way.
 - **Open questions wait for the maintainer.** A design question that is not yet
-  answered is a GitHub issue labelled `decision`, and it stays open until the
-  maintainer answers it. An agent that needs one answered stops and asks; that
+  answered is `open` in the decision register in `docs/README.md`, and it stays
+  open until the maintainer answers it. An agent that needs one answered stops and asks; that
   is the rule *surface, do not resolve*, and it applies to you too (see
   [Before you write code](#before-you-write-code)).
 - **Every review comment is answered.** Every pull request gets a Copilot
@@ -86,9 +86,9 @@ existing one. This is a small project and a design conversation is cheaper than 
 rewritten branch.
 
 **Some decisions are deliberately still open.** The design documents mark them
-with a letter and a number — `D3`, `C14`, `P7` — and they are listed together in
-[`docs/README.md`](docs/README.md) and tracked as GitHub issues labelled
-`decision`. **If your change needs one of them answered, say so in the issue and
+with a letter and a number — `C4`, `J3`, `H10`. The decision register in
+[`docs/README.md`](docs/README.md) says which are open, and many have a GitHub
+issue labelled `decision`. **If your change needs one of them answered, say so in the issue and
 stop.** Picking a plausible option and continuing turns an open decision into a
 fact buried in a diff, which is the one outcome this project is most careful to
 avoid.

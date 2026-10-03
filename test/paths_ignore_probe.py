@@ -106,6 +106,7 @@ WATCHED = WATCHED_DIRS + WATCHED_FILES
 #: this probe goes quiet about whatever it reads.
 DOCS_LANE = (
     "tests/test_verification_register.py",
+    "tests/test_decision_register.py",
     "tests/test_doc_command_lines.py",
     "tests/test_doc_lists.py",
     "tests/test_doc_sections.py",

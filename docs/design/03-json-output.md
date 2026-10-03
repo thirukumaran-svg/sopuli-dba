@@ -705,9 +705,8 @@ looked for drift and found none, and it never looked. `by_state` likewise carrie
 only the states a run actually produced.
 
 **`plan` is absent entirely on a command that plans nothing** — `config show`,
-`doctor`, `lock status`. That is not J2 ("always emit `plan`") being answered: J2
-asks whether a *planning* command may ever omit it, and the answer here is that a
-command with no units is not planning. `sopuli.plan` builds the section and
+`doctor`, `lock status`. J2 says every command that plans emits `plan`, and a
+command with no units does not plan. `sopuli.plan` builds the section and
 `sopuli/output/plan_view.py` reads it.
 
 Since Q7 (#85) made one secret per application the documented default, sharing has
@@ -2767,10 +2766,10 @@ for the reason every entry above gives.
 
 | # | Question | Leaning |
 |---|---|---|
-| J1 | Should `--output json` stream nothing until completion, even for long runs? | yes — a partial JSON document is worse than none; `jsonl` covers the streaming case |
-| J2 | Include `plan` in every run, or only with `--dry-run`/`--verbose`? | every run; it is small and makes plan-vs-result diffing mechanical |
+| J1 | ~~Should `--output json` stream nothing until completion, even for long runs?~~ | **decided** (#615): yes — a partial JSON document is worse than none; `jsonl` covers the streaming case |
+| J2 | ~~Include `plan` in every run, or only with `--dry-run`/`--verbose`?~~ | **decided: every command that plans** (#615); it is small and makes plan-vs-result diffing mechanical. A command with no units, such as `doctor`, emits none (§2) |
 | J3 | Stable machine-readable codes for warnings (`SOPULI-W014`) | yes, and they get a documented registry — otherwise consumers grep messages. **Opened, not answered**: §3 now carries a registry with the two codes the advisory lock needed (#83), a third for a configured-but-uninstalled backend (#130), and an error-code registry beside it holding `SOPULI-20001`. The config layer's other warnings still have none. What is left is the policy — which warnings get a code, and how numbers are allocated across categories; #130 allocated two by hand and did not settle it, and #317 allocated `SOPULI-W015`, `SOPULI-W016` and `SOPULI-W017` the same way, and #296 `SOPULI-W018` — following the established practice rather than answering the question, which stays open |
-| J4 | Emit a top-level `hostname`/`pid` for log correlation | probably, under `invocation.actor` |
-| J5 | OpenTelemetry span export alongside JSON | later; `correlation_id` is already the trace id in spirit |
-| J6 | Should the event stream be resumable after a crash? | no — re-run instead; `check` establishes truth cheaply |
+| J4 | ~~Emit a top-level `hostname`/`pid` for log correlation~~ | **decided: host only** (#615), as `invocation.actor.host`. No pid: `correlation_id` already ties a run to the audit and vault trails, and a pid means nothing once the process has exited |
+| J5 | OpenTelemetry span export alongside JSON | **deferred**: later; `correlation_id` is already the trace id in spirit |
+| J6 | ~~Should the event stream be resumable after a crash?~~ | **decided** (#615): no — re-run instead; `check` establishes truth cheaply |
 | ~~J7~~ | ~~Does `--output json` emit a run document on a usage error?~~ | *resolved 2026-08-13 (issue #8): no, and exit 2 is the only code that never does. §6 states the rule and P5 gained exit 9 so that a bad config file — which has a perfectly good invocation — is no longer on the same code as a bad command line.* |

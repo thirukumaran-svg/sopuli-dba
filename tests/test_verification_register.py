@@ -102,9 +102,8 @@ SCANNED = (
 #: The register's own section is not a site: its bullets assert the unverified
 #: state, because that is what a register is. **Only that section**, not the whole
 #: file -- #412's review pointed out that excluding `docs/README.md` entirely made
-#: the checker blind to the README's own prose, where §*Consolidated open
-#: decisions* repeats several of these claims and a typo'd marker would never have
-#: been validated.
+#: the checker blind to the README's own prose, where a typo'd marker would
+#: never have been validated.
 #:
 #: §Conventions needs no exclusion: it shows the syntax as `(unverified: <slug>)`,
 #: and `<` is outside the slug character class, so the example cannot be mistaken

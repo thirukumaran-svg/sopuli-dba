@@ -288,9 +288,9 @@ something specific.
 
 ## Open questions: surface, do not resolve
 
-The design docs contain deliberate open decisions, tagged `D`, `C`, `P`, `J`,
-`T`, `Q`. They are consolidated in `docs/README.md` and tracked as GitHub issues
-labelled `decision`.
+The design docs contain deliberate open decisions, tagged `D`, `E`, `C`, `P`,
+`J`, `T`, `Q`, `H`. Whether each is open is written in one place: the decision
+register in `docs/README.md`. Many also have a GitHub issue labelled `decision`.
 
 **If a task requires one to be answered, stop and ask.** Do not pick a plausible
 option and continue — that silently converts an open decision into a fact buried
