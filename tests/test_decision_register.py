@@ -1,6 +1,6 @@
 """The decision register is the one place a decision's status is written (#615).
 
-Tier 0: reads Markdown, imports nothing of the tool.
+Tier 0, except the last two tests, which ask GitHub and run weekly.
 
 Status used to live in four places: the `decision` label, a prose list in
 `docs/README.md`, each document's own table, and code comments. They disagreed.
@@ -15,8 +15,12 @@ that the two agree:
 * `00-principles.md`'s status column says the same as the register;
 * every ADR is in the register as `decided` and says `Status: **accepted**`.
 
-Whether an issue's open or closed state matches the register needs the network,
-and is not checked here.
+Two more checks need the network, so they are skipped unless
+`SOPULI_CHECK_ISSUES` is set, and `.github/workflows/pending-work.yml` sets it
+weekly:
+
+* an `open` row's issue is open, and a `decided` row's issue is closed;
+* every open issue labelled `decision` has a row.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+from github_issues import needs_github, open_issues, state
 from repo_files import requires_repo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -253,3 +258,43 @@ def test_the_row_pattern_reads_both_forms() -> None:
     assert struck is not None
     assert struck.group(1) == "P2"
     assert STRUCK.match(_cells(struck.group(2))[0])
+
+
+# -------------------------------------------------------- needs the network ---
+
+
+def _issue(entry: Entry) -> int | None:
+    return int(entry.issue.lstrip("#")) if entry.issue else None
+
+
+@needs_github
+def test_each_row_s_status_matches_its_issue() -> None:
+    """A `deferred` row may name an issue in either state: "not now" is an answer,
+    and whether its issue stays open is a matter of taste."""
+    wrong = []
+    for entry in register():
+        issue = _issue(entry)
+        if issue is None or entry.status == "deferred":
+            continue
+        expected = "open" if entry.status == "open" else "closed"
+        if state(issue) != expected:
+            wrong.append(f"{entry.id} is {entry.status}, and #{issue} is {state(issue)}")
+
+    assert not wrong, (
+        "the register and the issues disagree. Update the register row and the "
+        "document's table together:\n" + "\n".join(wrong)
+    )
+
+
+@needs_github
+def test_every_open_decision_issue_has_a_row() -> None:
+    """The `decision` label means a row in the register. An issue that is not a
+    design decision does not carry it."""
+    listed = {issue for entry in register() if (issue := _issue(entry)) is not None}
+    missing = sorted(open_issues("decision") - listed)
+
+    assert not missing, (
+        "these open `decision` issues have no row in the register. Add one, or "
+        "remove the label if the issue is not a decision: "
+        + ", ".join(f"#{issue}" for issue in missing)
+    )

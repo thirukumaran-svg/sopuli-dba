@@ -31,11 +31,7 @@ matched here.
 
 from __future__ import annotations
 
-import json
-import os
 import re
-import shutil
-import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -43,6 +39,7 @@ from pathlib import Path
 
 import pytest
 
+from github_issues import needs_github, state
 from repo_files import requires_repo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -291,31 +288,15 @@ def test_both_spellings_are_collected(tmp_path: Path, monkeypatch: pytest.Monkey
 # --------------------------------------------------------- needs the network ---
 
 
-def _state(issue: int) -> str:
-    result = subprocess.run(
-        ["gh", "api", f"repos/{{owner}}/{{repo}}/issues/{issue}"],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=ROOT,
-    )
-    return str(json.loads(result.stdout)["state"])
-
-
-@pytest.mark.skipif(
-    not os.environ.get("SOPULI_CHECK_ISSUES"),
-    reason="asks GitHub for issue states; set SOPULI_CHECK_ISSUES to run it",
-)
+@needs_github
 def test_no_marker_names_a_closed_issue() -> None:
     """Run weekly by `.github/workflows/pending-work.yml`.
 
     A pull request number counts as an issue here, as it does on GitHub, so a
     marker naming a merged pull request is reported too.
     """
-    if shutil.which("gh") is None:
-        pytest.fail("SOPULI_CHECK_ISSUES is set and `gh` is not on PATH")
     marked = markers()
-    closed = {issue: places for issue, places in marked.items() if _state(issue) != "open"}
+    closed = {issue: places for issue, places in marked.items() if state(issue) != "open"}
 
     assert not closed, (
         "these markers name a closed issue. Say what the issue did, and remove the "

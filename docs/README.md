@@ -125,6 +125,10 @@ against this one:
 - `00-principles.md` has a status column, and it must match;
 - every ADR is `decided` and says `Status: **accepted**`.
 
+The weekly `pending-work` workflow also compares the register with GitHub: an
+`open` row's issue must be open, a `decided` row's issue must be closed, and every
+open issue labelled `decision` must have a row. The label means exactly that.
+
 The statuses are:
 
 - `open`: not answered. Do not write code that depends on it. Ask first.
@@ -159,7 +163,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | C1 | 01 | Name of the binding section | decided | `applications`, with an inline form | |
 | C2 | 01 | Selector syntax | decided | `--select k=v` over labels, and `match:` in groups | #615 |
 | C3 | 01 | Arbitrary expressions in secret templates? | decided | no; a fixed token list plus labels | #615 |
-| C4 | 01 | Per-account overrides in an application entry | open | per-label cases are covered; per-account is not | |
+| C4 | 01 | Per-account overrides in an application entry | open | per-label cases are covered; per-account is not | #640 |
 | C5 | 01 | Config encryption at rest | decided | out of scope; the config holds no secrets | #615 |
 | C6 | 01 | Several vaults for one application (mirror writes) | deferred | to a later use case | |
 | C7 | 01 | More than two `target_sets` nesting levels? | decided | no; write a second set | |
@@ -183,15 +187,15 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | P8 | 02 | 11.2 keeps the `ALTER USER` text in `V$SQLSTATS` | decided | document it | #387 |
 | J1 | 03 | Does `--output json` print nothing until the end? | decided | yes; `jsonl` streams | #615 |
 | J2 | 03 | `plan` in every run? | decided | in every command that plans | #615 |
-| J3 | 03 | Machine-readable warning codes | open | codes exist; how numbers are allocated is open | |
+| J3 | 03 | Machine-readable warning codes | open | codes exist; how numbers are allocated is open | #641 |
 | J4 | 03 | Host and pid in the output | decided | `invocation.actor.host`; no pid | #615 |
 | J5 | 03 | OpenTelemetry export | deferred | later; `correlation_id` serves until then | |
 | J6 | 03 | Resumable event stream after a crash? | decided | no; run again | #615 |
 | J7 | 03 | A run document on a usage error? | decided | no; exit 2 never emits one | #8 |
 | T1 | 04 | Does an 11g XE image exist? | decided | yes | #1 |
 | T2 | 04 | testcontainers or compose? | decided | compose | #174 |
-| T3 | 04 | Is LocalStack Secrets Manager in the community tier? | open | | |
-| T4 | 04 | Does OCI Vault cost matter in a test loop? | open | | |
+| T3 | 04 | Is LocalStack Secrets Manager in the community tier? | open | | #642 |
+| T4 | 04 | Does OCI Vault cost matter in a test loop? | open | | #643 |
 | T5 | 04 | Public CI provider | decided | GitHub Actions | |
 | T6 | 04 | A real Data Guard standby for the read-only test? | deferred | until a driver bug needs it | |
 | T7 | 04 | Snapshot and restore for Oracle resets | deferred | drop and recreate until tier 2 is too slow | |

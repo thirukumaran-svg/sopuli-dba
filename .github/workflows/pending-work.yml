@@ -1,9 +1,13 @@
 name: pending-work
 
-# Fails when a `TODO(#N)` or `(open: #N)` marker names a closed issue (#614).
-# The marker means "this waits on #N", so once #N closes the text beside it is
-# probably wrong. `tests/test_pending_work.py` finds the markers; this asks
-# GitHub for each issue's state.
+# Compares what the repository says about issues with what GitHub says.
+#
+# * A `TODO(#N)` or `(open: #N)` marker names an open issue (#614). The marker
+#   means "this waits on #N", so once #N closes the text beside it is probably
+#   wrong. `tests/test_pending_work.py` finds the markers.
+# * The decision register in `docs/README.md` agrees with issue states, and every
+#   open `decision` issue has a row (#615). `tests/test_decision_register.py`
+#   reads the register.
 #
 # Weekly and on demand, not on pull requests: it needs the network, and an issue
 # closes without any pull request touching the files that name it.
@@ -19,7 +23,7 @@ permissions:
 
 jobs:
   markers:
-    name: markers name open issues
+    name: markers and the decision register match issue states
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -33,8 +37,8 @@ jobs:
 
       - run: pip install -e ".[dev]"
 
-      - name: no marker names a closed issue
+      - name: markers and the register match GitHub
         env:
           SOPULI_CHECK_ISSUES: "1"
           GH_TOKEN: ${{ github.token }}
-        run: pytest tests/test_pending_work.py -k closed_issue
+        run: pytest tests/test_pending_work.py tests/test_decision_register.py -k "closed_issue or issue_has_a_row or matches_its_issue"
