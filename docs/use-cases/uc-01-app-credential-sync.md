@@ -1533,9 +1533,9 @@ target bound to it ends the run holding the same password.
 rejection-sampling loop against the policy predicate; this adds one more rejector,
 and it is the only one that cannot be consulted offline.
 
-**What a run says it did.** Every draw is a `password_redrawn` warning naming the
+**What a run says it did.** Every draw is a `SOPULI-W029` warning naming the
 account, the version it staged, and the server's own message; every refusal to
-draw is a `password_not_redrawn` warning naming the account and which of the
+draw is a `SOPULI-W030` warning naming the account and which of the
 rules above stopped it. On the row itself, `results[].redraws` counts the extra
 passwords that account was given — present only when there was one, and read as
 "this row was applied more than once and reports the last attempt" rather than as

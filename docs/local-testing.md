@@ -2997,7 +2997,7 @@ whose limits are not both `UNLIMITED`, including one that succeeds, because when
 both limits are numbers the outcome depends on changes the tool cannot see.
 Under `--output json` the row's `error.hint` says why nothing was retried. A
 rollback has no other value to send, so it is never redrawn, and
-`password_not_redrawn` says so rather than blaming the document's provenance.
+`SOPULI-W030` says so rather than blaming the document's provenance.
 
 **Ask first, with `--dry-run --preflight`** (#580). A plain `--dry-run` reads
 the vault and connects to nothing, so it cannot see the profile and says
@@ -3027,7 +3027,7 @@ template gives.) Raised this early, it is a prediction: it cannot know that an
 account already holds `previous`, which the run's own reading would. A real
 rollback with `--preflight` prints the same single note under its `ORA-28007`
 row. The survey raised it, so the run does not raise it a second time:
-`diagnostics[]` carries one `SOPULI-W028`, ahead of `password_not_redrawn`
+`diagnostics[]` carries one `SOPULI-W028`, ahead of `SOPULI-W030`
 rather than after it.
 
 `ALTER USER acme_reuse_user PROFILE DEFAULT` and the same rollback goes through

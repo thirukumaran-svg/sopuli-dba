@@ -1530,6 +1530,8 @@ is not contract and may improve.
 | `SOPULI-W026` | A password was delivered and the notification saying so could not be sent (#442). The account **and the target** are named, because a reset can notify once per target and two failures would otherwise read identically (#520). A warning on a successful run for `SOPULI-W025`'s reason and more easily: the notification carries nothing anybody needs (UC-2 §6.1 keeps it to "a password is ready"), so what is lost is that somebody must be told another way. The webhook URL is never in the message — it is itself a credential (C9), and `httpx` puts it in the text of its own errors, so the exception's class name is carried instead |
 | `SOPULI-W027` | A secret document was not promoted because the run was narrowed past pairs the promotion needs (#406, UC-1 §5's *promotion gate*): the same credential on a target outside the run, or a sibling account in the document with a `pending` of its own. The databases in scope **were** changed, `pending` stays, and the run exits 4. Its own code for `SOPULI-W011`'s reason: a run whose targets failed exits 4 too and is repaired by the same narrowed run again, while this one is finished only by a **wider** run that covers the pairs the message names — repeating the narrow one withholds the promotion again. Also raised under `--dry-run`, where it says what the run would withhold |
 | `SOPULI-W028` | A rollback (`creds apply --source previous`) reached the statement on an account whose profile restricts password reuse (#568), or — under `--preflight` — is planned against one (#580). One entry per target and profile, naming `PASSWORD_REUSE_MAX` and `PASSWORD_REUSE_TIME` as the database spells them. `previous` is normally a password the account held one change ago, so `ORA-28007` is likely; where one limit is `UNLIMITED` and the other a number, a password the account has held is never accepted again. Reported rather than interpreted, as UC-1 §4 does with the same two values, and raised whichever way the statement went. Under `--preflight` the survey raises it before any statement, from the profile it already reads — the only way a `--dry-run` carries it — and the run then does not repeat it for that target and profile (#580). Not raised ahead where the run would first move the account to another profile, since the destination's limits are not read; the run's own reading covers that case. Its own code rather than `SOPULI-W017` widened, because that one's meaning is a *supplied* password and a consumer branching on it would be told something false. On such a profile the way back is a rollover window (UC-1 §6.3), not a rollback |
+| `SOPULI-W029` | The server refused a password the run applied — `ORA-28003` or `ORA-28007` — so the run drew another and staged it, to be applied again to every target of that account (UC-1 §6.4). One entry per draw, naming the account, the version staged and the server's message. It says a draw happened, not that the new password was accepted: the result rows say whether the re-apply succeeded, and `results[].redraws` counts the draws. Emitted as `password_redrawn` before #610 |
+| `SOPULI-W030` | The server refused a password the run applied, and the run was not allowed to draw another (UC-1 §6.4): nothing shows this tool drew the password, the redraw limit was reached, the account has no policy to draw from, or the run is a rollback. The message names which. The target that refused keeps the password it had; another target of the same account may already hold the refused value, and the result rows say which. Emitted as `password_not_redrawn` before #610 |
 
 The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
@@ -2328,6 +2330,15 @@ grace before it. A second rename does not get the same treatment.
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
 
+**1.30 became 1.31 when the redraw codes joined the registry** (#610).
+`SOPULI-W029` and `SOPULI-W030` are new diagnostic codes, a minor bump by §8's
+list. The schema file is byte-identical apart from its `$id`, as at 1.16. The
+two conditions were reported before, as `password_redrawn` and
+`password_not_redrawn`, outside the registry, and those two strings are no
+longer emitted. A consumer matching them must match the new codes instead.
+`SOPULI-W028` (#568) was added at 1.30 without a bump, so 1.31 is also the first
+version a consumer can rely on to carry it.
+
 **1.29 became 1.30 with `sopuli account expire-password`** (#525). Two additive
 changes, each a minor bump by the ordinary rule:
 
@@ -2701,9 +2712,10 @@ counting rotations should read it as "this row was applied more than once and
 reports the last attempt", not as a failure — a redrawn account that ends
 `IN_SYNC` succeeded.
 
-The two diagnostic codes that come with it, `password_redrawn` and
-`password_not_redrawn`, are a registry addition of the kind 1.15 → 1.16 was:
-`diagnostic.code` is an open string, so neither changes the schema file.
+The two diagnostic codes that come with it, `SOPULI-W029` and `SOPULI-W030`
+(§3), were first emitted as `password_redrawn` and `password_not_redrawn`,
+outside the registry and with no schema bump. #610 renamed them and made the
+bump that should have come with them: 1.31, above.
 
 **1.16 became 1.17 when `--force` gained something to record** (#286):
 `results[].overridden` carries the §4 account guardrails a run waived — the

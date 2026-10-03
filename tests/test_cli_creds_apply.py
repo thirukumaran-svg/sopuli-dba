@@ -2908,9 +2908,9 @@ def test_a_refused_rollback_on_a_reuse_profile_says_why_and_draws_nothing(
     assert "draw another" not in row["error"]["hint"]
     assert "rollover window" in row["error"]["hint"]
 
-    (declined,) = _coded(emitted, "password_not_redrawn")
+    (declined,) = _coded(emitted, "SOPULI-W030")
     assert "rollback" in declined["message"]
-    assert not _coded(emitted, "password_redrawn")
+    assert not _coded(emitted, "SOPULI-W029")
 
 
 def test_the_reuse_warning_is_printed_as_well_as_serialised(
@@ -3212,7 +3212,7 @@ def test_the_redraw_is_reported_on_the_row_and_in_the_diagnostics(
     emitted = document(result)
 
     assert all(entry["redraws"] == 1 for entry in emitted["results"])
-    warned = [one for one in emitted.get("diagnostics", []) if one["code"] == "password_redrawn"]
+    warned = [one for one in emitted.get("diagnostics", []) if one["code"] == "SOPULI-W029"]
     assert len(warned) == 1
     assert "ORA-28003" in warned[0]["message"]
 
@@ -3241,9 +3241,7 @@ def test_a_supplied_password_is_reported_and_never_replaced(
     assert result.exit_code != ExitCode.SUCCESS
     assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
     declined = [
-        one
-        for one in document(result).get("diagnostics", [])
-        if one["code"] == "password_not_redrawn"
+        one for one in document(result).get("diagnostics", []) if one["code"] == "SOPULI-W030"
     ]
     assert len(declined) == 1
     assert "did not draw" in declined[0]["message"]
@@ -3261,9 +3259,7 @@ def test_a_document_with_no_origin_is_not_redrawn(
 
     assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
     declined = [
-        one
-        for one in document(result).get("diagnostics", [])
-        if one["code"] == "password_not_redrawn"
+        one for one in document(result).get("diagnostics", []) if one["code"] == "SOPULI-W030"
     ]
     assert "no record" in declined[0]["message"]
 
@@ -3322,7 +3318,7 @@ def test_an_error_that_is_not_a_refusal_never_redraws(
 
     assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
     assert not [
-        one for one in document(result).get("diagnostics", []) if one["code"] == "password_redrawn"
+        one for one in document(result).get("diagnostics", []) if one["code"] == "SOPULI-W029"
     ]
 
 
@@ -3341,9 +3337,7 @@ def test_an_account_with_no_policy_reports_rather_than_raising(
     assert result.exit_code != ExitCode.CONFIG_INVALID
     assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
     declined = [
-        one
-        for one in document(result).get("diagnostics", [])
-        if one["code"] == "password_not_redrawn"
+        one for one in document(result).get("diagnostics", []) if one["code"] == "SOPULI-W030"
     ]
     assert "no password policy" in declined[0]["message"]
 
@@ -3872,3 +3866,12 @@ def test_a_failure_after_the_statement_still_reports_the_change(
     assert body["results"][0]["state"] == "ERROR"
     assert body["results"][0]["changed"] is True
     assert body["summary"]["changed"] == 1
+
+
+def test_the_redraw_codes_are_registered() -> None:
+    """#610: they were emitted outside the registry and its `SOPULI-W` spelling."""
+    from sopuli.diagnostics import PASSWORD_NOT_REDRAWN, PASSWORD_REDRAWN, WARNINGS
+
+    assert (PASSWORD_REDRAWN, PASSWORD_NOT_REDRAWN) == ("SOPULI-W029", "SOPULI-W030")
+    assert PASSWORD_REDRAWN in WARNINGS
+    assert PASSWORD_NOT_REDRAWN in WARNINGS

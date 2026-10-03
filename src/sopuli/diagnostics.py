@@ -443,6 +443,14 @@ PROMOTION_WITHHELD = "SOPULI-W027"
 #: such a profile, whichever way the statement went.
 ROLLBACK_REUSE_RESTRICTED = "SOPULI-W028"
 
+#: The server refused a password and the run drew another (#312, UC-1 §6.4).
+#: Until #610 these two were emitted as ``password_redrawn`` and
+#: ``password_not_redrawn``, outside this registry and its spelling.
+PASSWORD_REDRAWN = "SOPULI-W029"
+
+#: The server refused a password and the run was not allowed to draw another.
+PASSWORD_NOT_REDRAWN = "SOPULI-W030"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -656,6 +664,22 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "outside this tool. Raised whichever way the statement went. On such a "
             "profile the way back from a rotation is a rollover window "
             "(`PASSWORD_ROLLOVER_TIME`, UC-1 §6.3), not a rollback."
+        ),
+        PASSWORD_REDRAWN: (
+            "The server refused a password the run applied -- `ORA-28003` or `ORA-28007` "
+            "-- so the run drew another and staged it, to be applied again to every "
+            "target of that account (UC-1 §6.4). One entry per draw, naming the account, "
+            "the version staged and the server's message. It says a draw happened, not "
+            "that the new password was accepted: the result rows say whether the "
+            "re-apply succeeded, and `results[].redraws` counts the draws."
+        ),
+        PASSWORD_NOT_REDRAWN: (
+            "The server refused a password the run applied, and the run was not allowed "
+            "to draw another (UC-1 §6.4): nothing shows this tool drew the password, "
+            "the redraw limit was reached, the account has no policy to draw from, or "
+            "the run is a rollback. The message names which. The target that refused "
+            "keeps the password it had; another target of the same account may already "
+            "hold the refused value, and the result rows say which."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "

@@ -121,6 +121,8 @@ from sopuli.diagnostics import (
     LOW_ASSURANCE_ADMIN,
     PASSWORD_CHANGE_DATE_UNKNOWN,
     PASSWORD_GRACE_PERIOD,
+    PASSWORD_NOT_REDRAWN,
+    PASSWORD_REDRAWN,
     ROTATION_UNCONFIRMED,
     admin_diagnostics,
     constraint_diagnostics,
@@ -7371,13 +7373,6 @@ def _check_strategy(
         )
 
 
-#: The diagnostic code for a password the server refused and this run replaced.
-REDRAWN = "password_redrawn"
-
-#: And for one it refused that this run was not allowed to replace.
-NOT_REDRAWN = "password_not_redrawn"
-
-
 def _redraw_estate(
     applied: list[_Applied],
     documents: dict[LockKey, Any],
@@ -7527,7 +7522,7 @@ def _wants_redraw(
                 Diagnostic(
                     level="warning",
                     message=(f"the server refused this password and it was not replaced: {reason}"),
-                    code=NOT_REDRAWN,
+                    code=PASSWORD_NOT_REDRAWN,
                     account=record.binding.account,
                 )
             )
@@ -7679,7 +7674,7 @@ def _restage(
                         "the server refused this password, so another was drawn and staged as "
                         f"v{written.version}: {record.outcome.detail or 'no message was given'}"
                     ),
-                    code=REDRAWN,
+                    code=PASSWORD_REDRAWN,
                     account=record.binding.account,
                 )
             )
