@@ -1519,6 +1519,34 @@ Error: --reveal cannot be used with --output json
 Exit 2. Also try `--max-bytes 30 --encoding cp1252` to see the byte-limit preview
 that models an 11g password.
 
+A policy may also write `rotation:` and `verify:`. They validate, and no run
+reads them: the verbs take these from flags. Add both to the `standard` policy:
+
+```yaml
+    rotation:
+      strategy: rollover
+      keep_previous: true
+    verify:
+      method: hash
+```
+
+```bash
+sopuli --config sopuli.yaml config validate
+```
+```
+config: sopuli.yaml
+
+ok: 1 target, 1 binding, 2 warnings
+
+2 warnings:
+  policies.standard.rotation: `strategy`, `keep_previous` are parsed and not read
+    hint: no run reads these from a policy; the command line sets `strategy` with `--strategy`, and nothing sets `keep_previous`
+  policies.standard.verify: `method` is parsed and not read
+    hint: no run reads these from a policy; the command line sets `method` with `--method`
+```
+
+Exit 0: a warning, not an error. Take the two blocks out again before §8.
+
 ---
 
 ## 8. Vault, locks, and the fence that makes them mean something

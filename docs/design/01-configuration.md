@@ -489,14 +489,6 @@ policies:
       charset: alnum_safe        # A-Za-z0-9 plus _ # $ - . + = ~ ^
       first_char: alpha
       require: { upper: 1, lower: 1, digit: 1, special: 1 }
-    rotation:
-      strategy: rollover
-      rollover_hours: 24
-      keep_previous: true
-      max_age_days: 90
-    verify:
-      method: login              # profiles may override this — see §5
-      lockout_margin: 2
     account:
       unlock_if_locked: false
 
@@ -510,7 +502,6 @@ profiles:
   scheduled:
     verify: { method: hash }
     output: jsonl
-    log_level: warning
 
 # ---------------------------------------------------------------------------
 # The single application. It names its targets, so it uses `applications:` --
@@ -545,6 +536,12 @@ comparison passes `--method hash` on the command line (#437). Running one of
 these profiles without the flag verifies by `login`. That is the documented
 default rather than a substitution, but it is not what the profile appears to
 ask for, so a scheduled job should pass the flag explicitly.
+
+A policy may write `rotation:` and `verify:` blocks too. They are parsed and
+validated, and no run reads them, so the example leaves them out. The verbs take
+`--strategy`, `--max-age-days`, `--method` and `--lockout-margin` from the
+command line instead, and `config validate` warns about a policy that writes
+either block (§10).
 
 ### Why not the inline form
 
@@ -1964,7 +1961,6 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 | `SOPULI_DB_ADMIN_USER` / `SOPULI_DB_ADMIN_PASSWORD` | admin credentials (password is low-assurance, flagged in output). The password pair is the default for `admin.auth: { method: env }`; a target may name its own variable with `password_env:` (§3a) |
 | `SOPULI_ORACLE_CLIENT_LIB_DIR` | Oracle client directory for thick mode. Read at the first connect (#176) and passed to `init_oracle_client(lib_dir=…)`. Outranks `runtime.oracle.client_lib_dir` (P3: environment is layer 3, the file is layer 6); with neither set the platform's own loader decides, which is the ordinary Linux install and needs nothing |
 | `SOPULI_OUTPUT` | `text` \| `json` \| `jsonl` |
-| `SOPULI_LOG_LEVEL` | log level |
 | `SOPULI_NO_COLOR` / `NO_COLOR` | disable colour — set and not empty, whatever the value. Outranked by an explicit `--color always`; see `03-json-output.md` §1 for the full precedence |
 | `SOPULI_DRY_RUN` | force dry-run globally (safety ratchet: no flag turns it off). Set and non-empty is the whole answer, whatever the value — `SOPULI_DRY_RUN=0` means dry-run |
 
@@ -3150,9 +3146,11 @@ notices until a rotation.
   backend's own default
 - `VAULT_SKIP_VERIFY` set and non-empty → error (§6), naming
   `vaults.*.tls.verify` and what to write instead
-- `charset: printable_ascii` on a target detected below 12.2 → warning
-- `rotation.strategy: rollover` on a target without the `password_rollover`
-  capability → error at plan time, not at execution time
+- a policy's `rotation:` or `verify:` keys → warning, one per block, naming the
+  keys and the flag that sets each one where there is a flag. They are parsed
+  and validated, and no run reads them: `--strategy`, `--max-age-days`,
+  `--method` and `--lockout-margin` are the only way in, and `check` defaults to
+  `login` whatever a policy says (#86, #610)
 - config file **accessible** to others → refuse to run (P4). Wider than "readable"
   on purpose: the file holds no secrets (C5), so the risk it carries is
   *tampering*, and a group-writable config is the worse version of that — anyone
