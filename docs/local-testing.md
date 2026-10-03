@@ -985,7 +985,7 @@ operator; `design/02-oracle-privileges.md` §4 and §8 P8 have the measurements.
 Oracle-supplied `ORA_LOGON_FAILURES` policy after a real failed logon, measured
 on 21c. So `01_audit_policy.sql` creates and enables a policy that then records
 nothing, and `02_password_leak_probe.sql` reports `NOTHING CAPTURED - this trail
-proves nothing` in §4a. Fix it before concluding anything about auditing:
+proves nothing` in its section 4a. Fix it before concluding anything about auditing:
 
 ```sql
 alter system set audit_trail=db,extended scope=spfile;
@@ -4101,8 +4101,8 @@ sopuli: notify_secret.yaml: delivery.notify.webhook.template: a notify template 
 
 Exit 9, **at load** — before a password has been drawn, which is the only time a
 refusal about a template is any use. `{wrap_token}` is worth trying specifically
-because #442 proposed it as a placeholder before §6.1 settled the question, so it
-is the mistake the design itself nearly made.
+because #442 proposed it as a placeholder before UC-2 §6.1 settled the question,
+so it is the mistake the design itself nearly made.
 
 **The guard is the closed set, not that word.** Try a name nobody has ever listed:
 
@@ -4193,7 +4193,7 @@ sopuli: wrapped.yaml: delivery.vault_wrapped.vault: `delivery.method: vault_wrap
 
 Exit **8**, before anything connects — the chain is knowable from the file. Note
 what it does *not* fall back to: `reset_records.vault` is still set in that file
-and is not used, because §3.5 keeps the journal and the delivery target apart.
+and is not used, because UC-2 §3.5 keeps the journal and the delivery target apart.
 
 **A store that cannot wrap.** Point the delivery at a non-HashiCorp entry and it is
 refused with exit 5, naming the store: response wrapping is a Vault feature with no
@@ -4396,9 +4396,9 @@ Clean up with `DROP USER acme_dev_alice CASCADE`, `DROP PROFILE sopuli_refusing`
 
 #### The safety ratchet, refusing a method
 
-`safety.delivery.allowed_methods` (§10b) now has the consumer #498 said would
-arrive with the first delivery method. Narrow the set to something `manual` is
-not in:
+`safety.delivery.allowed_methods` (`01-configuration.md` §3a) now has the
+consumer #498 said would arrive with the first delivery method. Narrow the set to
+something `manual` is not in:
 
 ```yaml
 defaults:
@@ -5146,7 +5146,8 @@ sopuli: loose.yaml: delivery.vault_wrapped: must be a mapping, not a string
 
 That is the one thing checked about an unselected block, and it is checked because
 the published schema types all six method properties as objects — the tool must
-never accept a file the schema refuses, which is the wrong way round for §9b's
+never accept a file the schema refuses, which is the wrong way round for
+`01-configuration.md` §9b's
 division of labour.
 
 ### `safety.delivery.allowed_methods` — the list that only narrows
@@ -6132,7 +6133,8 @@ This is the part that will cost you an afternoon if nobody says it, so:
 | **TLS certificates** | the client certificate and trust anchors that finish a mutual-TLS handshake | the *connection*, whatever login method you use |
 | **secure external password store** | a credential keyed on an alias, so `/@alias` can log in with no username or password | `auth: external` **when a wallet is what authenticates** |
 
-`auth: external` is wider than that second row: §3a's `external` is *a wallet or
+`auth: external` is wider than that second row: `01-configuration.md` §3a's
+`external` is *a wallet or
 secure external password store, Kerberos, or OS auth*, and the Kerberos and OS
 paths need no password store at all. What follows is about the wallet path,
 because that is the one an ADB wallet looks like it satisfies.

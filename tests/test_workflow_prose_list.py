@@ -127,6 +127,7 @@ def _docs_lane_from_probe() -> list[str]:
 PROSE_READERS = (
     "tests/test_doc_command_lines.py",
     "tests/test_doc_lists.py",
+    "tests/test_doc_sections.py",
     "tests/test_readme_links.py",
     "tests/test_verification_register.py",
 )

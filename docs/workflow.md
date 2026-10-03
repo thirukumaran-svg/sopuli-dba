@@ -79,6 +79,8 @@ that the installed `sopuli` binary runs. No containers, under a minute.
     against the real CLI.
   - `tests/test_doc_lists.py` compares each list marked
     `<!-- checked-list: … -->` with the CLI, the run schema or the palette.
+  - `tests/test_doc_sections.py` checks that every `§` section reference, and
+    every `Pn`, names a heading or decision that exists.
   - `tests/test_readme_links.py` checks that the links in `README.md` are absolute
     URLs, so they work on PyPI.
 

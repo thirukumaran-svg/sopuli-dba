@@ -110,7 +110,8 @@ rehearsal therefore cannot come back clean while the flag silently did nothing.
 one that refuses a config file other people can reach — and refuses when anyone
 but the owner has access.
 
-This is a deliberate exception to §3a's rule that a `file:` MaterialRef is *not*
+This is a deliberate exception to `01-configuration.md` §3a's rule that a
+`file:` MaterialRef is *not*
 permission-checked, and the two paths it does not extend to are the reason the
 rule exists:
 
@@ -131,12 +132,13 @@ it, here, now.
 like every other inert global option. It is **not** a registered setting, and it
 does not appear in `invocation.options`.
 
-§3a's token chain *is* its merge — a store's own `token:`, then this flag, then
-the variables, then `~/.vault-token` — and it is resolved when a run reaches a
-store. Registering half of it in `sopuli/settings/` would give the tool two
-resolvers for one question, and would put a row in `invocation.options` claiming
-the precedence engine settled something it never saw. `auth:` is already absent
-from the registry for a related reason: it is a block, replaced whole.
+`01-configuration.md` §3a's token chain *is* its merge — a store's own `token:`,
+then this flag, then the variables, then `~/.vault-token` — and it is resolved
+when a run reaches a store. Registering half of it in `sopuli/settings/` would
+give the tool two resolvers for one question, and would put a row in
+`invocation.options` claiming the precedence engine settled something it never
+saw. `auth:` is already absent from the registry for a related reason: it is a
+block, replaced whole.
 
 ## The interactive prompt, and why there is no fifth option
 
@@ -178,11 +180,11 @@ syntax meaning one thing everywhere is a real argument, and this is not an
 instance of it. It is a **semantic collision**: `env:` / `file:` in a SecretRef
 means "resolve this via an already-authenticated store", and using the identical
 spelling for the thing that *authenticates* the store gives two grammars that
-look the same and resolve in opposite order. §3a already names the two types
-apart — MaterialRef and SecretRef — precisely so the chicken-and-egg stays
-visible rather than being papered over by one word meaning both. This is the kind
-of thing that reads well in a design document and costs somebody an afternoon in
-a support thread.
+look the same and resolve in opposite order. `01-configuration.md` §3a already
+names the two types apart — MaterialRef and SecretRef — precisely so the
+chicken-and-egg stays visible rather than being papered over by one word meaning
+both. This is the kind of thing that reads well in a design document and costs
+somebody an afternoon in a support thread.
 
 **`--vault-token-env NAME`.** Redundant with `$SOPULI_VAULT_TOKEN` and
 `$VAULT_TOKEN`, which a CI job can already set to whatever it likes by exporting

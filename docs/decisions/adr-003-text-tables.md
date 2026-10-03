@@ -10,8 +10,9 @@ Related: `../design/03-json-output.md` (§1 colour, §8 stability),
 ## Context
 
 Several commands display rows: `config show --resolved` lists an estate and its
-bindings, `target list` is a first-class command in §4, and `creds check` will
-report one line per account per target. Something has to lay out columns.
+bindings, `target list` is a first-class command in `01-configuration.md` §4,
+and `creds check` will report one line per account per target. Something has to
+lay out columns.
 
 The choice was deliberately left open until a command had real results to show —
 `docs/README.md` recorded it as gated on exactly that — because a table library

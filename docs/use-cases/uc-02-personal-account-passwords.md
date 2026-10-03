@@ -297,8 +297,8 @@ twice, and the driver rests on both:
 - **`LOCKED(TIMED)` is not already suspended.** `ACCOUNT LOCK` takes it to
   `LOCKED`, and that is a real change rather than a no-op on a technicality: the
   timed lock expires on its own under `PASSWORD_LOCK_TIME` and this one does not,
-  and §4.4's reset clears the first while refusing the second. Reporting no change
-  there would claim an offboarding that never happened.
+  and UC-2 §4.4's reset clears the first while refusing the second. Reporting no
+  change there would claim an offboarding that never happened.
 
 **Which makes the state a parse rather than a comparison**, and that is worth
 writing down because both obvious spellings are wrong. `LOCKED(TIMED)` *contains*
@@ -1045,12 +1045,12 @@ is not locked" is false on that axis: it clears the failed-login counter UC-1 §
 `--lockout-margin` reads. So the driver reads the lock state and issues nothing
 where there is no lock, reporting `applied: false`, exactly as #300 already does.
 That also makes the unlock and the window-close the two *convergent* steps of an
-otherwise non-convergent verb. **H7 (#454) did not build on them, and §4.5 says
-why**: the draw dominates, so the verb reports `changed: true` however little the
-other two statements did. What they keep is their own honesty one level down —
-`applied: false` for a statement that was not issued — and that is worth having
-whatever the verb reports, because *the account was not locked* and *the account
-was unlocked* are different facts about somebody's morning.
+otherwise non-convergent verb. **H7 (#454) did not build on them, and UC-2 §4.5
+says why**: the draw dominates, so the verb reports `changed: true` however
+little the other two statements did. What they keep is their own honesty one level
+down — `applied: false` for a statement that was not issued — and that is worth
+having whatever the verb reports, because *the account was not locked* and *the
+account was unlocked* are different facts about somebody's morning.
 
 **Self-service here means fetching, not resetting.** An owner who knows their
 password changes it themselves, without the tool: before expiry with
@@ -1188,7 +1188,7 @@ implementation violates it:
   accessor that names the hand-over, never the credential that performs it.
 
 **`manual` requires `force_expire: true`** and is refused at plan time without it
-(§6.4). That is the runtime half of the seen path's guarantee: the exposure is
+(§6.5). That is the runtime half of the seen path's guarantee: the exposure is
 bounded by the person's next logon or it is not bounded at all.
 
 ### 6.4 The order of the two steps

@@ -47,7 +47,7 @@ which paths ran and which are still untried.
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
 | `../sql/oracle/01_audit_policy.sql` | Unified audit policies and correlation queries |
 | `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: canary probe for password text retained anywhere queryable. Run on 26ai, 21c, 18c and 11.2; findings in `design/02-oracle-privileges.md` §4, what is still open in `design/04-testing.md` §6 gate 2 |
-| `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks — self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run on 26ai and 21c (#407). Run it after the probe and **before** the probe's §8, which turns the audit policies off |
+| `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks — self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run on 26ai and 21c (#407). Run it after the probe and **before** the probe's section 8, which turns the audit policies off |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
 | [decisions/adr-001-privilege-model.md](decisions/adr-001-privilege-model.md) | Why direct `ALTER USER`, what was rejected, and the two triggers for revisiting |
 | [decisions/adr-003-text-tables.md](decisions/adr-003-text-tables.md) | No table library: columns formatted with click and the standard library, and why output must not depend on the terminal |
@@ -165,7 +165,8 @@ proposed no), a built-in `interactive` profile (C12, leaning no), ~~whether `vau
 under `defaults`/`profiles` is a name or a block~~ (C13 — **decided in #31: a
 name, everywhere.** Settings *of* a store are reached by naming it under
 `vaults:`, which `defaults:` and a profile may each carry as partial entries;
-this is §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair written in the
+this is `01-configuration.md` §6's `SOPULI_VAULT` /
+`SOPULI_VAULT__VAULT_DEV__ADDR` pair written in the
 file. A layer may set every reach setting a store has, but not `type` and not the
 guardrails `non_production` and `locking`. Implemented in #136 for the layers the
 file supplies, which corrected one word: `defaults.vaults:` is layer 5 and so
@@ -218,7 +219,8 @@ documented default (P1), ~~grant `SELECT ON SYS.USER$` by default~~ (P2 —
 defaults to `login` unconditionally either way. Whether to *recommend* the
 grant, and whether `SELECT_CATALOG_ROLE`/`KU$_USER_VIEW` is a narrower
 alternative, is deferred to #124), ~~whether `--force` exists~~ (P3 — **decided in #89: yes**, one flag overriding
-§4's account checks 2–5 and nothing else. `DBSNMP` is the case: rotating its
+`02-oracle-privileges.md` §4's account checks 2–5 and nothing else. `DBSNMP` is
+the case: rotating its
 password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a tool with no
 override does not prevent that rotation — it moves it to SQL\*Plus, where nothing
 records it. Per-check flags were rejected as a growing flag surface for a rare
@@ -535,7 +537,7 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   answer. A 23ai before 23.26 is unmeasured and reads the same as 26ai. 12.1 is
   unmeasured, though it falls under the 30-byte rule, which is the safe
   direction. And whether the legacy limit is 30 *bytes* or 30 *characters* has
-  only been run with ASCII, which every password §8 draws is.
+  only been run with ASCII, which every password `01-configuration.md` §8 draws is.
 - `unverified` `pw-changed-source` (#87, #386) — **Whether `SYS.USER$.PTIME` is
   the password change date on the releases nobody has run.** Measured 2026-09-08:
   `DBA_USERS.PASSWORD_CHANGE_DATE` is present on 26ai and 21c and `ORA-00904` on
@@ -726,7 +728,7 @@ cannot be a mode of UC-1:
 (#438), both parts: the reset in #457 and delivery in #456. The paragraphs above are the
 argument for the use case existing; the document is where it is specified, and
 its questions are H1–H10: H9 the delivery section raised about itself, and H10
-the principle §1 states. One correction to the paragraphs above: expiring
+the principle UC-2 §1 states. One correction to the paragraphs above: expiring
 deliberately is the point only on the **seen** path, where the DBA knows the
 password — a deliberate exposure that the owner's first logon ends. The default,
 unseen path writes it to a store meant for its owner alone and expires nothing;
@@ -763,7 +765,7 @@ of its own**, and a personal account's password is generated under the same
 **`reset_records:`** is one block with two keys — a store and a prefix — declared
 once for the estate rather than per account. It is the DBA side's
 journal — *who* reset an account, by which path, where it was delivered, never the
-password (§3.1) — and it is not the delivery target, which on the unseen path is
+password (UC-2 §3.1) — and it is not the delivery target, which on the unseen path is
 written where only the person can read it. The same path is what UC-2's advisory
 lock keys on (§3.3), which is why the block is a prerequisite of the reset verb
 rather than an accessory to it. **#511 writes the record** — a run with the block
@@ -787,14 +789,14 @@ method's own keys land with that method's issue.
 | `vault_path` | #447 | a path template, and the **renaming** #447 asked for rather than a flag on `vault_wrapped`: it is not wrapping, nothing is single-use, and the guarantee comes from the path's policy. Needs human-identity auth and a templated policy that sopuli does not create, which is why it is not the default |
 | `one_time_link` | #445 | `backend: yopass`, `base_url`, and `ttl`/`one_time`. Needs an OpenPGP dependency, because Yopass encrypts client-side; may not be buildable as sketched |
 | `onepassword_share` | #446 | the API token as a MaterialRef (C9). **May not be buildable at all** — Connect may have no sharing, and #446 refuses to guess |
-| `smtp_encrypted` | — | no issue of its own; §6.2 puts it in the enum and specifies it no further than *unseen*, so the enum is the whole set rather than the set that happened to have issues |
+| `smtp_encrypted` | — | no issue of its own; UC-2 §6.2 puts it in the enum and specifies it no further than *unseen*, so the enum is the whole set rather than the set that happened to have issues |
 
 **`notify:`** (#442) is a channel the unseen methods reuse rather than a fourth
 method: `notify.method: webhook`, configured as `notify.webhook.{url, template}`,
 with `url` a MaterialRef because a webhook URL routinely embeds its own credential.
-It nests **under `delivery:`** (§6.3).
+It nests **under `delivery:`** (UC-2 §6.3).
 
-**Whether a retrieval credential may travel it is settled** (§6.1): no. "Anything
+**Whether a retrieval credential may travel it is settled** (UC-2 §6.1): no. "Anything
 that retrieves it" counts as secret-bearing, so a wrapping token and a one-time
 link are refused in a notify template rather than rendered — the rule is about
 *reach* rather than about *value*, and a token that holds no password still

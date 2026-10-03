@@ -1537,7 +1537,7 @@ def test_a_takeover_says_so_in_the_output(
 
     `lock_diagnostics` was written and unit-tested and called by nothing -- the
     same shape as #348 itself -- so a run that broke somebody's lock said so
-    nowhere. `01-configuration.md` §5.3 says this and `sopuli lock break` "emit
+    nowhere. `01-configuration.md` §3a says this and `sopuli lock break` "emit
     the same warning code, because it is the same event", and `_taken_over`'s own
     docstring says why it has to: the evidence is gone from the path the moment
     the takeover write lands, so if this run does not report it, nothing ever

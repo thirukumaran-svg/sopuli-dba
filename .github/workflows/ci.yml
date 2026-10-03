@@ -399,7 +399,7 @@ jobs:
       - run: pip install -e ".[dev]"
 
       - name: the tier-0 tests that read prose
-        run: pytest tests/test_verification_register.py tests/test_doc_command_lines.py tests/test_doc_lists.py tests/test_readme_links.py
+        run: pytest tests/test_verification_register.py tests/test_doc_command_lines.py tests/test_doc_lists.py tests/test_doc_sections.py tests/test_readme_links.py
 
   # The one check to require, and the reason it exists rather than requiring the
   # jobs above directly.

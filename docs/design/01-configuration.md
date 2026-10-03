@@ -157,11 +157,12 @@ reading the configuration.
 **It is not the delivery target, and the two must not be conflated.** On the unseen
 path the password is written where only the *person* can read it; this holds what
 happened. Two objects, two lifetimes, and a store that happens to be the same store
-does not make them one thing (§3.5). **The record never holds the password in any
-representation** — not the value, not a hash, not a verifier — which is invariant 2
-and is asserted against the serialised document rather than trusted to each writer.
+does not make them one thing (UC-2 §3.5). **The record never holds the password
+in any representation** — not the value, not a hash, not a verifier — which is
+invariant 2 and is asserted against the serialised document rather than trusted to
+each writer.
 
-**Its path is also what UC-2's advisory lock keys on** (§3.3), which is why the
+**Its path is also what UC-2's advisory lock keys on** (UC-2 §3.3), which is why the
 block is a prerequisite of the reset verb rather than an accessory to it. Nothing
 else about locking changes: the same `locks/` prefix, the same CAS, the same
 fencing token, the same `lock break`. Built in #512, and `lock status` surveys
@@ -171,8 +172,8 @@ until a database is asked.
 
 **Absent is a documented mode rather than an error.** The seen path may have no
 store at all — that is the site `manual` exists for — so a reset with nothing
-declared here writes no record, takes no lock, warns at plan time and runs (§3.1,
-§3.4). Refusing would take the fallback away from the estates it exists for.
+declared here writes no record, takes no lock, warns at plan time and runs (UC-2
+§3.1, §3.4). Refusing would take the fallback away from the estates it exists for.
 
 **A fifth declaration, and the last of UC-2's.**
 
@@ -344,11 +345,11 @@ implementation gets it wrong:
   containing one does not meet a refusal about a placeholder nobody wrote.
 
 **The enum holds one value and is not padded out**, which is the opposite call from
-`delivery.method` and the difference is real: §6.2 *defines* six delivery methods,
-so listing only the ones with tickets would be a contract shaped by project
-bookkeeping. Nothing defines a set of notify channels — `smtp` and `chat` are
-"their own issues if needed" — so inventing two values would publish a contract
-nobody has decided.
+`delivery.method` and the difference is real: UC-2 §6.2 *defines* six delivery
+methods, so listing only the ones with tickets would be a contract shaped by
+project bookkeeping. Nothing defines a set of notify channels — `smtp` and `chat`
+are "their own issues if needed" — so inventing two values would publish a
+contract nobody has decided.
 
 **The webhook sends.** `account reset-password` posts the rendered message after
 the database has confirmed the new password. It needs the `notify` install extra;
@@ -1325,7 +1326,7 @@ observation-only: something the driver may find, never something a file can clai
 it connects (P1 `resolve_scope`), so what the file writes is a claim to be checked
 rather than a setting to be applied — which is what UC-1's pre-flight already asks
 for: *"the connection really is in the container the config claims"*
-(`uc-01-app-credential-sync.md` §4). A declared value that disagrees with what the
+(`uc-01-app-credential-sync.md` §5). A declared value that disagrees with what the
 driver finds is an **error naming both**. That is worth more than it sounds: it
 catches a `dsn:` edit that silently repointed a target at a different container,
 and a PDB whose role changed under an estate that still describes the old one —
@@ -1392,7 +1393,7 @@ defaults:
 ```
 
 `delivery:` here is a **sub-block of `safety:`**, not the top-level `delivery:`
-block of §1a, and the two answer different questions: that one says which method
+block of §1, and the two answer different questions: that one says which method
 an estate uses and is overridden last-one-wins, this says which ones it *may*
 use and can only be narrowed. Every entry is checked against the same set of six
 method names, so an allow-list naming a method that does not exist is refused —
@@ -2274,7 +2275,7 @@ far end of a malformed one is a password written where nobody reads it.
 | `@version=` | a whole number from 1 upwards | `@version=v3-beta`, `@version=0`, and `@version=007` |
 | `@stage=` | `current`, `pending`, `previous`, in any case | anything else, including `latest` and `deprecated` |
 
-- **Stages are the three states UC-1 §2 names**, matched case-insensitively and
+- **Stages are the three states UC-1 §3 names**, matched case-insensitively and
   normalised to lower case. Case-insensitively because OCI writes `PENDING` and
   that is the spelling somebody copies out of the console; normalised because one
   spelling should reach the store, and each backend maps *from* it — to OCI's
@@ -3128,8 +3129,8 @@ notices until a rotation.
   that a profile does not select targets
 - a `vaults:` entry whose `type` names a backend that is not installed → warning,
   naming the store, the type and the extra that supplies it (ADR-006, E4). Not an
-  error: nothing about the file is wrong, and §3a has where it stops being a
-  warning
+  error: nothing about the file is wrong, and `01-configuration.md` §3a has
+  where it stops being a warning
 - a `vaults:` entry with `tls.verify: false` → warning, naming the store,
   carrying `SOPULI-W004` and repeated on **every run** rather than only at
   `config validate` (ADR-005). Not an error: an internal CA nobody has

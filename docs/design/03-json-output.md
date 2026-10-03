@@ -1553,9 +1553,10 @@ The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
 that nothing emits a code the registry does not describe. **J3 is not thereby
 answered**: what is settled is the spelling this document already used as its
 example and that these warnings have codes. Whether *every* warning gets one
-— the config layer's §10 findings still do not — and how numbers are allocated
-across categories is the part still open. Every one was allocated by hand at the
-moment something needed it, which is the evidence rather than the answer.
+— the config layer's `01-configuration.md` §10 findings still do not — and how
+numbers are allocated across categories is the part still open. Every one was
+allocated by hand at the moment something needed it, which is the evidence rather
+than the answer.
 
 **What #216 did settle, narrowly and only for `doctor`, is when a finding gets a
 code at all: one for what the exit code cannot tell you.** An unreachable store

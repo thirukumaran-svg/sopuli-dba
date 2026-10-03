@@ -70,12 +70,12 @@ asserts `isinstance(driver, Driver)` so the two cannot part company again.
 
 Three further decisions came with it, each a fork rather than a detail:
 
-- **Where Instant Client lives is resolved, not assumed.** §6's
-  `SOPULI_ORACLE_CLIENT_LIB_DIR` first, then `runtime.oracle.client_lib_dir`
+- **Where Instant Client lives is resolved, not assumed.** `01-configuration.md`
+  §6's `SOPULI_ORACLE_CLIENT_LIB_DIR` first, then `runtime.oracle.client_lib_dir`
   from the file, then the platform's own loader (P4's table). The config key had
-  been documented and parsed since the config layer was written and was ignored
-  by the first draft of this — a documented key that silently does nothing is
-  worse than one that does not exist.
+  been documented and parsed since the config layer was written and was ignored by
+  the first draft of this — a documented key that silently does nothing is worse
+  than one that does not exist.
 - **Thick-mode initialisation is lazy, on the first connect.**
   `init_oracle_client` is process-global and effectively one-shot, so the
   alternative was doing it at startup, where the failure is earliest. Lazy wins
@@ -290,14 +290,14 @@ current, so substituting the current one is a rotation reading the wrong
 generation. KV v1 is the store that refuses.
 
 **`patch` applies an RFC 7396 merge patch** (#183), behind `merge_patch`. What
-makes §7's "must not clobber siblings" a structural property rather than a
-careful one: the keys a run did not come for are never sent, so another account's
-password is neither read into the process nor written back. A store without the
-capability — or a Vault policy granting `update` and not `patch`, which is a
-policy and not a fault — falls back to a check-and-set read-modify-write, and the
-run **reports which of the two it used**, because they are not equally narrow.
-Both carry the same compare-and-set, so the difference is blast radius and never
-atomicity.
+makes `01-configuration.md` §7's "must not clobber siblings" a structural
+property rather than a careful one: the keys a run did not come for are never
+sent, so another account's password is neither read into the process nor written
+back. A store without the capability — or a Vault policy granting `update` and not
+`patch`, which is a policy and not a fault — falls back to a check-and-set
+read-modify-write, and the run **reports which of the two it used**, because they
+are not equally narrow. Both carry the same compare-and-set, so the difference is
+blast radius and never atomicity.
 
 The slice implemented is `sopuli/store/protocol.py`, and the secret side of it is
 `sopuli/store/credentials.py`: a SecretRef resolved against a stored document —
@@ -555,7 +555,8 @@ above it.
 
 Layer 1 arrived in #422 and is **one key wide**: `--vault-addr` hoists
 `vaults.*.addr` onto the command line and no flag hoists any other reach key. It
-addresses the store `SOPULI_VAULT` or `defaults.vault` names — §6's rule, shared
+addresses the store `SOPULI_VAULT` or `defaults.vault` names —
+`01-configuration.md` §6's rule, shared
 with the variables rather than restated, so the command line cannot become a
 second definition of "the default store" — and is refused where neither names
 one. There is no named `--vault-addr NAME=URL`: a run touching two stores uses

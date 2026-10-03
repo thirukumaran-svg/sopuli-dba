@@ -55,14 +55,14 @@ ours under every option, and bespoke regardless — #83 renews at each target
 boundary and checks the fencing version before every mutating call, which no
 general client expresses.
 
-With renewal removed, §3a's auth surface is about five POSTs. Token is not a
-call at all — it is a header, plus token-file and token-helper discovery, which
-is the config layer's problem either way. Kubernetes is "read the projected
-service-account token off disk, POST it"; the file read is the work. AppRole
-and userpass are one POST each. OIDC is the only awkward one, and `hvac` does
-not do the awkward part: the browser launch, the local callback listener, the
-`state`/`nonce` handling. That is CLI-side work the Vault CLI does and the
-Python client does not.
+With renewal removed, `01-configuration.md` §3a's auth surface is about five
+POSTs. Token is not a call at all — it is a header, plus token-file and
+token-helper discovery, which is the config layer's problem either way. Kubernetes
+is "read the projected service-account token off disk, POST it"; the file read is
+the work. AppRole and userpass are one POST each. OIDC is the only awkward one,
+and `hvac` does not do the awkward part: the browser launch, the local callback
+listener, the `state`/`nonce` handling. That is CLI-side work the Vault CLI does
+and the Python client does not.
 
 Measured against the real tier0 Vault (`../../test/vault_auth_probe.py`):
 AppRole is genuinely two calls — read a `role_id`, `POST role_id`+`secret_id`
@@ -74,7 +74,8 @@ syntactically-valid fake JWT past every check that does not require one
 (`kubernetes_ca_cert` does have to be a parseable PEM, or `auth/kubernetes/config`
 itself is refused — the one genuine surprise) and only failed reading claims
 out of it. Net: the auth argument for `hvac` is thin across every method in
-§3a except OIDC's browser/callback dance, which `hvac` does not provide either.
+`01-configuration.md` §3a except OIDC's browser/callback dance, which `hvac`
+does not provide either.
 
 **Release cadence, under a credential path.** `hvac` 2.4.0 is from October
 2025; 2.3.0 before it from June 2024. Alive, not abandoned, but bursty enough

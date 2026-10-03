@@ -6094,7 +6094,7 @@ def _record_locks(
     `lock_diagnostics` was written, unit-tested in `tests/test_lock_view.py`, and
     called by nothing -- so a run that took over an expired lock said so nowhere,
     and neither did a run holding an `advisory-only` lock. Both are documented
-    output: `01-configuration.md` §5.3 says `break_expired` and `sopuli lock
+    output: `01-configuration.md` §3a says `break_expired` and `sopuli lock
     break` "emit the same warning code, because it is the same event", and
     `03-json-output.md` lists `SOPULI-W001` for the second.
 
