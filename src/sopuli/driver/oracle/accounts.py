@@ -454,9 +454,10 @@ class DictionaryUnreadableError(DriverError):
     category = "authorization"
 
 
-#: What a refused read of a granted view says. :data:`ABSENT_CODES` without
-#: ``ORA-00904``: a missing column is how :func:`_user_row` finds a release's
-#: shape, and is never a missing grant.
+#: What a refused read of a granted view says.
+#: :data:`~sopuli.driver.oracle.capabilities.ABSENT_CODES` without ``ORA-00904``: a
+#: missing column is how :func:`_user_row` finds a release's shape, and is never a
+#: missing grant.
 _GRANT_CODES = frozenset({"ORA-00942", "ORA-01031", "ORA-41900"})
 
 #: The one code :func:`_user_row` narrows on rather than raises.
@@ -733,10 +734,11 @@ def _names(cursor: Cursor, statement: str, **binds: Any) -> tuple[str, ...]:
     """Every first column of a multi-row read, as the dictionary spelled it.
 
     Not :func:`~sopuli.driver.oracle.capabilities.read`, which fetches one row.
-    The :data:`ABSENT_CODES` rule does not apply either: these two views are the
-    ones ``02-oracle-privileges.md`` §2 already grants, so a failure to read one
-    is a broken installation rather than an absent capability, and turning it
-    into an empty list would report an estate with nobody in it.
+    The :data:`~sopuli.driver.oracle.capabilities.ABSENT_CODES` rule does not apply
+    either: these two views are the ones ``02-oracle-privileges.md`` §2 already
+    grants, so a failure to read one is a broken installation rather than an absent
+    capability, and turning it into an empty list would report an estate with nobody
+    in it.
     """
     cursor.execute(statement, binds or None)
     return tuple(str(row[0]) for row in cursor.fetchall())

@@ -1,7 +1,7 @@
 """What `creds check` concludes, given what the vault and the database said (#248).
 
 One question per (account, target): does the vault's `current` password work
-against this database? UC-1 §7's answer is a :data:`SyncState`, and this module is
+against this database? UC-1 §7's answer is a sync state, and this module is
 where the three inputs -- the stored secret, the account as the database
 describes it, and the verification attempt -- become one.
 

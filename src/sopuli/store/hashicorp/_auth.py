@@ -38,7 +38,7 @@ from sopuli.store.protocol import StoreError
 METHODS = ("token", "approle", "kubernetes", "userpass")
 
 #: In §3a's table for a vault, and deliberately not implemented (#104's split).
-#: See :func:`_refuse_oidc` for why deferring it costs less than it looks.
+#: See :func:`_refuse` for why deferring it costs less than it looks.
 DEFERRED = ("oidc",)
 
 #: The two statuses that mean the login itself was answered and rejected

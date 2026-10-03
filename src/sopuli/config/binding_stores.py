@@ -57,7 +57,7 @@ class NoStoreError(ConfigError):
     """A binding names a secret, and after the run is known still has no store.
 
     Exit 9 and category ``config``, inherited: the remedy is to edit the file or
-    to set a variable, which is the distinction :attr:`ExitCode.CONFIG_INVALID`
+    to set a variable, which is the distinction :attr:`~sopuli.exit_codes.ExitCode.CONFIG_INVALID`
     draws against exit 2's "fix your command line". It is a subclass rather than
     a bare :class:`~sopuli.config.errors.ConfigError` so that a caller can tell
     this apart from the file being malformed -- the file may be entirely valid

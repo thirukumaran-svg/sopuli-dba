@@ -88,7 +88,7 @@ class Take:
     three fields the write needs, because the *report* needs the rest: by the
     time the write has landed the holder's record is gone from the path, so if
     this run does not describe it, nothing ever does. That is the same argument
-    :func:`sopuli.diagnostics.lock_taken_over` makes for ``break_expired``.
+    :func:`sopuli.diagnostics._taken_over` makes for ``break_expired``.
     """
 
     state: LockState

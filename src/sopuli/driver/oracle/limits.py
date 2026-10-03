@@ -11,7 +11,7 @@ invariant 3.** The rule is that the tool never branches on a version *from
 config*; no dictionary view states the password limit, so the only place it can
 come from is the version the database itself reported when the session opened.
 The distinction matters: `04-testing.md` §3 makes the same point about the
-harness, and the version here is :attr:`Scope.db_version`, read on connect.
+harness, and the version here is :attr:`~sopuli.driver.protocol.Scope.db_version`, read on connect.
 
 **The character set needs no grant.** ``NLS_DATABASE_PARAMETERS`` answered
 ``AL32UTF8`` to a service account holding exactly `02-oracle-privileges.md` §2's

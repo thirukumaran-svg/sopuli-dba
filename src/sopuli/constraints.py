@@ -77,7 +77,7 @@ __all__ = [
 TARGETS = "targets"
 
 #: No target answered, so the policy's declared length governs. §4's fallback,
-#: and the reason :attr:`Constraints.limit` may be ``None``.
+#: and the reason :attr:`Constraints.drawing_limit` may be ``None``.
 POLICY = "policy"
 
 #: Nothing was asked. ``--offline``, and a distinct value from :data:`POLICY`

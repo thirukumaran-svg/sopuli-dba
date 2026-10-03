@@ -288,7 +288,7 @@ def test_the_auth_shorthand_offers_exactly_the_methods_that_need_nothing() -> No
 
 def test_the_target_selector_offers_exactly_the_forms_the_builder_reads() -> None:
     """`targets:` on an application is a list, a group or a match, and nothing
-    else -- the third form is what `_build_targets` refuses to guess at."""
+    else -- the third form is what `build_target_selector` refuses to guess at."""
     branches = build_schema()["$defs"]["application_targets"]["oneOf"]
     named = [tuple(branch["properties"]) for branch in branches if "properties" in branch]
 

@@ -1,9 +1,9 @@
 """The field readers every section builder is made of.
 
-Tier 0, pure: these take raw values and a :class:`KeyPath` and return typed ones.
-The thing actually under test in most of them is not the type check -- it is
-whether the error says *where*, because that is what the rest of the config layer
-is relying on them for.
+Tier 0, pure: these take raw values and a :class:`~sopuli.config.errors.KeyPath` and
+return typed ones. The thing actually under test in most of them is not the type check
+-- it is whether the error says *where*, because that is what the rest of the config
+layer is relying on them for.
 """
 
 from __future__ import annotations

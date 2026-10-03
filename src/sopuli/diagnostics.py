@@ -1292,7 +1292,7 @@ def install_diagnostics(
     than on the file.
 
     ``level`` is the caller's, and it is the *only* thing the caller decides.
-    Giving :func:`backend_diagnostics` a level was tried before #238 and was
+    Giving the former ``backend_diagnostics`` a level was tried before #238 and was
     worse, because there were still two functions answering "is this component
     missing" from two definitions; with one function there is nothing left to
     disagree about. It is a :data:`~sopuli.output.document.DiagnosticLevel` and

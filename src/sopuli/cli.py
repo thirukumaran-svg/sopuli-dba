@@ -6520,7 +6520,7 @@ def _apply_one(
     ``strategy`` is ``None`` for the default, which is resolved **per account**:
     two accounts in one database can sit on different profiles, and only one of
     them may grant a rollover window. An explicit one has already been refused
-    where it could not run (:func:`_refuse_unhonourable_strategy`), so by here it
+    where it could not run (:func:`_check_strategy`), so by here it
     is a regime this account can honour.
 
     **The fence is re-read immediately before every mutating call** (UC-1 §8),

@@ -6,12 +6,12 @@ over a profile or a role, resolved against the database -- so "is this account
 declared" stops being answerable from the file alone. This module is that answer.
 
 **It is pure, and it is not a query.** The two inputs a predicate needs, the
-account's profile and its roles, are already on the :class:`UserState` that every
-mutating verb reads before it does anything: the profile because `creds status`
-reports it and UC-1 §5 sets it, the roles because guardrail 4 refuses ``DBA`` and
-friends. So a predicate costs no extra round trip, and this layer takes the two
-values rather than a cursor -- which keeps it tier 0 (``04-testing.md`` §4) and
-keeps the resolution testable without a database.
+account's profile and its roles, are already on the
+:class:`~sopuli.driver.protocol.UserState` that every mutating verb reads before it
+does anything: the profile because `creds status` reports it and UC-1 §5 sets it, the
+roles because guardrail 4 refuses ``DBA`` and friends. So a predicate costs no extra
+round trip, and this layer takes the two values rather than a cursor -- which keeps it
+tier 0 (``04-testing.md`` §4) and keeps the resolution testable without a database.
 
 **A predicate never widens what a mutating verb may touch.** UC-2 §2 is explicit:
 the verb requires the account named on the command line and refuses any name the

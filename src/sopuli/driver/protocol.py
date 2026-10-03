@@ -1055,12 +1055,12 @@ class Session(Protocol):
     ) -> tuple[AttributeChange, ...]:
         """Enforce the non-password attributes ``attributes`` declares (UC-1 §5).
 
-        **One entry per attribute that was declared**, in :data:`ATTRIBUTES`
-        order, whether or not it turned out to need doing -- an account that is
-        already unlocked is ``changed: False`` and a row saying so, not an absent
-        row. §5 wants each attribute reported as its own change, and a consumer
-        that had to infer "not declared" from "not present" would be reading the
-        policy out of the results.
+        **One entry per attribute that was declared**, in
+        :class:`AccountAttributes` field order, whether or not it turned out to need
+        doing -- an account that is already unlocked is ``changed: False`` and a row
+        saying so, not an absent row. §5 wants each attribute reported as its own
+        change, and a consumer that had to infer "not declared" from "not present"
+        would be reading the policy out of the results.
 
         **Nothing is inferred.** An attribute the caller did not set is not
         enforced, so a run against an estate declaring none of them returns an

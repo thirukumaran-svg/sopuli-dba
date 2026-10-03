@@ -6,7 +6,7 @@ selects, whether the vault agreed with what was applied, and which of UC-1 §8's
 steps the exit code is describing.
 
 The age cases carry most of the file, and the one worth reading first is
-:func:`test_unknown_age_is_never_due` -- it is the branch that decides what this
+:meth:`TestSelect.test_unknown_age_is_never_due` -- it is the branch that decides what this
 tool does the first night it is pointed at somebody else's estate.
 """
 

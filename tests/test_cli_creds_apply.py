@@ -207,7 +207,7 @@ BREAK_EXPIRED_PROFILE_CONFIG = (
 )
 
 #: The same estate again, opted in to §5's profile assignment (#301). The profile
-#: is one `FakeSession` knows about; `MOVING_TO_NOTHING` names one no database has.
+#: is one `FakeSession` knows about; `MISSING_PROFILE_CONFIG` names one no database has.
 ASSIGNING_CONFIG = (
     CONFIG
     + """policies:

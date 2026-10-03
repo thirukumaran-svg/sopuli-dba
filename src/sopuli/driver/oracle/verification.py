@@ -64,7 +64,7 @@ Two things follow, and neither is fixed here:
   on this release**. They are kept rather than deleted because the code is real
   and older lines are unmeasured (tier 2), and because #309 decides what replaces
   them;
-* :meth:`~sopuli.driver.oracle.session.Session._attempt` reads its answer out of
+* :meth:`~sopuli.driver.oracle.session.OracleSession._attempt` reads its answer out of
   the exception and never looks at ``connection.warning``, so the notice is
   discarded wherever it appears. That is #322, and it is wider than the grace
   period.

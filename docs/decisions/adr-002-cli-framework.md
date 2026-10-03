@@ -28,7 +28,7 @@ Three arguments that look decisive and are not:
   subcommand, so `sopuli config show --output json` fails unless the option is
   attached to the verb — the same per-command wiring argparse needs via
   `parents=[...]`. This had to be solved deliberately regardless of choice; see
-  `common_options` in `cli.py`.
+  `global_options` in `invocation.py`.
 
 ## Decision
 

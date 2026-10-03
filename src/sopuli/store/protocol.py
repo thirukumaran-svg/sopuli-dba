@@ -236,9 +236,9 @@ DEGRADED = "degraded"
 #: connection, a timeout, a TLS failure, or a reply this build cannot read.
 #:
 #: The last of those is deliberately in here rather than in :data:`DEGRADED`,
-#: on :mod:`._errors`' fail-closed rule: an answer the tool cannot interpret is
-#: not evidence that a store is well, and a proxy's 502 is exactly what it would
-#: be mistaken for.
+#: on :mod:`sopuli.store.hashicorp._errors`' fail-closed rule: an answer the tool
+#: cannot interpret is not evidence that a store is well, and a proxy's 502 is exactly
+#: what it would be mistaken for.
 UNREACHABLE = "unreachable"
 
 

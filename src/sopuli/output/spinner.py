@@ -7,8 +7,8 @@ none of them is a style preference.
 document and nothing else may touch it (invariant 12). stderr is not safe by
 itself either: a consumer capturing ``2>&1`` would find ``\\r``-separated frames
 ahead of the document, so the machine contract turns the animation off entirely
-rather than relying on which stream it went to. :meth:`Emitter.spinner` asks
-:attr:`Emitter.is_json` before it builds one.
+rather than relying on which stream it went to. :meth:`~sopuli.output.emit.Emitter.spinner` asks
+:attr:`~sopuli.output.emit.Emitter.is_json` before it builds one.
 
 **A TTY, or nothing.** Unlike ``--color always`` — which exists because a CI log
 viewer with no TTY can still render ANSI — there is no reader for whom

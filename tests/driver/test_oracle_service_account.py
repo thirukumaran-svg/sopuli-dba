@@ -150,11 +150,12 @@ def admin(live_oracle: Environment) -> Iterator[Any]:
     """A `SYS AS SYSDBA` connection, which is what can issue §2's grants.
 
     Raw `oracledb` rather than the tool's own driver, and that is not a shortcut:
-    :meth:`OracleDriver.connect` has no `SYSDBA` mode and should not grow one.
-    P2's bootstrap list is about the credential the *tool* authenticates with,
-    and the tool has no operation that requires `SYSDBA` -- §3 puts it on the
-    must-not-grant list. Installing the account is an operator's job that happens
-    before the tool exists, so the fixture does it the way an operator does.
+    :meth:`~sopuli.driver.oracle.session.OracleDriver.connect` has no `SYSDBA` mode
+    and should not grow one. P2's bootstrap list is about the credential the *tool*
+    authenticates with, and the tool has no operation that requires `SYSDBA` -- §3
+    puts it on the must-not-grant list. Installing the account is an operator's job
+    that happens before the tool exists, so the fixture does it the way an operator
+    does.
     """
     oracledb = pytest.importorskip("oracledb")
     session_module = pytest.importorskip("sopuli.driver.oracle.session")

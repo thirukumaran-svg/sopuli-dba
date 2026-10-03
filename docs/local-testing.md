@@ -442,7 +442,7 @@ image keeps `COMMON_USER_PREFIX = C##`, as a real CDB does, where gvenzl sets it
 empty:
 
 - **The test profiles live in the PDB, not the root.**
-  `oracle-init/01_test_profiles.sql` creates `SOPULI_*` profiles in `CDB$ROOT`,
+  `test/oracle-init/01_test_profiles.sql` creates `SOPULI_*` profiles in `CDB$ROOT`,
   and here every one of them was `ORA-65140: invalid common profile name`.
   `test/oracle-init-19c/` runs the same file inside `ORCLPDB1` instead, which is
   where the suite connects.

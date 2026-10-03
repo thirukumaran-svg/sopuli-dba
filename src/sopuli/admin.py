@@ -437,11 +437,12 @@ def _from_env(
     two ways.
 
     **Re-raised with a location**, which is the one thing the delegate cannot
-    supply. :func:`sopuli.material.resolve` reports at :data:`ROOT` because it is
-    also used for a store's auth material and has no idea which target asked;
-    here the key that named the variable is known, so the error can point at the
-    line to edit instead of at the document. The message and hint are the
-    delegate's own -- reworded here, they would be two descriptions of one rule.
+    supply. :func:`sopuli.material.resolve` reports at
+    :data:`~sopuli.config.errors.ROOT` because it is also used for a store's auth
+    material and has no idea which target asked; here the key that named the variable
+    is known, so the error can point at the line to edit instead of at the document.
+    The message and hint are the delegate's own -- reworded here, they would be two
+    descriptions of one rule.
     """
     name = auth.password_env or ADMIN_PASSWORD_ENV
     where = f"target {target.name!r} admin credential"

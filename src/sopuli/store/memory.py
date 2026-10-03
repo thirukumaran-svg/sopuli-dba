@@ -281,8 +281,9 @@ class MemoryStore:
         that locks every new path out of its own first acquisition.
 
         Refusal is not modelled: this store has no policy, and the one refusal
-        that matters -- :class:`MetadataNotPermittedError` -- is a backend's to
-        raise. A test that wants it raises it from a stub around this one.
+        that matters -- :class:`~sopuli.store.protocol.MetadataNotPermittedError` --
+        is a backend's to raise. A test that wants it raises it from a stub around
+        this one.
         """
         entry = self.paths.setdefault(path, _Path())
         current = entry.metadata or PathMetadata()

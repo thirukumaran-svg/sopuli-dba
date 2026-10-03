@@ -2,9 +2,10 @@
 
 What is here is the reading of Vault's answer and the refusals around it — all of
 which are decisions this module makes about a response, and none of which need a
-server to exercise. The socket is `tests/store/test_delivery_vault_wrapped.py`'s,
-against the real container, and the one thing only that can tell us is whether the
-cubbyhole behaves the way §6.6 claims: that the second unwrap fails.
+server to exercise. The socket is `tests/test_cli_reset_password.py`'s
+(`test_the_token_unwraps_exactly_once`), against the real container, and the one
+thing only that can tell us is whether the cubbyhole behaves the way UC-2 §6.6
+claims: that the second unwrap fails.
 
 The seam is the transport, handed in rather than patched: :class:`VaultWrapped`
 takes one, which is what makes it testable with a stub that records what it was
