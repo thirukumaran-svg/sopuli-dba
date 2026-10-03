@@ -35,6 +35,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from sopuli.driver.oracle.errors import INSTALL_SCRIPT
 from sopuli.driver.protocol import Scope
 
 #: §8's checks, in §8's order. Used as ``Finding.check``, which is what a
@@ -242,7 +243,7 @@ def survey(
                 target=target,
                 check=PRIVILEGES,
                 message=(f"the service account is missing {', '.join(sorted(missing_privileges))}"),
-                hint="run the install script for this target's scope (`sql/oracle/00_install.sql`)",
+                hint=f"run the install script for this target's scope (`{INSTALL_SCRIPT}`)",
                 category="authorization",
             )
         )

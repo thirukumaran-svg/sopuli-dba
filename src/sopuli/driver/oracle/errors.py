@@ -50,6 +50,10 @@ from typing import Any
 from sopuli.driver.protocol import AuthenticationError, DriverError
 from sopuli.exit_codes import ExitCode
 
+#: The script that grants the service account what it needs, as a hint names it
+#: (#612). One spelling, so a hint cannot name a file that is not there.
+INSTALL_SCRIPT = "sql/oracle/00_install.sql"
+
 # ------------------------------------------------------------------- kinds ---
 #
 # What happened, as something a caller can branch on without matching a number.
@@ -152,7 +156,7 @@ RULES: dict[str, _Rule] = {
         "authorization",
         hint=(
             "the service account is missing a grant -- ALTER USER for a rotation, "
-            "SELECT on DBA_USERS/DBA_PROFILES for a read. See sql/oracle/00_install.sql"
+            f"SELECT on DBA_USERS/DBA_PROFILES for a read. See {INSTALL_SCRIPT}"
         ),
     ),
     "ORA-65040": _Rule(

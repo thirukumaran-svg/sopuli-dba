@@ -95,6 +95,16 @@ def max_bytes(db_version: str | None) -> int:
     return LEGACY_MAX_BYTES if _below(db_version, LONG_PASSWORD_FLOOR) else MODERN_MAX_BYTES
 
 
+def describe_max_bytes() -> str:
+    """The rule :func:`max_bytes` applies, in words, for help text (#612).
+
+    Built from the constants so that moving the floor moves the help with it.
+    """
+    major, minor = LONG_PASSWORD_FLOOR
+    floor = str(major) if minor == 0 else f"{major}.{minor}"
+    return f"{LEGACY_MAX_BYTES} below {floor}, {MODERN_MAX_BYTES} from {floor}"
+
+
 def _below(version: str | None, floor: tuple[int, int]) -> bool:
     if not version:
         return False

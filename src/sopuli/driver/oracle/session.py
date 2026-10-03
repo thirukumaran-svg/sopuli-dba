@@ -67,7 +67,7 @@ from sopuli.driver.oracle.client import (
     connect_arguments,
     missing_client,
 )
-from sopuli.driver.oracle.errors import from_error
+from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
 from sopuli.driver.oracle.limits import resolve as resolve_limit
 from sopuli.driver.oracle.privileges import audit
 from sopuli.driver.oracle.rollover import alter_profile_ddl, is_enabled
@@ -470,7 +470,7 @@ class OracleSession:
             hint=(
                 "the service account cannot read DBA_ROLES, so a role that matches nobody "
                 "cannot be told from one that does not exist: GRANT SELECT ON SYS.DBA_ROLES "
-                "to it (02-oracle-privileges.md section 2, or sql/oracle/00_install.sql)"
+                f"to it (02-oracle-privileges.md section 2, or {INSTALL_SCRIPT})"
             ),
         )
         with self.connection.cursor() as cursor:

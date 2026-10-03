@@ -107,6 +107,7 @@ from sopuli.config import (
     parse_selector,
     refuse_unknown,
 )
+from sopuli.config import delivery as delivery_config
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
@@ -146,6 +147,7 @@ from sopuli.driver.oracle.client import (
     describes_unreachable_server,
     reach_floor,
 )
+from sopuli.driver.oracle.limits import describe_max_bytes
 from sopuli.driver.oracle.verification import DEFAULT_MARGIN
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
@@ -313,6 +315,21 @@ if TYPE_CHECKING:  # pragma: no cover -- annotations only
 F = TypeVar("F", bound=Callable[..., Any])
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+
+
+def help_with(**facts: str) -> Callable[[F], F]:
+    """Fill ``{name}`` placeholders in a verb's docstring from code (#612).
+
+    click takes a verb's help from its docstring, and a docstring cannot be an
+    f-string. Put this directly above the ``def``: the decorators above it copy
+    the docstring when they wrap, so it must be filled before they run.
+    """
+
+    def apply(func: F) -> F:
+        func.__doc__ = (func.__doc__ or "").format(**facts)
+        return func
+
+    return apply
 
 
 def select_option(func: F) -> F:
@@ -1097,7 +1114,7 @@ def policy_group() -> None:
 @click.option(
     "--max-bytes",
     type=click.IntRange(1, 4096),
-    help="Preview a target's byte limit (30 below 23, 128 from 23).",
+    help=f"Preview a target's byte limit ({describe_max_bytes()}).",
 )
 @click.option(
     "--encoding",
@@ -1796,6 +1813,14 @@ def _expire_one(
                 session.close()
 
 
+def _unseen_methods_built() -> str:
+    """The implemented unseen delivery methods, as reset-password's help names them."""
+    unseen = [f"`{m}`" for m in delivery_config.IMPLEMENTED if m != delivery_config.MANUAL]
+    if len(unseen) == 1:
+        return f"{unseen[0]} is the unseen method"
+    return f"{', '.join(unseen)} are the unseen methods"
+
+
 @account_group.command("reset-password")
 @click.option(
     "--account",
@@ -1836,6 +1861,10 @@ def _expire_one(
     help="Waive guardrails 2 to 5. Never the whitelist, and never a deliberate lock.",
 )
 @global_options
+@help_with(
+    unseen=_unseen_methods_built(),
+    manual=delivery_config.MANUAL,
+)
 def account_reset_password(
     account: str,
     selectors: tuple[str, ...],
@@ -1854,13 +1883,13 @@ def account_reset_password(
 
     **Two paths, and the configuration chooses.** The unseen path -- the default
     -- puts the value where only the owner can fetch it and shows it to nobody.
-    `vault_wrapped` is the unseen method this build implements; a file naming
+    {unseen} this build implements; a file naming
     one that is not built is refused here, before the password changes. The seen path,
-    `delivery.method: manual`, prints the password to your terminal and always
+    `delivery.method: {manual}`, prints the password to your terminal and always
     expires the account, because expiry at first logon is what ends your sight of
     it.
 
-    **`--confirm` cannot be used with `manual`.** That path asks every time and no
+    **`--confirm` cannot be used with `{manual}`.** That path asks every time and no
     flag may answer: the prompt exists to establish that somebody is watching, and
     a flag asserting it would be testifying to its own premise. If nobody can
     answer, nobody can receive the password either.

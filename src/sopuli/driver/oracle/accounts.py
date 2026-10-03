@@ -111,7 +111,7 @@ from typing import Any
 
 from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.capabilities import Cursor, read
-from sopuli.driver.oracle.errors import from_error
+from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
 from sopuli.driver.oracle.rollover import is_enabled, window_end
 from sopuli.driver.protocol import DriverError, UserState
 
@@ -477,7 +477,7 @@ def _unreadable(error: Exception, view: str) -> DriverError:
             code=diagnosis.code,
             hint=(
                 f"GRANT SELECT ON SYS.{view} to the service account -- "
-                "02-oracle-privileges.md section 2, or sql/oracle/00_install.sql"
+                f"02-oracle-privileges.md section 2, or {INSTALL_SCRIPT}"
             ),
         )
     return diagnosis.as_error()
