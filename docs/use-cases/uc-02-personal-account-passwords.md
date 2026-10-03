@@ -695,9 +695,10 @@ entry would have its priorities backwards.
   two lifetimes, and conflating them is how the handover copy would end up living
   as long as the audit trail.
 - **The run document is always a record**, and it never carries a password
-  (invariant 2). So will the jsonl stream be when this verb streams — today
-  `account reset-password` does not, and refuses `--output jsonl` as every
-  non-streaming verb does (`03-json-output.md` §5).
+  (invariant 2). So is the jsonl stream: `account reset-password` streams under
+  `--output jsonl` (#535), and no event carries a password. A real seen reset
+  refuses every machine format, so the only seen-path run that can stream is a
+  `--dry-run`, which shows no password (`03-json-output.md` §5).
 
 ---
 
@@ -1420,9 +1421,9 @@ shape is declared rather than read off its type; `01-configuration.md` §9 has t
 rules, and **#498 built it**: the key is read from any `safety:` block, the
 intersection is taken across every layer including a target's and a group's, two
 layers with no method in common refuse at plan time naming all of them, and
-`config show --explain` reports the effective set and which layer narrowed it. No
-verb consults the answer, because no delivery method exists yet — the setting is
-marked inert in the registry until one does.
+`config show --explain` reports the effective set and which layer narrowed it.
+`account reset-password` consults it before anything connects
+(`safety.refuse_disallowed_method`), and refuses a method no layer permits.
 
 ---
 
@@ -1460,7 +1461,7 @@ container the unseen path writes to. Tier 0 covers everything with no I/O — th
 plan, the refusals, the confirmation, generation, and the statement text, which is
 where invariant 13's assertion already lives for UC-1.
 
-What a test must show, once there is something to test:
+What a test must show:
 
 - **unseen:** after a reset the account is not `EXPIRED`; the value is retrievable
   by the owner's identity or wrapping token, and on `vault_path` by nothing the
@@ -1505,7 +1506,7 @@ What a test must show, once there is something to test:
   concurrent resets of one (target, account) collide on the lock its path keys,
   where before H2 they collided on nothing;
 - **both:** the password appears in no run document, diagnostic or log sink, and in
-  no jsonl event once this verb streams. The seen path's one deliberate emission
+  no jsonl event. The seen path's one deliberate emission
   is the only exception, and it is what that path's confirmation guards;
 - the two measurements behind the seen path's markers, each on 26ai and then 21c —
   gate 2's probe extended to the `PASSWORD EXPIRE` form

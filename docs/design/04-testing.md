@@ -446,12 +446,12 @@ That the event stream makes this testable is a good sign the stream is right.
 
 Not tests that can be skipped. A release does not happen if any of these is red.
 
-1. **Redaction.** Run the full suite at `--log-level debug`, then grep every
+1. **Redaction.** Run the full suite, then grep every
    artefact — stdout, stderr, log files, JSON output, audit records — for every
    generated password. Zero hits.
 
-   **`policy sample --reveal` is excluded by name**, and it is the only exclusion.
-   That command prints a password because printing one is what it is for
+   **`policy sample --reveal` is excluded by name**, and so is UC-2's seen reset
+   (`03-json-output.md` §4 has its rule). That command prints a password because printing one is what it is for
    (invariant 2's third exception: a sample is not a credential, since nothing
    authenticates with it and it is never stored). Excluding it would weaken the
    gate if it stopped there, so the gate gains the narrower property in exchange:

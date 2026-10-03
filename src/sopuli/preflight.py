@@ -242,7 +242,7 @@ def survey(
                 target=target,
                 check=PRIVILEGES,
                 message=(f"the service account is missing {', '.join(sorted(missing_privileges))}"),
-                hint="run the install script for this target's scope (`sql/00_install.sql`)",
+                hint="run the install script for this target's scope (`sql/oracle/00_install.sql`)",
                 category="authorization",
             )
         )

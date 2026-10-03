@@ -122,9 +122,11 @@ Four things are worth knowing about it:
   the run stops with a message naming the setting, where it was written, and both
   `--confirm` and `--dry-run` as the two ways forward.
 
-Two commands confirm every time regardless of this setting: `creds rotate` and
-`lock break`. A third is designed but not built yet: resetting a person's own
-account password in the mode where the DBA sees the new password
+Three commands confirm every time regardless of this setting: `creds rotate`,
+`lock break`, and `account reset-password` in the mode where the DBA sees the new
+password (`delivery.method: manual`). The first two accept `--confirm` as the yes
+given in advance. The third refuses it and always asks, because if nobody is there
+to answer, nobody is there to receive the password either
 (`docs/use-cases/uc-02-personal-account-passwords.md`).
 
 ### The safety ratchet: settings can only get stricter
@@ -143,6 +145,7 @@ it came from.** These are the settings that behave this way:
 | `safety.dry_run` | preview only, never change | one layer asking for it is enough |
 | `safety.max_targets` | most databases one run may touch | the smallest number any layer named |
 | `safety.confirm_environments` | environments needing an explicit yes | every environment any layer listed |
+| `safety.delivery.allowed_methods` | which ways a reset may hand over a password | only the methods every layer allows |
 | `locking.break_expired` | permission to take over an expired lock | one layer withholding it is enough |
 
 The thing this protects against is concrete. A site-wide config file turns on a
@@ -294,24 +297,35 @@ taken away, so a built-in `prod` would be a floor nobody could lift. Listing
 
 ## 5. What happens to the password itself
 
-**In the tool's own output: nothing.** A secret value is held in a wrapper type
-whose text form, debug form and JSON form are all `***`. Masking is applied where
-output is produced, not at each place a password is handled — so there is no
-"remember to mask this one" for anybody to forget, in ordinary output or in a
-crash traceback.
+**In the tool's own output: only where you ask for it.** A secret value is held
+in a wrapper type whose text form, debug form and JSON form are all `***`. Masking
+is applied where output is produced, not at each place a password is handled — so
+there is no "remember to mask this one" for anybody to forget, in ordinary output
+or in a crash traceback.
 
-There is exactly one command that prints a real password: `policy sample
---reveal`, which shows what your password rules actually produce. A sample is not
-a credential — nothing authenticates with it, it is never stored, and it guards
-nothing. Even so it is fenced in: it refuses to run together with `--output json`,
-because JSON output is what gets captured and shipped to a log collector.
+A secret reaches output in three cases, and each one is asked for on purpose:
+
+- **`policy sample --reveal`** shows what your password rules produce. A sample
+  is not a credential — nothing authenticates with it, it is never stored, and it
+  guards nothing.
+- **`account reset-password` with `delivery.method: manual`** prints a person's
+  new password so the DBA can pass it on. It asks every time, and refuses
+  `--confirm`. It also refuses unless output goes to a terminal. The
+  password is expired as it is set, so the person must change it at first logon.
+- **`account reset-password` with `delivery.method: vault_wrapped`** prints a
+  short-lived, single-use token that fetches the new password, for you to hand to
+  the person. It is never in the JSON run document; with `--output json` it goes
+  to stderr instead. It needs no terminal, so a handover script can read it.
+
+The first two refuse `--output json` and `--output jsonl`, because JSON output is
+what gets captured and shipped to a log collector.
 
 ```
 $ sopuli policy sample --reveal --output json
 Usage: sopuli policy sample [OPTIONS] [NAME]
 Try 'sopuli policy sample --help' for help.
 
-Error: --reveal cannot be used with --output json
+Error: --reveal cannot be used with --output json or jsonl
        json output is what gets captured and shipped to log aggregation, so a sample never
        appears in it -- drop --reveal, or use the text output
 ```

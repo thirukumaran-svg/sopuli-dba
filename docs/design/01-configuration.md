@@ -350,11 +350,13 @@ bookkeeping. Nothing defines a set of notify channels — `smtp` and `chat` are
 "their own issues if needed" — so inventing two values would publish a contract
 nobody has decided.
 
-**Nothing is sent yet.** #442 has two parts: this one reads and refuses
-configuration, and the second opens the socket. A configured channel therefore gets
-its own `config validate` warning, separate from the delivery method's, because an
-estate can have a working delivery and an inert notification and one sentence
-covering both would say only that something here does not work.
+**The webhook sends.** `account reset-password` posts the rendered message after
+the database has confirmed the new password. It needs the `notify` install extra;
+a missing client is refused before anything connects (`SOPULI-20003`, exit 9). A
+failed post does not fail the run: the password has already changed, so the run
+reports it as warning `SOPULI-W026` and somebody tells the person another way.
+`config validate` warns about a configured channel only when it cannot send:
+its method is not built, or its client is not installed.
 
 **`safety.delivery.allowed_methods` restricts the set an estate may use**, and it
 is not a key of this block: it is a safety axis, ratcheting by intersection under
@@ -1901,14 +1903,16 @@ Rejected at validation, with a message naming the key:
    in `defaults.profile` is reported against that key; one typed on the command
    line has no line to point at, so it is reported against the file.
 
-**Not every key a profile may write is a setting yet.** `verify.*`, `confirm`,
-`log_level`, `log_file`, `rotation.strategy`, `db.*` and `vault` are parsed and
-validated, and reach nothing, because nothing consumes them — they join the
-resolver with their consumers, which is the rule `sopuli/settings/registry.py`
-states. What layer 3 supplies today is `output`, `safety.*`,
-`locking.break_expired` and `vaults.<name>.*`. A profile writing one of the
-others is not an error and does not appear in `invocation.options`, because it
-changed nothing.
+**Not every key a profile may write is a setting.** `verify.*`, `confirm`,
+`log_level`, `log_file` and `rotation.strategy` are parsed and validated, and
+reach nothing, because nothing consumes them. They join the resolver with their
+consumers, which is the rule `sopuli/settings/registry.py` states. Layer 3
+supplies `output`, `safety.*`, `locking.break_expired`, `vaults.<name>.*`,
+`db.connect_timeout_s` and `db.query_timeout_s`. A profile's `vault` is read
+too, outside the resolver: it is the store a binding or an admin credential
+falls back to when nothing more specific names one (§3a). A profile writing an
+unconsumed key is not an error and does not appear in `invocation.options`,
+because it changed nothing.
 
 ### Naming
 

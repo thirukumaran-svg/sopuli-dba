@@ -591,7 +591,7 @@ from:
 
 This is the machine-readable form of `config show --explain` (P3). When someone
 asks why a scheduled run behaved differently from their interactive one, the
-answer is in the output they already have, not in a re-run with `--debug`.
+answer is in the output they already have, not in a re-run.
 
 By default it carries the settings that **changed behaviour** — a setting
 answered by its built-in default changed nothing, and reporting
@@ -1632,10 +1632,10 @@ The output says the samples must not be used, because the realistic hazard is no
 the printing. It is somebody liking sample 2 and pasting it into an `ALTER USER`
 by hand, at which point a value that sat in a scrollback becomes a live credential.
 
-The release gate from UC-1 §11 tests the rest: run everything at
-`--log-level debug`, grep every artefact for the generated password, zero hits or
-no release. `policy sample --reveal` is excluded by name — it is the one command
-whose output is *supposed* to contain one — and in exchange the gate asserts the
+The release gate from UC-1 §11 tests the rest: run everything, grep every
+artefact for the generated password, zero hits or no release. `policy sample
+--reveal` is excluded by name — its output is *supposed* to contain one, as the
+seen reset's is (below) — and in exchange the gate asserts the
 narrower property above: no sample value in any JSON document, `--reveal` or not.
 See `04-testing.md` §6.
 

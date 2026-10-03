@@ -1095,7 +1095,7 @@ def policy_group() -> None:
 @click.option(
     "--max-bytes",
     type=click.IntRange(1, 4096),
-    help="Preview a target's byte limit (30 below 12.2, 128 from 12.2).",
+    help="Preview a target's byte limit (30 below 23, 128 from 23).",
 )
 @click.option(
     "--encoding",
@@ -1129,12 +1129,12 @@ def policy_sample(
     Offline, and further than the other verbs: it opens no socket *and* writes
     nothing. Nothing generated here is stored, in a vault or anywhere else. With
     `--max-bytes` and `--encoding` it previews what a target would accept without
-    connecting to one; reading the real limit needs a driver (P1) and will arrive
-    as `--target`.
+    connecting to one. Reading a target's real limit needs a connection (P1),
+    which this verb does not make.
 
-    `--reveal` prints the passwords themselves. That is the one place in the tool
-    where plaintext reaches output on purpose (invariant 2's third exception): a
-    sample is not a credential, because nothing authenticates with it and it is
+    `--reveal` prints the passwords themselves. That is invariant 2's third
+    exception, where plaintext reaches output on purpose: a sample is not a
+    credential, because nothing authenticates with it and it is
     never stored. It is refused with `--output json`, which is what gets captured
     and shipped to log aggregation -- and the JSON section carries no value
     property at all, so the two halves cannot disagree about that.
@@ -1851,9 +1851,9 @@ def account_reset_password(
     new one, sets it, and delivers it by the method `delivery:` names.
 
     **Two paths, and the configuration chooses.** The unseen path -- the default
-    -- puts the value where only the owner can fetch it and shows it to nobody;
-    none of its methods is implemented yet (#444-#447), so a file naming one is
-    refused here rather than after the password has changed. The seen path,
+    -- puts the value where only the owner can fetch it and shows it to nobody.
+    `vault_wrapped` is the unseen method this build implements; a file naming
+    one that is not built is refused here, before the password changes. The seen path,
     `delivery.method: manual`, prints the password to your terminal and always
     expires the account, because expiry at first logon is what ends your sight of
     it.
@@ -9101,9 +9101,9 @@ def _confirm_rotation(plan: Any, *, confirmed: bool, run: Invocation) -> None:
     pass -- so section 8 puts a confirmation in front of it and section 5 does
     not.
 
-    The estate-wide `safety.confirm_environments` setting is a separate gate that
-    nothing enforces yet (#292); this flag is not it, and neither one is a
-    substitute for the other.
+    The estate-wide `safety.confirm_environments` setting is not asked as well.
+    This prompt is unconditional, so the setting could only make it weaker, and
+    a second prompt would ask the same question twice.
     """
     if confirmed:
         return

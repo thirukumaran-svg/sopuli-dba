@@ -108,9 +108,9 @@ see [`docs/scenarios/kubernetes-eso.md`](https://github.com/villebase/sopuli-dba
 | | |
 |---|---|
 | **Install** | Nothing is published to PyPI yet — you install from a git checkout. `sopuli --version` and `sopuli about` report the installed distribution's version |
-| **Databases** | Oracle only. Tested against Oracle AI Database 26ai Free 23.26.2.0.0 |
+| **Databases** | Oracle only. CI runs against Oracle AI Database 26ai Free 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI. 12.1 is not tested |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
-| **What works** | Fourteen commands, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) is the by-hand map of exactly what this build can be made to do |
+| **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) is the by-hand map of exactly what this build can be made to do |
 
 If you want the full design picture — every decision, and every question that is
 still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md).
@@ -153,6 +153,7 @@ dependencies that part needs.
 | `pip install "sopuli-dba[oracle]"` | `python-oracledb` | you manage Oracle databases |
 | `pip install "sopuli-dba[hashicorp]"` | the HashiCorp Vault client | your secrets are in HashiCorp Vault |
 | `pip install "sopuli-dba[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
+| `pip install "sopuli-dba[notify]"` | an HTTP client for the notify webhook | `account reset-password` posts a notice to a webhook |
 | `pip install "sopuli-dba[all]"` | every extra | CI, or you genuinely have all of them |
 
 A working install is one store plus one database. For most sites that is:
@@ -241,10 +242,20 @@ The grant is not part of the standard install, because it is a broad read.
 
 **Passwords do not reach your logs.** A password is held in a wrapper type whose
 text form is `***`, so printing one prints the mask, in ordinary output and in a
-crash traceback alike. There is exactly one command that prints a real password
-(`policy sample --reveal`, which shows you what your password rules produce), and
-it refuses to run when output is machine-readable JSON — because JSON output is
-what gets shipped to a log collector.
+crash traceback alike. A secret reaches output in only these cases, and each
+one is asked for on purpose:
+
+- `policy sample --reveal` shows sample passwords, so you can see what your
+  password rules produce. Nothing logs in with a sample.
+- `account reset-password` with `delivery.method: manual` prints the new
+  password for a person to read. It asks every time, needs a terminal, and
+  expires the password so the person must change it at first logon.
+- `account reset-password` with `delivery.method: vault_wrapped` prints a
+  short-lived, single-use token that fetches the password. It is never in the
+  JSON run document; with `--output json` it goes to stderr.
+
+The two that print a password refuse machine-readable JSON output, because JSON
+output is what gets shipped to a log collector.
 
 **A password containing a double quote is rejected, not escaped.** Oracle's
 quoted identifiers have no escape sequence for `"`, so there is no correct way to

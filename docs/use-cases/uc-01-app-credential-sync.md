@@ -1588,9 +1588,8 @@ sopuli creds check --application orders-app
 `--lockout-margin`, `--method` and `--output`. `--method` defaults to `login`
 unconditionally (Q1, #86). `hash` and `both` arrived with #437, once #90 had
 reproduced the verifier, and an explicit one the estate cannot honour is refused
-at plan time (below). `--application`,
-`--account`, `--target` and `--group` are the selectors this command shares with
-every other verb and are not built yet; `--select` is.
+at plan time (below). `--application`, `--account`, `--target`, `--group` and
+`--select` are the selectors this command shares with every other verb.
 
 ### The lockout problem
 
@@ -1958,7 +1957,7 @@ in a store `vaults:` declares, and never touches the secret the lock guards.
 | 4 | nothing changed in the database; `pending` may exist | re-run `rotate`, or `generate` then `apply` |
 | 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair`; with rollover strategy there is no outage meanwhile |
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` distinguishes "wrong password" from "account locked/expired" |
-| 7 | database has new, vault `current` still old | **highest-severity case**: `pending` still holds the right value, so `sopuli creds apply` completes it — it re-verifies every target and promotes; `rotate` retries the promote internally before giving up |
+| 7 | database has new, vault `current` still old | **highest-severity case**: `pending` still holds the right value, so `sopuli creds apply` completes it — it re-verifies every target and promotes; `rotate` does not retry the promote: a compare-and-set conflict means a writer outside the tool, and re-reading to merge over it would rewrite fields of accounts nobody selected |
 | 8 | promoted, and the read-back disagreed | the databases are converged and the vault is not serving what it accepted. Exit 4 carrying `SOPULI-W012`, which names the accounts; nothing needs undoing, and the place to look is the vault (a replica behind its primary) rather than any database |
 | any fence check, at 4–7 | this run's lock was taken over by another; whatever it had already applied stands | abort immediately, mutate nothing further, exit **7** if nothing had been applied and **4** if something had, carrying `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it |
 
@@ -2041,9 +2040,9 @@ unattended run without it is refused on exit 8 rather than left to an EOF abort.
 `apply` does not ask, and the difference is real: it converges an estate on a
 value somebody already staged and reviewed, while `rotate` invents the value and
 replaces what every application is using, across the whole selection, in one
-pass. The estate-wide `safety.confirm_environments` setting is a *different* gate
-which nothing enforces yet (#292) — this flag is not it, and neither substitutes
-for the other.
+pass. The estate-wide `safety.confirm_environments` setting is a *different*
+gate, and `rotate` does not ask it as well: this prompt is unconditional, so the
+setting could only make it weaker.
 
 **Rollback.** `previous` is retained so that
 `sopuli creds apply --source previous --confirm` can put the old password back on
@@ -2168,9 +2167,14 @@ exit 3 alerts). Weekly `rotate --max-age-days 90 --strategy rollover`. The app
 refreshes credentials within the rollover window; a follow-up job runs
 `finish-rollover` once the window has elapsed.
 
-**S3 — One PDB was down during the last rotation.** `check` reports DRIFT for that
-PDB. `apply --repair --target cdb1-pdb-billing` fixes only it, from the vault's
-`current`. Idempotent for the ones already correct.
+**S3 — One PDB was down during the last rotation.** The other targets took the
+new password, and the promotion was withheld (invariant 7): `current` still holds
+the old password and `pending` the new one. Once the PDB is back, run `apply`
+without a target selector. It applies `pending` where a target does not hold it,
+confirms every target, and only then promotes. Idempotent for the ones already
+correct. `apply --target cdb1-pdb-billing` alone changes that PDB but still
+withholds the promotion (`SOPULI-W027`), because a narrowed run cannot confirm
+the targets it left out.
 
 **S4 — Emergency rotation after a leak.** `rotate --strategy direct
 --finish-rollover` — no grace window, old password invalid immediately, accepting
@@ -2180,8 +2184,12 @@ application errors as the price. The audit record captures who and when.
 `cdb1-root`, `container_clause: ALL`. One statement covers every PDB.
 
 **S6 — Vault write succeeds, database is unreachable.** `pending` exists, nothing
-applied, `current` unchanged, applications unaffected. `check` reports
-`PENDING_APPLY`. Re-running `rotate` resumes rather than starting over.
+applied, `current` unchanged, applications unaffected. While the database is
+unreachable, `check` reports `ERROR` and exits 1. Once it is back, `check` finds
+no drift, because the database still holds `current`, and `creds status` shows
+the staged `pending`. Finish with `apply`, which applies the staged `pending`,
+confirms it, and promotes. Re-running `rotate` does not resume: it draws a fresh
+password and stages it over the old `pending`.
 
 **S7 — Application still holds the old password after the window closed.**
 Logins start failing. `check --include-previous` shows the old password is no
@@ -2220,7 +2228,7 @@ is the UC-1 specific list.
   over — and assert the first aborts before its next `ALTER USER`. This is the
   case that a session-scoped `DBMS_LOCK` would not have caught, since a stalled
   session is still alive and still holding.
-- **Redaction test:** run everything with `--log-level debug`, grep all output,
+- **Redaction test:** run everything, grep all output,
   logs and trace for the generated password. Zero hits is a release gate.
 
 ---
