@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.69.0](https://github.com/villebase/sopuli-dba/compare/v0.68.0...v0.69.0) (2026-10-02)
+
+
+### Features
+
+* **apply:** warn about a reuse-restricted rollback under --preflight ([#580](https://github.com/villebase/sopuli-dba/issues/580)) ([#605](https://github.com/villebase/sopuli-dba/issues/605)) ([fd22c6e](https://github.com/villebase/sopuli-dba/commit/fd22c6e2c89ae5333b4b2b69779e0d9042660a4d))
+
+
+### Bug Fixes
+
+* **admin:** refuse an empty auth: prompt answer before connecting ([#601](https://github.com/villebase/sopuli-dba/issues/601)) ([#603](https://github.com/villebase/sopuli-dba/issues/603)) ([7f9d4a9](https://github.com/villebase/sopuli-dba/commit/7f9d4a9ed3347437aac33dc1de5ba4d27d79fabf))
+* **doctor:** the vault survey shares the run's store clients ([#489](https://github.com/villebase/sopuli-dba/issues/489)) ([#607](https://github.com/villebase/sopuli-dba/issues/607)) ([d5c4326](https://github.com/villebase/sopuli-dba/commit/d5c43265896f40e133bb59e8877220b04250d197))
+* **generate:** name the target in the byte-limit refusal ([#598](https://github.com/villebase/sopuli-dba/issues/598)) ([#602](https://github.com/villebase/sopuli-dba/issues/602)) ([a63e9cc](https://github.com/villebase/sopuli-dba/commit/a63e9cce9da0749894f3fcd9742ae1cdceb4897f))
+* **preflight:** print a passing survey's caveats in text mode ([#606](https://github.com/villebase/sopuli-dba/issues/606)) ([#608](https://github.com/villebase/sopuli-dba/issues/608)) ([6e479d2](https://github.com/villebase/sopuli-dba/commit/6e479d2710101cf1f2178fc9b49ad86e8da95b31))
+
 ## [0.68.0](https://github.com/villebase/sopuli-dba/compare/v0.67.4...v0.68.0) (2026-10-02)
 
 
