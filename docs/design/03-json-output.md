@@ -2383,8 +2383,8 @@ path.
 its own description says "never a value and **never a destination**", so the
 accessor could not go in it without a rename — major, under §8, to answer a
 question no consumer had asked. A sibling object also generalises where a widened
-string would not: `vault_path` (#447) will report a path here, `one_time_link`
-(#445) a link id, and each is the same *kind* of fact about a hand-over.
+string would not: `vault_path` would report a path here and `one_time_link` a
+link id (open: #445, #447), and each is the same *kind* of fact about a hand-over.
 
 **What it holds is the half that cannot fetch.** Vault returns two things beside a
 wrapped password: the token, which produces the password in anybody's hands, and

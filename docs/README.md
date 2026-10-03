@@ -103,6 +103,14 @@ cross-key rules, whose errors have to name the offending key — is listed in
   output, so a marker in one reaches every operator who asks for help. Where the
   claim is in help text the marker goes in a comment beside it, naming the
   sentence it belongs to — `sopuli/cli.py`'s `creds_check` is the example.
+- **Work that waits on an open issue carries a marker naming the issue**:
+  `(open: #N)` in Markdown, or `(open: #N, #M)` for several, and `TODO(#N)` in
+  code. Write what is true now and put the marker beside it. Do not write "until
+  #N lands" or "#N will": `tests/test_pending_work.py` rejects those phrases, and
+  rejects a `TODO` that names no issue. The `pending-work` workflow runs weekly
+  and fails when a marker names a closed issue. When that happens, say what the
+  issue did and remove the marker. The rule above about user-visible text
+  applies to these markers too.
 
 ## Consolidated open decisions
 
@@ -218,7 +226,7 @@ documented default (P1), ~~grant `SELECT ON SYS.USER$` by default~~ (P2 —
 **decided in #86: no.** Optional, capability-probed grant instead — `check`
 defaults to `login` unconditionally either way. Whether to *recommend* the
 grant, and whether `SELECT_CATALOG_ROLE`/`KU$_USER_VIEW` is a narrower
-alternative, is deferred to #124), ~~whether `--force` exists~~ (P3 — **decided in #89: yes**, one flag overriding
+alternative, is not decided (open: #124)), ~~whether `--force` exists~~ (P3 — **decided in #89: yes**, one flag overriding
 `02-oracle-privileges.md` §4's account checks 2–5 and nothing else. `DBSNMP` is
 the case: rotating its
 password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a tool with no
@@ -830,11 +838,12 @@ with no `--force` to waive it, and the registry's `inert_reason` is deleted
 rather than left to rot.
 
 **The seen path is built** (#441): `sopuli account reset-password` with
-`delivery.method: manual`, under #439's five guards, and the unseen methods
-refused at plan time on exit 5 until #444-#447 land. The reset record and the
-advisory lock keyed on its path are the part #468 shaped and nobody has written
-yet, so every run warns that the run document and the database are the whole
-record.
+`delivery.method: manual`, under #439's five guards. So is the unseen default,
+`vault_wrapped` (#444). A method this build does not implement is refused at plan
+time on exit 5 (open: #445, #446, #447). The reset record and the advisory lock
+keyed on its path are written where `reset_records:` is declared (#468, #512);
+without that block, every run warns that the run document and the database are
+the whole record.
 
 **What blocks what.** **#456 is written and #440 and #498 have landed**, so every
 `delivery:` issue now waits on nothing — the config block and the ratchet are both

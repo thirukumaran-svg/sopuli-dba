@@ -60,9 +60,9 @@ class Delivery:
 
     ``method`` is a name to write down, deliberately **not** checked against a
     closed set here. Which methods exist is the `delivery:` block's question
-    (#440), and every one of them is still blocked on #439 and #453; a closed set
-    in this module would be a second place to update each time #441-#447 lands
-    one, and the one more likely to be forgotten.
+    (#440), and methods are added one issue at a time; a closed set in this
+    module would be a second place to update each time one is added, and the one
+    more likely to be forgotten.
 
     ``to`` is **optional, and its absence is meaningful** rather than missing
     data. A store path or a cubbyhole reference is a location; the seen path's

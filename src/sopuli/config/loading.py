@@ -394,8 +394,8 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
     A load-time warning rather than a check inside one verb, so every command
     reports it the same way -- `config validate` in text, and `diagnostics[]` for
     the schedulers that never see the text. A file that parses clean must not read
-    as a file that would hand somebody a password, and until #441 or #444-#447
-    lands, none would.
+    as a file that would hand somebody a password, and a file naming a method
+    this build does not implement would not.
 
     No code yet. J3 -- how codes are allocated across categories -- is still open,
     and this follows established practice rather than settling it: the §10

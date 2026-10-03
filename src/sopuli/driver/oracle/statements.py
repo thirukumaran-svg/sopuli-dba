@@ -83,9 +83,9 @@ class PasswordNotAdmissibleError(DriverError):
     because an unset one reads like an oversight beside the neighbours here that
     do set theirs. P5's table has no code for a policy refusal, and inventing an
     unpublished number for a scheduler to branch on is not this module's to do:
-    exit codes are a published contract. Generic failure is the honest answer
-    until #172 classifies the whole family, which is where a new code would be
-    argued for if one is ever wanted.
+    exit codes are a published contract. Generic failure is also what #172 gave
+    the server's own policy refusals (``ORA-28003``, ``ORA-28007``), so the
+    family agrees; a new code for it would be a change to P5.
     """
 
     category = "policy"
@@ -421,8 +421,8 @@ def alter_user_profile(account: Identifier, profile: Identifier, *, scope: Scope
     everything else: this moves one account the config already whitelists onto a
     profile that exists, while ``ALTER PROFILE`` edits a shared object and so
     reaches accounts nobody selected. `02-oracle-privileges.md` §3 keeps that
-    privilege off the service account deliberately and Q4 (#88) is open with a
-    documented leaning of no -- so there is no function in this module that
+    privilege off the service account deliberately and Q4 (#88) decided that the
+    tool never alters a profile -- so there is no function in this module that
     builds one, which is the form that refusal takes here.
 
     ``profile`` is an :class:`Identifier` for the same reason ``account`` is: the

@@ -489,7 +489,7 @@ def test_the_quiet_estate_still_emits_a_section() -> None:
 
 def test_the_text_view_leads_with_the_string_lock_break_will_take() -> None:
     """`store:path` in one cell, because that spelling is what exit 7 prints and
-    what #149 will accept. Two columns would make the operator reassemble by
+    what `lock break` accepts. Two columns would make the operator reassemble by
     hand the one string they are about to paste."""
     rendered = render_status([Path("sopuli.yaml")], status_of(), mode="cas")
 

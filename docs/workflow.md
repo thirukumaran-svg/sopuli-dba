@@ -86,6 +86,10 @@ that the installed `sopuli` binary runs. No containers, under a minute.
     docstring names something that does.
   - `tests/test_readme_links.py` checks that the links in `README.md` are absolute
     URLs, so they work on PyPI.
+  - `tests/test_pending_work.py` rejects an issue named in the future tense
+    without a `TODO(#N)` or `(open: #N)` marker. Whether a marked issue is still
+    open needs the network, so the `pending-work` workflow checks that weekly
+    instead of on each pull request.
 
   Without the job a typo'd slug or a
   documented flag the CLI has not got merges green, which is what happened on

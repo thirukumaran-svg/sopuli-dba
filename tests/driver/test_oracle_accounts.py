@@ -248,8 +248,9 @@ def test_the_status_stays_compound_when_two_things_are_true(account: Any) -> Non
 
 
 def test_password_change_date_tracks_a_rotation(account: Any) -> None:
-    """#87 is open about where the value comes from on 11.2, not about whether it
-    means anything on a release that has the column.
+    """Password age is read from the vault's ``rotated_at`` (#87), not from this
+    column. What this pins is that the column means something on a release that
+    has it.
 
     The assertion is a strict ``>``, and the sleep is what earns it. The column
     has second granularity, so two rotations in the same second are equal — and

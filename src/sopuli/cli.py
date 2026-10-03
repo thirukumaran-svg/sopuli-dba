@@ -2293,7 +2293,7 @@ def _record_paths(
     :func:`~sopuli.reset_record.record_path` raises :class:`ValueError` for a
     target or an account that is not one path segment -- a `/` in either derives
     the same record path as a *different* pair, which is one journal describing
-    two accounts and, once #512 lands, one lock where there should be two.
+    two accounts and one lock where there should be two.
     Deriving at plan time is what keeps that a refusal rather than a discovery
     made after the password has changed.
 
@@ -4058,10 +4058,10 @@ def main() -> None:
         click.echo(f"sopuli: {exc}", err=True)
         raise SystemExit(exc.exit_code) from exc
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all at the boundary
-        # TODO(#4 follow-up): map the driver errors that arrive *inside* a
-        # per-account finding to their categories, carrying the vendor code and
-        # a hint (see CLAUDE.md, Style). Ones that escape a command whole are
-        # handled above.
+        # An exception none of the arms above classifies. A driver error inside
+        # a per-account finding keeps its category, vendor code and hint through
+        # `_as_error`, and one that escapes a command whole is handled above, so
+        # what reaches here is unclassified and generic failure is what it is.
         click.echo(f"sopuli: {type(exc).__name__}: {exc}", err=True)
         raise SystemExit(ExitCode.FAILURE) from exc
 

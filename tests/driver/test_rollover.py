@@ -88,8 +88,8 @@ def test_a_window_end_needs_both_halves(changed: datetime | None, limit: str | N
 
 
 def test_the_alter_profile_is_reported_and_never_issued() -> None:
-    """Q4 (#88) is open with a documented leaning of no, and this is the "no"
-    side: profiles are shared, so changing one affects accounts nobody selected,
+    """Q4 (#88) decided that the tool never alters a profile, and this is that
+    answer: profiles are shared, so changing one affects accounts nobody selected,
     and `02-oracle-privileges.md` §3 keeps `ALTER PROFILE` off the service
     account deliberately.
 

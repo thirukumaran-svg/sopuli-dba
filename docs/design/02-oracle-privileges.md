@@ -368,7 +368,7 @@ to an attacker who never touches the database again. That trade-off is a site's
 to make, not the tool's to default to — which is why the grant is opt-in.
 
 **Whether to recommend granting it, and whether a narrower alternative exists,
-is deferred to #124.** `SYS.KU$_USER_VIEW` / `SYS.KU$_USER_BASE_VIEW` (Data
+is not decided** (open: #124). `SYS.KU$_USER_VIEW` / `SYS.KU$_USER_BASE_VIEW` (Data
 Pump metadata views, granted to `PUBLIC`) reportedly expose `LCOUNT` under
 `SELECT_CATALOG_ROLE` alone, masking `SPARE4` unless the session also holds
 `EXP_FULL_DATABASE` — which, if it reproduces, would let a site enable the

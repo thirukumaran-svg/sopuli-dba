@@ -351,8 +351,8 @@ def test_a_record_path_that_cannot_be_derived_is_refused_at_plan_time(
     """Invariant 4, and the reason the path is derived before anything connects.
 
     A `/` in a target name derives the same record path as a *different* target
-    and account, which is one journal describing two accounts -- and, once #512
-    lands, one lock where there should be two. Refusing after the password had
+    and account, which is one journal describing two accounts and one lock
+    where there should be two. Refusing after the password had
     changed would be finding that out in the worst order.
     """
     written = (

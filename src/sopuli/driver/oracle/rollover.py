@@ -152,10 +152,9 @@ def alter_profile_ddl(profile: str, rollover_days: str = "1") -> str:
 
     **Reported, never issued.** Profiles are shared, so changing one affects
     accounts nobody selected, and `02-oracle-privileges.md` §3 keeps
-    ``ALTER PROFILE`` off the service account deliberately. Q4 (#88) is open with
-    a documented leaning of no; this function is the "no" side, and it is the
-    reversible half -- if Q4 is ever answered the other way, this is where the
-    change goes.
+    ``ALTER PROFILE`` off the service account deliberately. Q4 (#88) decided
+    that the tool never alters a profile, and this function is that answer: it
+    reports the statement for an operator to run.
     """
     return f"ALTER PROFILE {profile} LIMIT PASSWORD_ROLLOVER_TIME {rollover_days};"
 

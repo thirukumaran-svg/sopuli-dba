@@ -62,8 +62,8 @@ Two things follow, and neither is fixed here:
 
 * :data:`PASSWORD_IN_GRACE` and its arm of :func:`result_for` are **unreachable
   on this release**. They are kept rather than deleted because the code is real
-  and older lines are unmeasured (tier 2), and because #309 decides what replaces
-  them;
+  and older lines are unmeasured (tier 2). The grace period is read from
+  ``ACCOUNT_STATUS`` instead (below);
 * :meth:`~sopuli.driver.oracle.session.OracleSession._attempt` reads its answer out of
   the exception and never looks at ``connection.warning``, so the notice is
   discarded wherever it appears. That is #322, and it is wider than the grace

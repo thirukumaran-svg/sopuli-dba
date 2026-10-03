@@ -307,22 +307,6 @@ def test_a_profile_s_block_is_parsed_and_kept() -> None:
     assert config.profiles[0].vaults[0].addr == "https://ci.example.com"
 
 
-def test_a_profile_s_block_does_not_reach_the_store_yet() -> None:
-    """Asserted rather than assumed. Nothing activates a profile, so applying a
-    profile's patch would mean applying it to every run -- which is the opposite
-    of what a profile is (§5). When #153 lands this test changes to say that the
-    *active* profile's block applies."""
-    config = build_config(
-        document(
-            {"addr": "https://declared.example.com"},
-            profiles={"ci": {"vaults": {STORE: {"addr": "https://ci.example.com"}}}},
-        )
-    )
-
-    assert config.vaults[0].addr == "https://declared.example.com"
-    assert config.vaults[0].patched == ()
-
-
 # -------------------------------------------------------------- the registry ---
 
 

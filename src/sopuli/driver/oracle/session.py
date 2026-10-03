@@ -260,11 +260,10 @@ class OracleSession:
           which sends the reader to the listener and the credential for a
           problem that is neither.
         * The probe is several round trips, and not every session wants them.
-        * **It would pre-answer an open decision.** #180 has yet to decide
-          whether verification opens its own connection or reuses the admin
-          session; a session opened as the account *being verified* holds none of
-          §2's grants, so probing every connection would make one of those two
-          options quietly unworkable. Laziness leaves the choice where it belongs.
+        * **It would break verification.** Verification logs in on a fresh
+          connection as the account *being verified* (#180), and that session
+          holds none of §2's grants, so a probe on every connection would fail
+          there.
 
         What P1 does require is that a read-only standby is refused **up front**
         rather than mid-statement. That is a property of when the *plan* asks —
@@ -1392,9 +1391,9 @@ class OracleSession:
 
         **The tool never issues that DDL.** Profiles are shared, so changing one
         affects accounts nobody selected, and `02-oracle-privileges.md` §3 keeps
-        ``ALTER PROFILE`` off the service account deliberately. Q4 (#88) is open
-        with a documented leaning of no; reporting the statement is that leaning,
-        and it is the half that can be reversed if #88 ever says otherwise.
+        ``ALTER PROFILE`` off the service account deliberately. Q4 (#88) decided
+        that the tool never alters a profile, so it reports the statement
+        instead.
         """
         # The hint matters more here than on most refusals, because the two
         # halves of this method fail for opposite reasons and an operator meeting

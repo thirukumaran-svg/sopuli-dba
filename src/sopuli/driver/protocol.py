@@ -1210,8 +1210,8 @@ class Session(Protocol):
         * **the account's profile grants no window** -- a
           :class:`DriverError` whose hint carries the exact ``ALTER PROFILE`` an
           operator would run. The tool never issues it: profiles are shared, so
-          changing one affects accounts nobody selected, and Q4 (#88) is open with
-          a documented leaning of no.
+          changing one affects accounts nobody selected, and Q4 (#88) decided
+          that the tool never alters one.
 
         On the protocol as of #262, which is when it acquired a caller.
         :mod:`sopuli.strategy` deliberately does not restate either refusal -- the
