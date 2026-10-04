@@ -90,6 +90,9 @@ that the installed `sopuli` binary runs. No containers, under a minute.
     against the decision register in `docs/README.md`. Whether the register
     agrees with GitHub's issue states is checked weekly by the `pending-work`
     workflow.
+  - `tests/test_decision_log.py` checks that every decided register row has a
+    record in `docs/decisions/log.md` with the five fields, and that each
+    record names the same issue as its register row.
   - `tests/test_pending_work.py` rejects an issue named in the future tense
     without a `TODO(#N)` or `(open: #N)` marker. Whether a marked issue is still
     open needs the network, so the `pending-work` workflow checks that weekly

@@ -125,6 +125,7 @@ def _docs_lane_from_probe() -> list[str]:
 #: `test_neither_list_is_empty` failure one file over, in a new place. The set is
 #: therefore pinned rather than merely cross-checked.
 PROSE_READERS = (
+    "tests/test_decision_log.py",
     "tests/test_decision_register.py",
     "tests/test_doc_command_lines.py",
     "tests/test_doc_lists.py",

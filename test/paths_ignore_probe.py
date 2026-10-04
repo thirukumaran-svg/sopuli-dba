@@ -107,6 +107,7 @@ WATCHED = WATCHED_DIRS + WATCHED_FILES
 DOCS_LANE = (
     "tests/test_verification_register.py",
     "tests/test_decision_register.py",
+    "tests/test_decision_log.py",
     "tests/test_doc_command_lines.py",
     "tests/test_doc_lists.py",
     "tests/test_doc_sections.py",

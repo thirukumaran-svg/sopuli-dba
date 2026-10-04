@@ -93,6 +93,11 @@ stop.** Picking a plausible option and continuing turns an open decision into a
 fact buried in a diff, which is the one outcome this project is most careful to
 avoid.
 
+When a decision is made, the pull request that closes its issue also adds a
+record to [`docs/decisions/log.md`](docs/decisions/log.md), or writes an ADR for
+a large decision. The record says what was decided, why, and what was rejected,
+so the reasons stay in the repository and not only on GitHub.
+
 ---
 
 ## Setting up

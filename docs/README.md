@@ -56,6 +56,7 @@ which paths ran and which are still untried.
 | [decisions/adr-006-optional-dependencies.md](decisions/adr-006-optional-dependencies.md) | Vendor clients are install extras: what base carries, why base opens no sockets, and what a configured-but-uninstalled backend does |
 | [decisions/adr-007-vault-token-flag.md](decisions/adr-007-vault-token-flag.md) | `--vault-token-file` takes a path and `--vault-token` is refused; why a SecretRef cannot authenticate the store it lives in, and where the token chain merges |
 | [decisions/adr-008-contribution-provenance.md](decisions/adr-008-contribution-provenance.md) | A DCO sign-off rather than a CLA, why review-time checking rather than CI, and what would change either |
+| [decisions/log.md](decisions/log.md) | One short record for each smaller decision: the question, the answer, the reasons and the options rejected |
 | `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 | `../test/k8s_eso_probe.py` | Applies [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md)'s own manifests to a throwaway Kubernetes cluster, and checks that ESO reads what sopuli wrote. Needs a cluster, not compose |
@@ -116,8 +117,9 @@ cross-key rules, whose errors have to name the offending key — is listed in
 
 This table is the one place that says whether a decision is open. Each row names
 the document that raises the question. That document's own table keeps the
-question and the reasoning. `tests/test_decision_register.py` checks those tables
-against this one:
+question and the answer. The reasons for a decided question are in its record in
+[the decision log](decisions/log.md), or in its ADR.
+`tests/test_decision_register.py` checks those tables against this one:
 
 - a row whose question is struck through there (`~~…~~`) must be `decided`
   here, and the other way round;
