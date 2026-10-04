@@ -8,8 +8,10 @@ has a short record in the repository. This module checks that:
 
 * each record is a `## <ID>` section with the five fields, in order:
   Decided, Question, Decision, Why, Rejected;
-* each ID is used once, and is a `decided` row in the register;
-* a record's issue is the register row's issue, where the row has one;
+* each ID is used once, and is either a `decided` row in the register or, for
+  a decision with no register ID, its issue number (`## #10`);
+* a record's issue is the register row's issue, where the row has one, and a
+  `#N` record's issue is N, which no register row names;
 * every `decided` register row has a record, except ADRs, which are their own
   record;
 * every link to `log.md#…` in the docs names a record that exists.
@@ -91,10 +93,23 @@ def test_each_record_has_the_five_fields_in_order() -> None:
 def test_each_record_is_a_decided_register_row_and_names_its_issue() -> None:
     requires_repo(LOG)
     rows = {entry.id: entry for entry in register()}
+    registered_issues = {entry.issue for entry in rows.values() if entry.issue}
     seen: set[str] = set()
     for record in records():
         assert record.id not in seen, f"log.md:{record.line}: {record.id} is recorded twice"
         seen.add(record.id)
+        match = DECIDED.match(record.decided)
+        issue = match.group(2) if match else None
+        if record.id.startswith("#"):
+            assert issue == record.id, (
+                f"log.md:{record.line}: {record.id} names {issue}; "
+                "a record named by its issue names that issue"
+            )
+            assert record.id not in registered_issues, (
+                f"log.md:{record.line}: {record.id} has a row in the register; "
+                "name the record by the register's ID"
+            )
+            continue
         entry = rows.get(record.id)
         assert entry is not None, (
             f"log.md:{record.line}: {record.id} is not in the decision register in docs/README.md"
@@ -103,8 +118,6 @@ def test_each_record_is_a_decided_register_row_and_names_its_issue() -> None:
             f"log.md:{record.line}: {record.id} is `{entry.status}` in the register; "
             "only a decided question has a record"
         )
-        match = DECIDED.match(record.decided)
-        issue = match.group(2) if match else None
         if entry.issue:
             assert issue == entry.issue, (
                 f"log.md:{record.line}: {record.id} names {issue}; the register names {entry.issue}"
@@ -127,7 +140,8 @@ def test_every_decided_row_has_a_record() -> None:
 
 def test_every_link_into_the_log_names_a_record() -> None:
     requires_repo(LOG)
-    anchors = {record.id.lower() for record in records()}
+    # GitHub drops the `#` when it makes an anchor, so `## #10` is `log.md#10`.
+    anchors = {record.id.lower().lstrip("#") for record in records()}
     broken = []
     for path in sorted(DOCS.rglob("*.md")):
         text = path.read_text(encoding="utf-8")

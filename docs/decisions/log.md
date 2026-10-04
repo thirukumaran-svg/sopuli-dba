@@ -8,8 +8,9 @@ is open. This file says why a closed one was decided the way it was. A
 document's own decision table keeps the question and a one-line answer, and
 links here for the reasons.
 
-Each record is a section named by the decision's ID in the register, with five
-fields in this order:
+Each record is a section named by the decision's ID in the register. A decision
+with no register ID is named by its issue number, for example `## #10`. Each
+record has five fields in this order:
 
 - **Decided:** the date, and the issue that holds the full discussion.
 - **Question:** what had to be decided.
@@ -1022,3 +1023,316 @@ the register.
     Vault, and estates would fall back to the seen path.
   - A `notify:` channel declared trusted: the trust level would be an assertion
     in the configuration, not something the tool can check.
+
+## #10
+
+- **Decided:** 2026-08-13, #10
+- **Question:** An option such as `--dry-run` can appear before or after the
+  subcommand, and also come from the environment or the configuration. How is
+  one value chosen?
+- **Decision:** One resolver, keyed on settings rather than on click options.
+  Each setting declares its type, the layers that may supply it, and a merge
+  policy. A merge policy is a required field with no default. Safety settings
+  ratchet toward safe, and one generic test checks that no combination of layers
+  resolves to a less safe value. Inert options such as `--output` are accepted
+  in both positions. The safety flags are accepted only after the subcommand,
+  and a safety flag before it is refused with a message that shows the right
+  place. Both positions are one layer, `cli`.
+- **Why:** Some settings that need a merge policy have no flag at all, such as
+  `readonly`, so a resolver keyed on options would have nowhere to declare their
+  policy. "The most specific wins" is wrong for `--dry-run`: once anything asks
+  for a dry run, nothing may withdraw it (invariant 10). Accepting a safety flag
+  in only one position means there is nothing to merge at that layer.
+- **Rejected:**
+  - A merge policy per click option: settings without a flag would have none.
+  - A default merge policy: a new setting would silently inherit `override`.
+  - Accepting safety flags in both positions: buys only typing tolerance, at the
+    cost of a merge rule where it is least visible in review.
+
+## #68
+
+- **Decided:** 2026-08-12, #68
+- **Question:** How does an operator see what a password policy produces,
+  without changing anything?
+- **Decision:** A read-only verb, `sopuli policy sample NAME`, with `--reveal`
+  to print the sample passwords. This is the third exception to invariant 2.
+  `--reveal` is refused with `--output json`, and the run schema has no
+  property a sample password could go in.
+- **Why:** The questions a new policy raises can only be answered by looking: a
+  custom character set that loads but leaves out a character someone meant to
+  include, or passwords too long in bytes for a target. A sample is not a
+  credential: nothing logs in with it, it is never stored, and it guards
+  nothing.
+- **Rejected:**
+  - `creds generate --dry-run` that shows the password: `--dry-run` means
+    "redacted plan" everywhere else, and `generate` is a mutating verb that
+    needs a store and the lock.
+
+## #90
+
+- **Decided:** 2026-10-01, #90
+- **Question:** Can the `T:` (12C) verifier in `SYS.USER$.SPARE4` be reproduced
+  client-side from a known password? `creds check --method hash` depends on it.
+- **Decision:** Yes. The derivation is
+  `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt ‖ "AUTH_PBKDF2_SPEEDY_KEY", 4096, 64) ‖ salt)`.
+  `--method hash` compares `T:` only, and an account with no `12C` verifier
+  fails at plan time.
+- **Why:** Measured. Every stored `T:` reproduces byte for byte on 26ai, 21c,
+  18c, 12.2.0.1.0, 19.3.0.0.0 and 19.32.0.0.0. So does a rollover window's
+  `T:`/`t:` pair on 19.32.0.0.0. `pw_utf8` is the password as the database holds
+  it, after conversion to the database character set. 12.1 is unread. The
+  `t-verifier` entry in `docs/README.md` holds the details.
+- **Rejected:** Not a choice between options. Had it not reproduced, hash mode
+  would have been dropped.
+
+## #195
+
+- **Decided:** 2026-08-22, #195
+- **Question:** The capabilities `container_scope` and `common_users` shared one
+  probe. What does each mean, and how is each probed?
+- **Decision:** `container_scope` is removed as a capability: `scope.type`
+  already answers where a session is. `common_users` stays, and means "this
+  session holds the privilege to manage a common user". It is probed from
+  `USER_SYS_PRIVS`.
+- **Why:** Measured on 26ai 23.26.2.0.0. The shared probe asked
+  `sys_context('userenv','cdb')`, which raises `ORA-02003` in the root and in a
+  PDB alike, so both capabilities were reported absent everywhere. `scope.type`
+  is read on the same connection and is what the code branches on, and one fact
+  stored twice is two things that can disagree. `common_users` is different: a
+  root session can hold `ALTER USER` locally and still be unable to touch a
+  common user, and no scope field says so. Removing it needed no schema change:
+  `scope.capabilities` is an array of plain strings with no enum, so no
+  capability name is part of the typed contract.
+- **Rejected:**
+  - A corrected `container_scope` probe: a second copy of what `scope.type`
+    says.
+  - Removing `common_users` too: it carries a fact nothing else observes.
+
+## #250
+
+- **Decided:** 2026-08-28, #250
+- **Question:** C15 left a binding's store to be completed at plan time. Where
+  does that resolution live?
+- **Decision:** In a separate plan-time step. Bindings stay as loaded, and a run
+  resolves each binding's store once the active profile is known, before the
+  plan is built. A binding still without a store is refused at plan time.
+- **Why:** The `vault` setting in the registry means "which store the unnamed
+  environment variables address", and a binding's store is a different question
+  with the same name. A separate step keeps the two apart.
+- **Rejected:**
+  - Widening the `vault` setting to the profile layer: less code, but it mixes
+    two meanings in one setting.
+
+## #254
+
+- **Decided:** 2026-08-28, #254
+- **Question:** Running `creds generate` twice gives two different passwords. Is
+  it an exception to invariant 9 (idempotency)?
+- **Decision:** It is outside the invariant. A second `generate` replaces
+  `pending` and reports `changed: true`. H7 later restated this as a scope rule
+  covering every verb that draws fresh randomness.
+- **Why:** Invariant 9 governs convergent commands. Drawing a fresh password has
+  no fixed point to converge on.
+- **Rejected:**
+  - A sticky `pending`, replaced only with `--force`: it keeps invariant 9
+    literally true, but charges a flag for the ordinary case, a password that
+    went into a ticket and must be replaced.
+
+## #257
+
+- **Decided:** 2026-09-04, #257
+- **Question:** `creds generate --promote` writes `current` directly, with no
+  database confirming. How does it fit invariant 7, and what state does it
+  report?
+- **Decision:**
+  - It may write over an existing `current` only with `--overwrite-current`.
+    Without the flag, such an account is refused at plan time (exit 8). There is
+    no prompt. In the same write, `previous` takes the value `current` held.
+    This is the one documented exception to invariant 7.
+  - `results[].state` gains `VAULT_ONLY`.
+- **Why:** Invariant 7 protects a window: a `current` that applications read,
+  replaced before any database can serve the new value. `--promote` is for when
+  the operator already knows the password and no rotation is in flight. A
+  dedicated flag can later be loosened without breaking anyone. A `--confirm`
+  gate could not later be narrowed without breaking scheduled runs. `--confirm`
+  means "proceed without asking", so every future question would fold into it.
+- **Rejected:**
+  - Refuse whenever `current` exists: the flag could not mean "I know what I am
+    doing".
+  - `--confirm` as the gate: its scope would grow with every question the verb
+    learns to ask.
+  - `--force` buying the overwrite: gives `--force` a meaning it has nowhere
+    else.
+  - `SKIPPED` as the state: it is not true. No `results[]` at all: the verb that
+    writes the field applications read would have nothing machine-readable to
+    say.
+
+## #263
+
+- **Decided:** 2026-08-29, #263
+- **Question:** `creds finish-rollover` ends a rollover window early. Does it
+  check anything before cutting off the old password?
+- **Decision:** It checks each account with two gates, and closes the window
+  only where both pass.
+  - A staged `pending` means the rotation is unfinished: the window stays open
+    and the account is reported `PENDING_APPLY`. No login is spent.
+  - One login with the vault's `current`: if the database refuses it, the window
+    stays open and the account is reported `DRIFT`. The run exits 3.
+  - An account with no open window reports `changed: false`.
+- **Why:** With a window open, both passwords work, so a successful login
+  proves little. A refused login does prove something: neither password is the
+  one applications fetch, and closing the window would leave nothing that
+  works. A staged `pending` means `current` is the old password, and closing
+  then would strand every application not yet given the new one.
+- **Rejected:**
+  - Close without checking: it could close a window on the only password that
+    still works.
+
+## #264
+
+- **Decided:** 2026-08-30, #264
+- **Question:** Where does `creds apply --repair` get its list of what drifted?
+- **Decision:** From a previous run's document: `--repair result.json` narrows
+  the run to the (account, target) pairs that run reported as not confirmed.
+  It filters on each row's state, not on the document's exit code.
+- **Why:** `apply` already converges, so `--repair` buys fewer logins, not a new
+  capability. Each login is an attempt against the failed-login counter, a
+  connection and an audit entry on a database that had nothing wrong. Reading a
+  previous document is the only option that saves those logins.
+- **Rejected:**
+  - Run `check`'s logic first in the same process: spends exactly the logins
+    `--repair` is meant to save. The pre-flight already does this.
+  - A target list from the operator: that is the selectors that already exist.
+  - Filtering by exit code: it would refuse an `apply` that failed everywhere,
+    which is the document most worth repairing from.
+
+## #265
+
+- **Decided:** 2026-08-29, #265
+- **Question:** `creds apply --source` chooses the stage to apply. How does
+  `--source previous`, the rollback, work?
+- **Decision:** A named stage is read exactly and never falls back. A stage that
+  holds nothing is a failure naming that stage. `previous` needs `--confirm`, and
+  refuses (exit 8) where nothing can be asked. Once every target confirms, the
+  vault swaps: `current` takes the rolled-back value and `previous` takes the
+  one just removed, in one compare-and-set write.
+- **Why:** A fallback is what someone naming a stage is trying to avoid: applying
+  `current` to an operator who asked for `previous` is a rollback that did not
+  happen and said it did. A rollback is the one invocation whose success stops an
+  application's credential working, so it is confirmed. Swapping the vault keeps
+  the vault and the database in agreement, so `check` does not report drift
+  afterwards.
+- **Rejected:**
+  - Leave `current` alone after a rollback: the vault and the database would
+    disagree on purpose, and `check` would report drift until somebody fixed it.
+
+## #266
+
+- **Decided:** 2026-09-03, #266
+- **Question:** What would `creds apply --continue-on-error` govern that is not
+  already the default?
+- **Decision:** Nothing, so the flag is removed from UC-1 §5 rather than built.
+- **Why:** A failure that belongs to one target, one account or one document is
+  already confined to it, and the run continues. The run-wide stops that remain
+  must stay stops: a lock held by somebody else, a stolen lock found by a fence
+  check, a blocking pre-flight finding, and a missing capability. Each of them
+  promises that nothing more is written.
+- **Rejected:**
+  - Build the flag: it would either do nothing, or override one of the stops
+    above.
+
+## #268
+
+- **Decided:** 2026-09-01, #268
+- **Question:** When the server refuses a password with `ORA-28003` (verify
+  function) or `ORA-28007` (reuse), does `creds apply` draw a new one?
+- **Decision:** Yes. `apply` redraws, up to three draws, only for a password the
+  tool drew itself (the `origin` beside `pending`), never on an unmapped error
+  code, and it reports each redraw. It re-applies the account to its whole
+  target set.
+- **Why:** Neither refusal can be predicted before the `ALTER USER`: checking a
+  candidate against the verify function would need the password in a PL/SQL
+  block (invariant 13) or in a bind (invariant 14). So `generate` cannot prevent
+  it, and a refusal the operator cannot act on is worse than a bounded,
+  reported redraw. A password an external system dictated is never replaced.
+- **Rejected:**
+  - Report and point at `creds generate`: the operator can do nothing different
+    with the refusal.
+  - Re-apply only the target that refused: the others would hold a value the
+    vault no longer has.
+
+## #301
+
+- **Decided:** 2026-09-01, #301
+- **Question:** May `creds apply` assign an account to a profile, without
+  deciding Q4 (altering profiles)?
+- **Decision:** Yes. A policy's `account.profile` makes `apply` run
+  `ALTER USER … PROFILE …` where the account is on a different profile. The tool
+  never creates or alters a profile (Q4). A profile that does not exist on a
+  target is a pre-flight finding.
+- **Why:** Assigning changes which shared profile one whitelisted account sits
+  under, which is safe. A profile missing on one target of twenty is an ordinary
+  misconfiguration, and finding it on the twentieth would leave nineteen
+  accounts moved.
+- **Rejected:**
+  - Let `ORA-02380` surface during the run: the run would stop half way.
+
+## #302
+
+- **Decided:** 2026-09-01, #302
+- **Question:** UC-1 §5 listed "`PASSWORD_EXPIRE` handling" as an account
+  attribute. What should it do?
+- **Decision:** Nothing. The attribute is removed.
+- **Why:** Setting a password already clears `EXPIRED`, which is Oracle's
+  behaviour and not optional. What remains is expiring a password on purpose,
+  which forces the next login to choose a new one. An application account
+  cannot answer that prompt, so the rotation would break the application it
+  serves.
+- **Rejected:**
+  - An opt-in expiry attribute: for the accounts UC-1 manages, using it
+    successfully is a failure.
+
+## #303
+
+- **Decided:** 2026-09-01, #303
+- **Question:** UC-1 §5 listed default and temporary tablespace as account
+  attributes. Does `apply` set them?
+- **Decision:** No. Tablespaces belong to provisioning, UC-4, with account
+  creation (Q8).
+- **Why:** `ALTER USER … DEFAULT TABLESPACE` moves no existing segment. During a
+  credential rotation it looks done and is half done. During provisioning, the
+  account has no objects yet, so it is simply part of creating one.
+- **Rejected:**
+  - A tablespace attribute in `apply`: a half change at the worst moment.
+
+## #344
+
+- **Decided:** 2026-09-06, #344
+- **Question:** A path containing `..` let `lock break` write a lock record onto
+  the secret itself. Is `.` or `..` stripped or refused, and where?
+- **Decision:** Refused. `normalise_path`, which every producer of a lock path
+  goes through, raises on a `.` or `..` segment. A SecretRef in the
+  configuration is also refused at load, with a message that names its
+  location.
+- **Why:** A relative segment walks out of the `locks/` prefix: the lock path
+  became the secret's own path, and the run wrote a lock record onto the
+  credential document. Measured against the tier-1 Vault. Stripping the segment
+  would rewrite what the operator typed, so `lock status` and `lock break` could
+  disagree about which record they mean.
+- **Rejected:**
+  - Strip `.` and `..`: a silent rewrite.
+  - Refuse only in the lock-key functions: a later caller would have to
+    remember to.
+
+## #348
+
+- **Decided:** 2026-09-05, #348
+- **Question:** `locking.break_expired` was parsed, validated and ratcheted, but
+  never passed to the lock manager. Wire it, or document it as inert?
+- **Decision:** Wire it: the resolved setting is passed to every lock manager.
+- **Why:** Unlike the inert keys, this one has a complete implementation and a
+  documented safety story behind it. The refusal's own hint already told
+  operators to set it.
+- **Rejected:**
+  - Document it as inert: keeps a feature that is built and promised switched
+    off.
