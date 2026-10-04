@@ -1336,3 +1336,351 @@ the register.
 - **Rejected:**
   - Document it as inert: keeps a feature that is built and promised switched
     off.
+
+## #360
+
+- **Decided:** 2026-09-06, #360
+- **Question:** `db.query_timeout_s` was parsed and read by nothing. Wire it to
+  the driver, or leave it inert?
+- **Decision:** Wire it. `db.connect_timeout_s` was found half-wired too, and
+  both now reach the driver. Neither built-in changes: there is no query
+  timeout by default.
+- **Why:** A key that validates and changes nothing misleads whoever sets it.
+  The default stays unbounded for a reason that is about what the tool imposes:
+  a call timeout cancels the round trip without undoing what the server did,
+  and `ALTER USER` is not transactional, so a rotation cut off at the wrong
+  moment cannot say whether the password changed. An operator may still choose
+  a timeout. Estates that already set either key get it on their next run, so
+  the change was released as a behaviour change.
+- **Rejected:**
+  - Read the key only for verbs that do not mutate: one setting with two
+    behaviours.
+  - Warn when it is set on a mutating run: re-argues a decision the default
+    already makes.
+  - Leave it inert and say so: the key would mean nothing.
+
+## #386
+
+- **Decided:** 2026-09-13, #386
+- **Question:** `DBA_USERS.PASSWORD_CHANGE_DATE` does not exist below 19c, so
+  `creds status` showed no date there and did not say why. Fall back to
+  `SYS.USER$.PTIME`, or make it a capability?
+- **Decision:** Fall back to `PTIME` where the optional `SELECT ON SYS.USER$`
+  grant exists. When the date is still unknown, say why, with `SOPULI-W021`.
+  Exactly one source is read per release: `PTIME` is never read where the
+  column exists, not even to fill a `NULL`.
+- **Why:** `PTIME` is the same clock, which was measured. Reading one source per
+  release keeps a second source from becoming a second opinion that can
+  disagree. A capability would have changed the driver protocol, `doctor`, the
+  schema and the skip vocabulary, all for one display column.
+- **Rejected:**
+  - Leave it absent and say nothing more: the column stays empty with no reason.
+  - A capability: too much machinery for a display column.
+
+## #392
+
+- **Decided:** 2026-09-11, #392
+- **Question:** The run schema's `command` enum listed `creds.promote`, a verb
+  that was declined and will never exist. Remove it with a major bump, remove it
+  with a minor bump, or keep it as reserved?
+- **Decision:** Remove it, as a minor bump (schema 1.21). The rule is written
+  into `03-json-output.md` §8: a value that no released build has ever emitted
+  can be removed without a major bump. The test is the emitter, not the schema.
+- **Why:** Invariant 12 protects readers of emitted documents, and no document
+  could ever have contained this value. The rule is stated narrowly so that a
+  later removal cannot stretch it: it does not cover a value some build did
+  emit, or a property, or a value that is only not built yet.
+- **Rejected:**
+  - A major bump: paid for a change that cannot break any reader.
+  - Keep it as reserved: it keeps a misleading value for a verb that will not
+    arrive.
+
+## #395
+
+- **Decided:** 2026-09-09, #395
+- **Question:** What colour scheme does the text output use?
+- **Decision:** Four roles: `good`, `attention`, `bad` and `inconclusive`. One
+  function, `role_for_state`, maps a state to a role. Converged states are cyan,
+  not green. Colour never carries meaning on its own, and JSON output is never
+  coloured.
+- **Why:** In a wall of monospace, `IN_SYNC` and `FAILED` looked the same until
+  read. Before this, one colour did all the work and the views disagreed about
+  which states to colour. Green next to yellow is the pairing a reader with
+  deuteranopia cannot tell apart, and that is exactly the distinction this tool
+  reports.
+- **Rejected:**
+  - Green for converged: unreadable for deuteranopic readers.
+
+## #406
+
+- **Decided:** 2026-09-30, #406
+- **Question:** The promotion gate counted only the (account, target) pairs this
+  run visited. Should a narrowed run promote?
+- **Decision:** No. "Every target" in invariant 7 means every target the
+  configuration declares. A run narrowed past a pair the promotion needs still
+  changes what it was pointed at, then withholds the promotion (`SOPULI-W027`,
+  exit 4). `creds rotate` refuses such a narrowing up front.
+- **Why:** Counting only the visited pairs let `apply --target` promote a
+  credential whose other target still held the old password, with nothing
+  failing. It also let `--repair` strand a sibling account: new password on its
+  database, old one in `current`.
+- **Rejected:**
+  - Leave it and document it: the stranded state is reachable with no failure.
+  - Re-verify every account in the document before promoting: costs exactly the
+    logins the narrowing was meant to save.
+
+## #409
+
+- **Decided:** 2026-09-13, #409
+- **Question:** Three documented command lines used flags that do not exist.
+  Fix them, mark them illustrative, or both?
+- **Decision:** Rewrite all three on real flags, and add
+  `tests/test_doc_command_lines.py`, which parses every documented `sopuli`
+  command line against the real CLI.
+- **Why:** A real example existed for each case, so none needed an exemption.
+  A test with no unconditional exemption keeps every example honest. A block
+  that shows a refused option on purpose passes only when it also shows click's
+  rejection.
+- **Rejected:**
+  - Mark the examples illustrative: an exemption the test would have to honour
+    forever.
+  - A split, rewriting some and marking others: still leaves an exemption.
+
+## #422
+
+- **Decided:** 2026-09-14, #422
+- **Question:** Does `--vault-addr` exist as the command-line layer for a
+  store's address, which store does it address, and is there a form that names
+  a store?
+- **Decision:** It exists, addresses the active store (what `SOPULI_VAULT` or
+  `defaults.vault` names), and is refused where neither names one. There is no
+  form that names a store. It applies to `vaults.*.addr` and no other key.
+- **Why:** An environment variable outlives the command. On Linux,
+  `env VAR=… sopuli …` is a clean one-shot, but PowerShell has no inline prefix,
+  and Windows is a supported platform. That asymmetry is the whole case, and it
+  does not extend to `mount` or `namespace`, which nobody changes for one
+  command. Several stores are already addressed by
+  `SOPULI_VAULT__<NAME>__ADDR`.
+- **Rejected:**
+  - No flag: Windows users would have no one-shot way to point one run at
+    another address.
+  - A form that names a store: the per-store environment variables already
+    cover it.
+
+## #424
+
+- **Decided:** 2026-09-14, #424
+- **Question:** A `safety:` block on a target, group or target set was parsed
+  and never enforced. When a readonly target is in a run's plan, what happens?
+- **Decision:** The whole run is refused at plan time, `--dry-run` included. The
+  error names the readonly targets, the key that marked each one, and the
+  selectors that would leave them out. `max_targets` and `confirm_environments`
+  on those objects were inert too, and are enforced now. `lock break` is not
+  gated at this layer.
+- **Why:** A refusal before anything is touched is the safe direction, and
+  naming the selector lets the operator narrow the run. `lock break` takes no
+  selector, and every verb that could use a lock to change a target is refused
+  by the same block, so gating it would block a harmless cleanup and guard
+  nothing.
+- **Rejected:**
+  - Skip the readonly targets and run the rest: turns a refusal into a partial
+    run, with a new state and an exit-code rule to define.
+  - Refuse with no hint about how to exclude them: one readonly PDB would block
+    a 200-PDB run with no way forward.
+
+## #426
+
+- **Decided:** 2026-09-14, #426
+- **Question:** `config show --explain` printed `safety.readonly = false
+  [built-in default]` for a file whose target set it. How should `config show`
+  report a `safety:` block written on a target, group or target set?
+- **Decision:** A `safety` section in `config show`, with one row for each
+  object that writes a block, and its key path. The JSON gains `safety` on
+  `config.targets[]`. The `--explain` row itself does not change.
+- **Why:** The `--explain` row was correct: `config show` applies no selector
+  and is not gated by the setting. What was missing was anything saying a block
+  existed.
+- **Rejected:**
+  - A `SAFETY` column in the target table: a group is not a row in that table,
+    so it could not report the main use of the feature, and the column would be
+    mostly empty.
+  - An annotation on the `--explain` row: `[source]` has one fixed meaning, and
+    a second meaning inside it would need a JSON answer as well.
+
+## #428
+
+- **Decided:** 2026-09-14, #428
+- **Question:** `config show` said a store's key was layered, never which layer
+  set it. Where is that reported?
+- **Decision:** In text, per-store rows in `--explain`'s settings table, such as
+  `vaults.vault-dev.addr = … [cli --vault-addr]`, for the keys some layer
+  wrote. In JSON, `config` gains a `vaults` array with each store's effective
+  settings and where each came from.
+- **Why:** P3's own format example is a vault key, and the existing note column
+  already deferred to a view that did not exist. The effective address was in
+  neither JSON mode before: `--explain` emitted the address the file wrote, not
+  the one the run used.
+- **Rejected:**
+  - A `SOURCE` column: a truncated variable name is useless at exactly the
+    moment the view is needed.
+  - The layer appended to the note: keeps the layer and loses the location,
+    which is the part that says what to edit.
+
+## #438
+
+- **Decided:** 2026-09-18, #438
+- **Question:** How does UC-2, personal account passwords, work, and how does a
+  new password reach a person?
+- **Decision:** UC-2 is specified in
+  `docs/use-cases/uc-02-personal-account-passwords.md`. The default path is
+  unseen: the tool writes the password where only its owner can fetch it, and
+  does not expire it. The seen path, `manual`, is not the default, is confirmed
+  every time, and always expires the password. The individual questions are
+  H1 to H9 and #439.
+- **Why:** With no vault as master, a password is handed over, not synced, so
+  UC-1's flow could not be assumed. Expiry is needed only where the DBA has seen
+  the password.
+- **Rejected:**
+  - Expiry on every path: an unseen password needs none, because nobody but its
+    owner has it.
+
+## #439
+
+- **Decided:** 2026-09-18, #439
+- **Question:** May UC-2's `manual` delivery print a working password, which
+  invariant 2 otherwise forbids?
+- **Decision:** Yes, as invariant 2's fourth exception, under five structural
+  guards:
+  - one reveal site, reachable only when the delivery method is `manual`;
+  - refused with `--output json` and `jsonl`, and the run schema has no property
+    for a password;
+  - refused unless stdout is a terminal;
+  - confirmed every time, and `--confirm` does not answer the prompt in advance;
+  - `force_expire: true` required on the method.
+
+  A `--dry-run` is exempt from the middle three, because it prints a plan and
+  never a password.
+- **Why:** This is a credential, unlike a policy sample, so the third
+  exception's reason does not carry over. What allows it is that it is
+  deliberate, witnessed and expired at once: the person's first logon must
+  change it. Because that reason is weaker, the guards are stricter than
+  `--reveal`'s. The terminal check carries the argument: a value in a file or a
+  CI log outlives the one logon it is good for. If nobody is present to answer
+  the prompt, nobody is present to receive the password.
+- **Rejected:**
+  - Write it to a file: a file outlives the logon, like a log.
+  - No `manual` path: the seen path is how many estates hand over passwords
+    today.
+  - `--confirm` answering the prompt: a shell alias would remove the one guard
+    between a DBA and a password they will see.
+
+## #525
+
+- **Decided:** 2026-09-25, #525
+- **Question:** `account expire-password` forces a change and draws nothing.
+  What does it do with an open rollover window, and does it write a reset
+  record or take the reset lock?
+- **Decision:** Close the window, then expire: `EXPIRE PASSWORD ROLLOVER
+  PERIOD`, then `PASSWORD EXPIRE`, in that order. No reset record and no reset
+  lock. Whether to close is decided from the account's state and the database's
+  rollover capability, never from a version number. There is no flag to keep
+  the window.
+- **Why:** If the second statement fails, close-then-expire leaves an `OPEN`
+  account whose old password is already dead, which is the safe half. Closing
+  is safe whatever the release does: a close with no window open is accepted
+  and changes nothing. The only holder of the old password is the owner, as
+  for the reset (H4). An expiry draws and delivers nothing, so there is nothing
+  to journal or protect, and the run document is its record. The accepted
+  cost: a person who knows only the old password loses the self-service change
+  and needs a reset.
+- **Rejected:**
+  - Expire only: the old password keeps working through the window.
+  - Expire, then close: a failure between the two leaves the expire-only state
+    by accident.
+  - A reset record or the reset lock: they exist for deliveries, and an expiry
+    has none.
+
+## #531
+
+- **Decided:** 2026-09-25, #531
+- **Question:** `account list` resolves a `role:` predicate through
+  `DBA_ROLES`, which the install did not grant, so it refused every role
+  predicate as a misspelling. What changes? The mutating `account` verbs were
+  not affected: they check the named account's roles through `DBA_ROLE_PRIVS`,
+  which was already granted.
+- **Decision:** `GRANT SELECT ON SYS.DBA_ROLES` joins the base grant set and
+  `00_install.sql`. Resolving a `role:` predicate is gated on the
+  `role_lookup` capability, so an estate installed before the grant is refused
+  at plan time with the capability and the target named. The grant is not a
+  required read for `creds apply` or `rotate`, so older installs can still
+  rotate.
+- **Why:** Measured on 26ai 23.26.2.0.0: a service account holding exactly the
+  documented grants gets `ORA-00942` from `DBA_ROLES`. Telling an operator a
+  correctly spelled role is misspelled is the wrong refusal. Invariant 4 asks
+  for a plan-time refusal naming the capability.
+- **Rejected:**
+  - Only add the grant: existing installs would still get the misleading
+    refusal.
+  - Only gate on the capability: role predicates would never work on a standard
+    install.
+
+## #568
+
+- **Decided:** 2026-09-30, #568
+- **Question:** A rollback (`apply --source previous`) can be refused with
+  `ORA-28007` on a profile with reuse limits, including ADB's `DEFAULT`. Whether
+  it is depends on how many changes and how much time have passed, some of them
+  outside the tool. Warn, refuse at plan time, or only document it?
+- **Decision:** Warn and document. `SOPULI-W028` names the profile's
+  `PASSWORD_REUSE_MAX` and `PASSWORD_REUSE_TIME` whichever way the statement
+  goes. The docs name a rollover window as the way back on such a profile: the
+  previous password keeps working until `finish-rollover`.
+- **Why:** With both limits set, the outcome depends on password changes made
+  outside the tool, which it cannot see, so the rule is reported, not
+  interpreted. A new code was used instead of widening `SOPULI-W017`, because
+  W017's documented meaning is a supplied password, and changing what an
+  emitted code means would mislead a reader that branches on it.
+- **Rejected:**
+  - Refuse at plan time: the tool would have to interpret Oracle's reuse rule,
+    and would sometimes be wrong.
+  - Widen `SOPULI-W017`: changes the meaning of a code already emitted.
+
+## #606
+
+- **Decided:** 2026-10-02, #606
+- **Question:** Pre-flight's non-blocking findings reached only
+  `--output json`. Print them in text mode?
+- **Decision:** Yes, wherever a survey passes, as run-level notes: one note per
+  target, with findings that share a message sharing one line. A survey that
+  refuses is unchanged.
+- **Why:** These findings say how much the pre-flight could establish. Keeping
+  them JSON-only hid them from everyone who ran the command by hand.
+- **Rejected:**
+  - JSON only: the caveat reaches nobody running by hand.
+  - Only under `--dry-run --preflight`: a real run has the same caveat.
+
+## #610
+
+- **Decided:** 2026-10-03, #610
+- **Question:** Six documented behaviours did not exist in the build. Implement
+  or delete each?
+- **Decision:**
+  - `SOPULI_LOG_LEVEL`: delete the claim. Profile `log_level` and `log_file`
+    stay parsed and documented as unused.
+  - A profile's `confirm: false`: implement. A gated run then refuses with exit
+    8 unless `--confirm` is given.
+  - A policy's `rotation.*` and `verify.*`, and the `rotation.strategy:
+    rollover` error: delete the claims, and `config validate` warns that these
+    keys are parsed and not read.
+  - The `printable_ascii` below 12.2 warning: delete. It gave no reason, every
+    `printable_ascii` character is one byte, and the byte limit is enforced per
+    target.
+  - `password_redrawn` and `password_not_redrawn`: rename to registered codes,
+    `SOPULI-W029` and `SOPULI-W030`.
+- **Why:** Each claim was drift: a document promising what the code did not do.
+  Logging would need a log subsystem that nothing uses yet. `confirm: false`
+  only makes runs stricter and was already specified. The policy keys would
+  duplicate what flags already do, and #86 stands.
+- **Rejected:**
+  - Build logging now: a subsystem with no consumer.
+  - Implement the policy keys: a second way in beside the flags.

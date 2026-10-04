@@ -41,8 +41,26 @@ def state(issue: int) -> str:
 
 def open_issues(label: str) -> set[int]:
     """The open issues that carry ``label``."""
+    return _issues(label, "open")
+
+
+def closed_issues(label: str) -> set[int]:
+    """The closed issues that carry ``label``."""
+    return _issues(label, "closed")
+
+
+def _issues(label: str, issue_state: str) -> set[int]:
     listed = _gh(
-        "issue", "list", "--label", label, "--state", "open", "--limit", "1000", "--json", "number"
+        "issue",
+        "list",
+        "--label",
+        label,
+        "--state",
+        issue_state,
+        "--limit",
+        "1000",
+        "--json",
+        "number",
     )
     found = json.loads(listed)
     return {int(each["number"]) for each in found}

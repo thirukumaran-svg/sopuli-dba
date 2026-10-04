@@ -15,6 +15,11 @@ has a short record in the repository. This module checks that:
 * every `decided` register row has a record, except ADRs, which are their own
   record;
 * every link to `log.md#…` in the docs names a record that exists.
+
+One more check needs the network, so it is skipped unless `SOPULI_CHECK_ISSUES`
+is set, and `.github/workflows/pending-work.yml` sets it weekly: every closed
+issue labelled `decision` has a record, or is an ADR's issue, or is a
+`deferred` row's issue.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from github_issues import closed_issues, needs_github
 from repo_files import requires_repo
 from test_decision_register import register
 
@@ -150,3 +156,23 @@ def test_every_link_into_the_log_names_a_record() -> None:
                 if anchor not in anchors:
                     broken.append(f"{path.relative_to(ROOT).as_posix()}:{number}: #{anchor}")
     assert not broken, "links to a record log.md does not have:\n" + "\n".join(broken)
+
+
+@needs_github
+def test_every_closed_decision_issue_has_a_record() -> None:
+    """Closing a decision issue adds its record in the same pull request, so a
+    closed issue with no record is a decision whose reasons live only on GitHub."""
+    covered = set()
+    for record in records():
+        match = DECIDED.match(record.decided)
+        if match and match.group(2):
+            covered.add(int(match.group(2).lstrip("#")))
+    for entry in register():
+        if entry.issue and (entry.where in ADR_ROWS or entry.status == "deferred"):
+            covered.add(int(entry.issue.lstrip("#")))
+    missing = sorted(closed_issues("decision") - covered)
+    assert not missing, (
+        "closed decision issues with no record in docs/decisions/log.md: "
+        + ", ".join(f"#{n}" for n in missing)
+        + ". Add a record named by the register ID, or by the issue number if it has none."
+    )

@@ -8,6 +8,8 @@ name: pending-work
 # * The decision register in `docs/README.md` agrees with issue states, and every
 #   open `decision` issue has a row (#615). `tests/test_decision_register.py`
 #   reads the register.
+# * Every closed `decision` issue has a record in `docs/decisions/log.md` (#616).
+#   `tests/test_decision_log.py` reads the log.
 #
 # Weekly and on demand, not on pull requests: it needs the network, and an issue
 # closes without any pull request touching the files that name it.
@@ -23,7 +25,7 @@ permissions:
 
 jobs:
   markers:
-    name: markers and the decision register match issue states
+    name: markers, the decision register and the decision log match issue states
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -41,4 +43,4 @@ jobs:
         env:
           SOPULI_CHECK_ISSUES: "1"
           GH_TOKEN: ${{ github.token }}
-        run: pytest tests/test_pending_work.py tests/test_decision_register.py -k "closed_issue or issue_has_a_row or matches_its_issue"
+        run: pytest tests/test_pending_work.py tests/test_decision_register.py tests/test_decision_log.py -k "closed_issue or issue_has_a_row or matches_its_issue or closed_decision_issue"
