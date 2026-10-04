@@ -113,36 +113,31 @@ being available. No such grant exists to be had.
 
 The package implementation was drafted and has been deleted. It was never
 executed, and two things in it were never resolved. Both apply to the direct model
-equally. One is now partially closed:
+equally. Both have since been measured. The releases each ran on are in
+[`../measurements.md`](../measurements.md).
 
 - **Whether `ALTER USER` statement text leaks the password into `V$SQL` or
-  `UNIFIED_AUDIT_TRAIL`** — **answered for Oracle AI Database 26ai Free
-  23.26.2.0.0, in `CDB$ROOT` and a PDB, and for that version only.** No cursor for
-  the DDL is retained in `V$SQL` at all, and unified audit masks the statement to
-  `IDENTIFIED BY *` at write time in the base table `AUDSYS.AUD$UNIFIED` as well as
-  the view. The probe also found one real leak that neither model would have
+  `UNIFIED_AUDIT_TRAIL`.** On every release measured, no cursor for the DDL is
+  retained in `V$SQL`. The probe also found a leak that neither model would have
   caught by reasoning: an anonymous PL/SQL block whose own text carries the
-  password as a literal is retained verbatim, because Oracle's protection is keyed
-  to the `CREATE/ALTER USER` statement rather than to the password. 21c, 18c and
-  11.2 have since been run (#380, #381, #382) and 11.2 disagrees on one row —
-  `V$SQLSTATS` retains the `ALTER USER` text there. 19c, 12.1 and 12.2 are unrun
-  (unverified: ddl-text-versions).
-  **SQL trace was unchecked on every version until #407** (2026-09-11) and is now
-  measured on 26ai and 21c: a traced session does *not* capture the password, the
-  cursor being written truncated. The probe is
+  password as a literal is retained verbatim, because Oracle's protection is
+  keyed to the `CREATE/ALTER USER` statement rather than to the password. That
+  is invariant 13. From 12.2 on, unified audit masks the statement to
+  `IDENTIFIED BY *` at write time, in the base table `AUDSYS.AUD$UNIFIED` as well
+  as the view, and the block is the only leak. 11.2 has no unified auditing, and
+  there `V$SQLSTATS` also keeps the plain `ALTER USER` text. 12.1 is unrun
+  (unverified: ddl-text-versions). A traced session does not capture the
+  password, because the cursor is written cut short (#407). The probe is
   `sql/oracle/02_password_leak_probe.sql`, its extensions are
-  `sql/oracle/04_password_leak_extensions.sql`; findings are recorded in
-  `../design/02-oracle-privileges.md` §4, and what is still open in
+  `sql/oracle/04_password_leak_extensions.sql`, the findings are in
+  `../design/02-oracle-privileges.md` §4, and what is still open is in
   `../design/04-testing.md` §6 gate 2.
-- **The `T:` (12C) verifier in `SYS.USER$.SPARE4`** — its *layout* was read in
-  #431, the client-side *derivation* reproduces it byte-for-byte in #432, and the
-  *degradation* rule (compare `T:` only; an account with no `12C` fails at plan
-  time) was settled in #433 — all on 26ai, 21c and 18c, recorded in
-  `../design/02-oracle-privileges.md` §2. `--method hash` depends on this and it
-  now holds on every tier-2 release; 19c — the release an OCI estate runs, and so
-  the target of interest — is unread because it is not pullable, and 12.1/12.2
-  are unread too. Confirm the derivation on a throwaway 19c before committing
-  hash mode to the CLI.
+- **The `T:` (12C) verifier in `SYS.USER$.SPARE4`.** Its layout is read (#431),
+  a client-side derivation reproduces it byte for byte (#432), and the
+  degradation rule is settled (#433): compare `T:` only, and an account with no
+  `12C` fails at plan time. The details are in
+  `../design/02-oracle-privileges.md` §2. `--method hash` depends on this. It is
+  settled for 19c and not claimed on 12.1.
 
 If this decision is ever reversed, write the package fresh against the design as
 it stands then, rather than recovering the draft from git history.

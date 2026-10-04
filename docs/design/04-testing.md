@@ -367,7 +367,7 @@ Carried over from UC-1 §11, with the environment each one needs:
 | **30-byte password limit** — a policy asking for more must be refused at *plan* time, not by `ORA-00972` mid-`apply`. Measured 2026-09-08 (#380): 31 bytes is refused on 11g XE, 18c XE **and 21c XE**, and accepted on 26ai; **19c 19.3.0.0.0 refuses it too** (2026-09-27, #548), and a 40-character policy there fails mid-`apply` exactly as on 21c. So does **12.2.0.1.0** (2026-09-29, #572) — the release the limit is keyed to. **19.32.0.0.0** accepts 30 bytes and refuses 128 (2026-10-01, #581; 31 not tried), and `creds generate` there printed `constraints: 128 bytes` on the build of the day. The two halves of the old wording do not travel together — see the next row. `sopuli/driver/oracle/limits.py` keyed the limit to 12.2, which was wrong on every measured release from 12.2 to 21c (#383); since #595 it keys it to 23, and a 40-character policy on 21c XE is refused by `creds generate` at plan time, exit 9 | 21c XE / 19.3 EE / 18c XE / 12.2 EE / 11g XE |
 | 10G/11G verifiers, and no `T:` — so `--method hash` must refuse rather than guess. Measured 2026-09-08: `SYS.USER$.SPARE4` carries `S:` alone on 11g and `S:` plus `T:` on 18c, 21c and 26ai, and on 19.3 EE (2026-09-27, #548), 12.2 EE (2026-09-29, #572) and 19.32 EE (2026-10-01, #581) (#382, #90). The field layout and salt offsets behind that were read 2026-09-15 by `sql/oracle/05_verifier_layout_probe.sql` (#431), and `06_verifier_reproduce.{sql,py}` regenerated every stored `T:`/`t:` digest client-side the same day (#432). #433 confirmed the refusal: 11g's absent `12C` (and a forced `10G 11G 12C` account on 18c) fix the rule that `hash` compares `12C` only and fails at plan time when there is none | 11g XE, 18c XE |
 | **The non-CDB shape**, which is not a missing capability but a different set of questions Oracle will answer. `SYS_CONTEXT('USERENV','CON_NAME')` *raises* (`ORA-02003`) rather than answering NULL; `DBA_USERS` has no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or `COMMON`; `USER_SYS_PRIVS` has no `COMMON`; there are no audit policies. Each of those took something down that had nothing to do with containers — the privilege audit blanked a whole target row while exiting 0 (#382) | 11g XE |
-| **DDL text retention is not uniform** (unverified: ddl-text-versions). `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and not on 18c, 19.3, 21c or 26ai, so invariant 13's *conclusion* is release-dependent even though its reasoning is not. Decided in #387: documented, not warned about and not refused — which is only defensible while the table saying so is accurate, so a release claimed as supported gets `02_password_leak_probe.sql` run against it. 19.3.0.0.0 does not retain it either (#548), nor does 12.2.0.1.0 (#572), nor 19.32.0.0.0, the first release update measured (#581), so the boundary is somewhere in (11.2, 12.2]; 12.1 is unmeasured | every version claimed |
+| **DDL text retention is not uniform** (unverified: ddl-text-versions). `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and on no later release measured, so invariant 13's *conclusion* is release-dependent even though its reasoning is not. Decided in #387: documented, not warned about and not refused. That is only defensible while the record is accurate, so a release claimed as supported gets `02_password_leak_probe.sql` run against it. The releases are in [`../measurements.md`](../measurements.md); the change is somewhere in (11.2, 12.2], and 12.1 is unmeasured | every version claimed |
 | Common user + `CONTAINER=ALL`, and refusal outside `CDB$ROOT` | any CDB |
 | Rollover: both passwords valid during the window; `finish-rollover` ends it | 23ai Free, real 19.12+ (19.32.0.0.0, #581: the window opens and closes, and since #583 its length reads right) |
 | Rollover *absent*: `--strategy rollover` fails at plan time, not execution. **Measured on 18c 2026-09-08 (#381), and it had never run anywhere before that** — `test_a_release_without_rollover_refuses_at_plan_time` carries `@requires_no_capability(password_rollover)`, so on 26ai, the only server the suite had ever met, it skipped every time. Exit 5 under `--dry-run`, `error.category` `capability`, `error.target_capability` `password_rollover`, the `plan` emitted beside the refusal, and `doctor` reporting `password_rollover` absent one command earlier | 18c XE, 11g XE |
@@ -489,33 +489,22 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    `INCONCLUSIVE`; and `DBA_HIST_SQLTEXT` needs an AWR snapshot taken *before* the
    sweep, so it stays untested until one is (unverified: ddl-text-awr).
 
-   **Where it stands.** Position 1 has been run on 26ai Free 23.26.2.0.0 (PDB
-   and `CDB$ROOT`), 21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0 (PDB), and 11g XE
-   11.2.0.2.0 (non-CDB) — #380, #381, #382. **Position 2 with
-   `AUDIT_SYS_OPERATIONS = TRUE` was run on 21c and 26ai on 2026-09-11** (#407),
-   which is what the `audit_file_dest` greps needed to mean anything, together
-   with §7's greps on 26ai and the three checks the probe left manual. The
-   findings and their scope are `02-oracle-privileges.md` §4; the one release
-   that disagrees is 11.2, whose `V$SQLSTATS` retains the `ALTER USER` text
-   (#387).
-
-   **This entry said "position 2 has not been run anywhere" until #407, and that
-   was wrong in a way worth recording** rather than quietly fixing. The probe's
-   own header records a position 2 run on 26ai on 2026-08-26, in the table of
-   three positions. What had never been run was the half position 2 *exists*
-   for — the `audit_file_dest` greps that only `AUDIT_SYS_OPERATIONS` populates
-   — and this list compressed that into a claim about the position. Two
-   documents describing the same run at different resolutions is how a gate
-   loses track of itself, and the fix is to say which *surface* is unrun rather
-   than which position.
+   **Where it stands.** Which positions ran on which release is in
+   [`../measurements.md`](../measurements.md), and the findings are in
+   `02-oracle-privileges.md` §4. The one release that disagrees is 11.2, whose
+   `V$SQLSTATS` keeps the `ALTER USER` text (#387). When something is unrun,
+   name the *surface*, not the position. A position covers several surfaces:
+   position 2's `audit_file_dest` greps mean something only with
+   `AUDIT_SYS_OPERATIONS = TRUE`, so a position 2 run without it leaves that
+   surface unrun.
 
    Outstanding, and none of it is a pass:
 
    | Open | Why it blocks a claim |
    |---|---|
-   | ~~**19c RUs** unrun~~ | **closed for one RU, 19.32.0.0.0** (#581, 2026-10-01, all three positions, an OCI Base Database Service DB system): C3 the only leak, `V$SQLSTATS` and `V$SQL_BIND_CAPTURE` clean with the stock `ORA12C_STRONG_VERIFY_FUNCTION` enabled, every audit source masked, and `adump` holding C3 only from position 2, as on 21c and 19.3. Run once under `AUDIT_TRAIL = DB` as shipped, where the traditional trail records no statement text at all, and then under `DB,EXTENDED`. 19.3.0.0.0 (#548) had already answered the byte limit and 11.2's retention. One RU is not every RU; name the release when quoting it |
-   | **12.1** unrun (unverified: ddl-text-versions) | so **the boundary is narrowed, not found.** 11.2 retains the DDL text and **12.2.0.1.0 does not** (#572, 2026-09-29, all three positions, the `oracle-12c` container: C3 the only leak, every audit source masked, `adump` identical to 21c's), so the change is in (11.2, 12.2] and 12.1 is the one release left in it, with no known image. Read the 11.2 result as *11.2 does*, never as *everything older does* |
-   | **AWR / `DBA_HIST_SQLTEXT`** half answered (unverified: ddl-text-awr) | AWR on 19.32.0.0.0 (2026-10-01, #581), the first database here with the Diagnostics Pack (`DIAGNOSTIC+TUNING`, licence included): straight after position 1 planted its canaries, one root snapshot at flush level `ALL` captured **C3 verbatim** into `DBA_HIST_SQLTEXT` and `AWR_ROOT_SQLTEXT` (`command_type` 47, the PL/SQL block, in `ORCLPDB1`), uncolored. C1, C2 and C4 reached neither, before or after a second snapshot with the C3 cursor colored. The DB system keeps AWR for 8 days on hourly snapshots, so the wrapped literal outlives a shared-pool flush and sits on disk for a week. A quiet system: on a busy one the block may not rank into a snapshot's top SQL, which makes it less likely, not safe. What stays open is 11.2's retained plain `ALTER USER`, which no 11.2 with the pack has been available to test: every image in this stack ships `control_management_pack_access = NONE` |
+   | **12.1** unrun (unverified: ddl-text-versions) | 11.2 keeps the DDL text and 12.2.0.1.0 does not, so the change is in (11.2, 12.2]. 12.1 is the one release left in it, and there is no known image. Read the 11.2 result as *11.2 does*, never as *everything older does* |
+   | **Other 19c release updates** | 19.3.0.0.0 and 19.32.0.0.0 agree. One release update is not every release update, so name the release when quoting a result |
+   | **AWR, for 11.2** (unverified: ddl-text-awr) | On 19.32.0.0.0, the only database here with the Diagnostics Pack, the wrapped literal (C3) reaches `DBA_HIST_SQLTEXT` and stays for the 8 days that DB system keeps AWR. The plain `ALTER USER` does not, because it has no cursor. Whether 11.2's retained `ALTER USER` reaches AWR needs an 11.2 with the pack: every image in this stack ships `control_management_pack_access = NONE` |
 
    Closed by #407 on 2026-09-11, on 26ai 23.26.2.0.0 and 21c 21.3.0.0.0, and
    recorded in `02-oracle-privileges.md` §4 with the version on every row:

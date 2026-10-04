@@ -7,9 +7,8 @@ record rejected options and cite the issue behind each decision is in
 [CONTRIBUTING.md](../CONTRIBUTING.md#how-this-project-is-built-and-what-that-means-for-you).
 
 Pre-alpha. UC-1 is built and the rest of this directory is ahead of the code; each
-document says which of it exists. The SQL in `sql/oracle/` has been executed
-against Oracle 26ai Free 23.26.2.0.0 only; each script's `STATUS:` header records
-which paths ran and which are still untried.
+document says which of it exists. [measurements.md](measurements.md) says which
+script in `sql/oracle/` ran on which Oracle release, and what it showed.
 
 ## For a reader outside the project
 
@@ -34,6 +33,7 @@ which paths ran and which are still untried.
 | [design/04-testing.md](design/04-testing.md) | What can and cannot be containerised, capability-driven matrix, tiering, fault injection, release gates |
 | [use-cases/uc-01-app-credential-sync.md](use-cases/uc-01-app-credential-sync.md) | UC-1: application DB account credentials, vault as master — `generate` / `apply` / `check` / `rotate` |
 | [workflow.md](workflow.md) | Binding: branching (`issue-<n>-<slug>`, no long-lived integration branch), Conventional Commits, release-please and the 0.x policy |
+| [measurements.md](measurements.md) | What ran on which Oracle release, when, and what it showed: the one place for release-by-release results |
 | [local-testing.md](local-testing.md) | Exercising the implemented surface by hand: laptop, WSL, the tier-1 stack, the `creds` lifecycle end to end, and every refusal worth producing on purpose |
 
 ## Machine-readable artefacts
@@ -250,29 +250,24 @@ issues whose verification is still outstanding: the decision was taken and the
 measurement was not. A reader who resolves these against the issue tracker gets
 three wrong answers.
 
+Release-by-release results are in [measurements.md](measurements.md). An entry
+here says what the question is and what is still open, and links there for the
+releases.
+
 - `verified` `t-verifier` (#90) — **Whether a client can regenerate the `T:` (12C) verifier in `SYS.USER$.SPARE4`.**
-  The layout is read (#431) and the derivation reproduces byte-for-byte (#432),
-  both on 26ai, 21c and 18c: `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt ‖
-  "AUTH_PBKDF2_SPEEDY_KEY", 4096, 64) ‖ salt)`, and a rollover window's two
-  verifiers (`T:` previous, `t:` current) are told apart the same way —
-  `sql/oracle/05_verifier_layout_probe.sql` and `06_verifier_reproduce.{sql,py}`.
-  Degradation is settled too (#433): the comparison uses `T:` only, an account
-  with no `12C` fails at plan time (invariant 4), and the gate is a per-account
-  capability (`SPARE4` carries a `T:`), never a version. **All three parts are
-  answered on the tier-2 releases, on 19c 19.3.0.0.0** (#548, 2026-09-27: the
-  same layout, `VGEN_COUNT` 4096 on the wire, every `T:` reproduced, twice) **and
-  on 12c 12.2.0.1.0** (#572, 2026-09-29, the same again — and on a WE8DEC
-  database, which showed that `pw_utf8` is the password *as the database holds
-  it*, after conversion to its character set), **and on 19c 19.32.0.0.0** (#581,
-  2026-10-01, an OCI Base Database Service DB system and the first release update
-  read: the same layout, every `T:` reproduced, and a rollover window's `T:` old
-  and `t:` new). One step there could not be observed: the DB system requires
-  NNE, so `VGEN_COUNT` is encrypted on the wire, and 4096 is shown only by the
-  reproduction succeeding. **Settled for 19c, 2026-10-01**: a base release and a
-  release update both reproduce, and the maintainer judged one RU enough (#581).
-  **12.1 is still unread**, and the derivation is not claimed there. What this
-  unblocked is `--method hash|both`, built in #437; `check`'s default (`login`)
-  never waited on this (#86).
+  Yes: `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt ‖ "AUTH_PBKDF2_SPEEDY_KEY",
+  4096, 64) ‖ salt)`, where `pw_utf8` is the UTF-8 of the password as the
+  database holds it, after conversion to its character set. A rollover window's
+  two verifiers (`T:` previous, `t:` current) are told apart the same way. The
+  layout is read in #431 and the derivation reproduced in #432, with
+  `sql/oracle/05_verifier_layout_probe.sql` and
+  `06_verifier_reproduce.{sql,py}`. The comparison uses `T:` only, and an account
+  with no `12C` fails at plan time (invariant 4, #433). The gate is a per-account
+  capability (`SPARE4` carries a `T:`), never a version. The releases it ran on
+  are in [measurements.md](measurements.md); the derivation is not claimed on 12.1. Settled for 19c
+  on 2026-10-01: a base release and a release update both reproduce, and the
+  maintainer judged one release update enough (#581). This is what
+  `--method hash|both` needs (#437); `check`'s default, `login`, does not (#86).
 - `unverified` `lcount-grant` (#124) — **Whether `SELECT_CATALOG_ROLE` via
   `SYS.KU$_USER_VIEW` exposes `LCOUNT` without `SPARE4`** — a narrower alternative to `SELECT ON SYS.USER$`
   for the `LCOUNT` guard, from a blog post rather than Oracle documentation.
@@ -304,20 +299,15 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
 `design/02-oracle-privileges.md` §4 and `design/04-testing.md` §6 gate 2.
 
 - `unverified` `ddl-text-versions` (#387) — **Whether `ALTER USER` text leaks the
-  password into the shared pool, on the releases nobody has run.** Measured on
-  26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and 11g 11.2.0.2.0 (#380,
-  #381, #382): `V$SQL` holds no cursor for the DDL at all on the first three, and
-  the one leak everywhere is an anonymous PL/SQL block carrying the password as a
-  literal — which is now invariant 13, measured rather than reasoned. **11.2
-  disagrees**: `V$SQLSTATS` keeps its own copy there, so the *conclusion* is
-  release-dependent even though the reasoning is not (#387). **19c 19.3.0.0.0
-  agrees with 18c and later** (#548, 2026-09-27, all three positions:
-  `V$SQLSTATS` clean for the plain `ALTER USER`), and **so does 12c 12.2.0.1.0**
-  (#572, 2026-09-29, all three positions), and **so does 19c 19.32.0.0.0**, the
-  first release update measured (#581, 2026-10-01, all three positions, with the
-  stock verify function enabled), so the change sits somewhere in (11.2, 12.2].
-  **12.1 is unrun** — read the 11.2 result as *11.2 does*, never as *everything
-  older does*.
+  password into the shared pool, on the releases nobody has run.** On every
+  release measured, `V$SQL` holds no cursor for the DDL, and an anonymous PL/SQL
+  block carrying the password as a literal leaks. That is invariant 13. From
+  12.2 on, that block is the only leak. **11.2 differs**: `V$SQLSTATS` keeps the plain `ALTER USER` text there, so
+  the *conclusion* depends on the release even though the reasoning does not
+  (#387). 12.2.0.1.0 and every later release measured keep nothing, so the change
+  is somewhere in (11.2, 12.2]. **12.1 is unrun**, so read the 11.2 result as
+  *11.2 does*, never as *everything older does*. The releases are in
+  [measurements.md](measurements.md).
 - `unverified` `ddl-text-awr` (#387) — **Whether the retained text reaches AWR.**
   `DBA_HIST_SQLTEXT` needs a snapshot taken *before* the sweep, on a database
   where the Diagnostics Pack is enabled. Every image in this stack ships
@@ -339,26 +329,16 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   answered in the same run (masked on 21c; no user-management DDL reaches it at
   all on 23ai+), as were self-rotation and `IDENTIFIED BY VALUES` — both masked.
 - `unverified` `password-byte-limit` (#383) — **What the maximum password length
-  actually is, on every release from 12.1 to 23ai.** `limits.py` derived the
-  limit from the probed server version against `LONG_IDENTIFIER_FLOOR = (12, 2)`,
-  and **the premise was wrong**: 12.2 raised *identifiers* from 30 bytes to 128
-  and passwords did not move with them. #383 measured it — 31 bytes is
-  `ORA-00972` on 21c, 18c and 11.2, and accepted on 26ai — and **19c 19.3.0.0.0
-  refuses 31 and 128 the same way** (#548, 2026-09-27), as does **12c
-  12.2.0.1.0**, the release the floor is keyed to (#572, 2026-09-29: 30 bytes
-  accepted, 31 `ORA-00972`, and a 40-character policy planned with
-  `constraints: 128 bytes in WE8DEC` and failed in `apply`), so the floor is somewhere
-  in `(21.3, 23.26]` and `(12, 2)` was below every version ever tested against it.
+  actually is, on every release from 12.1 to 23ai.** The longest password is 30
+  bytes on every release measured before 23.26, and 128 bytes on 26ai
+  23.26.2.0.0. 12.2 raised *identifiers* from 30 bytes to 128, and passwords did
+  not move with them. The releases are in [measurements.md](measurements.md).
 
-  **Fixed in #595**: the floor is now `LONG_PASSWORD_FLOOR = (23, 0)`. Until
-  then this was a live bug: on 21c, 19.3 and 12.2 a policy asking for 40 bytes
-  planned clean, reported `constraints: 128 bytes`, and failed with `ORA-00972`
-  mid-`apply`, which violated invariant 4. #383 closed without fixing it. On
-  21c XE a 40-character policy is now refused by `creds generate` at plan time,
-  exit 9, and a 30-character one generates, applies and checks clean.
-  `23` is the only floor the tool can express rather than a choice among
-  several, because `V$INSTANCE.VERSION` reads the base release: every 23ai and
-  26ai reads `23.0.0.0.0`.
+  The tool keys the limit to `LONG_PASSWORD_FLOOR = (23, 0)` (#595). On 21c XE a
+  40-character policy is refused by `creds generate` at plan time, exit 9, and a
+  30-character one generates, applies and checks clean. `23` is the only floor
+  the tool can express, because `V$INSTANCE.VERSION` reads the base release:
+  every 23ai and 26ai reads `23.0.0.0.0`.
 
   **What keeps the entry `unverified`** is what no release in the stack can
   answer. A 23ai before 23.26 is unmeasured and reads the same as 26ai. 12.1 is
@@ -366,31 +346,16 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   direction. And whether the legacy limit is 30 *bytes* or 30 *characters* has
   only been run with ASCII, which every password `01-configuration.md` §8 draws is.
 - `unverified` `pw-changed-source` (#87, #386) — **Whether `SYS.USER$.PTIME` is
-  the password change date on the releases nobody has run.** Measured 2026-09-08:
-  `DBA_USERS.PASSWORD_CHANGE_DATE` is present on 26ai and 21c and `ORA-00904` on
-  **18c and 11.2 alike** — the column arrived after 18c, not in 12.1 as this entry
-  used to imply. On all four `PTIME` moved with `ALTER USER ... IDENTIFIED BY`,
-  equalled the column to the second where both exist, and `CTIME` did not move.
+  the password change date on the releases nobody has run.**
+  `DBA_USERS.PASSWORD_CHANGE_DATE` exists from 19c; 18c, 12.2 and 11.2 do not
+  have it. Where both exist, `PTIME` moved with `ALTER USER ... IDENTIFIED BY`
+  and equalled the column to the second, and `CTIME` did not move. On 12.2 the
+  suite's `test_password_change_date_tracks_a_rotation` passed through `PTIME`.
   #386 decided to fall back to `PTIME` behind the optional grant, and to say why
-  when neither answers (`SOPULI-W021`).
-
-  **19c has the column** — measured 2026-09-17 on **Oracle Database 19c EE High
-  Performance 19.0.0.0.0, version 19.24.0.0.0**, which this entry had only expected.
-  So the release an OCI estate runs takes the column path and never the fallback,
-  and it is off this entry's list. **What was measured there is the column's
-  presence**, by hand and not by running the suite: whether its value moves with
-  `ALTER USER … IDENTIFIED BY` on 19c is inferred from 26ai and 21c rather than
-  seen, and the tier-1 test that would pin it has not run on that release.
-
-  **12.2.0.1.0 takes the fallback**, measured 2026-09-29 (#572): no
-  `PASSWORD_CHANGE_DATE` column, and the suite's
-  `test_password_change_date_tracks_a_rotation` passed there through `PTIME` —
-  the value the driver read moved with `ALTER USER … IDENTIFIED BY`. The test
-  comparing `PTIME` with the column skipped, having no column to compare with, so
-  on 12.2 `PTIME` is shown to track a rotation rather than shown equal to anything.
-  **12.1 would take the fallback too and is unmeasured**, and that is what keeps
-  this entry open. Purely a display question — Q9 decided `--max-age-days` reads
-  only the vault.
+  when neither answers (`SOPULI-W021`). The releases, and what was checked on
+  each, are in [measurements.md](measurements.md). **12.1 would take the fallback and is
+  unmeasured**, and that keeps this entry open. Purely a display question: Q9
+  decided `--max-age-days` reads only the vault.
 - `verified` `expire-rollover` (#438, #461) — **What `ALTER USER … IDENTIFIED BY …
   PASSWORD EXPIRE` does to an account whose profile sets `PASSWORD_ROLLOVER_TIME`.**
   UC-2's **seen** (`manual`) reset is that one statement; its default, unseen reset

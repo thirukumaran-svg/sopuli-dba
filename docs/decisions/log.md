@@ -112,9 +112,8 @@ the register.
   `V$SQLSTATS` finding.
 - **Why:** 11.2 is cheap to test: `gvenzl/oracle-xe:11.2.0.2-slim` pulls freely
   and starts in seconds (T1). On 11.2 the `ALTER USER` text stays in
-  `V$SQLSTATS`. Every later release measured keeps nothing: 12.2.0.1.0,
-  18.4.0.0.0, 19.3.0.0.0, 19.32.0.0.0, 21.3.0.0.0 and 26ai 23.26.2.0.0. 12.1 is
-  unmeasured, and one measured release update is not every release update. 11.2 stayed in scope anyway,
+  `V$SQLSTATS`. Every later release measured keeps nothing
+  ([measurements](../measurements.md)); 12.1 is unmeasured. 11.2 stayed in scope anyway,
   because the text ages out of the shared pool and one `FLUSH SHARED_POOL`
   clears it, and dropping 11.2 would move the rotation to SQL\*Plus, which keeps
   the same text and records nothing (P8). Apple Silicon cannot reach 11.2,

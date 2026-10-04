@@ -4,19 +4,11 @@ A CLI for DBAs that manages database account credentials with a vault as the
 master record. Oracle first, multi-product by design.
 
 **Status: pre-implementation.** The design documents are complete and decided;
-almost no code exists yet. The SQL in `sql/` has been executed against Oracle 26ai
-Free 23.26.2.0.0, Oracle 21c XE 21.3.0.0.0, Oracle 18c XE 18.4.0.0.0 and Oracle
-11g XE 11.2.0.2.0, and the verifier and leak probes against Oracle 19c EE
-19.3.0.0.0 (#548), Oracle 12c EE 12.2.0.1.0 (#572) and Oracle 19c EE
-19.32.0.0.0 on an OCI Base Database Service DB system (#581). Each script carries a `STATUS:` header saying which paths ran
-and which are still untried — trust that header, not this line, and update it
-when you run one. **19.3 is the 19c base release, not what an OCI estate runs.**
-It answered what #383 and #387 needed from 19c (30-byte passwords; no
-`V$SQLSTATS` retention). **19.32.0.0.0 is the first release update measured**
-(#581, 2026-10-01): the leak probes, the verifier probes and a rollover window
-end to end, all agreeing with 19.3 and 26ai where they overlap. One RU is still
-not every RU. Say 19.3.0.0.0 or 19.32.0.0.0, never "19c", for
-anything measured on either — and 12.2.0.1.0, never "12c": 12.1 is still unmeasured.
+almost no code exists yet. Which script in `sql/oracle/` ran on which Oracle
+release, and what it showed, is in `docs/measurements.md`. When you run a script,
+update its header and the matrix; `tests/test_measurements.py` checks that they
+agree. Name the full release, such as 19.3.0.0.0 or 19.32.0.0.0, never "19c":
+results differ between releases, and between release updates of one release.
 
 ---
 
@@ -33,6 +25,7 @@ so — that is a design decision, not an implementation detail.
 | `docs/design/02-oracle-privileges.md` | anything issuing SQL against Oracle |
 | `docs/design/03-json-output.md` | anything that produces output |
 | `docs/design/04-testing.md` | anything touching tests or the test stack |
+| `docs/measurements.md` | quoting or adding a result measured on an Oracle release |
 | `docs/use-cases/uc-01-app-credential-sync.md` | the credential sync/rotate feature — the only use case in scope |
 | `docs/decisions/adr-001-privilege-model.md` | before proposing a definer-rights package (it was considered and rejected) |
 | `docs/decisions/adr-005-vault-client.md` | before proposing `hvac` or another Vault client library for the HashiCorp backend (it was considered and rejected — the HTTP API over `httpx` is the answer) |
@@ -300,42 +293,23 @@ Several are marked "verify before implementing" and need a real database rather
 than reasoning:
 
 - whether the `T:` (12C) verifier in `SYS.USER$.SPARE4` can be regenerated
-  client-side — `--method hash` depends on it. **The layout is read (#431) and
-  the derivation reproduces byte-for-byte (#432)** on 26ai, 21c and 18c:
-  `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt‖"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)‖
-  salt)`, 4096 sent at logon not stored. Degradation is settled too (#433):
-  compare `T:` only, and an account with no `12C` fails at plan time.
-  **Answered on every tier-2 release, on 19c 19.3.0.0.0 (#548), on 12.2.0.1.0
-  (#572) and on 19c 19.32.0.0.0 (#581) -- the first release update, where the
-  two-verifier rollover result (`T:` old, `t:` new) holds too.** **Settled for
-  19c** (register entry `t-verifier`, 2026-10-01); 12.1 is unread. 19.32's wire
-  step could not be observed — the DB system requires NNE, so the `AUTH_`
-  exchange is encrypted in a client trace — and 4096 is shown there by the
-  reproduction. One refinement from 12.2's WE8DEC image:
-  `pw_utf8` is the UTF-8 of the password *as the database holds it*, after
-  conversion to the database character set — identical on AL32UTF8, lossy where
-  the set cannot represent a character. Probes:
+  client-side — `--method hash` depends on it. **Settled** (register entry
+  `t-verifier`): `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt‖"AUTH_PBKDF2_SPEEDY_KEY",
+  4096, 64)‖salt)`, where `pw_utf8` is the UTF-8 of the password as the database
+  holds it, after conversion to its character set. Compare `T:` only; an account
+  with no `12C` fails at plan time (#433). Not claimed on 12.1. Probes:
   `sql/oracle/05_verifier_layout_probe.sql`, `06_verifier_reproduce.{sql,py}`
 - whether `ALTER USER` text leaks the password into `V$SQL` or
-  `UNIFIED_AUDIT_TRAIL`, per version (unverified: ddl-text-versions) —
-  **answered on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 19c 19.32.0.0.0 and
-  19.3.0.0.0, 18c 18.4.0.0.0, 12c 12.2.0.1.0 and 11g 11.2.0.2.0; unmeasured on
-  12.1.** `02_password_leak_probe.sql` was run in all three documented positions on
-  2026-08-26: unified audit masks the statement at write time, no `V$SQL` cursor
-  for the DDL exists at all, and the sole leak is an anonymous PL/SQL block
-  carrying the password as a literal — which is invariant 13, now measured rather
-  than assumed. Two of the three runs were as a service account holding
-  `ALTER USER` and nothing else (`isdba=FALSE`), so the capture is attributable to
-  the audit policy rather than to mandatory `SYSDBA` auditing; the earlier SYS-only
-  runs could not establish that. 21c and 18c agree with 26ai row for row and add
-  that traditional auditing masks it too. **11.2 does not agree**: `V$SQLSTATS`
-  retains the plain `ALTER USER` text there, readable by a dictionary reader
-  though not by the service account. Decided in #387 — documented, not warned
-  about and not refused, because it ages out with the shared pool and one
-  `FLUSH SHARED_POOL` clears it. 19.3.0.0.0 agrees with 18c and later, all three
-  positions (#548), and so do 12.2.0.1.0 (#572) and 19.32.0.0.0 (#581, where
-  `V$SQL_BIND_CAPTURE` is clean too with the verify function enabled), so the change sits in
-  (11.2, 12.2] — 12.1 is the one release left in it. Do not quote a leak result without its version
+  `UNIFIED_AUDIT_TRAIL`, per release (unverified: ddl-text-versions). On every
+  release measured, no `V$SQL` cursor for the DDL exists, and an anonymous PL/SQL
+  block carrying the password as a literal leaks. That is invariant 13. From
+  12.2 on, unified audit masks the statement at write time and that block is the
+  only leak. **11.2 differs**: it has no unified auditing, and `V$SQLSTATS` keeps
+  the plain `ALTER USER` text, readable by a dictionary reader though not by the
+  service account. Decided in #387: documented, not
+  warned about and not refused, because it ages out with the shared pool and one
+  `FLUSH SHARED_POOL` clears it. The change is somewhere in (11.2, 12.2], and
+  12.1 is unmeasured. Do not quote a leak result without its release
   (`docs/design/02-oracle-privileges.md` §4 and §8 P8)
 - ~~whether the 23-codebase schema privileges cover `ALTER USER` (P7)~~ —
   **answered: no.** `GRANT ALTER USER ON SCHEMA` gives `ORA-00990`, tested on 26ai

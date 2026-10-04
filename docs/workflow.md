@@ -99,6 +99,8 @@ that the installed `sopuli` binary runs. No containers, under a minute.
     without a `TODO(#N)` or `(open: #N)` marker. Whether a marked issue is still
     open needs the network, so the `pending-work` workflow checks that weekly
     instead of on each pull request.
+  - `tests/test_measurements.py` checks that `docs/measurements.md` and the
+    header of each script in `sql/oracle/` name the same Oracle releases.
 
   Without the job a typo'd slug or a
   documented flag the CLI has not got merges green, which is what happened on
