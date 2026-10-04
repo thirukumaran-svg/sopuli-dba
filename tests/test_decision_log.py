@@ -38,10 +38,8 @@ ADR_ROWS = {"ADR", "ADR-006"}
 NOT_YET_RECORDED = {
     *(f"D{n}" for n in range(1, 11)),
     *(f"C{n}" for n in (1, 2, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)),
-    *(f"P{n}" for n in range(1, 9)),
     *(f"J{n}" for n in (1, 2, 4, 6, 7)),
     *(f"T{n}" for n in (1, 2, 5)),
-    *(f"Q{n}" for n in (1, 2, 3, 4, 5, 7, 8, 9)),
 }
 
 RECORD = re.compile(r"^## (\S+)\s*$")

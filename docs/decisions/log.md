@@ -24,6 +24,283 @@ A pull request that closes an issue labelled `decision` adds its record here.
 `tests/test_decision_log.py` checks the format, and that each record agrees with
 the register.
 
+## P1
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Is the documented default service user one common `C##` user
+  for the whole CDB, or a local user in each PDB?
+- **Decision:** A common user. A local user per PDB is documented for a CDB whose
+  PDBs have different owners.
+- **Why:** The choice is about how far one stolen credential reaches, not about
+  what the tool can do. Both are supported. Usually one DBA team owns the whole
+  CDB, and then a common user means one grant set, one credential, and new PDBs
+  covered automatically. Where PDBs belong to different teams or tenants,
+  limiting a stolen credential to one PDB is worth the extra setup.
+  `02-oracle-privileges.md` §2 has the comparison.
+- **Rejected:**
+  - A local user per PDB as the default: N grant sets and N credentials, and
+    each new PDB needs setup, for isolation the usual estate does not need.
+
+## P2
+
+- **Decided:** 2026-08-18, #86
+- **Question:** Does the install script grant `SELECT ON SYS.USER$` by default?
+  The grant enables the `LCOUNT` lockout guard and `check --method hash`.
+- **Decision:** No. It is an optional grant. The tool probes for it at run time
+  and uses it where it exists. `check` defaults to `login` whether or not the
+  grant is present (Q1).
+- **Why:** The grant makes password verifiers readable by the service account,
+  and a verifier can be attacked offline. That is a different kind of exposure
+  from what `ALTER USER` already allows, so a site should choose it, not get it
+  by default. Without the grant, `check` still runs, with the other lockout
+  guards. Whether to recommend the grant, and whether a narrower grant would do,
+  is still open (#124).
+- **Rejected:**
+  - Grant by default: every site would expose its verifiers to the service
+    account, whether or not it uses the features that need them.
+
+## P3
+
+- **Decided:** 2026-08-17, #89
+- **Question:** Does `--force` exist, and what does it override?
+- **Decision:** Yes. It is one flag that overrides account checks 2 to 5 in
+  `02-oracle-privileges.md` §4: Oracle-maintained accounts, password-file users,
+  privileged roles, and the 11.2 deny list. It never overrides check 1, the
+  configuration whitelist (invariant 5), and it never relaxes a safety setting.
+  It is not a setting itself. It is recorded in the audit event and in the run
+  document.
+- **Why:** Managing the password of an Oracle-maintained account such as
+  `DBSNMP` is ordinary DBA work. A tool with no override does not stop that
+  change. It moves it to SQL\*Plus, where nothing records it. An audited
+  override is better than an unrecorded workaround. The accepted cost: a DBA who
+  wants to bypass one check bypasses four, and the audit record is there for
+  that.
+- **Rejected:**
+  - No override: the tool gets worked around, and the workaround is not
+    audited.
+  - One flag per check: a growing set of flags for a rare case, and a new flag
+    with every new check.
+
+## P4
+
+- **Decided:** 2026-10-03, #615
+- **Question:** One service account per database, or one per application?
+- **Decision:** One per database.
+- **Why:** The configuration already limits which accounts the tool may touch,
+  because it declares them per application (invariant 5). The database privilege
+  is the same `ALTER USER` either way, so a service account per application would
+  add accounts and credentials to install and store without narrowing what each
+  one can do.
+- **Rejected:**
+  - One per application: more accounts and credentials, and no narrower
+    privilege.
+
+## P5
+
+- **Decided:** 2026-08-26, #213
+- **Question:** Does `doctor --check-privileges` fail or warn when the service
+  account holds more privileges than it should?
+- **Decision:** Warn. The run document lists them in `scope.over_granted`, the
+  text output names what to `REVOKE`, and the exit code does not change.
+- **Why:** Failing would block the person who ran `doctor`, perhaps during an
+  incident, over a grant they did not make and cannot fix from the tool's side.
+  The over-grant is somebody else's decision. A tier-1 test against a live
+  Oracle checks the behaviour.
+- **Rejected:**
+  - Fail: it blocks the wrong person.
+  - A `--fail-on-over-grant` flag: P3 already rejected flags for rare cases, and
+    a flag is easy to add later and hard to remove.
+
+## P6
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Is 11.2 support worth its special cases, such as
+  `DBA_AUDIT_TRAIL` and the missing `ORACLE_MAINTAINED` column?
+- **Decision:** Keep 11.2 (D7). Drop it if it starts to cost real complexity.
+- **Why:** 11.2 is cheap to test, because a free 11g XE image exists (T1), so
+  its special cases cost little. D7 has the full reasoning, including why 11.2
+  stays in scope after the `V$SQLSTATS` finding (P8).
+- **Rejected:**
+  - Drop 11.2 now: it removes support that costs little to keep.
+
+## P7
+
+- **Decided:** 2026-08-17
+- **Question:** Do the schema privileges of the 23 codebase cover `ALTER USER`?
+  If they did, the service account could be limited to one schema.
+- **Decision:** No. The direct `ALTER USER` grant is the model on every release.
+- **Why:** Measured on 26ai 23.26.2.0.0. `GRANT ALTER USER ON SCHEMA` fails with
+  `ORA-00990: missing or invalid privilege`. `GRANT SELECT ANY TABLE ON SCHEMA`
+  succeeds in the same session, so schema privileges work, and the refusal is
+  specific to `ALTER USER`. This closes ADR-001's P7 trigger for revisiting.
+- **Rejected:**
+  - There was no choice between options: the scoped grant does not exist.
+
+## P8
+
+- **Decided:** 2026-09-09, #387
+- **Question:** On 11.2, the `ALTER USER` text, with the password, stays in
+  `V$SQLSTATS`. Does the tool document this, warn at run time, or refuse to
+  rotate on 11.2?
+- **Decision:** Document it, in `02-oracle-privileges.md` §4 and
+  `../security-model.md` §5.
+- **Why:** Reading the view needs a dictionary grant. The service account itself
+  gets `ORA-00942`. The text stays until it ages out of the shared pool. On an
+  idle test instance it survived 2,000 further distinct statements, and on a
+  quiet database it can stay much longer. `ALTER SYSTEM FLUSH SHARED_POOL`
+  removes it at once. Both were measured.
+- **Rejected:**
+  - Warn at run time: a session holding the tool's grants cannot ask whether a
+    release keeps DDL text. The warning would have to branch on the version
+    number, which invariant 3 forbids.
+  - Refuse on 11.2: it reverses D7 over an exposure that ends when the text
+    ages out and can be cleared at once. The operator would rotate in SQL\*Plus
+    instead, which keeps the same text and records nothing.
+
+## Q1
+
+- **Decided:** 2026-08-18, #86
+- **Question:** Does `creds check` default to `--method login` or
+  `--method hash`?
+- **Decision:** `login`, always. The default does not depend on the profile.
+- **Why:** Hash mode needs the optional `SELECT ON SYS.USER$` grant (P2), so it
+  cannot be the default. A login check needs no site-specific grant. A
+  successful login resets the failed-login counter, and where the grant exists
+  the `LCOUNT` guard stops a check before it could lock the account.
+  `--method hash` exists and is opt-in.
+- **Rejected:**
+  - `login` interactively and `hash` under an unattended profile: it assumed
+    that the grant was standard and that hash mode existed. Neither was true when
+    this was decided.
+
+## Q2
+
+- **Decided:** 2026-08-16, #83
+- **Question:** Where does the advisory lock live: in the vault, or in the
+  database with `DBMS_LOCK`?
+- **Decision:** In the vault. There is one lock record per secret path, written
+  with check-and-set, with holder details and a TTL, under a `locks/` prefix on
+  the secret's own mount. A store without check-and-set (KV v1, the file
+  backend) refuses mutations unless it is configured `locking: advisory-only`.
+- **Why:** The vault is the one participant every mutating command talks to.
+  `DBMS_LOCK` has one advantage: a lock is released when its session dies. That
+  does not help with the real risk. A stalled run's session is still alive, so
+  its lock prevents nothing while its plan goes out of date. A fencing token
+  prevents that: the vault version, checked again before each change. With
+  fencing in place, automatic release is not worth a wider grant set. The lock
+  is keyed on the path, because two accounts can share one secret. The `locks/`
+  prefix keeps lock writes out of the secret's own version history, which
+  `previous` and rollback use.
+- **Rejected:**
+  - `DBMS_LOCK`: it needs `EXECUTE ON DBMS_LOCK`, cannot cover `creds generate`
+    or coordinate across targets, and puts Oracle-specific behaviour in the
+    command layer.
+  - Both, one per scope: two mechanisms, two ways to fail, and two places to
+    look for a stuck lock.
+  - Keyed per target or per account: per target means nothing when every target
+    gets the same value, and per account misses two accounts that share one
+    secret.
+
+## Q3
+
+- **Decided:** 2026-08-16, #84
+- **Question:** How many generations of `previous` does the vault payload keep?
+- **Decision:** Exactly one, plus whatever version history the store keeps on
+  its own.
+- **Why:** C14 settled it. OCI Vault has exactly one `PREVIOUS` stage, and the
+  tool's fixed stage names (`current`, `pending`, `previous`) cannot address an
+  older generation. One `previous` keeps the emulated payload the same shape as
+  the native one, and `check --include-previous` never has to say which previous
+  it accepted. Rollback goes back one generation only.
+- **Rejected:**
+  - A configurable list of N: an unbounded payload, emulation on every backend,
+    and stage names that cannot address the older entries.
+  - None, relying on the store's history: rollback would depend on the backend,
+    and KV v1 and the file backend have no history.
+
+## Q4
+
+- **Decided:** 2026-09-03, #88
+- **Question:** May the tool ever alter a database profile, for example to
+  enable password rollover?
+- **Decision:** Never. The tool prints the exact `ALTER PROFILE` an operator
+  would run, and runs none. It may assign a profile to an account, but it never
+  creates or alters one. Whether UC-4 may create or alter profiles is a question
+  for UC-4, and would need a privilege outside this grant set.
+- **Why:** A profile is shared. Changing one affects accounts nobody selected,
+  and invariant 5 cannot limit that, because the configuration lists accounts,
+  not profiles.
+- **Rejected:**
+  - An `--allow-profile-change` flag: a flag cannot grant a privilege at run
+    time, so every service account would need `ALTER PROFILE` from install,
+    whether or not anyone used the flag.
+  - Alter a profile only when declared accounts are its only users: the check
+    and the `ALTER` race each other. The usual profile is `DEFAULT`, which fails
+    the check anyway.
+
+## Q5
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Does the tool send a notification when `check` finds drift?
+- **Decision:** No. Exit code 3 and the JSON run document are the integration
+  point.
+- **Why:** Exit code 3 means drift, and the run document says which accounts
+  drifted. Whatever runs `check` on a schedule can act on those, so the tool
+  needs no notification client of its own.
+- **Rejected:**
+  - Built-in notification: the caller that schedules `check` can already
+    alert on exit code 3 and read the run document. UC-2's `delivery.notify`
+    exists for a different job, telling a person a password is ready, and
+    is not a drift alert.
+
+## Q7
+
+- **Decided:** 2026-08-17, #85
+- **Question:** One secret per account, or one secret per application with a
+  field per account?
+- **Decision:** One secret per application, with a field per account, is the
+  documented default. One secret per account stays fully supported.
+- **Why:** An application's accounts are usually rotated together. Across a
+  dozen tenants and environments, one secret per account can mean 48 vault paths
+  instead of 8. On a store that bills per secret that is a cost, and on any
+  store it is more access policy to maintain. The lock is keyed on the path
+  (Q2), and a write changes one field without touching the others, so the
+  account is still the unit of work.
+- **Rejected:**
+  - One secret per account as the default: more paths and policies, for a
+    separate lifecycle that most accounts do not have. It is still the right
+    choice where an account's lifecycle really is its own.
+
+## Q8
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Can `creds apply` create an account that does not exist?
+- **Decision:** No. Creating accounts is provisioning, which is UC-4.
+- **Why:** UC-1 manages the passwords of accounts that already exist. Creating
+  one is provisioning, and `CREATE USER` is outside the service account's grant
+  set (`02-oracle-privileges.md` §3).
+- **Rejected:**
+  - Create on `apply`: it mixes provisioning into password sync, and needs a
+    wider grant set.
+
+## Q9
+
+- **Decided:** 2026-08-18, #87
+- **Question:** Which clock decides a password's age for
+  `rotate --max-age-days`: the vault's `rotated_at`, or the database's password
+  change time?
+- **Decision:** The vault's `rotated_at`, always. `creds status` shows the
+  database's own time beside it, as a sign of drift.
+- **Why:** The vault has one age per secret path, however many targets share
+  it. With the database as the clock, an account on several targets has several
+  ages, and the CLI would need a rule for which one counts: oldest, newest or
+  any. The database time also changes when anyone else runs `ALTER USER`, and a
+  target the tool cannot reach would have no age at all.
+- **Rejected:**
+  - The database as the clock: the problems above.
+  - The vault for selection, with a warning when the database age differs: it
+    needs a warning code, and how codes are allocated is still open (J3).
+
 ## H1
 
 - **Decided:** 2026-09-16, #449
