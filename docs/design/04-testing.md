@@ -641,10 +641,10 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 
 | # | Question | Leaning |
 |---|---|---|
-| ~~T1~~ | ~~Does `gvenzl/oracle-xe:11` exist?~~ | **resolved 2026-08-08: yes.** `11.2.0.2-slim` pulls, starts in ~15 s and accepts the test profiles. 11.2 stays tier 2; D7 is cheap. amd64-only. See §2 |
-| ~~T2~~ | ~~`testcontainers-python` or `compose.yaml` + fixtures?~~ | **resolved 2026-08-20 in #174: compose.** The harness configures a DSN and probes whatever answers; it starts nothing and stops nothing. That is the choice made concrete rather than merely stated — a fixture that managed containers would be a second definition of the stack alongside `test/compose.yaml`, and the reason for compose in the first place is that this tool's users are DBAs who will want to run the stack by hand and look at it. `SOPULI_TEST_ORACLE_DSN` points it elsewhere; the default is the compose service |
+| ~~T1~~ | ~~Does `gvenzl/oracle-xe:11` exist?~~ | **resolved 2026-08-08: yes**, `11.2.0.2-slim`, amd64-only. See §2. Reasons: [T1](../decisions/log.md#t1) |
+| ~~T2~~ | ~~`testcontainers-python` or `compose.yaml` + fixtures?~~ | **resolved 2026-08-20 in #174: compose.** The harness starts nothing; `SOPULI_TEST_ORACLE_DSN` points it elsewhere. Reasons: [T2](../decisions/log.md#t2) |
 | T3 | Is LocalStack Secrets Manager in the community tier? | verify before committing to it as the AWS path |
 | T4 | Does OCI Vault cost enough to matter in a test loop? | check pricing; if so, tier 3 only and reuse one secret |
-| ~~T5~~ | ~~Public CI provider~~ | **resolved 2026-08-09: GitHub Actions.** Tier 0 runs in `.github/workflows/ci.yml`; the repository and release-please were already there, so a second provider would have bought nothing. Oracle Free containers run on amd64 hosted runners when tier 1 arrives. One constraint found while wiring it: branch protection is unavailable on a private repo on the free plan, so CI reports but cannot block — see `../workflow.md` |
+| ~~T5~~ | ~~Public CI provider~~ | **resolved 2026-08-09: GitHub Actions.** See `../workflow.md`. Reasons: [T5](../decisions/log.md#t5) |
 | T6 | Do we need a real Data Guard standby to test the read-only refusal? | probably: a closed PDB is not the same failure. Defer until a driver bug argues for it |
 | T7 | Snapshot/restore for faster Oracle resets | **deferred**: start with drop-and-recreate; revisit if tier 2 exceeds its budget |

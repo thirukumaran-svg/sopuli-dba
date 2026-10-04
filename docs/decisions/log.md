@@ -24,6 +24,148 @@ A pull request that closes an issue labelled `decision` adds its record here.
 `tests/test_decision_log.py` checks the format, and that each record agrees with
 the register.
 
+## D1
+
+- **Decided:** 2026-08-08
+- **Question:** What is the binary called?
+- **Decision:** `sopuli`. The project and its package are `sopuli-dba`.
+- **Why:** No reason was written down when this was decided.
+- **Rejected:** None recorded.
+
+## D2
+
+- **Decided:** 2026-08-08
+- **Question:** What grammar does the CLI use?
+- **Decision:** Noun-verb, for example `sopuli creds rotate` and
+  `sopuli target list`.
+- **Why:** No reason was written down when this was decided.
+- **Rejected:** None recorded.
+
+## D3
+
+- **Decided:** 2026-08-08
+- **Question:** What language is the tool written in?
+- **Decision:** Python, with `python-oracledb` in thick mode, on every target.
+- **Why:** Thin mode cannot be used, for three independent reasons. It does not
+  support Native Network Encryption, which Base Database Service and any
+  database that requires NNE refuse to do without (measured on 19.32.0.0.0,
+  #575). It connects only to 12.1 and later, and 11.2 is supported. And
+  `auth: external` needs the Oracle client libraries. So Instant Client must be
+  installed at run time anyway. Python is also easier to review for a DBA who
+  is not mainly a developer, which matters for code that handles credentials.
+  `00-principles.md` P4, *Why thick mode*, has the detail.
+- **Rejected:**
+  - Go: its advantage is a single binary with no runtime dependencies, and
+    Instant Client removes that advantage.
+
+## D4
+
+- **Decided:** 2026-08-08
+- **Question:** What format is the configuration file?
+- **Decision:** YAML. JSON is also accepted, because JSON is valid YAML.
+- **Why:** No reason was written down when this was decided. JSON
+  is accepted because a YAML parser reads it anyway.
+- **Rejected:** None recorded.
+
+## D5
+
+- **Decided:** 2026-08-08
+- **Question:** Is macOS a supported platform?
+- **Decision:** Best effort. The code stays portable, the README claims no
+  support, and there is no macOS CI.
+- **Why:** Instant Client exists for macOS, including Apple Silicon, so the
+  tool can run there. The problem is testing. There is no Oracle server build
+  for macOS, so a Mac cannot host the full test stack locally and needs a remote
+  database (`SOPULI_TEST_ORACLE_DSN`). The 11.2 test image is `linux/amd64`
+  only, and Apple Silicon has only a 23.x client, which cannot reach 11.2. Excluding macOS would save nothing,
+  because the code has almost nothing macOS-specific. `00-principles.md` P4 has
+  the detail.
+- **Rejected:**
+  - A supported tier: a Mac cannot run the test stack locally, there would be
+    no macOS CI behind the claim, and there is no evidence of demand.
+  - Excluding macOS: saves nothing, and would have to be undone when someone
+    asks.
+
+## D6
+
+- **Decided:** 2026-08-08
+- **Question:** How are drivers and stores added: in the tree, or through a
+  plugin API?
+- **Decision:** In the tree. An entry-point plugin API comes only after a second
+  database driver exists.
+- **Why:** The decision ties the plugin API to a second driver, so the API is
+  designed against two implementations rather than one. Install extras (D9)
+  control which dependencies are installed, not which modules exist, so they do
+  not change this.
+- **Rejected:**
+  - A plugin API now: it would be designed against a single driver.
+
+## D7
+
+- **Decided:** 2026-08-08
+- **Question:** What is the oldest Oracle release the tool supports?
+- **Decision:** 11.2. It was confirmed again on 2026-09-09 (#387), after the
+  `V$SQLSTATS` finding.
+- **Why:** 11.2 is cheap to test: `gvenzl/oracle-xe:11.2.0.2-slim` pulls freely
+  and starts in seconds (T1). On 11.2 the `ALTER USER` text stays in
+  `V$SQLSTATS`. Every later release measured keeps nothing: 12.2.0.1.0,
+  18.4.0.0.0, 19.3.0.0.0, 19.32.0.0.0, 21.3.0.0.0 and 26ai 23.26.2.0.0. 12.1 is
+  unmeasured, and one measured release update is not every release update. 11.2 stayed in scope anyway,
+  because the text ages out of the shared pool and one `FLUSH SHARED_POOL`
+  clears it, and dropping 11.2 would move the rotation to SQL\*Plus, which keeps
+  the same text and records nothing (P8). Apple Silicon cannot reach 11.2,
+  because only the 23.x client exists there.
+- **Rejected:**
+  - Drop 11.2: the rotations would still happen, outside the tool.
+
+## D8
+
+- **Decided:** 2026-08-09
+- **Question:** Which CLI framework does the tool use?
+- **Decision:** click.
+- **Why:** `click.testing.CliRunner` runs CLI tests in-process with no I/O, and
+  click has a real exception hierarchy to map errors onto. The noun-verb grammar
+  (D2) and exit code 2 on a usage error are equally easy in either candidate.
+  ADR-002 has the detail.
+- **Rejected:**
+  - `argparse`: more verbose, and harder to test in-process.
+  - `typer`: click with an implicit layer on top, which loses the explicitness
+    that a reviewer who is a DBA first needs.
+
+## D9
+
+- **Decided:** 2026-08-18, #130
+- **Question:** Which dependencies does the base install carry?
+- **Decision:** Only the CLI framework, the YAML parser, `pywin32` on Windows,
+  and sopuli itself. Vendor clients, for stores and database drivers, are
+  install extras. The base install opens no sockets. ADR-006 holds the full
+  decision, and E1 to E7 are its parts.
+- **Why:** The dependency tree of a credential tool is something a security
+  review reads. "Only the vendors you use" is a better answer than "all of them".
+  Vendor SDKs also pin versions that can collide, and a site should not inherit
+  the pins of a backend it never configured. Extras are a published interface,
+  so this had to be decided before the first release.
+- **Rejected:** See ADR-006.
+
+## D10
+
+- **Decided:** 2026-09-05, #294
+- **Question:** Which confirmation prompts are built in, with no configuration?
+- **Decision:** None. `safety.confirm_environments` is the only trigger, and an
+  estate lists its production environments there.
+- **Why:** P5 asked for three triggers, and `01-configuration.md` §9 forbids two
+  of them. A built-in `[prod]` would be a floor that no layer could remove,
+  because the list merges by union. That is the trap §9 uses `confirm` to
+  illustrate. A prompt whenever more than one target is touched would prompt on
+  every multi-target change for an estate that configured nothing, and it would
+  read `max_targets` as a threshold when it is a ceiling. §9 governs, and P5 is
+  reworded to match.
+- **Rejected:**
+  - `environment: prod` as a separate built-in trigger: the same unremovable
+    floor, outside the ratchet instead of inside it.
+  - All three triggers as P5 first stated them: a default install would prompt
+    on any multi-target change.
+
 ## P1
 
 - **Decided:** 2026-10-03, #615
@@ -156,6 +298,111 @@ the register.
   - Refuse on 11.2: it reverses D7 over an exposure that ends when the text
     ages out and can be cleared at once. The operator would rotate in SQL\*Plus
     instead, which keeps the same text and records nothing.
+
+## J1
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Does `--output json` print nothing until the run ends, even for
+  a long run?
+- **Decision:** Yes. `--output jsonl` streams events for the case that needs
+  them.
+- **Why:** A partial JSON document is worse than none: a consumer cannot parse
+  it, and cannot tell how much of the run it describes.
+- **Rejected:**
+  - Stream the document as the run goes: it leaves invalid JSON when a run
+    stops early.
+
+## J2
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Is `plan` in every run document, or only with `--dry-run` or
+  `--verbose`?
+- **Decision:** In every command that plans. A command with no units, such as
+  `doctor`, has none.
+- **Why:** The plan is small, and having it in every document makes comparing
+  the plan with the result a mechanical job.
+- **Rejected:**
+  - Only with `--dry-run` or `--verbose`: a consumer could not compare plan and
+    result for an ordinary run.
+
+## J4
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Does the run document carry a host name and a process id for
+  log correlation?
+- **Decision:** The host, as `invocation.actor.host`. No process id.
+- **Why:** `correlation_id` already ties a run to the audit and vault trails. A
+  process id means nothing once the process has exited.
+- **Rejected:**
+  - A process id: it adds nothing that `correlation_id` does not give.
+
+## J6
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Can the event stream resume after a crash?
+- **Decision:** No. Run the command again.
+- **Why:** `check` finds the true state cheaply, so a rerun recovers without a
+  resume protocol.
+- **Rejected:**
+  - A resumable stream: a protocol to design and test, for a case a rerun
+    already covers.
+
+## J7
+
+- **Decided:** 2026-08-13, #8
+- **Question:** Does `--output json` emit a run document on a usage error?
+- **Decision:** No. A run document describes a run, and a run begins when the
+  invocation resolves. Exit code 2 is the only exit code that never produces a
+  document, and stdout is empty on exit 2. An invalid configuration file moved
+  to its own exit code, 9, and does produce a document.
+- **Why:** The schema requires `command` and `invocation`. A command line that
+  did not parse has neither, so a document for it would either break the schema
+  or force every consumer to handle a document that describes nothing. An
+  invalid configuration is different: the command line was valid, and
+  `config validate --output json` must report it. So the two needed different
+  exit codes.
+- **Rejected:**
+  - A document on a usage error too: it weakens the schema for every consumer.
+  - Keep exit 2 for both usage and configuration errors: then "empty stdout and
+    exit 2" no longer means one thing.
+  - Move configuration errors to exit 1: loses the most useful distinction the
+    tool has, because a broken configuration is something an operator can fix.
+
+## T1
+
+- **Decided:** 2026-08-08, #1
+- **Question:** Is there a freely pullable Oracle 11g XE image for the test
+  stack?
+- **Decision:** Yes. `gvenzl/oracle-xe:11.2.0.2-slim` pulls, starts in about 15
+  seconds, and accepts the test profiles. 11.2 is a tier-2 compose service.
+- **Why:** This was a measurement. It made D7 cheap to keep. The image is
+  `linux/amd64` only, which is a second reason Apple Silicon cannot test 11.2
+  locally.
+- **Rejected:** Not a choice between options.
+
+## T2
+
+- **Decided:** 2026-08-20, #174
+- **Question:** Does the test harness start containers with
+  `testcontainers-python`, or use `test/compose.yaml` and fixtures?
+- **Decision:** Compose. The harness reads a DSN and probes whatever answers. It
+  starts and stops nothing. `SOPULI_TEST_ORACLE_DSN` points it elsewhere.
+- **Why:** The users are DBAs, who will want to run the stack by hand and look
+  at it. A harness that managed containers would be a second definition of the
+  stack beside `test/compose.yaml`.
+- **Rejected:**
+  - `testcontainers-python`: a second definition of the stack, which the tests
+    and the by-hand stack could disagree on.
+
+## T5
+
+- **Decided:** 2026-08-09
+- **Question:** Which public CI provider does the project use?
+- **Decision:** GitHub Actions.
+- **Why:** The repository and release-please were already on GitHub, so a second
+  provider would have added nothing. Oracle Free containers run on its amd64
+  hosted runners.
+- **Rejected:** No other provider was evaluated.
 
 ## Q1
 

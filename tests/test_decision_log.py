@@ -36,10 +36,7 @@ ADR_ROWS = {"ADR", "ADR-006"}
 #: Decided rows whose records are not written yet. TODO(#616): the backfill
 #: empties this set, and then it goes.
 NOT_YET_RECORDED = {
-    *(f"D{n}" for n in range(1, 11)),
     *(f"C{n}" for n in (1, 2, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)),
-    *(f"J{n}" for n in (1, 2, 4, 6, 7)),
-    *(f"T{n}" for n in (1, 2, 5)),
 }
 
 RECORD = re.compile(r"^## (\S+)\s*$")
