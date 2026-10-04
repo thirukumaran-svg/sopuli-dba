@@ -73,8 +73,10 @@ cannot be silently made again. An agent that meets a rule without its reason
 may "fix" it, and several rules here look like mistakes until you know why.
 That is why the documents record the options that were rejected as carefully
 as the one that was chosen, why a decision cites the issue that made it, and
-why *surface, do not resolve* exists. The length of the documentation is the
-cost of that, and it is paid on purpose.
+why *surface, do not resolve* exists. The documents keep the reasons. They do
+not keep the history of how the text changed: git, the pull requests and
+`CHANGELOG.md` keep that. [Writing documentation and comments](#writing-documentation-and-comments)
+has the rules.
 
 ---
 
@@ -238,14 +240,95 @@ Paste the output from the run the previous section already required. That rule
 and this one are the same work: you ran the command, so write down what it
 printed. No sample in that guide is ever written from a diff.
 
-The public-facing documents — `README.md`, `docs/getting-started.md`,
-`docs/security-model.md`, `docs/scenarios/` and the comments in `examples/` —
-have a different audience and a different voice. They are written for a DBA or
-ops engineer who may not be a Python developer and may not have English as a
-first language: short sentences, jargon defined the first time it is used, and a
-sentence saying what a code block does before showing it. The design documents in
-`docs/design/`, `docs/decisions/` and `docs/use-cases/` keep their existing
-declarative voice, for contributors.
+---
+
+## Writing documentation and comments
+
+These rules apply to every document in the repository, to code comments and to
+docstrings. Some older text does not follow them yet; it is being rewritten
+(open: #622, #623, #624, #625). New and changed text follows them now.
+
+### Write in plain English
+
+Many readers do not have English as a first language.
+
+- Write short sentences, with one idea in each.
+- Use common words. Define a technical term the first time you use it. After
+  that, use the same term for the same thing every time.
+- Use the active voice: "the tool refuses the run", not "the run is refused".
+- Say the point directly. Do not use idioms or rhetorical framing, such as "the
+  thing to understand before touching it" or "it is not a loophole in it".
+- Use bold rarely, for the one sentence a reader must not miss.
+- Before a code block, say in one sentence what it does.
+
+`README.md`, `docs/getting-started.md` and `docs/security-model.md` are written
+this way. Use them as the model.
+
+### Describe the current build
+
+A document says what the tool does now, in the present tense.
+
+- Do not write "until #N", "this paragraph used to say", or the date a
+  behaviour changed.
+- The history of a change belongs in its commit message, its pull request and
+  `CHANGELOG.md`.
+- A binding document does not carry a `Status: draft` or `Status: sketch`
+  header. If the code is written against it, it is the specification.
+- A measured result names the Oracle release it ran on, because results differ
+  between releases. Dated measurement results belong in one place, the
+  measurement matrix (open: #618).
+- Work that waits on an open issue carries a marker, `(open: #N)` in Markdown
+  and `TODO(#N)` in code. [`docs/README.md`](docs/README.md) §*Conventions*
+  has the rule, and `tests/test_pending_work.py` checks it.
+
+### Keep the reason
+
+Removing history does not mean removing reasons. Where a rule could look like a
+mistake, the document says why the rule exists and which options were rejected.
+Without the reason, a reader or an agent may "fix" the rule.
+
+Invariants 13 and 14 in [`CLAUDE.md`](CLAUDE.md) are examples. Wrapping
+`ALTER USER` in a PL/SQL block, and sending a password as a bind value, both
+look like the more careful choice. Both leak the password. `CLAUDE.md` gives
+that reason with each rule.
+
+The reasons for a decision live in its record in
+[`docs/decisions/log.md`](docs/decisions/log.md), or in its ADR.
+
+### Write each fact in one place
+
+Each fact has one home. Everywhere else, link to that home instead of repeating
+the fact. A fact copied to several places goes stale in all but one of them,
+because the pull request that changes it rarely opens the other files.
+
+There is one exception. `.github/copilot-instructions.md` may summarise rules
+from other files, because the Copilot reviewer reads that file and cannot follow
+a link. A pull request that changes a rule it summarises updates that file too.
+
+### Do not count without a test
+
+Do not write how many of something there are, or that something is "the only"
+one, unless a test checks the claim. Such a claim goes stale when a later pull
+request adds one more, without touching the sentence. `tests/test_doc_lists.py`
+checks a list in a document against the code. Its docstring explains how to mark
+a new list.
+
+### Refer to issues only in these ways
+
+- **Provenance, once.** At the home of a decision, name the issue that made it:
+  "decided in #N".
+- **Pending work, as a marker.** See *Describe the current build* above.
+- **Never as narration.** Do not write "#N changed this" or "this said X until
+  #N".
+
+The reason itself is always written in the repository. An issue number points to
+the discussion. It does not replace the explanation.
+
+### Code comments and docstrings
+
+A comment says what the code does and why. It does not say which issue changed
+the code: `git log` and `git blame` show that. Keep module docstrings short.
+Say what the module is for, and what a reader must know before changing it.
 
 ---
 

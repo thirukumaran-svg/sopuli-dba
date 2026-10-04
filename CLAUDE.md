@@ -367,6 +367,13 @@ document in the same PR. The documents are the specification, not a description
 written afterwards — if they disagree with the code, that is a bug in one of them
 and it needs resolving, not noting.
 
+**Write documentation and comments by the rules in `CONTRIBUTING.md`**,
+§*Writing documentation and comments*. Read it before writing prose or comments.
+
+When a fact changes, replace the old wording. Do not add a correction beside it.
+Agents add text reliably and remove it unreliably, and that is how the documents
+grew stale.
+
 **`docs/local-testing.md` moves with the CLI surface**, and that is a second
 obligation rather than a restatement of the first. The design documents say what
 the tool is *for*; the guide is the by-hand map of what this build can actually be

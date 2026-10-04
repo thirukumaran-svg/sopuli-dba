@@ -125,6 +125,27 @@ direction of truth.
   `acme`, `acme_*_user`, `alpha` through `theta`, `example.com`, and
   `192.0.2.0/24`; do not add real-system identifiers or material.
 
+## Writing documentation and comments
+
+`CONTRIBUTING.md`, section "Writing documentation and comments", has the rules
+and is authoritative. This is a summary, kept because the reviewer cannot follow
+the link. Apply the rules to new and changed text, and flag a change that breaks
+them:
+
+- Plain English: short sentences, common words, active voice, no idioms or
+  rhetorical framing. Many readers are not native English speakers.
+- Present tense, describing the current build. No "until #N", no "this used to
+  say", no change dates. History belongs in commits, PRs and `CHANGELOG.md`.
+- Keep the reason, and the rejected options, wherever a rule could look like a
+  mistake. Do not suggest removing one.
+- One home for each fact; link to it elsewhere instead of restating it.
+- No counts and no "the only" unless a test checks them.
+- Cite an issue once, as provenance ("decided in #N"), or as a pending-work
+  marker: `(open: #N)` in Markdown, `TODO(#N)` in code. Never as narration. The
+  reason itself is always written in the repository.
+- Comments say what the code does and why, not which issue changed it. Module
+  docstrings stay short.
+
 ## Change and review requirements
 
 One GitHub issue maps to one reviewable PR; discuss a change that will exceed
