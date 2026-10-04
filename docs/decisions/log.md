@@ -29,8 +29,9 @@ the register.
 - **Decided:** 2026-08-08
 - **Question:** What is the binary called?
 - **Decision:** `sopuli`. The project and its package are `sopuli-dba`.
-- **Why:** No reason was written down when this was decided.
-- **Rejected:** None recorded.
+- **Why:** The maintainer chose it as a sensible way for the tool to work.
+  There was no particular reason beyond that.
+- **Rejected:** No alternatives were weighed.
 
 ## D2
 
@@ -38,8 +39,9 @@ the register.
 - **Question:** What grammar does the CLI use?
 - **Decision:** Noun-verb, for example `sopuli creds rotate` and
   `sopuli target list`.
-- **Why:** No reason was written down when this was decided.
-- **Rejected:** None recorded.
+- **Why:** The maintainer chose it as a sensible way for the tool to work.
+  There was no particular reason beyond that.
+- **Rejected:** No alternatives were weighed.
 
 ## D3
 
@@ -63,9 +65,10 @@ the register.
 - **Decided:** 2026-08-08
 - **Question:** What format is the configuration file?
 - **Decision:** YAML. JSON is also accepted, because JSON is valid YAML.
-- **Why:** No reason was written down when this was decided. JSON
-  is accepted because a YAML parser reads it anyway.
-- **Rejected:** None recorded.
+- **Why:** The maintainer chose it as a sensible way for the tool to work.
+  There was no particular reason beyond that. JSON is accepted because a YAML
+  parser reads it anyway.
+- **Rejected:** No alternatives were weighed.
 
 ## D5
 
@@ -165,6 +168,237 @@ the register.
     floor, outside the ratchet instead of inside it.
   - All three triggers as P5 first stated them: a default install would prompt
     on any multi-target change.
+
+## C1
+
+- **Decided:** 2026-08-08
+- **Question:** What is the section that binds accounts to secrets called?
+- **Decision:** `applications`. A file whose one application applies to all
+  its targets can instead put the binding keys at the top level. This inline
+  form is the default shape. An application that covers only some targets needs
+  `applications:`, for example in an estate that also has a CDB root for
+  maintenance.
+- **Why:** The common case is one application over every target, so the default
+  shape is the simplest one: a file that reads like a list of targets.
+  `01-configuration.md` §1 describes both forms. No reason was recorded for the
+  name itself.
+- **Rejected:** No alternatives were weighed.
+
+## C2
+
+- **Decided:** 2026-10-03, #615
+- **Question:** What syntax selects targets?
+- **Decision:** `--select k=v` over labels on the command line, and `match:` in
+  a group. Revisit only if a real case needs negation or set membership.
+- **Why:** It is what the build does, and no real case has needed negation or
+  set membership.
+- **Rejected:**
+  - A richer expression language now: negation and set membership have no real
+    case yet.
+
+## C3
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Can a secret template contain arbitrary expressions?
+- **Decision:** No. A template uses a fixed list of tokens, plus labels.
+- **Why:** The template is the account-to-secret mapping, which is the
+  safety-critical part of the configuration. With a fixed token list, a reviewer
+  can see exactly which path each account maps to.
+- **Rejected:**
+  - Arbitrary expressions: a reviewer would have to evaluate code to know where
+    a password goes.
+
+## C5
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Does the tool encrypt the configuration file at rest?
+- **Decision:** No. It is out of scope.
+- **Why:** The configuration holds no secrets, by construction. Secrets are
+  references to a store, and auth material is a reference to an environment
+  variable or a file. There is nothing in the file to protect with encryption.
+- **Rejected:**
+  - Encryption at rest: there is nothing secret in the file to protect.
+
+## C7
+
+- **Decided:** 2026-08-10
+- **Question:** Can `target_sets` nest more than two levels?
+- **Decision:** No. Write a second target set instead.
+- **Why:** A general templating language in a credential tool is hard to debug.
+  Two levels cover an environment with a list of tenants. A deeper or mixed
+  shape is refused rather than quietly flattened. `01-configuration.md` §4,
+  rules 2, 6 and 7, say what is refused.
+- **Rejected:**
+  - Deeper nesting: more power than the estates need, and harder to read and
+    debug.
+
+## C8
+
+- **Decided:** 2026-08-10
+- **Question:** Can explicit `targets:` carry labels, or only `environment`?
+- **Decision:** Labels are allowed on explicit targets.
+- **Why:** Generated targets get labels from their dimensions. If explicit
+  targets could not carry labels too, an estate with both kinds could not be
+  selected the same way.
+- **Rejected:**
+  - `environment` only: a mixed estate could not be selected uniformly.
+
+## C9
+
+- **Decided:** 2026-08-12, #27
+- **Question:** How does the configuration point at vault auth material, and at
+  the database admin credential?
+- **Decision:** One grammar with two vocabularies: `{ method: ..., ... }`, with
+  a scalar shorthand where a method needs nothing else.
+  - A vault's auth material is a MaterialRef, with one key, `env` or `file`.
+    Identity fields stay inline. `method: token`'s chain of sources stops inside
+    the method. A token helper is deferred.
+  - The admin credential uses P2's four sources. `method: vault` names a whole
+    SecretRef, `method: env` names its own variable, and `external` limits the
+    `dsn` to a TNS alias and refuses a `username`.
+  - `oracle.scope` and `container` on a target are assertions, checked on
+    connect.
+- **Why:** With a MaterialRef, the file can only point at a secret, never hold
+  one. So P2's no-plaintext rule is enforced by the grammar, not by care. One
+  grammar for both places means one thing to learn and validate.
+  `01-configuration.md` §3a has the detail.
+- **Rejected:**
+  - An `_env` / `_file` suffix on each key: the rule against plaintext would
+    then be a validation someone must remember to write, not a missing slot.
+  - Allowing `role_id` inline because it is an identifier: one exception would
+    have to be argued again for every method added later.
+  - A separate field for the admin credential's vault path: `method: vault`
+    reuses the SecretRef type instead.
+  - A token helper (`command:`): running a command from a credential tool
+    needs its own decision, so it is deferred.
+
+## C10
+
+- **Decided:** 2026-08-10
+- **Question:** What are profiles for?
+- **Decision:** Run context, not target selection. A profile changes how the
+  tool behaves (prompts, verification method, output, logging), never which
+  targets or accounts are in scope. A profile may contain only a fixed list of
+  keys.
+- **Why:** The same configuration runs from a laptop, a CI job and a scheduler,
+  and those need different behaviour. Without profiles, that lives in
+  environment variables scattered across workflow files, where nobody reviews
+  it. A profile that could change the scope would be a selector that does not
+  look like one, which is dangerous in a tool that rotates credentials.
+  An earlier draft had `policies.*.verify.scheduled_method`, run context hidden
+  in a password policy, and a profile overriding `verify.method` replaced it.
+- **Rejected:**
+  - Profiles that also select targets: a selector in disguise.
+
+## C11
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Can several profiles be active at once?
+- **Decision:** No. One active profile, and no inheritance between profiles.
+  Revisit only if a real configuration repeats itself across three or more
+  profiles.
+- **Why:** Composition would be worth its precedence rules only if
+  configurations repeated themselves across profiles, and no real configuration
+  has shown that.
+- **Rejected:**
+  - Composable profiles: precedence rules between profiles, for a need not yet
+    seen.
+
+## C12
+
+- **Decided:** 2026-10-03, #615
+- **Question:** Does the tool ship a built-in `interactive` profile as the
+  implicit default?
+- **Decision:** No. No profile means "just `defaults`".
+- **Why:** An invisible built-in profile would be one more thing to explain when
+  output surprises someone.
+- **Rejected:**
+  - A built-in `interactive` profile: hidden behaviour.
+
+## C13
+
+- **Decided:** 2026-08-18, #31
+- **Question:** Is `vault:` under `defaults:` and in a profile a store name, or a
+  block of settings?
+- **Decision:** A name, everywhere. To change a store's settings, `defaults:`
+  and a profile may carry partial `vaults:` entries for a store declared at the
+  top level. They may change how the store is reached (such as `addr`, `mount`
+  and `auth`), but not `type`, `non_production` or `locking`. Invariant 10 keeps
+  the last two out of the run context.
+- **Why:** The environment variables had already chosen this shape:
+  `SOPULI_VAULT` names a store, and `SOPULI_VAULT__VAULT_DEV__ADDR` sets one of
+  its settings. Settings that follow a store's name cannot leak to another
+  store. `01-configuration.md` §3a and §5 have the detail, and `config show
+  --explain` reports which layer set each key.
+- **Rejected:**
+  - A `vault_settings:` block that applies to whichever store is active:
+    shorter, but auth written for dev would follow a changed `vault:` into prod.
+
+## C14
+
+- **Decided:** 2026-08-16, #40
+- **Question:** What values can `@version=` and `@stage=` take in a SecretRef,
+  and who defines them?
+- **Decision:** The tool defines both. `stage` is one of `current`, `pending`
+  and `previous`, matched in any case and stored in lower case. `version` is a
+  whole number from 1. Neither may hold a `{token}`.
+- **Why:** OCI Vault's rotation states are a fixed set (`CURRENT`, `PENDING`,
+  `LATEST`, `PREVIOUS`, `DEPRECATED`), not labels a user defines, and its
+  versions are integers. So there was no backend vocabulary to pass through,
+  and passing values through would only move a typo from load time to rotation
+  time. This also settled Q3 at one `previous`.
+- **Rejected:**
+  - Pass the value through to the backend: a typo would fail during a rotation
+    instead of when the file is loaded.
+
+## C15
+
+- **Decided:** 2026-08-18, #118
+- **Question:** A binding names a secret, and no store is named anywhere. Does
+  the tool refuse, warn, or leave it to plan time?
+- **Decision:** Mostly plan time. `config show --resolved` shows the store as
+  `-`, and the command that needs a store fails at plan time, once the run's
+  profile is known. The file is refused at load only when `vaults:` declares no
+  store at all, so nothing could ever fill the gap.
+- **Why:** A missing store is not always a mistake. A profile's `vault:` or
+  `SOPULI_VAULT` may supply one, and neither is known while the bindings are
+  built. Plan time is when the answer is exact.
+- **Rejected:**
+  - Refuse at load whenever a binding's store is unnamed: it rejects a valid
+    file that declares stores and names no `defaults.vault`, where the run's
+    profile or `SOPULI_VAULT` supplies the store's name.
+
+## C16
+
+- **Decided:** 2026-08-19, #145
+- **Question:** What does `--vault-token` take?
+- **Decision:** Nothing. A bare `--vault-token` is refused with a message that
+  names invariant 1 and the working sources. `--vault-token-file PATH` is the
+  command line's place in `method: token`'s chain. ADR-007 holds the full
+  decision.
+- **Why:** A token as an option value is visible in `ps` and in the Windows
+  process list (invariant 1). A vault ref cannot help, because a ref is resolved
+  by a store that is already authenticated.
+- **Rejected:**
+  - `--vault-token env:NAME` or `file:PATH`, borrowing MaterialRef's keys: on a
+    command line, `env:NAME` has the shape of a SecretRef (`[<vault>:]<path>`),
+    which would address path `NAME` in a store called `env`. One string would
+    read as one type and be the other, which blurs the line
+    `01-configuration.md` §3a draws between MaterialRef and SecretRef.
+  - `--vault-token-stdin`: deferred rather than rejected, because
+    `--from-stdin` already uses the pipe.
+
+## C17
+
+- **Decided:** 2026-09-05, #294
+- **Question:** P5 asked for a confirmation prompt by default for a `prod`
+  target or a large blast radius. `01-configuration.md` §9 forbids a built-in
+  that takes part in a ratchet. Which one holds?
+- **Decision:** §9 holds, and P5 is reworded. This is the same decision as D10,
+  seen from the configuration side.
+- **Why:** See D10. `creds rotate` and `lock break` confirm every time, and were
+  never part of this question.
+- **Rejected:** See D10.
 
 ## P1
 

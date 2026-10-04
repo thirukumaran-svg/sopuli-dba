@@ -33,11 +33,6 @@ FIELDS = ("Decided", "Question", "Decision", "Why", "Rejected")
 #: `Where` values whose rows are recorded by an ADR rather than in the log.
 ADR_ROWS = {"ADR", "ADR-006"}
 
-#: Decided rows whose records are not written yet. TODO(#616): the backfill
-#: empties this set, and then it goes.
-NOT_YET_RECORDED = {
-    *(f"C{n}" for n in (1, 2, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)),
-}
 
 RECORD = re.compile(r"^## (\S+)\s*$")
 FIELD = re.compile(r"^- \*\*(\w+):\*\*\s*(.*)$")
@@ -122,17 +117,12 @@ def test_every_decided_row_has_a_record() -> None:
     missing = [
         entry.id
         for entry in register()
-        if entry.status == "decided"
-        and entry.where not in ADR_ROWS
-        and entry.id not in recorded
-        and entry.id not in NOT_YET_RECORDED
+        if entry.status == "decided" and entry.where not in ADR_ROWS and entry.id not in recorded
     ]
     assert not missing, (
         f"decided with no record in docs/decisions/log.md: {missing}. "
         "The pull request that closes a decision adds its record."
     )
-    stale = sorted(NOT_YET_RECORDED & recorded)
-    assert not stale, f"recorded, so remove from NOT_YET_RECORDED: {stale}"
 
 
 def test_every_link_into_the_log_names_a_record() -> None:

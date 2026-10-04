@@ -177,10 +177,12 @@ adds the flag should not also be the one who has to rediscover the collision.
 
 **`--vault-token env:NAME` | `file:PATH`, reusing the MaterialRef grammar.** One
 syntax meaning one thing everywhere is a real argument, and this is not an
-instance of it. It is a **semantic collision**: `env:` / `file:` in a SecretRef
-means "resolve this via an already-authenticated store", and using the identical
-spelling for the thing that *authenticates* the store gives two grammars that
-look the same and resolve in opposite order. `01-configuration.md` §3a already
+instance of it. It is a **semantic collision**. A MaterialRef is a one-key
+mapping in the file, read straight from the environment or the filesystem. On a
+command line, `env:NAME` has the shape of a SecretRef, `[<vault>:]<path>`, which
+would address path `NAME` in a store called `env` and be resolved through an
+authenticated store. One string would read as one type and be the other, for
+the thing that *authenticates* the store. `01-configuration.md` §3a already
 names the two types apart — MaterialRef and SecretRef — precisely so the
 chicken-and-egg stays visible rather than being papered over by one word meaning
 both. This is the kind of thing that reads well in a design document and costs
