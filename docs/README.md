@@ -1,14 +1,14 @@
 # sopuli-dba — design documentation
 
-This index is for contributors. **If you arrived here wanting to use the tool,
-start at [getting-started.md](getting-started.md) instead** — the documents below
-are the specification, written in the project's own declarative voice. Why they
-record rejected options and cite the issue behind each decision is in
-[CONTRIBUTING.md](../CONTRIBUTING.md#how-this-project-is-built-and-what-that-means-for-you).
+This index is for contributors. If you want to use the tool, start at
+[getting-started.md](getting-started.md). The documents below are the
+specification. [CONTRIBUTING.md](../CONTRIBUTING.md#how-this-project-is-built-and-what-that-means-for-you)
+explains why they record rejected options and name the issue behind each
+decision.
 
-Pre-alpha. UC-1 is built and the rest of this directory is ahead of the code; each
-document says which of it exists. [measurements.md](measurements.md) says which
-script in `sql/oracle/` ran on which Oracle release, and what it showed.
+The project is pre-alpha. Each use-case document says which parts of it are
+built. [measurements.md](measurements.md) says which script in `sql/oracle/` ran
+on which Oracle release, and what it showed.
 
 ## For a reader outside the project
 
@@ -32,10 +32,25 @@ script in `sql/oracle/` ran on which Oracle release, and what it showed.
 | [design/03-json-output.md](design/03-json-output.md) | The `--output json` / `--output jsonl` contract, redaction, stability policy, `jq` recipes |
 | [design/04-testing.md](design/04-testing.md) | What can and cannot be containerised, capability-driven matrix, tiering, fault injection, release gates |
 | [use-cases/uc-01-app-credential-sync.md](use-cases/uc-01-app-credential-sync.md) | UC-1: application DB account credentials, vault as master — `generate` / `apply` / `check` / `rotate` |
+| [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) | UC-2: a person's own database account — the `account` verbs, password reset, the reset record, and delivery methods |
 | [workflow.md](workflow.md) | Binding: branching (`issue-<n>-<slug>`, no long-lived integration branch), Conventional Commits, release-please and the 0.x policy |
 | [measurements.md](measurements.md) | What ran on which Oracle release, when, and what it showed: the one place for release-by-release results |
 | [local-testing.md](local-testing.md) | The usual commands, run by hand against the tier-1 stack: setup, the `creds` lifecycle, the `account` verbs, and a few refusals |
 | [maintainer-environments.md](maintainer-environments.md) | Setting up other Oracle releases, OCI Base Database and Autonomous Database, wallets, and WSL |
+
+## Decisions
+
+| Document | Contents |
+|---|---|
+| [decisions/adr-001-privilege-model.md](decisions/adr-001-privilege-model.md) | Why direct `ALTER USER`, what was rejected, and the two triggers for revisiting |
+| [decisions/adr-002-cli-framework.md](decisions/adr-002-cli-framework.md) | click as the CLI framework |
+| [decisions/adr-003-text-tables.md](decisions/adr-003-text-tables.md) | No table library: columns formatted with click and the standard library, and why output must not depend on the terminal |
+| [decisions/adr-004-yaml-parser.md](decisions/adr-004-yaml-parser.md) | PyYAML on a hardened `SafeLoader`, why not ruamel, and the pywin32 dependency for the P4 permission check |
+| [decisions/adr-005-vault-client.md](decisions/adr-005-vault-client.md) | The HTTP API directly, over `httpx`, not `hvac`, and why OCI keeps its own SDK |
+| [decisions/adr-006-optional-dependencies.md](decisions/adr-006-optional-dependencies.md) | Vendor clients are install extras: what base carries, why base opens no sockets, and what a configured-but-uninstalled backend does |
+| [decisions/adr-007-vault-token-flag.md](decisions/adr-007-vault-token-flag.md) | `--vault-token-file` takes a path and `--vault-token` is refused; why a SecretRef cannot authenticate the store it lives in, and where the token chain merges |
+| [decisions/adr-008-contribution-provenance.md](decisions/adr-008-contribution-provenance.md) | A DCO sign-off rather than a CLA, why review-time checking rather than CI, and what would change either |
+| [decisions/log.md](decisions/log.md) | One short record for each smaller decision: the question, the answer, the reasons and the options rejected |
 
 ## Machine-readable artefacts
 
@@ -47,64 +62,54 @@ script in `sql/oracle/` ran on which Oracle release, and what it showed.
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
 | `../sql/oracle/01_audit_policy.sql` | Unified audit policies and correlation queries |
-| `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: canary probe for password text retained anywhere queryable. Run on 26ai, 21c, 18c and 11.2; findings in `design/02-oracle-privileges.md` §4, what is still open in `design/04-testing.md` §6 gate 2 |
-| `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks — self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run on 26ai and 21c (#407). Run it after the probe and **before** the probe's section 8, which turns the audit policies off |
+| `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: a canary probe for password text kept anywhere queryable. Findings in `design/02-oracle-privileges.md` §4; what is still open in `design/04-testing.md` §6 gate 2 |
+| `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks: self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run it after the probe and **before** the probe's section 8, which turns the audit policies off |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
-| [decisions/adr-001-privilege-model.md](decisions/adr-001-privilege-model.md) | Why direct `ALTER USER`, what was rejected, and the two triggers for revisiting |
-| [decisions/adr-003-text-tables.md](decisions/adr-003-text-tables.md) | No table library: columns formatted with click and the standard library, and why output must not depend on the terminal |
-| [decisions/adr-004-yaml-parser.md](decisions/adr-004-yaml-parser.md) | PyYAML on a hardened `SafeLoader`, why not ruamel, and the pywin32 dependency for the P4 permission check |
-| [decisions/adr-005-vault-client.md](decisions/adr-005-vault-client.md) | The HTTP API directly, over `httpx`, not `hvac` — measured against a real Vault, why renewal doesn't change the answer, and what still binds OCI to its own SDK |
-| [decisions/adr-006-optional-dependencies.md](decisions/adr-006-optional-dependencies.md) | Vendor clients are install extras: what base carries, why base opens no sockets, and what a configured-but-uninstalled backend does |
-| [decisions/adr-007-vault-token-flag.md](decisions/adr-007-vault-token-flag.md) | `--vault-token-file` takes a path and `--vault-token` is refused; why a SecretRef cannot authenticate the store it lives in, and where the token chain merges |
-| [decisions/adr-008-contribution-provenance.md](decisions/adr-008-contribution-provenance.md) | A DCO sign-off rather than a CLA, why review-time checking rather than CI, and what would change either |
-| [decisions/log.md](decisions/log.md) | One short record for each smaller decision: the question, the answer, the reasons and the options rejected |
-| `../test/compose.yaml` | Test stack by tier: Vault (KV v1 + v2), PostgreSQL, Oracle Free/21c/18c/11g, an NNE-required Oracle, toxiproxy |
+| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE, and toxiproxy. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: LocalStack and lowkey-vault |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 | `../test/k8s_eso_probe.py` | Applies [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md)'s own manifests to a throwaway Kubernetes cluster, and checks that ESO reads what sopuli wrote. Needs a cluster, not compose |
 
-All three schemas validate as Draft 2020-12, and the example validates against the
-run schema. That is no longer an assertion in prose: `tests/test_schemas.py`
-checks it, and CI runs it on every push and pull request (invariant 12).
+[measurements.md](measurements.md) lists every script in `sql/oracle/` and the
+releases it ran on.
 
-To get completion and inline errors while editing a config, put
+All three schemas validate as Draft 2020-12, and the example validates against
+the run schema. `tests/test_schemas.py` checks this on every push and pull
+request (invariant 12).
+
+To get completion and inline errors while you edit a config, put
 `# yaml-language-server: $schema=./sopuli-config-1.8.schema.json` on the file's
-first line — see [design/01-configuration.md](design/01-configuration.md) §9b,
-which also explains why the schema's `$id` is not a URL to paste there.
+first line. [design/01-configuration.md](design/01-configuration.md) §9b says
+why the schema's `$id` is not a URL to paste there.
 
-The config schema is generated rather than written, and
-`tests/config/test_schema.py` fails if the committed file is not what the config
-layer produces today. A key added to a section without the schema following it
-does not merge. What the schema deliberately leaves to the validators — the
-cross-key rules, whose errors have to name the offending key — is listed in
-[design/01-configuration.md](design/01-configuration.md) §9b.
+The config schema is generated, not written. `tests/config/test_schema.py` fails
+if the committed file is not what the config layer produces, so a key cannot be
+added to a section without the schema. Some rules are left to the validators
+instead of the schema: the rules that cross keys, whose errors must name the
+key. [design/01-configuration.md](design/01-configuration.md) §9b lists them.
 
 ## Conventions
 
-- Binary name `sopuli`, project name `sopuli-dba` (D1)
-- CLI grammar is noun-verb: `sopuli creds rotate`, `sopuli config validate` (D2)
-- Anything marked **open decision** or **open question** is a real fork in the
-  road, not a placeholder — decide it before writing the code that depends on it
+- The binary is `sopuli` and the project is `sopuli-dba` (D1).
+- The CLI grammar is noun-verb: `sopuli creds rotate`, `sopuli config validate`
+  (D2).
+- A question the decision register below calls `open` is a real choice, not a
+  placeholder. Decide it before you write code that depends on it.
 - **A claim this project has not measured carries a marker naming its register
-  entry**, wherever it is asserted — `(unverified: <slug>)` — and
-  §*Verify before implementing* below is the register.
-  `tests/test_verification_register.py` fails when an entry becomes `verified`
-  and a document still carries its marker, naming every file.
+  entry**: `(unverified: <slug>)`. §*Verify before implementing* below is the
+  register.
 
-  **The marker goes at every site, not only where the question was raised.** That
-  is the whole point of it: the register already recorded these questions, and
-  twice in two PRs a measured result reached one document and left others
-  asserting the opposite (#408, #411). A marker is a join key for a checker that
-  cannot read prose — "SQL trace remains untested" and "SQL trace is unchecked on
-  every version" share no token with the table that answers them, and the obvious
-  greps drown in *unknown config keys* and *macOS is untested*.
+  Put the marker at every place the claim is made, not only where the question
+  was raised. A result that reaches one document and not the others is the
+  failure the marker exists to catch (#408, #411). When an entry becomes
+  `verified`, `tests/test_verification_register.py` fails and names each file
+  that still carries its marker. Removing the markers is part of settling the
+  question.
 
-  Removing a marker is part of settling the question, not tidying afterwards, and
-  the test is what makes that difference enforceable rather than remembered.
-
-  **Never inside user-visible text.** A click verb's docstring is its `--help`
-  output, so a marker in one reaches every operator who asks for help. Where the
-  claim is in help text the marker goes in a comment beside it, naming the
-  sentence it belongs to — `sopuli/cli.py`'s `creds_check` is the example.
+  **Never put a marker in user-visible text.** A click verb's docstring is its
+  `--help` output, so a marker there reaches every operator who asks for help.
+  Where the claim is in help text, put the marker in a comment beside it and
+  name the sentence it belongs to. `sopuli/cli.py`'s `creds_check` is the
+  example.
 - **Work that waits on an open issue carries a marker naming the issue**:
   `(open: #N)` in Markdown, or `(open: #N, #M)` for several, and `TODO(#N)` in
   code. Write what is true now and put the marker beside it. Do not write "until
@@ -242,478 +247,254 @@ Closed decision issues with no ID are not listed here. Each has a record in the
 
 ## Verify before implementing
 
-**Each entry carries a status and a slug**, and the slug is how the rest of the
-tree points back here — see §Conventions. `tests/test_verification_register.py`
-reads this section, so the two code spans at the head of each bullet are
-structure rather than decoration; the prose after them is for people.
+This register lists the questions that need a real database, or a real service,
+to answer. Each entry has a status and a slug. Other documents point back to an
+entry with the slug, as §Conventions describes. `tests/test_verification_register.py`
+reads this section, so the two code spans at the start of each entry are
+structure, not decoration.
 
-**The status is this register's, not GitHub's.** #383, #387 and #87 are closed
-issues whose verification is still outstanding: the decision was taken and the
-measurement was not. A reader who resolves these against the issue tracker gets
-three wrong answers.
+A `verified` entry was answered by a run, and gives the answer. An `unverified`
+entry is not fully answered. It gives what is known and what is still open, and
+where the answer is unknown, the code refuses rather than guesses.
 
-Release-by-release results are in [measurements.md](measurements.md). An entry
-here says what the question is and what is still open, and links there for the
-releases.
+There is no partial status. A question whose parts are answered separately is
+split into entries that each settle whole.
 
-- `verified` `t-verifier` (#90) — **Whether a client can regenerate the `T:` (12C) verifier in `SYS.USER$.SPARE4`.**
-  Yes: `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt ‖ "AUTH_PBKDF2_SPEEDY_KEY",
-  4096, 64) ‖ salt)`, where `pw_utf8` is the UTF-8 of the password as the
-  database holds it, after conversion to its character set. A rollover window's
-  two verifiers (`T:` previous, `t:` current) are told apart the same way. The
-  layout is read in #431 and the derivation reproduced in #432, with
-  `sql/oracle/05_verifier_layout_probe.sql` and
-  `06_verifier_reproduce.{sql,py}`. The comparison uses `T:` only, and an account
-  with no `12C` fails at plan time (invariant 4, #433). The gate is a per-account
-  capability (`SPARE4` carries a `T:`), never a version. The releases it ran on
-  are in [measurements.md](measurements.md); the derivation is not claimed on 12.1. Settled for 19c
-  on 2026-10-01: a base release and a release update both reproduce, and the
-  maintainer judged one release update enough (#581). This is what
-  `--method hash|both` needs (#437); `check`'s default, `login`, does not (#86).
-- `unverified` `lcount-grant` (#124) — **Whether `SELECT_CATALOG_ROLE` via
-  `SYS.KU$_USER_VIEW` exposes `LCOUNT` without `SPARE4`** — a narrower alternative to `SELECT ON SYS.USER$`
-  for the `LCOUNT` guard, from a blog post rather than Oracle documentation.
-  Affects what `sql/oracle/00_install.sql` recommends to sites that want the
-  guard; nothing in the default path depends on it.
-- `unverified` `adb-external-auth` (#471) — **Whether `auth: external` can be
-  made to work against an OCI Autonomous Database, by adding a credential to the
-  downloaded wallet with `mkstore -createCredential`.** What *is* established is
-  the fact that made the entry necessary: the ADB wallet zip holds TLS
-  certificates and no credential, so `auth: external` against an unmodified one
-  has nothing to log in with — the by-hand guide once presented it as the
-  one path to a real wallet that skips `mkstore`, and an operator following that
-  got a login failure. What is untried is the repair. sopuli *has* now run
-  against an ADB with a vault-held password (#479, `maintainer-environments.md`
-  §6), but never with `auth: external`, so the `mkstore` line there is still
-  Oracle's documented syntax rather than a command anybody here has watched
-  succeed. Nothing in the default path depends on it: the password sources are
-  unaffected, and that section's example uses one.
-**Password text retained by Oracle** is three entries rather than one, and the
-split is #412's doing. It was a single `partial` entry, and a partial entry is a
-loophole: the SQL-trace surface is settled while the version matrix is not, so a
-stale marker on a *trace* claim would have been allowed to sit there
-indefinitely — which is the #410 failure this register exists to catch, still
-uncaught. **There is no `partial` status any more.** A question whose surfaces
-settle separately splits into entries that each settle whole. Shared context for
-all three: the probe is `sql/oracle/02_password_leak_probe.sql`, its extensions
-are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
+The status is this register's, not GitHub's. The issue an entry names can be
+closed while the measurement is still open: #87, #383 and #387 are. Release-by-release results are in
+[measurements.md](measurements.md); an entry here does not list releases.
+
+### Verifiers and grants
+
+- `verified` `t-verifier` (#90) — **Can a client regenerate the `T:` (12C)
+  verifier in `SYS.USER$.SPARE4`?**
+  Yes. The verifier is `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt ‖
+  "AUTH_PBKDF2_SPEEDY_KEY", 4096, 64) ‖ salt)`, where `pw_utf8` is the UTF-8 of
+  the password as the database holds it, after conversion to its character set.
+  A rollover window's two verifiers, `T:` for the old password and `t:` for the
+  new one, are told apart the same way. `sql/oracle/05_verifier_layout_probe.sql`
+  reads the layout and `06_verifier_reproduce.{sql,py}` reproduces it. The
+  comparison uses `T:` only. An account with no `12C` verifier fails at plan
+  time (invariant 4, #433); the gate is a per-account capability, never a
+  version. `check --method hash|both` depends on this (#437); the default
+  method, `login`, does not (#86). Not claimed on 12.1, which is unmeasured.
+- `unverified` `lcount-grant` (#124) — **Does `SELECT_CATALOG_ROLE`, through
+  `SYS.KU$_USER_VIEW`, expose `LCOUNT` without `SPARE4`?**
+  Not run. The idea comes from a blog post, not from Oracle's documentation. If
+  it works, it is a narrower grant than `SELECT ON SYS.USER$` for the `LCOUNT`
+  guard. It affects only what `sql/oracle/00_install.sql` recommends to a site
+  that wants that guard. Nothing in the default path depends on it.
+
+### Connections and wallets
+
+- `unverified` `adb-external-auth` (#471) — **Can `auth: external` work against
+  an OCI Autonomous Database, after `mkstore -createCredential` adds a
+  credential to the downloaded wallet?**
+  Known: the wallet zip holds TLS certificates and no credential, so
+  `auth: external` with an unchanged wallet has nothing to log in with. Open: the
+  repair is untried. The `mkstore` line in `maintainer-environments.md` §6 is
+  Oracle's documented syntax, not a command run here. The tool has run against
+  an Autonomous Database with a password from the vault (#479), which is
+  unaffected. Nothing in the default path depends on this.
+- `verified` `nne-oci-default` (#575) — **Does OCI's Base Database Service
+  require Native Network Encryption as provisioned?**
+  Yes. The shipped `sqlnet.ora` sets
+  `SQLNET.ENCRYPTION_SERVER=REQUIRED` and `SQLNET.CRYPTO_CHECKSUM_SERVER=REQUIRED`.
+  A thin-mode connection is refused with `DPY-3001`, and a thick-mode one
+  negotiates AES256 and SHA256 with no client configuration
+  (`maintainer-environments.md` §5). Exadata Cloud is not part of this entry. Its
+  requirement is cited from Oracle's documentation, no run of it is planned, and
+  a sentence that names it says "documented, not measured" instead of carrying a
+  marker. The local `nne` compose profile is an approximation and is
+  unrun. This is one of D3's reasons for thick mode (`design/00-principles.md`,
+  *Why thick mode*).
+- `verified` `adb-thin-mode` (#575) — **Does Autonomous Database use TLS rather
+  than Native Network Encryption, and accept a python-oracledb thin-mode
+  connection?**
+  Yes to both. Thin mode connects through the wallet over `tcps`, and no NNE is
+  negotiated in either mode (`maintainer-environments.md` §6). Thin mode needs
+  the wallet's download password, because it reads the encrypted `ewallet.pem`
+  and not the auto-login `cwallet.sso`. No change to behaviour: the tool has one
+  mode, thick.
+
+### Password text kept by Oracle
+
+These three entries share a setup. The probe is
+`sql/oracle/02_password_leak_probe.sql` and its extensions are
+`sql/oracle/04_password_leak_extensions.sql`. The findings are in
 `design/02-oracle-privileges.md` §4 and `design/04-testing.md` §6 gate 2.
 
-- `unverified` `ddl-text-versions` (#387) — **Whether `ALTER USER` text leaks the
-  password into the shared pool, on the releases nobody has run.** On every
-  release measured, `V$SQL` holds no cursor for the DDL, and an anonymous PL/SQL
-  block carrying the password as a literal leaks. That is invariant 13. From
-  12.2 on, that block is the only leak. **11.2 differs**: `V$SQLSTATS` keeps the plain `ALTER USER` text there, so
-  the *conclusion* depends on the release even though the reasoning does not
-  (#387). 12.2.0.1.0 and every later release measured keep nothing, so the change
-  is somewhere in (11.2, 12.2]. **12.1 is unrun**, so read the 11.2 result as
-  *11.2 does*, never as *everything older does*. The releases are in
-  [measurements.md](measurements.md).
-- `unverified` `ddl-text-awr` (#387) — **Whether the retained text reaches AWR.**
-  `DBA_HIST_SQLTEXT` needs a snapshot taken *before* the sweep, on a database
-  where the Diagnostics Pack is enabled. Every image in this stack ships
-  `control_management_pack_access = NONE`, so two snapshots taken on 11g XE
-  captured nothing whatsoever and the clean result measured the image rather than
-  the release. **Half answered on 19.32.0.0.0** (#581, 2026-10-01), an OCI DB
-  system with `DIAGNOSTIC+TUNING`: one uncolored snapshot put the wrapped literal
-  (C3) verbatim into `DBA_HIST_SQLTEXT`, kept 8 days, while the `ALTER USER`
-  sopuli issues (C2) reached nothing, having no cursor to capture. **Open: 11.2**,
-  where the plain `ALTER USER` *is* retained in `V$SQLSTATS` and whether it
-  reaches AWR needs an 11.2 with the pack. That is why this stays `unverified`
-  rather than being called settled by the release that never retains it.
-- `verified` `ddl-text-trace` (#407) — **Whether a traced session captures the
-  password.** Answered 2026-09-11 on 26ai and 21c, and it retires the pessimistic
-  assumption rather than confirming it: at 10046 level 12 the cursor is written
-  truncated, `ALTER USER sopulitest IDE`, stopping one character into
-  `IDENTIFIED`. Five traced sessions, both releases, identical. The wrapped form
-  leaks in full, which is invariant 13 on a fifth surface. The OS audit trail was
-  answered in the same run (masked on 21c; no user-management DDL reaches it at
-  all on 23ai+), as were self-rotation and `IDENTIFIED BY VALUES` — both masked.
-- `unverified` `password-byte-limit` (#383) — **What the maximum password length
-  actually is, on every release from 12.1 to 23ai.** The longest password is 30
-  bytes on every release measured before 23.26, and 128 bytes on 26ai
-  23.26.2.0.0. 12.2 raised *identifiers* from 30 bytes to 128, and passwords did
-  not move with them. The releases are in [measurements.md](measurements.md).
+- `unverified` `ddl-text-versions` (#387) — **Does `ALTER USER` text leak the
+  password into the shared pool on the releases not yet run?**
+  On every release measured, `V$SQL` holds no cursor for the `ALTER USER`, and
+  an anonymous PL/SQL block that carries the password as a literal leaks it.
+  That is invariant 13. On 11.2.0.2.0, `V$SQLSTATS` also keeps the plain
+  `ALTER USER` text. 12.2.0.1.0 and every later release measured keep nothing,
+  so the change is somewhere after 11.2 and no later than 12.2. Open: 12.1 is
+  unrun. Read the 11.2 result as "11.2 keeps it", never as "every older release
+  keeps it".
+- `unverified` `ddl-text-awr` (#387) — **Does the kept text reach AWR?**
+  On 19.32.0.0.0, with the Diagnostics Pack enabled, the wrapped literal (C3)
+  reached `DBA_HIST_SQLTEXT` and stayed there. The `ALTER USER` that sopuli
+  issues (C2) did not, because it has no cursor to capture. Open: 11.2, where
+  `V$SQLSTATS` keeps the plain `ALTER USER`. Answering it needs an 11.2
+  database with the Diagnostics Pack. The images in the test stack set
+  `control_management_pack_access = NONE`, so they cannot answer it.
+- `verified` `ddl-text-trace` (#407) — **Does a traced session capture the
+  password?**
+  No. At 10046 level 12 the cursor is written cut short, as
+  `ALTER USER sopulitest IDE`, one character into `IDENTIFIED`. The wrapped
+  form leaks in full, which is invariant 13 again. The same run answered three
+  other surfaces. The OS audit trail masks the statement on 21c, and on 26ai no
+  user DDL reaches it. Self-rotation and `IDENTIFIED BY VALUES` are masked.
+- `unverified` `expire-ddl-text` (#438, #457) — **Is `ALTER USER … IDENTIFIED BY
+  … PASSWORD EXPIRE` kept or masked the same way as the bare `IDENTIFIED BY`?**
+  Not run. Gate 2's probe issues only the bare form, so every result in
+  `design/02-oracle-privileges.md` §4 is a result for that statement. Oracle
+  keys its masking to the statement type, which gives no reason to expect the
+  suffix to change it, but that is not a measurement. UC-2's seen (`manual`)
+  reset issues the suffixed form. Open: extend the probe to that form and run it
+  on 26ai and 21c first. The unseen reset issues the bare form and is covered by
+  `ddl-text-versions`.
 
-  The tool keys the limit to `LONG_PASSWORD_FLOOR = (23, 0)` (#595). On 21c XE a
-  40-character policy is refused by `creds generate` at plan time, exit 9, and a
-  30-character one generates, applies and checks clean. `23` is the only floor
-  the tool can express, because `V$INSTANCE.VERSION` reads the base release:
-  every 23ai and 26ai reads `23.0.0.0.0`.
+### Password limits and dates
 
-  **What keeps the entry `unverified`** is what no release in the stack can
-  answer. A 23ai before 23.26 is unmeasured and reads the same as 26ai. 12.1 is
-  unmeasured, though it falls under the 30-byte rule, which is the safe
-  direction. And whether the legacy limit is 30 *bytes* or 30 *characters* has
-  only been run with ASCII, which every password `01-configuration.md` §8 draws is.
-- `unverified` `pw-changed-source` (#87, #386) — **Whether `SYS.USER$.PTIME` is
-  the password change date on the releases nobody has run.**
-  `DBA_USERS.PASSWORD_CHANGE_DATE` exists from 19c; 18c, 12.2 and 11.2 do not
-  have it. Where both exist, `PTIME` moved with `ALTER USER ... IDENTIFIED BY`
-  and equalled the column to the second, and `CTIME` did not move. On 12.2 the
-  suite's `test_password_change_date_tracks_a_rotation` passed through `PTIME`.
-  #386 decided to fall back to `PTIME` behind the optional grant, and to say why
-  when neither answers (`SOPULI-W021`). The releases, and what was checked on
-  each, are in [measurements.md](measurements.md). **12.1 would take the fallback and is
-  unmeasured**, and that keeps this entry open. Purely a display question: Q9
-  decided `--max-age-days` reads only the vault.
-- `verified` `expire-rollover` (#438, #461) — **What `ALTER USER … IDENTIFIED BY …
-  PASSWORD EXPIRE` does to an account whose profile sets `PASSWORD_ROLLOVER_TIME`.**
-  UC-2's **seen** (`manual`) reset is that one statement; its default, unseen reset
-  issues no expiry and is unaffected. On a rollover-capable release the old
-  password keeps authenticating after `IDENTIFIED BY` until the window closes.
-  **Measured on 26ai 23.26.2.0.0, 2026-09-16** (#455,
-  `sql/oracle/07_lock_and_rollover_probe.sql` Q7), and the answer is worse than the
-  guess was: the statement **is** accepted on a rollover profile, the resulting
-  status is `EXPIRED & IN ROLLOVER` — both at once — and **the expiry does not end
-  the old password's window.** The old password answers `ORA-28001`, not
-  `ORA-01017`, so it still authenticates and is merely expired, which leaves it a
-  way to set the new one. **21c 21.3.0.0.0 agrees row for row** (#461, twice,
-  2026-09-26): accepted, `EXPIRED & IN ROLLOVER`, old and new passwords both
-  `ORA-28001`, and 07's Q1–Q6b match 26ai as well. That is the second release
-  the entry named, so it is settled. 19c is unmeasured, and nothing here says
-  what it does.
-  `use-cases/uc-02-personal-account-passwords.md` §4.3 still refuses a seen
-  reset on a rollover profile at plan time, and now the reason has been measured
-  on both releases.
-  **Q7 was measured from `OPEN`, and the start state turns out to decide it**
-  (#529, `sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.2.0.0, twice,
-  2026-09-26; **21c 21.3.0.0.0 identical in every status and every login check**,
-  twice, 2026-09-26, #461, though its grace-period logins warn with `ORA-28002`
-  where 26ai sends `ORA-28098`). From `EXPIRED`, and from `EXPIRED & IN ROLLOVER`, the same
-  statement opens **no** window and leaves every earlier password `ORA-01017`,
-  so the new, expired one is the only password that works. From `EXPIRED(GRACE)`
-  it behaves exactly as from `OPEN`, old password `ORA-28001`. So the exposure
-  depends on whether the old password still authenticates, not on whether the
-  status reads `EXPIRED`. That is a measurement on two releases, not a change to
-  the refusal: whether §4.3 narrows is #541's decision, and the measurement it
-  was waiting on is now in.
-- `unverified` `stale-rollover` (#441) — **What an open rollover window does when
-  the profile that granted it is set back to zero.** Raised by a review of #504,
-  which predicted the old password would keep working; **measured twice on 26ai
-  Free 23.26.2.0.0, 2026-09-20**, and the prediction is wrong on this release in a
-  way worth writing down. `ACCOUNT_STATUS` still reads `OPEN & IN ROLLOVER`, and
-  the old password is **already dead** — `ORA-01017` — so what outlives the profile
-  change is the *status* rather than the exposure. `EXPIRE PASSWORD ROLLOVER
-  PERIOD` is accepted in that state and takes the account back to `OPEN`. The
-  driver therefore closes the window on either signal, the profile's grant or an
-  open window, which costs one silently-accepted statement here and is
-  safety-critical on any release where the old password *does* outlive the change.
-  **Unmeasured on 19c and 21c**: needs tier 2. Nothing refuses on this and nothing
-  waits for it — the wider condition is correct under both answers, which is why
-  this is a note rather than a blocker.
-- `unverified` `expire-ddl-text` (#438, #457) — **Whether `ALTER USER … IDENTIFIED BY
-  … PASSWORD EXPIRE` is retained or masked the way the bare `IDENTIFIED BY` form
-  is.** Gate 2's probe (`sql/oracle/02_password_leak_probe.sql`) issues the bare
-  form only, so every retention result in `design/02-oracle-privileges.md` §4 is a
-  result for that statement. Oracle's protection is keyed to the statement type,
-  which gives no reason to expect the suffix to change it and is not a measurement
-  that it does not. UC-2's **seen** (`manual`) reset is the suffixed form, so the
-  probe needs extending to it, on 26ai and 21c first; the default, unseen reset
-  issues the bare form and is covered by `ddl-text-versions`.
-- `verified` `vault-cas-conflict` (#103, #104) — **What a real Vault's
-  compare-and-set conflict looks like on the wire** — **answered.** Against `hashicorp/vault:2.0.4` dev mode: every lost
-  compare-and-set, whatever caused it (a stale `cas: 0`, a stale nonzero `cas`,
-  or `cas: 0` against a path whose latest version was soft-deleted but whose
-  version counter survived), is a 400 with the identical body
-  `{"errors": ["check-and-set parameter did not match the current version"]}`
-  — one string `CasConflictError` can match on regardless of which client
-  wraps the call (#103). A malformed `cas` is a different 400
-  (`"error parsing check-and-set parameter"`), so the match does not misfire.
-  One refinement to `sopuli/store/protocol.py`'s `read()` docstring: the two
-  states it says both collapse to `None` are not actually identical on the
-  wire — a soft-deleted path's 404 still carries a `data.metadata` envelope
-  (`deletion_time`, `version`); a never-written path's 404 is bare. `read()`
-  is right not to expose this — nothing that calls it needs the distinction —
-  but the information is there if a future diagnostic ever wants it. Spike is
-  `test/vault_cas_probe.py`, run by hand against tier0 (`docker compose
-  --profile tier0 up -d`). The string dependency itself — the fact that a
-  future `CasConflictError` mapping would key on — is promoted to a real,
-  capability-skipped regression test in `tests/store/test_hashicorp_cas_conflict.py`,
-  which runs as part of the ordinary suite and skips cleanly (not a failure)
-  when Vault is unreachable.
-- `verified` `vault-client` (#103) — **Which HashiCorp Vault client** — **decided in
-  [ADR-005](decisions/adr-005-vault-client.md): the HTTP API directly, over
-  `httpx`. No `hvac`.** The case for `hvac` rested on auth being where a
-  library "earns its keep" (renewal, OIDC, Kubernetes). Against the real
-  tier0 Vault: AppRole is genuinely two calls — read a `role_id`, `POST
-  role_id`+`secret_id` to `auth/approle/login`, no auth header, get a
-  `client_token` straight back, confirmed to authenticate a follow-up call.
-  Kubernetes could only be exercised up to the point a real cluster becomes
-  load-bearing — no control plane exists in this stack, same category as real
-  OCI — but the client-side request needed nothing beyond `{role, jwt}`:
-  Vault accepted a syntactically-valid fake JWT past every check that does
-  not require one (`kubernetes_ca_cert` does have to be a parseable PEM, or
-  `auth/kubernetes/config` itself is refused — the one genuine surprise) and
-  only failed reading claims out of it. Renewal is one POST
-  (`auth/token/renew-self`) with no scheduling logic behind it in `hvac`
-  either, and what sopuli needs is bespoke regardless — #83 renews at each
-  target boundary behind a fence check, not on a background timer. Net: the
-  auth argument for `hvac` is thin across every method in `01-configuration.md`
-  §3a except OIDC's browser/callback dance, which `hvac` does not provide
-  either. Probe is `test/vault_auth_probe.py`, run against tier0. OCI keeps
-  its own SDK — ADR-005's criterion is request signing and principal
-  federation, not "is it HTTP." `httpx` lands with #104, in
-  `sopuli-dba[hashicorp]` rather than in base — ADR-005 said base until #130 made
-  "base can import none of the backends' clients" a testable rule (ADR-006,
-  E2).
-- `verified` `nne-oci-default` (#575) — **Whether OCI's Base Database Service and Exadata Cloud require Native Network Encryption as provisioned.**
-  One of D3's three reasons for thick mode (`design/00-principles.md`, *Why
-  thick mode*). **Answered for Base Database Service: yes**, on a 19.32.0.0.0
-  DB system (#581, 2026-10-01, `maintainer-environments.md` §5). The shipped
-  `sqlnet.ora`, untouched, sets `SQLNET.ENCRYPTION_SERVER=REQUIRED` and
-  `SQLNET.CRYPTO_CHECKSUM_SERVER=REQUIRED`; a thin connection is refused with
-  `DPY-3001`; a thick one negotiates AES256 and SHA256 with no client-side
-  configuration. **Exadata Cloud is not part of the answer**: it is cited from
-  Oracle's documentation, no run of it is planned, and every sentence that
-  names it beside Base Database says *documented, not measured* for that half
-  rather than carrying a marker. The local `nne` compose profile is still
-  unrun and still only an approximation. Blocked nothing: D3 holds on either of
-  its other two reasons.
-- `verified` `adb-thin-mode` (#575) — **Whether Autonomous Database uses TLS rather than Native Network Encryption, and accepts a python-oracledb thin-mode connection.**
-  **Answered: both**, on the ADB serverless instance #479 used, 26ai
-  23.26.3.3.0 with mutual TLS required (2026-10-01, `maintainer-environments.md` §6).
-  python-oracledb 4.0.2 in thin mode connects through the wallet
-  (`connection.thin` is `True`, the server records the driver as `thn`), over
-  `tcps`, twice out of two. No NNE is negotiated in either mode: the session's
-  `V$SESSION_CONNECT_INFO` lists the encryption and checksumming *services*
-  but no algorithm *adapter*, and a local 26ai with no NNE configured lists
-  exactly the same lines — the adapter rows are what 19.32's required NNE adds.
-  One thing the run found that the citation did not say: thin mode needs the
-  wallet's **download password**, because it reads the encrypted
-  `ewallet.pem` rather than the auto-login `cwallet.sso`. Changes no
-  behaviour: the tool has one mode, and it is thick.
+- `unverified` `password-byte-limit` (#383) — **What is the longest password on
+  each release from 12.1 to 23ai?**
+  30 bytes on every release measured before 23.26, and 128 bytes on
+  23.26.2.0.0. 12.2 raised the identifier limit to 128 bytes, but the password
+  limit did not move with it. The tool keys the limit to
+  `LONG_PASSWORD_FLOOR = (23, 0)` in `src/sopuli/driver/oracle/limits.py`
+  (#595). Below it, `creds generate` refuses at plan time, with exit 9, a policy
+  whose password can be longer than 30 bytes. `23` is the only floor the tool can express, because
+  `V$INSTANCE.VERSION` reads the base release: every 23ai and 26ai reads
+  `23.0.0.0.0`. Open: a 23ai release before 23.26 is unmeasured and reads the
+  same as 26ai. 12.1 is unmeasured, but the 30-byte limit applied to it is the
+  safe direction. Whether the old limit is 30 bytes or 30 characters has only
+  been run with ASCII, and every password that `01-configuration.md` §8 draws is
+  ASCII.
+- `unverified` `pw-changed-source` (#87, #386) — **Is `SYS.USER$.PTIME` the
+  password change date on the releases not yet run?**
+  `DBA_USERS.PASSWORD_CHANGE_DATE` exists from 19c and is absent on 18c, 12.2
+  and 11.2. Where both exist, `PTIME` equals the column and moves with
+  `ALTER USER … IDENTIFIED BY`; `CTIME` does not move. Where the column is
+  absent, the tool falls back to `PTIME` behind the optional grant, and warns
+  with `SOPULI-W021` when neither answers (#386). Open: 12.1 would take the
+  fallback and is unmeasured. This is a display question only: Q9 decided that
+  `--max-age-days` reads only the vault.
+
+### Rollover windows
+
+- `verified` `expire-rollover` (#438, #461) — **What does `ALTER USER …
+  IDENTIFIED BY … PASSWORD EXPIRE` do to an account whose profile sets
+  `PASSWORD_ROLLOVER_TIME`?**
+  UC-2's seen (`manual`) reset is that statement. The unseen reset issues no
+  expiry and is unaffected. The result depends on the account's status before
+  the statement (`sql/oracle/07_lock_and_rollover_probe.sql` Q7 and
+  `09_reset_from_expired_probe.sql`):
+
+  - from `OPEN` or `EXPIRED(GRACE)`: the statement is accepted, the status
+    becomes `EXPIRED & IN ROLLOVER`, and the expiry does not end the window. The
+    old password answers `ORA-28001`, so it still authenticates;
+  - from `EXPIRED` or `EXPIRED & IN ROLLOVER`: no window opens, and every
+    earlier password answers `ORA-01017`.
+
+  So the exposure depends on whether the old password still authenticates, not
+  on whether the status reads `EXPIRED`. UC-2 §4.3 refuses a seen reset on a
+  rollover profile at plan time. Whether that refusal narrows is #541's
+  decision. Not measured on a 19c release that has rollover.
+- `unverified` `stale-rollover` (#441) — **What does an open rollover window do
+  when its profile's `PASSWORD_ROLLOVER_TIME` is set back to zero?**
+  On 23.26.2.0.0, `ACCOUNT_STATUS` still reads `OPEN & IN ROLLOVER`, but the old
+  password already answers `ORA-01017`. `EXPIRE PASSWORD ROLLOVER PERIOD` is
+  accepted in that state and returns the account to `OPEN`. The driver closes
+  the window on either signal, the profile's setting or an open window. That is
+  correct whatever the answer on other releases, so nothing waits on this entry.
+  Open: 19c and 21c.
+
+### Vault
+
+- `verified` `vault-cas-conflict` (#103, #104) — **What does a real Vault's
+  compare-and-set conflict look like on the wire?**
+  On `hashicorp/vault:2.0.4`, every lost compare-and-set is a 400 with the body
+  `{"errors": ["check-and-set parameter did not match the current version"]}`,
+  whatever caused it. A malformed `cas` is a different 400, `"error parsing
+  check-and-set parameter"`. `CAS_MESSAGE_FRAGMENT` in
+  `src/sopuli/store/hashicorp/_errors.py` matches the first string.
+  `tests/store/test_hashicorp_cas_conflict.py` checks it against a running Vault
+  and skips when there is none. The probe is `test/vault_cas_probe.py`.
+- `verified` `vault-client` (#103) — **Which HashiCorp Vault client?**
+  The HTTP API directly, over `httpx`, and not `hvac`. The reasons and the
+  measurements are in [ADR-005](decisions/adr-005-vault-client.md). `httpx` is in
+  the `sopuli-dba[hashicorp]` extra, not in base (ADR-006, E2). The probe is
+  `test/vault_auth_probe.py`.
 
 ## Next use cases
 
-**None of these is specified, and each is a number you may cite today.** That is
-the point of the section: UC-1 keeps meeting work that is plainly this tool's job
-and plainly not *this* use case's, and "belongs to another use case" is only a
-real answer if the other use case has a name. Where something is deferred here,
-the deferral says which one and why.
-
-The numbers are stable once written down. Renumbering would break references from
-documents, issues and pull requests that have already used them, so a new use case
-takes the next free number rather than the position it feels like it deserves.
-
-### UC-2 — personal account passwords
-
-Developer, tester and DBA accounts: a human's own credential rather than an
-application's. Different in almost every dimension that matters, which is why it
-cannot be a mode of UC-1:
-
-- **there is no vault as master.** A password is handed over, not synced. Nothing
-  fetches it at runtime, so invariant 6's direction has nothing to be a direction
-  *of*;
-- **expiring deliberately is the point.** `ALTER USER … PASSWORD EXPIRE` forces a
-  change on first use, which is correct for a person and breaks an application —
-  that is why UC-1 §5 has no `PASSWORD_EXPIRE` attribute (#302), and this is where
-  the operation lands;
-- **lockout tolerance is different.** UC-1 §7's whole apparatus exists because
-  locking a production application account is an outage. Locking a developer out
-  of their own account is a Tuesday;
-- a self-service angle is possible here and is not possible in UC-1, where the
-  point is that no human is in the loop at 03:00.
-
-*Defers to it today:* UC-1 §5 (deliberate expiry, #302).
-
-**Now specified** as [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md)
-(#438), both parts: the reset in #457 and delivery in #456. The paragraphs above are the
-argument for the use case existing; the document is where it is specified, and
-its questions are H1–H10: H9 the delivery section raised about itself, and H10
-the principle UC-2 §1 states. One correction to the paragraphs above: expiring
-deliberately is the point only on the **seen** path, where the DBA knows the
-password — a deliberate exposure that the owner's first logon ends. The default,
-unseen path writes it to a store meant for its owner alone and expires nothing;
-how far "alone" holds depends on the store form and its delivery (UC-2 §6, #456).
-
-#### What UC-2 adds to a config file
-
-**Three blocks, not ten.** The delivery work is split across eight issues because
-each method is its own dependency, its own extra and its own verification, and the
-issue count reads much heavier than the configuration surface actually is. This is
-that surface, gathered, so it does not have to be reconstructed from issues again.
-`01-configuration.md` documents each block when it is **built**; this says what is
-coming and what each one waits on.
-
-| Block | Issue | State |
-|---|---|---|
-| `personal_accounts:` | #467 | **built**, schema 1.4 |
-| `reset_records:` | #468, #511, #512, #514, #444 | **built**, schema 1.5; written by `account reset-password` since #511, locked on since #512, surveyed by `lock status` since #514, and carrying an unseen delivery's accessor in `delivery.to` since #444 |
-| `delivery:`, with `notify:` inside it | #440, #441, #442, #444 | **built**. Two delivery methods -- `manual` (#441) and `vault_wrapped` (#444, the default) -- and `notify.method: webhook` (#442), which posts through the `[notify]` extra. **The two ways it can fail are not the same** (#520): a client that is not installed refuses the reset at plan time with `SOPULI-20003` and exit 9, before the password changes, because it is knowable then; a webhook that cannot be reached at send time is `SOPULI-W026` at exit 0, because by then the password has changed and the person can still fetch it |
-
-The verbs, for the same reason: `account suspend` (#463), `account list` (#490)
-and `reset-password` are built -- the latter on **both** the seen path (#441) and
-the default unseen one (#444, `vault_wrapped`) -- and so is `expire-password`
-(#525), which closes an open rollover window before it expires. The other four
-unseen methods are not (#445-#447 and `smtp_encrypted`).
-
-**`personal_accounts:`** is a list, each entry declaring exactly one of
-`accounts:`, `profile:` or `role:`, plus optional `targets:` and `policy:`. What
-it *reuses* is worth as much as what it adds —
-`policy:` names an ordinary `policies:` entry, so **UC-2 introduces no policy block
-of its own**, and a personal account's password is generated under the same
-`policies:` machinery an application account's is.
-
-**`reset_records:`** is one block with two keys — a store and a prefix — declared
-once for the estate rather than per account. It is the DBA side's
-journal — *who* reset an account, by which path, where it was delivered, never the
-password (UC-2 §3.1) — and it is not the delivery target, which on the unseen path is
-written where only the person can read it. The same path is what UC-2's advisory
-lock keys on (§3.3), which is why the block is a prerequisite of the reset verb
-rather than an accessory to it. **#511 writes the record** — a run with the block
-declared journals one per (target, account), and one without it warns at plan
-time and resets anyway. **#512 takes the advisory lock** keyed on that path, so
-two DBAs resetting one person at once no longer overwrite each other -- the
-second is refused at exit 7 before it connects. **#514 makes `lock status` see
-them**, by listing the declared prefix rather than enumerating keys under it —
-which is the only way an offline verb can reach a predicate-declared account —
-and reporting what it finds as this estate's rather than as a leftover
-(`declared_by`, schema 1.28). `lock break` has cleared one by name throughout.
-
-**`delivery:`** is one enum plus a sub-block per method, and #440 builds only the
-skeleton: the `method` key, and a check that the matching sub-block exists. Each
-method's own keys land with that method's issue.
-
-| Sub-block | Issue | What it adds, and what is unsettled |
-|---|---|---|
-| `manual` | #441 | **unblocked** — #439 decided it prints to stdout, under five guards (invariant 2's fourth exception). Adds `force_expire: true`, refused at plan time when absent |
-| `vault_wrapped` | #444 | `ttl` only. A response-wrapping token is single-use by construction, so `num_uses` is a **config error** rather than a key that is silently ignored |
-| `vault_path` | #447 | a path template, and the **renaming** #447 asked for rather than a flag on `vault_wrapped`: it is not wrapping, nothing is single-use, and the guarantee comes from the path's policy. Needs human-identity auth and a templated policy that sopuli does not create, which is why it is not the default |
-| `one_time_link` | #445 | `backend: yopass`, `base_url`, and `ttl`/`one_time`. Needs an OpenPGP dependency, because Yopass encrypts client-side; may not be buildable as sketched |
-| `onepassword_share` | #446 | the API token as a MaterialRef (C9). **May not be buildable at all** — Connect may have no sharing, and #446 refuses to guess |
-| `smtp_encrypted` | — | no issue of its own; UC-2 §6.2 puts it in the enum and specifies it no further than *unseen*, so the enum is the whole set rather than the set that happened to have issues |
-
-**`notify:`** (#442) is a channel the unseen methods reuse rather than a fourth
-method: `notify.method: webhook`, configured as `notify.webhook.{url, template}`,
-with `url` a MaterialRef because a webhook URL routinely embeds its own credential.
-It nests **under `delivery:`** (UC-2 §6.3).
-
-**Whether a retrieval credential may travel it is settled** (UC-2 §6.1): no. "Anything
-that retrieves it" counts as secret-bearing, so a wrapping token and a one-time
-link are refused in a notify template rather than rendered — the rule is about
-*reach* rather than about *value*, and a token that holds no password still
-produces one. What that leaves open is where such a credential does travel, which
-is H9 (#496), decided: nowhere the tool carries. The hand-over is out of band; an
-unwrap the person did not make is attributable through the accessor where Vault
-has an audit device; and no device, or a redirected token, is where that stops
-(UC-2 §6.8).
-
-**The restriction axis is not a `delivery:` key**, which is the one thing in this
-map that is easy to file in the wrong place. **H6 is decided** (#453):
-`safety.delivery.allowed_methods`, ratcheting by **intersection** so a layer may
-only narrow the set and no higher-authority layer can restore a method a lower one
-removed.
-
-It is fail-closed, and that is what the decision turned on. A
-`forbidden_methods` union would have fitted the existing machinery without a line
-of new code — and would have permitted every method a later release adds, in every
-estate that had not yet heard of it. An intersection makes the same method unusable
-until somebody names it. The cost is a **fourth ratchet shape**, declared per
-setting rather than read off the type, since `confirm_environments` is a list of
-strings too and the two must merge oppositely; `safe_bool` is the precedent, which
-is what makes it a fourth shape rather than a second mechanism. `CLAUDE.md`
-invariant 10, P3's safety bullet and `01-configuration.md` §9's merge-policy table
-all carry it, and **#498 built it** — the key in a `safety:` block, the
-intersection across every layer, the plan-time refusal when two layers have no
-method in common, and the effective set in `config show --explain`. **#441 gave
-it its consumer**, which is what #498 said would happen: `account reset-password`
-refuses a method the resolved set does not permit, after the estate merge and
-with no `--force` to waive it, and the registry's `inert_reason` is deleted
-rather than left to rot.
-
-**The seen path is built** (#441): `sopuli account reset-password` with
-`delivery.method: manual`, under #439's five guards. So is the unseen default,
-`vault_wrapped` (#444). A method this build does not implement is refused at plan
-time on exit 5 (open: #445, #446, #447). The reset record and the advisory lock
-keyed on its path are written where `reset_records:` is declared (#468, #512);
-without that block, every run warns that the run document and the database are
-the whole record.
-
-**What blocks what.** **#456 is written and #440 and #498 have landed**, so every
-`delivery:` issue now waits on nothing — the config block and the ratchet are both
-built, and everything below that is implementation rather than decision. **H7
-(#454) is closed** too — a reset draws fresh randomness, so it is outside
-invariant 9 rather than an exception to it, and reports `changed: true` with a
-warning naming what it replaced, which is what #441 needed before it could report
-anything at all. H8 (#459) and H9 (#496) are closed, both decided by
-UC-2 §1's principle — attribution, not access — and one UC-2 decision remains, which blocks
-nothing in this table: H10 (#591), whether a reset checks the audit condition that
-principle rests on.
-
-**Each block is a schema minor bump** — 1.4 became 1.5 with the record, 1.5 became
-1.6 with `delivery:` and 1.6 became 1.7 with `safety.delivery.allowed_methods`, and
-onward for each method sub-block unless they are batched. Additive and
-optional every time, so a file that declares none of them keeps meaning exactly
-what it did, which is the rule every bump so far has followed.
+None of these is specified. Each has a number so that work deferred from a
+specified use case can name where it goes. A number does not change once it is
+written down, because documents, issues and pull requests cite it. A new use case
+takes the next free number.
 
 ### UC-3 — run a statement across many targets
 
-The verb a DBA reaches for constantly and this tool has no answer to: *run this
-against all twenty-one PDBs and tell me what each one said*. Fanning one
-statement across a selected estate, with the run document's per-target results,
-the same selectors, the same lock and safety ratchets.
+Run one statement against a selected set of targets and report what each one
+returned: "run this against all twenty-one PDBs and tell me what each one said".
+It would use the run document's per-target results, the same selectors, and the
+same lock and safety ratchets.
 
-**The hard part is not the fan-out, it is the privilege model.** ADR-001 buys its
-whole argument from the service account holding `ALTER USER` and nothing else —
+The hard part is the privilege model, not the fan-out. ADR-001 rests on the
+service account holding `ALTER USER` and nothing else.
 `02-oracle-privileges.md` §3 lists what must never be granted, and the guardrails
-in §4 exist because even `ALTER USER` reaches `SYS`. A verb that runs arbitrary
-SQL needs whatever privilege that SQL needs, so it either connects as a different
-principal or it dissolves the model. That is the first thing this use case has to
-answer, and it is a genuine question rather than a reason to refuse: a DBA
-pasting the same statement into twenty-one sessions by hand has strictly more
-power than the tool would be given, which is §1's argument for the whole project.
+in §4 exist because even `ALTER USER` reaches `SYS`. A verb that runs any SQL
+needs whatever privilege that SQL needs. So it either connects as a different
+principal or it breaks the model. That is the first question this use case must
+answer.
 
-Also unresolved before it could be written: whether a statement is allowed to
-mutate at all or only to read; whether `--dry-run` can mean anything for SQL the
-tool does not understand; and what a *result* is when twenty targets each return
-a different row set.
+Also open: whether a statement may change data or only read it; what
+`--dry-run` means for SQL the tool does not understand; and what a result is
+when twenty targets each return different rows.
 
 ### UC-4 — user provisioning
 
-Creating and dropping accounts, and everything an account needs in order to
-exist: grants, roles, quotas, profiles, default and temporary tablespaces.
+Creating and dropping accounts, and what an account needs in order to exist:
+grants, roles, quotas, profiles, and default and temporary tablespaces.
 
-UC-1 deliberately does none of it. A missing account is `ACCOUNT_MISSING`, a state
-to report rather than a failure to recover from, and invariant 5 makes the config
-a whitelist of what may be *touched* rather than a list of what should exist.
+UC-1 does none of this. A missing account is `ACCOUNT_MISSING`, a state to
+report, not a failure to recover from. Invariant 5 makes the config a whitelist
+of what may be touched, not a list of what should exist.
 
-Profiles are the one item on that list UC-1 half-touches, so the split is worth
-stating. UC-1 *assigns* a profile (#301) and never creates or alters one, decided
-in Q4 (#88): `ALTER PROFILE` edits a shared object and so reaches accounts nobody
-selected, which the account whitelist cannot constrain. Here that argument does
-not hold in the same way — provisioning is where a profile is authored on purpose
-rather than reached sideways during a rotation — so **whether this use case may
-issue `ALTER PROFILE` and `CREATE PROFILE` is its own question, open, and not
-foreclosed by #88.** What #88 does foreclose is the credential-sync verbs ever
-doing it. If the answer here is yes, the privilege belongs to a principal this use
-case defines, not to UC-1's service account, whose grant set `02-oracle-privileges.md`
-§3 keeps it off.
+UC-1 assigns a profile (#301) and never creates or alters one. Q4 (#88) decided
+this, because `ALTER PROFILE` changes a shared object and so reaches accounts
+nobody selected. That reason does not apply in the same way to provisioning,
+where a profile is written on purpose. So whether this use case may issue
+`CREATE PROFILE` and `ALTER PROFILE` is an open question of its own, and #88
+does not decide it. #88 does decide that the credential-sync verbs never do it.
+If the answer here is yes, the privilege belongs to a principal this use case
+defines, not to UC-1's service account.
 
-*Defers to it today:* Q8 (may `apply` create a missing account — no, it belongs
-here), the *creating and altering* half of profiles, which Q4 (#88) settled only
-for the credential-sync verbs, and UC-1 §5's default/temporary tablespace
-attribute (#303). The tablespace one is worth stating plainly: `ALTER USER … DEFAULT TABLESPACE` moves no existing
-segment, so an account's objects stay exactly where they were. During a credential
-rotation that is a half-change that reads as done and is not — while during
-provisioning, where the account has no objects yet, it is simply part of creating
-one correctly.
+*Deferred to it:* Q8 (`apply` does not create a missing account), the creating
+and altering of profiles, and UC-1 §5's default and temporary tablespace
+attribute (#303). `ALTER USER … DEFAULT TABLESPACE` moves no existing segment,
+so during a rotation it is a half-change that looks complete. During
+provisioning the account has no objects yet, so it is simply part of creating
+the account.
 
 ### UC-5 — drift and compliance reporting across a fleet
 
-`creds check` answers "does the vault agree with this database" for the accounts
-one config declares. The reporting use case asks the estate-wide version: which
-accounts exist that nobody declared, which profiles are in use, where password
-versions or verifiers are older than policy allows, what the fleet looks like to
-an auditor.
+`creds check` answers "does the vault agree with this database" for the
+accounts one config declares. This use case asks the same across the estate:
+which accounts exist that nobody declared, which profiles are in use, where
+password versions or verifiers are older than policy allows, and what the fleet
+looks like to an auditor.
 
-Distinguished from UC-1 by what it is allowed to touch, which is nothing.
+It differs from UC-1 in what it may change, which is nothing.
 
 ### UC-1b — self-rotation, where there is no admin credential
 
-`ALTER USER … IDENTIFIED BY new REPLACE old`, connecting **as the account being
-rotated**, for estates that will not issue a service account holding `ALTER USER`.
-A variant of UC-1 rather than a use case of its own — same vault, same direction,
-same promotion ordering — which is why it keeps the `b`.
+`ALTER USER … IDENTIFIED BY new REPLACE old`, connecting as the account being
+rotated, for estates that will not create a service account holding
+`ALTER USER`. It is a variant of UC-1, with the same vault, direction and
+promotion order, so it keeps UC-1's number with a `b`.
 
-*Defers to it today:* Q6 (UC-1 §12).
+*Deferred to it:* Q6 (UC-1 §12).

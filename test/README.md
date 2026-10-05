@@ -159,9 +159,9 @@ support is cheap and stays in tier 2.)*
 
 ## What is *not* here, on purpose
 
-- **Oracle 19c EE.** Not redistributable, so it cannot be a compose service.
-  Build it from [`oracle/docker-images`](https://github.com/oracle/docker-images)
-  with binaries you download, and keep it in the maintainer tier.
+- **Oracle 19c and 12.2 EE in a public tier.** The images need an Oracle account
+  to pull, so they are compose services under their own profiles (`oracle19c`,
+  `oracle19c-ru`, `oracle12c`), maintainer-only and never in CI.
 - **Real OCI** — 19c, 26ai, ADB, OCI Vault. No emulator is faithful enough to be
   release evidence, and this is where Native Network Encryption and Autonomous
   behaviour are actually verified.
