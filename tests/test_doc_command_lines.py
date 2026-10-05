@@ -25,12 +25,12 @@ invoked. Two traps, both hit by the prototype in #409:
   sentence, not an invocation.
 
 **A rejection the document shows on purpose is not drift -- if it is true.**
-`docs/local-testing.md` causes failures deliberately, which is most of its value
-(CLAUDE.md), and `sopuli about --output json` is one: the point of the example is
-the `No such option` it prints. So an undeclared option passes when the same
-block prints click's own rejection for it, or the line's comment says "no such
-option". That is not an escape hatch, because it is checked in both directions:
-a block claiming an option does not exist, for an option that does, fails too.
+A document may cause a failure deliberately, such as `sopuli about --output
+json`, where the point of the example is the `No such option` it prints. So an
+undeclared option passes when the same block prints click's own rejection for
+it, or the line's comment says "no such option". That is not an escape hatch,
+because it is checked in both directions: a block claiming an option does not
+exist, for an option that does, fails too.
 What there is **not** is a marker that exempts a block unconditionally -- #409
 considered one for "illustrative" examples and re-cast §9 on real flags instead,
 because a documented way to skip a block is the way a real drift gets hidden.

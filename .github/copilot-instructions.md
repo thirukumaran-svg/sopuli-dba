@@ -17,7 +17,7 @@ document before changing behaviour:
 | Oracle grants, or a definer-rights package | `docs/decisions/adr-001-privilege-model.md` (the package was rejected) |
 | A flag or input that carries a secret | `docs/decisions/adr-007-vault-token-flag.md` (secrets never go in argv; a flag takes a path) |
 | Dependencies or vendor clients | `docs/decisions/adr-005-vault-client.md` and `docs/decisions/adr-006-optional-dependencies.md` |
-| Commands, flags, exit codes, or operator-facing messages | `docs/local-testing.md` |
+| The usual commands an operator runs, and what they print | `docs/local-testing.md` |
 
 Do not resolve an open decision marked in the design documents. Open decisions
 are collected in `docs/README.md` and tracked as `decision` issues; stop and
@@ -55,7 +55,7 @@ pytest tests\driver\test_oracle_statements.py -k password
 
 For changes that read from or write to Oracle or Vault, run the Tier 1 stack
 and exercise the affected command end to end; then capture real output in
-`docs/local-testing.md` when its surface changes:
+`docs/local-testing.md` when the usual path changes:
 
 ```powershell
 Set-Location test
@@ -124,8 +124,8 @@ direction of truth.
 - Configuration keys and accepted CLI inputs must either work or fail
   explicitly; never accept and silently ignore one. Config files are strict:
   unknown keys are errors.
-- Behaviour changes update the relevant design document and
-  `docs/local-testing.md`. Use the repository's fictional examples only:
+- Behaviour changes update the relevant design document, and
+  `docs/local-testing.md` when the usual path changes. Use the repository's fictional examples only:
   `acme`, `acme_*_user`, `alpha` through `theta`, `example.com`, and
   `192.0.2.0/24`; do not add real-system identifiers or material.
 

@@ -110,7 +110,7 @@ see [`docs/scenarios/kubernetes-eso.md`](https://github.com/villebase/sopuli-dba
 | **Install** | Nothing is published to PyPI yet — you install from a git checkout. `sopuli --version` and `sopuli about` report the installed distribution's version |
 | **Databases** | Oracle only. CI runs against Oracle AI Database 26ai Free 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI. 12.1 is not tested |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
-| **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) is the by-hand map of exactly what this build can be made to do |
+| **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
 
 If you want the full design picture — every decision, and every question that is
 still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md).
@@ -366,7 +366,7 @@ How this works in practice, and what it expects of contributors:
 | [docs/scenarios/kubernetes-eso.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/kubernetes-eso.md) | let applications running in Kubernetes pick up the new password automatically |
 | [examples/](https://github.com/villebase/sopuli-dba/tree/main/examples/) | three complete config files, commented, from smallest to safety-hardened |
 | [docs/security-model.md](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) | decide whether to trust this with a production credential |
-| [docs/local-testing.md](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) | exercise every command by hand, including the failures worth causing on purpose |
+| [docs/local-testing.md](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) | run the usual commands by hand against the local test stack |
 | [CONTRIBUTING.md](https://github.com/villebase/sopuli-dba/blob/main/CONTRIBUTING.md) | send a change |
 | [SECURITY.md](https://github.com/villebase/sopuli-dba/blob/main/SECURITY.md) | report a security problem privately |
 | [CODE_OF_CONDUCT.md](https://github.com/villebase/sopuli-dba/blob/main/CODE_OF_CONDUCT.md) | know what is expected of everyone taking part |

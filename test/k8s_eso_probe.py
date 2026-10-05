@@ -400,7 +400,7 @@ def configure_vault(policy_hcl: str) -> None:
 
     # sopuli takes an advisory lock in the vault before it writes, and refuses a
     # lock path that does not require compare-and-set (exit 5). Once per path --
-    # docs/local-testing.md has the long version of why.
+    # UC-1 §8, *What the fence does in this build*, says why.
     vault_cli(
         "kv", "metadata", "put", "-mount=kv", "-cas-required=true",
         f"locks/{SECRET_PATH}",

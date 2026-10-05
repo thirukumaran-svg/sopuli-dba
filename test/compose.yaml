@@ -168,7 +168,7 @@ services:
   # 19.3.0.0.0 Enterprise Edition, Oracle's own prebuilt image. MAINTAINER-ONLY:
   # pulling it takes an Oracle account, the licence accepted for the
   # database/enterprise repository, and `docker login container-registry.oracle.com`
-  # -- see docs/local-testing.md. It cannot be redistributed, so it never runs in
+  # -- see docs/maintainer-environments.md. It cannot be redistributed, so it never runs in
   # CI and the suite skips rather than fails without it.
   #
   # Profile `oracle19c`, not `tier3`: tier 3 is the whole maintainer matrix
@@ -182,7 +182,7 @@ services:
   # an OCI estate runs a later RU. Record results as 19.3.0.0.0, never "19c".
   #
   # The one service here WITH a volume, because first start runs DBCA and takes
-  # tens of minutes (timings in docs/local-testing.md). `down` keeps the volume;
+  # tens of minutes (docs/maintainer-environments.md). `down` keeps the volume;
   # `down -v` throws the database away and the next `up` creates it again.
   # Init: the same oracle-init/01_test_profiles.sql as tier 2, run once after
   # DBCA -- but inside ORCLPDB1 rather than CDB$ROOT, through the wrapper in
@@ -268,11 +268,11 @@ services:
   # every knob:
   #   - DB_SID / DB_PDB / DB_PASSWD, not ORACLE_SID / ORACLE_PDB / ORACLE_PWD;
   #   - no DBCA: first start untars prebuilt datafiles into /ORCL, so it is
-  #     minutes rather than tens of minutes (timings in docs/local-testing.md);
+  #     minutes rather than tens of minutes;
   #   - service names carry DB_DOMAIN, default `localdomain`, so the PDB is
   #     ORCLPDB1.localdomain and a bare ORCLPDB1 is ORA-12514;
   #   - NO user-script hook. oracle-init-12c/init.sh is run once, by hand, with
-  #     the docker exec in docs/local-testing.md: it writes a password file the
+  #     the docker exec in docs/maintainer-environments.md: it writes a password file the
   #     image's own setup refused to (OPW-00029 -- `sopuli-test` has no digit),
   #     creates the USERS tablespace this image's root lacks, and applies the
   #     test profiles in the PDB;

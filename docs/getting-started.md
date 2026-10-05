@@ -30,7 +30,7 @@ this build is at — it is supposed to name an old release, and it moves when th
 samples are re-captured rather than when a version is cut. Do not "correct" it to
 the current number: `pyproject.toml` owns that number, and `sopuli --version`
 reports the *installed distribution's* version, which under an editable install
-can itself lag the tree — see [`local-testing.md`](local-testing.md) §3, which
+can itself lag the tree — see [`local-testing.md`](local-testing.md) §2, which
 keeps the same kind of per-sample note.
 
 ---
@@ -470,7 +470,7 @@ it on the database and then promotes it — and that is the next document.
 | [../examples/](../examples/) | three complete config files, commented, from smallest to safety-hardened |
 | [security-model.md](security-model.md) | what the tool can and cannot do, before you trust it with production |
 | [design/01-configuration.md](design/01-configuration.md) | the full config reference — every key, every rule |
-| [local-testing.md](local-testing.md) | every command this build has, and the failures worth causing on purpose |
+| [local-testing.md](local-testing.md) | the usual commands, run by hand against the local test stack |
 
 ---
 
@@ -481,6 +481,6 @@ it on the database and then promotes it — and that is the next document.
 | `config file is accessible to ...`, exit 9 | the file's permissions are too open. Section 3 has the fix |
 | `instant_client  not loaded` in `doctor` | Instant Client is missing or not on the library path. Section 2c |
 | `... declares type "oci", but that backend is not installed` | your config names a store this build or this install cannot serve. The message carries the `pip` line where there is one |
-| `cannot be locked safely: its lock path does not require compare-and-set`, exit 5 | a vault housekeeping step, needed once per secret path. See [`local-testing.md`](local-testing.md) §8 |
+| `cannot be locked safely: its lock path does not require compare-and-set`, exit 5 | the lock path was created without `cas_required`, by something other than this tool. Set it once with `vault kv metadata put -cas-required=true` on the lock path. See UC-1 §8, *What the fence does in this build*, in [`use-cases/uc-01-app-credential-sync.md`](use-cases/uc-01-app-credential-sync.md) |
 | `VAULT_ADDR is set and was not applied` (a warning) | you have `VAULT_ADDR` in your environment and your config names no default store. Harmless if the variable belongs to something else; write `defaults.vault` to silence it |
 | exit 3 from `creds check` | not an error. Exit 3 means drift was found — the vault's password does not work on the database. It has its own exit code so a scheduler can tell it apart from a failure |

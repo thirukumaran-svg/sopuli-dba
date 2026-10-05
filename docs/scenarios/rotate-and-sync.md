@@ -548,4 +548,4 @@ same run, with passwords redacted. The contract is in
 - [../security-model.md](../security-model.md) — what the tool can and cannot do,
   before you point this at production.
 - [../local-testing.md](../local-testing.md) — the contributor's version of this
-  walkthrough, covering every command and every refusal worth causing on purpose.
+  walkthrough, against the local test stack.

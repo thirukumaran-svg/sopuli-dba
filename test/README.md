@@ -27,14 +27,14 @@ capabilities: a non-CDB, so `SYS_CONTEXT('USERENV','CON_NAME')` **raises**
 quoting any leak result from it**: `V$SQLSTATS` retains the `ALTER USER` text
 there, which no other release in the matrix does.
 **19.3 EE added 2026-09-27** (#548), under a profile of its own, `oracle19c`,
-and maintainer-only: see `docs/local-testing.md` §5 before pulling it.
+and maintainer-only: see `docs/maintainer-environments.md` §2 before pulling it.
 **19.19 EE added 2026-09-28** (#565), profile `oracle19c-ru` — **arm64 hosts
 only**; on x86 it does not start under emulation, and it is unrun on arm64.
 A current RU is an OCI DB system instead, not a compose service: 19.32.0.0.0,
 from `oci-dbcs/new-db-system.ps1` (#581).
 **12.2.0.1 EE added 2026-09-29** (#572), profile `oracle12c`, maintainer-only on
 the same terms as 19.3, plus a one-time `docker exec` after its first start —
-see `docs/local-testing.md` §5.
+see `docs/maintainer-environments.md` §3.
 `nne` and `emulators` are still unrun.
 Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testing.md).
 

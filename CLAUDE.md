@@ -34,7 +34,8 @@ so. That is a design decision, not an implementation detail.
 | `docs/decisions/adr-006-optional-dependencies.md` | before adding a dependency, or assuming a vendor client is installed. Vendor clients are install extras, and the base package opens no sockets |
 | `docs/decisions/adr-007-vault-token-flag.md` | before giving any flag a secret *value*. `--vault-token` was refused; the flag takes a path |
 | `docs/README.md` | the decision register, the verify-before-implementing register, and the roadmap (UC-3 to UC-5 and UC-1b). Read it before deferring work to "another use case" |
-| `docs/local-testing.md` | adding or changing a command, a flag, an exit code, or a message an operator sees |
+| `docs/local-testing.md` | adding or changing a command an operator usually runs, or what it prints |
+| `docs/maintainer-environments.md` | running against another Oracle release, OCI, a wallet, or WSL |
 | `docs/workflow.md` | branching, commit format, and the release process |
 
 ---
@@ -168,10 +169,12 @@ disagree, one of them has a bug: fix it, do not add a note.
 comments. When a fact changes, replace the old wording. Do not add a correction
 beside it.
 
-**`docs/local-testing.md` moves with the CLI surface.** A PR that adds or changes
-a command, a flag, an exit code, or a message an operator sees updates the guide
-too, including the failures worth causing on purpose. Paste output from a real
-run. A guide that omits a command makes it look unbuilt.
+**`docs/local-testing.md` follows the usual path.** It is a general guide for a
+person testing by hand: the usual commands, for the current build, with no
+history and no reasoning. A PR that adds a command, or changes what a usual
+command does or prints, updates the guide. A new flag, message or refusal does
+not need a section; its tests and the design document cover it. Paste every
+sample from a real run.
 
 **Measurements.** When you run a script in `sql/oracle/`, update its header and
 the matrix in `docs/measurements.md`; `tests/test_measurements.py` checks that
@@ -189,7 +192,7 @@ they need and skip with a reason when one is absent. They never branch on a
 version. The public suite stays green using only freely pullable images (tier 0
 and tier 1). Anything that needs more must skip, not fail. The Oracle 19.3 and
 12.2 images need an Oracle account, so they are maintainer-only
-(`docs/local-testing.md` §5).
+(`docs/maintainer-environments.md` §2 and §3).
 
 **Run it, do not only test it.** A change to what the tool reads from a target or
 a store, writes to one, or reports about one is not done when its tests pass.

@@ -1,9 +1,7 @@
 """Rendering a notification, with no socket anywhere near it (#442). Tier 0.
 
 The message is composed here and sent in #442's second part, and keeping the two
-apart is what lets UC-2 §6.1's rule be proved without a network — and what keeps
-a sample in `docs/local-testing.md` from being a prediction, because a render can
-be run.
+apart is what lets UC-2 §6.1's rule be proved without a network.
 """
 
 from __future__ import annotations

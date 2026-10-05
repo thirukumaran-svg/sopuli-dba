@@ -105,6 +105,7 @@ jobs:
           prose=(
             # prose-list-start
             'docs/local-testing.md'
+            'docs/maintainer-environments.md'
             'docs/workflow.md'
             'docs/README.md'
             'docs/getting-started.md'

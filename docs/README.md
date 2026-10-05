@@ -34,7 +34,8 @@ script in `sql/oracle/` ran on which Oracle release, and what it showed.
 | [use-cases/uc-01-app-credential-sync.md](use-cases/uc-01-app-credential-sync.md) | UC-1: application DB account credentials, vault as master — `generate` / `apply` / `check` / `rotate` |
 | [workflow.md](workflow.md) | Binding: branching (`issue-<n>-<slug>`, no long-lived integration branch), Conventional Commits, release-please and the 0.x policy |
 | [measurements.md](measurements.md) | What ran on which Oracle release, when, and what it showed: the one place for release-by-release results |
-| [local-testing.md](local-testing.md) | Exercising the implemented surface by hand: laptop, WSL, the tier-1 stack, the `creds` lifecycle end to end, and every refusal worth producing on purpose |
+| [local-testing.md](local-testing.md) | The usual commands, run by hand against the tier-1 stack: setup, the `creds` lifecycle, the `account` verbs, and a few refusals |
+| [maintainer-environments.md](maintainer-environments.md) | Setting up other Oracle releases, OCI Base Database and Autonomous Database, wallets, and WSL |
 
 ## Machine-readable artefacts
 
@@ -234,6 +235,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | The reset lock when journal and delivery are different vaults | open | | #516 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
 | — | — | Is logging to a file needed? | open | | #629 |
+| — | — | What does `sopuli admin install` do, if anything? | open | | #655 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.
@@ -278,15 +280,14 @@ releases.
   downloaded wallet with `mkstore -createCredential`.** What *is* established is
   the fact that made the entry necessary: the ADB wallet zip holds TLS
   certificates and no credential, so `auth: external` against an unmodified one
-  has nothing to log in with — `docs/local-testing.md` §14 presented it as the
+  has nothing to log in with — the by-hand guide once presented it as the
   one path to a real wallet that skips `mkstore`, and an operator following that
   got a login failure. What is untried is the repair. sopuli *has* now run
-  against an ADB with a vault-held password (#479, §14's *An Autonomous Database
-  end to end*), but never with `auth: external`, so the `mkstore` line in §14 is
-  still Oracle's documented syntax rather than a command anybody here has watched
-  succeed. Nothing in the
-  default path depends on it: the password sources are unaffected, and §14's
-  example now uses one.
+  against an ADB with a vault-held password (#479, `maintainer-environments.md`
+  §6), but never with `auth: external`, so the `mkstore` line there is still
+  Oracle's documented syntax rather than a command anybody here has watched
+  succeed. Nothing in the default path depends on it: the password sources are
+  unaffected, and that section's example uses one.
 **Password text retained by Oracle** is three entries rather than one, and the
 split is #412's doing. It was a single `partial` entry, and a partial entry is a
 loophole: the SQL-trace surface is settled while the version matrix is not, so a
@@ -459,7 +460,7 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
 - `verified` `nne-oci-default` (#575) — **Whether OCI's Base Database Service and Exadata Cloud require Native Network Encryption as provisioned.**
   One of D3's three reasons for thick mode (`design/00-principles.md`, *Why
   thick mode*). **Answered for Base Database Service: yes**, on a 19.32.0.0.0
-  DB system (#581, 2026-10-01, `local-testing.md` §14). The shipped
+  DB system (#581, 2026-10-01, `maintainer-environments.md` §5). The shipped
   `sqlnet.ora`, untouched, sets `SQLNET.ENCRYPTION_SERVER=REQUIRED` and
   `SQLNET.CRYPTO_CHECKSUM_SERVER=REQUIRED`; a thin connection is refused with
   `DPY-3001`; a thick one negotiates AES256 and SHA256 with no client-side
@@ -471,7 +472,7 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   its other two reasons.
 - `verified` `adb-thin-mode` (#575) — **Whether Autonomous Database uses TLS rather than Native Network Encryption, and accepts a python-oracledb thin-mode connection.**
   **Answered: both**, on the ADB serverless instance #479 used, 26ai
-  23.26.3.3.0 with mutual TLS required (2026-10-01, `local-testing.md` §14).
+  23.26.3.3.0 with mutual TLS required (2026-10-01, `maintainer-environments.md` §6).
   python-oracledb 4.0.2 in thin mode connects through the wallet
   (`connection.thin` is `True`, the server records the driver as `thn`), over
   `tcps`, twice out of two. No NNE is negotiated in either mode: the session's

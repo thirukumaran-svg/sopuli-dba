@@ -681,8 +681,7 @@ def test_every_verb_names_a_command_the_schema_allows(path: str, command: click.
 #: `uc-01-app-credential-sync.md` §4 had already declined, and no test could see
 #: the difference because no test looked in this direction at all.
 #:
-#: `admin.install` is planned: `docs/local-testing.md` describes the command that
-#: will run the SQL in `sql/oracle/` for you.
+#: `admin.install` is reserved while #655 decides whether the command exists.
 RESERVED_COMMANDS = frozenset({"admin.install"})
 
 

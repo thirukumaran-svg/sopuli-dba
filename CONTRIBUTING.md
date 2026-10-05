@@ -229,16 +229,15 @@ the same pull request.** The documents in `docs/design/` are the specification,
 not a description written afterwards. If they disagree with the code, that is a
 bug in one of them and it needs resolving, not noting.
 
-[`docs/local-testing.md`](docs/local-testing.md) is a second obligation rather
-than a restatement of the first. The design documents say what the tool is *for*;
-that guide is the by-hand map of what the current build can actually be made to
-do. So a change that adds or alters a command, a flag, an exit code, or a message
-an operator meets belongs in it too — including the failures worth causing on
-purpose, which are most of its value.
+[`docs/local-testing.md`](docs/local-testing.md) is a general guide for a person
+testing by hand: the usual commands, for the current build. A change that adds a
+command, or changes what a usual command does or prints, updates it. A new flag,
+message or refusal does not need a section there; its tests and the design
+document cover it.
 
-Paste the output from the run the previous section already required. That rule
-and this one are the same work: you ran the command, so write down what it
-printed. No sample in that guide is ever written from a diff.
+Paste the output from the run the previous section already required: you ran the
+command, so write down what it printed. No sample in that guide is written from
+a diff.
 
 ---
 

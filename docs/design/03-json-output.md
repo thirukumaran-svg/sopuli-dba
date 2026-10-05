@@ -1812,7 +1812,7 @@ no lock and dials no target.
 
 **A lock somebody else holds** is `lock.denied`, then `run.finished` with exit 7
 and the error, from the same stack with a held record planted as
-`local-testing.md` §8 does:
+`local-testing.md` §10 does:
 
 ```jsonl
 {"schema_version":"1.4","event":"lock.denied","seq":2,"ts":"2026-09-26T12:56:19.697278Z","correlation_id":"aacd2f9f-…","data":{"vault":"vault-dev","path":"acme/dev/acme","reason":"held","holder":{"host":"beta.example.com","pid":1234,"os_user":"someone-else","correlation_id":"11111111-2222-3333-4444-555555555555","command":"creds rotate"},"acquired_at":"2026-09-26T12:00:00Z","expires_at":"2026-09-26T23:59:00Z","expired":false}}
@@ -2677,10 +2677,9 @@ stays major with the overlap release. It does not cover properties: `plan` and
 `results` sat published and unfilled from 1.0, and a consumer that wrote a reader
 against either would have been right to — an unfilled property is a shape
 promised, where an enum value is a name. And it does not cover a value merely
-unimplemented *yet*: `admin.install` stays
-in the enum on exactly that ground, because the verb is planned
-(`../local-testing.md`) and §8 has tolerated a name published ahead of its code
-since `plan`, `results` and `lock`. What made `creds.promote` different is that
+unimplemented *yet*: `admin.install` stays in the enum on exactly that ground,
+because whether the verb exists is open (open: #655), and §8 has tolerated a name
+published ahead of its code since `plan`, `results` and `lock`. What made `creds.promote` different is that
 the verb was **declined**, not deferred — `uc-01-app-credential-sync.md` §4 says
 "there is no `creds promote`, and there is not going to be" (#276, #284). A slot
 for something that might arrive is honest; a branch nothing can ever reach is

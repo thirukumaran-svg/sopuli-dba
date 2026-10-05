@@ -358,8 +358,7 @@ def unserviceable(delivery: Delivery | None) -> str | None:
     It exists because the alternative is worse than an unhelpful message. A
     `delivery:` block that validates silently reads as delivery being configured,
     and the operator would find out otherwise at the moment a password had already
-    been drawn -- which is exactly the reading `docs/local-testing.md` calls the
-    failure of an inventory that omits things.
+    been drawn.
     """
     if delivery is None or delivery.method in IMPLEMENTED:
         return None

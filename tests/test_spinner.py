@@ -12,7 +12,7 @@ failing intermittently for reasons nobody will connect to a spinner.
 
 The animation itself is exercised by forcing it on against a ``StringIO``, which
 is the only way to see the bytes without a terminal. That is not a substitute for
-watching it spin -- ``docs/local-testing.md`` §10 carries the real run.
+watching it spin in a real run.
 """
 
 from __future__ import annotations
@@ -40,8 +40,7 @@ class Terminal(io.StringIO):
         return True
 
 
-#: The message the one real call site produces, so the samples here and the
-#: ones in ``docs/local-testing.md`` are the same string.
+#: The message the real call site produces.
 MESSAGE = "Reading `vault-dev:acme/dev/acme`"
 
 
