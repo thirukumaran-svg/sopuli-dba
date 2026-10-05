@@ -17,9 +17,9 @@ Status: binding, same as CLAUDE.md.
   `main`'s history is one line per change and a revert is one commit. Work
   inside a branch can be as untidy as it needs to be. This has a consequence
   for commit format — see below.
-- **Every PR gets a Copilot review before it merges**, and every comment it
-  leaves gets resolved: the code changes, or the change is declined with a
-  reason, and either way the PR says which and why. This is a solo repository,
+- **Every PR gets a review before it merges**, from Copilot or from Claude
+  Code, and every comment it leaves gets resolved: the code changes, or the
+  change is declined with a reason, and either way the PR says which and why. This is a solo repository,
   so the review is the only second opinion a change gets — and an unanswered
   comment leaves no record of whether it was considered or missed. CLAUDE.md's
   *Working agreement* has the full rule; `/request-copilot-review` has the

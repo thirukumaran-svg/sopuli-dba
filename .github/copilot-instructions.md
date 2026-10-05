@@ -12,6 +12,10 @@ document before changing behaviour:
 | CLI text, JSON, JSONL, or result shapes | `docs/design/03-json-output.md` |
 | Tests or the test stack | `docs/design/04-testing.md` |
 | Credential synchronization and rotation | `docs/use-cases/uc-01-app-credential-sync.md` |
+| Personal accounts, password reset, delivery methods | `docs/use-cases/uc-02-personal-account-passwords.md` |
+| A result measured on an Oracle release | `docs/measurements.md` |
+| Oracle grants, or a definer-rights package | `docs/decisions/adr-001-privilege-model.md` (the package was rejected) |
+| A flag or input that carries a secret | `docs/decisions/adr-007-vault-token-flag.md` (secrets never go in argv; a flag takes a path) |
 | Dependencies or vendor clients | `docs/decisions/adr-005-vault-client.md` and `docs/decisions/adr-006-optional-dependencies.md` |
 | Commands, flags, exit codes, or operator-facing messages | `docs/local-testing.md` |
 
@@ -151,6 +155,7 @@ them:
 One GitHub issue maps to one reviewable PR; discuss a change that will exceed
 roughly 400 lines before implementing it. Use imperative Conventional Commit
 subjects that reference the issue, sign commits with `git commit -s`, and do not
-manually update the release-managed project version. Every PR requires a
-Copilot review, and every review comment needs an explicit PR reply explaining
-the change or reason for declining it.
+manually update the release-managed project version. Every PR gets one
+review, from Copilot or from Claude Code, and every review comment needs an
+explicit PR reply explaining the change or reason for declining it. A second
+review is requested only when the fixes are large.

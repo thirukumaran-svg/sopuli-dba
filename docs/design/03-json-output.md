@@ -1610,9 +1610,11 @@ each call site.** Every secret value the process holds is wrapped in a type whos
 serialisation is the literal string `"***"`, and whose `__str__`/`__repr__` is the
 same. Nothing in the codebase can accidentally emit one by forgetting a helper,
 because there is no code path that produces the plaintext except the vault write,
-the database driver call, `policy sample --reveal`, and UC-2's seen reset (#439,
-built in #441). `tests/test_reveal_sites.py` pins that list by parsing `src/`, so
-a fifth path fails the suite rather than being noticed in review.
+the database driver call, `policy sample --reveal`, UC-2's seen reset (#439),
+and the wrapping token an unseen delivery returns (UC-2 §6.6).
+`tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in a
+module that holds none of these sites. It is a tripwire, not a proof: a second
+call in a permitted module, or a call spelled another way, passes it.
 
 Consequences that show up in the schema:
 

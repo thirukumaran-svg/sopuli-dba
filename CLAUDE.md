@@ -1,14 +1,14 @@
 # sopuli-dba — working agreement
 
 A CLI for DBAs that manages database account credentials with a vault as the
-master record. Oracle first, multi-product by design.
+master record. Oracle first, multi-product by design. The code is in
+`src/sopuli/`. The use cases are specified in `docs/use-cases/`, among them
+UC-1, application credentials, and UC-2, personal account passwords. Each
+document says which parts of it are built.
 
-**Status: pre-implementation.** The design documents are complete and decided;
-almost no code exists yet. Which script in `sql/oracle/` ran on which Oracle
-release, and what it showed, is in `docs/measurements.md`. When you run a script,
-update its header and the matrix; `tests/test_measurements.py` checks that they
-agree. Name the full release, such as 19.3.0.0.0 or 19.32.0.0.0, never "19c":
-results differ between releases, and between release updates of one release.
+This file is the working agreement for every assistant and contributor. It states
+each rule briefly and links to the document that explains it. Read the linked
+document before you change the behaviour it governs.
 
 ---
 
@@ -16,465 +16,253 @@ results differ between releases, and between release updates of one release.
 
 `docs/design/00-principles.md` is **binding**. A use case may refine it; nothing
 may contradict it. If a change seems to require contradicting it, stop and say
-so — that is a design decision, not an implementation detail.
+so. That is a design decision, not an implementation detail.
 
 | Document | When it applies |
 |---|---|
-| `docs/design/00-principles.md` | always — driver interface, vault interface, config precedence, cross-platform rules, exit codes |
-| `docs/design/01-configuration.md` | anything touching config, targets, applications, SecretRefs, password policy |
-| `docs/design/02-oracle-privileges.md` | anything issuing SQL against Oracle |
-| `docs/design/03-json-output.md` | anything that produces output |
-| `docs/design/04-testing.md` | anything touching tests or the test stack |
+| `docs/design/00-principles.md` | always: driver interface, vault interface, config precedence, cross-platform rules, exit codes |
+| `docs/design/01-configuration.md` | config, targets, applications, SecretRefs, password policy, delivery methods |
+| `docs/design/02-oracle-privileges.md` | any SQL issued against Oracle |
+| `docs/design/03-json-output.md` | anything that produces output, and redaction |
+| `docs/design/04-testing.md` | tests and the test stack |
+| `docs/use-cases/uc-01-app-credential-sync.md` | application credentials: `creds generate`, `apply`, `check`, `rotate` |
+| `docs/use-cases/uc-02-personal-account-passwords.md` | personal accounts: `account` verbs, password reset, delivery methods |
 | `docs/measurements.md` | quoting or adding a result measured on an Oracle release |
-| `docs/use-cases/uc-01-app-credential-sync.md` | the credential sync/rotate feature — the only use case in scope |
-| `docs/decisions/adr-001-privilege-model.md` | before proposing a definer-rights package (it was considered and rejected) |
-| `docs/decisions/adr-005-vault-client.md` | before proposing `hvac` or another Vault client library for the HashiCorp backend (it was considered and rejected — the HTTP API over `httpx` is the answer) |
-| `docs/decisions/adr-006-optional-dependencies.md` | before adding a dependency, or before assuming a vendor client is present — vendor clients are install extras and base opens no sockets |
-| `docs/decisions/adr-007-vault-token-flag.md` | before giving any flag a secret *value*, or before adding `--vault-token-stdin` — `--vault-token` was considered and is refused; the flag takes a path |
-| `docs/README.md` | before deferring work to "another use case" — the roadmap names UC-2…UC-5 and UC-1b, and says what already defers to each |
-| `docs/local-testing.md` | adding or changing a command, a flag, an exit code, or a message an operator meets — the by-hand guide moves with the surface, not after it |
-| `docs/workflow.md` | branching, commit format, and release process |
+| `docs/decisions/log.md` | why a decision was made, and what was rejected |
+| `docs/decisions/adr-001-privilege-model.md` | before proposing a definer-rights package. It was considered and rejected |
+| `docs/decisions/adr-005-vault-client.md` | before proposing `hvac` or another Vault client library. The HashiCorp backend uses the HTTP API over `httpx` |
+| `docs/decisions/adr-006-optional-dependencies.md` | before adding a dependency, or assuming a vendor client is installed. Vendor clients are install extras, and the base package opens no sockets |
+| `docs/decisions/adr-007-vault-token-flag.md` | before giving any flag a secret *value*. `--vault-token` was refused; the flag takes a path |
+| `docs/README.md` | the decision register, the verify-before-implementing register, and the roadmap (UC-3 to UC-5 and UC-1b). Read it before deferring work to "another use case" |
+| `docs/local-testing.md` | adding or changing a command, a flag, an exit code, or a message an operator sees |
+| `docs/workflow.md` | branching, commit format, and the release process |
 
 ---
 
 ## Invariants — do not violate these without an explicit decision
 
-These are not style preferences. Each exists because getting it wrong breaks
-something specific.
+Each invariant exists because getting it wrong breaks something specific. The
+reasons and the rejected options are in the linked documents. Changing an
+invariant, or adding an exception to one, is a decision and not an implementation
+detail.
 
-1. **Secrets never appear in `argv`.** Visible in `ps` and the Windows process
-   list. Passwords come from stdin, a file, or a vault ref — never a command-line
-   option.
+1. **Secrets never appear in `argv`.** `ps` and the Windows process list show
+   the command line. Passwords come from stdin, a file, or a vault ref, never a
+   command-line option. ADR-007 applies this to the vault token.
+
 2. **Redaction happens at the output serialiser, not at each call site.** Secret
    values are wrapped in a type whose `str`, `repr` and JSON serialisation are
-   `"***"`. There must be no code path that emits plaintext except the vault write,
-   the driver call, `policy sample --reveal`, UC-2's seen reset, and the wrapping
-   token an unseen delivery hands back (#444, and the only one of the five that is
-   not a password). Do not "remember to mask" at a log statement.
+   `"***"`. Do not "remember to mask" at a log statement. Plaintext leaves the
+   process at these sites only:
 
-   The third exception is allowed because **a sample is not a credential**:
-   nothing authenticates with it, it is never stored, and it guards nothing —
-   which is what makes `pwgen` safe and a vault write dangerous. It stays narrow
-   structurally rather than carefully: the one `reveal()` call outside the tests
-   lives in `sopuli/output/policy_view.py`, it is reachable only under `--reveal`,
-   `--reveal` is refused with `--output json`, and the run schema gives a sample no
-   value property to put a password in. Widening it again is a decision, not an
-   implementation detail.
+   1. the vault write;
+   2. the driver call;
+   3. `policy sample --reveal`. A sample is not a credential: nothing
+      authenticates with it and it is never stored;
+   4. `account reset-password` on the seen (`manual`) path. This is a real
+      credential, so it has five structural guards, stricter than the sample's.
+      The exposure is deliberate, witnessed, and ends at the owner's first logon;
+   5. the wrapping token an unseen delivery returns. It holds no password, but it
+      retrieves one, so it is a `Secret`. The tool has no other channel to hand it
+      over on.
 
-   **The fourth exception is `account reset-password` on the seen (`manual`) path,
-   decided in #439, and its justification is different from the third's** — which
-   is the thing to understand before touching it. A sample guards nothing; this
-   *is* a credential, and one somebody can log in with. What makes it allowed is
-   not that it is harmless but that it is **deliberate, witnessed and
-   time-limited**: an operator asked for the seen path by name, answered a prompt,
-   and the password is expired at the moment it is set, so the person's first logon
-   must change it. The exposure is the point of the path rather than a side effect
-   of it, and UC-2 §1 calls it that.
+   `tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in
+   a module that holds none of these sites, and on a second call in the seen
+   path's view. It is a tripwire: it does not catch a second call in another
+   permitted module, or a call spelled another way. The guards are in
+   `docs/design/03-json-output.md` §4 (3 and 4), UC-2 §6.5 (4) and UC-2 §6.6
+   (5). Loosening any guard is a decision.
 
-   Because the justification is weaker, the narrowing is **stricter** than
-   `--reveal`'s, not merely equal to it. Five structural guards, and none of them
-   is a reminder:
-
-   - one reveal site, in the seen path's own view module, reachable only when the
-     configured delivery method is `manual` -- and `tests/test_reveal_sites.py`
-     now holds the whole set by parsing `src/`, so a new site fails the suite
-     rather than being noticed in review (#441);
-   - refused with `--output json` and `--output jsonl`, as `--reveal` is, and the
-     run schema gives the result no property a password could occupy;
-   - **refused unless stdout is a terminal.** This has no counterpart in
-     `--reveal` and is the guard that carries the argument: a value redirected to a
-     file or captured in a CI log outlives the one logon it is good for, because a
-     log is read later and by other people, and expiry does not unpublish it. The
-     cost is real and accepted — `| clip` and `| pbcopy` stop working, and the
-     operator reads the value off the screen instead;
-   - **confirmed every time, and `--confirm` does not answer it in advance.** The
-     third unconditional gate in P5, and the strictest: `creds rotate` and `lock
-     break` both take the yes given ahead of time, and this one does not, because
-     if nobody is present to answer then nobody is present to receive the password
-     either. It is the same claim the terminal check makes, made twice on purpose;
-   - `force_expire: true` is required on the method, and a `manual` delivery
-     without it is refused at plan time rather than silently defaulted.
-
-   **All five are built** (#441). A sixth guard the build added on its own is
-   worth knowing because it is an absence: a `--dry-run` of the seen path is
-   *exempt* from guards 2 to 4, because a preview prints a plan and never a
-   password, and refusing one for want of a terminal made "show me what this
-   would do" impossible from the job that most wants it.
-
-   **The fifth exception is the wrapping token an unseen delivery hands back,
-   decided in #444, and it is not a password at all** — which is why its argument
-   is shaped differently from the four above rather than being a weaker version of
-   the fourth. What makes it an exception is §6.1's rule that the guard is about
-   *reach* and not about value: "the password, or anything that retrieves it". A
-   response-wrapping token holds no password and produces one, so it is typed as a
-   `Secret` and emitted through one `reveal()`, in
-   `sopuli/output/delivery_view.py`.
-
-   What allows the emission is that there is nowhere else for it to go. §6.1 bars
-   it from the notify channel, the tool carries no other channel, and the handover
-   to the person is out of band — so a method that could not print it could not
-   deliver at all. Three rules keep it narrow, and the middle one is **weaker**
-   than the seen path's on purpose:
-
-   - **never in the run document, and no property could hold it.** The document is
-     captured and kept, and a token in one outlives the TTL that is the method's
-     whole guarantee. What it carries instead is the *accessor*, in
-     `results[].handover`, which names the hand-over and cannot perform it (#444);
-   - **no terminal is required**, which is guard 3 deliberately not applied. A pipe
-     is how a handover script works, and forbidding one would leave an estate no
-     unattended path but `manual`. The cost is real and accepted: a redirect
-     outlives the token. What makes it a different trade is the object — minutes of
-     single use, whose one use is detectable, against a password good until
-     somebody's first logon;
-   - **under `--output json` it goes to stderr** rather than being refused, because
-     the document is what makes a scheduled reset auditable and refusing it would
-     make an estate choose between an audit trail and the default method.
-
-   A **sixth** exception is a decision, not an implementation detail — and so is
-   loosening any of the five guards above, or any of the three rules here.
-   `tests/test_reveal_sites.py` holds the whole set by parsing `src/`, so a new
-   site fails the suite rather than being noticed in review.
 3. **Never branch on a version number from config.** Query the database for its
-   capabilities, cache per session, and branch on the capability. See P1.
-4. **A command that needs an unavailable capability fails at plan time**, with a
-   distinct exit code and a message naming the capability and the target — never
-   a generic error mid-execution.
+   capabilities, cache them per session, and branch on the capability. See P1.
+
+4. **A command that needs an unavailable capability fails at plan time.** It
+   exits with a distinct exit code and a message that names the capability and
+   the target. It never fails with a generic error during execution.
+
 5. **The config is the whitelist.** The tool never touches an account the config
    does not declare. Selectors filter the declared set; they cannot extend it.
-   `--force` overrides other guardrails, never this one.
+   `--force` overrides other guardrails, never this one. A personal account may be
+   declared by a predicate over a profile or role; a mutating verb then still
+   requires the account named on the command line. A name may not be declared
+   twice. Reasons: [H1](docs/decisions/log.md#h1).
 
-   **What counts as *declared* has two forms** (H1, decided in #449). UC-1's
-   accounts are enumerated by name, in `accounts:` or an `applications:` entry. A
-   **personal account** is declared in `personal_accounts:`, by name *or* by a
-   **predicate** over a profile or a role, resolved against the database at run
-   time — because enumerating four hundred developers is transcription rather than
-   review. The predicate amends this invariant's first sentence and leaves the
-   second intact: `--account` filters the resolved set, it does not widen it.
-
-   **A name may not be declared twice.** An account that is both an application
-   account and a personal one makes the whitelist ambiguous about which guarantee
-   applies — mastered by a secret, or handed over — so the validator rejects it
-   rather than picking. Enforced across `accounts:`, `applications:` and
-   `personal_accounts:` alike.
-
-   **A predicate never widens what a mutating verb may touch.** A listing verb
-   resolves it and shows what it matched; a mutating verb additionally requires the
-   account named on the command line and refuses any name the predicate does not
-   admit — so one run touches exactly one account, which the operator typed and the
-   configuration admits. The cost is real and is stated in UC-2 §2 rather than
-   buried: predicate membership is controlled by whoever grants the profile or
-   role, not by whoever reviews the file.
 6. **Vault is master; direction is vault → database, always.** The database is
    never the source of truth.
+
 7. **Never promote in the vault before every target has confirmed.** The
-   `pending` → `current` ordering in UC-1 §3 is the whole safety design. Read it
-   before touching rotation. **`creds generate --promote` is the one exception**
-   (decided in #257): it writes `current` having asked no database anything, and
-   over an existing `current` only with `--overwrite-current`. What the invariant protects
-   is a *window* — a `current` that applications are reading, replaced before any
-   database can serve the new value — and `--promote` exists for the case where
-   the operator already knows the password and no rotation is in flight. The same
-   write moves the value `current` held into `previous`, so §8's rollback keeps
-   somewhere to go.
-   Written here rather than left to be discovered in a diff, as invariant 9's
-   scope rule is, and a second exception is a decision rather than an
-   implementation detail.
+   `pending` → `current` ordering in UC-1 §3 is the safety design. "Every target"
+   means every target the config declares, not every target this run visited.
+   UC-1 §5 has the promotion gate. `creds generate --promote` over an existing
+   `current` is an exception, and it writes only with `--overwrite-current`. Seeding an absent `current` has no reader to protect,
+   so it is not an exception. Reasons: [#257](docs/decisions/log.md#257),
+   [#406](docs/decisions/log.md#406).
 
-   **"Every target" is every target the configuration declares, not every
-   target this run visited** (decided in #406). A run narrowed by a selector
-   still changes what it was pointed at and then withholds the promotion
-   (`SOPULI-W027`, exit 4); `rotate` refuses up front instead. Counting only the
-   visited pairs let `apply --target` promote a credential whose other target
-   still held the old password, with nothing having failed. UC-1 §5's
-   *promotion gate* says which pairs a promotion needs.
 8. **Every mutating command supports `--dry-run` and prints a plan first.**
-9. **Idempotency:** running a **convergent** command twice must report
-   `changed: false` the second time and emit no mutation audit record.
 
-   **A convergent command is one with a state to converge on, which is all of
-   them but the two below** — the qualifier narrows the sentence and is not a
-   loophole in it. `apply` converges the database on the vault, and it is the one
-   that must report `changed: false` on a re-run. `account suspend` is the same
-   rule read through the driver: it reads `ACCOUNT_STATUS` first, so a second
-   `ACCOUNT LOCK` against an already-locked account reports `changed: false`.
-   `04-testing.md` §6's release gate states the criterion in the same words, and
-   the two must stay in step.
+9. **Idempotency.** Running a convergent command twice reports `changed: false`
+   the second time and emits no mutation audit record. A verb that draws a fresh
+   random password has nothing to converge on, so it is outside this rule:
+   `creds generate` and `account reset-password` report `changed: true` and say
+   what they replaced. Any verb with an observable target state is convergent.
+   Reasons: [H7](docs/decisions/log.md#h7).
 
-   **A verb that draws fresh randomness has nothing to converge on, and is
-   outside the invariant rather than an exception to it.** `creds generate`
-   (#254) and `account reset-password` (#454) are both instances: each reports
-   `changed: true` on every run, and each must say what it replaced — `generate`
-   names the version whose `pending` it overwrote, and a reset says that whoever
-   holds the previously delivered password now holds one that no longer works.
-
-   **Scope rather than a list of exemptions, decided in #454**, and the framing
-   is the decision. A list grows one entry at a time and invites the same
-   argument with every later verb that draws a password — UC-4's account
-   creation being the next one — while the rule that admits both of these admits
-   that one too, for a reason anybody can check. What is *not* open to an
-   implementer is the membership test: a verb is outside only because a fresh
-   random draw has nothing to compare against, and anything with an observable
-   target state is convergent and must report `changed: false`. A verb that is
-   inside the invariant and cannot satisfy it is a decision, not an
-   implementation detail.
-
-   **Convergence bought with an optional key does not count**, which is the
-   other half of #454 and the reason a reset is not made convergent instead. Both
-   ways of doing it — on a request id, or on "already expired since the last
-   recorded reset" — key on a metadata record an estate need not configure
-   (UC-2 §3.1), which is also absent in exactly the partly-failed runs somebody
-   retries (§3.4); and account state does not exist as a signal on the unseen
-   path at all, since it issues no `PASSWORD EXPIRE`. An idempotency that holds
-   only where an optional block was written is worse than an honest
-   `changed: true`, because nothing in the output says which of the two you got.
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
-    `max_targets`, `confirm_environments` and `safety.delivery.allowed_methods` cannot
-    be relaxed by a higher-precedence source. See P3.
+    `max_targets`, `confirm_environments` and `safety.delivery.allowed_methods`
+    cannot be relaxed by a higher-precedence source. See P3. The merge shape is
+    declared per setting. `allowed_methods` merges by intersection, so a new
+    delivery method is unusable until a config names it. Reasons:
+    [H6](docs/decisions/log.md#h6).
 
-    **`safety.delivery.allowed_methods` ratchets by *intersection*, and it is the one
-    setting whose merge cannot be read off its type** (H6, decided in #453). The
-    other four take one of three shapes chosen by type — a bool to its declared
-    safe value, an int to the minimum, a list to the union — and this is a list
-    that must not union: each layer may only narrow the set of UC-2 delivery
-    methods, never restore one a lower layer removed. Since
-    `confirm_environments` is a list of strings too, the shape is **declared per
-    setting**, exactly as `safe_bool` already is for the booleans whose polarity
-    the type could not give.
-
-    It is fail-closed on purpose, which is the whole reason for the extra shape:
-    a method added in a later release is unusable until an estate names it. A
-    `forbidden_methods` union would have cost no new code and permitted every new
-    method everywhere on upgrade — silently widening a guard that stands in front
-    of putting a live credential on a wire.
-
-    Three rules come with it, and each exists because the union has no equivalent
-    problem: **unset means no constraint**, not the empty intersection, so a file
-    that declares nothing can still deliver; **two layers with disjoint lists are
-    a plan-time refusal** naming both, because an empty result is a configuration
-    nobody can have meant; and **there is no `forbidden_methods`**, now or later.
-    One key, so there is no evaluation order to document and no second spelling
-    of one guard. Adding the second key is a decision rather than an addition.
 11. **Passwords containing `"` are rejected, not escaped.** Oracle quoted
     identifiers have no escape for it.
+
 12. **JSON output is a versioned contract.** Adding a field is a minor bump;
     renaming or removing one is major. Samples must validate against
-    `docs/schemas/*.schema.json` — this runs in CI.
+    `docs/schemas/*.schema.json`. CI checks this. See `03-json-output.md`.
+
 13. **The password never appears as a literal inside a PL/SQL block sent to the
-    server.** `ALTER USER` is issued directly, never wrapped in
-    `BEGIN`/`DECLARE`/`EXECUTE IMMEDIATE`. Measured on 26ai: Oracle retains no
-    cursor for the DDL itself, but a block *containing* the DDL is an ordinary
-    block and its text is kept verbatim in `V$SQL` and `V$DB_OBJECT_CACHE`. So
-    wrapping does not hide the literal — it is the only thing that exposes it.
-    This is easy to violate by accident, because a wrapper looks like the more
-    careful option. Tier 0 asserts it against the generated statement text.
-    **The rule is universal; the second half of that measurement is not.** On
-    11.2 the direct DDL is retained too, in `V$SQLSTATS` (#387) — wrapping is
-    still strictly worse there, so nothing about this invariant changes, but do
-    not restate "issuing it directly keeps the password out of the shared pool"
-    without naming the release.
+    server.** Issue `ALTER USER` directly, never inside `BEGIN`, `DECLARE` or
+    `EXECUTE IMMEDIATE`. A wrapper looks more careful, but on every release
+    measured Oracle keeps the text of a block that contains the DDL, password
+    included, in `V$SQL`. The block is never less exposed than the direct
+    statement. What each release retains is in
+    `docs/design/02-oracle-privileges.md` §4. Tier 0 checks the generated
+    statement text.
+
 14. **The password is never bound into a SQL predicate.** `V$SQL_BIND_CAPTURE`
-    samples bind values at hard parse and keeps them in clear. Rotation is
-    unaffected — DDL cannot take binds — so this binds on `check --method hash`:
-    never compare a password or a verifier by sending it as a bind.
+    keeps sampled bind values in clear. DDL cannot take binds, so rotation is not
+    affected. The rule applies to `check --method hash`: never send a password or
+    a verifier as a bind to compare it.
 
 ---
 
 ## Open questions: surface, do not resolve
 
-The design docs contain deliberate open decisions, tagged `D`, `E`, `C`, `P`,
-`J`, `T`, `Q`, `H`. Whether each is open is written in one place: the decision
-register in `docs/README.md`. Many also have a GitHub issue labelled `decision`.
+The design documents contain open decisions, tagged `D`, `E`, `C`, `P`, `J`,
+`T`, `Q` and `H`. The decision register in `docs/README.md` is the one place that
+says whether each is open.
 
-**If a task requires one to be answered, stop and ask.** Do not pick a plausible
-option and continue — that silently converts an open decision into a fact buried
-in a diff. Say which question is blocking and what the options cost.
+**If a task requires an open decision, stop and ask.** Do not pick a plausible
+option and continue. Say which question blocks the task and what each option
+costs.
 
-Several are marked "verify before implementing" and need a real database rather
-than reasoning:
-
-- whether the `T:` (12C) verifier in `SYS.USER$.SPARE4` can be regenerated
-  client-side — `--method hash` depends on it. **Settled** (register entry
-  `t-verifier`): `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt‖"AUTH_PBKDF2_SPEEDY_KEY",
-  4096, 64)‖salt)`, where `pw_utf8` is the UTF-8 of the password as the database
-  holds it, after conversion to its character set. Compare `T:` only; an account
-  with no `12C` fails at plan time (#433). Not claimed on 12.1. Probes:
-  `sql/oracle/05_verifier_layout_probe.sql`, `06_verifier_reproduce.{sql,py}`
-- whether `ALTER USER` text leaks the password into `V$SQL` or
-  `UNIFIED_AUDIT_TRAIL`, per release (unverified: ddl-text-versions). On every
-  release measured, no `V$SQL` cursor for the DDL exists, and an anonymous PL/SQL
-  block carrying the password as a literal leaks. That is invariant 13. From
-  12.2 on, unified audit masks the statement at write time and that block is the
-  only leak. **11.2 differs**: it has no unified auditing, and `V$SQLSTATS` keeps
-  the plain `ALTER USER` text, readable by a dictionary reader though not by the
-  service account. Decided in #387: documented, not
-  warned about and not refused, because it ages out with the shared pool and one
-  `FLUSH SHARED_POOL` clears it. The change is somewhere in (11.2, 12.2], and
-  12.1 is unmeasured. Do not quote a leak result without its release
-  (`docs/design/02-oracle-privileges.md` §4 and §8 P8)
-- ~~whether the 23-codebase schema privileges cover `ALTER USER` (P7)~~ —
-  **answered: no.** `GRANT ALTER USER ON SCHEMA` gives `ORA-00990`, tested on 26ai
-  23.26.2.0.0 with a succeeding `SELECT ANY TABLE ON SCHEMA` as the control. The
-  direct grant is the model permanently; do not re-open it as an option
-  (`docs/design/02-oracle-privileges.md` §2.1)
-- whether a pullable Oracle 11g XE image exists (T1)
-
-19.3.0.0.0 EE is `test/compose.yaml`'s `oracle-19c`, under `--profile oracle19c`
-only: pulling it takes an Oracle account and the licence accepted on the
-registry, so it is maintainer-only and never in CI (`docs/local-testing.md` §5).
-12.2.0.1.0 EE is `oracle-12c`, under `--profile oracle12c`, on the same terms —
-plus one `docker exec` after its first start, because that image has no
-user-script hook.
-
-Do not assume any of these. Where the answer is unknown, the code should refuse
-rather than guess — as the deleted package draft did for the T-verifier.
+Some questions need a real database rather than reasoning. They are in
+`docs/README.md` §*Verify before implementing*, with their status. Where the
+answer is unknown, the code refuses rather than guesses.
 
 ---
 
 ## Working agreement
 
-**Issues.** Work comes from GitHub issues. One issue ≈ one reviewable PR. If an
-issue turns out to need more than about 400 changed lines, split it and say so
-before writing the larger version.
+**Issues.** Work comes from GitHub issues. One issue is about one reviewable PR.
+If an issue needs more than about 400 changed lines, split it, and say so before
+writing the larger version.
 
-**Docs move with code.** A PR that changes behaviour updates the relevant design
-document in the same PR. The documents are the specification, not a description
-written afterwards — if they disagree with the code, that is a bug in one of them
-and it needs resolving, not noting.
+**Docs move with code.** A PR that changes behaviour updates the design document
+in the same PR. The documents are the specification. If a document and the code
+disagree, one of them has a bug: fix it, do not add a note.
 
 **Write documentation and comments by the rules in `CONTRIBUTING.md`**,
-§*Writing documentation and comments*. Read it before writing prose or comments.
+§*Writing documentation and comments*. Read them before writing prose or
+comments. When a fact changes, replace the old wording. Do not add a correction
+beside it.
 
-When a fact changes, replace the old wording. Do not add a correction beside it.
-Agents add text reliably and remove it unreliably, and that is how the documents
-grew stale.
+**`docs/local-testing.md` moves with the CLI surface.** A PR that adds or changes
+a command, a flag, an exit code, or a message an operator sees updates the guide
+too, including the failures worth causing on purpose. Paste output from a real
+run. A guide that omits a command makes it look unbuilt.
 
-**`docs/local-testing.md` moves with the CLI surface**, and that is a second
-obligation rather than a restatement of the first. The design documents say what
-the tool is *for*; the guide is the by-hand map of what this build can actually be
-made to do, so a PR that adds or changes a command, a flag, an exit code, or a
-message an operator meets belongs in it too — including the failures worth causing
-on purpose, which are most of its value.
+**Measurements.** When you run a script in `sql/oracle/`, update its header and
+the matrix in `docs/measurements.md`; `tests/test_measurements.py` checks that
+they agree. Name the full release, such as 19.3.0.0.0 or 19.32.0.0.0, never
+"19c". Results differ between releases, and between release updates of one
+release.
 
-Paste the output from the run "Run it, do not only test it" already required.
-That rule and this one are the same work: you ran the verb, so write down what it
-printed, and no sample in the guide is ever written from a diff.
-
-A guide that lists eight commands when there are thirteen is worse than no guide,
-because it reads as an inventory — so whatever it omits reads as *not built*. It
-went stale exactly that way between #243 and #366: the entire `creds` surface
-shipped while the document still told the reader "you cannot rotate a credential
-end to end today; if that is what you sat down to test, stop here". Nobody was
-lied to by a design document in that window; they were lied to by this one.
-
-**Order of work.** Tier 0 first (`docs/design/04-testing.md` §4): config parsing
-and validation, target-set expansion, precedence resolution, SecretRef parsing,
-password generation, redaction. All pure logic, no containers, no I/O. Keeping
-those layers free of I/O is an architecture requirement, not just a test
-convenience.
+**Keep pure layers pure.** Config parsing and validation, target-set expansion,
+precedence resolution, SecretRef parsing, password generation and redaction do no
+I/O. This is an architecture requirement, and it is what makes them testable in
+tier 0 (`docs/design/04-testing.md` §4).
 
 **Tests.** Every behaviour change carries a test. Tests declare the capabilities
-they need and skip with a reason when absent — never branch on a version. The
-public suite must stay green using only freely pullable images (tier 0 and
-tier 1); anything needing more must skip, not fail, or forks cannot run it.
+they need and skip with a reason when one is absent. They never branch on a
+version. The public suite stays green using only freely pullable images (tier 0
+and tier 1). Anything that needs more must skip, not fail. The Oracle 19.3 and
+12.2 images need an Oracle account, so they are maintainer-only
+(`docs/local-testing.md` §5).
 
-**Run it, do not only test it.** A change to what the tool reads from a target
-or a store, writes to one, or *reports* about one is not done when its tests
-pass. Bring the tier-1 stack up — `docker compose --profile tier1 up -d` from
-`test/` — and run the verb end to end. **Tier 1**, because that is the stack that
-comes up locally; tiers 2 and 3 stay the maintainer's pre-release matrix. That is
-a floor rather than a ceiling while the repository is private — reach for a
-harder environment when a change deserves it. `04-testing.md` §1's rule that a
-contributor must be able to go green on their own machine is the thing that would
-cap it, and it starts binding when the repository goes public.
+**Run it, do not only test it.** A change to what the tool reads from a target or
+a store, writes to one, or reports about one is not done when its tests pass.
+Start the tier-1 stack with `docker compose --profile tier1 up -d` from `test/`
+and run the verb end to end. A test checks only what its author already
+suspected. A real run catches faults like these:
 
-CI already runs tier 1 on every PR, so this is not about coverage. It is about
-the assertions nobody writes, because a test can only check what its author
-already suspected. Three that got through, and how (#309, #322, #326):
+- output that was described rather than produced. Paste every sample in a
+  document, PR body or docstring from a real run;
+- the shape of what the server actually sends, such as an error code that the
+  documentation names and the server does not send;
+- anything intermittent. One run is not a measurement.
 
-- **output that was described rather than produced.** Every sample in a design
-  document, a PR body or a docstring is pasted from a real run. A hand-written
-  one is a *prediction*: #309's first draft documented a warning the command did
-  not print at all.
-- **the shape of what the server actually sends.** `ORA-28002` is the documented
-  grace-period code and 26ai does not send it; the message repeats its own code
-  and appends a URL on a second line. Neither is guessable, and both changed the
-  design (#322).
-- **anything intermittent.** A diagnostic query reported the probe's own session
-  in one run out of two (#326). One run is not a measurement.
+**Commits.** Conventional Commit subject lines, imperative mood, referencing the
+issue. Do not commit generated artefacts, `.env` files, Oracle binaries, or
+anything from a real environment.
 
-**Commits.** Conventional-ish subject lines, imperative mood. Reference the issue.
-Do not commit generated artefacts, `.env` files, Oracle binaries, or anything
-pulled from a real environment.
+**Every commit is signed off** with `git commit -s`, which adds the
+`Signed-off-by:` line that `CONTRIBUTING.md` requires (DCO). No CI check enforces
+it, and fixing it later means rewriting a pushed branch.
 
-**Every commit is signed off** — `git commit -s`, which adds the
-`Signed-off-by:` line `CONTRIBUTING.md` requires (DCO). No CI check enforces
-it, which is exactly why it is written here: a commit without one is caught
-only by somebody reading the log, and fixing it afterwards means rewriting a
-pushed branch.
-
-**Every PR gets a Copilot review, and the review gets answered.** Opening a pull
-request is not the end of the task. Request the review, wait for it, and then
-resolve every comment it leaves — one of exactly two ways:
+**Every PR gets one review, and every comment gets an answer.** The review is
+Copilot's. When the maintainer's Copilot budget for additional usage is spent,
+it is a Claude Code review (`/code-review`) instead, because Copilot reviews
+cost money past the included allowance. `/request-copilot-review` checks the
+budget before it requests anything. Wait for the review, and resolve each comment
+by one of these:
 
 - **change the code**, or
-- **decline the change**, having decided it is wrong or that the existing form is
-  right for a reason.
+- **decline the change**, because it is wrong or the existing form is right for a
+  reason.
 
-Either way, **reply on the PR saying which and why**. A comment that was silently
-acted on is indistinguishable from one that was silently ignored, and neither is
-reviewable six months later. A decline needs the actual reason — "working as
-intended" is not one; the reason is whatever the reviewer would have needed to
-know in order not to raise it.
+Either way, **reply on the PR saying which, and why**. A decline gives the reason
+the reviewer would have needed in order not to raise the comment. "Working as
+intended" is not a reason. Judge each comment on its merits. This codebase makes
+choices that look like mistakes until you know the reason, such as invariants 13
+and 14. Where a comment is right about the problem and wrong about the fix, say
+both. If you accept a comment, push the fix and wait for CI to pass before you
+report the PR as ready.
 
-Judge each comment on its merits rather than deferring to it. A review tool is
-often right and occasionally confidently wrong, and this codebase makes a lot of
-deliberate choices that look like mistakes until you know why — the DDL that
-must not be wrapped in PL/SQL (invariant 13), the password that must not be
-bound (invariant 14), the refusals that exist because guessing is worse than
-stopping. Applying a suggestion that makes the code worse because it was
-suggested is the failure mode here, and so is dismissing a real bug because
-answering it is inconvenient. Where a comment is right about the problem and
-wrong about the fix, say both.
+**A second review is the exception.** After you answer the first review, decide
+whether to request another, and say on the PR which you chose. Request one only
+when the fixes are large: more than about 100 changed lines, or new or rewritten
+logic in `src/` beyond what the comments asked for. Otherwise skip it. Most
+fixes are small and need no second review.
 
-If a comment is accepted, push the fix and let CI go green again before
-reporting the PR as ready.
-
-`/request-copilot-review` does the mechanics. The request is
-`copilot-pull-request-reviewer[bot]` through the REST endpoint, which is the
-only route — GraphQL's `requestReviews` takes `userIds` and `teamIds` and will
-not resolve a bot. Confirming it landed takes GraphQL, though: the pull
-request's `requested_reviewers` omits Bot-type reviewers, so it reads empty even
-when the request succeeded.
+`/request-copilot-review` does the mechanics. Request the reviewer
+`copilot-pull-request-reviewer[bot]` through the REST endpoint; GraphQL's
+`requestReviews` cannot request a bot. Confirm the request with GraphQL, because
+the REST `requested_reviewers` list omits bots.
 
 ---
 
 ## Style
 
-Python 3.11+, `python-oracledb` in **thick mode** (D3), for three independent
-reasons: thin mode does not support Native Network Encryption, which Base
-Database Service, Exadata Cloud and any on-prem database that enforces it
-require; it connects only to 12.1 and later, and 11.2 is supported; and
-`auth: external` needs the Oracle client libraries.
-**Autonomous Database is not one of the reasons** — it encrypts with TLS, not
-NNE, so do not write "OCI-hosted databases require NNE". Instant Client is
-therefore a runtime prerequisite on every platform.
-`docs/design/00-principles.md`, *Why thick mode*, has the long form. Both
-service claims are measured (#575): Base Database Service on 19.32.0.0.0, where
-thin is refused with `DPY-3001`, and ADB serverless 23.26.3.3.0, where thin
-connects over TCPS with no NNE negotiated. **Exadata Cloud is Oracle's
-documentation, not a measurement** — no run of it is planned.
+Python 3.11+, `python-oracledb` in **thick mode** (D3). Thin mode has no Native
+Network Encryption, connects only to 12.1 and later, and cannot do
+`auth: external`. Instant Client is therefore a runtime prerequisite on every
+platform. Autonomous Database uses TLS, not NNE, so it is not one of the reasons.
+`docs/design/00-principles.md` §*Why thick mode* has the details and the
+measurements.
 
-- `ruff` for lint and format, `mypy` for types, `pytest` for tests
-- Type hints on anything public
-- Prefer boring, readable code over clever code. This project is reviewed by
-  someone who is a DBA first and a Python developer second, and credential
-  handling is a bad place for cleverness.
+- `ruff` for lint and format, `mypy` for types, `pytest` for tests.
+- Type hints on anything public.
+- Prefer boring, readable code over clever code. A DBA first and a Python
+  developer second reviews this project, and credential handling is a bad place
+  for cleverness.
 - Errors carry the vendor code, a category, and a hint about what to do next.
-  Never swallow an ORA- code — map it, and preserve the server's own message.
+  Never swallow an ORA- code: map it, and keep the server's own message.
 
 ---
 
-## Provenance — this matters more than usual
+## Provenance
 
 This is an independent open-source project developed on personal time and
 equipment. It is **not** derived from any employer codebase, and it must stay
@@ -484,7 +272,8 @@ that way.
   repository into this one.
 - Examples and fixtures use the fictional vocabulary in
   `docs/design/01-configuration.md`: application `acme`, accounts `acme_*_user`,
-  tenants `alpha`…`theta`, hosts under `example.com`, IPs from `192.0.2.0/24`.
-  Never a real hostname, account name, tenant, service, or vault path.
+  tenants `alpha` to `theta`, hosts under `example.com`, IPs from
+  `192.0.2.0/24`. Never a real hostname, account name, tenant, service, or vault
+  path.
 - If asked to add an example drawn from a real system, anonymise it completely
   and say that you did.
