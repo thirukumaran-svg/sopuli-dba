@@ -33,7 +33,7 @@ from sopuli.output.document import SCHEMA_VERSION
 SCHEMAS = Path(__file__).resolve().parents[2] / "docs" / "schemas"
 
 #: Derived from the version the tool emits rather than written out, so a minor
-#: bump (`03-json-output.md` §8 renames the file) does not break this test for a
+#: bump (`03-json-output.md` §8 publishes a new file) does not break this test for a
 #: reason that has nothing to do with scopes.
 RUN_SCHEMA = SCHEMAS / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
 

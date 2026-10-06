@@ -303,6 +303,26 @@ run with nothing to report omits the key; it does not emit an empty array.
   expanded estate, with labels, provenance, and whether anything manages each
   target. `bindings[]` has one row per account per target, with its secret ref.
 
+**`config.targets[].safety` is the block in force for that target.** It is the
+result after a target set's template and its `overrides:` entry are ratcheted
+together, not the flattened value the config model carries. The two differ where
+an override asks for less than its template: there the flattened value is the
+target layer's literal statement, and no run reads it. A document that said
+`readonly: false` for a target the tool then refuses to change would be the
+failure this property exists to remove. It does **not** fold in `defaults`, a
+profile or a group. None of those is a property of a target, and folding them
+would make one object's answer depend on four sources while hiding which.
+`config.declared` carries every block as written, and the text view's `safety`
+section lists each by the key that writes it.
+
+`safety.delivery` is a sub-block, holding `allowed_methods`: the delivery
+methods left after this target's own block and any template or `overrides:`
+entry are intersected. The resolved view nests along every separator in a
+setting's name, so a later sub-block needs no change to the view or the schema.
+`allowed_methods` is never an empty array: two layers with no method in common
+are refused at plan time (`01-configuration.md` §9), so the tool never produces
+an empty list.
+
 A binding's `secret` is the ref **as written**, a string that round-trips
 (`01-configuration.md` §7), so it matches the config file by eye. The structured
 form is `plan.units[].secret`, which does a different job: it addresses a
@@ -1026,6 +1046,10 @@ ADR-006's E6, and it sets the whole shape of the section:
 }
 ```
 
+**It is its own section, not part of `targets[]`.** Install shape is a property
+of the machine, not of any target, so in `targets[]` it would repeat one fact
+once per target.
+
 **Every registry entry appears, configured or not.** So the section can report
 the third case: installed and not configured. Nothing else in the tool looks at
 it that way round, and the gap between what a machine can do and what it was
@@ -1155,6 +1179,12 @@ vault reachability and clock skew beside client presence and `TNS_ADMIN`.
 ]
 ```
 
+**It is its own array, not part of `targets[]`.** A vault is neither a target
+nor an account, so a widened `targets[]` would have a field that means nothing
+for most of its rows. It is always present, `[]` included, as `install` is and
+`wallet` is not: every estate that does anything has stores, so an empty array
+is a real answer.
+
 **The clock skew matters for locking.** `sopuli/lock/decide.py` compares a
 lease's `expires_at` with *this* machine's clock, and allows `CLOCK_SKEW` for
 the two to disagree. A host whose clock is minutes out takes over locks that are
@@ -1273,6 +1303,12 @@ is from a tier-1 run:
 The second account's profile was created in the root with `CONTAINER=ALL`, so
 its verify function reads as the literal `FROM ROOT` from inside the PDB.
 
+**A section, not more warnings.** A diagnostic is for what the exit code
+cannot say (§3), and everything else belongs in the section that names it. A run
+that answered "what may a password be here?" with eleven warnings would have
+nowhere to put the eleven answers. `SOPULI-W015` to `W017` are only what the
+reading could not establish.
+
 **Readings, never a verdict.** Nothing here predicts that a password will be
 accepted. Only the byte count is binding. A verify function is arbitrary PL/SQL
 that cannot be consulted (invariants 13 and 14), and a reuse history is hashed.
@@ -1363,6 +1399,106 @@ carries a `warning` that says so. Applications read `current`, and until the
 promotion lands they read a password that part of the estate no longer has. That
 is UC-1 §8's highest-severity row. It is a per-result warning, not a run-level
 diagnostic, so it survives any filter a consumer applies to `results[]`.
+
+### `results[].overridden` and `results[].redraws`
+
+**`overridden`** lists the account guardrails (`02-oracle-privileges.md` §4) that
+`--force` waived on this row: the check that refused, and what it observed. It is
+absent where nothing was waived, because the field records overrides, not
+intent. Its `check` enum has no `declared`: check 1 is the one refusal `--force`
+cannot waive, so a document can never carry it here, and an enum that admitted
+it would advertise an override the tool refuses to make.
+
+**`redraws`** says how many *extra* passwords an account was given because the
+server refused the value itself, with `ORA-28003` or `ORA-28007` (UC-1 §6.4). It
+is emitted only when a redraw happened. It records redraws, not the budget for
+them, and a `0` on every row of every ordinary run would hide the rows that have
+one. Read it as "this row was applied more than once and reports the last
+attempt", not as a failure: a redrawn account that ends `IN_SYNC` succeeded.
+
+### `results[]` from the `account` verbs
+
+The UC-2 verbs use the same `results[]` entry, with fields of their own.
+
+**`account_status`** is Oracle's own `ACCOUNT_STATUS`, as read *before* anything
+was issued. It is emitted for a row the verb refused as well as one it changed,
+because "I left it alone, and here is its state" is the whole answer for a
+refused row. Compound values are ordinary: `EXPIRED & LOCKED` is real, and
+`LOCKED(TIMED)` is a lock from failed logins, not a deliberate one. A substring
+test for `LOCKED` cannot tell those apart, which is why the driver parses the
+value.
+
+**`state: LOCKED` from `account suspend` is not enough on its own.** A row can
+read `LOCKED` with `changed: false` because the account was *already* locked, or
+under `--dry-run` because it *would be*. The document's `dry_run` tells those
+apart, and `account_status` says what state the database was actually in.
+
+**`DECLARED`** is `account list`'s ordinary row: the declaration matched this
+account, and the database has it. It is not `IN_SYNC`, because nothing was
+compared: the verb never reads a password. An account the declaration names and
+the database lacks is `ACCOUNT_MISSING`, which already meant exactly that.
+
+**`declared_by`** says which `personal_accounts:` rule admitted the account:
+`accounts '...'` for an entry that names it, or `profile '...'` / `role '...'`
+for a predicate. `account list` exists for this field. Under a predicate the
+answer is not in the configuration at all, because membership is a profile
+assignment or a role grant ([H1](../decisions/log.md#h1)), so a record that says
+an account is declared without saying by what cannot be checked later. It is
+`null` where the declaration named an account the database does not have,
+because there was nothing to resolve the rule against.
+
+**`reset_at`** is when the reset journal says this account was last reset, from
+the `reset_records:` store. It is absent where no journal is configured, and
+`SOPULI-W023` says so. **`reset_at` and `password_age_days` are two clocks, and
+must not be merged** (UC-2 §3.2). The first is what this tool recorded; the
+second is the database's own. On the unseen path, a database date *later* than
+`reset_at` is a finding: somebody changed the password after the tool delivered
+it, so the copy the person was told to fetch no longer works. A consumer that
+averaged the two, or took whichever was present, would turn that finding into a
+number.
+
+**`RESET`** is what an `account reset-password` row reports: the thing that
+happened to the account, as `LOCKED` is for `account suspend`. No existing word
+fits. `IN_SYNC` claims a comparison this verb never makes, and the account's
+own status differs by path (`EXPIRED` on the seen path, `OPEN` on the unseen
+one), so neither describes the reset.
+
+**`delivered`** is how the password was handed over: the delivery *method*,
+never a value and never a destination. `manual` records the method and no
+location, because the seen path's destination is a person, by a route the tool
+did not carry. It is absent on a row that delivered nothing, which is every row
+a run refused.
+
+**`handover`** describes a hand-over without being able to perform it: an
+object with `accessor` and `expires_at`. It is a separate object because
+`delivered` is a string that may never hold a destination, and because each
+unseen method will have its own kind of handle for the same fact.
+
+- **It holds the half that cannot fetch.** Vault returns two things beside a
+  wrapped password: the token, which produces the password for whoever holds
+  it, and the accessor, which names the wrap in the audit log and produces
+  nothing. The token has no property here (§4).
+- **It is present whenever a delivery put the password somewhere**, and absent
+  otherwise. That is a fact about the path, not about how much the store said: a
+  wrap that returned neither an accessor nor a usable TTL is still a hand-over,
+  and the object is there with two nulls. On `manual` it is absent, because the
+  destination is a person reading a screen.
+- **`expires_at` comes from the store's clock, not this host's**: Vault's
+  `creation_time` plus the TTL it actually applied, which a mount's `max_ttl` may
+  have shortened below what the file asked for. It is reported and never
+  enforced. The store already enforces the TTL, and a second clock would only
+  disagree with it.
+
+**`account expire-password` rows** carry `password_expire`, the bare
+`ALTER USER … PASSWORD EXPIRE`. That statement sets no password, so it cannot
+report as `password_set`. The seen reset's `IDENTIFIED BY … PASSWORD EXPIRE`
+does set one, and reports as `password_set`. A row carries two actions,
+`rollover_finish` then `password_expire`, in the order the driver considers
+them, and each is reported whether or not it was issued. On an account found at
+`EXPIRED & IN ROLLOVER` only the first happens: the window is closed, the expiry
+is not issued again, and the row reports `changed: true`. A row that never
+reached the driver (refused, missing, unreachable or previewed) carries one
+`password_expire` action with `applied: false`, as `account suspend`'s rows do.
 
 ---
 
@@ -2021,99 +2157,87 @@ One rule:
 > **A run document describes a run, and a run begins when the invocation
 > resolves. No valid invocation, no document.**
 
-From which: **exit 2 is the only exit code that never produces a document. Empty
-stdout with exit 2 means the invocation never parsed; the message is on stderr.**
-Every other code emits one, exit 1 and internal errors included — they all have a
-valid invocation to describe, and withholding the document exactly when something
-went wrong is the opposite of useful.
+So **exit 2 is the only exit code that never produces a document. Empty stdout
+with exit 2 means the invocation never parsed, and the message is on stderr.**
+Every other code emits a document, exit 1 and internal errors included. They all
+have a valid invocation to describe, and withholding the document exactly when
+something went wrong would help nobody.
 
-The seam is there and not elsewhere for a schema reason as much as a conceptual
-one. `command` is a closed enum of dotted paths and sits in `required`, as does
-`invocation`. `sopuli config bogus` has no `command` value that exists, so
-emitting a document for it means either violating this schema or relaxing
-`required` and adding an `"unknown"` member — permanently, for every consumer, so
-that all of them must handle a document that describes nothing. That is
-contract-weakening dressed as contract-completing. `additionalProperties: false`
-and a closed `command` enum are only worth their strictness because every
-document describes a real run.
+The line is there for a schema reason too. `command` is a closed enum of dotted
+paths, and it is in `required`, as `invocation` is. `sopuli config bogus` has no
+`command` value, so a document for it would either break this schema or need
+`required` relaxed and an `"unknown"` member added. That would be permanent, for
+every consumer, and all of them would have to handle a document that describes
+nothing. `additionalProperties: false` and a closed `command` enum are worth
+their strictness only because every document describes a real run.
 
-**With one command outside the rule rather than an exception to it: `sopuli
-about` (#413).** It exits 0 and emits no document, and that is not a second seam
-in J7 — it is a screen that is not a run. It takes no options, reads no
+**`sopuli about` is outside the rule, not an exception to it.** It exits 0 and
+emits no document, because it is not a run. It takes no options, reads no
 configuration, resolves no settings, touches no estate and prints compiled-in
-text, so there is no invocation for a document to describe and nothing a
-consumer could branch on. It is the same footing `--version` and `--help` stand
-on, and the reason it is a verb rather than a flag is D2's grammar: a bare
-top-level command fits it, a root-level `--about` would not.
+text, so there is no invocation to describe and nothing a consumer could branch
+on. It is in the same position as `--version` and `--help`. It is a verb, not a
+flag, because of D2's grammar: a bare top-level command fits it, and a root-level
+`--about` would not.
 
-**Asking it for JSON is a usage error, not a quiet text answer.** `--output`
-belongs to the group's parser, so `sopuli --output json about` is accepted
-*there* whatever the command does — and a command that then printed human text
-and exited 0 would be the silent-ignore this document's §2 refuses everywhere
-else: the run looks like it did what was asked. So `about` refuses `--output`,
-`--config`, `--profile` and `--vault-token-file` in that position by name, and
-exits 2 with no document, which is J7 unchanged.
+**Asking `about` for JSON is a usage error, not a quiet text answer.**
+`--output` belongs to the group's parser, so `sopuli --output json about` is
+accepted there whatever the command does. A command that then printed text and
+exited 0 would ignore the request silently, which §2 refuses everywhere else. So
+`about` refuses `--output`, `--config`, `--profile` and `--vault-token-file` in
+that position by name, and exits 2 with no document.
 
-The consequence for this contract is that **`about` is not in the `command`
-enum and must not be added to it.** An enum value nothing emits is a branch a
-consumer can write and never reach, which is the defect #392 was opened about;
-`tests/test_cli_precedence.py` holds both halves — the command is named in
-`NOT_A_RUN`, and that list is asserted to be absent from the enum and to take
-none of the global options. A later change that gave `about` `--output json`
-would be a change to what the command is, not a field addition, and it would
-need the enum entry, a schema bump under §8's minor rule, and a reason why the
-tool now answers one question in two places.
+So **`about` is not in the `command` enum and must not be added to it.** An enum
+value that nothing emits is a branch a consumer can write and never reach.
+`tests/test_cli_precedence.py` checks both halves: `NOT_A_RUN` names the command,
+and the test asserts that the list is absent from the enum and takes none of the
+global options. Giving `about` `--output json` would change what the command is.
+It would need the enum entry, a schema bump under §8, and a reason for the tool
+to answer one question in two places.
 
-And `--output json` is itself an option that has to parse. `sopuli config show
---output jsom` is a usage error *in the request for JSON*; the tool cannot honour
-a request it failed to read. A rule of "emit one if the parse got far enough to
-see `--output`" would make the behaviour depend on where in argv the parse died —
-not statable as a contract.
+`--output json` is itself an option that has to parse. `sopuli config show
+--output jsom` is a usage error *in the request for JSON*, and the tool cannot
+honour a request it could not read. A rule such as "emit a document if the parse
+got far enough to see `--output`" would make the behaviour depend on where in
+argv the parse failed, which cannot be stated as a contract.
 
-**A bad config file is not a usage error.** It has a perfectly good invocation:
-argv resolved, the run began, and the file it was told to read turned out to be
+**A bad config file is not a usage error.** Its invocation is valid: argv
+resolved, the run began, and the file it was told to read turned out to be
 unusable. It exits 9 (P5), carries `error.category: "config"`, and emits a
-document. `config validate --output json` is the case that forced this: a
-validator that goes silent exactly when it has something to say is not a
-validator.
+document. `config validate --output json` needs this: a validator that goes
+silent exactly when it has something to say is not a validator.
 
-> **Implementation note, because the convenient way is the wrong way.** A missing
-> or invalid config file must not be raised as a CLI-framework usage error, even
-> though `--config` is an option and its callback is the natural place to load
-> the file. Doing that hands the error to the framework's usage path, which
-> prints text and exits 2 — putting config errors back on the no-document side
-> whatever this section says.
+> **Implementation note.** Do not raise a missing or invalid config file as a
+> CLI-framework usage error, although `--config` is an option and its callback
+> is the obvious place to load the file. The framework's usage path prints text
+> and exits 2, which would put config errors on the no-document side.
 
 **How it is enforced.** The document is opened the moment the invocation
-resolves, not assembled when the run ends, and it is serialised once by a single
-exit handler wrapped around every verb (`sopuli/invocation.py`). That ordering is
-what makes the rule true rather than aspirational: an exception three lines into
-a verb still has a document to attach the error to, carrying `command`, the
-`invocation` including its resolved options, a zeroed `summary`, and the error —
-schema-valid, and the case most likely to be missed if the document were built at
-the end. The handler decides by **exit code**, never by exception type, so a new
-error class cannot arrive on the wrong side of the seam by forgetting to be
-listed somewhere.
+resolves, not assembled when the run ends, and one exit handler around every verb
+serialises it once (`sopuli/invocation.py`). That order is what makes the rule
+hold. An exception three lines into a verb still has a document to attach the
+error to, with `command`, the `invocation` and its resolved options, a zeroed
+`summary`, and the error, all valid against the schema. The handler decides by
+**exit code**, never by exception type, so a new error class cannot land on the
+wrong side because somebody forgot to list it.
 
-A run document *is* the `--output json` mode; text output has no such thing to
-withhold, and a failure there is the located message on stderr that it always
-was. Both streams are used on a failed JSON run: the document on stdout for the
-scheduler, the message on stderr for whoever is watching the log.
+The run document *is* the `--output json` mode. Text output has no document to
+withhold, and a failure there is the located message on stderr. A failed JSON run
+uses both streams: the document on stdout for the scheduler, and the message on
+stderr for whoever is watching the log.
 
 **An abort is a run that happened and did not finish**, so it gets a document
-too, on exit 8. Withholding one would be worst in the case the code exists for: a
-confirmation declined halfway through a rotation is exactly when a consumer needs
-to know which targets were already touched. It carries no `error` — the category
-enum has no value for "the operator said no", and `internal` would be a lie about
-what happened — so the exit code says it and a `diagnostics[]` entry says it in
-words. `error` is optional precisely so a document can report an outcome that is
-not a failure.
+too, with exit 8. A confirmation declined halfway through a rotation is exactly
+when a consumer needs to know which targets were already touched. The document
+has no `error`: the category enum has no value for "the operator said no", and
+`internal` would misdescribe what happened. The exit code says it, and a
+`diagnostics[]` entry says it in words. `error` is optional so that a document can
+report an outcome that is not a failure.
 
-The same rule holds for `jsonl`: a usage error produces zero events, not a
-truncated stream. That is already consistent with "a stream that ends without
-`run.finished` did not complete".
+The same rule holds for `jsonl`: a usage error produces no events, not a
+truncated stream. That fits "a stream that ends without `run.finished` did not
+complete".
 
-So a consumer faces **three** shapes, not two:
+So a consumer sees one of **three** shapes:
 
 | What it sees | What it means |
 |---|---|
@@ -2121,13 +2245,15 @@ So a consumer faces **three** shapes, not two:
 | empty stdout, exit 2 | the invocation never parsed; the message is on stderr |
 | empty stdout, any other exit | the process died before it could serialise |
 
-The third is real and worth planning for — `jsonl` exists precisely for runs long
-enough that dying halfway is a possibility worth observing.
+Plan for the third. `jsonl` exists for runs long enough that dying halfway is
+worth observing.
 
 ### The pairing that makes scheduling work
 
+This script runs a scheduled check and alerts on each outcome:
+
 ```bash
-sopuli creds check --application orders-app --profile scheduled --output json > result.json
+sopuli creds check --application acme --profile scheduled --output json > result.json
 case $? in
   0) ;;                                     # in sync, say nothing
   2) alert "sopuli: bad command line" ;;    # no document — result.json is empty
@@ -2139,27 +2265,27 @@ case $? in
 esac
 ```
 
-The `2)` arm is the one worth copying: it is the only arm that must not read
-`result.json`, and a canonical example that leaves it out is how the rule gets
-discovered in production instead of in the docs.
+Copy the `2)` arm. It is the only arm that must not read `result.json`.
 
-Exit 3 being distinct from exit 1 is the whole reason a scheduled check is
-useful: "the passwords disagree" and "the tool is broken" need different pagers.
+Exit 3 is separate from exit 1 because "the passwords disagree" and "the tool is
+broken" need different people paged. That is what makes a scheduled check useful.
 
 ---
 
 ## 7. Recipes
 
+These `jq` commands answer common questions from a run document:
+
 ```bash
 # which accounts drifted, and where
 jq -r '.results[] | select(.state=="DRIFT") | "\(.account)@\(.target)"' result.json
 
-# what a partial apply left unconfirmed: the repair set `--repair` reads (#264, #391)
-# -- the same filter the flag applies, kept in step with it deliberately
+# what a partial apply left unconfirmed: the set `--repair` reads
+# (the same filter the flag applies; src/sopuli/repair.py keeps them in step)
 jq -r '.results[] | select(.state != "IN_SYNC" and .state != "ROLLOVER_ACTIVE")
        | "\(.account)@\(.target)"' result.json
 
-# and the flag itself, which needs the document on disk rather than on a pipe
+# and the flag itself, which needs the document in a file, not on a pipe
 sopuli creds apply --config estate.yaml --output json > result.json
 sopuli creds apply --config estate.yaml --repair result.json
 
@@ -2177,7 +2303,7 @@ jq '.invocation.options' result.json
 jq -r '.results[] | select(.state=="DRIFT") | .scope.labels.tenant' result.json | sort | uniq -c
 
 # follow a scheduled check live, one line per target as it finishes
-sopuli creds check --application orders-app --output jsonl \
+sopuli creds check --application acme --output jsonl \
   | jq -r 'select(.event=="target.finished") | "\(.seq) \(.target) \(.account) \(.data.state)"'
 
 # join to the database audit trail
@@ -2190,7 +2316,8 @@ jq -r .invocation.correlation_id result.json
 
 ## 8. Stability policy
 
-`schema_version` is `MAJOR.MINOR`.
+`schema_version` is `MAJOR.MINOR`. The run schema and the event schema have
+separate versions, and these rules apply to both.
 
 **Minor** (consumers must tolerate): new optional properties, new enum values,
 new event types, new diagnostic codes.
@@ -2198,534 +2325,85 @@ new event types, new diagnostic codes.
 **Major** (announced, with an overlap release): removing or renaming a property,
 removing an enum value, changing a type, changing the meaning of a field.
 
-Both schemas set `additionalProperties: false` so the tool's own tests catch
-accidental additions — but *consumers* must ignore unknown properties, and the
-docs say so explicitly. The strictness is a producer-side guard, not a
-consumer-side requirement.
+**Consumers must ignore unknown properties.** The run schema sets
+`additionalProperties: false`, and the event schema sets
+`unevaluatedProperties: false` on each event, so the tool's own tests catch a
+property added by accident. An event's `data` is open, except for the closed
+payloads below. That strictness guards the producer; it is not a requirement on
+consumers. The tool is a consumer too: `creds apply --repair` reads an earlier
+run document, and `src/sopuli/repair.py` never branches on `schema_version`. It
+requires one optional property, `invocation.config_files`, because it refuses a
+document that cannot show it came from the same configuration. Every other
+optional property may be absent.
 
-**1.0 became 1.1 when `config` was added**, which is the minor rule above
-working as written: an optional property, and no consumer of 1.0 breaks by
-ignoring it. The published schema file was renamed rather than duplicated. It is
-a *producer-side* guard — it describes what this build emits — so a retained 1.0
-file would guard nothing and drift.
+**A meaning is contract; wording is not.** What an enum value or a diagnostic
+code means may not change, and changing it is not a bump: it is a false
+statement. The message around a code may improve at any time. So any value a
+consumer needs to read is a field of its own, never something to parse out of a
+message.
 
-**1.1 became 1.2 when `target.list` joined the `command` enum**, which is the
-same rule again: a new enum value, and a consumer of 1.1 that switches on
-`command` already has to cope with a value it does not recognise, because the
-enum was never the set of commands it happened to know. Renamed rather than
-duplicated, for the reason above.
+These rules follow from the two lists:
 
-**1.2 became 1.3 when `policy.sample` arrived**, which is both rules at once: a
-new enum value and a new optional property (`policy`). Nothing existing changed
-meaning, so a 1.2 consumer that ignores unknown properties reads a 1.3 document
-correctly. Renamed again, for the reason above.
+- **A new required property can still be a minor bump**, when it arrives on
+  entries an older consumer would not have received and every older field keeps
+  its meaning. `lock.found[].declared` is the example. The rule is about what a
+  consumer of the earlier version can still do: one that ignores the field sees
+  more rows, and one that reads it can keep exactly the rows it saw before.
+- **Widening a field's meaning, without contradicting it, is minor.**
+  `lock.found[].declared` widened from "a binding names this path" to "this
+  configuration accounts for this path". Turning the boolean into a three-valued
+  string would have been a rename, which is major.
+- **A new section is better than a widened one** when the new data does not fit
+  the old section's required fields. `doctor`'s `targets[]`, `install` and
+  `vaults[]` are separate from `results[]` for that reason (§2).
 
-**1.3 became 1.4 when exit code 9 joined the `exit_code` enum** (J7, issue #8),
-**and 1.4 became 1.5 when `lock` arrived** — a new enum value and then a new
-optional property, which is the minor rule twice over.
-`lock` is the first section published *ahead* of the code that fills it, which
-the minor rule tolerates for the same reason it tolerates `plan` and `results`
-having sat unimplemented since 1.0: the schema is a producer-side guard on the
-shape, and a section nothing emits constrains nothing. What it does buy is that
-the decision in issue #83 has one written form, in the file CI validates against,
-rather than two that can disagree.
+**Every bump publishes a new schema file, and the old ones stay published.** A
+build that emits `schema_version: "1.20"` must be able to fetch the schema it
+validates against. Every event schema version is published. The run schema
+follows the rule from 1.16. Earlier run schema bumps renamed the file instead,
+so 1.0 to 1.9 and 1.15 are not published. A bump is made even when the file is identical apart from its
+`$id`, as it is for a new diagnostic code: `schema_version` tells a consumer
+which builds can emit what.
 
-**1.5 became 1.6 with the staged payload** (#85, #109) **and 1.6 became 1.7 with
-`config.shared_secrets`** (#110) — optional properties both, and neither was
-recorded here at the time. Written down now because a list that stops at 1.5 and
-resumes at 1.8 reads as two renames nobody can account for, which is worse than
-either entry is interesting.
+**A shape may be published before the code that fills it.** A section or a
+property in the schema that nothing emits yet constrains nothing, and it gives a
+decision one written form in the file CI validates against. An enum value for a
+verb whose existence is still open may also stay in the schema:
+`admin.install` does, because whether the command exists is not decided
+(open: #655).
+`tests/test_cli_precedence.py` keeps that list.
 
-**1.7 became 1.8 when `lock status` arrived** (#105): `lock.status` joined the
-`command` enum and `lock.found[]` joined the section, which is the minor rule
-twice over again. Nothing existing changed meaning — `found` was added *beside*
-`held` precisely so that `held` would not have to. The `denied.holder` object
-moved into a `$defs/lock_holder` the two arrays share, which is a refactor of the
-schema file and not of the contract: the shape a consumer sees is byte-identical.
+**Removing an enum value that no released build has ever emitted is minor.** No
+document has ever carried it, so removing it cannot break a reader. The test is
+the *emitter*, not the schema, and `git log -S` over `src` and `tests` checks it.
+The rule is narrow in three ways, and a removal that cites it must meet all
+three:
 
-**1.8 became 1.9 when the survey started looking past the declared set** (#150):
-`lock.found[].declared` joined the entry, required. A new *required* property is
-still a minor bump under §8's rule — the rule is about what a consumer that knows
-1.8 can still do, and every 1.8 field means what it meant. What changed is that
-`found[]` may now carry entries a 1.8 consumer would not have received at all,
-and `declared` is the field that tells it so. A consumer that ignores the field
-sees more rows than before; one that reads it sees exactly what it saw in 1.8 by
-keeping `declared: true`.
+- It does not cover a value that some released build *did* emit. Removing that
+  changes what a document can say, and stays major, with the overlap release.
+- It does not cover properties. A property is a promised shape, and a consumer
+  may rightly write a reader for it before anything fills it. An enum value is a
+  name.
+- It does not cover a value for a verb not built *yet*. It covers a verb that was
+  **declined**: `creds.promote` was removed under this rule, because UC-1 §4 says
+  there is no `creds promote` and there will not be one. A slot for something
+  that might arrive is honest. A branch nothing can ever reach is not.
 
-**1.9 became 1.10 when a lock could be broken** (#149): `lock.break` joined the
-`command` enum and `lock.broken[]` joined the section, which is the minor rule
-twice over — for the fourth time, and by now that is the pattern rather than a
-coincidence. A verb arrives, it needs a name in the enum and an array of its own
-beside the ones that already mean something else, and nothing existing changes
-meaning. `SOPULI-W002`'s description widened in the same change and is
-deliberately *not* a schema matter: a code's meaning is contract, its wording is
-not, and this widening was neither.
+**Renaming a property that a released build emits is major**, with no
+exception.
 
-**1.10 became 1.11 when `doctor` had somewhere to put its findings** (#182):
-`targets[]` joined the document, and `doctor` was already in the `command` enum.
-The minor rule for the fifth time, and the first time the alternative was
-seriously weighed: `results[]` existed and looked like the obvious home, and it
-required an `account` this command does not have and a `state` vocabulary about
-a sync it does not perform. Reusing it would have cost nothing in schema version
-and lied in every document.
+**Event payloads next to a credential are closed.** `password.applied`,
+`password.generated` and `password.delivered` set `additionalProperties: false`
+on their payloads. This is invariant 2 held by the schema, not by the emitter's
+discipline: a field added later that could carry a password or a retrieval
+credential fails CI on every line, instead of relying on a reviewer to notice.
 
-**1.11 became 1.12 when `--check-privileges` had something positive to report**
-(#225): `targets[].privileges` joined the entry, and every property inside it is
-required. The minor rule for the sixth time. Recorded here after the fact —
-#227 bumped the schema and did not write the entry, and a list that skips a
-number reads as a rename nobody can account for, which §8's own 1.5-to-1.8 gap
-already demonstrated. The section's prose was owed to §2 by whoever next touched
-the privilege audit, and #341 was that — it is there now.
-
-**1.12 became 1.13 when `doctor` reported install shape** (#214, ADR-006 E6):
-`install` joined the document as an optional property, and `doctor` was already
-in the `command` enum. The minor rule for the seventh time, and the same
-alternative was weighed and rejected as in 1.11: `targets[]` was the section that
-already existed, and install shape is a property of the *machine* rather than of
-any target — so putting it there would have repeated one fact once per target and
-said it twenty-one times on the estate `01-configuration.md` §2 uses as its
-example. The new `status` enum arrives in the same bump, which is the minor rule
-again rather than a second thing.
-
-**1.13 became 1.14 when `doctor` looked for the wallet** (#215, P4): `wallet`
-joined the document as an optional property. The minor rule for the eighth time,
-and the first section whose *absence* carries meaning in the way `lock`'s does —
-it is omitted when nothing in the estate uses `auth: external`, which is not the
-same as omitted because the command did not look.
-
-**1.14 became 1.15 when `doctor` asked the vaults** (#216, P4): `vaults[]`
-joined the document as an optional array. The minor rule for the ninth time, and
-the same argument 1.13 made — a vault is neither a target nor an account, so
-widening `targets[]` would have meant a field that means nothing for most of its
-rows. It follows `install`'s always-present rule rather than `wallet`'s
-sometimes-absent one, and the two are not inconsistent: a wallet matters only to
-an estate using `auth: external`, while every estate that does anything has
-stores, so an empty array is a real answer here and an absent section would not
-be.
-
-**One rename has happened under 1.0, deliberately.** `actor.scheduled` became
-`actor.unattended` when run context moved into profiles
-(`01-configuration.md` §5). By the rule above that is a major change, and it was
-made in place anyway: no released build ever emitted the property — it is written
-only when true and nothing ever set it — so there is no consumer to overlap with.
-The rule holds from the first release that emits a populated `actor`; this is the
-grace before it. A second rename does not get the same treatment.
+**Adding an event name is minor**, and it is the one minor change that a
+consumer switching over every event notices. Weigh it against the alternatives,
+as `constraints.resolved` was (§5).
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
-
-**1.30 became 1.31 when the redraw codes joined the registry** (#610).
-`SOPULI-W029` and `SOPULI-W030` are new diagnostic codes, a minor bump by §8's
-list. The schema file is byte-identical apart from its `$id`, as at 1.16. The
-two conditions were reported before, as `password_redrawn` and
-`password_not_redrawn`, outside the registry, and those two strings are no
-longer emitted. A consumer matching them must match the new codes instead.
-`SOPULI-W028` (#568) was added at 1.30 without a bump, so 1.31 is also the first
-version a consumer can rely on to carry it.
-
-**1.29 became 1.30 with `sopuli account expire-password`** (#525). Two additive
-changes, each a minor bump by the ordinary rule:
-
-- `password_expire` joins the `action_kind` enum. It is the bare
-  `ALTER USER … PASSWORD EXPIRE`, which sets no password, so it could not report
-  as `password_set`: the seen reset's `IDENTIFIED BY … PASSWORD EXPIRE` does set
-  one, and reports as that;
-- `account.expire-password` joins the `command` enum.
-
-**A row carries two actions**, `rollover_finish` then `password_expire`, in the
-order the driver considered them, and each is reported whether or not it was
-issued. That is `reset-password`'s shape rather than `suspend`'s single action.
-The two are separate facts, and on an account found at `EXPIRED & IN ROLLOVER` only
-the first happens: the window is closed, the expiry is not reissued, and the row
-reports `changed: true`. A row that never reached the driver (refused, missing,
-unreachable, or previewed) carries the single `password_expire` action with
-`applied: false`, as `suspend`'s rows do.
-
-**1.28 became 1.29 when a hand-over could be described without being performed**
-(#444). One additive change: **`results[].handover`**, an object carrying
-`accessor` and `expires_at`, emitted on an unseen delivery and absent on the seen
-path.
-
-**It exists because `delivered` could not grow.** That property is a string and
-its own description says "never a value and **never a destination**", so the
-accessor could not go in it without a rename — major, under §8, to answer a
-question no consumer had asked. A sibling object also generalises where a widened
-string would not: `vault_path` would report a path here and `one_time_link` a
-link id (open: #445, #447), and each is the same *kind* of fact about a hand-over.
-
-**What it holds is the half that cannot fetch.** Vault returns two things beside a
-wrapped password: the token, which produces the password in anybody's hands, and
-the accessor, which names the wrap in the audit log and produces nothing. The first
-has no property here and will not get one — a document is captured, shipped to log
-aggregation and kept, and a token in one outlives the TTL that is the method's
-whole guarantee. That is the argument the password's absence already rests on,
-applied to a different object, and UC-2 §6.1 is why it applies at all: the rule is
-about reach rather than value.
-
-**Present whenever a delivery put the password somewhere, and absent otherwise.**
-That is a fact about the *path*, not about how much the store was willing to say:
-a wrap that returned neither an accessor nor a usable TTL is still a hand-over, and
-the section is there with two nulls. Keying its presence on "is either field set"
-was a real bug in the first draft — it reported such a delivery as the seen path,
-which is the one thing the section exists to tell apart. On `manual` it is absent,
-because the destination is a person reading a screen: no accessor to name, and no
-store clock to expire.
-
-**`expires_at` comes from the store's clock, not this host's** — Vault's
-`creation_time` plus the TTL it actually applied, which a mount's `max_ttl` may
-have shortened below what the file asked for. Reported and never enforced: nothing
-here polices a TTL the store is already policing, and a second clock would only
-disagree with the first.
-
-**The event schema went 1.1 to 1.2 in the same change**, adding
-**`password.delivered`** — the event UC-2 §6.3 says every delivery emits. It has no
-emitter, for 1.1's reason exactly: `--output jsonl` was unimplemented then (#9), so this
-extends an artefact already ahead of its stream, and the word is registered with
-the change that knows why the event exists. Neither it nor `password.displayed`
-carries the password, and neither carries the retrieval credential — a consumer
-that wants to tie a stream to a vault's audit log reads `handover.accessor` from
-the run document. (It got its emitter in 1.7, #535, and carries that accessor
-itself now.)
-
-**The event schema went 1.2 to 1.3 when something first emitted it** (#9). Three
-payloads §5 had described since 1.0 became requirements: `run.finished.data`
-must carry `summary` and `exit_code` (and may carry `error`), `target.started`
-must name its `target`, and `plan.resolved` must carry `data`. A `diagnostic`
-event must carry `level` and `message`. Tightening a schema nothing emitted
-breaks no consumer — there were none — and it is what turns §1's "the last event
-carries the same summary" from prose into something CI checks on every line.
-**Added rather than renamed**, which is the event schema's own practice since
-1.1 and 1.17's reasoning: 1.3 is the first version a build emits, so it is the
-one a consumer will fetch.
-
-**The event schema went 1.3 to 1.4 when `creds apply` began to stream** (#535),
-which is the "comes with the first verb that emits them" #535 named. Every
-constraint is on an event nothing emitted before, so no 1.3 stream fails it:
-`lock.acquired` and `lock.released` must carry a `lock.held[]` entry's six
-fields, `lock.denied` its `vault`, `path` and `reason`; `vault.read` and
-`vault.write` a `vault`, `path` and `version`; `vault.promote` a `promoted_to`;
-`verification.done` its `account`, `target` and `data`. **`password.applied`
-and `password.generated` have closed payloads** — `version` and `outcome` for
-the first, `vault`, `path` and `stage` for the second, and
-`additionalProperties: false` on both. That is the one tightening of an event
-1.3 already constrained, and it is invariant 2 held by the schema rather than by
-the emitter's discipline: a field added later that could carry a password fails
-CI on every line rather than being noticed in review. Added rather than renamed,
-for 1.3's reason.
-
-**The event schema went 1.6 to 1.7 with `account reset-password`** (#535), the
-first emitter of `password.delivered`. Its payload is closed: `method`, and an
-optional `handover` of exactly the run schema's shape (`accessor`,
-`expires_at`) — `additionalProperties: false` at both levels, for the reason
-1.4 closed `password.applied`'s: the event sits next to a credential, and a
-field added later that could carry it must fail CI rather than a review.
-`password.displayed` keeps no emitter, by construction: the seen path streams
-only as a `--dry-run`, which displays nothing.
-
-**The event schema went 1.4 to 1.5 with `creds rotate`** (#535), the first verb
-to emit `confirmation.required`: its `data` must carry the `prompt`. `vault.write`
-may carry an `error` object, for a staging write the vault refused. Both are on
-events nothing emitted under 1.4 in those shapes, so no 1.4 stream fails 1.5.
-
-**The event schema went 1.5 to 1.6 with `creds generate`** (#535), and it is the
-first bump since 1.1 to add an event *name*: `constraints.resolved`, which must
-carry `data` — the run schema's `$defs/constraints`. Adding a value to the event
-enum is minor under §8, and it is the one kind of minor change an exhaustive
-consumer notices; that is the cost of giving the section a home, weighed against
-putting it inside `run.finished` (late, and a catch-all) or one event per target
-(which strands the estate-wide fields).
-
-
-**1.27 became 1.28 when the survey found a third kind of record** (#514). One
-additive change: **`lock.found[].declared_by`**, which says *how* this
-configuration accounts for a path — `binding`, `reset_records`, or `null` for a
-leftover.
-
-**It exists because a boolean ran out of answers.** Until UC-2 there were two
-kinds of record: one a binding names, and one nothing names. A reset lock is
-neither. It is keyed on the reset record's own path, so the file declares the
-*prefix* and cannot name the keys beneath it — an account admitted by a
-`profile:` or `role:` predicate has no name until a database is asked, and `lock
-status` asks none. Reporting it `declared: false` would tell an operator a
-colleague's reset belongs to another estate; reporting it `true` with nothing
-else would claim the file enumerates it.
-
-**`declared` stayed and widened rather than being replaced.** It now means "this
-configuration accounts for the path at all", which is what a consumer filtering
-its own locks out of a survey was already asking it. Widening a boolean's
-extension is a minor bump; turning it into a tri-state string is a rename, which
-is major — and it would have cost every consumer a change to answer a question
-none of them asked.
-
-**`declared_by` is not an enum, deliberately**, which is the opposite call from
-`state`'s neighbours in §3. A later release may claim another region by prefix —
-UC-4 hands accounts over through the same delivery abstraction (UC-2 §6.7) — and
-a consumer that switched exhaustively on two values would break on the third
-rather than fall through to "not mine, or not mine yet".
-
-
-**The event schema went 1.0 to 1.1 in the same change** (#441), and it adds an
-event nothing emits: **`password.displayed`**, the seen reset's exposure.
-
-That is deliberate rather than an oversight, and it is the one place this
-document's usual rule bends. A contract value with no emitter is normally the
-defect `SOPULI-W022` was written to fix -- but the whole event schema has had no
-emitter since it was published, because `--output jsonl` was unimplemented (#9),
-so this is extending an artefact that is already ahead of its stream rather than
-creating a new inconsistency. The word is registered with **the change that
-causes the exposure** rather than with the one that will carry it, because the
-change that knows why the event exists is the one that should name it.
-
-**What records the exposure today is the run document**, which every run has:
-`results[].delivered` says the method was `manual`, and `manual` is by definition
-the path that shows somebody a password. `password.displayed` is what a *stream*
-consumer would read — and it never will: `account reset-password` streams since
-#535, but the seen path only as a `--dry-run`, which shows nothing; the real one
-is refused under every machine format. The run document remains what records the exposure.
-
-**1.26 became 1.27 with `sopuli account reset-password`** (#441), UC-2's reset.
-Two additive changes:
-
-- `account.reset-password` joins the `command` enum;
-- **`RESET` joins the `state` enum** — what a reset row reports, the way
-  `account suspend` reports `LOCKED`: the thing that happened to the account. It
-  is not one of the existing words and reusing one would have been worse than a
-  bump — `IN_SYNC` claims a comparison this verb never makes, and the account's
-  own status differs by path (`EXPIRED` on the seen path, `OPEN` on the unseen
-  one), so neither is a fact about the *reset*;
-- **`results[].delivered`** — how the password was handed over: the delivery
-  *method*, never a value and never a destination. `manual` records the method
-  and no location, because the seen path's destination is a person by a route the
-  tool did not carry, and UC-2 §3.1's record draws the same distinction. Absent on
-  a row that delivered nothing, which is every row a run refused.
-
-**No new `action_kind`**, which is worth saying because the verb issues three
-statements and reports each: `account_unlock`, `password_set` and
-`rollover_finish` have all been in that enum since it was written.
-
-**`state` did need one**, and the first draft of this section claimed otherwise —
-caught by Copilot's review of #505, which found that `account reset-password
---dry-run --output json` emitted `state: "RESET"` against an enum that stopped at
-`DECLARED`, so the tool produced a document its own contract rejected. That
-combination is reachable because a preview is exempt from the seen path's output
-guard: it prints a plan and never a password.
-
-**There is no property a password could occupy, and that is a guard rather than
-an omission** (#439's second). Refusing `--output json` stops the seen path from
-running while a document is produced; this makes the document unable to carry the
-value whatever runs. The two are one guard asserted twice, and the second is the
-one that survives somebody adding an output mode.
-
-**1.25 became 1.26 with `safety.delivery.allowed_methods`** (#498), H6's ratchet.
-One additive change: **`config.targets[].safety.delivery`**, an object holding
-`allowed_methods` — the delivery methods left after this target's own block and any
-target set template or `overrides:` entry have been intersected.
-
-**It is a sub-block, and that is the whole content of the bump.** Every safety
-setting was one key deep until this one, so the resolved view built each property
-by stripping `safety.` off the setting's name — which is nesting, as long as
-nothing nests. With a sub-block it stopped being: the view emitted a property
-literally called `delivery.allowed_methods`, and `safety`'s
-`additionalProperties: false` refused it, so `config show --resolved --output json`
-produced a document this contract rejected the moment a target wrote the key. Found
-by Copilot's review of #500 rather than by a test, because nothing had ever put a
-nested setting on a target. The view now nests along every separator in a setting's
-name, so the next sub-block needs no change to either.
-
-`allowed_methods` is never the empty array: two layers with no method in common
-refuse at plan time (`01-configuration.md` §9) rather than resolving to nothing, so
-a consumer reading an empty list would be reading a state the tool does not produce.
-
-**1.24 became 1.25 with `sopuli account list`** (#490), UC-2's listing verb.
-Four additive changes, each a minor bump by the ordinary rule:
-
-- `account.list` joins the `command` enum;
-- **`DECLARED` joins the `state` enum.** It is that verb's ordinary row: the
-  declaration matched this account and the database has it. It is deliberately
-  not `IN_SYNC` — nothing was compared, because this verb never reads a password
-  — and an account the declaration names and the database does not have is
-  `ACCOUNT_MISSING`, which already meant exactly that and did not need a synonym.
-- **`results[].declared_by`** — which `personal_accounts:` rule admitted the
-  account: `accounts '...'` for an enumerated entry, or `profile '...'` /
-  `role '...'` for a predicate. **This is the field the verb exists for.** Under a
-  predicate the answer is not in the configuration at all, because membership is a
-  profile assignment or a role grant (H1, #449), so a record saying an account is
-  declared without saying by what cannot be checked afterwards. `null` where the
-  declaration named an account the database does not have, since there was nothing
-  to resolve the rule against.
-- **`results[].reset_at`** — when the reset journal says this account was last
-  reset, from the `reset_records:` store (#468). Absent where no journal is
-  configured, and `SOPULI-W023` says so.
-
-**`reset_at` and `password_age_days` are two clocks and must not be folded**, which
-is UC-2 §3.2 and the one thing to know before consuming either. The first is what
-this tool recorded; the second is the database's own. On the unseen path a database
-date *later* than `reset_at` is a finding: somebody changed the password after the
-tool delivered it, so the copy the person was told to fetch no longer works. A
-consumer that averaged them, or took whichever was present, would turn that finding
-into a number.
-
-**1.23 became 1.24 with `sopuli account suspend`** (#463), UC-2's offboarding verb.
-Three additive changes, each a minor bump by the ordinary rule:
-
-- `account_lock` joins the `action_kind` enum, beside the `account_unlock` that
-  was already there — the two are one pair, and this is the write half;
-- `account.suspend` joins the `command` enum;
-- **`results[].account_status`**, which is Oracle's own `ACCOUNT_STATUS` as it was
-  read *before* anything was issued. It is emitted for a row the verb refused as
-  well as one it changed, because "I left it alone and here is the state it is in"
-  is the whole answer for those. Compound values are ordinary and a consumer must
-  expect them: `EXPIRED & LOCKED` is real, and `LOCKED(TIMED)` is a failed-login
-  lock rather than a deliberate one — a substring test for `LOCKED` cannot tell
-  those apart, which is the mistake the driver's own parse exists to avoid.
-
-**Why `state: LOCKED` is not enough on its own**, and this is the thing to know
-before consuming it: a row can read `LOCKED` with `changed: false` because the
-account was *already* locked, and under `--dry-run` because it *would be*. The
-document's `dry_run` distinguishes them, and `account_status` is what says which
-state the database was actually in.
-
-**1.22 became 1.23 when `config show` learned to report the stores** (#428):
-`config.vaults[]`, additive, and a minor bump by the ordinary rule.
-
-It is the one entry in this list that fixes an *absence* rather than adding a
-fact. `config.declared` carried the address the file wrote and `config.resolved`
-carried no store at all, so "which vault will this run talk to" had no answer in
-either shape — and the text view had been answering it, from effective values,
-since the store layers were built. Two views of one command disagreeing about the
-same store is the defect; adding the provenance without the value would have been
-a smaller version of it.
-
-The same release lifted `invocation.options`' entry shape into
-`$defs/resolved_setting` and pointed both consumers at it. **That is not a
-contract change**: the definition is byte-for-byte what `options` inlined, so
-every document that validated before validates now. It is here because the layer
-enum lives in it, and two copies of an enum are two things that can disagree —
-which `tests/settings/test_registry.py` reads the schema specifically to prevent.
-
-**1.21 became 1.22 when the expanded estate gained a `safety:` block** (#426):
-`config.targets[].safety`, additive, and a minor bump by the ordinary rule rather
-than by any exception.
-
-What it reports is **the block in force for that target**, after a target set's
-template and its `overrides:` entry have been ratcheted together — not the
-flattened value the config model carries. The two differ exactly where an override
-asks for less than its template, and there the flattened one is the target layer's
-literal statement rather than what any run reads (#425). A contract that carried
-`readonly: false` for a target the tool then refuses to mutate would be the
-precise failure this property was added to remove.
-
-What it does **not** fold in is `defaults`, a profile, or a group. None of those is
-a property of a target, and folding them would make one object's answer depend on
-four while hiding which — `config.declared` already carries every block as
-written, and `config show`'s own `safety` section lists each by the key that
-writes it.
-
-**1.20 became 1.21 when a verb that will never exist left the `command` enum**
-(#392): `creds.promote` removed. The list above calls removing an enum value a
-**major** change, and this one is minor, so the exception gets stated rather than
-waved at:
-
-> **A value no released build has ever emitted was never part of what a document
-> could say**, so removing it cannot break a reader of one. The test is the
-> *emitter*, not the schema.
-
-It is a claim about evidence, and the evidence is checkable rather than argued:
-`creds.promote` has been in this enum since the schema was written, and
-`git log -S"creds.promote" -- src tests` returns no commit in the repository's
-history. Nothing has ever produced the value, so no document carries it and no
-`case` over `command` has ever taken that branch except by writing it blind.
-
-**The exception is narrow in three directions**, and a later removal that cites
-it has to meet all three. It does not cover a value some released build *did*
-emit and this one no longer does — that changes what a document can say, and
-stays major with the overlap release. It does not cover properties: `plan` and
-`results` sat published and unfilled from 1.0, and a consumer that wrote a reader
-against either would have been right to — an unfilled property is a shape
-promised, where an enum value is a name. And it does not cover a value merely
-unimplemented *yet*: `admin.install` stays in the enum on exactly that ground,
-because whether the verb exists is open (open: #655), and §8 has tolerated a name
-published ahead of its code since `plan`, `results` and `lock`. What made `creds.promote` different is that
-the verb was **declined**, not deferred — `uc-01-app-credential-sync.md` §4 says
-"there is no `creds promote`, and there is not going to be" (#276, #284). A slot
-for something that might arrive is honest; a branch nothing can ever reach is
-not, and it is worse here than elsewhere because this enum is what this section
-points at as the definition of what the tool can produce.
-
-**The bump is still paid**, for a change that makes no document different,
-because `schema_version` answers *which build is capable of what* — the argument
-1.15 → 1.16 made for a file that was byte-identical apart from its `$id`. The
-1.20 file stays published: a build emitting `schema_version: "1.20"` has to be
-able to fetch the schema it validates against, which is 1.16 → 1.17's rule and
-the reason that one was added rather than renamed.
-
-**1.19 became 1.20 when a password could be written straight to `current`**
-(#257): `state` gains `VAULT_ONLY`, which §3's own first line makes a **minor**
-bump — an added enum value, with nothing existing changing meaning. The cost is a
-consumer switching exhaustively over `state`, and it is paid deliberately: the
-alternatives were a value that asserts something untrue and a successful mutation
-with no `results[]` at all.
-
-Nothing else in the document moves. `vault_promote` has been in the `action_kind`
-enum since the schema was written, and `results[].secret.stage` has always been
-able to say `current`, so the verb that arrived with this bump needed one new
-word and no new shape.
-
-**1.18 became 1.19 when `creds generate` reported what it read** (#317): a
-`constraints` section, described above, carrying the limit that bound the draw
-and — per account — the three things UC-1 §4 step 2 names that no draw can be
-bound by. A new optional property, which §8's own list calls a minor bump.
-
-**A section rather than more warnings**, which is #216's rule applied one verb
-along: a diagnostic is for what the exit code cannot tell you, and everything
-else belongs in the section that names it. A run answering *what may a password
-be here* with eleven warnings has nowhere to put the eleven answers. The two
-codes that come with it, `SOPULI-W016` and `SOPULI-W017`, are a registry addition
-of the kind 1.15 → 1.16 was.
-
-**1.17 became 1.18 when a run could draw a second password** (#312):
-`results[].redraws` says how many *extra* passwords an account was given because
-the server refused the value itself — `ORA-28003` or `ORA-28007`, UC-1 §6.4. A
-new optional property, which §8's own list calls a minor bump.
-
-**Emitted only when it happened**, like `overridden` below and for the same
-reason: the field records redraws rather than the budget for them, and a `0` on
-every row of every ordinary run would bury the rows that carry one. A consumer
-counting rotations should read it as "this row was applied more than once and
-reports the last attempt", not as a failure — a redrawn account that ends
-`IN_SYNC` succeeded.
-
-The two diagnostic codes that come with it, `SOPULI-W029` and `SOPULI-W030`
-(§3), were first emitted as `password_redrawn` and `password_not_redrawn`,
-outside the registry and with no schema bump. #610 renamed them and made the
-bump that should have come with them: 1.31, above.
-
-**1.16 became 1.17 when `--force` gained something to record** (#286):
-`results[].overridden` carries the §4 account guardrails a run waived — the
-check that refused and what it observed. A new optional property, which §8's own
-list calls a minor bump.
-
-**Added rather than renamed, unlike the bump below**, and the difference is the
-point: 1.16's file was byte-identical to 1.15's, so renaming lost nothing. This
-one changes the document's shape, so 1.16 and 1.17 are genuinely different
-schemas and a consumer pinned to either has to be able to fetch the one it
-validates against. A renamed-away 1.16 would leave a build emitting
-`schema_version: "1.16"` with no schema of that name.
-
-`declared` — §4 check 1 — is deliberately absent from the `check` enum. It is the
-one refusal `--force` cannot waive, so a document could never legitimately carry
-it here, and an enum admitting it would advertise an override the tool refuses to
-perform.
-
-**1.15 became 1.16 when a run could be fenced out** (#282): `SOPULI-W011`
-joined the diagnostic registry, which §8's own list calls a minor bump — a new
-diagnostic code, and nothing existing changing meaning. The schema *file* is
-byte-identical apart from its `$id`, because `diagnostic.code` was never an
-enum: a consumer branching on codes has to cope with one it does not know
-whatever the schema says. What the bump buys is the only thing it could — a
-consumer can tell which builds are capable of emitting `SOPULI-W011`, which is
-the question `schema_version` exists to answer. Renamed rather than duplicated,
-for the reason every entry above gives.
 
 ---
 
@@ -2735,8 +2413,8 @@ for the reason every entry above gives.
 |---|---|---|
 | J1 | ~~Should `--output json` stream nothing until completion, even for long runs?~~ | **decided** (#615): yes; `jsonl` covers the streaming case. Reasons: [J1](../decisions/log.md#j1) |
 | J2 | ~~Include `plan` in every run, or only with `--dry-run`/`--verbose`?~~ | **decided: every command that plans** (#615). A command with no units, such as `doctor`, emits none (§2). Reasons: [J2](../decisions/log.md#j2) |
-| J3 | Stable machine-readable codes for warnings (`SOPULI-W014`) | yes, and they get a documented registry — otherwise consumers grep messages. **Opened, not answered**: §3 now carries a registry with the two codes the advisory lock needed (#83), a third for a configured-but-uninstalled backend (#130), and an error-code registry beside it holding `SOPULI-20001`. The config layer's other warnings still have none. What is left is the policy — which warnings get a code, and how numbers are allocated across categories; #130 allocated two by hand and did not settle it, and #317 allocated `SOPULI-W015`, `SOPULI-W016` and `SOPULI-W017` the same way, and #296 `SOPULI-W018` — following the established practice rather than answering the question, which stays open |
+| J3 | Stable machine-readable codes for warnings (`SOPULI-W014`) | **open** (#641): codes and a registry exist (§3). Which warnings get a code, and how numbers are allocated across categories, is not decided. The config layer's findings have no codes |
 | J4 | ~~Emit a top-level `hostname`/`pid` for log correlation~~ | **decided: host only** (#615), as `invocation.actor.host`; no pid. Reasons: [J4](../decisions/log.md#j4) |
 | J5 | OpenTelemetry span export alongside JSON | **deferred**: later; `correlation_id` is already the trace id in spirit |
 | J6 | ~~Should the event stream be resumable after a crash?~~ | **decided** (#615): no; run it again. Reasons: [J6](../decisions/log.md#j6) |
-| ~~J7~~ | ~~Does `--output json` emit a run document on a usage error?~~ | *resolved 2026-08-13 (issue #8): no, and exit 2 is the only code that never does; an invalid config file exits 9 (§6)*. Reasons: [J7](../decisions/log.md#j7) |
+| ~~J7~~ | ~~Does `--output json` emit a run document on a usage error?~~ | **decided: no** (#8). Exit 2 is the only code that never emits one; an invalid config file exits 9 (§6). Reasons: [J7](../decisions/log.md#j7) |
