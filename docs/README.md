@@ -241,6 +241,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
 | — | — | Is logging to a file needed? | open | | #629 |
 | — | — | What does `sopuli admin install` do, if anything? | open | | #655 |
+| — | — | Emit `plan.confirmation_required`, now that `confirm:` is resolved? | open | | #663 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.

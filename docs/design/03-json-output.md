@@ -1,48 +1,12 @@
 # sopuli-dba — JSON output contract
 
-Status: draft / sketch, **partly implemented**. The run document, `--output
-text|json`, colour resolution, the `config` section, `diagnostics`, `plan`,
-`results` and four of `invocation.selection`'s six members are real and validated
-against the schema in CI (`sopuli/output/`). **`--output jsonl` exists since #9,
-for the verbs that stream** — `creds check` first, then `creds apply`, `creds rotate`, `creds generate` and
-`account reset-password` (#535) — and
-any other verb refuses it as a usage error; §5 says what is emitted and why the refusal is
-the rule. This paragraph called `plan` and `results` unwritten until #392;
-they have been emitted by every `creds` verb for many releases.
+This document specifies what the tool writes for programs to read: the run
+document (`--output json`), the event stream (`--output jsonl`), and the rules
+for text output that keep it consistent with both.
+`sopuli/output/` produces them, and CI validates the output against the
+published schemas.
 
-**`lock` is emitted by the two `lock` verbs and by the three mutating `creds`
-verbs** (#105, #149). `sopuli/output/lock_view.py` produces the whole section,
-and `tests/test_lock_view.py` validates every shape it can produce against the
-published schema. `lock status` fills in `found[]` — records it read at paths it
-does not hold, whether or not the config declares them (#150). `lock break`
-fills in `broken[]`, and `denied` when it is refused a live lock. `held[]` is
-filled by whatever *takes* a lock for itself, which is `creds generate`,
-`creds apply` and `creds rotate`; `_record_locks` in `sopuli/cli.py` is the one
-place all three go through, and it is called after release so that `released`
-reports the store record rather than the moment (#348). This paragraph said
-`held[]` was still waiting on `creds generate`, "which does not exist", until
-#392 — it had shipped, with a lock, three releases earlier.
-The `lock.*` events are emitted by `creds apply` since #535, the first verb that
-both takes a lock and streams, and by `creds rotate` and `creds generate` after
-it. `lock break` does not stream, on purpose — §5 says why.
-
-**`invocation.selection` is now filled in** (#297). The object has carried
-slots for `applications`, `accounts`, `targets`, `groups`, `all` and `limit`
-since the schema was written, and until the flags existed only `select` was ever
-populated. Four of the six are real; `all` and `limit` remain slots for flags
-that do not exist, and stay omitted rather than sent empty — an empty array would
-claim the tool considered a selector it has not got. **No schema change was
-needed**, which is the schema having been right about where this was going.
-
-`diagnostics` carries what §10 of `01-configuration.md` calls warnings: findings
-the loader decided not to refuse to run over. They are run-level because a config
-warning belongs to no single target, and `level` is `warning` for all of them so
-far — the config layer has no other severity to report. Every command that loads
-a config emits them, `config show` in both its views as well as
-`config validate`: a warning that reached only the text output would be invisible
-to the scheduler, which is the reader that most needs it. A run with nothing to
-report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.30.schema.json`](../schemas/sopuli-run-1.30.schema.json),
+Schemas: [`../schemas/sopuli-run-1.31.schema.json`](../schemas/sopuli-run-1.31.schema.json),
 [`../schemas/sopuli-event-1.7.schema.json`](../schemas/sopuli-event-1.7.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -50,46 +14,49 @@ Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-
 
 ## 1. Why this is a contract and not just output
 
-Everything that consumes this tool programmatically — the scheduler that alerts on
-drift, the CI job that gates a release, the dashboard someone will inevitably
-build — reads JSON. Text output is for humans and may change freely. JSON output
-may not. Treating it as a versioned interface from day one costs almost nothing
-now and saves a compatibility mess later.
+Every program that uses this tool reads JSON: the scheduler that alerts on
+drift, the CI job that gates a release, a dashboard. Text output is for people
+and may change freely. JSON output may not. It is a versioned interface
+(invariant 12), and §8 says what may change in a minor version.
 
-Three output modes:
+These are the three output modes:
 
 | Mode | Shape | Use |
 |---|---|---|
-| `--output text` (default) | tables, colour when a TTY | humans |
+| `--output text` (default) | tables, colour when a TTY | people |
 | `--output json` | one document on stdout when the run completes | scripts, `jq`, CI |
 | `--output jsonl` | one event object per line, streamed as work happens | long runs, live dashboards, log shipping |
 
-`jsonl` and `json` describe the same run. The last `run.finished` event carries
-the same `summary` and `exit_code` as the `json` document, so a consumer can use
-either without a second code path. **`jsonl` is offered only by a verb that
-streams** — `creds check`, `creds apply`, `creds rotate`, `creds generate` and
-`account reset-password` today — and refused
-by the rest; §5
-says why.
+`jsonl` and `json` describe the same run. The last event, `run.finished`,
+carries the same `summary` and `exit_code` as the `json` document, so a consumer
+can use either without a second code path. **Only a verb that streams offers
+`jsonl`**. These verbs stream:
+
+- `creds check`
+- `creds apply`
+- `creds rotate`
+- `creds generate`
+- `account reset-password`
+
+Every other verb refuses `jsonl` as a usage error. §5 says what is emitted and
+why the others refuse.
 
 ### Encoding, on every mode
 
-**All three standard streams are UTF-8**, forced at startup regardless of the
-platform's locale and regardless of `PYTHONIOENCODING`. See P4 in
-`00-principles.md` for why — the short version is that redirected stdout on
-Windows is cp1252, and that turns a status glyph into a crashed command rather
-than a cosmetic problem.
+**All three standard streams are UTF-8.** The tool sets this at startup,
+whatever the platform's locale and whatever `PYTHONIOENCODING` says.
+`00-principles.md` P4 has the reason: redirected stdout on Windows is cp1252,
+and there a status glyph crashes the command.
 
-JSON output was never exposed to this: `json.dumps` escapes non-ASCII by
-default, so the document is ASCII on the wire whatever the stream does. The rule
-exists for `--output text`, and for the error and diagnostic messages that carry
-a server's own wording back to the user.
+JSON output does not depend on this. `json.dumps` escapes non-ASCII by default,
+so the document is ASCII on the wire. The rule is for `--output text`, and for
+error and diagnostic messages that carry a server's own wording.
 
 ### Colour
 
-Colour is a property of a run, resolved once, and asked for rather than decided
-at each call site — `Emitter.use_color()` is the single answer. Precedence, in
-order:
+Colour is a property of a run. It is resolved once, and every call site asks
+`Emitter.use_color()` for the answer. These rules apply in order, and the first
+that matches decides:
 
 | # | Rule | Result |
 |---|---|---|
@@ -102,46 +69,42 @@ order:
 | 7 | Windows console where VT mode cannot be enabled | off (P4's plain fallback) |
 | 8 | otherwise | on |
 
-Three of those are decisions rather than transcription.
+These parts of the table are decisions:
 
-**An explicit flag beats the environment** (rules 2 and 3 above 4). This follows
-P3, where the command line outranks the environment, and it is the reason
-`--color always` exists at all: a CI job whose log viewer renders ANSI has no
-TTY, so autodetection strips exactly the output that was wanted. It does not
-contradict invariant 10 — that ratchet governs *safety* settings, and nothing
-becomes more dangerous because it is red.
+- **An explicit flag beats the environment** (rules 2 and 3 come before 4). In
+  P3 the command line outranks the environment. It is also why `--color always`
+  exists: a CI job whose log viewer shows ANSI colour has no TTY, so
+  autodetection would remove the colour that was wanted. This does not break
+  invariant 10. That ratchet is for safety settings, and red text is not less
+  safe.
+- **`--output json` always wins** (rule 1 comes before 3). The document is a
+  versioned contract (invariant 12), and a consumer must never have to remove
+  escape sequences before parsing it.
+- **"Set and not empty"** follows no-color.org, so `NO_COLOR=0` also turns
+  colour off. The variable being present is the signal. Reading `0` as "colour,
+  please" would break every program that follows the convention.
 
-**`--output json` is not negotiable** (rule 1 above 3). The document is a
-versioned contract (invariant 12); a consumer must never have to strip escape
-sequences before parsing.
-
-**Set-and-not-empty**, per no-color.org, so `NO_COLOR=0` still disables colour.
-That reads wrong and is correct: presence is the signal, and treating `0` as
-"yes please" would break every consumer that follows the convention.
-
-When colour is off, escape sequences are **stripped at the serialiser** rather
-than avoided upstream — the same shape as redaction, and for the same reason. A
+When colour is off, the serialiser removes escape sequences. Call sites do not
+avoid them. This is the same shape as redaction, for the same reason: a
 guarantee held in one place cannot be lost by a call site that forgot, and a
-vendor message may arrive already decorated.
+vendor message can arrive with escapes already in it.
 
 ### Progress, and the one thing on stderr that is not a message
 
-A verb reading a document out of a vault animates a spinner on **stderr** while
-it waits (#419, assessed in #416). It is the only progress indicator in the tool,
-and it is opt-in at exactly one call site: `sopuli/cli.py`'s `_read_documents`,
-which `creds apply`, `creds rotate`, `creds finish-rollover` and `creds status`
-all read through.
+While a verb reads a document from a vault, a spinner turns on **stderr**. It is
+the tool's only progress indicator. One call site turns it on:
+`_read_documents` in `sopuli/cli.py`, which `creds apply`, `creds rotate`,
+`creds finish-rollover` and `creds status` all read through.
 
-**That is not every read of the vault, and the difference is deliberate.**
-`creds check` reads through `_stored_credential`, and `creds generate` calls
-`store.read` directly where it needs a document's current version for a
-compare-and-set; neither animates. #419 scoped this to one call site rather than
-a sweep, so that which operations are considered slow stays a decision somebody
-made in a diff. Extending it is another one.
+**Other reads of the vault do not animate.** `creds check` reads through
+`_stored_credential`, and `creds generate` calls `store.read` directly where it
+needs a document's current version for a compare-and-set. Turning the spinner
+on at one call site, not everywhere, keeps "which operations count as slow" a
+decision that someone makes in a diff. Adding another call site is another such
+decision.
 
-Gated the same way colour is, and in the same place, for the same reason:
-`Emitter.spinner()` is the single answer, so no call site works it out for
-itself.
+`Emitter.spinner()` decides whether the spinner runs, as `Emitter.use_color()`
+does for colour, so no call site works it out for itself:
 
 | # | Rule | Result |
 |---|---|---|
@@ -149,48 +112,42 @@ itself.
 | 2 | stderr is not a TTY | never |
 | 3 | otherwise | animate |
 
-Three things about that table are decisions.
+These parts of the table are decisions:
 
-**There is no rule 3 for a flag**, and there will not be one. `--color always`
-exists because a CI log viewer with no TTY can still render ANSI; nothing renders
-a carriage-return animation usefully into a log file, so a `--spinner` flag would
-exist only to let somebody write about 12,000 characters of `|/-\` into 30
-seconds of nightly log. Measured in #416. The absence is the design: no flag, no
-`SOPULI_SPINNER`, no precedence rule, and nothing for the settings registry.
-
-**`--output json` is refused even though the spinner never touches stdout.**
-Rule 1 is not redundant with rule 2. stdout is the contract (invariant 12), and a
-consumer capturing `2>&1` -- which is ordinary in a scheduler -- would otherwise
-find frames ahead of the document. The animation is turned off at the source
-rather than defended by which stream it went to.
-
-**Colour is not consulted, and `NO_COLOR` does not apply.** The frames are four
-ASCII characters and a carriage return, with no escape sequence anywhere, so
-there is nothing for the stripping rule above to strip and nothing `NO_COLOR`
-promises that the spinner could break. Verified on a terminal: a `NO_COLOR=1` run
-emits byte-for-byte what an ordinary one does.
-
-**It must never be live across anything else that writes to stderr.** The plan
-preview and `click.confirm` are both on stderr deliberately (§*Exit codes*
-below, and `00-principles.md` P3), and a frame written over a prompt leaves the
-operator reading a spinner while the process blocks on an answer to a question
-no longer on screen -- measured in #416. That is why a spinner wraps one call
-rather than decorating a verb, and why the call it wraps is one the store layer
-services without printing anything.
+- **No flag turns the spinner on.** `--color always` exists because a CI log
+  viewer with no TTY can still show colour. Nothing shows a carriage-return
+  animation usefully in a log file: a `--spinner` flag would only let somebody
+  write about 12,000 characters of `|/-\` into 30 seconds of nightly log. So
+  there is no flag, no `SOPULI_SPINNER`, no precedence rule, and nothing in the
+  settings registry.
+- **`--output json` turns it off, although the spinner never writes to
+  stdout.** Rule 1 is not the same as rule 2. stdout is the contract (invariant
+  12), and a scheduler often captures `2>&1`, which would put spinner frames
+  ahead of the document. So the animation is turned off at the source.
+- **Colour settings do not apply to it, and neither does `NO_COLOR`.** The frames
+  are four ASCII characters and a carriage return, with no escape sequence. A
+  `NO_COLOR=1` run writes the same bytes as an ordinary one.
+- **It must never run while anything else writes to stderr.** The plan preview
+  and `click.confirm` both write to stderr on purpose (§6, and
+  `00-principles.md` P3). A spinner frame written over a prompt leaves the
+  operator looking at a spinner while the process waits for an answer to a
+  question that is no longer on screen. So a spinner wraps one call, not a whole
+  verb, and that call is one the store layer serves without printing anything.
 
 ### What colour is allowed to mean
 
-Two rules, both binding on the renderer that ADR-003 selects:
+These rules bind the text renderer that
+[ADR-003](../decisions/adr-003-text-tables.md) chose.
 
-**The palette maps onto the JSON vocabulary** — `state`, `by_state`, `drift`,
-`unverifiable`, `failed`, and the `state` enum in the run schema. The human and
-machine views must not be able to describe the same run differently. Inventing a
-separate set of visual categories produces two vocabularies that will drift.
+**The colours map onto the JSON vocabulary**: `state`, `by_state`, `drift`,
+`unverifiable`, `failed`, and the `state` enum in the run schema. The text view
+and the JSON view must not be able to describe one run differently. A separate
+set of visual categories would be a second vocabulary, and the two would drift
+apart.
 
-That rule was written against *results*, because results were the only text
-output anticipated. `config show` arrived first and has no states at all, so the
-rule applies to it in the same form against the fields its `config` section
-emits. Implemented in `sopuli/output/palette.py`:
+`sopuli/output/palette.py` holds the roles. The rule applies to every view,
+including `config show`, which has no states: there it applies to the fields
+its `config` section emits.
 
 <!-- checked-list: state-roles -->
 | Role | What it marks | The field behind it |
@@ -204,8 +161,8 @@ emits. Implemented in `sopuli/output/palette.py`:
 | `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED` |
 | `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED`, `DECLARED` |
 
-The same four roles carry a second vocabulary — a store's health — rather than
-growing a palette of their own:
+The same roles also colour a second vocabulary, the health of a store or an
+install. There is no separate palette for it:
 
 | Value | Role | Why |
 |---|---|---|
@@ -217,80 +174,75 @@ growing a palette of their own:
 | `= not_implemented`, something configured | `bad` | the run's actual failure, exit 9, and no install fixes it |
 | `targets[].reachable` = `false` | `bad` | |
 
-**Two rules a reader will otherwise take as inconsistency.** `IN_SYNC` is
-coloured and `reachable: true` is not, because a result state is one of many
-with no norm — cyan says *this row is done* — while reachability has two values
-and an overwhelming one, so painting the common one would make the single `no`
-ordinary again. That is `config show`'s argument for painting `prod` and no other
-environment, and it is the same rule seen from the other end. And
-`not_implemented` is the one status whose role depends on another column, which
-it earns: unconfigured it is noise on every run, configured it is why the run
-exited 9.
+Each of these is a field the JSON already carries, so the two views still
+cannot disagree.
 
-Two views were reviewed and left plain on purpose: `wallet_view` and
-`constraints_view` render prose and key-value blocks rather than tables, so there
-is no column to scan and a colour would decorate a sentence. Both already carry
-diagnostic codes for a consumer that wants to branch. Their module docstrings say
-so, rather than leaving the absence to look like an oversight.
+**Two rules that can look inconsistent:**
 
-Nothing there is a new category: each is a field the JSON already carries, so
-the two views still cannot disagree.
+- `IN_SYNC` is coloured and `reachable: true` is not. A result state is one of
+  many, with no normal value, so cyan says "this row is done". Reachability has
+  two values and one of them is almost always true. Colouring the common value
+  would make the rare `no` look ordinary again. `config show` colours `prod`
+  and no other environment for the same reason.
+- `not_implemented` is the only status whose role depends on another column.
+  Unconfigured, it is true on every run and means nothing. Configured, it is why
+  the run exited 9.
 
-**The result palette arrived in #395**, which is what the deferral this paragraph
-used to carry was waiting for. Four roles, and one function —
-`sopuli/output/palette.py`'s `role_for_state` — decides which a state gets. Before
-it, four views each kept their own subset of the enum and painted it `notable`:
-`check` coloured `DRIFT` and `apply` did not, `apply` coloured `ERROR` and `check`
-did not. One state, one run, different emphasis depending on the verb, which is
-the thing the role indirection exists to prevent.
+`wallet_view` and `constraints_view` stay plain on purpose. They show prose and
+key-value blocks, not tables, so there is no column to scan, and colour would
+only decorate a sentence. Both carry diagnostic codes for a program that needs
+to branch. Their module docstrings say so.
 
-Three properties of that palette are decisions rather than taste.
+**`role_for_state` in `sopuli/output/palette.py` is the one function that gives
+a state its role.** Every view calls it. When each view kept its own subset of
+the enum, `check` coloured `DRIFT` and `apply` did not, and `apply` coloured
+`ERROR` and `check` did not. One state got different emphasis depending on the
+verb, which is what the roles exist to prevent.
 
-**Converged is cyan, not green.** Green `IN_SYNC` against yellow `DRIFT` is the
-one pairing a deuteranopic reader cannot separate, on the exact distinction this
-tool exists to report — so the conventional traffic light is the wrong palette
-here specifically. Red is kept for `bad`, where it is close to universal, and the
-three that must never collapse into one are asserted distinct in
-`tests/test_palette.py`.
+These properties of the palette are decisions, not taste:
 
-**Inconclusive is dim rather than coloured.** A row nothing could be concluded
-about must not compete with a row that says something, and must not read as
-either good or bad. It is also what makes the palette affordable in `creds
-status`, whose *ordinary* row is `UNVERIFIABLE` — the whole column recedes
-instead of shouting.
+- **Converged is cyan, not green.** A deuteranopic reader cannot tell green
+  `IN_SYNC` from yellow `DRIFT`, and that is exactly the distinction this tool
+  exists to report. So the usual traffic light is the wrong palette here. Red
+  stays for `bad`, where it is close to universal. `tests/test_palette.py`
+  asserts that the three roles that must never look alike are distinct.
+- **Inconclusive is dim, not coloured.** A row that says nothing must not
+  compete with a row that says something, and must not read as good or bad.
+  This also makes the palette usable in `creds status`, whose ordinary row is
+  `UNVERIFIABLE`: the whole column recedes.
+- **The grouping is not the exit code's grouping.**
+  `sopuli.check.is_inconclusive` counts `ACCOUNT_MISSING`, `LOCKED` and
+  `EXPIRED` as inconclusive, correctly: none of them says anything about the
+  password. For a colour that is the wrong question, because a locked account is
+  news. So those three are `bad` in the palette and inconclusive in the summary.
+  A reader can see a red `ACCOUNT_MISSING` row above a `1 unverifiable`
+  counter. The two answer different questions; they do not contradict each
+  other.
 
-**The grouping is not the exit code's grouping, deliberately.**
-`sopuli.check.is_inconclusive` counts `ACCOUNT_MISSING`, `LOCKED` and `EXPIRED`
-as inconclusive, correctly: none says anything about the *password*. For a colour
-that is the wrong question — a locked account is not an absence of news — so those
-three are `bad` in the palette and inconclusive in the summary. A reader will meet
-both at once, an `ACCOUNT_MISSING` row in red above a `1 unverifiable` counter,
-and the two are answering different questions rather than contradicting each other.
+**Colour never carries meaning alone.** Drift has its own exit code (3) because
+schedulers alert on it. A person needs that distinction without colour too,
+from a word or a symbol, with colour only reinforcing it. So the `NO_COLOR` view
+loses nothing. This is the accessibility floor.
 
-**Meaning is never carried by colour alone.** Drift has its own exit code (3)
-because schedulers alert on it; a human needs that distinction without colour
-too — a symbol or a word, with colour as reinforcement. This makes the
-`NO_COLOR` path lossless rather than degraded, and it is the accessibility
-floor.
+Every role decorates a word that is already on the line, such as `prod`,
+`override`, `non-production` or `-`. So the guarantee holds by construction.
+`tests/test_cli_smoke.py` checks the strong form of it end to end: with the
+escapes removed, `--color always` output equals `--color never` output byte for
+byte.
 
-Every role above decorates a word that is already on the line — `prod`,
-`override`, `non-production`, `-` — so the guarantee holds by construction
-rather than by care. `tests/test_cli_smoke.py` asserts the strong form of it end
-to end: strip the escapes from `--color always` output and it equals `--color
-never` output byte for byte.
-
-**The tool's own prose stays ASCII by convention**, enforced across the whole
-command tree by `tests/test_cli_smoke.py`. This is not a limitation left over
-from the encoding problem — it is the rule that keeps decoration deliberate.
-Box drawing, status glyphs and any other non-ASCII presentation belong to the
-text renderer, where the choice is made once and can be switched off; they do
-not belong in a message because someone typed a nicer dash. Text that came from
-outside — an account name, an `ORA-` message, a vault path — is passed through
-unchanged, which is precisely what the UTF-8 streams make safe.
+**The tool's own text is ASCII.** `tests/test_cli_smoke.py` checks this across
+the whole command tree. It keeps decoration deliberate: box drawing, status
+glyphs and other non-ASCII presentation belong to the text renderer, where the
+choice is made once and can be switched off. They do not belong in a message
+because someone typed a nicer dash. Text from outside the tool, such as an
+account name, an `ORA-` message or a vault path, passes through unchanged. The
+UTF-8 streams make that safe.
 
 ---
 
 ## 2. The run document
+
+This sketch shows the run document's shape:
 
 <!-- checked-list: run-document -->
 ```
@@ -326,35 +278,45 @@ unchanged, which is precisely what the UTF-8 streams make safe.
 `tests/test_doc_lists.py` checks the top-level keys and the `results[]` keys of
 this sketch against the schema. The other objects are abridged.
 
-Several parts of it are worth explaining, because they encode decisions rather
-than just data.
+The sections below explain the parts that encode a decision.
+
+### `diagnostics`
+
+`diagnostics[]` holds run-level findings: things the run reports and did not
+refuse to run over. A config warning (`01-configuration.md` §10) is one, because
+it belongs to no single target. Every command that loads a config emits its
+warnings, including `config show` in both views and `config validate`. A warning
+that reached only the text output would be invisible to the scheduler, which is
+the reader that most needs it.
+
+Each entry has a `level`: `info`, `warning` or `error`. §3 lists the codes. A
+run with nothing to report omits the key; it does not emit an empty array.
 
 ### `config`, emitted by `config show`
 
-Two views of one file, discriminated by `resolved`:
+`resolved` tells the two views of one file apart:
 
 - **`resolved: false`** carries `declared`, the merged config document as
-  loaded. Deliberately untyped in the schema: it is the user's YAML after
-  `--config` layering, and reshaping it on the way out would answer a different
-  question from the one it is there to answer.
-- **`resolved: true`** carries `targets[]` — the expanded estate with labels,
-  provenance and whether anything manages each one — and `bindings[]`, one row
-  per account per target with its secret ref rendered.
+  loaded. The schema leaves it untyped on purpose. It is the user's YAML after
+  `--config` layering, and reshaping it would answer a different question.
+- **`resolved: true`** carries `targets[]` and `bindings[]`. `targets[]` is the
+  expanded estate, with labels, provenance, and whether anything manages each
+  target. `bindings[]` has one row per account per target, with its secret ref.
 
 A binding's `secret` is the ref **as written**, a string that round-trips
-(`01-configuration.md` §7), so it lines up by eye with the config file. The
-structured form is `plan.units[].secret`, which is a different job: that one
-addresses a specific version at a specific moment, and this one records what the
-file says. Neither ever carries a value.
+(`01-configuration.md` §7), so it matches the config file by eye. The structured
+form is `plan.units[].secret`, which does a different job: it addresses a
+specific version at a specific moment, and this records what the file says.
+Neither ever carries a value.
 
-#### `config.vaults[]` — which store, at which address, from which layer (#428)
+#### `config.vaults[]` — which store, at which address, from which layer
 
-Present in **both** views, and the reason it is not a rider on either is that
-neither carried it: `declared` is the address the *file wrote*, and `resolved`
-dropped stores entirely to report targets and bindings. `doctor`'s own `vaults[]`
-has no `addr` either. So a consumer could not answer *which vault will this run
-talk to*, for any layer — true since the store layers were built rather than
-since `--vault-addr` was.
+`config.vaults[]` answers "which vault will this run talk to, and which layer set
+its address?" It is in both views, because neither view carries it otherwise:
+`declared` has the address the file wrote, and `resolved` reports targets and
+bindings, not stores. `doctor`'s `vaults[]` has no `addr` either.
+
+This is one entry, from a run with `--vault-addr` set:
 
 ```json
 "vaults": [
@@ -382,216 +344,196 @@ since `--vault-addr` was.
 ]
 ```
 
-That forces an ordering worth stating: **you cannot report where `addr` came from
-before reporting what `addr` is.** The value is the substantive half and the
-provenance rides along with it — which also means this section answers the
-broader question *should `config show --resolved` report the stores a run will
-use*, and the answer is yes.
+You cannot report where `addr` came from without reporting what it is, so each
+entry carries the value with its provenance.
 
-A `settings` entry is the **same shape** `invocation.options` carries, and the
-schema has one `$defs/resolved_setting` both point at: it is one question about
-one resolver, and a second grammar for it would be two shapes a consumer has to
-learn for one fact. `source_detail` is a location and never a value, by that
+A `settings` entry has the **same shape** as an `invocation.options` entry. The
+schema has one `$defs/resolved_setting` that both use: it is one question about
+one resolver, and a second shape for it would be two things a consumer must
+learn for one fact. `source_detail` is a location, never a value, by that
 definition's own contract.
 
-**Not admitted into `invocation.options`**, which was the alternative and would
-contradict what that section means: `RESOLVED_SETTINGS` excludes a store's keys
-on the documented grounds that they "describe a store rather than a run", and
-`sopuli/invocation.py: _wired()` *raises* on a name that is not listed. The guard
-is right; the fix should not be to defeat it. Sharing the shape is not sharing
-the section.
+**Store settings are not in `invocation.options`.** `RESOLVED_SETTINGS` excludes
+a store's keys, because they describe a store and not a run, and
+`sopuli/invocation.py`'s `_wired()` raises on a name that is not listed. That
+guard is right. Sharing the shape is not sharing the section.
 
-Four properties of the object:
+These properties of the object are decisions:
 
-- **Always emitted, `[]` included**, following `install`'s always-present rule
-  rather than `shared_secrets`' sometimes-absent one — and for `vaults[]`' own
-  reason under `doctor`: every estate that does anything has stores, so an empty
-  array is a real answer here.
-- **`name` and `type` only, beside `settings`.** Both are the store's identity
-  and neither is layerable — a store that is HashiCorp from a laptop and OCI from
-  CI is two stores (C13). `non_production` and `locking` are deliberately absent:
-  both are declaration-only guardrails, `declared` carries them as written, and
-  `doctor` reports the second as `lock.mode`. Adding either later is additive.
-- **A key no layer wrote is absent**, not `null`. A store with no namespace has
-  no provenance for one, and a `null` would invite a consumer to branch on a
-  field that is empty almost always.
-- **`auth:` is not in `settings` at all.** It is replaced whole rather than
-  resolved key by key, so no layer *won* a key and there is no
-  `resolved_setting` to emit. It is also the one part of a store entry that
-  addresses credentials, and §4's redaction rule is easier to hold structurally
-  than by remembering: there is nowhere here for it to sit.
+- **It is always emitted, `[]` included**, as `install` is. Every estate that
+  does anything has stores, so an empty array is a real answer here.
+- **Only `name` and `type` sit beside `settings`.** Both are the store's
+  identity, and neither can be layered: a store that is HashiCorp from a laptop
+  and OCI from CI is two stores ([C13](../decisions/log.md#c13)).
+  `non_production` and `locking` are absent: both are guardrails set only by
+  declaration, `declared` carries them as written, and `doctor` reports the
+  second as `lock.mode`. Adding either later is a minor change.
+- **A key that no layer wrote is absent**, not `null`. A store with no namespace
+  has no provenance for one, and a `null` would invite a consumer to branch on a
+  field that is almost always empty.
+- **`auth:` is not in `settings`.** A layer replaces it whole; it is not
+  resolved key by key, so no layer won a key and there is no `resolved_setting`
+  to emit. It is also the part of a store entry that addresses credentials, and
+  §4's redaction rule is easier to keep by structure: there is nowhere here for
+  it to go.
 
-Unlike the text table, the provenance is carried whether or not `--explain` was
-passed. There is nothing to filter — no `vaults.*` setting has a built-in
-default, so every key reported is one some layer actually wrote, which is the
-filter `invocation.options` applies and `--explain` lifts.
+The JSON carries the provenance whether or not `--explain` was passed, unlike the
+text table. There is nothing to filter: no `vaults.*` setting has a built-in
+default, so every key reported is one that some layer wrote. That is the filter
+`invocation.options` applies and `--explain` lifts.
 
 ### `policy`, emitted by `policy sample`
 
-The policy as declared, plus one entry per sample describing it: how many
-characters, how many bytes in the encoding it was measured against, how many of
-each character class, and whether it satisfies the policy it was drawn from.
+The section holds the policy as declared, and one entry per sample. Each entry
+says how many characters the sample has, how many bytes in the encoding it was
+measured against, how many of each character class, and whether it satisfies
+the policy it was drawn from.
 
-**A sample object has no value property at all**, the same way `secret_ref` has
-none. That is not an oversight to fix later: `policy sample --reveal` prints
-passwords to a terminal for a human to look at, and it is refused with
-`--output json` precisely because JSON is what gets captured and shipped to log
-aggregation. The schema having nowhere to put a password is what makes the
-refusal a property rather than a promise.
+**A sample object has no value property**, just as `secret_ref` has none.
+`policy sample --reveal` prints passwords to a terminal for a person to look at.
+It is refused with `--output json`, because JSON is what gets captured and
+shipped to log aggregation. The schema has nowhere to put a password, so the
+refusal is a property of the format, not a promise.
 
 `compliant` is always `true` for a generated sample. It is reported anyway,
-because `false` would mean the generator and the validator disagree — and one
-predicate serving both is the design (`01-configuration.md` §8).
+because `false` would mean that the generator and the validator disagree. One
+predicate serves both (`01-configuration.md` §8).
 
 ### `error`, when the run failed as a whole
 
-Distinct from `results[].error`, which is one target failing inside a run that
-otherwise worked. The run-level one is present when there is no per-target work
-to report at all — the configuration could not be read, or something went wrong
-before the first target was touched — and it is what makes exit 9 and exit 1
+The run-level `error` is not `results[].error`, which is one target failing in a
+run that otherwise worked. The run-level one is present when there is no
+per-target work to report: the configuration could not be read, or something
+failed before the first target was touched. It is what makes exit 9 and exit 1
 answerable from the document alone.
 
-It has **no location field**, so a config error's file and key path travel inside
-`message`; `hint` has a field of its own and is not repeated there. The category
-comes from the exception rather than from the boundary inferring one from a
-Python type, which is the mapping that goes wrong first when a subclass is added.
+It has **no location field**. A config error's file and key path go inside
+`message`. `hint` has its own field and is not repeated in `message`. The
+category comes from the exception itself. The output boundary does not infer
+one from a Python type, because that mapping is the first to go wrong when
+someone adds a subclass.
 
-**A driver error reached this object for the first time in #287**, and the gap it
-closed is the one that mapping was written to prevent. Every `DriverError` had
-been falling into the boundary's catch-all: `internal` on exit 1, the hint folded
-into `message` rather than into the field it has, and the message prefixed with
-the exception's class name. That included `UnsupportedCapabilityError`, so
-invariant 4's *distinct exit code* was 1 like everything else and
-`target_capability` — in this schema since it was written — had never been
-emitted by anything. A capability refusal now carries `category: "capability"`,
-exit 5, and the capability's name in its own field, which is what a consumer
-branches on instead of parsing it back out of prose.
+**A driver error carries its own category.** A capability refusal has
+`category: "capability"`, exit 5, and the capability's name in
+`target_capability`. That is invariant 4's distinct exit code, and the field a
+consumer branches on, so it does not have to parse the name out of the message.
 
-**The field holds a name, never a sentence**, and `creds check --method
-hash|both` (#437) added the first names that are about an *account* rather than
-a target: `verifier_12c` (the account has no 12C verifier), `verifier_12c_format`
-(a `T:`/`t:` token in a format never measured) and `verifier_charset` (the
-database character set cannot hold the vault value). The account is named in
-`error.hint`, which is where per-account detail goes. Beside them is
-`offline_verify`, the probe's own name for a `SYS.USER$` this session cannot
-read, and on Autonomous Database the hint says so in ADB's terms rather than
-advising a grant nobody there can make.
+**`target_capability` holds a name, never a sentence.** Most names are about a
+target. `creds check --method hash|both` adds names about an account:
 
-**A pre-flight refusal is the other new producer** (#283): `category` is the kind
-of problem that stopped it — `connectivity`, `authorization` or `database` —
-`message` says how many were found over how many targets and names the first, and
-each finding is a `diagnostics[]` entry with its `target` and, where the check is
-about one, its `account`. The findings get no diagnostic *code*: §3's rule is
-that a code exists for what the exit code cannot tell you, and here `category`
-already carries the branch. A `warning`-level finding is one the survey could not
-establish rather than one that refused — an unreadable privilege audit — and it
-appears on runs that went ahead.
+- `verifier_12c`: the account has no 12C verifier;
+- `verifier_12c_format`: a `T:` or `t:` token is in a format never measured;
+- `verifier_charset`: the database character set cannot hold the vault value.
 
-**A rotation reports both halves in one `results[]`** (#284). `creds rotate`
-sequences verbs that already have entries here and reuses theirs rather than
-inventing a third shape: the staging write at §8 step 4 produces `generate`'s
-entry with its `vault_write_pending` action, and steps 5 to 7 produce `apply`'s,
-with `password_set`, the two `verify`s and `vault_promote`. So an account this
-run rotated appears twice, once per phase, which is what the two writes actually
-were — and `creds.rotate` needed no schema bump, having been in the `command`
-enum since before the command existed.
+`error.hint` names the account, because per-account detail goes there.
+`offline_verify` is the probe's name for a `SYS.USER$` that this session cannot
+read. On Autonomous Database its hint says that no account there can read it,
+and does not advise a grant nobody there can make.
 
-What the verb adds is one diagnostic and no fields. `SOPULI-W012` is §8 step 8,
-and `--max-age-days` narrowing a run is visible in `summary.total` rather than in
-a member of its own: an account the age filter left alone is one this run did not
-act on, and inventing a fourth state for it would put "not attempted" in the same
-vocabulary as "attempted and unverifiable".
+**A pre-flight refusal** has the `category` of the problem that stopped it:
+`connectivity`, `authorization` or `database`. `message` gives the number of
+findings over the number of targets and names the first. Each finding is a
+`diagnostics[]` entry with its `target`, and its `account` where the check is
+about one. The findings have no diagnostic code: §3's rule is that a code exists
+for what the exit code cannot tell you, and here `category` already carries the
+branch. A `warning`-level finding is one the survey could not establish, such as
+an unreadable privilege audit. It did not refuse, and it appears on runs that
+went ahead.
 
-**A guardrail-skipped account is `SKIPPED` with its reason** (#286). The state
-is the schema's own word and `creds finish-rollover` already uses it for the
-neighbouring idea — something the tool declined to do here, as against something
-it tried and could not. It is worth knowing what the state does *not* mean: it is
-not a failure, it does not make the run partial, and it is excluded from the
-exit code's arithmetic on both sides. §4 of `02-oracle-privileges.md` carries the
-reasoning; the short version is that an account a guardrail refused is one the
-run was never going to act on, and a nightly rotation that exited 4 for ever
-because one account holds `DBA` would be a guardrail more disruptive than the
-mistake it catches.
+**A rotation reports both phases in one `results[]`.** `creds rotate` runs the
+steps of other verbs and reuses their entries; it does not add a third shape.
+The staging write (UC-1 §8 step 4) produces `generate`'s entry, with its
+`vault_write_pending` action. Steps 5 to 7 produce `apply`'s entry, with
+`password_set`, the two `verify` actions and `vault_promote`. So an account that
+the run rotated appears twice, once per phase, which matches the two writes it
+made.
+
+`rotate` adds one diagnostic and no fields. `SOPULI-W012` is UC-1 §8 step 8.
+When `--max-age-days` narrows a run, `summary.total` shows it; there is no
+member for it. An account the age filter left alone is one this run did not act
+on. A fourth state for it would put "not attempted" in the same vocabulary as
+"attempted and unverifiable".
+
+**An account a guardrail refused is `SKIPPED`, with its reason.** `SKIPPED` is
+the schema's word for something the tool declined to do, as against something it
+tried and could not do; `creds finish-rollover` uses it the same way. It is not
+a failure, it does not make the run partial, and the exit code ignores it.
+`02-oracle-privileges.md` §4 has the reasoning: the run was never going to act
+on that account, and a nightly rotation that exited 4 forever because one
+account holds `DBA` would be more disruptive than the mistake the guardrail
+catches.
 
 ### `invocation.selection`
 
-What the run was narrowed to, as the selectors were given rather than as they
-resolved — the resolved answer is `config.targets[]` or `results[]`, and having
-both is what makes a filtered run auditable.
+`invocation.selection` records what the run was narrowed to, as the selectors
+were given, not as they resolved. The resolved answer is `config.targets[]` or
+`results[]`. Having both is what makes a filtered run auditable.
 
-Only `select` is populated so far, from `--select k=v`. The other slots —
-`applications`, `accounts`, `targets`, `groups`, `all` and `limit` — are the
-selectors that do not exist yet, and are omitted rather than sent empty: an
-empty array would claim the tool weighed a selector it has not implemented.
+The members are `applications`, `accounts`, `targets`, `groups` and `select`.
+They come from `--application`, `--account`, `--target`, `--group` and
+`--select k=v`. A selector that was not given is omitted, not sent empty: an
+empty array would claim the run applied a selector it was not given.
 
-`selection` is absent entirely when the whole estate was in scope. This matters
-more than it looks — a consumer reading `total: 2` cannot otherwise tell a small
-estate from a filtered one, and "2 rotated" means very different things in each.
+`selection` is absent when the whole estate was in scope. A consumer that reads
+`total: 2` cannot otherwise tell a small estate from a filtered one, and "2
+rotated" means very different things in each.
 
 ### `invocation.profile`
 
-The active profile's name, or absent (`01-configuration.md` §5, #153).
+The active profile's name, or absent (`01-configuration.md` §5).
 
-Reported whether or not the profile changed anything, unlike `options` — which
-carries only what changed behaviour. *Which* profile a scheduled run was invoked
-under is the first question when two runs over one config behaved differently,
-and answering it only when some key happened to differ would be answering a
-different question.
+It is reported whether or not the profile changed anything. `options` is
+different: it carries only what changed behaviour. When two runs over one config
+behaved differently, the first question is which profile each ran under, and
+that question has an answer even when no key differed.
 
-Absent rather than `null` when no profile is active. The schema allows either;
-the key with no name in it reads as "a profile was considered and found", which
-is not what happened.
+It is absent, not `null`, when no profile is active. The schema allows either. A
+key with no name in it reads as "a profile was considered and found", which is
+not what happened.
 
-The *choice* is also a resolved setting in its own right — `profile`, from
-`--profile`, `SOPULI_PROFILE` or `defaults.profile` — so `options` says where the
-name came from, and this says what it resolved to. The two differ in exactly one
-case worth being exact about: nobody asked and the file's default did not either,
-so `options` has no `profile` row and this is absent.
+The choice of profile is itself a resolved setting, `profile`, from
+`--profile`, `SOPULI_PROFILE` or `defaults.profile`. So `options` says where the
+name came from, and this field says what it resolved to. They differ in one
+case: when nobody asked for a profile and the file names no default, `options`
+has no `profile` row and this field is absent.
 
 ### `invocation.config_files`
 
-The files this run read, in layering order (`01-configuration.md` §5, #402).
+The files this run read, in layering order (`01-configuration.md` §5).
 
-**Declared here from the beginning and emitted by nothing until #402**, which is
-worth recording rather than quietly fixing: the schema described it, the
-committed sample showed it populated, and no run had ever written it. The sample
-validated against the schema throughout — conformance is not the claim *a run
-produces this* — so nothing was red. `tests/test_run_document.py` now asserts the
-example carries no `invocation` key the producer cannot write, which is the
-assertion that was missing rather than the field.
+`invocation.options` names a file only through the `source_detail` of a setting
+that file changed. This field lists every file read, so a run whose config
+supplied nothing worth reporting still names its files.
+`tests/test_run_document.py` checks that the committed example carries no
+`invocation` key that the producer cannot write.
 
-Until then a document said which *settings* a file changed, through
-`options.source_detail`, and never which files were read: a run whose config
-supplied nothing worth reporting named no file anywhere.
+**The order is part of the contract.** Later files are layered over earlier
+ones, so sorting them would describe a precedence the run did not use.
 
-**Order is contract, the set is not.** Later files layer over earlier ones, so a
-producer that sorted these would describe a precedence the run did not use.
+**It holds paths, not content.** A consumer asks this field which estate the
+document is about, which is what `creds apply --repair` reads it for. Two runs
+over the same paths are the same estate for that question. A file edited between
+them is a question of staleness, for whatever compares the documents.
 
-**Paths, not content.** What a consumer asks of this is *which estate is this
-document about* — which is what `creds apply --repair` reads it for (#391) — and
-two runs over the same paths are the same estate for that question. A file edited
-between them is a staleness question, and belongs to whatever compares the
-documents rather than to their identity.
-
-**Absent, not empty, on a run that never loaded a configuration layer** — the
-file was missing, unreadable or rejected. There is no verb for which that is the
-ordinary case: every command loads a config before its body runs, so absence
-here always means the run got no further than trying, and the `error` on exit 9
-names the path. An empty array would say the run looked and found nothing, which
-is a different statement.
+**It is absent, not empty, when the run loaded no configuration layer**: the
+file was missing, unreadable or rejected. Every command that writes a run
+document loads a config before its body runs (`sopuli about` writes none), so
+absence always means the run stopped while trying, and the
+`error` on exit 9 names the path. An empty array would say that the run looked
+and found nothing, which is a different statement.
 
 ### `invocation.correlation_id`
 
-A UUID per run. The tool also:
+A UUID for each run. The tool also:
 
 - sets it as the Oracle **client identifier** on every session
   (`DBMS_SESSION.SET_IDENTIFIER`), so it lands in
-  `UNIFIED_AUDIT_TRAIL.CLIENT_ID`
-- writes it into the **vault secret metadata** on every write
+  `UNIFIED_AUDIT_TRAIL.CLIENT_ID`;
+- writes it into the **vault secret metadata** on every write.
 
-One id therefore joins the tool's JSON, the database's audit trail, and the
-vault's version history. That join is the difference between "something rotated
-at 03:00 and half of it failed" and an actual answer.
+So one id joins the tool's JSON, the database audit trail and the vault's
+version history. With it, "something rotated at 03:00 and half of it failed"
+has an answer.
 
 ### `invocation.options`
 
@@ -605,156 +547,159 @@ from:
 
 This is the machine-readable form of `config show --explain` (P3). When someone
 asks why a scheduled run behaved differently from their interactive one, the
-answer is in the output they already have, not in a re-run.
+answer is in the output they already have. They do not need to run it again.
 
-By default it carries the settings that **changed behaviour** — a setting
+By default it carries only the settings that **changed behaviour**. A setting
 answered by its built-in default changed nothing, and reporting
-`output: text [builtin]` on every clean run would be noise in a document
-consumers diff. `--explain` lifts that filter and includes them, in this mode as
-well as in the text one: it means *show everything you consulted*. The shape of
-an entry is identical either way, so the flag changes how many entries appear and
-nothing about what one means.
+`output: text [builtin]` on every clean run would be noise in a document that
+consumers compare. `--explain` lifts that filter, in this mode as in text mode:
+it means "show everything you consulted". An entry has the same shape either
+way, so the flag changes how many entries appear and nothing about what an
+entry means.
 
-Two rules about the pair, both load-bearing:
+**`source_detail` is a location, never a value.** It is the flag as typed (`-o`
+is recorded as `-o`), the variable name, or the config key. It exists so that
+somebody can find the setting in their own command line or CI job definition.
+That is why the profile layer points at `profiles.ci.verify.method`, not just
+`"profile"`. No code path puts a value in this field, so it is inside §4's
+redaction rule by construction.
 
-**`source_detail` is a location, never a value.** The flag as typed (`-o` records
-as `-o`), the variable name, the config key. It exists so somebody can find the
-thing in their own command line or CI job definition — which is why the config
-layer points at `profiles.ci.verify.method` rather than just `"profile"`. That
-keeps the field inside §4's redaction rule for free, because no code path puts a
-value there at all.
+This rule is about what may appear **in the document**. Invariant 1 is about
+what may appear **in argv**, and the two are separate rules. A flag that took a
+token as its value would satisfy this rule and still be forbidden. That is why
+`--vault-token-file PATH` takes a path and `--vault-token` is refused (§3a of
+`01-configuration.md`, [ADR-007](../decisions/adr-007-vault-token-flag.md)).
+The vault token chain does not appear in `invocation.options` at all: it is its
+own merge, resolved when a run reaches a store, and the settings registry does
+not resolve it.
 
-This paragraph used to offer `--vault-token` as the example of a flag whose
-*value* is a secret and whose `source_detail` is only its name. #145 removed the
-example by removing the flag: `--vault-token-file PATH` is what exists, it takes
-a location, and `--vault-token` is refused (§3a of `01-configuration.md`,
-[ADR-007](../decisions/adr-007-vault-token-flag.md)). Worth recording, because
-the two rules were easy to read as one and are not: this one is about what may
-appear **in the document**, and invariant 1 is about what may appear **in argv**.
-A flag carrying a token would have satisfied this rule perfectly and still been
-forbidden. Neither `--vault-token-file` nor the rest of §3a's token chain appears
-in `invocation.options` at all — the chain is its own merge, resolved when a run
-reaches a store, and nothing in the settings registry claims to have settled it.
-
-**For a ratcheted setting, `source` names the layer that determined the effective
+**For a ratcheted setting, `source` names the layer that decided the effective
 value, not the highest layer present.** If `defaults.safety.readonly` is `true`
 and a flag asked to relax it, the pair is `"source": "defaults"`,
-`"source_detail": "defaults.safety.readonly"` — the layer that held, and the key
-inside it. Reporting `"cli"` because the command line is layer 1 would be
-precisely backwards. The defeated request is not swallowed either: it appears in
-`diagnostics[]` as a warning naming both ends.
+`"source_detail": "defaults.safety.readonly"`: the layer that held, and the key
+in it. Reporting `"cli"` because the command line is layer 1 would be exactly
+backwards. The refused request still appears, in `diagnostics[]`, as a warning
+that names both ends.
 
-The two always agree, because `source_detail` is where the value named by
-`source` was written: a `safety:` block under a target resolves as
-`"object"` / `"targets.acme-alpha.safety.readonly"`, and the same block under a
-profile as `"profile"` / `"profiles.ci.safety.readonly"`. There is no `config`
-value in the enum, deliberately — "somewhere in the file" is not a precedence
-layer, and four of the seven layers live in the file.
+The two fields always agree, because `source_detail` is where the value named by
+`source` was written. A `safety:` block under a target resolves as `"object"` /
+`"targets.acme-alpha.safety.readonly"`, and the same block under a profile as
+`"profile"` / `"profiles.ci.safety.readonly"`. The enum has no `config` value:
+"somewhere in the file" is not a precedence layer, and several layers live in
+the file.
 
-One consequence to record so it is not re-opened later as a bug report: a
-ratcheted setting can have **several** contributing sources while the reported
-one is the floor rather than the top — a union of `confirm_environments` is the
-clearest case. That is correct, and text output says as much. If the full
-contribution chain is ever wanted in JSON it arrives as a new optional field
-(a minor bump), never as a change to what `source` means.
+A ratcheted setting can have **several** contributing sources while `source`
+names the floor, not the top. A union of `confirm_environments` is the clearest
+case. That is correct, and the text output says so. Do not report it as a bug.
+If the whole contribution chain is ever wanted in JSON, it arrives as a new
+optional field (a minor bump), never as a change to what `source` means.
 
-There is deliberately no `cli_group` / `cli_verb` distinction in the `source`
-enum. A precedence layer encodes authority — who expressed more specific or more
-current intent — and flag position before or after the subcommand is the same
-person, in the same command line, at the same moment. Splitting it would push an
-artefact of the CLI parser into an interface scripts branch on; position, where
-it is worth recording at all, goes in `source_detail`.
+The `source` enum has no `cli_group` / `cli_verb` split. A precedence layer
+encodes authority: who expressed the more specific or more recent intent. A flag
+before the subcommand and one after it come from the same person, in the same
+command line, at the same moment. Splitting them would expose a detail of the
+CLI parser in a field that scripts branch on. If the position is worth
+recording, it goes in `source_detail`.
 
 ### `plan`, emitted on real runs too
 
-`plan` is not a dry-run-only section. A real run emits the identical structure it
-would have emitted with `--dry-run`, so a diff between "what we said we'd do" and
-`results` is mechanical. `plan.shared_secrets` exists specifically to surface the
-one-secret-many-targets case from UC-1 §4 — the situation where rotating one
-account quietly changes three PDBs. Legal, often intended, never invisible.
+`plan` is not only for dry runs. A real run emits the same structure it would
+have emitted with `--dry-run`, so comparing "what we said we would do" with
+`results` is mechanical. `plan.shared_secrets` exists to show the case where one
+secret serves many targets (UC-1 §4): rotating one account changes three PDBs.
+That is legal and often intended, but never invisible.
 
-**`confirmation_required` is optional, and is not emitted yet** (#247). Answering
-it needs a profile's `confirm:` reaching the precedence resolver, which has not
-happened — the key is parsed and has no consumer. Emitting `false` in the
-meantime would be the one reading that is actually wrong: it claims a run was put
-to a gate and passed it. Absent says the run was never asked, which is true.
-Adding it later is a minor bump, since the property already exists in the schema.
+**`confirmation_required` is optional, and the tool does not emit it**
+(open: #663). Emitting `false` would claim that the run met a confirmation gate
+and passed it. Absent says that the run was never asked, which is true.
 
 **A unit omits `secret` when nothing has named its store yet.** `secret_ref`
 requires `vault` as a string, so there is no shape for half an address, and
-`units[].secret` is optional exactly so a unit can say it has none. §3's chain
-deliberately leaves out a profile's `vault:` and `SOPULI_VAULT` — which profile is
-active is a property of a run, and bindings are built once at load — so a valid
-file can reach the plan with no store resolved. The plan does not refuse it, and
-C15 (#118) is what says so: it decided "mostly plan time" — the null is a real
-temporary state, and the command that actually *needs* a store is what fails,
-once a run's profile is known and the answer is exact (invariant 4). `config show
---resolved` renders `-` for the same binding. The completion step that turns
-such a binding into an addressable one is `config/binding_stores.py` (#250),
-called by the command that needs a store rather than at load.
+`units[].secret` is optional so that a unit can say it has none.
+`01-configuration.md` §3's chain for a binding's store leaves out a profile's `vault:` and `SOPULI_VAULT` on purpose: the active
+profile is a property of a run, and bindings are built once, at load. So a valid
+file can reach the plan with no store resolved. The plan does not refuse it
+([C15](../decisions/log.md#c15)). The command that needs a store fails, once the
+run's profile is known and the answer is exact (invariant 4).
+`config show --resolved` shows `-` for the same binding.
+`config/binding_stores.py` completes such a binding, called by the command that
+needs a store, not at load.
 
 **`results` is per credential; `targets` is per target.** `creds check` emits the
-first (#248) and `doctor` the second (#182): one reports on a password in a
-database and the other on the database. `results[]` is meant to be read beside
-`plan.units[]` — same grain, same order — so a diff between what a run said it
-would do and what it did is mechanical.
+first and `doctor` the second: one reports on a password in a database, the other
+on the database. Read `results[]` beside `plan.units[]`: they have the same
+grain and the same order, so comparing what a run said it would do with what it
+did is mechanical.
 
-**`summary`'s optional counters are populated by the verbs that count them**, and
-omitted by the ones that do not. `drift: 0` from `doctor` would say that command
-looked for drift and found none, and it never looked. `by_state` likewise carries
-only the states a run actually produced.
+**`summary`'s optional counters appear only from the verbs that count them.**
+`drift: 0` from `doctor` would say that `doctor` looked for drift and found none,
+and it never looks. `by_state` likewise carries only the states a run produced.
 
-**`plan` is absent entirely on a command that plans nothing** — `config show`,
-`doctor`, `lock status`. J2 says every command that plans emits `plan`, and a
-command with no units does not plan. `sopuli.plan` builds the section and
-`sopuli/output/plan_view.py` reads it.
+**`plan` is absent on a command that plans nothing**: `config show`, `doctor`,
+`lock status`. [J2](../decisions/log.md#j2) says every command that plans emits
+`plan`, and a command with no units does not plan. `sopuli.plan` builds the
+section and `sopuli/output/plan_view.py` reads it.
 
-Since Q7 (#85) made one secret per application the documented default, sharing has
-a second axis and the entry carries it: `accounts[]`, present when one document
-holds more than one account's credential. That is the case where rotating
-`acme_orders_user` rewrites the document `acme_batch_user` reads, and the two axes
-are genuinely different questions — `targets[]` answers "who receives this
-password", `accounts[]` answers "whose password is in this document". A consumer
-that only knew the first would report a blast radius of one account for a write
-that touched six.
+One secret per application is the documented default
+([Q7](../decisions/log.md#q7)), so sharing has a second axis, and a
+`shared_secrets` entry carries it: `accounts[]`, present when one document holds
+more than one account's credential. Then rotating `acme_orders_user` rewrites
+the document that `acme_batch_user` reads. The two axes are different questions:
+`targets[]` answers "who receives this password", and `accounts[]` answers
+"whose password is in this document". A consumer that knew only the first would
+report a blast radius of one account for a write that touched six.
 
-`accounts[]` is optional rather than always-present, and reads as "the sharing the
-operator might not have intended". A document with exactly one account in it omits
-it, because a list of one is not a warning.
+`accounts[]` is optional, and means "sharing the operator might not have
+intended". A document with exactly one account omits it, because a list of one is
+not a warning.
 
-**An entry is one document, not one ref** (#110). Every account in a document
-differs only by the pointer below the field, and the document is what a write, a
-compare-and-set and the advisory lock all operate on — so an entry is one entry
-per lock, and the `secret` it carries is a `vault` and a `path` with no `field`.
-Keying on the full ref instead would emit six near-identical entries for one
-six-account document, each repeating the same five neighbours. The path is
-normalised through the same function `sopuli/lock/keys.py` uses, so "shares a
-document" and "shares a lock" cannot give two different answers.
+**An entry is one document, not one ref.** The accounts in a document differ only
+by the pointer below the field. A write, a compare-and-set and the advisory lock
+all act on the whole document, so there is one entry per lock, and its `secret`
+is a `vault` and a `path` with no `field`. One entry per ref would emit six
+near-identical entries for a six-account document, each repeating the same five
+neighbours. The path is normalised by the same function that
+`sopuli/lock/keys.py` uses, so "shares a document" and "shares a lock" cannot give
+different answers.
 
-**Where `accounts[]` comes from: the config, never the store.** The accounts in an
-entry are the ones the file declares for that document — invariant 5's set, which
-is also the set a write may touch. Two consequences, both intended. It is offline
-and deterministic, which it has to be: a plan is reviewable ahead of time only if
-it is a function of the config and the selection, and this section is emitted on
-real runs too, so a list read from a live document would make the plan-versus-
-`results` diff a question of whether somebody else edited the vault in between. And
-it will not show an account that is in the document but absent from the file —
-that is worth knowing, and it is drift rather than plan, so `creds check` reports
-it.
+**`accounts[]` comes from the config, never from the store.** The accounts in an
+entry are the ones the file declares for that document: invariant 5's set, which
+is also the set a write may touch. This has two intended consequences:
 
-**`config.shared_secrets` is the same shape, asked of the whole file.** `config
-show --resolved` emits it from the config alone, which is the offline question:
-*what does my file share, before I run anything?* `plan.shared_secrets` is the
-same detection narrowed to one run's work. They coexist for the reason
-`config.bindings` and `plan.units[]` do — one describes the file, the other
-describes a run. Both are omitted entirely when nothing is shared, rather than
-emitted empty: an empty array reads like a finding that came back negative.
+- The plan is offline and deterministic. A plan can be reviewed ahead of time
+  only if it depends on the config and the selection alone. The section is also
+  emitted on real runs, and a list read from a live document would make the
+  plan-versus-`results` comparison depend on whether somebody edited the vault
+  in between.
+- It does not show an account that is in the document but not in the file. That
+  is worth knowing, but it is drift, not plan, so `creds check` reports it.
+
+**`config.shared_secrets` is the same shape, asked of the whole file.**
+`config show --resolved` emits it from the config alone. That answers the
+offline question: what does my file share, before I run anything?
+`plan.shared_secrets` is the same detection narrowed to one run's work. They
+coexist for the same reason as `config.bindings` and `plan.units[]`: one
+describes the file, the other a run. Both are omitted when nothing is shared,
+because an empty array reads like a finding that came back negative.
 
 ### `lock`, on runs that take one
 
-P5's advisory lock lives in the vault and is keyed on the **secret path** being
-mutated (Q2, decided in issue #83). What reaches the document is deliberately
-about the guarantee rather than the mechanism:
+`00-principles.md` P5's advisory lock is in the vault, keyed on the **secret
+path** being changed ([Q2](../decisions/log.md#q2)). These verbs write the
+section:
+
+- `creds generate`, `creds apply`, `creds rotate` and
+  `account reset-password` take locks and fill `held[]`. All four go through
+  `_record_locks` in `sopuli/cli.py`, which runs after release, so `released`
+  reports the store's record, not the moment;
+- `lock status` fills `found[]`;
+- `lock break` fills `broken[]`.
+
+`denied` appears on any of them that is refused a live lock.
+`sopuli/output/lock_view.py` builds the section, and `tests/test_lock_view.py`
+validates every shape it can build against the schema. The section describes the
+guarantee, not the mechanism. This is from `creds generate --output json` against
+the tier-1 stack:
 
 ```json
 "lock": {
@@ -767,55 +712,51 @@ about the guarantee rather than the mechanism:
 }
 ```
 
-Captured from `creds generate --output json` against the tier-1 stack on
-2026-09-11, not written by hand.
-
 **`mode` is `cas` or `none`**, not `kv2` or `flock`. A consumer needs to know
-whether the run was actually protected; it should not have to know what KV v1 is
-to find out. `none` is what a store configured `locking: advisory-only` reports —
-the record was written without compare-and-set, which catches two operators
-minutes apart and misses two CI jobs in the same second. That weakening is also a
-`diagnostics[]` warning on every run, carrying the code `SOPULI-W001` (§3), so it
-appears in the audit trail of each run rather than only in the config file
-somebody would have to go and read.
+whether the run was protected; it should not need to know what KV v1 is to find
+out. A store configured with `locking: advisory-only` reports `none`: the record
+was written without compare-and-set, which catches two operators minutes apart
+and misses two CI jobs in the same second. Every such run also carries a
+`diagnostics[]` warning, `SOPULI-W001` (§3), so the weakening is in each run's
+audit trail, not only in a config file somebody would have to read.
 
-**`fence` is the version the acquiring write returned**, and it is the whole
-safety argument for putting the lock in the vault rather than in the database.
-The risk worth designing against is not the stale lock but the stolen one: a run
-stalls, its lock expires, a second run takes over and rotates, and the first
-wakes up and applies `ALTER USER` to its remaining targets from a plan that is no
-longer true. `DBMS_LOCK` does not prevent that either — the stalled session is
-still alive and still holds it. Re-reading the fence before every mutation does,
-which is why automatic release on session death stopped being worth a widened
-grant set.
+**`fence` is the version that the acquiring write returned.** It is the reason
+the lock is in the vault and not in the database. The risk to design against is
+the stolen lock, not the stale one: a run stalls, its lock expires, a second run
+takes over and rotates, and then the first run wakes up and applies
+`ALTER USER` to its remaining targets from a plan that is no longer true.
+`DBMS_LOCK` does not prevent that: the stalled session is still alive and still
+holds it. Re-reading the fence before every change does prevent it. So releasing
+the lock automatically when a session dies was not worth a wider grant set.
 
-**`denied` appears on exit 7**, carrying the holder — host, pid, os_user, and
-the holder's own `correlation_id`. That is the field that answers the only
-question anyone has at that moment: is this a colleague mid-rotation, or a
-process that died? There is never more than one, because acquisition is
-all-or-nothing and stops at the first refusal.
+**`denied` appears on exit 7**, with the holder: host, pid, os_user, and the
+holder's own `correlation_id`. Those fields answer the question everyone has at
+that moment: is this a colleague in the middle of a rotation, or a process that
+died? There is never more than one, because acquisition is all-or-nothing and
+stops at the first refusal.
 
-Its `reason` says **how** the run lost, and the two ways are not the same event.
-`held` means a held, unexpired record was read, so the holder and the timestamps
-describe it and the schema requires them. `race` means the compare-and-set write
-was refused — another run acquired between this run's read and its write — and
-there the winner's record was never read. The schema therefore leaves `holder`
-optional and `reason` says why it is absent, which is better than a producer
-emitting an all-null holder that a consumer cannot distinguish from a vault that
-answered badly. A conflict on the *renewal* write is neither of these and is not
-`denied` at all — this run held the lock, so losing the compare-and-set is a
-takeover, reported the way every other takeover is (#346). Everything in `held[]` is required by contrast: that section is
-written when the run ends, by which point there is nothing about its own locks
-the tool does not know.
+Its `reason` says **how** the run lost, and the two ways are different events:
 
-**The section is absent on a run that takes no lock**, which is `check`,
-`status` and every `--dry-run`. Absent means none was needed, not none was
-available.
+- `held`: the run read a held, unexpired record. The holder and the timestamps
+  describe that record, and the schema requires them.
+- `race`: the compare-and-set write was refused, because another run acquired
+  the lock between this run's read and its write. The winner's record was never
+  read. So `holder` is optional, and `reason` says why it is absent. An all-null
+  holder would look the same as a vault that answered badly.
 
-**`found[]` is the third array, and it is somebody else's locks** (#105).
-`sopuli lock status` takes no lock, reads the records at every secret path the
-config declares, and — since #150 — lists each store's lock prefix so that a
-record at a path the config *does not* declare is reported too:
+A conflict on the *renewal* write is neither, and is not `denied` at all. This
+run held the lock, so losing the compare-and-set is a takeover, reported like
+every other takeover. Every field in `held[]` is required, because the section is
+written when the run ends, and by then the tool knows everything about its own
+locks.
+
+**The section is absent on a run that takes no lock**: `check`, `status` and
+every `--dry-run`. Absent means none was needed, not none was available.
+
+**`found[]` lists other runs' locks.** `sopuli lock status` takes no lock. It
+reads the record at every secret path the config declares, and lists each
+store's lock prefix, so a record at a path the config does *not* declare is
+reported too:
 
 ```json
 "lock": {
@@ -831,71 +772,75 @@ record at a path the config *does not* declare is reported too:
 }
 ```
 
-It is a separate array rather than a reuse of `held[]`, and the reason is that
-**`held` is possessive**. There, `released: true` means *this run let go
-cleanly*; in a survey the same word would mean *this path is free*. That is one
-field meaning two things depending on `command`, which is what §8's stability
-rules exist to prevent — and a consumer aggregating held locks across runs would
-start counting surveys as acquisitions. The holder is reported through the same
-definition `denied.holder` uses, because the question at exit 7 and the question
-`lock status` answers are the same question.
+It is a separate array, not `held[]` reused, because **`held` is possessive**.
+In `held[]`, `released: true` means "this run let go cleanly". In a survey the
+same word would mean "this path is free". One field would mean two things
+depending on `command`, which §8's rules exist to prevent, and a consumer that
+counted held locks across runs would count surveys as acquisitions. The holder
+uses the same definition as `denied.holder`, because exit 7 and `lock status`
+answer the same question.
 
-**`declared` says whose the record is** (#150). `false` is one the store holds
-and the file names nowhere — an application renamed or removed, or another
-config's estate sharing the mount — and it is the entry an operator cannot
-otherwise see, which is the entire reason for listing. Invariant 5 is not
-strained: the config whitelists what the tool may *touch*, and a survey touches
-nothing. It is judged against the **unfiltered** estate, so `--select` narrowing
-a survey never turns somebody's own lock into a leftover, and it is required on
-every entry rather than written only on the leftovers — a consumer that had to
-read absence as "mine" would be branching on a gap, which is also what a producer
-that forgot the field emits.
+**`declared` says whether this configuration accounts for the record.** `false`
+is a record the store holds and the file names nowhere: an application renamed
+or removed, or another config's estate sharing the mount. An operator cannot see
+it any other way, and it is the reason for listing. Invariant 5 still holds: the
+config whitelists what the tool may *touch*, and a survey touches nothing. It is
+judged against the **unfiltered** estate, so `--select` never turns somebody's
+own lock into a leftover. It is required on every entry: a consumer that had to
+read absence as "mine" would be branching on a gap, and a gap is also what a
+producer that forgot the field would emit.
 
-**`declared_by` says how** (#514), because from UC-2 onwards "whose" has three
-answers rather than two. A reset lock is keyed on the reset record's path, which
-no binding produces, so the survey finds it by listing the declared
-`reset_records:` prefix rather than by enumerating keys — an account admitted by
-a predicate has no name until a database is asked, and this verb asks none. Such
-an entry carries `declared: true` and `declared_by: "reset_records"`; a binding's
-carries `"binding"`; a leftover carries `null`. §8's 1.28 entry says why the
-boolean widened instead of becoming a tri-state, and why this field is not an
-enum.
+**`declared_by` says how**: `binding`, `reset_records`, or `null` for a
+leftover. From UC-2 on, "whose" has three answers. A reset lock is keyed on the
+reset record's own path, which no binding produces. The file declares the
+`reset_records:` prefix and cannot name the keys under it, because an account
+admitted by a `profile:` or `role:` predicate has no name until a database is
+asked, and `lock status` asks none. So the survey finds reset locks by listing
+the prefix. Such an entry has `declared: true` and
+`declared_by: "reset_records"`.
 
-A **fourth array was rejected.** What split `held` from `found` was that one
-field would have meant different things in each; nothing of the sort happens
-here, since every field means exactly what it means for a declared record and
-only ownership differs. The text view does render the two separately, which is a
-rendering decision rather than a contract one.
+- **`declared` widened; it was not replaced.** It means "this configuration
+  accounts for the path at all", which is what a consumer filtering its own locks
+  out of a survey asks. Widening a boolean is a minor bump. Turning it into a
+  three-valued string would be a rename, which is major, and every consumer
+  would pay for a question none of them asked.
+- **`declared_by` is not an enum**, unlike `state`. A later use case may claim
+  another prefix: UC-4 hands accounts over through the same delivery
+  abstraction (UC-2 §6.7). A consumer that switched on two values would break on
+  a third, instead of treating it as "not mine".
 
-**A store with no `list` capability is named in a warning, not refused**
-(`SOPULI-W005`). Refusing would make `lock status` a command that works on some
-backends and not others, and would cost the operator the report for every other
-store as well. But it cannot be silent either: an empty `found[]` is something a
-consumer acts on — it concludes there are no leftovers — and that conclusion has
-to be earned by having looked.
+A **fourth array was rejected.** `held` and `found` are separate because one
+field would mean different things in each. Nothing like that happens here: every
+field of a leftover means what it means for a declared record, and only ownership
+differs. The text view does show the two separately, which is a rendering
+choice, not a contract.
 
-`held` and `state` are the verdict and the evidence, and they are not the same
-field twice. Anything that is not `released` is held, **including a state this
-build has never heard of** — treating an unknown state as free is the one guess
-that ends with two runs rotating one credential — and a consumer that saw only
-`held: true` could not tell such a record from an ordinary one. `version` is the
-store's version and is deliberately not called a fence: a fence is a claim, and
-nothing in a survey holds one.
+**A store with no `list` capability gets a warning, not a refusal**
+(`SOPULI-W005`). A refusal would make `lock status` work on some backends and not
+others, and would lose the report for every other store too. But it cannot be
+silent: an empty `found[]` tells a consumer there are no leftovers, and that
+conclusion must come from having looked.
 
-**A declared path with no record at it is not an entry.** `found` is what was
-read, which is what keeps every member of an entry required; how many paths were
-examined is `summary.total`, and the difference between the two numbers is how
-many are free. On `lock status` the array is emitted even when empty, because
-there an empty array is the finding — a quiet estate must not be
-indistinguishable from a command that did not look.
+`held` is the verdict and `state` is the evidence; they are not one field twice.
+Anything that is not `released` is held, **including a state this build does not
+know**. Treating an unknown state as free is the one guess that ends with two
+runs rotating one credential. A consumer that saw only `held: true` could not
+tell such a record from an ordinary one. `version` is the store's version and is
+not called a fence: a fence is a claim, and a survey holds none.
 
-`mode` means one thing in every array: the guarantee available in the stores the
-section is about. On a run that took locks that is what it took them under; on a
-survey it is what a lock in those stores would be worth.
+**A declared path with no record is not an entry.** `found` is what was read,
+which keeps every member of an entry required. `summary.total` is how many paths
+were examined, and the difference between the two numbers is how many are free.
+On `lock status` the array is emitted even when empty, because there an empty
+array is the finding: a quiet estate must not look like a command that did not
+look.
 
-**`broken[]` is the fourth array, and it is a lock this run ended** (#149).
-`sopuli lock break` writes a `released` record over a held one, comparing against
-the version it read:
+`mode` means the same in every array: the guarantee available in the stores the
+section covers. On a run that took locks, it is what they were taken under. On a
+survey, it is what a lock in those stores would be worth.
+
+**`broken[]` lists locks this run ended.** `sopuli lock break` writes a
+`released` record over a held one, comparing against the version it read:
 
 ```json
 "lock": {
@@ -910,56 +855,57 @@ the version it read:
 }
 ```
 
-Its own array for the reason that split `held` from `found`: this is neither a
-claim the run holds nor a record it merely read. The fields that matter are the
-ones neither of the others has. **`version` is what the write compared against**
-and **`new_version` is what it produced** — and it is the second that fences the
-previous holder, whose next check now fails. Neither is called a fence: `held[]`'s
-`fence` is a claim *this* run holds, and after a break nobody holds anything.
-`version` is never null here, unlike `found[].version`, because a store that
-cannot fence is refused before the read (exit 5) — and so is one *declared*
-`locking: advisory-only`, whatever it turns out to support. An unfenced "break"
-is worse than a weaker guarantee: the released record keeps the holder's own
-`correlation_id`, so with no version to compare, their next check would find a
-record that still answers "mine" and they would carry on rotating, never told.
+It is its own array for the reason `held` and `found` are separate: a broken lock
+is neither a claim the run holds nor a record it only read. Its important fields
+are ones the other arrays lack:
 
-**`applied` is what makes `--dry-run` and the run that follows one shape.** The
-plan *is* the entry; whether it happened is a boolean inside it, so a consumer
-diffing them compares like with like rather than two documents (invariant 8). It
-is false under `--dry-run`, where `new_version` is null because no version was
-produced.
+- **`version` is what the write compared against**, and **`new_version` is what
+  it produced.** The second fences the previous holder, whose next check now
+  fails. Neither is called a fence: `held[]`'s `fence` is a claim this run holds,
+  and after a break nobody holds anything.
+- `version` is never null here, unlike `found[].version`. A store that cannot
+  fence is refused before the read, with exit 5, and so is a store declared
+  `locking: advisory-only`, whatever it supports. A break with no fence is worse
+  than a weaker guarantee. The released record keeps the holder's own
+  `correlation_id`, so without a version to compare, the holder's next check
+  would find a record that still says "mine", and it would carry on rotating
+  without being told.
+- **`applied` makes `--dry-run` and the real run one shape.** The plan is the
+  entry, and whether it happened is a boolean in it, so a consumer compares like
+  with like (invariant 8). It is `false` under `--dry-run`, where `new_version`
+  is null because no version was produced.
 
-**An empty `broken[]` is the finding**, as an empty `found[]` is on a survey:
-there was no claim at the path — nothing there, or a record already released — so
-nothing was broken, `summary.changed` is 0 and the run exits 0. That is where
-invariant 9 comes from for this verb rather than being arranged: the second `lock
-break` on a path finds the record the first one wrote.
+**An empty `broken[]` is the finding**, as an empty `found[]` is in a survey.
+There was no claim at the path, either no record or one already released, so
+nothing was broken, `summary.changed` is 0 and the run exits 0. This is
+invariant 9 for this verb, and it follows from the design: a second `lock break`
+on a path finds the record the first one wrote.
 
-**The holder is reported here and nowhere else afterwards.** The write replaces
-their record with a released one that still carries their name, so a later `lock
-status` cannot tell a break from a clean release. That cost is the one already
-accepted for `locking.break_expired`, where the takeover overwrites the record
-entirely: the path is not the audit trail, the run document is. `SOPULI-W002` says
-the same thing in words.
+**The holder is reported here and nowhere afterwards.** The write replaces the
+holder's record with a released one that still carries their name, so a later
+`lock status` cannot tell a break from a clean release. `locking.break_expired`
+already accepts the same cost, because its takeover overwrites the record
+entirely. The path is not the audit trail; the run document is. `SOPULI-W002`
+says the same in words.
 
-An unexpired lock is **not** in this array — it is `denied`, on exit 7, with the
-holder named. Same object, same wording as a rotation that lost the same lock,
-because it is the same question being answered to the same person.
+An unexpired lock is **not** in this array. It is `denied`, on exit 7, with the
+holder named. It is the same object and the same wording as a rotation that lost
+the same lock, because it answers the same question for the same person.
 
 ### `targets`, emitted by `doctor`
 
-One entry per target, and deliberately **not** `results[]`.
+One entry per target. It is not `results[]`, on purpose.
 
-`result` is per (account, target). It requires an `account` and a `state` from a
-vocabulary that is entirely about credential sync — `IN_SYNC`, `DRIFT`,
+A `result` is per account and target. It requires an `account`, and a `state`
+from a vocabulary that is entirely about credential sync: `IN_SYNC`, `DRIFT`,
 `ACCOUNT_MISSING`. `doctor` manages no credential and touches no account, so
-every one of those words would have meant something else: `IN_SYNC` on a healthy
-target claims a sync that never happened, and `SKIPPED` means *we chose not to
-try*.
+each of those words would mean something else. `IN_SYNC` on a healthy target
+would claim a sync that never happened, and `SKIPPED` means "we chose not to
+try".
 
-Widening `result` was the alternative — make `account` optional, add states —
-and it is a major change: a consumer reading `result.account` unconditionally
-breaks. Adding a section is the minor rule again, for the fifth time.
+Widening `result` was the alternative: make `account` optional and add states.
+That is a major change, because a consumer that reads `result.account`
+unconditionally breaks. A new section is a minor one.
 
 ```json
 "targets": [
@@ -987,23 +933,22 @@ breaks. Adding a section is the minor rule again, for the fifth time.
 ]
 ```
 
-**`reachable` is the field to branch on, and everything else is absent rather
-than empty.** A target that could not be reached has no scope, no capabilities
-and no assertion result. An empty `capabilities` array there would read as a
-database that supports nothing, which is a different and much more alarming
-claim than *nobody could get to it*.
+**Branch on `reachable`. Everything else is absent, not empty, on an
+unreachable target.** A target that could not be reached has no scope, no
+capabilities and no assertion result. An empty `capabilities` array would read as
+a database that supports nothing, which is a different and much more alarming
+claim than "nobody could reach it".
 
-**`asserted` is absent when the target asserts nothing**, rather than present
-with `matches: true`. `01-configuration.md` §3a is explicit that an assertion
-nobody makes is not a gap, and an object claiming a match would be reporting
-agreement with a claim that was never made.
+**`asserted` is absent when the target asserts nothing**, not present with
+`matches: true`. `01-configuration.md` §3a says that an assertion nobody makes is
+not a gap. An object claiming a match would report agreement with a claim that
+was never made.
 
 ### `targets[].privileges`, emitted by `doctor --check-privileges`
 
-What the service account holds, from `02-oracle-privileges.md` §2's and §3's
-lists. Added in 1.12 and owed prose here ever since; written now by #341, the
-first change to alter what one of its properties means. Pasted from a run against
-a PDB service account on 26ai Free 23.26.2.0.0:
+What the service account holds, judged against the lists in
+`02-oracle-privileges.md` §2 and §3. This is from a run against a PDB service
+account on 26ai Free 23.26.2.0.0:
 
 ```json
 "privileges": {
@@ -1018,51 +963,49 @@ a PDB service account on 26ai Free 23.26.2.0.0:
 }
 ```
 
-**Absent unless the flag asked, and whole whenever it is present** — empty arrays
-included, which is why every property is required. That is ADR-006's E6 applied
-to an audit: a section that appeared only on a problem could not be quoted as
-evidence that there was none. *Not asked* and *asked, nothing found* are
-different facts, and a consumer that tested the section for truthiness would
-merge them.
+**It is absent unless the flag asked for it, and complete whenever it is
+present**, empty arrays included, so every property is required. That is
+ADR-006's E6 applied to an audit: a section that appeared only when there was a
+problem could not be quoted as evidence that there was none. "Not asked" and
+"asked, and nothing found" are different facts, and a consumer that tested the
+section for truthiness would merge them.
 
-**The findings are not here.** `over_granted` lives on `scope`, where the schema
-has had it since 1.10, and two copies of one finding are two things that can
-disagree. A consumer reads what was found from `scope.over_granted` and how far
-the audit reached from this section.
+**The findings are not here.** `over_granted` is on `scope`. Two copies of one
+finding are two things that can disagree. A consumer reads what was found from
+`scope.over_granted`, and how far the audit reached from this section.
 
-**`held`/`missing` and `over_granted` are independent questions**, not two ends
-of one scale: what the account needs and may not have, and what it has and must
-not. An account can be in both states at once, which is what a half-finished
-debugging session leaves behind. `missing` is spelled as the `GRANT` to issue,
-because the point of an entry is that somebody has to go and issue it.
+**`held`/`missing` and `over_granted` are separate questions**, not two ends of
+one scale. The first is what the account needs and may lack; the second is what
+it has and must not. An account can be in both states at once, which is what a
+half-finished debugging session leaves. `missing` is written as the `GRANT` to
+issue, because somebody has to go and issue it.
 
 **`unaudited` and `unreadable` are the report's two ways of saying it did not
 look**, and they are not interchangeable:
 
-- **`unaudited`** is a row of §3's list this run did not check. Never empty on
-  Oracle — `EXECUTE ON DBMS_LOCK` is an object privilege that no view the audit
-  reads carries. `SYSDBA` and `SYSOPER` join it only where §2's *optional*
-  `SELECT ON V$PWFILE_USERS` was not granted; where it was, they are audited like
-  anything else and a held one appears in `scope.over_granted` (#341). Before
-  that they were named unaudited unconditionally, which was true of the default
-  install and not of every install.
-- **`unreadable`** is a view that *raised*, which makes the audit partial and
-  changes how `over_granted` should be read. A grant the product documents as
-  optional never lands here: declining it is the documented install, and a run
-  that called every correct install partial would teach a reader to skip the line
-  that matters when a view really was refused.
+- **`unaudited`** is a row of `02-oracle-privileges.md` §3's list that this run
+  did not check. It is never empty on Oracle: `EXECUTE ON DBMS_LOCK` is an
+  object privilege, and no view the audit reads carries it. `SYSDBA` and
+  `SYSOPER` are in it only where the optional `SELECT ON V$PWFILE_USERS` grant
+  (§2 of that document) was not taken. Where it was, the audit checks them like
+  anything else, and a held one appears in `scope.over_granted`.
+- **`unreadable`** is a view that *raised*. That makes the audit partial and
+  changes how `over_granted` should be read. A grant documented as optional
+  never lands here: declining it is the documented install. A report that called
+  every correct install partial would teach readers to skip the line that matters
+  when a view really was refused.
 
-Both reach the text report and `targets[].warnings` as caveats, on every run
-rather than only on a bad one — including a line naming the `GRANT` that would
-shrink `unaudited`, where one exists. Neither moves the exit code: P5 is decided
-and `--check-privileges` warns rather than fails, because failing would block
-somebody mid-incident over a condition they did not create.
+Both reach the text report and `targets[].warnings` as caveats, on every run, not
+only on a bad one. Where a `GRANT` would shrink `unaudited`, a line names it.
+Neither changes the exit code: `--check-privileges` warns and does not fail
+([P5](../decisions/log.md#p5)), because failing would block somebody in the
+middle of an incident over a condition they did not create.
 
 ### `install`, emitted by `doctor`
 
 Which backends and drivers this build can serve, which the config asks for, and
-where the two disagree. **On every run, not only on a mismatch** — that is
-ADR-006 E6 and it is the whole shape of the section:
+where the two disagree. **It is on every run, not only on a mismatch.** That is
+ADR-006's E6, and it sets the whole shape of the section:
 
 > `doctor`'s question is "can I reach my vaults", and its output is audit
 > evidence as often as it is a diagnostic; a section that appears only when
@@ -1083,45 +1026,48 @@ ADR-006 E6 and it is the whole shape of the section:
 }
 ```
 
-**Every registry entry appears, configured or not**, which is what makes the
-third direction reportable at all: *installed and not configured*. Nothing else
-in the tool looks that way round, and the gap between what a machine can do and
-what it was asked to do is worth seeing before somebody is troubleshooting inside
-it. An unconfigured backend is a row with an empty `vaults`, never an omission.
+**Every registry entry appears, configured or not.** So the section can report
+the third case: installed and not configured. Nothing else in the tool looks at
+it that way round, and the gap between what a machine can do and what it was
+asked to do is worth seeing before somebody is troubleshooting inside it. An
+unconfigured backend is a row with an empty `vaults`, never a missing row.
 
-**`status` is three values and not a boolean**, because the two failing ones have
-different remedies and only one of them is the reader's to run. `not_installed`
-means the module is here and the client is not, and `install_command` is the line
-to paste; `not_implemented` means this build has no module for it, which nothing
-the operator installs changes — so a row in that state carries no install line,
-however much its name suggests one exists. They are the same two conditions
-`SOPULI-20001` and its `BackendNotImplementedError` sibling already separate, and
-collapsing them here would send somebody to `pip` for something `pip` cannot
-supply.
+**`status` has three values, not two**, because the two failing ones have
+different remedies, and only one is the reader's to apply:
 
-**Backends name their `vaults:` entries and drivers count their targets.** A
-store is written out by hand, there are a handful, and its name is the thing to
-go and look at. Targets are generated by the dozen from one `target_sets:` entry
-and every one of them is already listed in full in `targets[]`, so naming them
-again here would be a second copy of a fact the same document carries — the same
-reasoning that makes `SOPULI-W006` one warning per driver *type*.
+- `not_installed`: the module is here and the client is not. `install_command`
+  is the line to paste.
+- `not_implemented`: this build has no module for it, and nothing the operator
+  installs changes that. Such a row has no install line, however much its name
+  suggests one exists.
 
-**A configured component this machine cannot serve fails the run, at exit 9.**
-`config validate` warns over the identical fact and exits 0 (E4), and the two
-commands answering differently is deliberate: one asks whether the file is
-valid — it is — and the other asks whether this machine can reach what the file
-names. Exit 9 rather than 1 is E5's number for the same condition when a command
-*resolves* one, and `doctor` reporting it under a different number would give the
-tool two answers to one question. `summary` is unaffected and still counts
-targets: an install-shape failure is not a target that failed.
+These are the two conditions that `SOPULI-20001` and its sibling
+`BackendNotImplementedError` already separate. Merging them would send somebody
+to `pip` for something `pip` cannot supply.
+
+**Backends name their `vaults:` entries; drivers count their targets.** A store
+is written by hand, there are a few, and its name is the thing to go and look at.
+Targets are generated by the dozen from one `target_sets:` entry, and
+`targets[]` already lists every one, so naming them again would be a second copy
+of a fact in the same document. `SOPULI-W006` is one warning per driver *type*
+for the same reason.
+
+**A configured component this machine cannot serve fails the run, with exit 9.**
+`config validate` warns about the same fact and exits 0 (E4). The two commands
+answer differently on purpose: one asks whether the file is valid, and it is; the
+other asks whether this machine can reach what the file names. Exit 9 and not 1
+is E5's number for the same condition when a command resolves a component, and
+`doctor` reporting it under another number would give the tool two answers to
+one question. `summary` still counts targets: an install-shape failure is not a
+target that failed.
 
 ### `wallet`, emitted by `doctor`
 
-Whether this machine has an Oracle wallet the run can authenticate with. P4 names
-wallet readability in the same breath as client presence and `TNS_ADMIN`, and the
-gap it closes is between *the variable is set* — which `doctor` already reported
-— and *there is a wallet there this process can read*. Those are different facts
-on every machine where a service runs as one user and a DBA tests as another.
+Whether this machine has an Oracle wallet that the run can authenticate with. P4
+names wallet readability beside client presence and `TNS_ADMIN`. `doctor`
+reports whether `TNS_ADMIN` is set; this section reports whether there is a
+wallet there that this process can read. On a machine where a service runs as
+one user and a DBA tests as another, those are different facts.
 
 ```json
 "wallet": {
@@ -1137,55 +1083,52 @@ on every machine where a service runs as one user and a DBA tests as another.
 }
 ```
 
-**Absent when nothing in the estate uses `auth: external`**, which is the
-opposite of `install`'s always-present rule and right for the opposite reason.
-Install shape is a fact about the machine that is always true of it; this is a
-fact about a configuration option most files never use, and a section warning
-about a missing wallet in every document that never needed one is noise rather
-than evidence.
+**It is absent when nothing in the estate uses `auth: external`.** That is the
+opposite of `install`'s rule, for the opposite reason. Install shape is always
+true of the machine. A wallet matters only for a configuration option that most
+files never use, and a missing-wallet warning in every document that never needed
+one would be noise.
 
 **`directory` is not always `tns_admin`, and `from_sqlnet` says when it is not.**
-`sqlnet.ora`'s `WALLET_LOCATION` moves the wallet, and the client follows it. A
-survey that did not would report "no wallet" for a correctly configured estate —
-sending somebody to fix a directory that was never wrong, which is worse than not
-checking at all. A reader who checks the obvious directory and finds nothing has
-to be able to see that the tool looked elsewhere.
+`WALLET_LOCATION` in `sqlnet.ora` moves the wallet, and the client follows it. A
+check that did not follow it would report "no wallet" for a correctly configured
+estate, and send somebody to fix a directory that was never wrong. A reader who
+looks in the obvious directory and finds nothing must be able to see that the
+tool looked elsewhere.
 
-**Presence is not access, so `files` holds what could actually be opened.** A
-wallet owned by the account a service runs as is `is_file()` from every account
-on the machine and opens from exactly one — which is the case this whole section
-exists for, so it is measured by reading a byte rather than inferred from the
-file existing. One that is there and unreadable lands in `unreadable[]` and does
-not count towards `auto_login`: it is a different finding from a missing wallet,
-because the remedy is different. A missing wallet is somebody to ask for one; an
-unreadable one is already where it should be and owned by the wrong account.
+**Presence is not access, so `files` holds what could be opened.** A wallet owned
+by the service's account exists for every account on the machine and opens for
+exactly one. This section exists for that case, so the tool reads a byte; it
+does not infer access from the file existing. A file that is there and
+unreadable goes in `unreadable[]` and does not count towards `auto_login`. That
+is a different finding from a missing wallet, with a different remedy: a missing
+wallet means asking somebody for one, and an unreadable one is in the right place
+and owned by the wrong account.
 
-**`auto_login` and not just `files`.** `ewallet.p12` alone is a wallet, and it
-needs a passphrase this tool has no way to supply — so a directory holding only
-that one cannot serve an unattended run, and the naive reading of *is there a
-wallet here* says yes. That gap is the whole reason the field exists.
+**`auto_login`, not just `files`.** `ewallet.p12` alone is a wallet, but it needs
+a passphrase that this tool cannot supply. A directory holding only that file
+cannot serve an unattended run, although a naive "is there a wallet here?" says
+yes. That is why the field exists.
 
-**Nothing here moves the exit code.** An unreadable wallet is not a separate
-verdict: it rides on each target's own reachability, which the connection attempt
-settles a moment later. The section explains the failure that is about to happen
-rather than pre-empting it, and `SOPULI-W007` is the warning that carries the
-explanation into the diagnostics array. A wallet other people can read is
-`SOPULI-W008` and is likewise a warning, for the reason #213 settled for
-over-granted accounts: it is somebody else's file, and refusing to run would
-block the person who ran it over a condition they did not create.
+**Nothing here changes the exit code.** An unreadable wallet is not a separate
+verdict. It shows in each target's reachability, which the connection attempt
+settles a moment later. The section explains the failure that is about to happen;
+it does not pre-empt it. `SOPULI-W007` carries the explanation into
+`diagnostics[]`. A wallet that other people can read is `SOPULI-W008`, also a
+warning, for the reason P5 gives for over-granted accounts: it is somebody else's
+file, and refusing to run would block the person who ran the command over a
+condition they did not create.
 
-**What is deliberately not checked.** The wallet is not opened. Confirming it
-holds a credential for the alias means asking the Oracle client, and the
-connection report already does that better than any inspection could — a target
-that connects has proved its wallet works. What is left for this section is the
-diagnosis when it does not.
+**The wallet is not opened.** Confirming that it holds a credential for the
+alias means asking the Oracle client, and the connection already does that
+better than any inspection: a target that connects has proved its wallet works.
+What is left for this section is the diagnosis when it does not.
 
 ### `vaults`, emitted by `doctor`
 
 Every store the configuration declares: whether it answered, whether this run's
 credential was accepted, and how far its clock is from this machine's. P4 names
-vault reachability and clock skew in the same breath as client presence and
-`TNS_ADMIN`, and the pairing is not arbitrary.
+vault reachability and clock skew beside client presence and `TNS_ADMIN`.
 
 ```json
 "vaults": [
@@ -1212,76 +1155,80 @@ vault reachability and clock skew in the same breath as client presence and
 ]
 ```
 
-**The skew is not a health nicety.** `sopuli/lock/decide.py` compares a lease's
-`expires_at` against *this* machine's clock and allows `CLOCK_SKEW` for the two
-disagreeing (#83). A host minutes out takes over locks that are still live, or
-refuses ones long dead — and the failure presents as a locking bug rather than as
-an NTP problem. `tolerance_ms` is that allowance, reported so the verdict can be
-checked rather than assumed.
+**The clock skew matters for locking.** `sopuli/lock/decide.py` compares a
+lease's `expires_at` with *this* machine's clock, and allows `CLOCK_SKEW` for
+the two to disagree. A host whose clock is minutes out takes over locks that are
+still live, or refuses ones long dead, and the failure looks like a locking bug,
+not a clock problem. `tolerance_ms` is that allowance, reported so that the
+verdict can be checked.
 
-**Three words, not a boolean.** `ok` is answering and able to serve this run;
-`degraded` is answering and not — sealed, standing by, not initialised, or
-refusing the credential it was opened with; `unreachable` is nothing recognisable
-answering at all. The middle one earns its place because the reader's next move
-differs: `degraded` sends somebody to the vault and `unreachable` sends them to
-the network, and being sent to the wrong one costs an outage's worth of time.
+**`status` has three values, not two.**
+
+- `ok`: the store answered and can serve this run.
+- `degraded`: it answered and cannot serve: sealed, standing by, not
+  initialised, or refusing the credential it was opened with.
+- `unreachable`: nothing recognisable answered.
+
+`degraded` exists because the reader's next step differs: `degraded` sends
+somebody to the vault, and `unreachable` sends them to the network. Going to the
+wrong one costs an outage's worth of time.
 
 **An answer the tool cannot read is `unreachable`, not `degraded`.** A proxy's
-502 is not a Vault saying anything about itself, and treating it as evidence a
-store is present is precisely what makes a survey worthless. The same fail-closed
-rule `sopuli/store/hashicorp/_errors.py` applies to an unrecognised 400.
+502 is not a Vault saying anything about itself, and treating it as evidence that
+a store is there would make the survey worthless.
+`sopuli/store/hashicorp/_errors.py` applies the same fail-closed rule to an
+unrecognised 400.
 
-**Only `unreachable` moves the exit code**, and it moves it to 1 — the same as an
-unreachable target, and if anything it deserves worse: the vault is master and
-the direction is always vault → database (invariant 6), so a store nobody can
-reach is an estate on which no `creds` verb can do anything. A degraded store and
-a skewed clock leave the run at 0 and land in `diagnostics[]` as `SOPULI-W010`
-and `SOPULI-W009`, which is #213's answer for over-granted accounts applied to
-the same shape of question: `doctor` must not refuse to survey an estate over a
-condition the person running it did not create.
+**Only `unreachable` changes the exit code**, to 1, as an unreachable target
+does. The vault is master and the direction is always vault → database
+(invariant 6), so no `creds` verb can do anything with a store nobody can reach.
+A degraded store and a skewed clock leave the run at 0 and appear in
+`diagnostics[]` as `SOPULI-W010` and `SOPULI-W009`. That is P5's answer for
+over-granted accounts applied to the same kind of question: `doctor` must not
+refuse to survey an estate over a condition the person running it did not create.
 
-**`summary` still counts targets.** A vault is not one, and inflating `failed` to
-make the exit code look derivable would put a number in the document that no
-entry in `targets[]` accounts for. The exit code is deliberately not a function
-of the summary — `install` made that true first, and this makes it true a second
-way.
+**`summary` still counts targets.** A vault is not a target, and adding vaults to
+`failed` to make the exit code look derivable would put a number in the document
+that no `targets[]` entry explains. The exit code is not a function of the
+summary, here or in `install`.
 
-**Absent skew and zero skew are different answers.** A backend exposing no server
-time has `server_time`, `skew_ms` and the three fields around it all absent; two
-clocks that agree have `skew_ms: 0`. Substituting this host's clock for a store
-that cannot report one would produce a confident zero, which is the single
-confusion the whole measurement exists to avoid.
+**Absent skew and zero skew are different answers.** A backend that exposes no
+server time has `server_time`, `skew_ms` and the three fields beside it all
+absent. Two clocks that agree have `skew_ms: 0`. Using this host's clock for a
+store that cannot report one would produce a confident zero, which is the exact
+confusion the measurement exists to avoid.
 
-**The measurement says what it does not know.** The store answered somewhere
-inside the round trip, so half the trip — plus whatever the store rounds its own
-answer to — is the width of what one request cannot pin down. That is
+**The measurement says what it does not know.** The store answered at some point
+during the round trip, so half the round trip, plus whatever the store rounds its
+own answer to, is how much one request cannot pin down. That is
 `skew_uncertain_by_ms`, and `skew_within_tolerance` is judged against the
-*unexplained* part of the difference. A slow link therefore cannot manufacture a
-skew finding, which matters because an operator who once chases a clock that was
-fine stops believing the next report. HashiCorp answers in whole seconds, so a
-perfectly synchronised pair reports a small negative figure rather than zero.
+*unexplained* part of the difference. So a slow link cannot create a skew
+finding. That matters: an operator who once chases a clock that was fine stops
+believing the next report. HashiCorp answers in whole seconds, so two
+synchronised clocks report a small negative figure, not zero.
 
-**`authenticated` absent means not asked.** `sys/health` takes no token, so a
-store whose credential expired last night answers it perfectly — the token is
+**`authenticated` absent means "not asked".** `sys/health` takes no token, so a
+store whose credential expired last night answers it normally. The token is
 looked up separately, and only where a sealed store would not refuse the lookup
 and have the refusal blamed on the credential. Absent, `false` and `true` are
-three findings and none collapses into another.
+three findings, and none collapses into another.
 
 **`detail` and `error` are not two spellings of one thing.** `detail` is always
-the one-line answer to *why*, whichever way the store failed. `error` appears
-only where something **threw** — a backend with no module, a client that is not
-installed, a refused login — because only those carry a category and a code worth
-branching on. So the reading order is `status` to branch, `detail` for the
-reason, `error` when there is a machine-classified cause to go with it.
+the one-line answer to "why", whichever way the store failed. `error` appears
+only where something **raised**: a backend with no module, a client that is not
+installed, a refused login. Only those carry a category and a code worth
+branching on. So read `status` to branch, `detail` for the reason, and `error`
+when there is a classified cause.
 
-**Nothing here writes.** P5 makes `doctor` mutate nothing, and a reachability
-check that proved itself by leaving a lease behind would be a measurement that
-changes what it measures — on a lock mount, one a concurrent rotation notices.
+**Nothing here writes.** P5 makes `doctor` change nothing. A reachability check
+that proved itself by leaving a lease behind would change what it measures, and
+on a lock mount a concurrent rotation would notice.
 
 ### `constraints`, emitted by `creds generate`
 
-What the estate said a password may be, read before one was drawn (UC-1 §4
-step 2, #317). One entry per target asked, and one per account that answered.
+What the estate said a password may be, read before one was drawn (UC-1 §4 step
+2). One entry for each target asked, and one for each account that answered. This
+is from a tier-1 run:
 
 ```json
 "constraints": {
@@ -1323,104 +1270,99 @@ step 2, #317). One entry per target asked, and one per account that answered.
 }
 ```
 
-That is a real document from a tier-1 run, not a sketch — including the second
-account, whose profile was created in the root with `CONTAINER=ALL` and whose
-verify function therefore reads as the literal `FROM ROOT` from inside the PDB.
+The second account's profile was created in the root with `CONTAINER=ALL`, so
+its verify function reads as the literal `FROM ROOT` from inside the PDB.
 
 **Readings, never a verdict.** Nothing here predicts that a password will be
-accepted. Only the byte count *binds* anything: a verify function is arbitrary
-PL/SQL that cannot be consulted (invariants 13 and 14) and a reuse history is
-hashed, so `ORA-28003` and `ORA-28007` stay unpredictable before the statement is
-issued and #312 answers them by redrawing. The section says what the run found
-out; `diagnostics[]` says what it could not check.
+accepted. Only the byte count is binding. A verify function is arbitrary PL/SQL
+that cannot be consulted (invariants 13 and 14), and a reuse history is hashed.
+So `ORA-28003` and `ORA-28007` cannot be predicted before the statement is
+issued, and the tool answers them by drawing again. The section says what the
+run found out; `diagnostics[]` says what it could not check.
 
-**Three states for a verify function, not a nullable name.** `named`, `none` and
-`unknown` are three answers, and a missing name would merge the last two into the
-one reading that misleads — *nothing will judge this password*. §5's
-`--preflight` rule applies here: not knowing is not a finding. The run above is
-the case that makes it concrete: the account reported `unknown` was in fact
-guarded, and applying its staged password was refused with `ORA-28003`.
+**A verify function has three states, not a nullable name.** `named`, `none` and
+`unknown` are three answers. A missing name would merge the last two into the
+one reading that misleads: "nothing will judge this password". §5's
+`--preflight` rule applies: not knowing is not a finding. The run above shows
+why: the account reported `unknown` was in fact guarded, and applying its staged
+password was refused with `ORA-28003`.
 
-**`unknown` is narrower than "a PDB".** Measured on 26ai: a **common** profile
-read from inside a PDB answers `FROM ROOT`; a local profile read from the same
-session answers with its function's name; and `DEFAULT`, which is common,
-answers `NULL`. So the unreadable case is a user-created common profile seen from
-a PDB, and treating every PDB as unknowable would refuse to report the ordinary
-one.
+**`unknown` is narrower than "a PDB".** On 26ai, a **common** profile read from
+inside a PDB answers `FROM ROOT`. A local profile read in the same session
+answers with its function's name. `DEFAULT`, which is common, answers `NULL`. So
+the unreadable case is a user-created common profile seen from a PDB, and
+treating every PDB as unknowable would refuse to report the ordinary case.
 
-**`source` has two values and no third.** `targets` means at least one database
-answered; `policy` means none did and the policy's declared length governed,
-which UC-1 §4 makes a legitimate fallback rather than a failure. A run that asked
-*nothing* — `--offline` — omits the section entirely, because "we could not find
-out" and "we did not look" are answers a report must never merge. Absence is
-therefore the third value, and it is the only one that needs no name.
+**`source` has two values.** `targets` means at least one database answered.
+`policy` means none did, and the policy's declared length governed, which UC-1
+§4 makes a legitimate fallback, not a failure. A run that asked nothing
+(`--offline`) omits the section, because "we could not find out" and "we did not
+look" are answers a report must never merge. Absence is the third value.
 
-**Present even when nothing answered**, which is `install`'s rule rather than
-`wallet`'s: the section is evidence that the estate was consulted, and one that
-appeared only when something was wrong could never be quoted as proof that
-nothing was.
+**It is present even when nothing answered**, as `install` is and `wallet` is
+not. The section is evidence that the estate was consulted, and one that appeared
+only when something was wrong could never be quoted as proof that nothing was.
 
 **Every reading is kept.** A limit is a byte count *and* the character set it is
 counted in, so 128 bytes of `WE8MSWIN1252` and 128 of `AL32UTF8` do not contain
-one another — "stricter" is a partial order. `max_password_bytes` at the top is
-what a *generated* password was drawn against, which consults no character set;
-`targets[]` carries them all, because a *supplied* password has to satisfy each.
+each other: "stricter" is only a partial order. `max_password_bytes` at the top
+is what a *generated* password was drawn against, which uses no character set.
+`targets[]` carries every reading, because a *supplied* password must satisfy
+each.
 
-**`measured_as` is the codec, and it is not implied by `character_set`.** An
-unmapped character set falls back to `ascii` deliberately (`driver/oracle/limits.py`),
-which refuses a non-ASCII password rather than guessing its width — and a reader
-whose database refuses one should see that here rather than deduce it from the
-refusal.
+**`measured_as` is the codec, and `character_set` does not imply it.** An
+unmapped character set falls back to `ascii` on purpose
+(`driver/oracle/limits.py`). That refuses a non-ASCII password rather than
+guessing its width, and a reader whose database refuses one should see the
+reason here, not have to deduce it.
 
 **The reuse resources are strings.** `UNLIMITED` is a word in a column a reader
 expects numbers in, and the two resources interact: one of them `UNLIMITED`
-beside a number is not the same regime as both being numbers. They are reported
-rather than interpreted, because this run measured neither the interaction nor
-the hashed history.
+beside a number is not the same regime as two numbers. They are reported, not
+interpreted, because the run measured neither the interaction nor the hashed
+history.
 
 ### `results[].changed` vs `results[].state`
 
-Deliberately separate:
+These are separate on purpose:
 
-- `state` is **what is true now** (`IN_SYNC`, `DRIFT`, `ROLLOVER_ACTIVE`, …)
-- `changed` is **whether this run did anything**
+- `state` is **what is true now** (`IN_SYNC`, `DRIFT`, `ROLLOVER_ACTIVE`, …);
+- `changed` is **whether this run did anything**.
 
 An idempotent re-run of `apply` reports `state: IN_SYNC, changed: false`. A
 monitoring system watches `state`; a change-management system watches `changed`.
-Collapsing them into one field breaks one of the two consumers.
+One field for both would break one of the two consumers.
 
-`creds apply` is where the two visibly come apart (#259). It reaches `IN_SYNC`
-two ways — by changing the password, and by finding the database already had it
-— and the second is invariant 9's requirement on this verb. `summary.ok` and
-`summary.changed` differ for the same reason, and `summary.unchanged` is the
-complement of `changed` rather than of `ok`: it answers *how much did this run
-leave alone*.
+`creds apply` shows the difference. It reaches `IN_SYNC` in two ways: by changing
+the password, or by finding the database already had it. The second is
+invariant 9 for this verb. `summary.ok` and `summary.changed` differ for the same
+reason. `summary.unchanged` is the complement of `changed`, not of `ok`: it
+answers "how much did this run leave alone?"
 
 **`actions[]` carries the sequence, not just the outcome.** UC-1 §5 is a flow,
-and an `apply` entry holds up to four steps in the order they ran — the
+and an `apply` entry holds up to four steps in the order they ran: the
 pre-flight `verify`, the `password_set`, the `verify` that confirmed it, and the
-`vault_promote`. `applied` on each is whether the step *ran*, never whether it
-succeeded, so a `verify` with `applied: false` is a login the lockout guard
-declined and a `password_set` with `applied: false` is a password that was
-already right. A single action per result would make "we did not need to change
-it" and "we changed it and could not confirm it" the same row.
+`vault_promote`. `applied` on each says whether the step *ran*, never whether it
+succeeded. A `verify` with `applied: false` is a login the lockout guard
+declined, and a `password_set` with `applied: false` is a password that was
+already right. With one action per result, "we did not need to change it" and
+"we changed it and could not confirm it" would be the same row.
 
-**`results[].rollover` is emitted for every account `apply` acted on** (#262),
-not only for the ones with an open window. `active: false` beside a
+**`results[].rollover` is emitted for every account `apply` acted on**, not only
+for accounts with an open window. `active: false` beside a
 `profile_rollover_time` of `"1"` is a different fact from `active: false` beside
-a `null`: the first says a window opened and was closed inside the run
-(`--strategy direct`), the second says none was ever possible. Together with the
-`rollover_finish` action they make the regime each account ran under recoverable
-from the document, which is why `--strategy` needed no new field.
+`null`. The first says a window opened and was closed in the run
+(`--strategy direct`); the second says no window was possible. With the
+`rollover_finish` action, these make the regime each account ran under
+recoverable from the document, so `--strategy` needed no new field.
 
 **A promotion is reported on every account in the document it promoted**, with
 the version it produced, because they shared one compare-and-set. Where the
 database was changed and the document was *not* promoted, every account involved
-carries a `warning` saying so: applications read `current`, and until the
-promotion lands they are reading a password part of the estate no longer has.
-That is UC-1 §8's highest-severity row, and it is a per-result warning rather
-than a run-level diagnostic so that it survives whatever a consumer filters
-`results[]` down to.
+carries a `warning` that says so. Applications read `current`, and until the
+promotion lands they read a password that part of the estate no longer has. That
+is UC-1 §8's highest-severity row. It is a per-result warning, not a run-level
+diagnostic, so it survives any filter a consumer applies to `results[]`.
 
 ---
 
