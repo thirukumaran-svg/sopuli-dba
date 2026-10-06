@@ -22,11 +22,10 @@ and it is a good error -- see :func:`sopuli.driver.oracle.client.missing_client`
 
 **One connection per target, never a shared session with ``SET CONTAINER``.**
 A CDB root and its PDBs are separate services and are connected to separately.
-The alternative needs ``ALTER SESSION SET CONTAINER``, which
-``02-oracle-privileges.md`` §2 lists as optional and which the document's whole
-position is to avoid needing: the grant set stays minimal, and a run that cannot
-reach a PDB fails for that PDB rather than poisoning a session shared with
-others.
+The alternative needs the ``SET CONTAINER`` privilege, which
+``02-oracle-privileges.md`` §2 leaves out of the grant set. Without it the grant
+set stays minimal, and a run that cannot reach a PDB fails for that PDB rather
+than poisoning a session shared with others.
 """
 
 from __future__ import annotations

@@ -1,87 +1,72 @@
 # sopuli-dba — Oracle privileges and grants
 
-Status: the SQL in `sql/oracle/` has been run, per script and per release, and
-**each script's own `STATUS:` header says where** and what is still untried.
-Trust that header over any summary, including this one.
 Depends on: `00-principles.md`, `../use-cases/uc-01-app-credential-sync.md`
+
+This document says what the service account is granted, what it must not be
+granted, and what the tool checks before it changes an account. The SQL is in
+`sql/oracle/`. Which release each script ran on, and what it showed, is in
+[`../measurements.md`](../measurements.md).
 
 ---
 
 ## 1. The model: direct `ALTER USER`
 
-The tool connects as an account holding the `ALTER USER` system privilege. That
-is the whole privilege model. Install is a handful of grants, not a deployment.
+The tool connects as an account that holds the `ALTER USER` system privilege.
+That is the whole privilege model. Installing it is a handful of grants.
 
 ### Why not something narrower
 
-Through 21c there is nothing narrower to have. `ALTER USER` has **no object
-scope** — there is no `GRANT ALTER USER ON ORDERS_APP`. Any account that can
-change one user's password can change every user's password in that container,
-including `SYS`.
+Oracle has nothing narrower. `ALTER USER` has no object scope: there is no
+`GRANT ALTER USER ON ORDERS_APP`. An account that can change one user's password
+can change every user's password in that container, `SYS` included.
 
-The 23 codebase — 23ai, renamed 26ai — adds **schema privileges**, which looked like
-they might change that. **They do not: `GRANT ALTER USER ON SCHEMA` is rejected with
-`ORA-00990`, tested on 26ai 23.26.2.0.0.** So there is nothing narrower to have on
-any current release either, and §1's model is permanent rather than provisional.
-Evidence and consequences in §2.1 (P7, closed).
+The 23 codebase (23ai, renamed 26ai) adds schema privileges. They do not cover
+`ALTER USER` either: §2.1 has the test.
 
-The alternative is a definer-rights package that owns the privilege and exposes
-only whitelisted operations. That was the earlier draft of this document, and it
-was rejected on cost:
+The alternative is a definer-rights package. The package owns the privilege and
+offers only whitelisted operations. It was rejected on cost:
 
-- a package to install, version and upgrade in **every PDB**, since a single
-  common package in the root would itself need root-wide reach
-- a server-side whitelist to maintain in parallel with the tool's own config
-- version skew between tool and package as a new class of operational failure
-- all of it in exchange for constraining an operator who already holds SYSDBA
+- the package must be installed, versioned and upgraded in every PDB, because one
+  common package in the root would itself need reach over the whole CDB;
+- a server-side whitelist must be kept in step with the tool's own config;
+- a tool and a package at different versions is a new kind of failure;
+- all of this constrains an operator who already holds `SYSDBA`.
 
-sopuli-dba is a tool for DBAs to do faster and more reliably what they already do
-by hand. A DBA rotating a password with `sqlplus` today has strictly more power
-than the tool is being given. Requiring an in-database framework to hand them a
-subset of what they already have is friction without a corresponding gain.
+sopuli-dba helps a DBA do what they already do by hand, faster and more
+reliably. A DBA who rotates a password with `sqlplus` has more power than the
+tool is given. An in-database framework that hands them part of what they
+already have adds work and no protection.
 
-The reasoning is recorded in
-[`../decisions/adr-001-privilege-model.md`](../decisions/adr-001-privilege-model.md);
-the package implementation itself has been deleted rather than carried as dead
-code. §6 describes the one situation where it may earn its cost back.
+[`../decisions/adr-001-privilege-model.md`](../decisions/adr-001-privilege-model.md)
+records the decision. §6 describes the one case where the package could be
+worth its cost.
 
 ---
 
 ## 2. The grants
 
-### 2.1 Schema privileges do not cover `ALTER USER` — tested, closed (P7)
+### 2.1 Schema privileges do not cover `ALTER USER` (P7)
 
-**Answered 2026-08-17 on Oracle AI Database 26ai Free 23.26.2.0.0 (`FREEPDB1`).
 `GRANT ALTER USER ON SCHEMA` is rejected with `ORA-00990: missing or invalid
-privilege`, the error pointing at `USER`.** The direct grant in §1 is therefore the
-model, permanently rather than provisionally, and the narrower grant this section
-was hoping for does not exist on any current release.
+privilege` on 26ai 23.26.2.0.0. So the direct grant in §1 is the model on every
+release.
 
-> **"23ai" and "26ai" are one product, not two.** Oracle renamed Oracle Database
-> 23ai to Oracle AI Database 26ai in October 2025: same codebase, no architectural
-> or API change, and 26ai inherits 23ai's Lifetime Support Policy. In
-> `23.26.2.0.0` the **23** is the codebase and the **26** is the release-update
-> year. A 23ai instance becomes 26ai by applying the 23.26.0 RU, and 23ai is no
-> longer separately downloadable — **so there is no pre-26ai 23ai to find, and
-> nothing here is waiting on one.** Read "23ai" below as "the 23 codebase", and
-> "23ai+" as "codebase 23 and later". Numbering detail:
-> [`04-testing.md`](04-testing.md) §2.
+> **"23ai" and "26ai" are one product.** Oracle renamed Oracle Database 23ai to
+> Oracle AI Database 26ai in October 2025, with no change to the architecture
+> or the API. In `23.26.2.0.0` the **23** is the codebase and the **26** is the
+> year of the release update. In this document "23ai+" means "codebase 23 and
+> later". [`04-testing.md`](04-testing.md) §2 has the numbering.
 
-Oracle 23ai introduced schema-level privilege grants:
+The 23 codebase can grant a privilege on one schema:
 
 ```sql
 GRANT SELECT ANY TABLE ON SCHEMA hr TO analyst;
 ```
 
-This scopes an `ANY`-form privilege to the objects of a single schema, and covers
-objects created later without re-granting. It is exactly the shape of thing that
-would let this tool hold a narrow grant.
-
-This scopes an `ANY`-form privilege to the objects of a single schema, and covers
-objects created later without re-granting. It is exactly the shape of thing that
-would have let this tool hold a narrow grant.
-
-**It does not extend to `ALTER USER`.** What was run, and what came back:
+This limits an `ANY` privilege to the objects of one schema, including objects
+created later. A grant of that shape would let the tool hold a narrow privilege.
+It does not extend to `ALTER USER`. These statements ran in one session, and
+each comment shows the result:
 
 ```sql
 -- CONTROL: a documented schema privilege, on the same database, same session
@@ -99,41 +84,37 @@ SELECT privilege FROM dba_schema_privs WHERE grantee = 'SOPULI_SVC';
 -- SELECT ANY TABLE   <- only the control; nothing from the ALTER USER attempts
 ```
 
-**The control is the part that makes this conclusive.** A bare `ORA-00990` would be
-consistent with schema privileges being absent, unlicensed, or syntactically
-unsupported on this release. `SELECT ANY TABLE ON SCHEMA` succeeding in the same
-session proves the feature is present and working, so the refusal is specific to
-`ALTER USER` rather than incidental to the environment. Nothing partial landed
-either — `DBA_SCHEMA_PRIVS` shows only the control.
+**The control makes the result conclusive.** `ORA-00990` alone could mean that
+schema privileges are missing, unlicensed or unsupported on this release. The
+control grant succeeded in the same session, so the feature works, and the
+refusal is specific to `ALTER USER`. `DBA_SCHEMA_PRIVS` shows that nothing from
+the refused grants was partly applied.
 
-This matches the predicted reasoning, which is worth keeping because it is what
-makes the result general rather than a single observation:
+Two reasons make the result general, not one observation:
 
-1. Schema privileges scope privileges over *objects inside* a schema — tables,
-   views, sequences, procedures. `ALTER USER` does not act on an object in a
-   schema; it acts on the account as a security principal. The documented
-   examples are all `SELECT/INSERT/UPDATE/DELETE ANY TABLE`,
-   `SELECT ANY SEQUENCE`, `EXECUTE ANY PROCEDURE`.
-2. `ALTER USER` is not an `ANY`-form privilege at all, so there is no natural
-   syntax for it — which is exactly what `ORA-00990` is reporting.
+1. Schema privileges cover objects inside a schema: tables, views, sequences,
+   procedures. `ALTER USER` acts on an account, which is not an object in a
+   schema. Oracle's documented examples are all of the first kind:
+   `SELECT/INSERT/UPDATE/DELETE ANY TABLE`, `SELECT ANY SEQUENCE`,
+   `EXECUTE ANY PROCEDURE`.
+2. `ALTER USER` is not an `ANY` privilege, so it has no schema-scoped syntax.
+   `ORA-00990` says exactly that.
 
-Oracle publishes the definitive list of system and administrative privileges
-excluded from schema privileges in *Configuring Privilege and Role Authorization*.
+Oracle lists the privileges that schema privileges exclude in *Configuring
+Privilege and Role Authorization*.
 
-**Consequences.** The least-privilege model this section was testing for is not
-available, so nothing about §1 changes and the direct grant is the model on every
-supported release. Two follow-on effects worth naming: the P7 trigger for
-reconsidering the definer-rights package is closed
-([`../decisions/adr-001-privilege-model.md`](../decisions/adr-001-privilege-model.md)),
-leaving the unattended-runner case as its only remaining trigger; and §4's
-client-side guardrails carry the whole account-scoping job, since there is no
-server-side way to bound which accounts the service credential can reach.
+**Consequences.** Nothing in §1 changes. The P7 reason to reconsider the
+definer-rights package is gone, so the unattended runner in §6 is the only one
+left ([ADR-001](../decisions/adr-001-privilege-model.md)). And no server-side
+setting limits which accounts the service account can reach, so §4's client-side
+guardrails do all of that work.
 
-Keep the probe as a regression check rather than deleting it — a future release
-could add `ALTER USER` to the schema-privilege list, and that would be worth
-noticing (`04-testing.md` §5).
+The probe stays as a regression check. A later release could add `ALTER USER`
+to the schema privileges, and that would matter (`04-testing.md` §5).
 
 ### Non-CDB, or a single PDB with local users
+
+This is the grant set for a local service account:
 
 ```sql
 CREATE USER sopuli_svc IDENTIFIED BY "…" DEFAULT TABLESPACE users;
@@ -150,75 +131,66 @@ GRANT SELECT ON SYS.V_$DATABASE    TO sopuli_svc;
 GRANT SELECT ON SYS.V_$INSTANCE    TO sopuli_svc;
 ```
 
-`SELECT_CATALOG_ROLE` covers all six in one grant (read off `DBA_TAB_PRIVS` on
-26ai, 2026-09-25) and is a reasonable
-convenience choice — it reaches the `DBA_*` and `V$` views but **not** base
-tables such as `SYS.USER$`. The explicit list is the documented default because
-it makes a privilege review trivial; the role is fine if your site prefers it.
+`SELECT_CATALOG_ROLE` covers all six dictionary reads in one grant (read from
+`DBA_TAB_PRIVS` on 26ai 23.26.2.0.0). You may use it instead. It reaches the
+`DBA_*` and `V$` views, but not base tables such as `SYS.USER$`. The explicit
+list is the default because a privilege review can read it at a glance.
 
-**Run these as `SYS`, not as `SYSTEM`.** Measured on 26ai 23.26.2.0.0: every
+**Run these as `SYS`, not as `SYSTEM`.** On 26ai 23.26.2.0.0, every
 `GRANT SELECT ON SYS.…` above fails with `ORA-01031: insufficient privileges`
-when the granting session is `SYSTEM`, while the `CREATE USER` and the two system
-privileges succeed. The result is a service account that connects, can rotate,
-and reads nothing — whose capability probes then report absent for perfectly
-correct reasons, which looks exactly like a broken probe. Worth stating because
-nothing in the statements themselves says who has to issue them.
+when `SYSTEM` issues it, while `CREATE USER` and the two system privileges
+succeed. The result is a service account that connects and can rotate, but
+reads nothing. Its capability probes then report every capability absent, which
+looks like a broken probe. Nothing in the statements says who must issue them.
 
-**`DBA_ROLE_PRIVS` is what guardrail 4 reads, and it was missing from this list
-until #178.** §4 check 4 refuses an account holding `DBA`, `PDB_DBA`, `CDB_DBA`
-or `AUDIT_ADMIN`, and the only place to see another account's roles is
-`DBA_ROLE_PRIVS`. Measured: a service account holding exactly the grants above
-got `ORA-00942` from it, so the guardrail's input was unobtainable by a correctly
-installed tool.
+Each dictionary read has a consumer, and a missing grant is never read as an
+empty answer.
 
-The failure mode is why it is a grant rather than a graceful degradation. An
-empty role set means *this account holds none of them* and reads as a pass, so a
-missing grant would have turned a safety check into a silent success. The driver
-therefore refuses to describe an account whose roles it cannot read
-(`RolesUnreadableError`), naming this grant — the same rule as a capability probe
-that could not be answered, which raises instead of reporting absent (#195).
-Only a refused grant (`ORA-00942`, `ORA-01031`, `ORA-41900`) is reported that
-way, with the server's code and message. Any other failure is classified as
-itself, because the grant is the wrong fix for a dropped connection (#521).
+- **`DBA_ROLE_PRIVS`** is what guardrail 4 reads (§4). Check 4 refuses an
+  account that holds `DBA`, `PDB_DBA`, `CDB_DBA` or `AUDIT_ADMIN`, and this view
+  is the only place to see another account's roles. An empty role set means "this
+  account holds none of them", which passes the check. So a missing grant would
+  turn the check into a silent pass. The driver refuses to describe an account
+  whose roles it cannot read (`RolesUnreadableError`) and names this grant. A
+  capability probe that cannot be answered follows the same rule: it raises, and
+  does not report the capability absent. Only a refused grant (`ORA-00942`,
+  `ORA-01031`, `ORA-41900`) is reported this way, with the server's code and
+  message. Any other failure is reported as itself, because a grant does not fix
+  a dropped connection.
+- **`DBA_USERS`** follows the same rule. Here "no row" means the account does not
+  exist, so an unreadable view would report `ACCOUNT_MISSING` for every account.
+  Instead `creds status` reports `ERROR` with category `authorization`,
+  `ORA-00942` and a hint that names this grant, and exits 1. `ORA-00904` is the
+  one code that narrows the query instead, because a missing column is how the
+  driver finds the shape of a release's `DBA_USERS`.
+- **`DBA_ROLES`** is not read by UC-1. It is the only place that says whether a
+  role exists, and UC-2 §2 depends on that. A `role:` predicate that names no
+  role is a misspelling and is refused. A predicate that names a real role that
+  nobody holds is a true empty answer.
 
-**`DBA_USERS` is refused on the same rule** (#521). There the tempting
-misreading is worse: "no row" means the database has no such account, so an
-ungranted view read as `ACCOUNT_MISSING` for every account in the estate. That
-was measured on 26ai against a service account holding `CREATE SESSION` and
-`ALTER USER` only: `creds status` reported `ACCOUNT_MISSING` and exited 0. It now
-reports `ERROR` with category `authorization`, `ORA-00942` and a hint naming
-this grant, and exits 1. `ORA-00904` is still the one code that narrows the
-query, since a missing column is how a release's `DBA_USERS` shape is found.
+  An install that lacks this grant still works for everything except role
+  predicates. `role_lookup` is a probed capability (P1), so `account list`
+  refuses a role predicate at plan time, with exit 5, naming the capability, the
+  target and this grant. It is not one of the required reads that
+  `doctor --check-privileges` audits (§3). The pre-flight in `creds apply` and
+  `creds rotate` blocks on a missing required read, and making this one required
+  would stop older installs from rotating, for a grant that only a UC-2 listing
+  uses. `doctor` shows it as the capability `role_lookup`, absent.
 
-**`DBA_ROLES` joined this list with #531, and nothing in UC-1 reads it.** It is
-the one place that says whether a role *exists*, and UC-2 §2 turns on that: a
-`role:` predicate naming no role is a misspelling and is refused, and one naming
-a role that matches nobody is a true empty answer. `resolve_role`'s docstring
-said this view was already granted when it was not. Measured on 26ai, an account
-holding exactly the grants above got `ORA-00942` from it, so `account list`
-refused every role predicate as a misspelling on a correctly installed target.
+**A role-granted `ALTER USER` reads as absent.** The capability `common_users` is
+probed through `USER_SYS_PRIVS`, which shows direct grants only. An account that
+holds `ALTER USER` through a role, as `SYSTEM` does, reports the capability
+absent and is refused at plan time. The grant above is direct, so a correctly
+installed service account never hits this. The other views are worse:
 
-**An estate installed before #531 is gated, not broken.** `role_lookup` is a
-probed capability (P1), so `account list` refuses a role predicate at plan time,
-exit 5, with the capability, the target and this grant named. It is deliberately
-**not** one of the `doctor --check-privileges` audit's required reads (§3). The
-pre-flight in `creds apply` and `rotate` blocks on a missing required read, and
-adding this one there would stop every older install from rotating over a grant only a UC-2 listing uses. `doctor`
-shows it the capability way instead, as `role_lookup` absent.
-
-**A role-granted `ALTER USER` reads as absent.** `common_users` is probed through
-`USER_SYS_PRIVS`, which shows **direct** grants only — so an account holding
-`ALTER USER` through a role (as `SYSTEM` does) reports the capability absent and
-is refused at plan time. The grant above is direct, so a correctly installed
-service account is never that case. The alternatives were measured and are worse:
-`DBA_SYS_PRIVS` is not readable under this grant set at all, and `SESSION_PRIVS`
-sees role-derived privileges but has no `COMMON` column, so it calls a *local*
-`ALTER USER` a pass — which would over-claim, and an over-claimed capability
-fails halfway through a rotation instead of before it (#195).
+- `DBA_SYS_PRIVS` is not readable with this grant set at all.
+- `SESSION_PRIVS` sees role-derived privileges but has no `COMMON` column, so it
+  would report a local `ALTER USER` as enough. An over-reported capability fails
+  in the middle of a rotation instead of before it.
 
 ### CDB with common users — one grant covers every container
 
-This is where the direct model pays off most obviously:
+This is the grant set for a common service account, run in `CDB$ROOT`:
 
 ```sql
 -- in CDB$ROOT
@@ -235,24 +207,22 @@ GRANT SELECT ON SYS.V_$INSTANCE  TO c##sopuli_svc CONTAINER=ALL;
 GRANT SELECT ON SYS.V_$PDBS      TO c##sopuli_svc;   -- root only
 ```
 
-One statement set, every PDB covered, new PDBs inherit it. Compare with a package
-install per PDB, repeated on every plug-in and clone.
+One set of statements covers every PDB, and a new PDB inherits it. A package
+would need an install in each PDB, repeated on every plug-in and clone.
 
-Two additional grants depending on how the tool connects:
+The tool needs no `SET CONTAINER`. It opens one connection per target, to the
+PDB's own service, and never switches container inside a session. So a target
+that cannot be reached fails on its own, and the grant set stays small.
+`00_install.sql` can still grant it (`grant_set_container`) for a site whose
+other tools need it.
 
-```sql
--- only if the tool switches containers on an existing session rather than
--- connecting to each PDB service directly
-GRANT SET CONTAINER TO c##sopuli_svc CONTAINER=ALL;
-
--- to manage the common user itself with CONTAINER=ALL
--- (already covered by ALTER USER above; noted because the *session* must be in
---  CDB$ROOT for the CONTAINER=ALL clause to be legal)
-```
+A `CONTAINER=ALL` clause on `ALTER USER` is legal only in a session in
+`CDB$ROOT`. §4 *Statement construction* says when the tool adds it.
 
 ### Choosing common vs per-PDB local
 
-Both are supported; it is a blast-radius decision, not a capability one.
+The tool supports both. The choice is about how far one stolen credential
+reaches, not about what the tool can do.
 
 | | one common `C##SOPULI_SVC` | a local `SOPULI_SVC` per PDB |
 |---|---|---|
@@ -262,311 +232,286 @@ Both are supported; it is a blast-radius decision, not a capability one.
 | Credentials to store in the vault | one | N |
 | Fits | one team owns the whole CDB | PDBs owned by different teams or tenants |
 
-Recommendation: common user when one DBA team owns the CDB, which is the usual
-case. Per-PDB local users when PDBs have different owners — there the isolation
-is worth the extra provisioning, and the tool's config already models targets
-individually.
+Use a common user when one DBA team owns the CDB, which is the usual case. Use
+local users when different teams own the PDBs. The isolation is then worth the
+extra provisioning, and the config already models each target on its own.
+[P1](../decisions/log.md#p1) records the decision.
 
 ### Autonomous Database — PDB mode, as `ADMIN`, and no `SYS.USER$`
 
-An Autonomous Database is a PDB whose container name is generated (a long prefix
-and the database name, e.g. `G…_ACMEDB`), and `ADMIN` is its most privileged
-account. It is not `SYSDBA`. **`00_install.sql` runs there unchanged in PDB
-mode, run as `ADMIN`** (measured 2026-09-28 on ADB serverless 26ai 23.26.3.3.0,
-#479). The mode check accepts the generated name, all eight grants in §2's base
-set succeed, and the report's "should not appear" query is empty. `doctor
---check-privileges` then flags nothing beyond the optional grants. Use the PDB
-tablespace ADB provides, `DATA`, as the third argument.
+An Autonomous Database (ADB) is a PDB with a generated container name, a long
+prefix and the database name, such as `G…_ACMEDB`. Its most privileged account
+is `ADMIN`, which is not `SYSDBA`.
 
-What ADB takes away is permanent rather than a version gap:
+**`00_install.sql` runs unchanged on ADB in PDB mode, as `ADMIN`.** The mode
+check accepts the generated name, every grant in the base set succeeds, and the
+report's over-grant query is empty. `doctor --check-privileges` then reports
+only the optional grants as missing. Use ADB's tablespace, `DATA`, as the third
+argument. [`../measurements.md`](../measurements.md) has the run.
 
-- **No `SYS.USER$`.** `ADMIN` gets `ORA-00942` on it (#478), so
-  `grant_user_dollar=Y` has nothing to grant. That means no `check --method hash`
-  on ADB, no `LCOUNT` guard, and `offline_verify_available: false` in `doctor`.
-  The driver's refusal says so in ADB's terms rather than advising a grant
-  (#437). It reads `SYS_CONTEXT('USERENV','CLOUD_SERVICE')`, which answered
-  `OLTP` here on 2026-10-02, NULL on 26ai Free, 21c and 18c XE, and
-  `ORA-02003` on 11g XE.
-  An explicit `check --method hash` or `both` there is refused in those words,
-  at plan time.
-  None of this is evidence about the verifier layout, because nothing was read.
-  The `PTIME` fallback is not needed there, since `PASSWORD_CHANGE_DATE` exists.
-- **`DEFAULT` is ADB's own profile**, and every created user gets it:
+ADB takes some things away for good:
+
+- **No `SYS.USER$`.** `ADMIN` gets `ORA-00942` on it, so `grant_user_dollar=Y`
+  has nothing to grant. So ADB has no `check --method hash`, no `LCOUNT` guard,
+  and `doctor` reports `offline_verify_available: false`. The driver detects ADB
+  from `SYS_CONTEXT('USERENV','CLOUD_SERVICE')`, which needs no grant. On ADB it
+  names the workload, such as `OLTP`. Elsewhere it is NULL, or `ORA-02003` on
+  11.2, and the driver reads both as "not ADB". The driver's refusal says that
+  no account on ADB can read `SYS.USER$`, and does not advise a grant. An
+  explicit `check --method hash` or `both` is refused in those words, at plan
+  time. `PASSWORD_CHANGE_DATE` exists on ADB, so the `PTIME` fallback is not
+  needed.
+- **`DEFAULT` is ADB's own profile**, and every created user gets it. It sets
   `PASSWORD_VERIFY_FUNCTION CLOUD_VERIFY_FUNCTION`, `PASSWORD_REUSE_MAX 4`,
-  `PASSWORD_REUSE_TIME 1`, `PASSWORD_ROLLOVER_TIME 0`. The verify function is
-  reported as `SOPULI-W016`, and it refused a ten-character password with
-  `ORA-28003`. It accepted forty, so the 30-character upper bound in the ADB
-  documentation's rules for `ADMIN`'s own password did not apply to a created
-  user on this release. The reuse limits make UC-1 §8's rollback fail with
-  `ORA-28007` (#568), which the rollback reports as `SOPULI-W028`; the way back
-  there is a rollover window, from a profile `ADMIN` can create.
-- **No retention claim either way.** `02_password_leak_probe.sql`, which is
-  gate 2's evidence (`04-testing.md` §6), sweeps `V$SQLSTATS`, the OS audit files
-  and the trace directory as `SYSDBA`. ADB has no `SYSDBA` and no OS access, so
-  the sweep can't run there, and its `SYSDBA` positions are **inapplicable**
-  rather than unrun. §4's surface table names the releases it was measured on,
-  and ADB is not among them for that reason. It must not borrow 26ai's result
-  because both are 26ai.
-- **`db_version` is the base release**, `23.0.0.0.0`, because it is
-  `V$INSTANCE.VERSION`, and that column has carried only the base release since
-  18c. 19.3 reports `19.0.0.0.0` in the same column, with `VERSION_FULL`
-  `19.3.0.0.0`. `doctor` displays it as `scope.db_version`. The one thing that
-  *decides* anything with it is `driver/oracle/limits.py`'s password-limit floor,
-  which compares the first two components only, so the zeros change nothing
-  (#479).
-- **Not tried:** whether `ADMIN` can grant `SELECT ON SYS.V_$PWFILE_USERS`
-  (§4 check 3), and whether `01_audit_policy.sql` runs on ADB, where unified
-  auditing is on by default.
+  `PASSWORD_REUSE_TIME 1` and `PASSWORD_ROLLOVER_TIME 0`. The tool reports the
+  verify function as `SOPULI-W016`. It refused a ten-character password with
+  `ORA-28003` and accepted forty characters. So the 30-character limit in ADB's
+  rules for `ADMIN`'s own password did not apply to a created user. The reuse
+  limits make UC-1 §8's rollback fail with `ORA-28007`, which the rollback
+  reports as `SOPULI-W028`. On ADB the way back is a rollover window, from a
+  profile that `ADMIN` can create.
+- **No retention result either way.** `02_password_leak_probe.sql` is gate 2's
+  evidence (`04-testing.md` §6). It sweeps `V$SQLSTATS`, the OS audit files and
+  the trace directory as `SYSDBA`. ADB has no `SYSDBA` and no OS access, so the
+  sweep cannot run there. Its `SYSDBA` positions do not apply to ADB; they are
+  not merely unrun. Do not carry 26ai Free's result over to ADB because both are
+  26ai.
+- **`db_version` is the base release**, `23.0.0.0.0`, because it comes from
+  `V$INSTANCE.VERSION`. Since 18c that column holds only the base release: 19.3
+  reports `19.0.0.0.0`, with `VERSION_FULL` `19.3.0.0.0`. `doctor` shows it as
+  `scope.db_version`. Only the password-limit floor in
+  `driver/oracle/limits.py` uses it to decide anything, and that compares the
+  first two parts only.
+- **Not tried:** whether `ADMIN` can grant `SELECT ON SYS.V_$PWFILE_USERS` (§4
+  check 3), and whether `01_audit_policy.sql` runs on ADB, where unified auditing
+  is on by default.
 
 ### `check`'s default method, and the optional `SYS.USER$` grant
 
-`check` defaults to `--method login` unconditionally — **decided in #86,
-2026-08-18** (Q1: `login`; P2: `SELECT ON SYS.USER$` is not granted by
-default). It never requires `SYS.USER$`: a login attempt plus
-UC-1 §7's mitigations (never retry, reset on success, `ACCOUNT_STATUS`
-reporting) is the whole of the default path, and all of it runs on the base
-grant set in §7 alone.
+`check` uses `--method login` by default, always. It never needs `SYS.USER$`.
+The default path is a login attempt plus UC-1 §7's mitigations: never retry,
+reset on success, and report `ACCOUNT_STATUS`. All of it runs on the base grant
+set. [P2](../decisions/log.md#p2) records the decision.
 
-`SELECT ON SYS.USER$` is **optional**, not part of the default install:
+`SELECT ON SYS.USER$` is optional. `sql/oracle/00_install.sql` grants it only
+when `grant_user_dollar` is `Y`, and the default is `N`:
 
 ```sql
 GRANT SELECT ON SYS.USER$ TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
 ```
 
-`sql/oracle/00_install.sql` already models it this way — `grant_user_dollar`
-defaults to `N` — so this decision brings the docs into line with SQL that
-predates it, not the other way round.
+When the grant is present, the tool probes it as a capability at plan time
+(invariant 3) and uses it for three things:
 
-When present, the grant is probed as a capability at plan time (invariant 3,
-`CLAUDE.md`) rather than assumed from config, and used for three things:
+- **The `LCOUNT` guard.** It refuses a login attempt within `--lockout-margin`
+  of the account's `FAILED_LOGIN_ATTEMPTS` limit (UC-1 §7 mitigation 2). This is
+  the one place where the grant changes behaviour. Without it, `--method login`
+  still runs on UC-1 §7's other mitigations (1, 3 and 6), and `check` says
+  plainly that the guard is absent.
+- **`check --method hash`.** See below.
+- **The password change date, where `DBA_USERS` has no column for it.**
+  `DBA_USERS.PASSWORD_CHANGE_DATE` exists from 19c, and is absent on 18c, 12.2
+  and 11.2. Where it is absent, `SELECT PTIME FROM SYS.USER$` gives the same
+  value; it equals the column to the second on the releases that have both. The
+  value is for display only: `creds status`'s `DB_PW_CHANGED` and the run
+  document's `password_age_days`. The driver never reads `PTIME` where the column
+  exists. Without the grant the date is absent, and `SOPULI-W021` says so.
 
-- **The `LCOUNT` guard** — refuse a login attempt within `--lockout-margin` of
-  the account's `FAILED_LOGIN_ATTEMPTS` limit (UC-1 §7 mitigation 2). This is
-  the one place the grant changes *behaviour*, not just what's queryable:
-  without it, `--method login` still runs, on UC-1 §7's remaining runtime
-  mitigations (1/3/6 — never retry, reset on success, `ACCOUNT_STATUS`
-  reporting), and `check` must report the guard's absence plainly rather than
-  silently run a weaker version of it.
-- **`check --method hash`** (#437) — see below.
-- **The password change date where `DBA_USERS` has no column for it** (#386).
-  `DBA_USERS.PASSWORD_CHANGE_DATE` is `ORA-00904` on 18c and 11.2, and present on
-  19c (19.24.0.0.0, measured 2026-09-17), which never takes this path as a result.
-  12.2.0.1.0 has no such column either (2026-09-29, #572) and takes the path,
-  as 18c does; 12.1 is unmeasured. Where it is absent, `SELECT PTIME FROM SYS.USER$` supplies
-  the same value, measured equal to the column to the second on the releases
-  that have both. Display only — `creds status`'s `DB_PW_CHANGED` and the run
-  document's `password_age_days` — and never read where the column exists.
-  Without the grant the date is absent and `SOPULI-W021` says so.
+**Why the grant is optional.** It exposes every password verifier in the
+database. An account that holds `ALTER USER` can already set any password, so
+reading the verifiers adds little to what it can do in the database. But
+verifiers can be attacked offline: a stolen copy is useful to an attacker who
+never touches the database again. A site makes that trade, not the tool.
 
-Under the package model this grant was the thing to avoid — it exposes every
-password verifier in the database to a low-privilege account. Under the direct
-model that objection largely evaporates: an account holding `ALTER USER` can
-already set any password it likes, so being able to read the verifiers adds
-little to what it can do. The residual concern is different in kind rather than
-degree — verifiers are *offline-attackable*, so a stolen dump of them is useful
-to an attacker who never touches the database again. That trade-off is a site's
-to make, not the tool's to default to — which is why the grant is opt-in.
+Whether to recommend the grant, and whether a narrower grant exists, is not
+decided (open: #124). The Data Pump metadata views `SYS.KU$_USER_VIEW` and
+`SYS.KU$_USER_BASE_VIEW` are granted to `PUBLIC`. A blog post says they show
+`LCOUNT` under `SELECT_CATALOG_ROLE` alone, and hide `SPARE4` unless the session
+also holds `EXP_FULL_DATABASE`. If that is true, a site could enable the `LCOUNT`
+guard without exposing verifiers (unverified: lcount-grant). It comes from a blog
+post, not from Oracle's documentation, so it must be measured before
+`00_install.sql` recommends it.
 
-**Whether to recommend granting it, and whether a narrower alternative exists,
-is not decided** (open: #124). `SYS.KU$_USER_VIEW` / `SYS.KU$_USER_BASE_VIEW` (Data
-Pump metadata views, granted to `PUBLIC`) reportedly expose `LCOUNT` under
-`SELECT_CATALOG_ROLE` alone, masking `SPARE4` unless the session also holds
-`EXP_FULL_DATABASE` — which, if it reproduces, would let a site enable the
-`LCOUNT` guard without exposing verifiers at all (unverified: lcount-grant).
-That claim comes from a blog
-post, not Oracle documentation, and needs the same measure-don't-trust
-treatment #124 gives it before it goes anywhere near the install script.
+#### Hash mode
 
-**The reproduction question (#90) is independent of whether to *recommend* the
-grant (#124) — but hash mode itself is not independent of the grant.** The `T:`
-(12C, PBKDF2-SHA512) verifier must be regenerated client-side, which the grant
-does not touch, *and* read from `SPARE4`, which needs `SELECT ON SYS.USER$`. So
-`hash` mode requires the grant even though the derivation does not. The layout is
-read, the derivation reproduces, and the degradation rule is settled — on the
-tier-2 releases, on **19c 19.3.0.0.0** (#548), on **12c 12.2.0.1.0** (#572)
-and on **19c 19.32.0.0.0** (#581), an OCI Base Database Service DB system and
-the first release update read. 12.1 is still unread. #90 is three parts:
+`check --method hash` compares the vault's password with the account's stored
+`T:` (12C, PBKDF2-SHA512) verifier. The tool regenerates the verifier
+client-side. Reading the stored one needs `SELECT ON SYS.USER$`, because it is in
+`SPARE4`. So hash mode needs the grant, although the derivation does not.
 
-- **The layout — read on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and
-  11g 11.2.0.2.0 (#431), 2026-09-15, on 19c 19.3.0.0.0 (#548), 2026-09-27, and
-  on 12.2.0.1.0 (#572), 2026-09-29, and on 19.32.0.0.0 (#581), 2026-10-01;
-  unread on 12.1.** `SPARE4`
-  is `S:<60 hex>;T:<160 hex>` on the six 12.2+ releases and `S:<60 hex>` alone
-  on 11g. There is no `H:` in `SPARE4` on any of them; 11g's 10G value is
-  `USER$.PASSWORD`. `T:` is a 64-byte digest followed by a 16-byte salt, `S:` a
-  20-byte digest followed by a 10-byte salt. The salt offsets are measured
-  rather than assumed: the `AUTH_VFR_DATA` a traced logon receives equals those
-  trailing bytes, twice on every release but 19.32. **The iteration count is
-  not stored** — the server sends `AUTH_PBKDF2_VGEN_COUNT` = 4096 at logon, on
-  all five 12.2+ releases where it could be read. **On 19.32 it could not**: the
-  DB system requires NNE, so everything after the connect packet is encrypted
-  and a client trace shows no `AUTH_` key at all. There the count is shown only
-  indirectly, by the reproduction below succeeding with 4096. Every `ALTER USER` draws a fresh salt, including one to the
-  same password, so a stored verifier can only ever be compared by regenerating
-  from *its* salt. Field table, normalisation notes and the probe:
-  `sql/oracle/05_verifier_layout_probe.sql`.
-- **Reproduction — confirmed on 26ai, 21c and 18c (#432), 2026-09-15, on
-  19.3.0.0.0 (#548), 2026-09-27, on 12.2.0.1.0 (#572), 2026-09-29, at least
-  twice each, and on 19.32.0.0.0 (#581), 2026-10-01; not on 12.1.** The stored `T:` digest regenerates byte-for-byte from the password:
+The layout, the derivation and the rules for a missing verifier are measured.
+[`../measurements.md`](../measurements.md) lists the releases, and 12.1 is not
+among them. `docs/README.md` §*Verify before implementing* has the entry
+`t-verifier`.
 
-  ```
-  salt   = the last 16 bytes of the T: blob (its 32 trailing hex characters)
-  inter  = PBKDF2-HMAC-SHA512(password_utf8, salt || b"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)
-  digest = SHA-512(inter || salt)                # the 64-byte / 128-hex head of the blob
-  ```
+**The layout.** `SPARE4` is `S:<60 hex>;T:<160 hex>` on every release measured
+from 12.2 on, and `S:<60 hex>` alone on 11g. No release has an `H:` in `SPARE4`.
+11g's 10G verifier is in `USER$.PASSWORD`.
 
-  The password is fed as raw UTF-8 with no case folding and no normalisation —
-  the non-ASCII case reproduces on the multibyte input unchanged. **"The
-  password" means the one the database holds**, after conversion to its
-  character set: on 12.2's WE8DEC image `Ω` does not survive that conversion,
+- `T:` is a 64-byte digest followed by a 16-byte salt.
+- `S:` is a 20-byte digest followed by a 10-byte salt.
+
+The salt offsets are measured, not assumed: the `AUTH_VFR_DATA` that a traced
+logon receives equals those trailing bytes. `SPARE4` does not store the
+iteration count. The server sends `AUTH_PBKDF2_VGEN_COUNT` = 4096 at logon. On
+19.32.0.0.0 the logon could not be read, because the DB system requires Native
+Network Encryption (NNE) and the client trace shows no `AUTH_` key. There the
+count is shown only by the reproduction succeeding with 4096.
+
+Every `ALTER USER` draws a fresh salt, even one that sets the same password. So
+a stored verifier can be compared only by regenerating it from its own salt.
+`sql/oracle/05_verifier_layout_probe.sql` has the field table and the
+normalisation notes.
+
+**The derivation.** The stored `T:` digest regenerates byte for byte from the
+password:
+
+```
+salt   = the last 16 bytes of the T: blob (its 32 trailing hex characters)
+inter  = PBKDF2-HMAC-SHA512(password_utf8, salt || b"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)
+digest = SHA-512(inter || salt)                # the 64-byte / 128-hex head of the blob
+```
+
+- The password is the raw UTF-8, with no case folding and no normalisation. A
+  non-ASCII password reproduces unchanged.
+- "The password" is the one the database holds, after conversion to its
+  character set. On 12.2's WE8DEC image, `Ω` does not survive the conversion:
   the account's password became `…¿9`, and the verifier reproduced from the
-  UTF-8 of *that* (#572). On AL32UTF8 the two are the same string. The tool is
-  unaffected — `limits.py` measures an unmapped set like WE8DEC in ASCII, so
-  no password it sets can reach the lossy path — but a `hash` implementation
-  must not assume the vault's string is the one hashed on such a database. A 128-byte
-  password reproduces on 26ai (it is rejected at DDL below 23ai, the 30-byte
-  limit of #383, which the probe reads from the server rather than a version).
-  4096 is the count the
-  server sends at logon (the layout bullet), not a value in `SPARE4`, so a
-  release sending a different one would not reproduce and must be measured, not
-  assumed. That is why 19c stayed open until an RU had been read. 19.32 has now
-  been read and reproduces with 4096 (#581), with the count shown by the
-  reproduction rather than read off the wire, and the register entry is settled
-  for 19c on that basis. 12.1 is unread. The
-  reference derivation and the probe are `sql/oracle/06_verifier_reproduce.py`
-  and `.sql`.
-- **The rollover window carries two 12C verifiers, distinguishable client-side
-  (#432).** During a gradual rollover (measured on 26ai, 21c and 19.32.0.0.0;
-  18c, 19.3 and 12.2 have no such feature), `SPARE4` holds `T:` = the *previous* password and `t:` = the
-  *current* one, sharing one salt, alongside a non-verifier `V:` marker. So
-  `check` reports `ROLLOVER_ACTIVE` from the presence of two 12C verifiers, and
-  `--include-previous` tells current from previous by which prefix the vault
-  value reproduces — never by drift. Confirmed on a real 19.12+ by 19.32 (#581):
-  `T:` = old and `t:` = new during the window, `T:` = new after it.
-- **Multi-verifier accounts and degradation when `T:` is absent — measured on
-  11g and 18c (#433), 2026-09-15.** The comparison uses the **12C `T:` verifier
-  and only it**; the older verifiers are neither compared nor in the way:
-    - A genuine three-verifier account (`PASSWORD_VERSIONS = 10G 11G 12C`, forced
-      on 18c with `SQLNET.ALLOWED_LOGON_VERSION_SERVER = 8` — see below) puts the
-      **10G verifier in `SYS.USER$.PASSWORD`, a different column**, and leaves
-      `SPARE4` as the same `S:;T:` pair. `T:` sits at the same offset and
-      reproduces byte-for-byte with 10G and 11G both present. So the presence of
-      older verifiers changes nothing about reading or deriving `T:`.
-    - 10G and 11G must **never** be a silent fallback: 10G is unsalted,
-      case-insensitive DES and 11G is `S:` (SHA-1); comparing either would report
-      a weaker check than `--method login` already gives. `T:` is the only
-      verifier `hash` mode trusts.
-    - **When no `T:` is present** — 11g (`PASSWORD_VERSIONS = 10G 11G`, `SPARE4`
-      is `S:` alone), or any account whose `PASSWORD_VERSIONS` lacks `12C` —
-      `hash` mode has nothing to compare and **fails at plan time naming the
-      capability and the target** (invariant 4), never a generic mid-run error
-      and never a quiet fall-through to a weaker verifier. `both` cannot degrade
-      to `login` silently for the same reason it cannot elsewhere.
-    - **The gate is a capability, not a version** (invariant 3 / P1): *a readable
-      `T:` verifier is present for this account*, which is `SPARE4` carrying a
-      `T:`/`t:` token, mirrored by `DBA_USERS.PASSWORD_VERSIONS` containing
-      `12C`. It is two conditions in one: the session-level `SELECT ON SYS.USER$`
-      grant (`OFFLINE_VERIFY`) makes `SPARE4` readable at all, and the
-      account-level `PASSWORD_VERSIONS` says whether this account has a `12C` to
-      read. Both are queried, never inferred from the server release — a 12.1+
-      server can still hold an account with no `12C` verifier.
-    - Aside, measured in passing: **23ai has dropped the 10G verifier entirely.**
-      Even at `ALLOWED_LOGON_VERSION_SERVER = 8` a fresh 26ai account is
-      `11G 12C`, so 10G and 12C co-occur only on 12.1–19c. Nothing depends on
-      this; it is recorded so a future `10G`-handling assumption is not made
-      about the newest target.
-    - **19.3.0.0.0 (2026-09-28, #479):** with no `ALLOWED_LOGON_VERSION_SERVER`
-      set, a fresh account is `11G 12C`, with `SPARE4` holding `S:` and `T:` and
-      no 10G hash. With `ALLOWED_LOGON_VERSION_SERVER = 11` it is `10G 11G 12C`,
-      and the 10G hash lands in `SYS.USER$.PASSWORD` exactly as on 18c. So on 19c
-      the co-occurrence is real, but only where a site lowered the logon version.
-      A patched 19c is unmeasured.
-    - **12.2.0.1.0 (2026-09-29, #572):** identical to 19.3 — `11G 12C` by
-      default, `10G 11G 12C` with `ALLOWED_LOGON_VERSION_SERVER = 11` and the
-      16-hex 10G hash in `SYS.USER$.PASSWORD`, `SPARE4` unchanged at 225
-      characters. No restart needed. 12.1 is unmeasured.
+  UTF-8 of that string. On AL32UTF8 the two strings are the same. The tool
+  cannot reach this case, because `limits.py` measures a set with unmapped
+  characters, such as WE8DEC, in ASCII. But hash mode must not assume that the
+  vault's string is the one the database hashed.
+- A 128-byte password reproduces on 26ai. Releases before the 23 codebase reject
+  more than 30 bytes at the DDL (unverified: password-byte-limit).
+- 4096 is the count the server sends at logon, not a value in `SPARE4`. A
+  release that sends another count would not reproduce. That is why each
+  release must be measured, not assumed.
 
-  How the three-verifier account was produced, for a maintainer re-run (not a
-  repeatable public probe, because it needs a server config change): append
-  `SQLNET.ALLOWED_LOGON_VERSION_SERVER = 8` to the server `sqlnet.ora`
-  (`$ORACLE_HOME/network/admin/sqlnet.ora`), then `CREATE USER … IDENTIFIED BY
-  …`; `PASSWORD_VERSIONS` reads `10G 11G 12C`. On 19.3 no restart was needed:
-  a new SYSDBA session read the edited file and the next `CREATE USER` got the
-  10G verifier. On 18c the recipe included a restart, and whether that one
-  needed it was not tested. Restore the file afterwards. The recipe worked on
-  18c, 19.3 and 12.2 and not on 26ai. (On 12.2's image the server's
-  `sqlnet.ora` is under `$ORACLE_HOME/admin/ORCLCDB`, its `TNS_ADMIN`.)
+`sql/oracle/06_verifier_reproduce.py` is the reference derivation, and
+`06_verifier_reproduce.sql` is the probe.
 
-Since the derivation reproduces and degradation is settled, `--method hash|both`
-is now a mechanical implementation on the tier-2 releases. **The driver half is
-built (#437):** `verify_password(method="hash")` reads `SPARE4`, binds the
-account name and nothing else, and compares in
-`src/sopuli/driver/oracle/verifier.py`. It refuses, naming the target, where the
-session cannot read `SYS.USER$` or the account has no `12C` verifier, and also
-where a `T:`/`t:` token is not the measured 160 hex characters. It also refuses
-where the database character set cannot hold the vault value exactly: the server
-hashed a converted copy (the WE8DEC case above), and a mismatch reported there
-would be false drift. During a window,
-it reports which of the two verifiers the password reproduced.
-`verify_password(method="both")` compares first and logs in only when the
-comparison passed, so a mismatch spends no lockout budget (decided in #437).
-`require_verifier` makes every one of those refusals without comparing anything
-it reports, so a caller can refuse at plan time. Each refusal names a capability
-rather than describing one: `offline_verify`, `verifier_12c`,
-`verifier_12c_format` or `verifier_charset`. On Autonomous Database the
-`offline_verify` refusal says no account there can read `SYS.USER$`, and does not
-advise a grant. **The CLI half is built too:** `creds check --method hash|both`
-asks every target `require_verifier` before any account is checked, so each of
-those refusals is exit 5 naming the target, at plan time, with the name in
-`error.target_capability` and the account in the hint. Were it ever to fail
-on a release not yet read (12.1, or a later RU — 19.3 and 19.32 reproduce), both non-login modes would leave the
-CLI entirely — `both` is login plus this same comparison, and a `both` that
-silently degraded to `login` would report a stronger check than it performed.
-Either way `login` with the optional `LCOUNT` guard is already the complete
-default path (#86), so no default depends on the outcome. **Invariant 14**
-governs any future server-side form: the verifier is never bound into a SQL
-predicate — the reproduction here is entirely client-side.
+**The rollover window holds two 12C verifiers.** During a gradual rollover,
+`SPARE4` holds `T:` for the previous password and `t:` for the current one.
+They share one salt, and a `V:` marker that is not a verifier sits beside them.
+After the window, `T:` is the new password. Releases from 21c have the feature,
+and 19c has it from 19.12; 18c, 19.3 and 12.2 do not. So `check` reports
+`ROLLOVER_ACTIVE` when an account has two 12C verifiers. `--include-previous`
+tells the current one from the previous one by which prefix the vault value
+reproduces, never by drift.
+
+**Accounts with several verifiers, and accounts with no `T:`.** The comparison
+uses the 12C `T:` verifier and nothing else.
+
+- An account can hold three verifiers (`PASSWORD_VERSIONS = 10G 11G 12C`). The
+  10G verifier is then in `SYS.USER$.PASSWORD`, a different column, and `SPARE4`
+  is the same `S:;T:` pair. `T:` is at the same offset and reproduces byte for
+  byte. So older verifiers change nothing about reading or deriving `T:`.
+- 10G and 11G are never a fallback. 10G is unsalted, case-insensitive DES, and
+  11G (`S:`) is SHA-1. Comparing either would report a weaker check than
+  `--method login` already gives.
+- When an account has no `T:`, hash mode has nothing to compare. This is 11g,
+  where `PASSWORD_VERSIONS` is `10G 11G` and `SPARE4` is `S:` alone, or any
+  account whose `PASSWORD_VERSIONS` lacks `12C`. Hash mode then fails at plan
+  time and names the capability and the target (invariant 4). It never fails
+  with a generic error mid-run, and never falls back to a weaker verifier. For
+  the same reason, `both` never falls back to `login` alone.
+- **The gate is a capability, not a version** (invariant 3, P1): a readable `T:`
+  verifier exists for this account. That is two conditions. The session-level
+  grant (`OFFLINE_VERIFY`) makes `SPARE4` readable at all. The account's
+  `PASSWORD_VERSIONS` says whether it has a `12C` verifier to read. The driver
+  queries both and never infers them from the release: a server from 12.1 on can
+  still hold an account with no `12C` verifier.
+- The 23 codebase has dropped the 10G verifier. Even at
+  `ALLOWED_LOGON_VERSION_SERVER = 8`, a new 26ai account is `11G 12C`. So 10G and
+  12C occur together only on 12.1 to 19c. Nothing depends on this; it is written
+  here so that nobody assumes 10G handling on the newest targets.
+- On 19.3 and 12.2, a new account is `11G 12C` by default, with `S:` and `T:` in
+  `SPARE4` and no 10G hash. With `ALLOWED_LOGON_VERSION_SERVER = 11` it is
+  `10G 11G 12C`, and the 10G hash is in `SYS.USER$.PASSWORD`. So 10G and 12C
+  occur together on 19c only where a site lowered the logon version.
+
+To make a three-verifier account for a maintainer re-run, add
+`SQLNET.ALLOWED_LOGON_VERSION_SERVER = 8` to the server's `sqlnet.ora`
+(`$ORACLE_HOME/network/admin/sqlnet.ora`), then run `CREATE USER … IDENTIFIED BY
+…`. `PASSWORD_VERSIONS` then reads `10G 11G 12C`. Restore the file afterwards.
+It is not a public probe, because it changes the server's configuration.
+
+- On 19.3 and 12.2 no restart was needed: a new `SYSDBA` session read the
+  edited file.
+- On 18c the recipe included a restart. Whether the restart was needed was not
+  tested.
+- On 26ai the recipe does not produce a 10G verifier.
+- On 12.2's image, the server's `sqlnet.ora` is in `$ORACLE_HOME/admin/ORCLCDB`,
+  its `TNS_ADMIN`.
+
+**What the driver does.** `verify_password(method="hash")` reads `SPARE4`, binds
+the account name and nothing else, and compares in
+`src/sopuli/driver/oracle/verifier.py`. It refuses, and names the target, when:
+
+- the session cannot read `SYS.USER$` (`offline_verify`);
+- the account has no `12C` verifier (`verifier_12c`);
+- a `T:` or `t:` token is not the measured 160 hex characters
+  (`verifier_12c_format`);
+- the database character set cannot hold the vault value exactly
+  (`verifier_charset`). The server then hashed a converted copy, as in the WE8DEC
+  case above, and a mismatch would be false drift.
+
+During a rollover window it reports which of the two verifiers the password
+reproduced. `verify_password(method="both")` compares first, and logs in only
+when the comparison passed, so a mismatch uses up no login attempts.
+`require_verifier` makes every one of those refusals without comparing
+anything, so a caller can refuse at plan time. On ADB the `offline_verify`
+refusal says that no account there can read `SYS.USER$`, and does not advise a
+grant.
+
+`creds check --method hash|both` asks every target `require_verifier` before it
+checks any account. So each refusal is exit 5 at plan time, naming the target,
+with the capability in `error.target_capability` and the account in the hint.
+
+If the derivation failed on a release not yet read, both non-login modes would
+leave the CLI. `both` is a login plus this comparison, and a `both` that
+quietly fell back to `login` would report a stronger check than it ran. The
+default, `login` with the optional `LCOUNT` guard, does not depend on hash mode.
+
+**Invariant 14** applies to any server-side form: the verifier is never bound
+into a SQL predicate. The comparison here is entirely client-side.
 
 ### §4 check 3, and the optional `V$PWFILE_USERS` grant
 
-Guardrail 3 refuses an account in the password file, and the only place to see
-that is `V$PWFILE_USERS`. It is **optional**, not part of the default install —
-decided in #296, which considered adding it to the set above and did not:
+Guardrail 3 refuses an account that is in the password file. Only
+`V$PWFILE_USERS` shows that. The grant is optional, not part of the default
+install: decided in #296.
 
 ```sql
 GRANT SELECT ON SYS.V_$PWFILE_USERS TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
 ```
 
-**Measured on 26ai Free 23.26.2.0.0, 2026-09-05.** A service account holding
-exactly the grants above gets
-`ORA-00942: table or view "SYS"."V_$PWFILE_USERS" does not exist` from it — the
-same enumerated negative `ABSENT_CODES` already reads as *absent* — so the
-driver answers `None` and never `False`. With the grant it answers a count from
-inside a PDB without further privilege.
+Without the grant, a service account with the base grants gets
+`ORA-00942: table or view "SYS"."V_$PWFILE_USERS" does not exist`. That code is
+in `ABSENT_CODES`, so the driver answers `None` ("unknown"), never `False`. With
+the grant, the driver can read the view from inside a PDB with no further
+privilege.
 
-**It buys two things, and the second arrived later.** Guardrail 3 is the one it
-was taken for; since #341 the same view also answers §3's `SYSDBA` and `SYSOPER`
-rows for `doctor --check-privileges`, which reported them unaudited from a
-constant until then. Same grant, same query, two consumers — and the audit asks
-about the *session's own user* where the guardrail asks about a target account,
-so neither reads the other's answer.
+The grant has two consumers:
 
-**Why it stays optional.** The accounts check 3 catches are largely caught by
-checks 2 and 4 as well, and widening what every service account needs for the
-remainder is a poor trade. What is left over is real, though, and was measured
-rather than argued: an account granted `SYSDBA` **inside a PDB** appears in
-`V$PWFILE_USERS` with its own `CON_ID` — visible from the PDB and from
-`CDB$ROOT` — while reading `ORACLE_MAINTAINED = 'N'` and holding no roles at
-all. So it is a site-created account that checks 2, 4 and 5 all pass, and only
-this one refuses. Sites have those.
+- guardrail 3, which asks about a target account;
+- §3's `SYSDBA` and `SYSOPER` rows in `doctor --check-privileges`, which ask
+  about the session's own user.
 
-**Without the grant the check does not silently pass.** That was the bug (#296):
-nothing populated the field, so *nobody looked* read as *not a member*. The run
-now says so — `SOPULI-W018`, one warning per target, naming this grant — and
-goes ahead, because refusing on an unread check would refuse every mutation on
-every estate installed exactly as documented. §4 has the reasoning. What it looks
-like, pasted from a `creds apply` against a PDB service account holding exactly
-the grants above:
+Neither reads the other's answer.
+
+**Why it stays optional.** Checks 2 and 4 also catch most of the accounts check
+3 catches. Making every service account need this grant for the rest is a poor
+trade. But the rest exists. An account granted `SYSDBA` inside a PDB appears in
+`V$PWFILE_USERS` with its own `CON_ID`, visible from the PDB and from
+`CDB$ROOT`. It can still read `ORACLE_MAINTAINED = 'N'` and hold no roles. Such a
+site-created account passes checks 2, 4 and 5, and only check 3 refuses it.
+
+**Without the grant, check 3 does not silently pass.** The run reports
+`SOPULI-W018`, one warning per target, naming this grant, and carries on.
+Refusing on an unread check would refuse every change on every estate installed
+as documented. §4 has the reasoning. This is a `creds apply` against a PDB
+service account with exactly the base grants:
 
 ```
 ACCOUNT        TARGET       STATE    DETAIL
@@ -578,17 +523,17 @@ nothing changed
   appdb-alpha: guardrail check `password_file` did not run: could not establish whether the account is in the password file -- GRANT SELECT ON SYS.V_$PWFILE_USERS to the service account to enable it (ACME_WEB_USER)
 ```
 
-and, once the grant is taken, the same run with no note. With `SYSDBA` granted to
-`ACME_WEB_USER` and the view readable, check 3 fires for the first time:
+With the grant taken, the same run prints no note. With `SYSDBA` granted to
+`ACME_WEB_USER` and the view readable, check 3 refuses the account:
 
 ```
 ACCOUNT        TARGET       STATE    DETAIL
 acme_web_user  appdb-alpha  SKIPPED  the account is in the password file
 ```
 
-**An administrative account can still be on a rollover profile, and 21c makes
-that easy to conclude the other way round.** Measured on both, 2026-09-08
-(#380), creating a profile with `PASSWORD_ROLLOVER_TIME` and a user on it:
+**An administrative account can still be on a rollover profile.** 21c makes the
+opposite look true. With a profile that sets `PASSWORD_ROLLOVER_TIME`, and a user
+on that profile:
 
 | | 26ai 23.26.2.0.0 | 21c XE 21.3.0.0.0 |
 |---|---|---|
@@ -597,18 +542,14 @@ that easy to conclude the other way round.** Measured on both, 2026-09-08
 | `GRANT DBA` (the role) likewise | ok | ok |
 | `GRANT SYSDBA` first, *then* `ALTER USER ... PROFILE` onto it | ok | **ok** |
 
-The last row is the one that matters. 21c enforces the rule on the `GRANT` path
-and not on the `ALTER USER` path, so the state it refuses to create directly is
-reachable in two statements — which means "in the password file, therefore no
-rollover window" is not a safe inference on any version, and nothing here draws
-it. Guardrail 3 refuses such an account outright, which is the same answer either
-way.
-
-It is recorded here rather than in §5 because it is a fact about the password
-file and about profiles, not about auditing. The practical consequence for this
-repository was in a test:
+The last row matters. 21c enforces the rule on the `GRANT` and not on the
+`ALTER USER`, so two statements reach the state it refuses to create directly.
+So "in the password file, therefore no rollover window" is not a safe inference
+on any release, and the tool does not draw it. Guardrail 3 refuses such an
+account outright, so the answer is the same either way. A test fixture must set
+the profile limit itself:
 `tests/driver/test_oracle_accounts.py::test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file`
-borrowed a fixture whose profile set the limit, which no 26ai run could reveal.
+is one that does.
 
 ---
 
@@ -616,125 +557,111 @@ borrowed a fixture whose profile set the limit, which no 26ai run could reveal.
 
 | Not granted | Why |
 |---|---|
-| `SELECT ANY DICTIONARY` | includes `SYS.USER$` *and* everything else; if hash mode is wanted, grant `SELECT ON SYS.USER$` specifically |
+| `SELECT ANY DICTIONARY` | includes `SYS.USER$` and everything else. If hash mode is wanted, grant `SELECT ON SYS.USER$` alone |
 | `DBA`, `PDB_DBA`, `CDB_DBA` | the tool needs `ALTER USER`, not a role that carries a hundred other privileges |
-| `SYSDBA` / `SYSOPER` | never; the tool has no operation that requires it |
-| `ALTER PROFILE` | decided in UC-1 Q4 (#88): no credential-sync verb ever edits a profile — a profile is shared, so editing one reaches accounts nobody selected, which the config's account whitelist (invariant 5) has no way to constrain. The tool reports the DDL needed to enable password rollover instead, and `doctor --check-privileges` flags this privilege if the service account has it. Whether UC-4 may create and alter profiles is its own open question, and would be a privilege on a principal UC-4 defines rather than on this grant set |
-| `CREATE USER` / `DROP USER` | account provisioning is out of scope for UC-1 |
+| `SYSDBA` / `SYSOPER` | no operation of the tool needs them |
+| `ALTER PROFILE` | no credential-sync verb edits a profile (UC-1 Q4). A profile is shared, so editing one reaches accounts nobody selected, and the config's account whitelist (invariant 5) cannot limit that. The tool reports the DDL that enables password rollover instead, and `doctor --check-privileges` reports this privilege if the service account holds it. Whether UC-4 may create and alter profiles is its own question; it would be a privilege of a principal UC-4 defines, not of this grant set |
+| `CREATE USER` / `DROP USER` | creating and dropping accounts is outside UC-1 |
 | `ALTER SYSTEM`, `GRANT ANY *`, `BECOME USER` | no operation needs them |
-| `EXECUTE ON DBMS_LOCK` | P5's advisory lock lives in the vault, not in the database (Q2, decided in #83). It was the one grant a `DBMS_LOCK`-based lock would have added, and the reason it is not here is that session-scoped locking does not solve the problem it looked like it solved: a stalled run's session is still alive, so its lock prevents nothing while its plan goes stale. A fencing token re-checked before every mutation does, and it needs nothing from the database |
+| `EXECUTE ON DBMS_LOCK` | `00-principles.md` P5's advisory lock is in the vault, not the database (UC-1 Q2). A session-scoped database lock does not solve the problem: a stalled run's session is still alive, so its lock blocks others while its plan goes stale. A fencing token, checked again before every change, does solve it, and it needs nothing from the database |
 
-**Application containers are the one scope §2 cannot see through a view, and do
-not need to.** `V$PDBS` is granted in the root only and `CDB_PDBS` nowhere, so
-the three views carrying `APPLICATION_ROOT` / `APPLICATION_PDB` are all
-`ORA-00942` to a PDB-mode service account — measured, not assumed (#204). The
-fact is available from `SYS_CONTEXT('USERENV','IS_APPLICATION_ROOT')` and
-`'IS_APPLICATION_PDB'` instead, which need no grant, exactly as `CON_NAME` needs
-none. **No grant is added for this**, which settles the trade #204 asked to argue
-by removing it: there is nothing to buy. On a release without those attributes the
-probe raises `ORA-02003` rather than returning null — the same code `CON_NAME`
-gives on 11.2, carrying a different fact and the same conclusion.
+**The service account needs no grant to detect an application container.** `V$PDBS` is
+granted in the root only and `CDB_PDBS` nowhere, so the three views that carry
+`APPLICATION_ROOT` or `APPLICATION_PDB` all give `ORA-00942` to a PDB-mode
+service account. `SYS_CONTEXT('USERENV','IS_APPLICATION_ROOT')` and
+`'IS_APPLICATION_PDB'` answer the same question with no grant, as `CON_NAME`
+does. `sql/oracle/03_app_container_probe.sql` measured this. A release before
+12.2 lacks those attributes and raises `ORA-02003` instead of returning NULL.
+The driver reads that as "not an application container", as it reads the same
+code from `CON_NAME` on 11.2 as "not a CDB".
 
-`sopuli doctor --check-privileges` reports what the service account actually
-holds and flags anything on this list. Over-granting is the common failure when
-someone is debugging a permissions problem at 17:00 on a Friday; the tool should
-notice and say so rather than quietly benefit from it.
+`sopuli doctor --check-privileges` reports what the service account holds, and
+names anything on the list above. Over-granting is the common result of
+debugging a permissions problem in a hurry. The tool notices it and says so.
 
-**It warns and never fails** (P5, decided in #213 — see §8). Reporting is not
-enforcing: #173 is the refusal and §4 is the guardrail set, and neither is this.
+**It warns and never fails** ([P5](../decisions/log.md#p5)). It reports; it does
+not enforce. §4's guardrails are the enforcement, and they are a different thing.
 
-**It reports both sides**, and they are independent questions. §3's list is what
-the account holds and should not; §2's is what it needs and may not have. An
-account can be in both states at once, which is what a half-finished
-17:00-on-a-Friday debugging session actually leaves behind. Reporting the second
-at connect time is what stops a missing `SELECT ON DBA_PROFILES` surfacing as a
-limit resolution that could not answer, three commands later, with an error about
-a view rather than about the install.
+**It reports both sides**, because they are two questions. §3's list is what the
+account holds and should not. §2's list is what it needs and may lack. An
+account can be in both states at once, which is what a half-finished debugging
+session leaves. Reporting a missing grant at connect time means that a missing
+`SELECT ON DBA_PROFILES` shows up as an install problem, not three commands later
+as an unanswered limit lookup that names a view.
 
-**A dictionary grant is answered by reading the view, not by reading a grant
-table** (#225). `USER_TAB_PRIVS` plus `ROLE_TAB_PRIVS` was the alternative, and
-probing is better on three counts: a role-derived grant needs no special handling,
-because a view you can read is a view you can read however the grant arrived; a
-grant row is not access, since the view may have been dropped or renamed under it;
-and the mechanism already exists and is already measured — `ABSENT_CODES` treats
-`ORA-00942`, `ORA-01031` and `ORA-41900` as "no", the last of which was measured
-rather than predicted. The cost is one round trip per documented grant, which is
-why the whole thing is behind a flag.
+**A dictionary grant is checked by reading the view, not a grant table.** The
+alternative was `USER_TAB_PRIVS` plus `ROLE_TAB_PRIVS`. Reading the view is
+better for three reasons:
 
-**`V_$PDBS` is required in the root only**, where §2 grants it, and is absent from
-both the held and the missing list elsewhere. "Not required here" and "required
-and missing" are the two answers this report exists to keep apart.
+- a role-derived grant needs no special handling, because a view you can read
+  is readable however the grant arrived;
+- a grant row is not access: the view may have been dropped or renamed;
+- the mechanism already exists and is measured. `ABSENT_CODES` treats
+  `ORA-00942`, `ORA-01031` and `ORA-41900` as "no".
 
-**The audit is self-inspection**, which is what makes it possible at all. The
-obvious implementation reads `DBA_SYS_PRIVS` for this grantee and does not work —
-an account holding exactly §2's grants gets `ORA-00942` from it, measured on 26ai
-in #178, so a *correctly installed* tool would report nothing at all. That is the
-answer that looks like good news and means "I could not look", and it is the same
-failure #178 found in `DBA_ROLE_PRIVS` and #195 in a capability probe. So the
-questions are asked of views that need no grant:
+The cost is one round trip per documented grant, which is why the audit runs
+only with the flag.
+
+**`V_$PDBS` is required in the root only**, where §2 grants it. Elsewhere it is
+in neither the held list nor the missing list. "Not required here" and "required
+and missing" are two different answers, and the report keeps them apart.
+
+**The audit is self-inspection.** The obvious implementation reads
+`DBA_SYS_PRIVS` for this grantee, and it does not work: an account with exactly
+§2's grants gets `ORA-00942` from it, so a correctly installed tool would report
+nothing at all. That answer looks like good news and means "I could not look".
+So the audit asks views that need no grant:
 
 | View | Answers | Grant needed |
 |---|---|---|
 | `SESSION_PRIVS` | every system privilege in force, **role-derived included** | none |
-| `USER_SYS_PRIVS` | the same account's *direct* grants, with `COMMON` — the column `SESSION_PRIVS` lacks | none |
-| `DBA_ROLE_PRIVS` | granted roles, traversed with `CONNECT BY NOCYCLE` | §2 grants it (#207) |
+| `USER_SYS_PRIVS` | the same account's *direct* grants, with `COMMON`, the column `SESSION_PRIVS` lacks | none |
+| `DBA_ROLE_PRIVS` | granted roles, traversed with `CONNECT BY NOCYCLE` | §2 grants it |
 
-**Roles are read granted rather than enabled**, which is why `SESSION_ROLES` —
-free of any grant — is not used: it shows what is enabled in *this* session, and
-a non-default `DBA` grant is one `SET ROLE` away. For a guardrail that would be
-splitting hairs; for an audit asking what an account could become, a privilege
-one statement away is held.
+**Roles are read as granted, not as enabled.** So the audit does not use
+`SESSION_ROLES`, although it needs no grant. It shows the roles enabled in this
+session, and a non-default `DBA` grant is one `SET ROLE` away. The audit asks
+what an account could become, so a privilege one statement away counts as held.
 
-**One row cannot be audited anywhere, and two more only where §2's optional
-grant was declined.** The report names whichever apply on every run rather than
-omitting them — E6's argument, applied to a caveat: one that appears only when
-something is wrong cannot be quoted as evidence that nothing was.
+**Some rows cannot be audited.** The report names them on every run, not only
+when something is wrong. A caveat that appears only when something is wrong
+cannot be quoted as evidence that nothing was.
 
 | Row | Why not | What it would take |
 |---|---|---|
-| `EXECUTE ON DBMS_LOCK` | an **object** privilege; the three views above carry system privileges and roles | `USER_TAB_PRIVS` and `ROLE_TAB_PRIVS`, the second of which does not compose with the nested-role traversal — a design question rather than a query |
-| `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's *default* grant set | nothing, on an estate that took the optional grant §4 check 3 documents. Read since #341, and unaudited only where the answer came back absent |
+| `EXECUTE ON DBMS_LOCK` | an **object** privilege; the three views above carry system privileges and roles | `USER_TAB_PRIVS` and `ROLE_TAB_PRIVS`, and the second does not fit the nested-role traversal. That is a design question, not a query |
+| `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's default grant set | the optional grant that §2 describes for check 3. With it, the audit reads these rows |
 
-A refused `DBA_ROLE_PRIVS` joins them at runtime, taking the three role rows with
-it. "I looked and found nothing" and "I could not look" are answers this report
-never merges.
+If `DBA_ROLE_PRIVS` is refused at runtime, the three role rows join this list.
+The report never merges "I looked and found nothing" with "I could not look".
 
-**The password-file rows are read, not assumed** (#341). Until then the audit
-reported them unaudited from a constant, which #296 made wrong for the estates
-that took the grant: the answer was available and the report said *I could not
-look*, which is the same merge this section refuses, arrived at from the side
-that under-reports. Three readings, measured on 26ai Free 23.26.2.0.0 on
-2026-09-05 against a PDB-local service account holding §2's grants plus that one:
+**With the optional grant, the password-file rows are read.** On 26ai
+23.26.2.0.0, against a PDB-local service account with §2's grants plus that
+one:
 
-- **the two rows are answered separately**, because the view carries a column
-  each — `SYSDBA`, `SYSOPER`, and four more it does not ask about. Granted and
-  revoked one at a time, all four combinations read back as themselves;
-  collapsing them into "in the password file" would report `SYSOPER` on the
-  strength of a `SYSDBA` row;
-- **a held row is an `over_granted` finding like any other**, which makes it the
-  audit's first that is neither a system privilege nor a role. §3's must-not-grant
-  list is one list, and a reader must not have to know which view each row came
-  from;
-- **taking the grant does not itself make `doctor` complain.** `over_granted`
-  reads system privileges and roles, and this is an object privilege — confirmed
-  on the same run, and it would have been a defect in #296 rather than a
-  follow-up.
+- **The two rows are answered separately**, because the view has a column for
+  each. Granted and revoked one at a time, all four combinations read back
+  correctly. One "in the password file" answer would report `SYSOPER` because of
+  a `SYSDBA` row.
+- **A held row is an `over_granted` finding like any other.** It is the only
+  finding that is neither a system privilege nor a role, but §3's list is one
+  list, and a reader must not need to know which view each row came from.
+- **Taking the grant does not make `doctor` report an over-grant.**
+  `over_granted` reads system privileges and roles, and this is an object
+  privilege.
 
-**An absent answer does not make the audit partial.** `unreadable` says the
-report cannot be taken at face value; an estate that declined an optional grant
-is installed exactly as documented. So the two rows go to the unaudited list and
-bring a remedy with them — since #296 the reason they are unchecked is *you may
-enable this* rather than *this cannot be known*, and only one of those has a next
-action. The audit's own shape names no database, so the `GRANT` is the driver's
-words rather than the report's, the same seam guardrail 3's remedy sits on.
+**An absent answer does not make the audit partial.** `unreadable` means the
+report cannot be taken at face value. An estate that declined an optional grant
+is installed as documented. So the two rows go to the unaudited list with a
+remedy: the operator may enable the grant. The audit's own output names no
+database, so the `GRANT` text comes from the driver, as guardrail 3's remedy
+does.
 
-**This does not make the audit complete**, and "make the audit complete" is the
-tempting framing. `EXECUTE ON DBMS_LOCK` stays unauditable for its own reason and
-no grant fixes it: it is two of three rows, on the estates that opted in.
+`EXECUTE ON DBMS_LOCK` cannot be audited, and no grant changes that.
 
-What the three estates look like, pasted from `doctor --check-privileges`
-against a PDB service account on 26ai Free 23.26.2.0.0. The default install,
-which is unchanged except that the caveat now carries a next action:
+The three states look like this. Each is an excerpt from `doctor
+--check-privileges` against a PDB service account on 26ai Free 23.26.2.0.0. The
+default install:
 
 ```
 TARGET       REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
@@ -743,8 +670,8 @@ appdb-alpha  yes        pdb    FREEPDB1   READ WRITE  5
   appdb-alpha: SYSDBA and SYSOPER need SELECT on V$PWFILE_USERS, which 02-oracle-privileges.md §2 leaves optional: GRANT SELECT ON SYS.V_$PWFILE_USERS to the service account to audit them
 ```
 
-the same account with the grant taken, holding neither privilege — one row left
-unchecked, and nothing to suggest about it:
+The same account with the grant taken, holding neither privilege. One row is
+left unchecked, and there is nothing to suggest about it:
 
 ```
 TARGET       REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
@@ -752,8 +679,8 @@ appdb-alpha  yes        pdb    FREEPDB1   READ WRITE  5
   appdb-alpha: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
 ```
 
-and the same account granted `SYSDBA`, which is the finding this could not make
-before — reported and, per P5, not fatal (the run exits 0):
+The same account granted `SYSDBA`. The finding is reported and, under P5, is
+not fatal: the run exits 0.
 
 ```
 TARGET       REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
@@ -766,284 +693,230 @@ appdb-alpha  yes        pdb    FREEPDB1   READ WRITE  5
 
 ## 4. Guardrails, now client-side
 
-Dropping the package moves the account-safety checks into the tool. They stop
-being a security boundary — a compromised service credential bypasses them
-entirely — and become what they realistically were for an operator with SYSDBA
-anyway: **protection against typos and against a config change with a wider blast
-radius than intended.** Worth keeping, worth being honest about.
+With no package, the account-safety checks are in the tool. They are not a
+security boundary: a stolen service credential bypasses them. They protect
+against typos, and against a config change that reaches more accounts than
+intended. An operator with `SYSDBA` never had more than that from them.
 
 Before any `ALTER USER`, the tool refuses when the target account:
 
-1. is not among the config's **declared accounts** — `accounts:` inline, an
-   `applications:` entry, or, for a personal account, a name or a predicate in
-   `personal_accounts:` (H1, #449) — the config *is* the whitelist, just advisory
-   rather than enforced. The list matters here rather than in the prose below,
-   because an implementation written from this item alone would omit the
-   predicate form and silently refuse every personal account
-2. has `DBA_USERS.ORACLE_MAINTAINED = 'Y'` — covers SYS, SYSTEM, DBSNMP,
-   GSMADMIN_INTERNAL and the rest without a hand-maintained list going stale
-3. appears in `V$PWFILE_USERS` — behind an **optional** grant, so on most
-   estates this check has no input and says so rather than passing (#296; §2)
-4. holds `DBA`, `PDB_DBA`, `CDB_DBA`, or `AUDIT_ADMIN`
-5. is on a literal deny list, for 11.2 where `ORACLE_MAINTAINED` does not exist
+1. is not among the config's **declared accounts**. An account is declared by
+   `accounts:` inline, by an `applications:` entry, or, for a personal account,
+   by a name or a predicate in `personal_accounts:` (H1). The config is the
+   whitelist. Note the predicate form: an implementation written from this item
+   without it would refuse every personal account declared by predicate;
+2. has `DBA_USERS.ORACLE_MAINTAINED = 'Y'`. This covers `SYS`, `SYSTEM`,
+   `DBSNMP`, `GSMADMIN_INTERNAL` and the rest, with no hand-kept list to go
+   stale;
+3. appears in `V$PWFILE_USERS`. The grant is optional, so on most estates this
+   check has no input, and the run says so instead of passing (§2);
+4. holds `DBA`, `PDB_DBA`, `CDB_DBA` or `AUDIT_ADMIN`;
+5. is on a literal deny list. This is for 11.2, where `ORACLE_MAINTAINED` does
+   not exist.
 
-`--force` overrides 2–5 for the case where a DBA deliberately manages something
-unusual (P3, decided in #89). It is recorded in the audit event and in the JSON
-output; it never overrides 1, because acting on an account absent from the config
-would make the tool's own audit trail meaningless.
+`--force` overrides checks 2 to 5, for a DBA who deliberately manages an unusual
+account ([P3](../decisions/log.md#p3)). The audit event and the JSON output
+record the override. It never overrides check 1, because acting on an account
+the config does not declare would make the tool's own audit trail meaningless.
 
-Implemented in `sopuli/driver/guardrails.py` (#173), which reviews and does not
-decide — the same shape as the error mapping. Three things it settles:
+`src/sopuli/driver/guardrails.py` implements the checks. It reviews; it does
+not decide, as the error mapping does. `creds apply` and `creds rotate` call it.
+These rules apply:
 
-- **What a refusal does depends on how the account was selected**, and the rule
-  is one rule for every mutating verb. An account the operator **named** —
-  `--account DBSNMP` — refuses the run: they asked for something the tool will
-  not do, and quietly skipping it would report success for work nobody did. An
-  account that merely **fell inside** a broad selection is `SKIPPED` with its
-  reason, and the run does the rest of its job; refusing 200 rotations because
-  the 47th selected account turned out to be `ORACLE_MAINTAINED` would make the
-  guardrail more disruptive than the mistake it caught. Selection is what the
-  command layer knows and the driver does not, so the rule is written here and
-  applied there.
-- **Check 5 is consulted only where check 2 had nothing to say.** Where the
-  database can report `ORACLE_MAINTAINED`, that answer wins outright — including
-  when it says *no* about a name on the list. Sites do call an account `SCOTT`,
-  and a list maintained by us overruling the database describing itself would
-  make it a second whitelist nobody agreed to. The list is deliberately long
-  rather than exact: a missing entry means one old version misses one check, a
-  spurious entry means an audited `--force`, and those costs are not symmetrical.
-- **Check 1 compares case-folded.** `01-configuration.md` writes
-  `acme_web_user` and Oracle stores `ACME_WEB_USER`, because an unquoted
-  identifier is upper-cased on the way in. Comparing exactly would refuse every
-  correctly-declared account on Oracle — a guardrail that fires only on its own
-  users. The residual risk, an estate holding both `ACME_WEB_USER` and a quoted
-  `"acme_web_user"`, is named rather than solved.
+- **What a refusal does depends on how the account was selected.** The rule is
+  the same for every mutating verb.
+  - An account the operator **named**, as in `--account DBSNMP`, fails the run
+    and is reported as `ERROR`. The operator asked for something the tool will
+    not do. Skipping it quietly would report success for work nobody did.
+  - An account that only **fell inside** a broad selection is `SKIPPED` with its
+    reason, and the run does the rest of its work. Refusing 200 rotations
+    because the 47th account is `ORACLE_MAINTAINED` would do more harm than the
+    mistake the guardrail caught.
 
-### What the guardrails do in this build (#286)
+  The estate ends in the same state either way; only the exit code differs. The
+  command layer knows how each account was selected, and the driver does not, so
+  the command layer applies this rule.
 
-`sopuli/driver/guardrails.py` was written in #173 and **called by nothing** until
-now: it implemented all five checks, documented `--force`, and had a full unit
-suite, while `creds apply` would happily issue `ALTER USER` against an
-`ORACLE_MAINTAINED` account provided the config declared it. `creds apply` and
-`creds rotate` now ask it. Five things about how are decisions:
+  **Naming a target, group or application is not naming an account**, however
+  few accounts it resolves to. Otherwise a safety rule would behave differently
+  depending on how many accounts an estate has today. A named account refused by
+  check 1 is not told to use `--force`, because no flag overrides check 1. It is
+  told to declare the account.
+- **The review runs before the first login, not just before the statement.** An
+  account the tool will not touch must not use up a login attempt against its
+  lockout counter. UC-1 §7 makes this argument for every login. It costs no extra
+  round trip: `describe_user` has already read every fact the checks need.
+- **Check 5 is used only where check 2 has no answer.** Where the database
+  reports `ORACLE_MAINTAINED`, that answer wins, even when it says "no" about a
+  name on the list. Sites do name an account `SCOTT`. If the tool's own list
+  overruled the database's description of itself, it would be a second
+  whitelist that nobody agreed to. The list is long rather than exact. A missing
+  entry means one old release misses one check. An extra entry means an audited
+  `--force`. The first cost is the larger one.
+- **Check 1 compares names case-folded.** `01-configuration.md` writes
+  `acme_web_user`, and Oracle stores `ACME_WEB_USER`, because it upper-cases an
+  unquoted identifier. An exact comparison would refuse every correctly declared
+  account. The remaining risk is an estate that holds both `ACME_WEB_USER` and a
+  quoted `"acme_web_user"`. The tool does not handle that case.
+- **Check 1 uses the unfiltered config.** A selector narrows what a run touches.
+  It cannot remove an account from the declared set (invariant 5). So the
+  whitelist is the file's declared set, not this run's part of it.
 
-- **The review runs before the first login, not before the statement.** An
-  account the tool will not touch must not spend an attempt against a lockout
-  counter, which is the argument §7 of UC-1 makes for every login this tool
-  budgets. It costs no extra round trip either way: `describe_user` has already
-  read every fact the checks need.
-- **Check 1 asks the *unfiltered* config.** A selector narrows what a run
-  touches and cannot un-declare an account (invariant 5), so the whitelist is
-  the file's declared set and not this run's slice of it. In practice check 1
-  cannot fire from a mutating verb today, because the bindings come from the same
-  file — it is run anyway, because "enforced by construction" is a property of
-  today's call graph rather than of the guardrail.
+  For accounts declared by name, check 1 cannot fire from a mutating verb,
+  because the run's accounts come from the same file. It runs anyway, because
+  that is a property of today's call graph, not of the guardrail. For a personal
+  account declared by a profile or a role predicate (H1), the declared set is a
+  query result. Check 1 is then the only thing between a `GRANT` somebody made in
+  the database and an account the tool will change. It is not dead code.
+- **A refused account is `SKIPPED`, and the exit code does not count it.** It is
+  neither a success nor a failure: it has left the run's scope, like an account
+  the config never declared. If it counted as unconfirmed, the run would exit 4,
+  which means "some of it worked, run `apply --repair`". But the repair would
+  skip the same account again, every night. A run of nothing but skips exits 0,
+  as an empty selection does.
+- **A skipped account is dropped from its document's promotion**, from the gate
+  as well as from the write. Promoting it would move its `pending` to `current`
+  while its database still holds the old password, which invariant 7 forbids.
+  Letting it block the gate would mean one account that is always refused, such
+  as one with a `DBA` grant nobody will remove, blocks promotion for every other
+  account at that secret path. Dropping it avoids both: its `pending` stays
+  staged, and the other accounts are promoted.
+- **The override is a structured field.** `--force` fills
+  `results[].overridden` with the check and what it observed. A consumer can
+  then branch on "this account was forced" instead of searching a sentence. The
+  field is absent where nothing was overridden: it records overrides, not intent.
 
-  **That stops being true under UC-2's predicate declaration** (H1, #449). Where a
-  personal account is declared by a profile or a role rather than by name, the
-  declared set is a query result rather than the file's own list, so check 1 is the
-  thing standing between a `GRANT` somebody made in the database and an account
-  this tool will touch. The property it has today — unfireable because the set and
-  the check read the same file — is exactly what a predicate removes, which makes
-  the check load-bearing rather than ceremonial and is worth knowing before anyone
-  decides it is dead code.
-- **A refusal is `SKIPPED`, and `SKIPPED` is not counted in the exit code.** It
-  is neither a success nor a failure: it is an account that left the run's scope,
-  the same way one the config never declared never entered it. Counting it as
-  unconfirmed would exit 4 — "some of it worked, run `apply --repair`" — on a run
-  where everything the tool was willing to do succeeded, and the repair would
-  skip the same account again, every night, for ever. A run of nothing but skips
-  exits 0, which is the answer an empty selection already gives.
-- **A skipped account is dropped from its document's promotion entirely**, from
-  the gate as well as from the write. Promoting it would move its `pending` to
-  `current` while its database still holds the old password, which is what
-  invariant 7 exists to prevent; letting it *gate* the document would mean one
-  permanently guarded account — a `DBA` grant nobody is going to give up —
-  blocking promotion for every neighbour sharing the secret path, for ever.
-  Dropping it does neither: its `pending` stays staged and its neighbours
-  promote.
-- **The waiver is a structured field, not prose.** `--force` fills
-  `results[].overridden` with the check and what it observed (run schema 1.17),
-  because §4 requires the override to survive the waiving and a consumer has to
-  be able to branch on "this account was forced" rather than grep a sentence. It
-  is omitted where nothing was waived: the field records overrides, not intent.
+**Check 3 has three answers: refused, permitted, or could not establish.** The
+third is a `Caveat`. It refuses nothing, `--force` does not affect it, and the
+run reports it as `SOPULI-W018`, naming the optional grant that would settle it.
+Without this third answer, "I could not look" would read as "I looked and found
+nothing", which `privileges.py` already refuses to do for the same view.
 
-**Two of the five checks could not fire when #286 landed**, and both were
-recorded rather than quietly tolerated. Both are now built:
+- **It does not refuse.** The estate that cannot answer check 3 is the correctly
+  installed one, so a refusal would mean the tool changes nothing anywhere.
+  `--preflight` handles a privilege audit the service account cannot read the
+  same way: a `warning` finding, and the run goes on.
+- **It is one entry per target and check, not per account.** What could not be
+  read is a grant on a database. An estate with forty accounts on one target
+  would otherwise be told the same fact forty times. `creds generate` groups the
+  constraints it cannot check in the same way, for the same reason.
+- **It is printed, not only serialised.** The emitter prints the command's text,
+  not the JSON document. A warning only in the JSON would not reach somebody who
+  ran the command by hand.
 
-- ~~**Check 3 never runs.**~~ **Fixed in #296**, and the fix is not the obvious
-  one. `UserState.password_file_member` was `None`-when-unknown and *nothing
-  populated it* — no query read `V$PWFILE_USERS` — so `review()` read "I could
-  not look" as "I looked and found nothing", which is exactly the merge
-  `privileges.py` refuses to make one layer up about the same view. The driver
-  now reads it. That alone would not have fixed anything: §2 deliberately does
-  not grant the view, so the answer on a correct install is still *unknown*.
+An account the guardrails refused adds no caveat. The tool did not touch it, so
+an unread check changed nothing about it.
 
-  What fixes it is that **`review()` has a third answer**. Refused, permitted,
-  or *could not establish* — a `Caveat`, which refuses nothing, rides through
-  `--force` untouched, and is reported as `SOPULI-W018`, one warning per target,
-  naming the optional grant that would settle it. Three things about it are
-  decisions:
+**`sopuli lock break` uses the same flag.** It refuses a lock that has not
+expired, and `--force` breaks it anyway. Both uses are an audited override of a
+guardrail that is asked about one thing at one moment: this account now, or this
+lock now. A safety setting is different: it is resolved from layers and only
+ratchets toward safe. Both overrides are reported the same way. The lock
+override is visible in the run document as `lock.broken[].expired: false`.
 
-  - **It does not refuse.** The estate that cannot answer check 3 is the
-    correctly installed one, so refusing would mean the tool mutating nothing
-    anywhere. The shape is `--preflight`'s for a privilege audit the service
-    account may not read: a `warning`-level finding, and the run proceeds.
-  - **It is one entry per (target, check), not per account.** What could not be
-    read is a grant on a database; an estate with forty accounts on one target
-    would otherwise be told the same fact forty times. `creds generate` groups
-    the constraints it cannot check the same way and for the same reason.
-  - **It is printed, not only serialised.** The emitter prints the command's
-    text rather than the document, so a run-level warning is invisible to
-    somebody reading a terminal — and a guardrail that did not run, reported
-    only in JSON, is reported to nobody who ran the command by hand (#309).
+**`DBSNMP` is the case `--force` exists for.** Rotating its password is ordinary
+DBA work, and it is `ORACLE_MAINTAINED = 'Y'`, so check 2 refuses it. Without an
+override, the rotation still happens, but in SQL\*Plus, where nothing records
+it. An audited override is the better outcome.
 
-  An account the guardrails **refused** contributes no caveat: it was not
-  touched, so what an unread check might have said about it changed nothing.
-- ~~**The "operator named the account" half of the refusal rule is
-  unreachable.**~~ **Built in #297**, which added `--account` along with
-  `--target`, `--group` and `--application`. An account the operator named is
-  now reported as `ERROR` rather than `SKIPPED` — the estate is left in exactly
-  the same state either way, and the difference is entirely in the exit code,
-  which is the difference §4 asks for: "quietly skipping it would report success
-  for work nobody did".
+**It takes two deliberate acts.** `--force` alone does not rotate `DBSNMP`,
+because check 1 still applies. The account must also be declared: in
+`accounts:`, in an `applications:` entry, or, for a personal account, through
+`personal_accounts:` (H1). That is invariant 5: the config is the whitelist, and
+a flag cannot extend it. It keeps "an unusual account, managed deliberately"
+apart from "a typo that was forced through".
 
-  Two things about it are decisions. **Naming a target, group or application is
-  not naming an account**, however few accounts it resolves to — the tempting
-  reading is "the selection came out as one account, so they must have meant
-  it", and that would make a safety rule change behaviour according to how many
-  rows an estate happens to have today. And **a named account refused by check 1
-  is not advised to use `--force`**, because check 1 is the one no flag reaches;
-  it is told to declare the account instead.
-
-**One more refusal joined its catalogue, and it is not an account check** (#149).
-`sopuli lock break` refuses a lock that has not expired, and `--force` is what
-takes it anyway. The generalisation that makes both cases one flag is *an audited
-override of a guardrail that is asked of one thing at one moment* — this account,
-now; this lock, now — as opposed to a safety setting, which is resolved from
-layers and ratchets. #89 delimited the flag to checks 2–5 because those were the
-guardrails that existed; the boundary it actually drew is the one below, and the
-lock refusal is on the same side of it. Both cases report the override the same
-way, and the second is visible in the run document as `lock.broken[].expired:
-false`.
-
-**`DBSNMP` is the case it exists for.** Rotating its password is ordinary DBA
-work, and it is `ORACLE_MAINTAINED = 'Y'`, so check 2 refuses it. A tool with no
-override does not prevent that rotation — it moves it to SQL\*Plus, where nothing
-records that it happened. An audited override is the better failure.
-
-**It takes two deliberate acts, not one.** `--force` alone will not rotate
-`DBSNMP`: guardrail 1 still applies, so the account has to be declared as well —
-in `accounts:` or an `applications:` entry, or, for a personal account, admitted
-by `personal_accounts:` (H1, #449). That is invariant 5 — the config is the
-whitelist, and a flag cannot extend it — and it is what keeps "unusual account,
-deliberately managed" distinguishable from "typo that happened to be forced past".
-
-**What it may never override is a safety setting.** `readonly`, `max_targets`,
-`confirm_environments` and `dry_run` ratchet toward safe and no
+**`--force` never overrides a safety setting.** `readonly`, `max_targets`,
+`confirm_environments` and `dry_run` only ratchet toward safe, and no
 higher-precedence source may relax them (invariant 10, `00-principles.md` P3).
-`--force` is a higher-precedence source, so if it could relax any of them the
-ratchet would not be one. The two sets are kept apart structurally rather than by
-care: **`--force` is not a setting.** It never enters
-`sopuli/settings/registry.py`, so there is no merge policy for it to have and no
-layer for it to win — it is a per-invocation argument to §4's account checks and
-nothing else. A `relax-but-bounded` merge policy was considered for it and is not
-needed.
+`--force` is a higher-precedence source, so if it could relax one of them, the
+ratchet would not hold. The code keeps the two apart by structure: **`--force` is
+not a setting.** It is not in `src/sopuli/settings/registry.py`, so it has no
+merge policy and no layer. It is an argument to §4's account checks, and to the
+lock refusal, and to nothing else.
 
 ### Statement construction
 
-The password cannot be a bind variable — DDL takes literals — so the tool builds:
+DDL takes literals, so the password cannot be a bind variable. The tool builds
+this statement:
 
 ```sql
 ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
 ```
 
-- **Passwords containing `"` are rejected, not escaped.** Oracle quoted
-  identifiers have no escape sequence for a double quote; there is no correct
-  escaping, so refusal is the only safe handling. The `alnum_safe` charset
-  default already excludes it.
-- Control characters and `CHR(0)` are rejected; byte length is checked against
-  the target's limit (30 vs 128) in the database character set.
+- **Passwords containing `"` are rejected, not escaped.** An Oracle quoted
+  identifier has no escape for a double quote, so refusing is the only safe
+  handling. The default character set, `alnum_safe`, excludes it.
+- Control characters and `CHR(0)` are rejected. The byte length is checked
+  against the target's limit, 30 or 128 bytes, in the database character set.
 - The username in the statement is the spelling read back from `DBA_USERS` after
-  validation, never the raw string from config.
-- `CONTAINER=ALL` is appended only when the session is in `CDB$ROOT` **and** the
-  account is a `C##` common user; otherwise the tool refuses rather than letting
-  Oracle produce a confusing error. An **application** root or PDB is refused
-  either way — **no longer.** Measured in #204
-  (`sql/oracle/03_app_container_probe.sql`), the two halves are not alike. An
-  application **root** is refused: a statement with no container clause is already
-  container-wide there, so the tool's "no `C##` prefix, therefore local, therefore
-  no clause" path produces an application-container-wide rotation, and no property
-  of the name distinguishes it because `C##` names cannot exist in an application
-  container. An application **PDB** takes the ordinary path: a local account there
-  is ordinary, and an application-common one is refused by Oracle itself
-  (`ORA-65066`, mapped) rather than by a guardrail that would also have blocked
-  the working case. See UC-1 §6.2.
-- **`ALTER USER "ORDERS_APP" ACCOUNT UNLOCK` is built the same way** (#300, UC-1
-  §5's first attribute): the same identifier rules, the same container clause, and
-  issued directly rather than wrapped, even though it carries nothing secret. The
-  habit is what keeps the next statement safe, and the next one carries a
-  password. It needs no grant beyond §2's `ALTER USER`.
-- **`ALTER USER "ORDERS_APP" PROFILE "ORDERS_PROF"` likewise** (#301, §5's second
-  attribute). The profile name goes through the same identifier rules and is the
-  spelling read back from `DBA_PROFILES`, for the reason the username is. There is
-  no function in the statement layer that builds an `ALTER PROFILE`, and there is
-  not meant to be one: the credential-sync verbs assign a profile and never edit
-  one, because a profile is shared and editing one reaches accounts nobody
-  selected (§3, and Q4 decided in #88). Should UC-4 ever need to author profiles,
-  it needs a builder this grant set does not authorise and a principal of its own,
-  which is the point of keeping the absence visible here. The absence is structural rather than an omission: there is no
-  `ALTER PROFILE` call site to review because nothing builds one — narrow by
-  construction, the way invariant 2 keeps plaintext to a single `reveal()` rather
-  than by remembering to mask at each place it could escape.
+  validation, never the raw string from the config.
+- `CONTAINER=ALL` is added only when the session is in `CDB$ROOT` and the account
+  is a `C##` common user. Otherwise the tool refuses, instead of letting Oracle
+  return a confusing error.
+- **An application root is refused.** There, a statement with no container
+  clause already applies to the whole application container. The tool's usual
+  path reads "no `C##` prefix, so local, so no clause", and that would rotate
+  the password across the application container. No property of the name tells
+  the cases apart, because `C##` names cannot exist in an application container.
+- **An application PDB takes the ordinary path.** A local account there is
+  ordinary. Oracle itself refuses an application-common account (`ORA-65066`,
+  mapped), so a guardrail is not needed and would also block the working case.
+  `sql/oracle/03_app_container_probe.sql` measured both; UC-1 §6.2 has the rest.
+- **`ALTER USER "ORDERS_APP" ACCOUNT UNLOCK` is built the same way** (UC-1 §5's
+  first attribute): the same identifier rules and container clause, issued
+  directly, never wrapped. It carries no secret. The habit keeps the next
+  statement safe, and the next statement carries a password. It needs no grant
+  beyond `ALTER USER`.
+- **`ALTER USER "ORDERS_APP" PROFILE "ORDERS_PROF"` is built the same way** (UC-1
+  §5's second attribute). The profile name follows the same identifier rules, and
+  is the spelling read back from `DBA_PROFILES`, for the same reason as the
+  username.
+- **No function builds `ALTER PROFILE`.** The credential-sync verbs assign a
+  profile and never edit one, because a profile is shared and editing it reaches
+  accounts nobody selected (§3, UC-1 Q4). If UC-4 needs to author profiles, it
+  needs a builder this grant set does not allow, and a principal of its own.
+  Because nothing builds the statement, there is no call site to review. This is
+  how invariant 2 keeps plaintext to `reveal()` instead of masking at each call
+  site.
 - **The built statement redacts itself.** It carries a password, so it is as
-  sensitive as one: every stringification is `ALTER USER "X" IDENTIFIED BY ***`,
-  which is also the form `--dry-run` prints, and the plaintext is reachable only
-  through a `reveal()` named after the one on `Secret` so that grepping a single
-  method name still finds every place plaintext can be had.
+  sensitive as one. Every string form of it is `ALTER USER "X" IDENTIFIED BY
+  ***`, which is also what `--dry-run` prints. The plaintext is reachable only
+  through a method named `reveal()`, like the one on `Secret`, so a search for
+  one method name finds every place that can get plaintext.
 
-The statement layer refuses a password on its own terms, which is deliberately
-not the same act as `passwords.check` finding a policy violation. UC-1 §4 lets an
-operator waive the second with `--no-policy-check`; nothing waives the first. A
-rule that can be turned off and a rule that cannot are two rules even where they
-reject the same character, and merging them would make `--no-policy-check` a way
-to switch off invariant 11.
+The statement layer refuses a password on its own terms. That is a different act
+from `passwords.check` finding a policy violation. UC-1 §4 lets an operator waive
+the policy check with `--no-policy-check`. Nothing waives the statement layer's
+refusal. A rule that can be turned off and a rule that cannot are two rules,
+even where they reject the same character. Merging them would let
+`--no-policy-check` turn off invariant 11.
 
 ### Where the password text can surface
 
-Measured, not assumed. `sql/oracle/02_password_leak_probe.sql` plants a distinct
-canary per execution path and sweeps 24 source/column pairs, reporting whether
-each column is populated at all so that a "clean" on an empty column is labelled
-inconclusive rather than counted as a pass.
+`sql/oracle/02_password_leak_probe.sql` plants a distinct canary for each
+execution path and searches 24 source and column pairs for it. For each column
+it also reports whether the column holds any rows. A clean result on an empty
+column is labelled inconclusive, not counted as a pass.
 
-**Every finding below is scoped to the versions its row names**, and it is not a
-general statement about Oracle. The column head is 26ai Free 23.26.2.0.0 in both
-`CDB$ROOT` and a PDB, which is where all of it was first measured; **21c XE
-21.3.0.0.0, 18c XE 18.4.0.0.0 and 11g XE 11.2.0.2.0 were added on 2026-09-08
-(#380, #381, #382)**, the first two in a PDB and the third a non-CDB. 21c and 18c
-agree on every row they reached, and add the two they can answer and 26ai cannot
-— `DBA_AUDIT_TRAIL` and `SYS.AUD$`, since 23ai desupported traditional auditing.
+**Each result holds only for the releases it names.** None is a general
+statement about Oracle. [`../measurements.md`](../measurements.md) lists every
+run: the release, the positions, the date and the issue. The table below gives
+the findings.
 
-**11.2 disagrees on one row, and it is the most important one.** `V$SQLSTATS`
-retains the `ALTER USER` text there, so the first row below holds on 18c, 21c and
-26ai and *not* on 11.2. Everything else on 11.2 matched, including the
-off-database greps, which were clean across 835 audit files.
+**11.2 differs on the most important row.** On 11.2.0.2.0, `V$SQLSTATS` keeps
+the text of the plain `ALTER USER` that sopuli issues. Every later release
+measured keeps nothing. So the change is after 11.2 and no later than 12.2.0.1.0
+(unverified: ddl-text-versions). 12.1 has no image that can be pulled, and has
+not been run. Read the 11.2 result as "11.2 keeps it", not as "every release
+before 12.2 keeps it".
 
-**What the tool does about it: nothing, and says so** — decided in #387,
-2026-09-09, and recorded as P8 in §8. The two alternatives were a runtime warning
-on 11.2 and refusing to rotate there at all; both were declined, and the reasons
-are in P8 because the second one would have reversed
-[`00-principles.md`](00-principles.md) D7. What the decision rests on was measured
-on the day it was taken, and it is the part worth carrying: **the retained text is
-a window, not a record.**
-
-**It is sopuli's own statement, not just the probe's.** #387 was filed off a
-canary planted by `02_password_leak_probe.sql`; before deciding it, a real
-`creds apply` was run against 11g XE through the ordinary path — Instant Client,
-`SOPULI_SVC` holding exactly §2's grants, a password sopuli generated and wrote to
-Vault and never showed anybody. Reading it back out of the vault and looking for it
-in the dictionary finds this, with the password masked here by the sweep rather
-than by Oracle:
+This was confirmed with sopuli's own statement, not just the probe's. A real
+`creds apply` ran against 11g XE through the usual path: Instant Client,
+`SOPULI_SVC` with exactly §2's grants, and a password that sopuli generated,
+wrote to Vault and showed nobody. This is the search for that password, read
+back from the vault, with the password masked by the search script, not by
+Oracle:
 
 ```
 V$SQLSTATS.sql_text           *** LEAK *** 1
@@ -1056,81 +929,74 @@ DBA_AUDIT_TRAIL.sql_text      clean        0
     ALTER USER "ACME_APP_USER" IDENTIFIED BY "<the password sopuli generated>"
 ```
 
-The same session then confirmed both halves of the mitigation: `SOPULI_SVC` gets
-`ORA-00942` from `V$SQLSTATS` and `V$SQL` alike, and one
-`ALTER SYSTEM FLUSH SHARED_POOL` takes the row to `clean 0`.
+**The tool does nothing about it, and the documents say so**
+([P8](../decisions/log.md#p8)). The alternatives were a runtime warning on 11.2,
+or refusing to rotate there. Refusing would have reversed
+[`00-principles.md`](00-principles.md) D7. The decision rests on one fact: **the
+kept text is a window, not a record.** On 11g XE 11.2.0.2.0:
 
-| Question #387 asked | Measured, 11g XE 11.2.0.2.0, 2026-09-09 |
+| Question | Result |
 |---|---|
-| Does `V$SQLSTATS` age the row out? | **Yes.** With `V$SQLSTATS` at its cap on this instance (~5,590 rows), a planted canary survived 2,000 further distinct statements and was gone by 3,000. Planted into a nearly empty pool it survived longer, and 20,000 evicted it |
-| Does `ALTER SYSTEM FLUSH SHARED_POOL` clear it? | **Yes, immediately** — canary present before, absent after, both times it was run. That is the operator's remedy, and it is the operator's rather than the tool's: `ALTER SYSTEM` is a privilege §3 refuses, and flushing a production shared pool is a performance event nobody should get as a side effect of a rotation |
-| Does it reach AWR? | **Still untested, and now attributably so** (unverified: ddl-text-awr). Two snapshots were taken and `DBA_HIST_SQLTEXT` *and* `DBA_HIST_SQLSTAT` came back empty of everything — XE ships `control_management_pack_access = NONE`, so nothing was captured at all. The clean result is the image, not the release. Answering it needs a licensed EE with the Diagnostics Pack |
+| Can the service account read it? | **No.** `SOPULI_SVC` gets `ORA-00942` from `V$SQLSTATS` and `V$SQL` alike. A user who can read the dictionary can read it |
+| Does `V$SQLSTATS` age the row out? | **Yes.** With `V$SQLSTATS` at its limit on this instance (about 5,590 rows), a planted canary survived 2,000 more distinct statements and was gone by 3,000. Planted into a nearly empty pool it survived longer, and 20,000 removed it |
+| Does `ALTER SYSTEM FLUSH SHARED_POOL` clear it? | **Yes, at once.** The canary was present before and absent after, both times. This is the operator's remedy, not the tool's: `ALTER SYSTEM` is a privilege §3 refuses, and flushing a production shared pool affects performance, which nobody should get as a side effect of a rotation |
+| Does it reach AWR? | **Not known** (unverified: ddl-text-awr). XE ships `control_management_pack_access = NONE`, so AWR snapshots on 11g XE capture nothing. Answering this needs an 11.2 Enterprise Edition with the Diagnostics Pack |
 
-So on 11.2 the exposure is: readable by anyone who can read the dictionary, for as
-long as the shared pool keeps the entry, and removable in one statement. It is
-smaller than "the password is on disk" and larger than nothing, which is why it is
-documented rather than warned about or refused.
+So on 11.2, a user who can read the dictionary can read the password while the
+shared pool keeps the entry, and one statement removes it. That is less than "the
+password is on disk" and more than nothing. So it is documented, not warned
+about and not refused. `../security-model.md` §5 is what an operator is told.
 
-**The boundary is narrowed to one release, not closed** (unverified:
-ddl-text-versions). 11.2 retains; **12.2.0.1.0 does not** (2026-09-29, #572, all
-three positions, `V$SQLSTATS` clean for the plain `ALTER USER`), and neither do
-18.4, **19.3.0.0.0** (2026-09-27, #548), **19.32.0.0.0** (2026-10-01, #581, all
-three positions, an OCI Base Database Service DB system), 21.3 or 26ai. So the
-behaviour changed somewhere in (11.2, 12.2]; 12.1 has no pullable image and has
-not been run. 19.3 is the base release and 19.32 a release update, and they
-agree. Read the 11.2 row as *11.2 retains* and not as *everything before 12.2
-retains* — the second is plausible and, for 12.1, unevidenced. The password
-byte limit (#383) (unverified: password-byte-limit) is the other version
-question; 19.3 and 12.2 both answer 30 bytes, as 21c does, and 19.32 accepts 30
-and refuses 128 (31 not tried). Since #595 the tool keys the limit to 23 rather
-than 12.2, which agrees with every one of those. The `04-testing.md` §6 gate 2 records what
-is open. A row that names only 26ai means only 26ai.
+The longest password a release accepts is the other per-release question
+(unverified: password-byte-limit). The tool applies 128 bytes from the 23
+codebase and 30 bytes below it, which agrees with every release measured.
 
-| Surface | 26ai 23.26.2.0.0, `CDB$ROOT` and PDB; 21c 21.3, 19c 19.3 and 19.32, 18c 18.4 and 12c 12.2.0.1 in a PDB (19.3, 19.32 and 12.2 in `CDB$ROOT` too); 11g 11.2 non-CDB | Action |
+This table gives the findings. "Every release measured" means the releases
+[`../measurements.md`](../measurements.md) lists for the script that answers the
+row.
+
+| Surface | Finding | Action |
 |---|---|---|
-| `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` — the `CREATE/ALTER USER` statement itself | **no cursor for the DDL exists at all** on 26ai, 21c, 19.3, 19.32, 18c and 12.2. Not masked — absent. Holds for client-issued DDL and for DDL run via `EXECUTE IMMEDIATE` alike. **On 11.2 it does not hold**: `V$SQL` still has no cursor for the DDL, but `V$SQLSTATS` keeps its own copy and that copy outlives it, so the plain `ALTER USER … IDENTIFIED BY` sopuli issues is readable verbatim (measured 2026-09-08, #382). The service account cannot read the view (`ORA-00942`); a dictionary reader can. It ages out under ordinary shared-pool turnover and `ALTER SYSTEM FLUSH SHARED_POOL` clears it at once (2026-09-09, #387). **19.3.0.0.0 does not retain it** (2026-09-27, #548): `V$SQLSTATS` clean for the plain `ALTER USER` in all three positions, and **nor does 12.2.0.1.0** (2026-09-29, #572, all three positions), so the change happened somewhere in (11.2, 12.2]. **Nor does 19.32.0.0.0** (2026-10-01, #581, all three positions), the first release update measured — under `AUDIT_TRAIL = DB` as an OCI DB system ships it, and under `DB,EXTENDED`. **Unmeasured on 12.1** | 11.2: documented, not warned about and not refused — P8 in §8, and `../security-model.md` §5 is what an operator is told. Elsewhere: nothing to do, and re-run the probe on every version claimed as supported — this is a retention behaviour and not a documented guarantee, which is exactly how 11.2 came to differ |
-| **An anonymous PL/SQL block carrying the password as a literal** | **leaks in full** into `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` and `V$DB_OBJECT_CACHE`. Oracle's protection is keyed to the `CREATE/ALTER USER` statement; a block that merely *contains* one is an ordinary block, and the block's own text is retained verbatim | **the tool never builds one.** Issue `ALTER USER` directly — invariant 13 |
-| Unified audit `SQL_TEXT` | **masked to `IDENTIFIED BY *`, at write time.** Confirmed in the base table `AUDSYS.AUD$UNIFIED` as well as in `UNIFIED_AUDIT_TRAIL` | keep verifying the base table rather than the view: view-level redaction alone would be bypassable by anyone holding `SELECT ANY DICTIONARY` |
-| AWR — `DBA_HIST_SQLTEXT` | **The wrapped literal reaches it** (unverified: ddl-text-awr). AWR on 19.32.0.0.0 (2026-10-01, #581), the first database here with the Diagnostics Pack (`DIAGNOSTIC+TUNING`, licence included): straight after position 1 planted its canaries, one root snapshot at flush level `ALL` captured **C3 verbatim** into `DBA_HIST_SQLTEXT` and `AWR_ROOT_SQLTEXT` (`command_type` 47, the PL/SQL block, in `ORCLPDB1`), uncolored. C1, C2 and C4 reached neither, before or after a second snapshot with the C3 cursor colored. The DB system keeps AWR for 8 days on hourly snapshots, so the wrapped literal outlives a shared-pool flush and sits on disk for a week. A quiet system: on a busy one the block may not rank into a snapshot's top SQL, which makes it less likely, not safe. Earlier releases could not answer this: XE ships `control_management_pack_access = NONE`, so snapshots on 11g XE for #387 captured nothing, and no snapshot was taken before the 26ai sweeps | invariant 13 again, on its most durable surface: the tool never builds the block. **Still open: whether 11.2's retained plain `ALTER USER` reaches AWR**, since no 11.2 here has the pack — that half is why the entry stays open |
-| `V$SQL_BIND_CAPTURE` — bind values in SQL *predicates* | sampled at hard parse and retained in clear. Does not apply to rotation, since DDL cannot take binds. **Clean for the rotation on 19.32.0.0.0 with `ORA12C_STRONG_VERIFY_FUNCTION` enabled** (2026-10-01, #581), the OCI DB system's `DEFAULT`: the verify function receives the clear password on every `ALTER USER` and left it in no bind capture, in all three positions | constrains `check --method hash` if verifier comparison ever moves server-side: **never bind a password or a verifier into a predicate** — invariant 14 |
-| SQL trace / 10046 | **run, and the assumption it replaces was the pessimistic one** (#407, 2026-09-11, 26ai 23.26.2.0.0 and 21c 21.3.0.0.0). A session traced at level 12 does **not** capture the password: the cursor is written truncated, `ALTER USER sopulitest IDE`, stopping one character into `IDENTIFIED`. Five traced sessions across the two releases, every one identical, and the same on 19.3.0.0.0 (#479) and 19.32.0.0.0 (2026-10-01, #581, twice). The wrapped form is the exception and leaks in full, which is invariant 13 on a fifth surface. This row said "untested — assume not redacted" until the greps were actually run | nothing to do, and the pessimism is retired rather than confirmed. Re-run `04_password_leak_extensions.sql` on any release added to the matrix: this is retention behaviour, not a documented guarantee, and that is precisely how 11.2 came to differ on the row above |
-| OS audit files (`audit_file_dest`) — the SYSDBA path | **clean on 21c, 18c and 11.2 in position 1** (2026-09-08, #380, #381, #382), all three with `AUDIT_SYS_OPERATIONS = TRUE` and 11.2 across 835 files. **Position 2 — `svc_user = sys`, the position this row exists for — was run on 21c only** (2026-09-11, #407), so read the masked OS-file result below as *21c*, and position 1's clean sweep as the thing that covers 18c and 11.2. The verdict does not change on 21c:  the DDL is written to the OS file *masked*, `ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'`, and the only verbatim canary in 646 `ACTION` lines is the PL/SQL wrapper. Note what it took to get a trustworthy answer — the grep as written matched the canary *prefix*, which the probe's own SQL text contains, so it reported a leak in the one place a leak would matter most. Fixed to match the numbered canaries; a run before 2026-09-08 that reported a hit here was reading the probe | answered on 11.2 through 21c, and on **19.3.0.0.0 in all three positions** (2026-09-27, #548): position 2 is identical to 21c's — the DDL written masked, `ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'`, and C3 the only verbatim canary. The same on **12.2.0.1.0 in all three positions** (2026-09-29, #572), across 468 files, and on **19.32.0.0.0 in all three positions** (2026-10-01, #581), across 251 files. **On 26ai it is not clean, it is absent** — see the row below |
-| OS audit files on **23ai and later** | **the surface is gone, and a clean grep there measures nothing** (#407, 2026-09-11, 26ai 23.26.2.0.0). `AUDIT_SYS_OPERATIONS = TRUE` is accepted and writes nothing useful: `audit_file_dest` held five files, each a session header plus one `ACTION` line, all five the same internal call, and **no `CREATE`, `ALTER` or `DROP USER` text reached it at all** — no file so much as names the test account. Traditional auditing is desupported on 23ai+, and this parameter belongs to it | read it as `pop=n` in OS-file form, exactly as the sweep labels an empty column `INCONCLUSIVE` rather than clean. There is nothing here to protect on 23ai+, which is a different claim from "we looked and found nothing", and the difference is the one this whole table is organised around |
-| **Self-rotation** — `IDENTIFIED BY … REPLACE …` | **audited and masked on both secrets** (#407, 2026-09-11, 26ai and 21c). The statement is recorded as `ALTER USER sopulitest IDENTIFIED BY * REPLACE *`, attributed to the account itself rather than to a service account, by the `ACTIONS ALTER USER` unified policy on both releases and by traditional `AUDIT USER` on 21c. The `REPLACE` clause carries the account's *current* password, and it is masked with the same `*`. The same in both trails on 19.32.0.0.0 (2026-10-01, #581), where the test account had a profile with no verify function: the function would have been handed both secrets, and canaries sharing a prefix cannot satisfy its eight-character difference rule, so self-rotation *under* a verify function is unmeasured | the worry was that this path exercises no `ALTER USER` privilege, so *privilege* auditing could miss what *statement* auditing catches. It does not: **"rotations are audited" holds for the self-rotation path too**, which UC-1b needed before it could claim it. The path itself is still not this build |
-| **`IDENTIFIED BY VALUES`** — the verifier | **masked** (#407, 2026-09-11, 26ai and 21c): `ALTER USER sopulitest IDENTIFIED BY VALUES *` in the trail, and under a level-12 trace the DDL truncates at the same character the password form does — `len=44` declared, `ALTER USER sopulitest IDE` printed. No raw verifier appears in any trace file or OS audit file on either release. Oracle masks a verifier the way it masks a password, which was a separate question and had never been asked. **On 19.32.0.0.0** (2026-10-01, #581) it is masked in the unified trail and appears in **neither `DBA_AUDIT_TRAIL` nor `audit_file_dest`**, where 19.3 had it masked in both: the traditional half is absent there, not clean, and the cause is not established — the SYSDBA login was a non-SYS user granted `SYSDBA`, and the statement is recursive | so a restore-from-verifier path, if one is ever added, does not widen the *audit* exposure. It stays offline-crackable wherever the verifier itself can be read, which is ADR-001's question and not this one. Needs `SELECT ON SYS.USER$`; where that is withheld, 6b is **unanswered** rather than clean. And the finding is about the DDL, not about every way of reaching it: a verifier written as a *literal* into a PL/SQL block leaks like any other literal — invariant 13 does not stop applying because the secret changed shape |
-| Network | encrypted when NNE or TLS is in use | `sopuli doctor` warns on an unencrypted connection |
-| Tool's own output and logs | redacted at the sink | covered by the redaction release gate, UC-1 §11 |
+| `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL`: the `CREATE/ALTER USER` statement itself | **No cursor for the DDL exists**, from 12.2.0.1.0 on: not masked, absent. This holds for DDL sent by a client and for DDL run with `EXECUTE IMMEDIATE`. **11.2.0.2.0 differs**: `V$SQL` has no cursor, but `V$SQLSTATS` keeps its own copy of the text, and the copy outlives the cursor. 12.1 is not measured | 11.2: documented, not warned about and not refused (P8, above). Elsewhere: nothing to do. Re-run the probe on every release claimed as supported: this is retention behaviour, not a documented guarantee, and that is how 11.2 came to differ |
+| **An anonymous PL/SQL block that carries the password as a literal** | **leaks in full** into `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` and `V$DB_OBJECT_CACHE`. Oracle's protection is keyed to the `CREATE/ALTER USER` statement. A block that contains one is an ordinary block, and Oracle keeps its text verbatim | **The tool never builds one.** It issues `ALTER USER` directly (invariant 13) |
+| Unified audit `SQL_TEXT` | **masked to `IDENTIFIED BY *` when the record is written.** Masked in the base table `AUDSYS.AUD$UNIFIED` as well as in `UNIFIED_AUDIT_TRAIL` | Keep checking the base table, not only the view. Masking only in the view could be bypassed by anyone with `SELECT ANY DICTIONARY` |
+| AWR: `DBA_HIST_SQLTEXT` | **The PL/SQL block reaches it** (unverified: ddl-text-awr). On 19.32.0.0.0 with the Diagnostics Pack, one root snapshot at flush level `ALL` captured the block verbatim into `DBA_HIST_SQLTEXT` and `AWR_ROOT_SQLTEXT`. The plain `ALTER USER` did not reach it, because it has no cursor. That DB system keeps AWR for 8 days, so the block's literal outlives a shared-pool flush and stays on disk for a week. On a busy system the block may not rank among a snapshot's top SQL; that makes capture less likely, not impossible. `sql/oracle/10_awr_snapshot_probe.sql` takes the snapshot | Invariant 13 again, on the longest-lived surface. Still open: whether 11.2's kept `ALTER USER` reaches AWR. No 11.2 with the pack is available |
+| `V$SQL_BIND_CAPTURE`: bind values in SQL predicates | Oracle samples them at hard parse and keeps them in clear. This does not apply to rotation, because DDL cannot take binds. On 19.32.0.0.0, with `ORA12C_STRONG_VERIFY_FUNCTION` enabled, no bind capture held the password, although the verify function receives it on every `ALTER USER` | Constrains `check --method hash` if the comparison ever moves to the server: **never bind a password or a verifier into a predicate** (invariant 14) |
+| SQL trace (10046) | **A traced session does not capture the password.** At level 12 the cursor is written cut short, as `ALTER USER sopulitest IDE`, one character into `IDENTIFIED`. The PL/SQL block is the exception and leaks in full | Nothing to do. Re-run `sql/oracle/04_password_leak_extensions.sql` on every release added to the matrix: this is retention behaviour, not a documented guarantee |
+| OS audit files (`audit_file_dest`): the `SYSDBA` path | **Clean** in position 1 on every release measured before the 23 codebase, with `AUDIT_SYS_OPERATIONS = TRUE`. In position 2, where `svc_user` is `SYS`, the DDL is written masked, `ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'`, and the only verbatim canary is the PL/SQL block. Position 2 ran on 21c, 19.3, 19.32 and 12.2, not on 18c or 11.2. The search must match the numbered canaries: matching the shared prefix finds the probe's own SQL text and reports a false leak | Nothing to do on releases before the 23 codebase. On 26ai the surface is absent, not clean: see the next row |
+| OS audit files on the 23 codebase | **The surface is gone, so a clean search there measures nothing.** On 26ai 23.26.2.0.0, `AUDIT_SYS_OPERATIONS = TRUE` is accepted and writes nothing useful: five files, each a session header and one `ACTION` line for the same internal call, and no `CREATE`, `ALTER` or `DROP USER` text. Traditional auditing is desupported from the 23 codebase, and this parameter belongs to it | Read it as an empty column, as the search labels one `INCONCLUSIVE`. There is nothing to protect here on the 23 codebase. That is a different claim from "we looked and found nothing" |
+| **Self-rotation**: `IDENTIFIED BY … REPLACE …` | **Audited, with both passwords masked.** The trail records `ALTER USER sopulitest IDENTIFIED BY * REPLACE *`, attributed to the account itself, not to a service account. The unified policy `ACTIONS ALTER USER` records it, and so does traditional `AUDIT USER` where it exists. The `REPLACE` clause carries the account's current password, masked with the same `*`. Not measured: self-rotation under a password verify function, which receives both passwords | The concern was that this path uses no `ALTER USER` privilege, so privilege auditing could miss it. It does not: **"rotations are audited" holds for self-rotation too**, which UC-1b needs. The tool does not have this path |
+| **`IDENTIFIED BY VALUES`**: the verifier | **Masked.** The trail records `ALTER USER sopulitest IDENTIFIED BY VALUES *`, and under a level-12 trace the DDL is cut short at the same character as the password form. No raw verifier appears in a trace file or an OS audit file. On 19.32.0.0.0 it is masked in the unified trail and absent from both `DBA_AUDIT_TRAIL` and `audit_file_dest`. That traditional half is absent, not clean, and the cause is not known | A restore-from-verifier path, if one is ever added, does not widen the audit exposure. The verifier can still be attacked offline wherever it can be read, which is ADR-001's question. The probe needs `SELECT ON SYS.USER$`; without it, this row is unanswered, not clean. A verifier written as a literal into a PL/SQL block leaks like any other literal (invariant 13) |
+| Network | encrypted when NNE or TLS is in use | `sopuli doctor` warns about an unencrypted connection |
+| Tool's own output and logs | redacted at the output serialiser | covered by the redaction release gate, UC-1 §11 |
 
-The probe is `sql/oracle/02_password_leak_probe.sql`. Run it in the three positions
-its header describes — PDB with a non-SYSDBA service account, PDB as SYSDBA, and
-`CDB$ROOT` — and record the outcome in `04-testing.md` §6 gate 2. The
-service-account position is the only one that proves anything about the audit
-policy; see `04-testing.md` §6 gate 2.
+Run `sql/oracle/02_password_leak_probe.sql` in the three positions its header
+describes: in a PDB with a service account that is not `SYSDBA`, in a PDB as
+`SYSDBA`, and in `CDB$ROOT`. Only the service-account position proves anything
+about the audit policy. `04-testing.md` §6 gate 2 says what the gate needs.
 
-**Then run `sql/oracle/04_password_leak_extensions.sql`**, which is the other
-three checks the probe's §6 and §7 described in comments and left for somebody to
-do by hand. Nobody did, for six weeks, and #407 is what that cost: two of the
-three bore on claims this document was already making. **A check that is a comment
-is a check that does not run**, which is the same defect as a flag named in a
-specification and never built — the extensions are a file now for that reason
-rather than a tidier one.
+**Then run `sql/oracle/04_password_leak_extensions.sql`.** It covers three
+surfaces the main probe does not: self-rotation, `IDENTIFIED BY VALUES`, and
+trace and OS audit files. They are a separate script so that they run; a check
+written only as a comment in a script does not run.
 
-It has one ordering trap, measured on both releases before it was understood. The
-main probe's §8 cleanup drops `SOPULI_PROBE_POL` and issues `NOAUDIT USER`, so
-running the extensions straight afterwards records nothing and reports a masking
-result it did not earn. **The dangerous form of that failure is 21c's**, not
-26ai's: on 26ai nothing at all was enabled and the trail came back visibly empty,
-while on 21c the Oracle-supplied `ORA_SECURECONFIG` policy covers `ALTER USER` and
-the trail looked populated anyway. An empty result announces itself; a result
-produced by a policy you did not think you were testing does not.
+**Run the extensions with auditing enabled again.** The main probe's cleanup
+drops `SOPULI_PROBE_POL` and issues `NOAUDIT USER`. Run straight afterwards, the
+extensions record nothing, and their masking result proves nothing. 21c makes
+this harder to see than 26ai does. On 26ai nothing is enabled, and the trail is
+visibly empty. On 21c the Oracle-supplied `ORA_SECURECONFIG` policy covers
+`ALTER USER`, so the trail looks populated anyway, by a policy you did not mean
+to test.
 
 ---
 
 ## 5. Auditing
 
-With no package there is no `SOPULI_AUDIT` table, so the database-side trail is
-unified auditing alone — which is the authoritative one anyway, since it does not
-depend on the tool behaving.
+With no package there is no `SOPULI_AUDIT` table. The database-side trail is
+unified auditing alone. It is the trail to trust, because it does not depend on
+the tool behaving correctly.
+
+This policy audits every account change:
 
 ```sql
 CREATE AUDIT POLICY sopuli_pol
@@ -1138,15 +1004,14 @@ CREATE AUDIT POLICY sopuli_pol
 AUDIT POLICY sopuli_pol;
 ```
 
-Given `ALTER USER` is now the whole privilege model, this policy is not optional
-housekeeping — it is the compensating control. Enable it before the first
-rotation, not after the first incident.
+`ALTER USER` is the whole privilege model, so this policy is the compensating
+control, not optional housekeeping. Enable it before the first rotation, not
+after the first incident. `sql/oracle/01_audit_policy.sql` creates it.
 
-**Correlation still works.** The tool calls
-`DBMS_SESSION.SET_IDENTIFIER(<correlation_id>)` on every connection, so its UUID
-lands in `UNIFIED_AUDIT_TRAIL.CLIENT_ID`. That is the join between the tool's
-JSON output, the database trail, and the vault's secret metadata — the property
-that made the package's local audit table useful is preserved without the table:
+**Correlation.** The tool calls `DBMS_SESSION.SET_IDENTIFIER(<correlation_id>)`
+on every connection, so its UUID lands in `UNIFIED_AUDIT_TRAIL.CLIENT_ID`. That
+joins the tool's JSON output, the database trail and the vault's secret
+metadata. This query finds one run's records:
 
 ```sql
 SELECT event_timestamp, dbusername, action_name, object_name, return_code
@@ -1155,57 +1020,53 @@ SELECT event_timestamp, dbusername, action_name, object_name, return_code
  ORDER BY event_timestamp;
 ```
 
-On 11.2, fall back to `AUDIT ALTER USER` and `DBA_AUDIT_TRAIL`, where
-`CLIENT_ID` also exists.
+On 11.2, use `AUDIT ALTER USER` and `DBA_AUDIT_TRAIL` instead. `CLIENT_ID`
+exists there too.
 
-Implemented in #176, on **every** connection rather than only on the ones that
-mutate something: a session that shows up in the trail with no `CLIENT_ID` is
-the one somebody has to account for afterwards, and the cost of setting it is
-one round trip on a connection that has already been made. It is set before
-anything else happens on the session, so there is no window in which a statement
-could be audited without it — and a session that cannot be labelled is closed
-rather than used, because carrying on would silently give up the join this
-section exists to provide.
+- **The identifier is set on every connection**, not only on connections that
+  change something. A session in the trail with no `CLIENT_ID` is one somebody
+  must explain later, and setting it costs one round trip on a connection that is
+  already open.
+- **It is set before anything else runs**, so no statement can be audited
+  without it. A session that cannot be labelled is closed, not used, because
+  using it would lose the join this section exists for.
+- **The call binds the id.** It does not build a string. This is the reverse of
+  invariant 14. `V$SQL_BIND_CAPTURE` keeps bind values in clear, which is why a
+  password must never be bound, and why a captured correlation id is useful. The
+  dangerous habit is the other one: a `SET_IDENTIFIER` built by concatenation is
+  the pattern that later writes a password into SQL text.
 
-The call **binds** the id rather than building a string, which is the exact
-inverse of invariant 14 and worth stating beside it: `V$SQL_BIND_CAPTURE` keeps
-bind values in clear, which is precisely why a password must never be bound and
-why a correlation id is a good thing to have captured. The dangerous habit is
-the other one — a `SET_IDENTIFIER` assembled by concatenation is the pattern
-that later writes a password into SQL text.
+Tier 1 checks it from the database's side, by reading
+`SYS_CONTEXT('USERENV','CLIENT_IDENTIFIER')`. That is the value
+`UNIFIED_AUDIT_TRAIL.CLIENT_ID` comes from, so the test needs no audit policy on
+the test container.
 
-Tier 1 asserts it from the database's own side, reading
-`SYS_CONTEXT('USERENV','CLIENT_IDENTIFIER')` — the value `UNIFIED_AUDIT_TRAIL.
-CLIENT_ID` is populated from — so the property is checked without requiring an
-audit policy on the test container.
-
-Worth auditing alongside it: failed logons by the service account, which is what
-credential probing looks like.
+Also audit failed logons by the service account. That is what credential
+probing looks like.
 
 ---
 
 ## 6. When the package would be worth reconsidering
 
-Not now, and possibly never — but the distinction is worth recording, because it
-is about the *stored* credential rather than the operator.
+Not now, and possibly never. The case is about the stored credential, not the
+operator.
 
-An interactive DBA already holds SYSDBA, so granting the tool `ALTER USER` gives
-away nothing. An **unattended scheduled runner** is different: its credential sits
-in a CI system, a container, or a systemd unit, authenticated by machine identity
-and used without a human present. If that credential is stolen it is a full
-database compromise, and it has a broader exposure surface than a DBA's own
-login.
+An interactive DBA already holds `SYSDBA`, so granting the tool `ALTER USER`
+gives away nothing. An **unattended scheduled runner** is different. Its
+credential sits in a CI system, a container or a systemd unit. It authenticates
+by machine identity and is used with no person present. If it is stolen, the
+whole database is compromised, and it is exposed in more places than a DBA's
+own login.
 
-UC-1 §S2 assumes exactly this — nightly `check`, weekly `rotate` from a scheduler.
-So the honest position is: direct grants for the interactive and initial case;
-revisit the package **only if** unattended rotation in a hostile-ish environment
-becomes a real deployment pattern, and only for that runner's credential. A
-sensible middle option if it comes to that is a read-only service account for
-scheduled `check` plus an `ALTER USER` account used only by `apply`/`rotate`.
+UC-1 §S2 assumes exactly this: a nightly `check` and a weekly `rotate` from a
+scheduler. So the tool uses direct grants for interactive use. Reconsider the
+package only if unattended rotation in an untrusted environment becomes a real
+deployment pattern, and only for that runner's credential. A middle option is a
+read-only service account for scheduled `check`, and an `ALTER USER` account
+used only by `apply` and `rotate`.
 
-Filed as an option, not a plan. If it is ever taken up, write the package fresh
-against the design as it stands then — the earlier draft was never executed and
-is not worth recovering.
+This is an option, not a plan. If it is taken up, write the package new, against
+the design as it is then.
 
 ---
 
@@ -1213,15 +1074,24 @@ is not worth recovering.
 
 | File | Purpose |
 |---|---|
-| `sql/oracle/00_install.sql` | create the service account and grant it, with non-CDB / common-user / per-PDB variants |
-| `sql/oracle/01_audit_policy.sql` | unified audit policy and correlation queries |
-| `sql/oracle/02_password_leak_probe.sql` | release gate 2: canary probe for password text retained anywhere queryable |
-| `sql/oracle/05_verifier_layout_probe.sql` | #431: reads the `SPARE4` verifier layout and locates the salt from a traced logon; derives nothing |
-| `sql/oracle/06_verifier_reproduce.{sql,py}` | #432: regenerates each stored `T:`/`t:` digest client-side and compares byte-for-byte, static passwords and a rollover window |
-| `sql/oracle/99_uninstall.sql` | remove the account and policies |
-| `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to revisit |
+| `sql/oracle/00_install.sql` | creates the service account and grants it, in non-CDB, common-user and per-PDB modes. The optional grants are parameters |
+| `sql/oracle/01_audit_policy.sql` | the unified audit policy (§5) and correlation queries |
+| `sql/oracle/02_password_leak_probe.sql` | release gate 2: plants canary passwords and searches for them anywhere queryable (§4) |
+| `sql/oracle/03_app_container_probe.sql` | tells an application root and an application PDB from an ordinary PDB, and what the common-user rules mean inside one (§3, §4) |
+| `sql/oracle/04_password_leak_extensions.sql` | the probe's other surfaces: self-rotation, `IDENTIFIED BY VALUES`, SQL trace and OS audit files (§4) |
+| `sql/oracle/05_verifier_layout_probe.sql` | reads the verifier layout in `SPARE4` and finds the salt from a traced logon. It derives nothing (§2) |
+| `sql/oracle/06_verifier_reproduce.{sql,py}` | sets known passwords, then regenerates each stored `T:`/`t:` digest client-side and compares byte for byte, for static passwords and a rollover window (§2) |
+| `sql/oracle/07_lock_and_rollover_probe.sql` | what `ACCOUNT UNLOCK` and `IDENTIFIED BY` do to `LCOUNT` and locks, and the UC-2 reset on a rollover profile |
+| `sql/oracle/08_expire_password_probe.sql` | the bare `PASSWORD EXPIRE` that `account expire-password` issues, from each account status |
+| `sql/oracle/09_reset_from_expired_probe.sql` | setting a password on an `EXPIRED` account whose profile has a rollover window |
+| `sql/oracle/10_awr_snapshot_probe.sql` | takes an AWR snapshot after `02_password_leak_probe.sql` and searches it (§4) |
+| `sql/oracle/11_proxy_connect_probe.sql` | whether `ALTER USER` alone can grant `CONNECT THROUGH` and connect as another account, and what that leaves in the audit trail |
+| `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
+| `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 
-All scripts are idempotent and report what they did.
+`00_install.sql`, `01_audit_policy.sql` and `99_uninstall.sql` can be run again
+safely, and report what they did. The probes are for throwaway databases only:
+each header says what it creates and leaves behind.
 
 ---
 
@@ -1229,11 +1099,11 @@ All scripts are idempotent and report what they did.
 
 | # | Question | Leaning |
 |---|---|---|
-| P1 | ~~Common `C##` service user or per-PDB local, as the documented default?~~ | **decided** (#615): common, with per-PDB documented for multi-tenant ownership. Reasons: [P1](../decisions/log.md#p1) |
+| ~~P1~~ | ~~Common `C##` service user or per-PDB local, as the documented default?~~ | **decided** (#615): common, with per-PDB documented for multi-tenant ownership. Reasons: [P1](../decisions/log.md#p1) |
 | ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86). An optional, capability-probed grant (§2); a narrower alternative is #124. Reasons: [P2](../decisions/log.md#p2) |
 | ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag, overriding checks 2–5 of §4 and nothing else** (#89); it is not a setting. Reasons: [P3](../decisions/log.md#p3) |
-| P4 | ~~One service account per database, or per application?~~ | **decided** (#615): per database; the config's declared accounts provide the finer scoping. Reasons: [P4](../decisions/log.md#p4) |
+| ~~P4~~ | ~~One service account per database, or per application?~~ | **decided** (#615): per database; the config's declared accounts provide the finer scoping. Reasons: [P4](../decisions/log.md#p4) |
 | ~~P5~~ | ~~Does `doctor` fail or warn on over-granted privileges?~~ | **decided: warn** (#213); `scope.over_granted` is populated and the exit code is unchanged. Reasons: [P5](../decisions/log.md#p5) |
-| P6 | ~~11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases?~~ | **decided** (#615): keep for now, drop if it starts costing real complexity. Reasons: [P6](../decisions/log.md#p6) |
-| ~~P7~~ | ~~Do the 23-codebase schema privileges cover `ALTER USER`?~~ (§2.1) | **decided: no — tested 2026-08-17 on 26ai 23.26.2.0.0**, `ORA-00990`; the direct grant in §1 is the model. Reasons: [P7](../decisions/log.md#p7) |
+| ~~P6~~ | ~~11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases?~~ | **decided** (#615): keep for now, drop if it starts costing real complexity. Reasons: [P6](../decisions/log.md#p6) |
+| ~~P7~~ | ~~Do the 23-codebase schema privileges cover `ALTER USER`?~~ (§2.1) | **decided: no**, `ORA-00990` on 26ai 23.26.2.0.0; the direct grant in §1 is the model. Reasons: [P7](../decisions/log.md#p7) |
 | ~~P8~~ | ~~On 11.2 the `ALTER USER` text survives in `V$SQLSTATS` (§4). Document it, warn at runtime, or refuse to rotate there?~~ | **decided: document it** (#387), in §4 and `../security-model.md` §5. Reasons: [P8](../decisions/log.md#p8) |
