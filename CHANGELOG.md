@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.70.0](https://github.com/villebase/sopuli-dba/compare/v0.69.0...v0.70.0) (2026-10-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* **output:** register the redraw diagnostics as SOPULI-W029 and W030 ([#610](https://github.com/villebase/sopuli-dba/issues/610)) (#630)
+
+### Features
+
+* **config:** a profile's confirm: false refuses every prompt ([#610](https://github.com/villebase/sopuli-dba/issues/610)) ([#633](https://github.com/villebase/sopuli-dba/issues/633)) ([2fd3eff](https://github.com/villebase/sopuli-dba/commit/2fd3effff29235a70b7bc59f2aa2cbe83521a427))
+* **config:** warn that a policy's rotation and verify keys are not read ([#610](https://github.com/villebase/sopuli-dba/issues/610)) ([#631](https://github.com/villebase/sopuli-dba/issues/631)) ([05da179](https://github.com/villebase/sopuli-dba/commit/05da179bd1765794339fb77b89e29a1b455b0dbf))
+* **output:** register the redraw diagnostics as SOPULI-W029 and W030 ([#610](https://github.com/villebase/sopuli-dba/issues/610)) ([#630](https://github.com/villebase/sopuli-dba/issues/630)) ([c37a19e](https://github.com/villebase/sopuli-dba/commit/c37a19e74455649f5d29a76cb7ee6345f4293d00))
+
+
+### Bug Fixes
+
+* **docs:** correct help text, hints and docs that contradict the build ([#609](https://github.com/villebase/sopuli-dba/issues/609)) ([#628](https://github.com/villebase/sopuli-dba/issues/628)) ([a80b0a6](https://github.com/villebase/sopuli-dba/commit/a80b0a6718c2797c171f1dbfe5b3073c4c399754))
+
 ## [0.69.0](https://github.com/villebase/sopuli-dba/compare/v0.68.0...v0.69.0) (2026-10-02)
 
 
