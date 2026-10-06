@@ -1376,26 +1376,29 @@ or renaming one is major.
 `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `UNVERIFIABLE`, `SKIPPED`, `ERROR`,
 `VAULT_ONLY`, `DECLARED`, `RESET`
 
-**`VAULT_ONLY` is what `creds generate --promote` reports** (#257): the vault
-holds this password and no database has been asked. None of the other values
-would have been true of that result. `IN_SYNC` asserts a match nobody checked;
-`DRIFT` asserts a comparison that never happened — and exits 3, so a successful
-adoption would exit non-zero; `PENDING_APPLY` sends `check` and `apply` looking
-for a `pending` that is not there; and `UNVERIFIABLE` means *tried and could
-not*, which `check` leans on. Reusing `SKIPPED` was weighed and refused as a lie,
-and emitting no `results[]` at all was refused because it would leave the one verb
-that writes the field applications read with nothing machine-readable to say about
-what it changed. So the enum gains a value, which this section's own first line
-makes a **minor** bump. The cost is a consumer switching exhaustively over
-`state`, paid once here rather than argued again per verb, and `sopuli-run-1.20`
-carries it.
+**`VAULT_ONLY` is what `creds generate --promote` reports**: the vault holds this
+password, and no database has been asked. No other value would be true of that
+result:
 
-**Not `PENDING_APPLY` with the stage swapped.** That state says a rotation is in
-flight and something is waiting to be applied; this one says there is none. What
-follows a `VAULT_ONLY` is still `creds apply` — it finds the databases behind the
-vault and converges them — but a consumer counting rotations in progress must not
-count these, and `check` looking for a `pending` here would find nothing and be
-right.
+- `IN_SYNC` claims a match that nobody checked.
+- `DRIFT` claims a comparison that never happened, and exits 3, so a successful
+  adoption would exit non-zero.
+- `PENDING_APPLY` sends `check` and `apply` looking for a `pending` that is not
+  there.
+- `UNVERIFIABLE` means "tried and could not", and `check` relies on that meaning.
+- `SKIPPED` would be false, and emitting no `results[]` at all would leave the
+  verb that writes the field applications read with nothing machine-readable to
+  say about what it changed.
+
+So the enum has a value of its own for it. A consumer that switches over every
+`state` value had to handle it once.
+
+**It is not `PENDING_APPLY` with the stage swapped.** `PENDING_APPLY` says a
+rotation is in progress and something waits to be applied. `VAULT_ONLY` says no
+rotation is in progress. `creds apply` still follows a `VAULT_ONLY`: it finds the
+databases behind the vault and converges them. But a consumer that counts
+rotations in progress must not count these, and `check` correctly finds no
+`pending` here.
 
 <!-- checked-list: enum action_kind -->
 **`action_kind`** — `none`, `generate`, `vault_write_pending`, `vault_promote`,
@@ -1403,7 +1406,7 @@ right.
 `account_unlock`, `account_lock`, `password_expire`, `attribute_set`, `verify`
 
 The action list is a readable trace of the UC-1 §8 sequence. A completed rotation
-of one account against one target reads:
+of one account on one target reads:
 
 ```json
 "actions": [
@@ -1415,133 +1418,123 @@ of one account against one target reads:
 ]
 ```
 
-An interrupted one stops partway, and where it stopped tells you exactly which
-recovery from the UC-1 §8 table applies.
+An interrupted rotation stops partway, and where it stopped says which recovery
+in the UC-1 §8 table applies.
 
-`attribute_set` is what UC-1 §5's remaining attributes report as, starting with
-profile assignment (#301). One kind for several attributes is deliberate: it is
-what the value has meant since the schema was written, and the alternative was a
-minor bump and a new enum value per attribute on a contract consumers branch on.
-**The detail is what distinguishes them** — `"profile ACME_LEGACY_PROF ->
-ACME_APP_PROF"` — so every implementation writes one.
+`attribute_set` is what UC-1 §5's other attributes report as, profile
+assignment first. One kind covers several attributes on purpose: a new enum value
+per attribute would mean a minor bump each time, on a field consumers branch on.
+**The `detail` tells them apart**, for example `"profile ACME_LEGACY_PROF ->
+ACME_APP_PROF"`, so every implementation writes one.
 
-`account_unlock` is UC-1 §5's first opt-in attribute (#300) and reads at the head
-of the list, because that is where it happens: an unlock is what makes the
-pre-flight login worth attempting. It is emitted whenever the policy declared the
-attribute, `applied: false` where the account was not locked — a consumer
-inferring "not declared" from "not present" would be reading the policy out of the
-results. `results[].changed` is the union of every mutation on the row, so an
-account that was unlocked and needed no new password is `changed: true` with a
+`account_unlock` is UC-1 §5's first opt-in attribute, and comes first in the
+list because it happens first: an unlock is what makes the pre-flight login worth
+trying. It is emitted whenever the policy declares the attribute, with
+`applied: false` where the account was not locked. Otherwise a consumer would
+have to read "not declared" from "not present", which is reading the policy out
+of the results. `results[].changed` covers every change on the row, so an account
+that was unlocked and needed no new password is `changed: true`, with a
 `password_set` that did not apply.
 
 **`error.category`** — `config`, `selection`, `connectivity`, `authentication`,
 `authorization`, `capability`, `policy`, `vault`, `database`, `lock`, `internal`.
-Categories are stable; `error.code` carries the vendor detail (`ORA-01017`) or
-a tool-side code from the registry below (`SOPULI-20001`). Consumers branch on
-category, log the code.
+Categories are stable. `error.code` carries the vendor detail (`ORA-01017`), or a
+tool code from the registry below (`SOPULI-20001`). Consumers branch on the
+category and log the code.
 
-**`install.*[].status`** — `installed`, `not_installed`, `not_implemented`.
-Three and not a boolean, because the two failing values have different remedies:
-`pip` fixes one and nothing the operator installs fixes the other.
+**`install.*[].status`** — `installed`, `not_installed`, `not_implemented`. Three
+values, not two, because the two failing values have different remedies: `pip`
+fixes one, and nothing the operator installs fixes the other.
 
-**`verification.method`** — `login`, `hash`, `both`, `none`, with
-`lockout_margin_hit` recording the UC-1 §7 case where the tool *declined* to try
-a login because the account was near its threshold. That is a distinct outcome
-from a failed verification and must not be reported as drift.
+**`verification.method`** — `login`, `hash`, `both`, `none`.
+`lockout_margin_hit` records the UC-1 §7 case where the tool *declined* to try a
+login because the account was near its lockout threshold. That outcome is not a
+failed verification, and must not be reported as drift.
 
 ### Diagnostic codes
 
-`diagnostic.code` is optional and, where present, comes from this registry. A
-code is contract in the way an enum value is: adding one is a minor bump, and
-changing what one means is not a bump at all but a lie. The *message* around it
-is not contract and may improve.
+`diagnostic.code` is optional. Where it is present, it comes from this registry.
+A code is part of the contract, like an enum value: adding one is a minor bump,
+and changing what one means is not allowed at all. The *message* around it is
+not contract and may improve.
 
 | Code | Meaning |
 |---|---|
-| `SOPULI-W001` | A store in this run is `locking: advisory-only`, so its lock record was written without compare-and-set. The run has no fence: two runs starting in the same second can both believe they hold the lock (#83) |
-| `SOPULI-W002` | A lock was taken from its holder: automatically, because it was past its expiry and `locking.break_expired` permits that, or deliberately by `sopuli lock break` (#149). The previous holder is fenced — its next check will fail — but it may have applied changes before that |
-| `SOPULI-W003` | A `vaults:` entry names a backend this machine cannot serve. The config is valid and the install is incomplete (ADR-006, E4), and what that is worth depends on the question asked: `config validate` warns and exits 0, `doctor` reports it as an `error` and exits 9 (E6), and any command that resolves the store to a client fails with `SOPULI-20001` |
-| `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked and anything on the path can read every secret that crosses. Under P3's safety ratchet, so no layer can weaken it further — but nothing in the run undoes it either (#135, ADR-005) |
-| `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record left at a path the file no longer names would not appear — in that store. Everything reported is accurate; the survey is narrower than it looks (#150) |
-| `SOPULI-W006` | A `targets:` entry names a driver this machine cannot serve (#170), weighed by each command exactly as its store counterpart `SOPULI-W003` is. They are deliberately two codes: one meaning "some backend or other is missing" would leave a consumer unable to tell a store it cannot reach from a database it cannot reach, which are different outages. Emitted once per driver *type* rather than once per target, since an estate generates targets by the dozen from one `target_sets:` entry |
-| `SOPULI-W007` | An estate uses `auth: external`, and this machine has no auto-login wallet this process can read (#215). The connection will fail as an Oracle *login* error, which is the most misleading way for a file-permission problem to appear; this says why in advance. A warning and not a verdict — the target's own reachability decides the run |
-| `SOPULI-W008` | A wallet file in this run's `TNS_ADMIN` is reachable by somebody other than its owner (#215, P4). An auto-login wallet is a credential: whoever can read it can authenticate as the account it holds. `doctor` warns and never fails, for the reason #213 settled for over-granted accounts |
-| `SOPULI-W009` | This machine's clock is further from a configured store's than the advisory lock tolerates (#216, #83). A lease's expiry is compared against the local clock, so a run on this host will take over locks that are still live or refuse ones long dead — and the failure looks like a locking bug rather than an NTP problem. `doctor` warns and never fails: the condition is real, this run did not create it, and refusing to survey an estate over it would block the person who ran it |
-| `SOPULI-W011` | This run's lock was taken over by another while it was running, found at a fence check (#282). It stopped before its next mutation and promoted nothing, so the vault still advertises what it did before — but whatever it had already applied to a database stands. The code exists because the exit code cannot say it: a fenced-out run exits 4 exactly like one whose targets failed, and the second is repaired by running `apply` again while the first must not be. The other side of the same event is `SOPULI-W002`, and they are two codes because *broke somebody's lock* and *had mine broken* are opposite things to be paged about |
-| `SOPULI-W010` | A configured store answered and cannot serve this run: sealed, standing by, not yet initialised, or refusing the credential it was opened with (#216). Distinct from a store that could not be *reached*, which fails the run instead and gets no code — here something answered, and what the reader does next is go and look at the vault rather than at the network |
-| `SOPULI-W014` | A login **succeeded** and the server attached a diagnostic to the connection rather than raising (#322). A password in its grace period is the ordinary cause: it connects, and Oracle puts the notice on the connection where nothing was reading it. The verification passed and the message is carried verbatim with its vendor code — the code is *data*, never matched against a list, because one condition is `ORA-28098` or `ORA-28011` on the same release depending on the profile. It can appear beside `SOPULI-W013` for one account: those are two sources — what `ACCOUNT_STATUS` says, and what the server said on this login — and they are reported side by side rather than deduplicated, because telling them apart would need exactly the code list this refuses |
-| `SOPULI-W015` | `creds generate` could not read a target's password constraints, so the policy's declared length governed the draw (#317, UC-1 §4 step 2). A **warning** rather than an error because §4 makes the fallback legitimate — staging a password for an estate that is down is a thing operators do, and the run staged one; what it may not do is stay quiet, because a password drawn against a policy alone and one drawn against a database that answered are different claims about the same run and nothing in the password distinguishes them. One code for both shapes — no target answered, and some did — because the remedy is identical and the message names which targets either way; a partial read is the same condition with fewer databases missing. `--offline` emits nothing: it is the operator saying they know, and a warning that fires because a flag was passed teaches its reader to filter it |
-| `SOPULI-W016` | An account's profile names a password verify function, or whether it names one could not be established — a common profile read from inside a PDB answers `FROM ROOT` (#317, UC-1 §4 step 2). **Reported and never acted on**: the function is arbitrary PL/SQL that cannot be consulted before the statement is issued (invariants 13 and 14), so this is not a prediction that the password will be refused, and `creds apply` redraws if it is. What it says is that something other than the policy will judge this password. The not-knowing shares the code because the consequence is identical — this run cannot tell you the password will be accepted — and the message says which of the two it is; what it must never do is report the unreadable case as *no verify function*, which reads as a guarantee. One per (target, profile), because that is where the function lives: forty accounts on one profile is one fact, not forty |
-| `SOPULI-W017` | An account's profile restricts password reuse, and the run was given a password rather than drawing one (#317). **Only under `--from-stdin`**, which is why it is not part of `SOPULI-W016`: fresh randomness cannot collide with a hashed history, so a reuse warning on an ordinary draw would fire on every run and mean nothing on any of them — while a supplied password is whatever an external system dictated, and *the one it had last year* is an ordinary thing for one to dictate. The two resource values are carried and not interpreted: they interact, and the run measured neither the interaction nor the history |
-| `SOPULI-W013` | An account's password is in its grace period: past `PASSWORD_LIFE_TIME`, inside the window `PASSWORD_GRACE_TIME` grants, and **still working** (#309, UC-1 §6.4). Emitted on `results[].warnings[]` beside the state rather than as a state, because `state` is one field and the account may be `IN_SYNC` or may have drifted — a value of its own would have to displace one of those answers and hide what the reader came for. Read from `DBA_USERS.ACCOUNT_STATUS`, so it is reported even on a run where no login was attempted; not from `ORA-28002`, which 26ai does not send |
-| `SOPULI-W012` | A rotation promoted a secret document and then read a different password back out of it (#284, UC-1 §8 step 8). Every database took the new password and the promotion was acknowledged, so nothing needs undoing and `apply` converges what is left — but until the vault serves what it accepted, an application fetching `current` may get the old password. Its own code for the reason `SOPULI-W011` has one: the run exits 4, and so does a run with half its targets failed, and those two want opposite responses. Here the *databases* are the converged half and the vault is not, so the reader goes and looks at the store — replication lag on a mount with read replicas is the ordinary cause |
-| `SOPULI-W018` | One of `02-oracle-privileges.md` §4's account guardrails could not be run against a target, because the fact it checks could not be read (#296). The run **proceeded** and the other four checks were applied. Today this is always check 3, the password file: `V$PWFILE_USERS` is outside §2's default grant set on purpose, so the code appears on a correctly installed estate and the optional grant is what removes it — which is what makes it a warning worth leaving on rather than one a reader learns to filter. It exists for #216's rule: the run exits 0 with every account applied, and nothing in the exit code, the states or `results[].overridden` says that one of five checks contributed nothing to that answer. **Not a refusal**, because the estate that cannot answer is the correct one and refusing would mutate nothing anywhere; **one per (target, check)**, because a missing grant is a property of the database and forty accounts on it is one fact; and **printed as well as serialised**, on #309's rule that a warning nobody can see in the default output is not surfaced |
-| `SOPULI-W019` | A lock path was created without `cas_required`, because this run's store credential may not write path metadata (#390). The run's own lock was still taken under a compare-and-set and its fence held, so nothing in the result is wrong — what is missing is the store refusing an un-CAS'd write from **anybody else**, an operator with a vault CLI included. Its own code for #216's rule: the run exits 0 and the condition it describes is a property of the path that will still be there on the next run, which is the shape of thing a reader goes and fixes in the vault. **One per path**, not per store — the opposite of `SOPULI-W001`, and deliberately: advisory locking is one fact however many locks are held on it, while this names a path to repair. **Emitted only by the run that creates the path**; every later run finds the metadata, finds `cas_required` unset, and is refused at exit 5 instead |
-| `SOPULI-W020` | The document `creds apply --repair` was handed is old enough to say so (#391). A **warning and never a gate**: a threshold that refused would have to be wrong for somebody, and the run it stopped would have been safe -- the set can only narrow (invariant 5) and a pair since repaired costs one login and reports `changed: false`, so a stale document is wasteful rather than dangerous. It **names the age** rather than quoting the threshold, because what the reader does with "eleven days" is decide whether that is still the estate they are looking at. Its own code on #216's rule: the run exits 0 having done less than the operator may have expected, and nothing else in the document says the narrowing came from something written last week. **Printed as well as serialised** (#309): the emitter writes the document or the text and never both, and the person who typed the flag is exactly who this is for |
-| `SOPULI-W021` | The database would not say when an account's password was last set, so `results[].password_age_days` is absent and `creds status` prints `-` under `DB_PW_CHANGED` (#386). **The message says why**, because the two causes want different responses: a release with no `DBA_USERS.PASSWORD_CHANGE_DATE` (18c, 11.2) and no `SELECT ON SYS.USER$` to read `PTIME` instead — which a grant fixes — or a value that could not be read, which is worth investigating. It exists because a consumer cannot see a dash: a documented field that vanishes per target with nothing saying why is a hole in the contract. **One per result, on `results[].warnings[]`**, beside the field it explains, unlike `SOPULI-W018`'s per-target grouping — a consumer reading one result should not have to join it to a run-level array. The text output groups it per target. Emitted by `creds check` and `creds status`; informational, since nothing gates on the database's date (Q9) |
+| `SOPULI-W001` | A store in this run is `locking: advisory-only`, so its lock record was written without compare-and-set. The run has no fence: two runs that start in the same second can both believe they hold the lock |
+| `SOPULI-W002` | A lock was taken from its holder: automatically, because it was past its expiry and `locking.break_expired` allows that, or on purpose by `sopuli lock break`. The previous holder is fenced, so its next check fails, but it may have applied changes before then |
+| `SOPULI-W003` | A `vaults:` entry names a backend this machine cannot serve. The config is valid and the install is incomplete (ADR-006, E4). What that means depends on the command: `config validate` warns and exits 0, `doctor` reports an `error` and exits 9 (E6), and any command that resolves the store to a client fails with `SOPULI-20001` |
+| `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked, and anything on the network path can read every secret that crosses it. The setting is under P3's safety ratchet, so no layer can weaken it further, but nothing in the run undoes it either (ADR-005) |
+| `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record at a path the file no longer names would not appear, in that store. Everything reported is accurate; the survey is narrower than it looks |
+| `SOPULI-W006` | A `targets:` entry names a driver this machine cannot serve. Each command weighs it as it weighs `SOPULI-W003`. They are two codes on purpose: one code for "some backend is missing" would not tell a store the tool cannot reach from a database it cannot reach, and those are different outages. Emitted once per driver *type*, not once per target, because an estate generates targets by the dozen from one `target_sets:` entry |
+| `SOPULI-W007` | The estate uses `auth: external`, and this machine has no auto-login wallet that this process can read. The connection will fail as an Oracle *login* error, which is the most misleading way for a file-permission problem to appear, so this says why in advance. It is a warning, not a verdict: the target's own reachability decides the run |
+| `SOPULI-W008` | A wallet file in this run's `TNS_ADMIN` can be read by somebody other than its owner (P4). An auto-login wallet is a credential: whoever can read it can authenticate as the account it holds. `doctor` warns and never fails, for the reason P5 gives for over-granted accounts |
+| `SOPULI-W009` | This machine's clock is further from a configured store's clock than the advisory lock tolerates. A lease's expiry is compared with the local clock, so a run on this host will take over locks that are still live, or refuse ones long dead, and the failure looks like a locking bug, not a clock problem. `doctor` warns and never fails: the condition is real, this run did not create it, and refusing to survey the estate would block the person who ran it |
+| `SOPULI-W010` | A configured store answered and cannot serve this run: sealed, standing by, not initialised, or refusing the credential it was opened with. A store that could not be *reached* is different: it fails the run and gets no code. Here something answered, so the reader goes to the vault, not to the network |
+| `SOPULI-W011` | Another run took over this run's lock while it was running, found at a fence check. This run stopped before its next change and promoted nothing, so the vault still serves what it did before. But whatever it had already applied to a database stands. The code exists because the exit code cannot say this: a fenced-out run exits 4, like a run whose targets failed. The second is repaired by running `apply` again, and the first must not be. `SOPULI-W002` is the other side of the same event. They are two codes because "I broke somebody's lock" and "my lock was broken" are opposite things to be paged about |
+| `SOPULI-W012` | A rotation promoted a secret document and then read a different password back out of it (UC-1 §8 step 8). Every database took the new password and the vault acknowledged the promotion, so nothing needs undoing, and `apply` converges what is left. But until the vault serves what it accepted, an application that fetches `current` may get the old password. It has its own code for `SOPULI-W011`'s reason: the run exits 4, as a run with half its targets failed does, and the two need opposite responses. Here the *databases* are converged and the vault is not, so the reader looks at the store. Replication lag on a mount with read replicas is the usual cause |
+| `SOPULI-W013` | An account's password is in its grace period: past `PASSWORD_LIFE_TIME`, inside the window `PASSWORD_GRACE_TIME` allows, and **still working** (UC-1 §6.4). It is on `results[].warnings[]` beside the state, not a state of its own, because `state` is one field and the account may be `IN_SYNC` or may have drifted. A value of its own would hide the answer the reader came for. It is read from `DBA_USERS.ACCOUNT_STATUS`, so it is reported even on a run with no login. It is not read from `ORA-28002`, which 26ai does not send |
+| `SOPULI-W014` | A login **succeeded**, and the server attached a diagnostic to the connection without raising. A password in its grace period is the usual cause: the login works, and Oracle puts the notice on the connection. The verification passed. The message is carried verbatim with its vendor code. The code is *data* and is never matched against a list, because the same condition is `ORA-28098` or `ORA-28011` on one release, depending on the profile. It can appear beside `SOPULI-W013` for one account. Those are two sources, what `ACCOUNT_STATUS` says and what the server said on this login, and they are reported side by side, not deduplicated, because telling them apart would need the code list this refuses to keep |
+| `SOPULI-W015` | `creds generate` could not read a target's password constraints, so the policy's declared length governed the draw (UC-1 §4 step 2). It is a **warning**, not an error, because UC-1 §4 makes the fallback legitimate: operators do stage a password for an estate that is down. The run may not stay quiet about it, because a password drawn against a policy alone and one drawn against a database that answered are different claims, and nothing in the password tells them apart. One code covers both cases, no target answered and some did, because the remedy is the same and the message names the targets. `--offline` emits nothing: the operator has said they know, and a warning that fires because a flag was passed teaches readers to filter it |
+| `SOPULI-W016` | An account's profile names a password verify function, or the run could not establish whether it names one: a common profile read from inside a PDB answers `FROM ROOT` (UC-1 §4 step 2). **Reported and never acted on.** The function is arbitrary PL/SQL that cannot be consulted before the statement is issued (invariants 13 and 14), so this does not predict that the password will be refused, and `creds apply` draws again if it is. It says that something other than the policy will judge this password. The not-knowing case shares the code because the consequence is the same, and the message says which case it is. It must never report the unreadable case as "no verify function", which reads as a guarantee. One per target and profile, because that is where the function lives: forty accounts on one profile are one fact |
+| `SOPULI-W017` | An account's profile restricts password reuse, and the run was given a password instead of drawing one. **Only under `--from-stdin`**, so it is not part of `SOPULI-W016`. A fresh random password cannot collide with a hashed history, so a reuse warning on an ordinary draw would fire on every run and mean nothing. A supplied password is whatever an external system dictated, and that can be the one it had last year. The two resource values are carried and not interpreted: they interact, and the run measured neither the interaction nor the history |
+| `SOPULI-W018` | One of `02-oracle-privileges.md` §4's account guardrails could not run against a target, because the run could not read the fact it checks. The run **went ahead** and applied the other checks. In this build it is always check 3, the password file: `V$PWFILE_USERS` is outside that document's default grant set on purpose, so the code appears on a correctly installed estate, and the optional grant removes it. Without the code, nothing in the exit code, the states or `results[].overridden` would say that one check contributed nothing. **Not a refusal**, because the estate that cannot answer is the correctly installed one, and refusing would change nothing anywhere. **One per target and check**, because a missing grant is a property of the database. **Printed as well as serialised**, because a warning nobody sees in the default output has not been reported |
+| `SOPULI-W019` | A lock path was created without `cas_required`, because this run's store credential may not write path metadata. The run's own lock was still taken with compare-and-set and its fence held, so the result is correct. What is missing is the store refusing a write without compare-and-set from **anybody else**, including an operator with a vault CLI. It has a code because the run exits 0 and the condition is a property of the path, still there on the next run, which a reader goes and fixes in the vault. **One per path**, not per store, unlike `SOPULI-W001`: advisory locking is one fact however many locks it covers, and this names a path to repair. **Only the run that creates the path emits it.** Every later run finds the metadata with `cas_required` unset and is refused with exit 5 |
+| `SOPULI-W020` | The document given to `creds apply --repair` is old enough to mention. **A warning, never a gate.** A threshold that refused would be wrong for somebody, and the run it stopped would have been safe: the set can only narrow (invariant 5), and a pair already repaired costs one login and reports `changed: false`. So a stale document wastes work and does no harm. It **names the age**, not the threshold, because a reader decides from "eleven days" whether that is still the estate they are looking at. It has a code because the run exits 0 having done less than the operator may have expected, and nothing else in the document says the narrowing came from something written last week. **Printed as well as serialised**: the emitter writes the document or the text, never both, and the person who typed the flag is who this is for |
+| `SOPULI-W021` | The database would not say when an account's password was last set, so `results[].password_age_days` is absent and `creds status` prints `-` under `DB_PW_CHANGED`. **The message says why**, because the two causes need different responses. Either the release has no `DBA_USERS.PASSWORD_CHANGE_DATE` (18c, 11.2) and the service account lacks `SELECT ON SYS.USER$` to read `PTIME` instead, which a grant fixes; or a value could not be read, which is worth investigating. It exists because a consumer cannot see a dash: a documented field that vanishes for some targets, with nothing saying why, is a hole in the contract. **One per result, on `results[].warnings[]`**, beside the field it explains, unlike `SOPULI-W018`'s grouping per target: a consumer reading one result should not have to join it to a run-level array. The text output groups it per target. `creds check` and `creds status` emit it. It is informational: nothing depends on the database's date ([Q9](../decisions/log.md#q9)) |
+| `SOPULI-W022` | A target's admin credential was read from an environment variable. P2 lists `env` last in its bootstrap order and **supports** it, for an estate with no other way in, so this is a flag and never a refusal. `01-configuration.md` §3a says the source "stays flagged wherever it is reported". The run connects, succeeds and exits 0, and nothing else in the document says *how* the tool got the credential: without the code, a run that used a wallet and one that used a variable a CI job exported look the same. **The message names the variable**, from `Resolved.source`, because the reader next looks at where it is set. **One per target per run**, deduplicated on code and target: one run may resolve a target twice (`creds apply --strategy` pre-flights and then applies), and the configuration did not change in between. It is keyed on `admin.LOW_ASSURANCE`, not on the method name, so another low-assurance source would be flagged with no change at the reporting sites. **Every command that connects emits it**, because each one resolves its admin credential through `cli._admin_credential`. **Only `doctor` prints it.** P2 asks for the flag in output, so something must print it. But it is a property of the configuration, the same on every run until the file changes, and a line under every rotation would be a warning readers learn to filter. `doctor` is the command that reports on the setup, and `diagnostics[]` is where anything that alerts reads it |
+| `SOPULI-W023` | `account list` had no reset journal to read, so its `RESET_AT` column is empty for every row and `results[].reset_at` is absent. The configuration declares no `reset_records:` block, which is **a documented mode, not a fault**: UC-2 §3.1 keeps the journal optional, because the seen (`manual`) path may have no store at all. It is `SOPULI-W021`'s rule applied to the other date column: a documented column that vanishes with nothing saying why is a hole in the contract. **One per run, not one per result.** That is the difference from `SOPULI-W021`: a missing journal is a property of the configuration and the same on every row, while whether the database reports a password change date can differ between two accounts on one target. A journal that has no record for this account yet is not a finding, and gets no code |
+| `SOPULI-W024` | `account reset-password` wrote no record of a reset, because the configuration declares no `reset_records:` block. The run document and the database are the whole record of it, and **no advisory lock was taken on the account either**. Those two facts have one cause (UC-2 §3.3), and an operator told only the first would not learn that two concurrent resets are not serialised. **Raised at plan time**, before the password changes, so an operator who did not mean to run this way can still stop. A **documented mode, not a fault**, for `SOPULI-W023`'s reason. It is a separate code because that one explains an empty column in a listing, and this one says a change went unrecorded |
+| `SOPULI-W025` | A reset succeeded, and its record could not be written. **A warning on a successful run**, never a rollback and never a non-zero exit: the password has already changed and the person still needs it, so failing would report a false negative about the part that mattered (UC-2 §3.4). It is separate from `SOPULI-W024` because the next step differs. An absent journal is a configuration somebody chose. Here a store answered: a revoked token, a policy that grants read and not write, or a mount that is not there. The store's own message comes **last** in the text, so its punctuation ends the sentence |
+| `SOPULI-W026` | A password was delivered, and the notification saying so could not be sent. The account **and the target** are named, because a reset can notify once per target, and two failures would otherwise read the same. A warning on a successful run, for `SOPULI-W025`'s reason and more so: the notification carries nothing anybody needs (UC-2 §6.1 limits it to "a password is ready"), so all that is lost is that somebody must be told another way. The webhook URL is never in the message. It is itself a credential ([C9](../decisions/log.md#c9)), and `httpx` puts it in the text of its own errors, so the message carries the exception's class name instead |
+| `SOPULI-W027` | A secret document was not promoted, because the run was narrowed past pairs the promotion needs (UC-1 §5's *promotion gate*): the same credential on a target outside the run, or another account in the document with its own `pending`. The databases in scope **were** changed, `pending` stays, and the run exits 4. It has its own code for `SOPULI-W011`'s reason. A run whose targets failed also exits 4, and the same narrowed run repairs it. This one is finished only by a **wider** run that covers the pairs the message names; repeating the narrow run withholds the promotion again. It is also raised under `--dry-run`, where it says what the run would withhold |
+| `SOPULI-W028` | A rollback (`creds apply --source previous`) reached the statement on an account whose profile restricts password reuse, or, under `--preflight`, is planned against one. One entry per target and profile, naming `PASSWORD_REUSE_MAX` and `PASSWORD_REUSE_TIME` as the database spells them. `previous` is usually a password the account held one change ago, so `ORA-28007` is likely. Where one limit is `UNLIMITED` and the other a number, a password the account has held is never accepted again. Reported, not interpreted, as UC-1 §4 does with the same two values, and raised whichever way the statement went. Under `--preflight` the survey raises it before any statement, from the profile it already reads, which is the only way a `--dry-run` carries it. The run then does not repeat it for that target and profile. It is not raised in advance where the run would first move the account to another profile, because the new profile's limits are not read; the run's own reading covers that case. It has its own code, not a wider `SOPULI-W017`, because that code means a *supplied* password, and a consumer branching on it would be told something false. On such a profile the way back is a rollover window (UC-1 §6.3), not a rollback |
+| `SOPULI-W029` | The server refused a password the run applied, with `ORA-28003` or `ORA-28007`, so the run drew another and staged it, to be applied again to every target of that account (UC-1 §6.4). One entry per draw, naming the account, the version staged and the server's message. It says a draw happened, not that the new password was accepted: the result rows say whether the re-apply succeeded, and `results[].redraws` counts the draws |
+| `SOPULI-W030` | The server refused a password the run applied, and the run was not allowed to draw another (UC-1 §6.4). The reason is one of these: nothing shows this tool drew the password, the redraw limit was reached, the account has no policy to draw from, or the run is a rollback. The message names which. The target that refused keeps the password it had. Another target of the same account may already hold the refused value, and the result rows say which |
 
-| `SOPULI-W022` | A target's admin credential was read from an environment variable (#477). P2 lists `env` last in its bootstrap order and **supports** it — an estate with no other way in is the case it exists for — so this is a flag and never a refusal; `01-configuration.md` §3a says twice that the source "stays flagged wherever it is reported", and until this code existed `Resolved.low_assurance` was computed on every run and read by nothing. It is #216's rule exactly: the run connects, succeeds and exits 0, and nothing else in the document says *how* the tool got hold of the credential — a reader cannot tell a run that authenticated from a wallet from one that used a variable a CI job exported. **The message names the variable**, from `Resolved.source`, because what the reader does next is go and look at where it is set. **One per target per run**, deduplicated on (code, target): a target may be resolved twice in one run — `creds apply --strategy` pre-flights and then applies — and the configuration did not change between them. Keyed on `admin.LOW_ASSURANCE` rather than on the method name, so a second low-assurance source is flagged without finding every reporting site again. **Emitted by every command that connects** — `doctor`, `account suspend`, `account reset-password`, `account expire-password`, `account list`, `creds status`, `creds generate` (unless `--offline`), `creds check`, `creds apply`, `creds rotate` and `creds finish-rollover`, which is every verb that opens a database session today — and **printed by `doctor` alone**. The list is exhaustive rather than illustrative because the alternative is a consumer concluding that the verbs it omits do not carry the code; it is exhaustive *as of writing*, and the mechanism rather than the list is the guarantee: every one of them resolves its admin credential through `cli._admin_credential`, so a verb that starts connecting gets this without anybody remembering to add it. P2 asks for the flag *in output* and text is the default output, so something must print it; but the fact is a property of the *configuration*, identical on every run until the file changes, so a line under every rotation would be the warning a reader learns to filter. That is the same line the other printed notices draw: `SOPULI-W020` is printed because the stale document is the one the operator just passed, and `SOPULI-W018` because the unrun check is about this run's accounts. `doctor` is the verb whose job is to report on the setup, and `diagnostics[]` is where anything alerting reads it |
-| `SOPULI-W023` | `account list` had no reset journal to read, so its `RESET_AT` column is empty for every row and `results[].reset_at` is absent (#490). The configuration declares no `reset_records:` block (#468), which is a **documented mode rather than a fault**: UC-2 §3.1 keeps the journal optional because the seen (`manual`) path may have no store at all, and that is the site it exists for. It is `SOPULI-W021`'s rule applied to the other date column — a documented column that vanishes with nothing saying why is a hole in the contract — and §2 asks for it by name. **One per run, not one per result**, and that is the difference from `SOPULI-W021` beside it: a missing journal is a property of the configuration and is identical on every row, while whether the database will say when *this* account's password changed can differ between two accounts on one target. **Allocated with the verb that raises it**, which turned out to be the listing verb and not the reset: #468 built the block and deliberately left this number unallocated, because a code with no emitter is what `SOPULI-W022` was written to fix. It says which absence it is, because the other one — a journal that holds no record for this account yet — is not a finding at all and gets no code |
-| `SOPULI-W024` | `account reset-password` wrote no record of a reset, because the configuration declares no `reset_records:` block (#511). The run document and the database are the whole record of it, and **no advisory lock was taken on the account either** — two facts with one cause (UC-2 §3.3), and an operator told only the first would not learn that two concurrent resets are not serialised. **Raised at plan time**, before the password changes, which is what makes it worth saying at all: the operator who did not mean to run this way can still stop. A **documented mode rather than a fault**, for `SOPULI-W023`'s reason — the seen (`manual`) path may have no store at all — and distinct from it because that one explains an empty column in a listing and this one says a mutation went unrecorded |
-| `SOPULI-W025` | A reset succeeded and its record could not be written (#511). **A warning on a successful run**, never a rollback and never a non-zero exit: the password has already changed and the person still needs it, so failing would report a false negative about the part that mattered (UC-2 §3.4). Separate from `SOPULI-W024` because the next move differs — an absent journal is a configuration somebody chose, and this is a store that answered: a revoked token, a policy granting read and not write, or a mount that is not there. The store's own message is carried **last** in the text, so its punctuation ends the sentence rather than reading as a fragment |
-| `SOPULI-W026` | A password was delivered and the notification saying so could not be sent (#442). The account **and the target** are named, because a reset can notify once per target and two failures would otherwise read identically (#520). A warning on a successful run for `SOPULI-W025`'s reason and more easily: the notification carries nothing anybody needs (UC-2 §6.1 keeps it to "a password is ready"), so what is lost is that somebody must be told another way. The webhook URL is never in the message — it is itself a credential (C9), and `httpx` puts it in the text of its own errors, so the exception's class name is carried instead |
-| `SOPULI-W027` | A secret document was not promoted because the run was narrowed past pairs the promotion needs (#406, UC-1 §5's *promotion gate*): the same credential on a target outside the run, or a sibling account in the document with a `pending` of its own. The databases in scope **were** changed, `pending` stays, and the run exits 4. Its own code for `SOPULI-W011`'s reason: a run whose targets failed exits 4 too and is repaired by the same narrowed run again, while this one is finished only by a **wider** run that covers the pairs the message names — repeating the narrow one withholds the promotion again. Also raised under `--dry-run`, where it says what the run would withhold |
-| `SOPULI-W028` | A rollback (`creds apply --source previous`) reached the statement on an account whose profile restricts password reuse (#568), or — under `--preflight` — is planned against one (#580). One entry per target and profile, naming `PASSWORD_REUSE_MAX` and `PASSWORD_REUSE_TIME` as the database spells them. `previous` is normally a password the account held one change ago, so `ORA-28007` is likely; where one limit is `UNLIMITED` and the other a number, a password the account has held is never accepted again. Reported rather than interpreted, as UC-1 §4 does with the same two values, and raised whichever way the statement went. Under `--preflight` the survey raises it before any statement, from the profile it already reads — the only way a `--dry-run` carries it — and the run then does not repeat it for that target and profile (#580). Not raised ahead where the run would first move the account to another profile, since the destination's limits are not read; the run's own reading covers that case. Its own code rather than `SOPULI-W017` widened, because that one's meaning is a *supplied* password and a consumer branching on it would be told something false. On such a profile the way back is a rollover window (UC-1 §6.3), not a rollback |
-| `SOPULI-W029` | The server refused a password the run applied — `ORA-28003` or `ORA-28007` — so the run drew another and staged it, to be applied again to every target of that account (UC-1 §6.4). One entry per draw, naming the account, the version staged and the server's message. It says a draw happened, not that the new password was accepted: the result rows say whether the re-apply succeeded, and `results[].redraws` counts the draws. Emitted as `password_redrawn` before #610 |
-| `SOPULI-W030` | The server refused a password the run applied, and the run was not allowed to draw another (UC-1 §6.4): nothing shows this tool drew the password, the redraw limit was reached, the account has no policy to draw from, or the run is a rollback. The message names which. The target that refused keeps the password it had; another target of the same account may already hold the refused value, and the result rows say which. Emitted as `password_not_redrawn` before #610 |
+`sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
+nothing emits a code the registry does not describe.
 
-The registry is `sopuli/diagnostics.py`, and `tests/test_lock_view.py` asserts
-that nothing emits a code the registry does not describe. **J3 is not thereby
-answered**: what is settled is the spelling this document already used as its
-example and that these warnings have codes. Whether *every* warning gets one
-— the config layer's `01-configuration.md` §10 findings still do not — and how
-numbers are allocated across categories is the part still open. Every one was
-allocated by hand at the moment something needed it, which is the evidence rather
-than the answer.
+**How codes are allocated is open** (J3, open: #641). The code format and the
+fact that these warnings have codes are settled. Whether every warning gets one
+is not: the config layer's findings (`01-configuration.md` §10) have none. Nor
+is the scheme for numbering across categories. Each code so far was allocated by
+hand when something needed it.
 
-**What #216 did settle, narrowly and only for `doctor`, is when a finding gets a
-code at all: one for what the exit code cannot tell you.** An unreachable store
-fails the run, so anything watching the exit code already knows and the entry in
-`vaults[]` names which store and why — exactly as an unreachable *target* has
-been an entry and never a diagnostic since #212. A store that answered and cannot
-serve, or a clock outside the lock's tolerance, leaves the run exiting 0 with
-something still wrong, and that is what a diagnostic is for. This is a rule for
-one command rather than an answer to J3, but it is the first time the question
-"why does this finding have a code and that one not" has had one.
+**For `doctor`, a finding gets a code only for what the exit code cannot say.**
+An unreachable store fails the run, so anything watching the exit code already
+knows, and the `vaults[]` entry names the store and the reason, as an unreachable
+target's `targets[]` entry does. A store that answered and cannot serve, or a
+clock outside the lock's tolerance, leaves the run exiting 0 with something
+still wrong, and a diagnostic is for that. This is a rule for one command, not an
+answer to J3.
 
-`SOPULI-W002` gained a second emitter in #149 and **did not gain a second
-meaning**, which is the distinction the rule above draws. It has always meant *a
-lock was taken from its holder*; what `lock break` adds is a person deciding it
-rather than a config key. The wording in the table widened to cover both, and the
-wording is not contract. A second code would have told a consumer alerting on
-"somebody's lock was taken" that there were now two things to watch for.
+**`SOPULI-W002` has two emitters and one meaning.** It means "a lock was taken
+from its holder". `lock break` adds a person deciding it, where
+`locking.break_expired` is a config key deciding it. The table's wording covers
+both, and the wording is not contract. A second code would tell a consumer that
+alerts on "somebody's lock was taken" that there were now two things to watch.
 
 ### Error codes
 
-`error.code` carries the vendor detail where there is one — `ORA-01017` comes
-from the server and the tool passes it through. Where the condition is the
-tool's own, the code is a `SOPULI-` one from this registry, under the same rule
-as the diagnostics above.
+`error.code` carries the vendor's code where there is one: `ORA-01017` comes from
+the server, and the tool passes it through. Where the condition is the tool's
+own, the code is a `SOPULI-` code from this registry, under the same rule as the
+diagnostic codes above.
 
 | Code | Category | Exit | Meaning |
 |---|---|---|---|
 | `SOPULI-20001` | `config` | 9 | A `vaults:` entry names a backend whose client is not installed. The message names the store, its `type`, and the extra that supplies it (ADR-006, `01-configuration.md` §3a) |
-| `SOPULI-20002` | `config` | 9 | A `targets:` entry names a driver whose client is not installed. The same shape as `SOPULI-20001` and for the same reason (ADR-006 E1, E5): `python-oracledb` is `sopuli-dba[oracle]`, and a driver that is declared but absent is fixed on this machine by the person reading the message (#170) |
-| `SOPULI-20003` | `config` | 9 | `delivery.notify.method` names a channel whose client is not installed. The same shape and the same reason a third time (ADR-006 E5, E7): `webhook` posts with `httpx` from `sopuli-dba[notify]`, and a channel that is declared but absent is fixed on this machine by the person reading the message (#442). It is reached only by a run that had something to send — `config validate` reports the same condition as a warning at load, which is where an operator meets it first |
+| `SOPULI-20002` | `config` | 9 | A `targets:` entry names a driver whose client is not installed. The same shape as `SOPULI-20001`, for the same reason (ADR-006 E1, E5): `python-oracledb` is `sopuli-dba[oracle]`, and a driver that is declared and absent is fixed on this machine by the person reading the message |
+| `SOPULI-20003` | `config` | 9 | `delivery.notify.method` names a channel whose client is not installed. The same shape again (ADR-006 E5, E7): `webhook` posts with `httpx` from `sopuli-dba[notify]`. Only a run that has something to send reaches it. `config validate` reports the same condition as a warning at load, which is where an operator meets it first |
 
-`SOPULI-20001` was this document's illustrative placeholder for a tool-side code
-before it meant anything; #130 gave it something to mean rather than adding a
-second number beside it.
-
-**The category is `config`, not `capability` (ADR-006, E5).** `capability` names
-what a *target* cannot do — a property of the database at the other end, which
+**The category is `config`, not `capability`** (ADR-006, E5). `capability` names
+what a *target* cannot do: a property of the database at the other end, which
 nothing the operator does locally changes, and which `target_capability` reports
-per target. A missing backend is not that: it is fixed on this machine, by the
-person reading the message, with the command in the message. It belongs where an
-unreadable config file and an unresolvable name already are, and exit 9 already
-says *fix your configuration, not your command line* (`00-principles.md` P5). No
-enum value is added — which is the point, since a consumer that already branches
-on `config` handles this without a change.
+per target. A missing client is fixed on this machine, by the person reading the
+message, with the command in the message. So it belongs with an unreadable config
+file and an unresolvable name, and exit 9 already means "fix your configuration,
+not your command line" (`00-principles.md` P5). No enum value is added, so a
+consumer that already branches on `config` handles it without a change.
 
 ---
 
@@ -1549,105 +1542,142 @@ on `config` handles this without a change.
 
 One rule, enforced in one place: **redaction happens at the serialiser, not at
 each call site.** Every secret value the process holds is wrapped in a type whose
-serialisation is the literal string `"***"`, and whose `__str__`/`__repr__` is the
-same. Nothing in the codebase can accidentally emit one by forgetting a helper,
-because there is no code path that produces the plaintext except the vault write,
-the database driver call, `policy sample --reveal`, UC-2's seen reset (#439),
-and the wrapping token an unseen delivery returns (UC-2 §6.6).
-`tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in a
-module that holds none of these sites. It is a tripwire, not a proof: a second
-call in a permitted module, or a call spelled another way, passes it.
+serialisation is the literal string `"***"`, and whose `__str__` and `__repr__`
+are the same. No call site can emit a secret by forgetting a helper.
 
-Consequences that show up in the schema:
+A password, or a credential that retrieves one, leaves the process only at the
+sites `CLAUDE.md` invariant 2 lists:
+
+1. the vault write;
+2. the driver call;
+3. `policy sample --reveal`;
+4. `account reset-password` on the seen (`manual`) path;
+5. the wrapping token that an unseen (`vault_wrapped`) delivery returns.
+
+The tool also presents credentials to the services it calls: the vault login,
+the vault token on the wire, and a webhook URL ([C9](../decisions/log.md#c9)).
+Each is a `Secret`, revealed only where it is sent. That is a separate class, not
+an exception to invariant 2: a credential that never reached the wire would
+authenticate nothing.
+
+`tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in a
+module that holds none of these sites, of either class. It is a tripwire, not a
+proof: a second call in a permitted module, or a call spelled another way,
+passes it.
+
+These consequences show in the schema:
 
 - `secret_ref` objects address a secret (`vault`, `path`, `field`, `version`,
   `stage`) and have **no value property at all**. There is nowhere to put a
-  password. `version` is an integer and `stage` is the closed lower-case enum
-  `current` / `pending` / `previous`, which C14 ratified rather than widened
-  (`01-configuration.md` §7): the config layer refuses anything else before a
-  document is ever emitted. `vault` is required here even though a written ref
-  may omit the prefix — this object is emitted after resolution, when the store
-  is known, and a plan that named a secret without naming its store would need
-  precedence re-derived to read.
-- a `sample` object has none either, for the same reason and with the same effect.
+  password. `version` is an integer, and `stage` is the closed lower-case enum
+  `current` / `pending` / `previous` ([C14](../decisions/log.md#c14),
+  `01-configuration.md` §7). The config layer refuses anything else before a
+  document is emitted. `vault` is required here, although a written ref may omit
+  the prefix: this object is emitted after resolution, when the store is known,
+  and a plan that named a secret without its store would make the reader work
+  out precedence again.
+- A `sample` object has no value property either, for the same reason.
 - `error.message` and `diagnostic.message` are documented as redacted. Driver
-  exceptions are passed through a scrubber before they reach either.
+  exceptions pass through a scrubber before they reach either.
 - `password.applied` events carry the vault version, never the value.
+- `results[].handover` carries the wrapping token's *accessor*, never the token.
 
-### The two exceptions, and what keeps each narrow
+Sites 1 and 2 are where a password must go. Sites 3 to 5 are exceptions, and the
+sections below say what keeps each one narrow.
+
+### `policy sample --reveal`
 
 `policy sample --reveal` prints generated passwords on purpose. It is allowed
 because **a sample is not a credential**: nothing authenticates with it, it is
-never stored, and it guards nothing — the property that makes `pwgen` safe and a
-vault write dangerous.
+never stored, and it protects nothing. That property is what makes `pwgen` safe
+and a vault write dangerous.
 
-What stops it from becoming a leak is structure rather than care:
+Structure, not care, stops it from becoming a leak:
 
 | | |
 |---|---|
-| it is opt-in | the default output reports properties — length, bytes, class counts — and no value |
+| it is opt-in | the default output reports properties (length, bytes, class counts) and no value |
 | it is text-only | `--reveal` with `--output json` is **refused**, not quietly downgraded |
 | JSON cannot carry it | a `sample` object has no value property, so the section could not hold one even if asked |
-| it is one call site | the only `reveal()` outside the tests is in `sopuli/output/policy_view.py`, findable by grepping one method name |
+| it is one call site | its one `reveal()` is in `sopuli/output/policy_view.py` |
 
-The output says the samples must not be used, because the realistic hazard is not
-the printing. It is somebody liking sample 2 and pasting it into an `ALTER USER`
-by hand, at which point a value that sat in a scrollback becomes a live credential.
+The output says that the samples must not be used. The real hazard is not the
+printing. It is somebody who likes sample 2 pasting it into an `ALTER USER` by
+hand, and then a value from a scrollback is a live credential.
 
-The release gate from UC-1 §11 tests the rest: run everything, grep every
-artefact for the generated password, zero hits or no release. `policy sample
---reveal` is excluded by name — its output is *supposed* to contain one, as the
-seen reset's is (below) — and in exchange the gate asserts the
-narrower property above: no sample value in any JSON document, `--reveal` or not.
-See `04-testing.md` §6.
+The release gate from UC-1 §11 tests the rest: run everything, search every
+artefact for the generated password, and release only with zero hits.
+`policy sample --reveal` is excluded by name, because its output is *supposed*
+to contain a password, as the seen reset's is (below). In exchange the gate
+asserts the narrower property above: no sample value in any JSON document,
+`--reveal` or not. See `04-testing.md` §6.
 
-#### The second exception: UC-2's seen reset (#439)
+### UC-2's seen reset
 
-**Built** (#441). `account reset-password` on the `manual` delivery path prints a
-working password once, under five structural guards. Written here because this
-section is the redaction contract, and a contract that named only the first
-exception would have contradicted the use case the moment the verb landed — the
-failure #411 was raised about, where a settled result reaches one document and
-leaves the others disagreeing.
+`account reset-password` on the `manual` delivery path prints a working password
+once, under five structural guards.
 
-**Nothing in this contract can carry the value**, which is the half that matters
-here: `results[]` has no property a password could occupy, and the verb refuses
-`--output json` and `--output jsonl` outright. Those are one guard asserted twice,
-and the second is the one that survives somebody adding an output mode.
+**Nothing in this contract can carry the value.** `results[]` has no property a
+password could occupy, and the verb refuses `--output json` and `--output jsonl`.
+Those are one guard checked twice. The second check is the one that still holds
+if somebody adds an output mode.
 
-**Its justification is different, and weaker.** The first exception rests on a
-sample being no credential at all. This *is* one, and somebody can log in with it.
-What allows it is that the exposure is **deliberate, witnessed and time-limited**:
-the operator selected the seen path, answered a prompt, and the password is expired
-at the moment it is set, so the owner's first logon must change it.
+**Its justification is weaker than the sample's.** A sample is no credential at
+all. This password *is* one, and somebody can log in with it. What allows it is
+that the exposure is **deliberate, witnessed and time-limited**: the operator
+chose the seen path and answered a prompt, and the password is expired when it is
+set, so the owner's first logon must change it.
 
-Because the justification is weaker, the structure is **stricter** than the first
-exception's — the same four guards plus a fifth that has no counterpart there:
+Because the justification is weaker, the structure is **stricter**: the sample's
+four guards, plus a fifth with no counterpart there.
 
 | | |
 |---|---|
-| it is opt-in | non-default; `delivery.method: manual` selects it, and the unseen path is what an estate gets without asking |
+| it is opt-in | not the default; `delivery.method: manual` selects it, and an estate that asks for nothing gets the unseen path |
 | it is text-only | refused with `--output json` **and** `--output jsonl` |
-| JSON cannot carry it | no property of a `result` can hold a password, `--output` notwithstanding |
+| JSON cannot carry it | no property of a `result` can hold a password, whatever `--output` says |
 | it is one call site | one `reveal()`, in the seen path's own view, reachable only when the method is `manual` |
-| **stdout must be a terminal** | the guard `--reveal` has none of, and the one the argument rests on: a value redirected to a file or captured in a CI log outlives the single logon it is good for, because a log is read later and by other people, and expiry does not unpublish it |
+| **stdout must be a terminal** | the guard `--reveal` lacks, and the one the argument rests on. A value redirected to a file or captured in a CI log outlives the single logon it is good for: other people read a log later, and expiry does not remove it from the log |
 
-Two more things bound it and are not redaction rules, so they live in `CLAUDE.md`
-invariant 2 and UC-2 §6 rather than here: it is confirmed every time with
-`--confirm` **not** answering the prompt, and `force_expire: true` is required on
-the method.
+Two more limits are not redaction rules, so `CLAUDE.md` invariant 2 and UC-2 §6
+hold them. The run is confirmed every time, and `--confirm` does **not** answer
+the prompt. The method requires `force_expire: true`.
 
-**The release gate treats it as it treats `policy sample --reveal`**: excluded by
-name from the grep, since its output is supposed to contain a password, and in
-exchange it must satisfy the narrower assertion — no password in any JSON document,
-in any jsonl event, or in any log sink, whatever the delivery method.
+**The release gate treats it like `policy sample --reveal`.** It is excluded by
+name from the search, because its output is supposed to contain a password. In
+exchange it must satisfy the narrower assertion: no password in any JSON
+document, any jsonl event or any log sink, whatever the delivery method.
+
+### The wrapping token from an unseen delivery
+
+On the `vault_wrapped` path the password goes to Vault and to nobody else. What
+comes back is a wrapping token: a single-use bearer credential that retrieves the
+password once, and expires. It holds no password, but it retrieves one, so the
+tool keeps it in a `Secret`. The tool has no other channel to hand it over on,
+and UC-2 §6.1 bars it from the notify channel, so it is printed. UC-2 §6.6 has
+the full argument.
+
+| | |
+|---|---|
+| no document can carry it | the run document has no property for it. `results[].handover` carries the token's *accessor*, which names the hand-over and cannot perform it, and its expiry. The `password.delivered` event carries the same `handover` object, and event schema 1.7 closes that payload |
+| it never goes to stdout under a machine format | under `--output json` or `jsonl` it is written to stderr, because stdout carries the document. `vault_wrapped` is not refused with `--output json`, unlike `manual`: the document is what makes a scheduled reset auditable |
+| it is one call site | its one `reveal()` is in `sopuli/output/delivery_view.py`. `delivery/vault_wrapped.py` holds the vault write that creates it, which is site 1 |
+
+**No terminal is required**, unlike the seen path. A handover script reads the
+token from a pipe, and requiring a terminal would leave an estate no way to
+deliver unattended except the path that shows a DBA a password. The cost is
+stated: a redirect to a file outlives the token. The object is what makes the
+trade different: a token that expires within minutes and works once, where a
+second use is detectable, against a password that works until somebody's first
+logon.
 
 ---
 
 ## 5. Streaming events
 
-**Implemented for `creds check`** (#9). A drifted account against the tier-1
-stack, pasted from the run and trimmed only where `…` says so:
+`--output jsonl` writes one event per line as the run happens. This is
+`creds check` on a drifted account against the tier-1 stack, pasted from the run
+and trimmed only where `…` says so:
 
 ```jsonl
 {"schema_version":"1.3","event":"run.started","seq":0,"ts":"2026-09-25T17:48:29.670694Z","correlation_id":"9352c606-…","data":{"command":"creds.check","dry_run":false}}
@@ -1658,46 +1688,49 @@ stack, pasted from the run and trimmed only where `…` says so:
 {"schema_version":"1.3","event":"run.finished","seq":5,"ts":"2026-09-25T17:48:31.448006Z","correlation_id":"9352c606-…","data":{"summary":{"total":1,"ok":0,"changed":0,"failed":0,"unchanged":1,"drift":1,"unverifiable":0,"by_state":{"DRIFT":1}},"exit_code":3}}
 ```
 
-`seq` is monotonic within a run, so a consumer can detect truncation — which
-matters because the interesting failure mode is the process dying mid-run. A
+The samples in this section came from runs against earlier event schema
+versions, as their `schema_version` shows. Later minor versions only add to
+them.
+
+`seq` increases within a run, so a consumer can detect truncation. That matters,
+because the failure that counts is the process dying in the middle of a run. A
 stream that ends without `run.finished` means the run did not complete, and the
-last `seq` says where it stopped. **Every line is flushed as it is written**: a
+last `seq` says where it stopped. **Every line is flushed as it is written.** A
 line held in a pipe buffer until exit would make this `json` with worse syntax.
 
-Payload shapes are reused, not redefined: `target.finished.data` is a `result`
-object — the same entry `results[]` carries, not a second serialisation of it —
-`run.finished.data` carries `summary` + `exit_code`, and `plan.resolved.data` is
-a `plan`. Event schema 1.3 makes those three into requirements rather than prose.
+Payloads reuse shapes; they do not redefine them. `target.finished.data` is a
+`result` object, the same entry `results[]` carries.
+`run.finished.data` carries `summary` and `exit_code`, and `plan.resolved.data`
+is a `plan`. The event schema requires those three shapes.
 
-**Two events are written for the verb rather than by it**, so neither can be
-forgotten by the next verb to stream:
+**The emitter writes two events itself**, so the next verb to stream cannot
+forget them:
 
-- **`run.started` always opens the stream**, ahead of whichever event came first.
-  A run that fails before any target — a config file that is not there, exit 9 —
-  is `run.started` then `run.finished`, which is J7 on jsonl's terms: the run
-  began, so it has a stream, and the stream ends.
+- **`run.started` always opens the stream**, ahead of whichever event comes
+  first. A run that fails before any target, such as one whose config file is
+  missing (exit 9), is `run.started` then `run.finished`. That is
+  [J7](../decisions/log.md#j7) for jsonl: the run began, so it has a stream, and
+  the stream ends.
 - **`run.finished` is written by the same call that writes the `json` document**,
-  on every path out of a run — success, a failure that escaped the verb, an
-  abort. It carries `error` beside `summary` and `exit_code` when the run failed
-  as a whole, because the stream has nowhere else to say why.
+  on every way out of a run: success, a failure that escaped the verb, an abort.
+  When the run failed as a whole, it carries `error` beside `summary` and
+  `exit_code`, because the stream has nowhere else to say why.
 
 **`diagnostic` events stream what `diagnostics[]` holds**, each one ahead of the
-event that followed it, with its code in `data.code`. The places that make a
-diagnostic append to the document and do nothing else; the emitter sends
-whatever is new before each event. The consequence worth knowing is that a
-diagnostic arrives when the *next* event does, not the instant it is made —
-above, `SOPULI-W022` is made while the target is being connected to and is sent
-just ahead of that target's `target.finished`.
+next event, with its code in `data.code`. Code that makes a diagnostic only
+appends it to the document. Before each event, the emitter sends whatever is new.
+So a diagnostic arrives with the *next* event, not the moment it is made. Above,
+`SOPULI-W022` is made while the target is being connected to, and is sent just
+before that target's `target.finished`.
 
-`creds check` streams **per target**, not per account: the accounts on one
+`creds check` streams **per target**, not per account. The accounts on one
 target share one connection and finish together, so their `target.finished`
-events arrive together once that connection is done.
+events arrive together when that connection is done.
 
 ### `creds apply`
 
-**Streams since #535**, the first verb that changes something. A staged password
-applied and promoted against the tier-1 stack, pasted from the run and trimmed
-only where `…` says so:
+A staged password applied and promoted against the tier-1 stack, pasted from the
+run and trimmed only where `…` says so:
 
 ```jsonl
 {"schema_version":"1.4","event":"run.started","seq":0,"ts":"2026-09-26T12:55:57.739823Z","correlation_id":"be07e5d1-…","data":{"command":"creds.apply","dry_run":false}}
@@ -1714,46 +1747,45 @@ only where `…` says so:
 {"schema_version":"1.4","event":"run.finished","seq":11,"ts":"2026-09-26T12:55:59.672032Z","correlation_id":"be07e5d1-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
 ```
 
-Read top to bottom, that is UC-1 §3's ordering as it happened: the lock, the
+Read from top to bottom, this is UC-1 §3's order as it happened: the lock, the
 document read under it (`version` 3, which is what was applied), the target, the
-database changed and verified, *then* the promotion to v4, then the release.
+database changed and verified, *then* the promotion to version 4, then the
+release.
 
-**`target.finished` arrives after the promotion, not as each target finishes**
-— which is where `creds check` sends it, and the one respect in which the two
-verbs' streams differ. This section's rule is that `target.finished.data` *is* the
-`results[]` entry, and an apply row is not final until its document's promotion
-is decided: `promoted_to` and the `vault_promote` action are written on every
-account the promotion covered, and a redraw (UC-1 §6.4) can replace a row after
-its target was left. Sending it early would mean either a row that differs from
-the document or a second event correcting the first. The per-target progress is
-carried by the events in between:
+**`target.finished` arrives after the promotion, not as each target finishes.**
+That is where `apply`'s stream differs from `check`'s. `target.finished.data`
+*is* the `results[]` entry, and an apply row is not final until its document's
+promotion is decided: `promoted_to` and the `vault_promote` action are written
+on every account the promotion covered, and a redraw (UC-1 §6.4) can replace a
+row after its target is done. Sending the row early would mean either a row that
+differs from the document, or a second event that corrects the first. These
+events carry the progress per target:
 
-- **`password.applied`**, once per (account, target) whose `ALTER USER` was
+- **`password.applied`**, once per account and target whose `ALTER USER` was
   issued, with the document version the value was read at and the account's
-  state — and nothing else, which event schema 1.4 enforces by closing the
-  payload. That includes an account whose re-read or verification failed
-  *after* the statement: its row is `ERROR` **and** `changed: true`, because
-  the database was mutated (review of #542 found it reported `false`). A
-  re-run that changes nothing sends no `password.applied` at all,
-  only `verification.done`: invariant 9, visible on the stream.
+  state, and nothing else. Event schema 1.4 closes the payload. This includes an
+  account whose re-read or verification failed *after* the statement: its row is
+  `ERROR` **and** `changed: true`, because the database was changed. A re-run
+  that changes nothing sends no `password.applied` at all, only
+  `verification.done`: invariant 9, visible in the stream.
 - **`verification.done`**, with the result's own `verification` object.
-- **`vault.read`**, per document, with its version; `null` is a path with nothing
-  at it. **`vault.write`** and **`password.generated`** appear only on a redraw,
-  naming the path and the stage, never the value.
-- **`vault.promote`**, per document **whose promotion was attempted**, with the
-  version it produced — or `null` and an `error` when the vault refused the
+- **`vault.read`**, once per document, with its version. `null` is a path with
+  nothing at it. **`vault.write`** and **`password.generated`** appear only on a
+  redraw, naming the path and the stage, never the value.
+- **`vault.promote`**, once per document **whose promotion was attempted**, with
+  the version it produced, or `null` and an `error` when the vault refused the
   write. A document held back because a target did not confirm gets no event,
-  and that absence is the point: `password.applied` lines with no `vault.promote`
-  after them are the database-changed, vault-not-promoted state invariant 7
-  describes, and a stream cut short by a crash between the two reads the same
-  way. That is the case this verb's stream exists for.
+  and the absence is the point. `password.applied` lines with no `vault.promote`
+  after them are the state invariant 7 describes: database changed, vault not
+  promoted. A stream cut short by a crash between the two reads the same way.
+  This verb's stream exists for that case.
 
-**A dry run streams its reads and nothing else** — `run.started`,
-`plan.resolved`, one `vault.read` per document, `run.finished` — because it takes
-no lock and dials no target.
+**A dry run streams its reads and nothing else**: `run.started`,
+`plan.resolved`, one `vault.read` per document, and `run.finished`. It takes no
+lock and connects to no target.
 
-**A lock somebody else holds** is `lock.denied`, then `run.finished` with exit 7
-and the error, from the same stack with a held record planted as
+**A lock somebody else holds** gives `lock.denied`, then `run.finished` with exit
+7 and the error. This is from the same stack, with a held record planted as
 `local-testing.md` §10 does:
 
 ```jsonl
@@ -1761,17 +1793,17 @@ and the error, from the same stack with a held record planted as
 {"schema_version":"1.4","event":"run.finished","seq":3,"ts":"2026-09-26T12:56:19.697391Z","correlation_id":"aacd2f9f-…","data":{"summary":{"total":0,"ok":0,"changed":0,"failed":0},"exit_code":7,"error":{"category":"lock","message":"vault-dev:acme/dev/acme is locked by someone-else@beta.example.com pid 1234 running creds rotate","hint":"wait for it to finish, or coordinate with whoever is running it"}}}
 ```
 
-**The lock events come from the lock manager, not from around it**, because
-only the manager sees a partial acquisition: two locks taken and given back
-before a third is denied are in `lock.held[]` on exit 7, and a stream that
-reported them afterwards would put them after the denial that caused their
-release. **A release that failed sends no `lock.released`** — the document says
-`released: false`, and an event claiming otherwise would contradict it.
+**The lock manager emits the lock events itself**, because only the manager sees
+a partial acquisition. Two locks taken and given back before a third is denied
+are in `lock.held[]` on exit 7. A stream that reported them from outside the
+manager would put them after the denial that caused their release. **A release
+that failed sends no `lock.released`**: the document says `released: false`, and
+an event that said otherwise would contradict it.
 
 ### `creds rotate`
 
-**Streams since #535**, and it is `apply`'s stream with a vault phase in front of
-it. Against the tier-1 stack, with `--confirm`, trimmed only where `…` says so:
+`rotate` streams `apply`'s events with a vault phase in front of them. Against
+the tier-1 stack, with `--confirm`, trimmed only where `…` says so:
 
 ```jsonl
 {"schema_version":"1.5","event":"run.started","seq":0,"ts":"2026-09-26T14:10:11.974415Z","correlation_id":"0306dc38-…","data":{"command":"creds.rotate","dry_run":false}}
@@ -1794,51 +1826,48 @@ it. Against the tier-1 stack, with `--confirm`, trimmed only where `…` says so
 {"schema_version":"1.5","event":"run.finished","seq":17,"ts":"2026-09-26T14:10:14.567540Z","correlation_id":"0306dc38-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
 ```
 
-**The vault phase is per document and comes first**, which is the grain question
-#535 left to be answered when `rotate` was built. Staging is one compare-and-set
-per secret path, however many targets share it, so its events — a `vault.read`,
-a `password.generated` per account drawn, a `vault.write` — name a `path` and no
-`target`, and every one of them comes before the first `target.started`. That is
-UC-1 §8's own order (stage everything, *then* touch a database), so the stream
-shows it rather than interleaving the two phases per target, which would put a
-database event between two vault writes that happened back to back.
+**The vault phase is per document, and comes first.** Staging is one
+compare-and-set per secret path, however many targets share it. So its events, a
+`vault.read`, a `password.generated` per account drawn, and a `vault.write`, name
+a `path` and no `target`, and all of them come before the first
+`target.started`. That is UC-1 §8's own order: stage everything, *then* touch a
+database. Interleaving the two phases per target would put a database event
+between two vault writes that happened one after the other.
 
 - **`vault.read` appears three times per document**, and each is a real read:
-  under the lock at step 3 (`--max-age-days` is answered from it), just before
-  the staging write (its version is the compare-and-set), and after the
-  promotion — step 8's read-back, which is the one `rotate` has and `apply`
-  does not.
+  under the lock at step 3, which `--max-age-days` is answered from; just before
+  the staging write, whose version is the compare-and-set; and after the
+  promotion, which is step 8's read-back. `rotate` has that last read and
+  `apply` does not.
 - **The version applied is the version staged**: `vault.write` says 5,
   `password.applied` says 5, and the promotion produced 6.
 - **A staging write the vault refused is a `vault.write` with `version: null`
-  and the store's `error`**, not a missing event — it is a per-document finding
-  and the run continues to its refusal. Nothing reaches a database after one, so
-  there is no `target.started`, and the staging rows still arrive as
-  `target.finished`.
-- **The rows come last and in `results[]` order**: the staging rows
-  (`PENDING_APPLY`, one per account and target) and then the applied ones.
-  `apply`'s reason for waiting applies unchanged.
+  and the store's `error`**, not a missing event. It is a finding for that
+  document, and the run continues to its refusal. Nothing reaches a database
+  after one, so there is no `target.started`, and the staging rows still arrive
+  as `target.finished`.
+- **The rows come last, in `results[]` order**: first the staging rows
+  (`PENDING_APPLY`, one per account and target), then the applied ones. `apply`'s
+  reason for waiting applies unchanged.
 - **`--finish-rollover` has no event of its own.** Closing a window is reported
-  on the row, and nothing in the event enum names it; adding one is a schema
-  change for the verb that needs it, not this one.
+  on the row, and no event in the enum names it.
 
-**`confirmation.required` is sent only when somebody is actually asked** — with
-the prompt they were shown in `data.prompt` — so a stream that stops after it is
-a run waiting on a person, which a consumer can tell from a hang. `--confirm`
-answers in advance, so nothing waits and nothing is sent. A prompt that was
-answered with EOF, from the same stack:
+**`confirmation.required` is sent only when somebody is actually asked**, with
+the prompt they were shown in `data.prompt`. So a stream that stops after it is a
+run waiting for a person, which a consumer can tell from a hang. `--confirm`
+answers in advance, so nothing waits and nothing is sent. A prompt answered with
+end-of-file, from the same stack:
 
 ```jsonl
 {"schema_version":"1.5","event":"confirmation.required","seq":2,"ts":"2026-09-26T14:10:18.252939Z","correlation_id":"b60184d7-9d90-4e8a-ad31-c3d496eefb67","data":{"prompt":"draw a new password for 1 account on 1 target in `dev` and promote it?"}}
 ```
 
-followed by `run.finished` with exit 8.
+`run.finished` follows, with exit 8.
 
 ### `creds generate`
 
-**Streams since #535**, and the one thing it needed that no other verb did was
-somewhere to put its `constraints` section. From the tier-1 stack, trimmed only
-where `…` says so:
+`generate` adds one event that no other verb needs, for its `constraints`
+section. From the tier-1 stack, trimmed only where `…` says so:
 
 ```jsonl
 {"schema_version":"1.6","event":"run.started","seq":0,"ts":"2026-09-26T16:02:28.187333Z","correlation_id":"f3925d23-…","data":{"command":"creds.generate","dry_run":false}}
@@ -1854,28 +1883,29 @@ where `…` says so:
 {"schema_version":"1.6","event":"run.finished","seq":10,"ts":"2026-09-26T16:02:29.535349Z","correlation_id":"f3925d23-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"by_state":{"PENDING_APPLY":1}},"exit_code":0}}
 ```
 
-**`constraints.resolved` is the section, once, as soon as it exists** — the
-`constraints` object the run document carries, unchanged, sent after every
-target has been read and before anything is drawn. That is `plan.resolved`'s
-arrangement, and it was chosen over one event per target as each is read: the
-section's estate-wide fields, `strictest_target` and `character_set`, belong to
-no single target, and a per-target stream would leave every consumer to
-recompute "strictest" — logic this tool already owns. The notes the reading
-produced (`SOPULI-W015` to `W017`) arrive just ahead of it as `diagnostic`
-events. A `--dry-run` streams it too, because the reading is most of what a
-preview of `generate` is for: `run.started`, `plan.resolved`,
-`constraints.resolved`, `run.finished`.
+**`constraints.resolved` is the whole section, sent once, as soon as it
+exists**: the `constraints` object the run document carries, unchanged, sent
+after every target has been read and before anything is drawn. That is how
+`plan.resolved` works. One event per target as each is read was the
+alternative. It was rejected because the section's estate-wide fields,
+`strictest_target` and `character_set`, belong to no single target, and a
+stream per target would leave every consumer to work out "strictest" again,
+which is logic this tool already owns. The notes the reading produced
+(`SOPULI-W015` to `W017`) arrive just before it as `diagnostic` events. A
+`--dry-run` streams it too, because the reading is most of what a preview of
+`generate` is for: `run.started`, `plan.resolved`, `constraints.resolved`,
+`run.finished`.
 
-- **The staging events are rotate's**, from the same code: a `vault.read` per
+- **The staging events are `rotate`'s**, from the same code: a `vault.read` per
   document, a `password.generated` per account drawn, and one `vault.write` per
   document, however many accounts share it.
-- **A password from `--from-stdin` is not announced as generated.** The event
-  reports provenance as it happens, and that value was supplied; its row says
-  so, and the `vault.write` still appears.
-- **`--promote` is `vault.promote`, not `vault.write`**, because what a
-  consumer watches that event for — `current` changed, applications will now
-  fetch this — is exactly what it does. Invariant 7's one exception is visible on
-  the stream as what it is, with the draws marked `"stage":"current"`:
+- **A password from `--from-stdin` is not reported as generated.** The event
+  reports where the password came from, and that value was supplied. Its row
+  says so, and the `vault.write` still appears.
+- **`--promote` is `vault.promote`, not `vault.write`.** A consumer watches that
+  event to learn that `current` changed and applications will now fetch the new
+  password, and that is what happened. Invariant 7's one exception shows in the
+  stream as what it is, with the draws marked `"stage":"current"`:
 
   ```jsonl
   {"schema_version":"1.6","event":"vault.read","seq":5,"ts":"2026-09-26T16:02:31.805675Z","correlation_id":"074237b8-ab4f-4f4e-b784-9615a0fa5dbe","data":{"vault":"vault-dev","path":"acme/dev/acme","version":9}}
@@ -1883,22 +1913,22 @@ preview of `generate` is for: `run.started`, `plan.resolved`,
   {"schema_version":"1.6","event":"vault.promote","seq":7,"ts":"2026-09-26T16:02:31.808371Z","correlation_id":"074237b8-ab4f-4f4e-b784-9615a0fa5dbe","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":10}}
   ```
 
-- **`confirmation.required` is sent by the environment gate too**
-  (`safety.confirm_environments`), which `generate` shares with `apply`: only
-  when somebody is actually asked, with the question in `data.prompt`.
+- **The environment gate (`safety.confirm_environments`) also sends
+  `confirmation.required`**, which `generate` shares with `apply`: only when
+  somebody is actually asked, with the question in `data.prompt`.
 
 ### `account reset-password`
 
-**Streams since #535 — the unseen paths, and the seen path's preview.** A seen
+**The unseen paths stream, and so does the seen path's preview.** A seen
 (`manual`) reset is refused under every machine format before a password is
-drawn — invariant 2's guard 2, which has checked "machine format" rather than
-"JSON" since #9. Its `--dry-run` is exempt, as it is under `json` (#441's sixth
-guard): a preview prints a plan and never a password, so it streams
-`run.started`, `plan.resolved`, `target.started`, `target.finished`, `run.finished` and no `password.*` event at all (review of #546).
-So `password.displayed` has no emitter *by construction* — the one seen-path run
-that can stream is the one that shows nothing — and that is the design rather
-than a gap. A `vault_wrapped` reset against the tier-1 stack, trimmed
-only where `…` says so:
+drawn: invariant 2's second guard checks for any machine format, not only JSON.
+Its `--dry-run` is allowed, as it is under `json`, because a preview prints a
+plan and never a password. It streams `run.started`, `plan.resolved`,
+`target.started`, `target.finished` and `run.finished`, and no `password.*`
+event. So `password.displayed` has no emitter by construction: the one seen-path
+run that can stream is the one that shows nothing. That is the design, not a
+gap. A `vault_wrapped` reset against the tier-1 stack, trimmed only where `…`
+says so:
 
 ```jsonl
 {"schema_version":"1.7","event":"run.started","seq":0,"ts":"2026-09-26T17:13:35.870495Z","correlation_id":"8ebe1029-…","data":{"command":"account.reset-password","dry_run":false}}
@@ -1912,56 +1942,51 @@ only where `…` says so:
 {"schema_version":"1.7","event":"run.finished","seq":8,"ts":"2026-09-26T17:13:37.595600Z","correlation_id":"8ebe1029-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0},"exit_code":0}}
 ```
 
-**Per target, as each finishes** — `creds check`'s grain, not `apply`'s. An
-apply row waits for a promotion decided after every target; a reset row is final
-when its target is, because nothing decided later is written back onto it. So a
-stream that stops on target three has already said what happened on one and two.
+**Per target, as each finishes**: `creds check`'s grain, not `apply`'s. An apply
+row waits for a promotion decided after every target. A reset row is final when
+its target is, because nothing decided later is written back onto it. So a stream
+that stops on target three has already said what happened on one and two.
 
 - **`password.applied`** where the password was set, with `"version": null`: a
-  reset draws a password and keeps it in no document a version could name.
-- **`password.delivered`** where the row says it was handed over — its first
-  emitter, registered in 1.2 (#444). It carries the `method` and, on an unseen
-  path, the `handover` object the row carries: the accessor that names the
-  hand-over and cannot perform it, and when it expires. **Never the wrapping
-  token**, which goes to stderr under every machine format as it does under
-  `json`, and never the password; event schema 1.7 closes the payload so no
-  later field can carry either.
-- **A partly applied reset** (#528) streams what it did: the password set and
-  handed over, then a row that is `ERROR`, then exit 4. **An unlock that
-  committed and a set that did not** streams neither event — nothing that works
-  was set or handed over.
+  reset draws a password and keeps it in no document that a version could name.
+- **`password.delivered`** where the row says the password was handed over. It
+  carries the `method` and, on an unseen path, the row's `handover` object: the
+  accessor, which names the hand-over and cannot perform it, and its expiry.
+  **Never the wrapping token**, which goes to stderr under every machine format,
+  and never the password (§4). Event schema 1.7 closes the payload, so no later
+  field can carry either.
+- **A partly applied reset** streams what it did: the password set and handed
+  over, then a row that is `ERROR`, then exit 4. **An unlock that committed and a
+  set that did not** streams neither event, because no working password was set
+  or handed over.
 - **No `password.generated`**: its payload names the vault path and stage the
-  draw was staged to, and a reset's password is staged nowhere. The
-  `password.delivered` beside it is what says where it went.
+  draw was staged to, and a reset's password is staged nowhere.
+  `password.delivered` says where it went.
 
 ### Which verbs stream, and why the rest refuse
 
-**Only a verb that has events to stream accepts `--output jsonl`**, and every
-other verb refuses it on exit 2 with no events, naming where the value came from
-— `--output`, `SOPULI_OUTPUT` or a profile's `output:`:
+**Only a verb that has events to stream accepts `--output jsonl`.** Every other
+verb refuses it with exit 2 and no events, and names where the value came from:
+`--output`, `SOPULI_OUTPUT` or a profile's `output:`.
 
 ```
 sopuli: --output (verb): `config show` does not stream, so it has no jsonl output
   hint: use --output json for the same run as one document; jsonl is offered by: account reset-password, creds apply, creds check, creds generate, creds rotate
 ```
 
-The alternative was to accept it everywhere and emit `run.started` and
-`run.finished` around nothing, and it is refused for §1's reason: `jsonl` and
-`json` are promised to describe the same run, and the event schema has no home
-for a `config` or `targets` section. (`lock` and `constraints` were on that
-list until #535 gave the `lock.*` events a payload and `creds generate` an event
-for its `constraints`.) A stream that
-silently carried less than the document would be the quiet downgrade §2 refuses
-everywhere else. `STREAMING_COMMANDS` in `sopuli/invocation.py` is the list,
-and adding a verb to it means giving the verb events rather than only a line
-there.
+The alternative was to accept `jsonl` everywhere and emit `run.started` and
+`run.finished` around nothing. It is refused for §1's reason: `jsonl` and `json`
+must describe the same run, and the event schema has no place for a `config` or
+`targets` section. A stream that silently carried less than the document would
+be the quiet downgrade §2 refuses everywhere else. `STREAMING_COMMANDS` in
+`sopuli/invocation.py` is the list. Adding a verb to it means giving the verb
+events, not only adding a line there.
 
-**`lock break` refuses it on purpose**, decided in #535 rather than left for
-later. Streaming is for runs whose progress or stopping point matters, and `lock
-break` is one action with nothing that unfolds: its stream would be `run.started`,
-one event carrying the `broken[]` entry, and `run.finished` — the run document
-with worse syntax, bought with a new event name. `--output json` already gives a
-consumer all of it.
+**`lock break` refuses it on purpose.** Streaming is for runs whose progress or
+stopping point matters. `lock break` is one action, and nothing unfolds: its
+stream would be `run.started`, one event carrying the `broken[]` entry, and
+`run.finished`. That is the run document with worse syntax, at the cost of a new
+event name. `--output json` already gives a consumer all of it.
 
 ```
 sopuli: --output (verb): `lock break` does not stream, so it has no jsonl output
@@ -1970,18 +1995,17 @@ sopuli: --output (verb): `lock break` does not stream, so it has no jsonl output
 
 **A path that refuses the machine formats refuses `jsonl` too.** `account
 reset-password`'s seen path and `policy sample --reveal` are refused under
-`--output json`, and the refusal checks treat `jsonl` as a machine format — so
-the guard survived `account reset-password` learning to stream (#535), exactly
-as it was built to. `policy sample` is outside the streaming list as well.
+`--output json`, and the refusal treats `jsonl` as a machine format. So the
+guard still holds for `account reset-password`, which streams.
+`policy sample` is not a streaming verb either.
 
-The three `lock.*` events were in the enum from 1.0 and have had a payload since
-1.4 (#535). `lock.acquired` and `lock.released` carry a `lock.held[]` entry as of
-that moment — `vault`, `path`, `fence`, the two timestamps and `released` — and
-`lock.denied` carries the run document's `lock.denied` object, holder and all.
-**None of them carries `account`**, which an earlier draft of this paragraph
-kept as a label: the lock is keyed on the path, two accounts sharing one document
-contend on one lock, and naming either would invite a consumer to group by
-account and report that contention as two independent locks.
+The three `lock.*` events carry a payload. `lock.acquired` and `lock.released`
+carry a `lock.held[]` entry as it is at that moment: `vault`, `path`, `fence`,
+the two timestamps and `released`. `lock.denied` carries the run document's
+`lock.denied` object, holder included. **None of them carries `account`.** The
+lock is keyed on the path, and two accounts that share one document contend for
+one lock. Naming either account would invite a consumer to group by account and
+report that contention as two separate locks.
 
 ---
 
