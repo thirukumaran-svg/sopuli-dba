@@ -243,8 +243,8 @@ and per account, so one line covers an estate. For the account and target above
 it resolves to `vault-dev:acme/dev/db`, field `DB_CREDENTIALS/acme_app_user`.
 
 **The file has no `applications:` section**, because there is only one
-application here. With two or more, the four binding keys at the bottom
-(`accounts`, `secret_template`, `policy`, `overrides`) move into an
+application here. With two or more, the binding keys at the bottom
+(`accounts`, `secret_template` or `secret`, `policy`, `overrides`) move into an
 `applications:` list, one entry each. The full reference is
 [`design/01-configuration.md`](design/01-configuration.md).
 
@@ -428,8 +428,8 @@ nothing was written (--dry-run)
 ```
 
 `--dry-run` means: work out the whole plan, print it, change nothing. Every
-command that changes something accepts it, and no setting can take it away from
-you.
+command that changes something accepts it. `safety.readonly` refuses even a dry
+run, and so does `safety.max_targets` when the plan is over the limit.
 
 Read the plan from the top. `1 account x 1 target = 1 generation` is the blast
 radius — how much this run would touch. The `INTENT` column is what would be done
@@ -480,7 +480,8 @@ it on the database and then promotes it — and that is the next document.
 |---|---|
 | `config file is accessible to ...`, exit 9 | the file's permissions are too open. Section 3 has the fix |
 | `instant_client  not loaded` in `doctor` | Instant Client is missing or not on the library path. Section 2c |
-| `... declares type "oci", but that backend is not installed` | your config names a store this build or this install cannot serve. The message carries the `pip` line where there is one |
+| `... declares type "oci", but this build has no oci backend yet`, exit 9 | your config names a store this build has no code for |
+| `... declares type "hashicorp", but that backend is not installed`, exit 9 | the store's client is not installed. The hint gives the `pip` line |
 | `cannot be locked safely: its lock path does not require compare-and-set`, exit 5 | the lock path was created without `cas_required`, by something other than this tool. Set it once with `vault kv metadata put -cas-required=true` on the lock path. See UC-1 §8, *What the fence does in this build*, in [`use-cases/uc-01-app-credential-sync.md`](use-cases/uc-01-app-credential-sync.md) |
 | `VAULT_ADDR is set and was not applied` (a warning) | you have `VAULT_ADDR` in your environment and your config names no default store. Harmless if the variable belongs to something else; write `defaults.vault` to silence it |
 | exit 3 from `creds check` | not an error. Exit 3 means drift was found — the vault's password does not work on the database. It has its own exit code so a scheduler can tell it apart from a failure |

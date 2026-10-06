@@ -412,9 +412,9 @@ rules make that real:
    document under `--output json` like any other config-resolution failure:
 
    ```
-   $ sopuli creds check --application acme
-   error: vault "oci-prod" declares type "oci", but that backend is not installed
-          install it with:  pip install "sopuli-dba[oci]"
+   $ sopuli creds check
+   sopuli: vault "vault-prod" declares type "hashicorp", but that backend is not installed
+     hint: install it with:  pip install "sopuli-dba[hashicorp]"
    exit 9
    ```
 

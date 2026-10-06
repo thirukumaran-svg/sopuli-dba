@@ -194,9 +194,9 @@ def resolve(vault: Vault) -> ModuleType:
                 f'vault "{vault.name}" declares type "{vault.type}", '
                 f"but that backend is not installed",
                 # No `at=`: the message names the store already, and
-                # `01-configuration.md` §3a and the root README both quote this
-                # line verbatim. A `vaults.<name>:` breadcrumb in front of a
-                # sentence that opens with the same name reads as a stutter.
+                # `01-configuration.md` §3a quotes this line verbatim. A
+                # `vaults.<name>:` breadcrumb in front of a sentence that opens
+                # with the same name reads as a stutter.
                 hint=f"install it with:  {backend.install_command}",
             ) from exc
         if kind == MISSING_MODULE:

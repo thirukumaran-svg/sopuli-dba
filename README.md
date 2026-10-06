@@ -108,7 +108,7 @@ see [`docs/scenarios/kubernetes-eso.md`](https://github.com/villebase/sopuli-dba
 | | |
 |---|---|
 | **Install** | Nothing is published to PyPI yet — you install from a git checkout. `sopuli --version` and `sopuli about` report the installed distribution's version |
-| **Databases** | Oracle only. CI runs against Oracle AI Database 26ai Free 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI. 12.1 is not tested |
+| **Databases** | Oracle only. CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI. 12.1 is not tested |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
 
@@ -181,9 +181,9 @@ command that needs to connect stops instead, with the install line where there
 is one to give:
 
 ```
-$ sopuli creds check --application acme
-error: vault "oci-prod" declares type "oci", but that backend is not installed
-       install it with:  pip install "sopuli-dba[oci]"
+$ sopuli creds check
+sopuli: vault "oci-prod" declares type "oci", but this build has no oci backend yet
+  hint: this is not something to install -- the backend is not written yet
 ```
 
 The rule and what it costs: [ADR-006](https://github.com/villebase/sopuli-dba/blob/main/docs/decisions/adr-006-optional-dependencies.md).
@@ -208,9 +208,11 @@ tool does to protect you once you do trust it with something that matters.
 
 **You can always see a change before it happens.** Every command that changes
 something takes `--dry-run`, which prints exactly what the command would do and
-then stops without doing it. No setting can take `--dry-run` away from you. It is
-the one thing that is never blocked, because a preview is how you work out
-whether to say yes.
+then stops without doing it. A confirmation never blocks a dry run, because a
+preview is how you work out whether to say yes. `safety.readonly` does refuse
+one, because it makes every changing command unavailable. So does
+`safety.max_targets`, which will not show a plan bigger than its limit as though
+it could run.
 
 **You can require somebody to say yes.** In the config file you can list the
 environments — `prod`, `uat`, whatever you call them — that a change may not

@@ -84,9 +84,15 @@ Every command that changes something accepts `--dry-run`. With that flag the
 command works out its whole plan, prints it, and stops. Nothing is written to the
 vault and nothing is sent to the database.
 
-**No setting can take `--dry-run` away from you.** That is deliberate. A preview
-is how you work out whether to agree to something, so blocking the preview would
-block the wrong thing.
+**A confirmation never blocks `--dry-run`.** A preview is how you work out
+whether to agree to something, so blocking the preview would block the wrong
+thing. These settings do refuse a dry run, with exit 8:
+
+- `safety.readonly` makes every changing command unavailable, dry run included.
+  The read-only commands are how you ask questions under it.
+- `safety.max_targets` refuses a plan that reaches more databases than its limit.
+  Showing that plan as though it could run is the surprise the limit exists to
+  prevent.
 
 The plan is not decoration. Every limit the tool enforces — the maximum number of
 targets, the environments that need confirming, whether the database can do what
@@ -122,10 +128,11 @@ Four things are worth knowing about it:
   the run stops with a message naming the setting, where it was written, and both
   `--confirm` and `--dry-run` as the two ways forward.
 
-Three commands confirm every time regardless of this setting: `creds rotate`,
-`lock break`, and `account reset-password` in the mode where the DBA sees the new
-password (`delivery.method: manual`). The first two accept `--confirm` as the yes
-given in advance. The third refuses it and always asks, because if nobody is there
+These commands confirm every time regardless of this setting: `creds rotate`,
+`creds apply --source previous`, `lock break`, and `account reset-password` in
+the mode where the DBA sees the new password (`delivery.method: manual`). All
+but the last accept `--confirm` as the yes given in advance.
+`account reset-password` refuses it and always asks, because if nobody is there
 to answer, nobody is there to receive the password either
 (`docs/use-cases/uc-02-personal-account-passwords.md`).
 
@@ -147,6 +154,7 @@ it came from.** These are the settings that behave this way:
 | `safety.confirm_environments` | environments needing an explicit yes | every environment any layer listed |
 | `safety.delivery.allowed_methods` | which ways a reset may hand over a password | only the methods every layer allows |
 | `locking.break_expired` | permission to take over an expired lock | one layer withholding it is enough |
+| `vaults.<name>.tls.verify` | check the vault's TLS certificate | one layer asking for it is enough |
 
 The thing this protects against is concrete. A site-wide config file turns on a
 safety rule. A team writes their own more specific file, which for every other
@@ -154,13 +162,14 @@ setting would override it. If the ordinary rule applied here, that team file
 could switch the site-wide rule off — probably by accident, and nothing would say
 so. Under the ratchet it cannot. It can only add more restrictions.
 
-Note the last row: `locking.break_expired` is *permission* rather than a guard,
+Note the `locking.break_expired` row: it is *permission* rather than a guard,
 so for that one the safe direction is `false`, and one layer saying `false` wins.
 The direction is declared per setting rather than guessed from its name.
 
 `--force` is not in the table because it is not a setting. It overrides the
-account guardrails from section 1, and nothing else. It cannot relax a safety
-setting and it cannot extend the config's whitelist.
+account guardrails from section 1, and lets `lock break` take a lock that has not
+expired. Nothing else. It cannot relax a safety setting and it cannot extend the
+config's whitelist.
 
 To see which layer produced each effective setting, run
 `sopuli config show --explain`. It prints every setting and where its value came
@@ -345,8 +354,8 @@ as literal text, because Oracle's data definition statements cannot use bind
 variables. So the question is what Oracle keeps afterwards, and that was tested
 with a canary password swept through every place a statement's text can come to
 rest. On Oracle 26ai the statement itself is not retained anywhere queryable, and
-the unified audit trail masks it at write time. Two things do leak, and both are
-now forbidden in the tool's own code: wrapping the statement in a PL/SQL block
+the unified audit trail masks it at write time. Two things do leak, and the tool's
+own code does neither: wrapping the statement in a PL/SQL block
 (the block *is* retained, verbatim), and sending a password as a bind value in a
 query (bind values are captured in clear). The full results, per version and
 with their scope, are in

@@ -757,9 +757,9 @@ What changes is where it stops:
 | `sopuli doctor` | **failure**. Its question is "can I reach my vaults", and this is a no |
 
 ```
-$ sopuli creds check --application acme
-error: vault "oci-prod" declares type "oci", but that backend is not installed
-       install it with:  pip install "sopuli-dba[oci]"
+$ sopuli creds check
+sopuli: vault "vault-prod" declares type "hashicorp", but that backend is not installed
+  hint: install it with:  pip install "sopuli-dba[hashicorp]"
 exit 9
 ```
 
