@@ -1067,52 +1067,50 @@ code exists for what the exit code cannot tell you. Here exit 4 says it, and
 
 ### 6.1 The statement
 
+The tool changes a password with this statement:
+
 ```sql
-ALTER USER "ORDERS_APP" IDENTIFIED BY "<new>";
+ALTER USER "ACME_WEB_USER" IDENTIFIED BY "<new>";
 ```
 
 Points that matter:
 
-- **Passwords cannot be bind variables.** DDL is literal text, so the password
-  appears in the statement. Consequences to handle and document:
-  - quote the password, and **reject** a password containing `"` rather than
-    escape it — an Oracle quoted identifier has no escape for it (invariant 11).
-    The `alnum_safe` charset default never draws one. This bullet said "escape
-    embedded `"`" until #457, which contradicted the invariant it now cites
-  - **not in `V$SQL`, on 26ai.** Measured on 26ai Free 23.26.2.0.0 in `CDB$ROOT`
-    and a PDB: no cursor for the DDL is retained at all, so there is nothing to
-    mask. Unified audit does retain the statement, masked to `IDENTIFIED BY *` at
-    write time, in `AUDSYS.AUD$UNIFIED` as well as the view. Neither result is a
-    general Oracle guarantee — re-verify per version with
-    `sql/oracle/02_password_leak_probe.sql`. **SQL trace has now been measured and
-    does not capture the password** (#407, 2026-09-11, 26ai 23.26.2.0.0 and 21c
-    21.3.0.0.0): a session traced at 10046 level 12 writes the cursor truncated,
-    `ALTER USER sopulitest IDE`, stopping one character into `IDENTIFIED`. This
-    paragraph said "remains untested — the greps have not been run" until then,
-    and the assumption it carried was the pessimistic one, so retiring it is a
-    correction in the tool's favour rather than a new risk.
-    **Trace-consuming 3rd-party monitors are still untested**, and are a
-    different question: what they retain is theirs, not Oracle's. The tool:
-    never enables trace on its own sessions, keeps the statement out of its own
-    logs, and documents the residual risk.
-  - **Never wrap the statement in an anonymous PL/SQL block.** Issue `ALTER USER`
-    directly. Wrapping does not move the DDL literal into the shared pool — the
-    DDL literal never reaches it either way — it *adds* an exposure, because the
-    wrapper block's own text is retained verbatim in `V$SQL`, `V$SQLAREA`,
-    `V$SQLSTATS`, `GV$SQL` and `V$DB_OBJECT_CACHE`. Oracle's protection is keyed
-    to the `CREATE/ALTER USER` statement; a block that merely contains one is an
-    ordinary block. Invariant 13.
-- **Privileges.** `ALTER USER` is a system privilege with no object scope — there
-  is no way to grant it for specific accounts only. The tool requires it and
-  nothing more; in particular it must never require `DBA` or `SELECT ANY
-  DICTIONARY`. Which accounts may be touched is enforced client-side from the
-  config's `applications` section (or the inline `accounts:` list). See `../design/02-oracle-privileges.md`.
-- **`IDENTIFIED BY new REPLACE old`** is required when a user changes *their own*
-  password without holding the `ALTER USER` privilege and a password verify
-  function is assigned to their profile. This matters only in self-rotation mode
-  (the tool connecting as the account itself, Q6) — and there the old password is
-  exactly what the vault's `current` field holds, so it is available. An admin
-  holding `ALTER USER` never needs `REPLACE`.
+- **A password cannot be a bind variable.** DDL is literal text, so the password
+  appears in the statement. Consequences:
+  - The tool quotes the password, and **rejects** a password that contains `"`
+    instead of escaping it. An Oracle quoted identifier has no escape for it
+    (invariant 11). The default `alnum_safe` charset never draws one.
+  - **The statement is not kept in `V$SQL` on 26ai.** In `CDB$ROOT` and in a
+    PDB, no cursor for the DDL is retained, so there is nothing to mask. Unified
+    audit does keep the statement, masked to `IDENTIFIED BY *` when it is
+    written, in `AUDSYS.AUD$UNIFIED` and in the view. A session traced at 10046
+    level 12 writes the statement cut short, `ALTER USER sopulitest IDE`, so SQL
+    trace does not capture the password. These are measurements, not Oracle
+    guarantees. `docs/measurements.md` lists the releases they ran on, and
+    `sql/oracle/02_password_leak_probe.sql` and
+    `04_password_leak_extensions.sql` repeat them on another release.
+    **Third-party monitors that read trace files are untested.** What they keep
+    is theirs, not Oracle's. The tool never enables trace on its own sessions,
+    keeps the statement out of its own logs, and documents the remaining risk.
+  - **Never wrap the statement in an anonymous PL/SQL block.** Issue
+    `ALTER USER` directly. Wrapping does not keep the DDL literal out of the
+    shared pool. Wrapping *adds* an exposure, because the block's own text is kept
+    verbatim in `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` and
+    `V$DB_OBJECT_CACHE`. Oracle's protection is tied to the `CREATE USER` or
+    `ALTER USER` statement. A block that contains one is an ordinary block
+    (invariant 13).
+- **Privileges.** `ALTER USER` is a system privilege with no object scope. It
+  cannot be granted for specific accounts only. The tool needs it and nothing
+  more. It must never need `DBA` or `SELECT ANY DICTIONARY`. The tool enforces
+  which accounts it may touch, on the client side, from the config's
+  `applications` section or the inline `accounts:` list. See
+  `../design/02-oracle-privileges.md`.
+- **`IDENTIFIED BY new REPLACE old`** is needed when a user changes *their own*
+  password without the `ALTER USER` privilege, and their profile has a password
+  verify function. This matters only in self-rotation mode, where the tool
+  connects as the account itself (Q6). There the old password is what the
+  vault's `current` field holds, so it is available. An admin with `ALTER USER`
+  never needs `REPLACE`.
 
 ### 6.2 Common users and containers
 
@@ -1121,151 +1119,143 @@ Points that matter:
 | non-CDB | `ALTER USER x IDENTIFIED BY …` | plain |
 | PDB, local user | connect to the PDB service, then plain `ALTER USER` | one password per PDB unless the secret is shared |
 | CDB root, common user | `ALTER USER "C##MON" IDENTIFIED BY … CONTAINER=ALL` | must be connected to `CDB$ROOT`; `CONTAINER=ALL` is the config's `oracle.container_clause` |
-| Application root | every account is application-common; a statement with **no** container clause is already container-wide | distinct scope, must not be conflated with CDB root |
-| Application PDB, local user | connect to the application PDB service, then plain `ALTER USER` | ordinary; measured, see below |
+| Application root | every account is application-common; a statement with **no** container clause already applies to the whole application container | refused; see below |
+| Application PDB, local user | connect to the application PDB service, then plain `ALTER USER` | ordinary |
 
-Guardrails: refuse `CONTAINER=ALL` when not connected to a root; refuse to treat
-`C##`-prefixed names as local users; refuse to apply to a PDB that is not
-`OPEN READ WRITE`; skip (with a clear status) PDBs that are closed or in a
-standby, rather than failing the whole run.
+Guardrails: refuse `CONTAINER=ALL` when not connected to a root. Refuse to treat
+`C##`-prefixed names as local users. Refuse to apply to a PDB that is not
+`OPEN READ WRITE`. Skip PDBs that are closed or in a standby, with a clear
+status, instead of failing the whole run.
 
-**An application root is refused; an application PDB is not** (#171, #204). The
-refusal used to cover both and could fire on neither, because the driver resolved
-the scope from `SYS_CONTEXT('USERENV','CON_NAME')` alone and an application
-container has an ordinary container name. Both halves changed once there was
-something to measure.
-
-**Measured against a real one** (#204, 2026-09-03, 26ai Free 23.26.2.0.0;
-`sql/oracle/03_app_container_probe.sql` builds the container and reproduces every
-line). The two things this section guessed at are now answers, and one of them is
-the reverse of the guess:
+**An application root is refused; an application PDB is not.** The driver
+detects both scopes. The facts below were measured on 26ai Free 23.26.2.0.0.
+`sql/oracle/03_app_container_probe.sql` builds the container and reproduces each
+one.
 
 - **Detection needs no grant.** `SYS_CONTEXT('USERENV','IS_APPLICATION_ROOT')`
-  and `'IS_APPLICATION_PDB'` separate both scopes from an ordinary PDB, and a
-  service account holding exactly §2's PDB-mode grants reads them in a session
-  where `V$PDBS`, `DBA_PDBS` and `CDB_PDBS` are all `ORA-00942`. The grant this
-  was expected to cost does not exist.
-- **`C##` names cannot exist in an application container at all** — `ORA-60534`,
-  either way. So the question this section asked, whether an application-common
-  user is `C##`-prefixed the way a CDB common user is, has a third answer: there
-  are no common-prefixed names there to be either.
-- **In an application root every account is application-common**; a local one is
-  `ORA-65049`, and `CREATE USER` with no container clause defaults to
-  application-common. The hazard follows, and it is not the one guessed above.
-  `CONTAINER=ALL` does mean something narrower there — but the tool never gets
-  that far. It sees a name without a `C##` prefix, concludes *local account*,
-  appends no clause, and issues a statement Oracle accepts and applies across the
-  whole application container. **The danger is not that the clause means less
-  than it looks; it is that the absence of one already means more.** Confirmed by
-  login: after a clauseless rotation in the root, the new password authenticates
-  in an already-synced application PDB with no sync in between, while the old one
-  does not. `password_change_date` in that PDB reads empty throughout and would
-  have reported the opposite — which is Q1's argument for `login` again (#86).
-- **In an application PDB the refusal is not needed.** A local account is
-  entirely ordinary, and an application-common one is refused by Oracle itself:
-  `ORA-65066` with no clause, `ORA-65040` with `CONTAINER=ALL`.
+  and `'IS_APPLICATION_PDB'` tell both scopes apart from an ordinary PDB. A
+  service account with exactly `02-oracle-privileges.md` §2's PDB-mode grants
+  can read them, in a session where `V$PDBS`, `DBA_PDBS` and `CDB_PDBS` all
+  give `ORA-00942`.
+- **`C##` names cannot exist in an application container.** Oracle refuses
+  them with `ORA-60534`, in the root and in a PDB.
+- **In an application root, every account is application-common.** A local
+  account gives `ORA-65049`, and `CREATE USER` with no container clause creates
+  an application-common user. So the tool sees a name without a `C##` prefix,
+  concludes it is a local account, and adds no clause. Oracle accepts that
+  statement and applies it across the whole application container. **The danger
+  is that the missing clause already means more than it seems to.** A login test
+  confirmed it: after a rotation with no clause in the root, the new password
+  works in an application PDB that had already been synced, with no sync in
+  between, and the old one does not. `password_change_date` in that PDB stays
+  empty throughout, and would have said the opposite. That is Q1's argument for
+  verifying by `login`.
+- **In an application PDB, the refusal is not needed.** A local account is
+  ordinary. Oracle itself refuses an application-common one: `ORA-65066` with no
+  clause, `ORA-65040` with `CONTAINER=ALL`.
 
-**What that produced.** The scope now resolves: `IS_APPLICATION_ROOT` and
-`IS_APPLICATION_PDB` are asked from within a container that would otherwise be
-`pdb`, so a non-CDB and a root session pay nothing for a question whose answer
-they already have. An application root is refused, naming the scope and saying
-that a clauseless rotation there reaches the whole application container. An
-application PDB takes the ordinary path — a local account gets a plain statement,
-and a `C##` one is refused by the common-user guardrail, now for a second reason:
-such an account cannot exist there at all.
+The driver asks `IS_APPLICATION_ROOT` and `IS_APPLICATION_PDB` only in a
+container that would otherwise be `pdb`. A non-CDB or a root session already has
+its answer and pays nothing. An application root is refused. The message names
+the scope and says that a rotation with no clause there reaches the whole
+application container. An application PDB takes the ordinary path. A local
+account gets a plain statement. A `C##` account is refused by the common-user
+guardrail, and could not exist there anyway.
 
-The one case neither guardrail can pre-empt is an application-common account
-declared against an application PDB, because it carries no marker to recognise it
-by. Oracle refuses it, `ORA-65066`, which is mapped to the container-misuse
-category and exit 9 with a hint naming the root as the place to rotate it from.
+Neither guardrail can catch an application-common account declared against an
+application PDB, because nothing in its name marks it. Oracle refuses it with
+`ORA-65066`. The tool maps that to the container-misuse category and exit 9,
+with a hint that the root is where to rotate it.
 
-### 6.3 Gradual password rollover (19.12+/21c) — the default strategy
+### 6.3 Gradual password rollover (19.12+/21c): the default strategy
 
-Where available, this makes zero-downtime rotation real:
+Where it is available, rollover makes a rotation with no downtime possible:
 
-1. The account's profile has `PASSWORD_ROLLOVER_TIME` > 0 (e.g. `1` day).
+1. The account's profile has `PASSWORD_ROLLOVER_TIME` > 0, for example `1` day.
 2. `ALTER USER x IDENTIFIED BY <new>` starts the rollover window. **Both the old
-   and the new password authenticate** until the window closes.
-3. Applications pick up the new password from the vault on their own schedule
-   (restart, connection pool refresh, credential refresh loop).
-4. When the window is confirmed complete:
+   and the new password work** until the window closes.
+3. Applications pick up the new password from the vault on their own schedule:
+   a restart, a connection pool refresh, or a credential refresh loop.
+4. When the window is no longer needed,
    `ALTER USER x EXPIRE PASSWORD ROLLOVER PERIOD;` ends it early.
 
-Tool support:
+What the tool does:
 
-- `--strategy rollover` (default when the capability exists) verifies the profile
-  actually has a non-zero `PASSWORD_ROLLOVER_TIME`. Where it has not, the tool
-  **reports the exact `ALTER PROFILE` an operator would run and issues none** —
-  decided in Q4 (#88), and the same position `finish-rollover` takes from the
-  other end. A profile is shared, so editing one reaches accounts nobody
-  selected, which is a blast radius invariant 5 cannot express: the config
-  whitelists accounts, not profiles. Enabling rollover on a site that has not got
-  it is therefore an out-of-band DBA change, and the tool's job is to name the
-  statement rather than to run it. What the run does *instead* depends on whether
-  the strategy was asked for — refused at pre-flight if it was, resolved per
-  account to `staged` if it was not; see "What `--strategy` actually decides".
-- `check` reports `ROLLOVER_ACTIVE` with time remaining rather than calling it
-  drift.
-- `sopuli creds finish-rollover` ends the window explicitly (#263). Same
-  statement as `--strategy direct`, and a different command because it has to
-  *find* windows nobody handed it — see below.
-- Fallback for databases without the capability: `--strategy staged`, meaning the
-  tool applies and reports, and the operator owns the app-side restart. Documented
-  as "brief authentication failures possible for connections established with the
-  old password after the change".
+- `--strategy rollover`, the default where the capability exists, checks that
+  the profile has a non-zero `PASSWORD_ROLLOVER_TIME`. Where it has not, the tool
+  **reports the exact `ALTER PROFILE` an operator would run, and issues none**
+  (Q4, decided in #88). `finish-rollover` takes the same position. A profile is
+  shared, so editing one reaches accounts nobody selected. Invariant 5 cannot
+  limit that, because the config whitelists accounts, not profiles. So enabling
+  rollover where a site has not got it is a DBA change outside the tool. What the
+  run does *instead* depends on whether the strategy was asked for: refused at
+  pre-flight if it was, resolved per account to `staged` if it was not. See
+  *What `--strategy` decides*.
+- `check` reports `ROLLOVER_ACTIVE`, with the time remaining, instead of calling
+  it drift.
+- `sopuli creds finish-rollover` ends the window explicitly. It issues the same
+  statement as `--strategy direct`. It is a separate command because it has to
+  *find* windows that no run handed it; see below.
+- Where the database has no rollover capability, use `--strategy staged`. The
+  tool applies and reports, and the operator restarts the application. The
+  documented risk: "brief authentication failures are possible for connections
+  established with the old password after the change".
 
-### `creds finish-rollover`, and what it refuses (#263)
+### `creds finish-rollover`, and what it refuses (decided in #263)
+
+The command below closes rollover windows:
 
 ```
-sopuli creds finish-rollover [selectors] [--dry-run] [--lockout-margin N]
+sopuli creds finish-rollover [selectors] [--dry-run] [--confirm] [--lockout-margin N]
 ```
 
-`--strategy direct` closes the window it just opened, inside the run that opened
-it. This verb finds windows nobody handed it, which makes it a different command
-with a different failure mode: **closing a window is the one step in UC-1 whose
-purpose is to stop something working**, so most of what it does is decide which
-accounts to leave alone.
+`--strategy direct` closes the window it just opened, in the run that opened it.
+This verb finds windows that no run handed it. **Closing a window is a step whose
+purpose is to stop something working**, so most of what this verb does is decide
+which accounts to leave alone. Reasons and rejected options:
+[#263](../decisions/log.md#263).
 
-**It takes no lock and writes to no store.** Nothing in any vault changes, so
-there is nothing for the advisory lock to protect — and a nightly job that took
-one would block the rotation it exists to finish. It is the second verb after
-`check` that leaves every document alone.
+**It takes no lock and writes to no store.** Nothing in any vault changes, so the
+advisory lock has nothing to protect. A nightly job that took the lock would
+block the rotation it exists to finish. Like `check`, it leaves every vault
+document alone.
 
-**Two gates, and only one of them costs a login** (decided in #263):
+**It applies these gates, and only the second costs a login:**
 
-- **a staged `pending`** — the rotation is unfinished, so the vault's `current`
-  is still the *old* password and closing the window would strand every
-  application that has not been given the new one. Reported as `PENDING_APPLY`
-  and refused **without an attempt**;
-- **a refused `current`** — the vault's password is rejected even with the window
-  open, so neither password in play is the one applications fetch. `DRIFT`, exit
-  3, window left open.
+- **a staged `pending`**: the rotation is unfinished, so the vault's `current` is
+  still the *old* password. Closing the window would cut off every application
+  that has not been given the new one. The account is reported as
+  `PENDING_APPLY` and refused **without a login**.
+- **a refused `current`**: the database rejects the vault's password even with
+  the window open, so neither password in play is the one applications fetch.
+  The account is `DRIFT`, the run exits 3, and the window stays open.
 
-**What the login proves, and what it does not**, is the reason those two are
-separate rather than one check. Under an open window both passwords authenticate,
-so a *pass* cannot tell "the database has the vault's password" from "it has the
-previous one and accepts both" — the same caveat `check` reports as
-`ROLLOVER_ACTIVE`. A *fail* is conclusive, and that is what the attempt is spent
-on. The case a pass would have got wrong is exactly the staged-`pending` one, and
-that is caught on the vault side for nothing.
+**What the login proves, and what it does not.** That is why the gates are
+separate checks. Under an open window, both passwords work. So a *pass* cannot
+tell "the database has the vault's password" from "it has the previous one and
+accepts both". `check` reports the same doubt as `ROLLOVER_ACTIVE`. A *fail* is
+conclusive, and that is what the login is for. The case where a pass would
+mislead is the staged-`pending` one, and the vault reveals that without a login.
 
-Everything else with an open window is closed. An account with **no** window open
-reports `changed: false` — invariant 9, and the ordinary result for the scheduled
-job S2 describes: measured on 26ai, issuing the statement with no window open is
-accepted silently and changes nothing, so a run that just issued it would report
-a change every night. A locked or expired account keeps its window, and so does
-one on a database with no `expire_password` capability — that is `SKIPPED` rather
-than an error, because a window nobody can close early simply elapses on its own.
+Every other account with an open window has its window closed. An account with
+**no** window open reports `changed: false` (invariant 9). That is the usual
+result for S2's scheduled job. On 26ai, the statement issued with no window open
+is accepted silently and changes nothing, so a run that issued it anyway would
+report a change every night. A locked or expired account keeps its window. So
+does an account on a database with no `expire_password` capability. That is
+`SKIPPED`, not an error, because a window nobody can close early ends on its own.
 
-**`--dry-run` reads the state and spends no login.** What a preview is for here
-is *who am I about to cut off, and how early*, and a login is a real cost against
-a failed-login counter for a run that changes nothing.
+`--confirm` answers the `safety.confirm_environments` question in advance.
+`--lockout-margin` sets §7's lockout guard for the login.
 
-### What `--strategy` actually decides (#262)
+**`--dry-run` reads the state and spends no login.** A preview here answers *who
+am I about to cut off, and how early*. A login has a real cost against the
+failed-login counter, and a preview changes nothing.
 
-**The statement is the same in all three regimes.** That is the fact the flag is
-built around, and it is why this is one code path with a precondition and a
-follow-up rather than three:
+### What `--strategy` decides
+
+**The statement is the same in all three regimes.** So this is one code path with
+a precondition and a follow-up, not three:
 
 | strategy | statement | after |
 |---|---|---|
@@ -1273,89 +1263,81 @@ follow-up rather than three:
 | `staged` | the same | the change is immediate |
 | `direct` | the same, then `ALTER USER … EXPIRE PASSWORD ROLLOVER PERIOD` | the window is closed at once, so the old password stops working |
 
-**The default is per account, and it is never `direct`.** `rollover` where the
-capability exists *and* the account's profile grants a window, `staged`
-otherwise — two accounts in one database can sit on different profiles, so this
-is resolved per account rather than per run. `direct` is never chosen for
-somebody: ending a grace window early is destructive to whoever still holds the
-old password, and a default that did it would be making that decision for an
-operator who did not know there was one.
+**The default is chosen per account, and it is never `direct`.** It is `rollover`
+where the capability exists *and* the account's profile grants a window, and
+`staged` otherwise. Two accounts in one database can have different profiles, so
+it is resolved per account, not per run. `direct` is never chosen for the
+operator. Ending a grace window early harms whoever still holds the old password,
+and a default that did it would make that decision for an operator who did not
+know there was one.
 
-**Oracle decides whether a window opens, not this tool.** It opens because the
+**Oracle decides whether a window opens, not this tool.** It opens when the
 profile's `PASSWORD_ROLLOVER_TIME` is greater than zero, whatever the run asked
-for. So `--strategy staged` against a rollover-enabled profile is **refused**:
-running anyway and reporting `staged` would tell an application team that the old
+for. So `--strategy staged` against a rollover-enabled profile is **refused**.
+Running anyway and reporting `staged` would tell an application team that the old
 password had stopped working when it had not. The refusal names the profile and
 offers `rollover` or `direct`.
 
-**An explicit strategy is refused for the whole estate, before anything
-changes.** Naming a regime is asking for a property of the estate — *no
-application will see a failed login tonight* — and a run that honoured it on four
-PDBs and discovered on the fifth that it could not would already have broken the
-promise. So an explicit `--strategy` costs one extra connection per target, spent
-on a pre-flight that clears every account or refuses. With no flag there is
-nothing to refuse and the run pays nothing.
+**An explicit strategy is checked for the whole estate, before anything
+changes.** Naming a regime asks for a property of the estate, such as *no
+application will see a failed login tonight*. A run that honoured it on four PDBs
+and found on the fifth that it could not would already have broken that promise.
+So an explicit `--strategy` costs one extra connection per target, for a
+pre-flight that clears every account or refuses. With no flag there is nothing to
+refuse, and the run pays nothing.
 
-**`direct` closes the window only after the change is verified.** Closing it on a
-change nobody confirmed leaves an account whose old password has stopped working
-and whose new one is not known to work — the one state worse than the grace
-period `direct` exists to avoid. And `direct` against a profile that grants no
-window issues no second statement at all: the change was already immediate, which
-is what was asked for.
+**`direct` closes the window only after the change is verified.** Closing it
+after an unconfirmed change could leave an account whose old password has stopped
+working and whose new one is not known to work. That is worse than the grace
+period `direct` exists to avoid. Against a profile that grants no window, `direct`
+issues no second statement, because the change was already immediate.
 
 **What the run reports.** `results[].rollover` carries `active`, `ends_at` where
-there is a window, and `profile_rollover_time` — emitted for every account this
-run acted on rather than only the ones with a window open, because the *absence*
-of one is the answer to "did the old password stop working just now".
+there is a window, and `profile_rollover_time`. It is present for every account
+the run acted on, not only those with an open window, because the *absence* of a
+window answers "did the old password stop working just now".
 
 ### 6.4 Errors worth handling by name
 
 | Error | Meaning | Tool behaviour |
 |---|---|---|
-| ORA-28003 | password verify function rejected it | `apply` redraws (bounded), preserves the server message |
-| ORA-28007 | password cannot be reused | `apply` redraws; never retry the same value |
+| ORA-28003 | password verify function rejected it | `apply` redraws (bounded), keeps the server message |
+| ORA-28007 | password cannot be reused | `apply` redraws; never retries the same value |
 | ORA-01017 | invalid credentials | verification failure → drift, not a crash |
-| ORA-28000 | account locked | report `LOCKED`; unlock only where the policy declared it (#300) |
-| ORA-28001 | password expired | distinguish from drift; resolved by apply, since setting a password clears the expiry. The tool never expires one deliberately — see §5 (#302) |
-| ORA-28002 | password in grace period | informational, surfaced in `check` and `status` as `SOPULI-W013` — **not** as a state (#309). **Not the code 26ai sends** — see the note below |
-| ORA-01031 | insufficient privileges | fail early in pre-flight, name the missing grant |
+| ORA-28000 | account locked | report `LOCKED`; unlock only where the policy declares it (§5) |
+| ORA-28001 | password expired | distinguish from drift; `apply` resolves it, because setting a password clears the expiry. The tool never expires a password on purpose (§5) |
+| ORA-28002 | password in grace period | informational, **not** a state. `check` and `status` report the grace period as `SOPULI-W013`, read from `ACCOUNT_STATUS`; `check` carries the login's own notice, whatever its code, as `SOPULI-W014`. See below |
+| ORA-01031 | insufficient privileges | fail early in pre-flight, naming the missing grant |
 | ORA-65040 / ORA-65048 | container-clause misuse, error while applying to a PDB | scope guardrail message |
-| ORA-12154 / ORA-12541 | naming/listener | connectivity, distinct exit path |
-| ORA-28040 / ORA-01017 with version mismatch | verifier / `ALLOWED_LOGON_VERSION` mismatch | explain password-version implications |
-| DPI-1047 / DPY-3001 | the *client* library, not the server: Instant Client missing, or thin mode reached because thick-mode initialisation did not happen | `config` and exit 9 — the same landing ADR-006 gives a backend that is configured and not installed, because it is fixed on this machine by the person reading the message |
+| ORA-12154 / ORA-12541 | naming/listener | connectivity, a separate category |
+| ORA-28040 / ORA-01017 with version mismatch | verifier / `ALLOWED_LOGON_VERSION` mismatch | explain the password-version implications |
+| DPI-1047 / DPY-3001 | the *client* library, not the server: Instant Client missing, or thin mode reached because thick-mode initialisation did not happen | `config` and exit 9, as ADR-006 does for a backend that is configured and not installed, because the person reading the message fixes it on this machine |
 
-**The grace-period row is the one measurement in this table that came back
-differently from the book** (2026-09-02, 26ai Free 23.26.2.0.0, `python-oracledb`
-in thick mode — full method in #309). Three things, and each changes what a fix
-may rely on:
+**The grace-period code depends on the release and the profile.** These are the
+measured results. Each was measured with `python-oracledb` in thick mode, unless
+the row says otherwise. `docs/measurements.md` has the dates:
 
-| Attempt | What actually happens |
-|---|---|
-| in grace, `PASSWORD_GRACE_TIME` limited | the login **succeeds**; `connection.warning` carries `ORA-28098` |
-| in grace, `PASSWORD_GRACE_TIME UNLIMITED` | the login **succeeds**; `connection.warning` carries `ORA-28011` |
-| hard expired | raises `ORA-28001`, as the row above says |
+| Release | In grace, `PASSWORD_GRACE_TIME` limited | In grace, `PASSWORD_GRACE_TIME UNLIMITED` |
+|---|---|---|
+| 26ai Free 23.26.2.0.0 | login **succeeds**; `connection.warning` carries `ORA-28098` | login **succeeds**; `connection.warning` carries `ORA-28011` |
+| 19.3.0.0.0 | login **succeeds**; `connection.warning` carries `ORA-28002` | not measured |
+| 21.3.0.0.0 | `ORA-28002`, seen in SQL\*Plus; not measured through the driver | not measured |
 
-- **It is not an error.** A grace login connects, so nothing is raised and the
-  notice arrives on the connection. `ORA-28002` sits in the table above as the
-  code to expect and was not produced in either shape on this release. Whatever
-  the server does attach is now carried as `SOPULI-W014` rather than discarded
-  (#322) — verbatim, with its code as data, since the code varies with the
-  profile.
-- **The code depends on the profile, not just the version** — two codes for one
-  condition, decided by whether the grace time is limited.
-- **`DBA_USERS.ACCOUNT_STATUS` says `EXPIRED(GRACE)` in both cases**, and does not
-  vary. So the dictionary is the dependable signal for the grace period and the
-  login warning is not, which is what keeps a fix off a per-release code table.
+A hard-expired password raises `ORA-28001` on every release measured.
 
-Whether older lines send `ORA-28002` is **unmeasured** — tier 2, and deliberately
-not on #309's critical path for exactly that reason. The row stays because the
-code is real; what is now known is that it is not what 26ai sends.
+- **It is not an error.** A login in its grace period connects, so nothing is
+  raised, and the notice arrives on the connection. The tool carries whatever the
+  server attaches as `SOPULI-W014`, verbatim, with its code as data, because the
+  code varies.
+- **`DBA_USERS.ACCOUNT_STATUS` says `EXPIRED(GRACE)` in every case.** So the
+  dictionary is the dependable signal for the grace period, and the login
+  warning is not. That keeps the tool off a per-release code table.
 
-#### What the grace period is reported as (#309, decided)
+#### What the grace period is reported as
 
 **A warning beside the state, never a state of its own.** An account in its grace
-period authenticates, so `check` verifies it like any other and reports what the
-login found:
+period can log in, so `check` verifies it like any other account and reports
+what the login found:
 
 ```console
 $ sopuli creds check --application acme
@@ -1370,117 +1352,101 @@ all 1 in sync
 ```
 
 The verdict still says **in sync**, because it is. `creds status` counts it
-instead — *1 account: 1 in a grace period* — since that command's closing line
-answers *is there anything to do*, and there is: rotate before the window
-closes.
+instead, as *1 account: 1 in a grace period*. That command's closing line answers
+*is there anything to do*, and there is: rotate before the window closes.
 
-The alternative — a `state` of its own — was considered and refused. `state` is
-one field, and an account in grace may equally well have **drifted**: a value
-there would have to displace `IN_SYNC` or `DRIFT`, and either choice hides the
-answer the reader came for. As a warning, *drifted, and expiring on Friday* is
-sayable. It is also a smaller contract change: `results[].warnings[]` already
-exists, so nothing in `03-json-output.md` §2's state enum moves.
+A `state` of its own was rejected. `state` is one field, and an account in grace
+may also have **drifted**. A grace value would have to replace `IN_SYNC` or
+`DRIFT`, and either way it would hide the answer the reader came for. As a
+warning, *drifted, and expiring on Friday* can be said. It is also a smaller
+contract change: `results[].warnings[]` already exists, so the state enum in
+`03-json-output.md` §2 does not change.
 
-**Read from the dictionary, not from the login.** `ACCOUNT_STATUS` says
-`EXPIRED(GRACE)` in every profile shape, so the warning is produced on runs where
-no login happened at all — which is exactly when the lockout guard declined to
-try and an operator most wants the rest of what is known.
+**It is read from the dictionary, not from the login.** `ACCOUNT_STATUS` says
+`EXPIRED(GRACE)` in every profile shape. So the warning appears even on runs
+where no login happened, which is when the lockout guard declined to try and an
+operator most wants the rest of what is known.
 
-**The remedy the warning implies is `creds apply`**, and it needs no new
-machinery: setting a password clears the expiry, so a rotation closes the window
-as a side effect of what it already does (§5).
+**The remedy the warning implies is `creds apply`.** It needs nothing new.
+Setting a password clears the expiry, so a rotation ends the grace period as a
+side effect (§5).
 
-Before this, `EXPIRED(GRACE)` was read as a hard expiry — `check` reported
-`EXPIRED` and skipped the login, which left a scheduled check blind to drift for
-the whole grace window, the one period before a forced expiry when somebody most
-wants to hear *still in sync*.
+### Which verb redraws, and why it is `apply` (decided in #268)
 
-### Which verb redraws, and why it is `apply` (#268, decided)
+Reasons and rejected options: [#268](../decisions/log.md#268).
 
-"Regenerate" without a subject is what made the two rows above ambiguous for as
-long as they stood there. The subject is **`apply`**, and `generate` is not where
-this is fixed.
+`apply` redraws when the server refuses a password. `generate` cannot prevent
+either refusal, because neither can be predicted before the `ALTER USER` runs:
 
-Neither refusal can be predicted before the `ALTER USER` is issued, so there is
-no earlier verb that could have avoided it:
-
-- `ORA-28003`'s verdict comes from arbitrary PL/SQL, and the function cannot be
-  consulted. Calling it needs the password inside a PL/SQL block (invariant 13)
-  or in a bind (invariant 14), and there is no third way to invoke one. That is
-  also why §5's flow no longer claims to pre-flight a password against the verify
-  function "where possible": there is no possible.
+- `ORA-28003`'s verdict comes from arbitrary PL/SQL, and the tool cannot call
+  the function. Calling it needs the password inside a PL/SQL block
+  (invariant 13) or in a bind (invariant 14), and there is no other way to
+  invoke it.
 - From inside a PDB, a **common** profile's `PASSWORD_VERIFY_FUNCTION` reads as
-  the literal `FROM ROOT`, so a service account without a root connection cannot
-  even *name* the function it has to satisfy (`02-oracle-privileges.md`).
-  Measured for #317: a *local* profile answers with the function's name from the
-  same session, and `DEFAULT` answers `NULL` — so §4 step 2 reports the reading
-  it got rather than assuming the container decides it.
-- `ORA-28007` is hashed per-account history. `apply` already reads
-  `PASSWORD_REUSE_MAX`/`TIME`; they state the rule, never whether this draw
-  collides with it.
+  the literal `FROM ROOT`. A service account without a root connection cannot
+  even *name* the function it must satisfy (`02-oracle-privileges.md`). A
+  *local* profile answers with the function's name, and `DEFAULT` answers
+  `NULL`, so §4 step 2 reports the reading it got.
+- `ORA-28007` depends on hashed per-account history. `apply` reads
+  `PASSWORD_REUSE_MAX` and `PASSWORD_REUSE_TIME`. They state the rule, never
+  whether this draw collides with it.
 
-§4 step 2's constraint read — connect to a representative target and draw against
-the strictest one — remains worth building and removes a different set of
-refusals: byte length and character set. Those are the *deterministic* failure,
-where one policy fix ends it for every account in the selection. It is not a
-prerequisite for the above, and it would not remove either row.
+§4 step 2's constraint read removes a different set of refusals: byte length and
+character set. Those failures are *deterministic*, and one policy fix ends them
+for every account in the selection. It does not remove either of the rows above.
 
-**Four rules govern the redraw**, and each exists because the alternative is
+**These rules govern the redraw**, and each exists because the alternative is
 worse:
 
 | | |
 |---|---|
-| **Bounded** | three draws, the value the run arrived with included. A server that has refused three independent draws is describing its own rules, and the fourth learns nothing the third did not |
+| **Bounded** | three draws, including the value the run started with. A server that has refused three independent draws is describing its own rules, and a fourth draw learns nothing new |
 | **Only what the tool drew** | gated on the `origin` beside `pending` (§3). A `supplied` password was dictated by an external system, and an absent `origin` is the same case without the evidence |
-| **Only a refused password** | an unmapped code never redraws. It might be transient and it might be a value the server will refuse forever; of the two ways to be wrong, looping is the one that locks accounts |
-| **Never quietly** | each redraw is reported as its own change, naming the version whose `pending` it replaced — §4's warning, reused |
+| **Only a refused password** | an unmapped code never redraws. It might be transient, or a value the server will always refuse; of the two ways to be wrong, looping is the one that locks accounts |
+| **Never quietly** | each redraw is reported as its own change, naming the version whose `pending` it replaced (§4's warning) |
 
-**The scope of a redraw is one account, not the document and not the estate.**
-Passwords are drawn per account even where accounts share a document (§4), so a
-refusal implicates exactly the account that met it — and the re-apply covers that
-account's own targets, including ones already visited in this pass, so that every
-target bound to it ends the run holding the same password.
+**A redraw covers one account, not the document and not the estate.** Passwords
+are drawn per account even where accounts share a document (§4). So a refusal
+concerns only the account that met it. The new password is applied to all of
+that account's targets, including those already visited in this run, so that
+every target bound to it ends the run with the same password.
 
 `apply` does not become a generator by doing this. §4 step 3 is already a bounded
-rejection-sampling loop against the policy predicate; this adds one more rejector,
-and it is the only one that cannot be consulted offline.
+loop that rejects candidates against the policy. This adds one more check, and it
+cannot be run offline.
 
 **What a run says it did.** Every draw is a `SOPULI-W029` warning naming the
-account, the version it staged, and the server's own message; every refusal to
-draw is a `SOPULI-W030` warning naming the account and which of the
-rules above stopped it. On the row itself, `results[].redraws` counts the extra
-passwords that account was given — present only when there was one, and read as
-"this row was applied more than once and reports the last attempt" rather than as
-a failure. A redrawn account that ends `IN_SYNC` succeeded. Run schema 1.18.
+account, the version it staged, and the server's own message. Every refusal to
+draw is a `SOPULI-W030` warning naming the account and the rule that stopped it.
+On the row, `results[].redraws` counts the extra passwords the account was given.
+It is present only when there was one. It means "this row was applied more than
+once and reports the last attempt", not a failure. A redrawn account that ends
+`IN_SYNC` succeeded.
 
-**Two more refusals fall out of the rules rather than being added to them.** An
-account whose policy the file does not declare cannot be drawn for, so it reports
-instead of failing the run — the estate was being applied happily, and a
-configuration error there would be a complaint about a file nothing had changed.
-And a run applying from `current` rather than `pending` never redraws, because
-`origin` describes a staged value and `current` is what applications are already
-holding: replacing that mid-apply is a different and much worse operation, and
-§3's rule that an absent `origin` blocks a redraw already says so without a case
-of its own.
+**Two more refusals follow from the rules.** An account whose policy the file
+does not declare cannot be drawn for, so it is reported and the run goes on. The
+run was applying the estate correctly, and a configuration error would complain
+about a file nothing had changed. A run that applies from `current` instead of
+`pending` never redraws, because `origin` describes a staged value, and `current`
+is what applications already hold. Replacing that during an apply would be a
+different and much worse operation. §3's rule that an absent `origin` blocks a
+redraw already covers it.
 
-Implemented in `sopuli/driver/oracle/errors.py` (#172), on three rules worth
-stating because each one is a decision the table above does not make:
+`sopuli/driver/oracle/errors.py` maps the codes, under these rules:
 
 - **The mapping classifies; it does not decide.** Nothing there raises, because
-  `ORA-01017` means two different things depending on whose credential was
-  refused: exit 6 for the admin connection, `DRIFT` and exit 3 for a
-  verification login. It returns a value and the caller — which knows what it
-  was doing — decides whether that value is an exception, a state, or a reason
-  to draw another password.
-- **An unmapped code is terminal, and never regenerates.** It might be transient
-  and it might be a value the server will refuse forever; of the two ways to be
-  wrong, looping is the one that locks accounts. A code in Oracle's Net/TNS
-  range still lands as `connectivity` rather than as `database`, so an unnamed
-  member of a family is unknown without being misplaced.
+  `ORA-01017` means different things depending on whose credential was refused:
+  exit 6 for the admin connection, `DRIFT` and exit 3 for a verification login.
+  It returns a value, and the caller, which knows what it was doing, decides
+  whether that value is an exception, a state, or a reason to draw another
+  password.
+- **An unmapped code is final, and never causes a redraw.** A code in Oracle's
+  Net/TNS range still lands as `connectivity`, not as `database`, so an unnamed
+  member of a family is unknown but not misplaced.
 - **Exit codes are P5's and are not invented here.** Connectivity and
-  authorization have no number of their own and exit 1 carrying their own
-  *category*. "Distinct exit path" means a distinct thing the operator reads;
-  adding a number to P5's table is a change to a contract schedulers branch on.
+  authorization errors have no exit code of their own. They exit 1 and carry
+  their own *category*. Adding a number to P5's table would change a contract
+  that schedulers rely on.
 
 ---
 
@@ -1490,173 +1456,180 @@ Answer one question per (account, target): does the vault's `current` password
 work against this database?
 
 ```
-sopuli creds check --application orders-app
-                   [--method {login,hash,both}]
-                   [--include-previous]     # is the old password still accepted?
+sopuli creds check [--application acme]          # and the other selectors (§2)
+                   [--method {login,hash,both}]  # default: login
+                   [--include-previous]          # is the old password still accepted?
+                   [--lockout-margin N]          # default 2
                    [--output json]
 ```
 
-**As shipped (#248, #437):** the selectors, `--include-previous`,
-`--lockout-margin`, `--method` and `--output`. `--method` defaults to `login`
-unconditionally (Q1, #86). `hash` and `both` arrived with #437, once #90 had
-reproduced the verifier, and an explicit one the estate cannot honour is refused
-at plan time (below). `--application`, `--account`, `--target`, `--group` and
-`--select` are the selectors this command shares with every other verb.
+`--method` defaults to `login` (Q1, decided in #86). An explicit `hash` or
+`both` that the estate cannot honour is refused at plan time (below).
 
 ### The lockout problem
 
-A naive check logs in with the vault password. If it is wrong, the failed attempt
-counts against `FAILED_LOGIN_ATTEMPTS` and repeated scheduled checks will
-eventually **lock the production application account**. That is worse than the
-drift it was detecting. Mitigations, all of which must be in place:
+A simple check logs in with the vault password. If the password is wrong, the
+failed attempt counts against `FAILED_LOGIN_ATTEMPTS`, and repeated scheduled
+checks will eventually **lock the production application account**. That is
+worse than the drift the check was looking for. All of these mitigations apply:
 
-1. **Never retry.** One attempt per account per run, no back-off retries on
+1. **Never retry.** One attempt per account per run, with no retries on
    ORA-01017.
 2. **Read `LCOUNT` first, where the grant exists.** `SELECT ON SYS.USER$` is
-   optional, not part of the default install (`02-oracle-privileges.md` §2,
-   §8 P2 — decided in #86), and probed as a capability rather than assumed.
-   Where present, refuse to attempt a login when the account is already within
-   `--lockout-margin` (default 2) of the profile's `FAILED_LOGIN_ATTEMPTS`, and
-   report `UNVERIFIABLE` with the reason. Where absent, `check` still runs on
-   the remaining runtime mitigations (1/3/6 below), and must say so plainly
-   rather than silently skip the guard.
-3. **Reset on success.** A successful login resets the counter, which is why the
-   happy path is self-cleaning.
-4. **Offer hash mode** (below) as the safe alternative for high-frequency
-   checks: `--method hash`, built in #437 on #90's derivation.
-5. Document the interaction with `PASSWORD_LOCK_TIME` and with profiles that set
-   `FAILED_LOGIN_ATTEMPTS UNLIMITED`. (A documentation item, not a runtime
-   check — excluded from the "1/3/6" runtime set above and below.)
-6. **Report `ACCOUNT_STATUS` unconditionally**, from `DBA_USERS` (already in
-   the baseline grant set, no extra privilege needed). A login attempt alone
-   conflates an expired password, an already-locked account and a genuinely
-   wrong password behind the same `ORA-01017` — `check` reads status
-   separately and surfaces `LOCKED` / `LOCKED (TIMED)` / `EXPIRED` as their own
-   states rather than folding them into `DRIFT`.
+   optional and not part of the default install (`02-oracle-privileges.md` §2
+   and §8 P2; decided in #86). The tool probes it as a capability. Where it is
+   present, the tool does not attempt a login when the account is already within
+   `--lockout-margin` (default 2) of the profile's `FAILED_LOGIN_ATTEMPTS`. It
+   reports `UNVERIFIABLE` with the reason. Where it is absent, `check` still runs
+   on the other runtime mitigations (1, 3 and 6), and says plainly that the guard
+   is not running.
+3. **A successful login resets the counter.** So the normal path cleans up after
+   itself.
+4. **Offer hash mode** (below) as the safe alternative for frequent checks:
+   `--method hash`.
+5. Document how this interacts with `PASSWORD_LOCK_TIME` and with profiles that
+   set `FAILED_LOGIN_ATTEMPTS UNLIMITED`. This is documentation, not a runtime
+   check.
+6. **Report `ACCOUNT_STATUS` always**, from `DBA_USERS`, which is in the baseline
+   grant set. A login attempt alone gives the same `ORA-01017` for an expired
+   password, a locked account and a wrong password. `check` reads the status
+   separately, and reports `LOCKED`, `LOCKED (TIMED)` and `EXPIRED` as their own
+   states instead of folding them into `DRIFT`.
 
-### `--method hash` — verification without a login attempt
+### `--method hash`: verification without a login attempt
 
-**Built (#437); not part of the default path.** `check` defaults to `login`
-unconditionally (Q1 — decided in #86); hash mode is an opt-in extra, not a
-fallback the default depends on.
+Hash mode is an opt-in extra. The default, `login`, does not depend on it.
 
-**`--method both` compares first** (decided in #437, 2026-10-02). A mismatch is
-reported as drift from the comparison alone and no login is attempted, because
-spending lockout budget on a value already shown to be wrong buys nothing. Only
-a value that matches goes on to the ordinary guarded login, and the row says
-which half answered.
-
-**On Autonomous Database the refusal says so in its own words** (decided in
-#437). No account there can read `SYS.USER$`, `ADMIN` included (#478), so the
-no-grant message's advice to grant it would be advice nobody can follow. The
-capability probe cannot tell the two apart, since both answer `ORA-00942`, so
-the refusal reads `SYS_CONTEXT('USERENV','CLOUD_SERVICE')`: `OLTP` on ADB
-serverless 23.26.3.3.0, NULL on 26ai Free, 21c and 18c, and `ORA-02003` on 11.2.
-
-Oracle stores a salted PBKDF2-SHA512 verifier (the `12C` verifier in
-`SYS.USER$.SPARE4`). Given read access to that column, the tool derives the
-verifier from the vault password and compares — **no authentication attempt, no
-failed-login counter, no lockout risk** — and it works on locked and expired
+Oracle stores a salted PBKDF2-SHA512 verifier, the `12C` verifier in
+`SYS.USER$.SPARE4`. With read access to that column, the tool derives the
+verifier from the vault password and compares them. There is **no login attempt,
+no failed-login counter and no lockout risk**, and it works on locked and expired
 accounts too. Those are still reported as `LOCKED` or `EXPIRED`, because the
-status is the more urgent fact, with what the comparison found beside it, so an
-operator can tell whether unlocking would be enough. The `T:` verifier can be reproduced client-side — measured
-in #432 on 26ai, 21c and 18c (`02-oracle-privileges.md` §2), which is what makes
-this method possible at all; a rollover window's two verifiers (`T:` previous,
-`t:` current) are told apart the same way, so this reports `ROLLOVER_ACTIVE`
-rather than drift. An account with no `12C` verifier (11g, or any account whose
-`PASSWORD_VERSIONS` lacks it) has nothing to compare, so an explicit
-`--method hash` or `--method both` fails at plan time naming the capability and
-the target (invariant 4) rather than falling back to a weaker verifier or
-silently to `login` (#433). The pre-flight asks about every value the run will
-compare, including the previous one under `--include-previous`, because the
-character-set refusal is about the value. Confirmed on 19.3.0.0.0 (#548), 12.2.0.1.0 (#572)
-and 19.32.0.0.0 (#581), a release update and so the release an OCI estate runs,
-which settles it for 19c (register entry `t-verifier`). 12.1 is unread; if the
-derivation went wrong there, the method would be dropped from the CLI.
+status is the more urgent fact, with what the comparison found beside it. So an
+operator can tell whether unlocking would be enough.
 
-Trade-offs, stated because it shipped:
+The client can reproduce the `T:` verifier, which is what makes this method
+possible (`docs/README.md`, register entry `t-verifier`). A rollover window's two
+verifiers, `T:` for the previous password and `t:` for the current one, are told
+apart the same way, so hash mode reports `ROLLOVER_ACTIVE` instead of drift. It
+has been confirmed on the releases in `docs/measurements.md`, including
+19.32.0.0.0, a release update and so the release an OCI estate runs. 12.1 is
+unmeasured. If the derivation turned out wrong there, the method would be removed
+from the CLI.
 
-- requires the same optional `SELECT ON SYS.USER$` grant as the `LCOUNT` guard
-  (`02-oracle-privileges.md` §2), which some sites will not grant. Where no
-  `--method` is given the default is `login` and nothing is lost; an *explicit*
-  `--method hash` or `--method both` against a target lacking the grant (or the
-  `12C` verifier) fails at plan time rather than silently becoming `login` — the
-  same shape as an explicit `--strategy` in #262. #124 is investigating whether a
-  narrower grant can expose just enough to avoid this trade-off
-  (unverified: lcount-grant)
-- confirms the *stored verifier*, not that a login would succeed — an expired
-  password, a locked account, or a failed listener still means the application
-  cannot connect. Hence `--method both` for the strongest answer. Lock/expiry
-  status is already surfaced independently regardless of method — see
-  mitigation 6 above.
-- must handle multiple verifiers (10G/11G/12C) and pick the right one
+An account with no `12C` verifier (11g, or any account whose `PASSWORD_VERSIONS`
+lacks it) has nothing to compare. So an explicit `--method hash` or
+`--method both` fails at plan time, naming the capability and the target
+(invariant 4). It does not fall back to a weaker verifier, or silently to
+`login`. The pre-flight checks every value the run will compare, including the
+previous one under `--include-previous`, because the character-set refusal
+depends on the value.
+
+**`--method both` compares first** (decided in #437). A mismatch is reported as
+drift from the comparison alone, and no login is attempted, because spending
+lockout budget on a value already shown to be wrong gains nothing. Only a value
+that matches goes on to the ordinary guarded login. The row says which half
+answered.
+
+**On Autonomous Database, the refusal says so in its own words** (decided in
+#437). No account there can read `SYS.USER$`, `ADMIN` included. So the usual
+advice to grant it would be advice nobody can follow. The capability probe gets
+`ORA-00942` in both cases and cannot tell them apart. So the refusal reads
+`SYS_CONTEXT('USERENV','CLOUD_SERVICE')`. It is `OLTP` on ADB serverless
+23.26.3.3.0, NULL on 26ai Free 23.26.2.0.0, 21.3.0.0.0 and 18.4.0.0.0, and
+`ORA-02003` on 11.2.0.2.0.
+
+Trade-offs:
+
+- It needs the same optional `SELECT ON SYS.USER$` grant as the `LCOUNT` guard
+  (`02-oracle-privileges.md` §2), which some sites will not grant. With no
+  `--method`, the default is `login`, and nothing is lost. An *explicit*
+  `--method hash` or `--method both` against a target without the grant or the
+  `12C` verifier fails at plan time, instead of silently becoming `login`. A
+  narrower grant might expose just enough (unverified: lcount-grant).
+- It confirms the *stored verifier*, not that a login would succeed. An expired
+  password, a locked account or a failed listener still means the application
+  cannot connect. `--method both` gives the strongest answer. Lock and expiry
+  status are reported whatever the method (mitigation 6).
+- It must handle several verifiers (10G, 11G, 12C) and pick the right one.
 
 ### Output
 
+The sample below is from tier 1. `acme_app_user`'s password was changed by hand
+after `apply`, and `acme_batch_user`'s profile opened a rollover window:
+
 ```
-$ sopuli creds check --application orders-app
+$ sopuli --config sopuli.yaml creds check
+Plan: 2 accounts x 1 target = 2 checks   [dev]
 
-Plan: 2 accounts × 2 targets = 4 checks   [group prod-pdbs]
+ACCOUNT          TARGET    INTENT  SECRET
+acme_app_user    free-pdb  verify  vault-dev:acme/dev/acme
+acme_batch_user  free-pdb  verify  vault-dev:acme/dev/acme
 
-ACCOUNT       TARGET             STATE             DETAIL
-ORDERS_APP    cdb1-pdb-orders    IN_SYNC           vault v7, verified by login (12ms)
-ORDERS_APP    cdb1-pdb-billing   DRIFT             vault v7 rejected (ORA-01017)
-ORDERS_BATCH  cdb1-pdb-orders    ROLLOVER_ACTIVE   window ends 2026-08-05 09:12Z
-ORDERS_BATCH  cdb1-pdb-billing   UNVERIFIABLE      lcount 8 of 10, within lockout margin
+shared secrets (1 document):
+SECRET                   TARGETS   ACCOUNTS
+vault-dev:acme/dev/acme  free-pdb  acme_app_user, acme_batch_user
 
-1 drift, 1 unverifiable
-exit 3
+ACCOUNT          TARGET    STATE            DETAIL
+acme_app_user    free-pdb  DRIFT            vault v2 the database rejected this password (ORA-01017): ORA-01017: invalid credential or not authorized; logon denied
+acme_batch_user  free-pdb  ROLLOVER_ACTIVE  vault v2 accepted, but a rollover window is open: the previous password still works too
+
+1 drift
 ```
 
-Exit 3 for drift is what makes this schedulable: a monitoring system can alert on
-"3" specifically, distinct from "the tool failed".
+It exits 3. Exit 3 for drift is what makes `check` useful on a schedule: a
+monitoring system can alert on 3, separately from "the tool failed".
 
 **An unreachable target is exit 1, never exit 3.** A broken check must not page
-whoever watches for drift, so `ERROR` outranks `DRIFT` when the run's own code is
-decided: a run that reached nine targets and could not reach the tenth found
-drift on nine targets' worth of estate, and reporting 3 would claim the survey
-was complete. `LOCKED`, `EXPIRED`, `ACCOUNT_MISSING` and `UNVERIFIABLE` are exit
-**0** — none of them established that a credential is wrong, and each is counted
-in the "unverifiable" half of the closing line.
+whoever watches for drift. So `ERROR` outranks `DRIFT` when the run's exit code
+is decided. A run that reached nine targets and could not reach the tenth found
+drift on only nine targets, and exit 3 would claim the survey was complete.
+`LOCKED`, `EXPIRED`, `ACCOUNT_MISSING` and `UNVERIFIABLE` exit **0**. None of
+them shows that a credential is wrong, and each is counted in the "unverifiable"
+part of the closing line.
 
 **A locked or expired account is never probed.** Mitigation 6 reads the status to
-*report* those cases, and attempting a login anyway would spend a failed login
-discovering something the status already said — the harm this section exists to
-prevent, reached by a different route. `sopuli/cli.py:_settled_by_status` is the
-refusal; `sopuli/check.py:decide` is the reporting.
+*report* those cases. A login attempt would spend a failed login to find out what
+the status already said, which is the harm this section exists to prevent.
+`sopuli/cli.py:_settled_by_status` is the refusal; `sopuli/check.py:decide` is
+the reporting.
 
 ---
 
 ## 8. `sopuli creds rotate`
 
-`generate` + `apply` + `check`, with the failure semantics tied together.
-
-**`--max-age-days` reads the vault, never the database** (Q9, decided in #87).
-`rotated_at` lives on the secret path, one value regardless of how many targets
-share it, so there is nothing to aggregate the way N database timestamps would
-need — no "oldest, newest, or any" rule to write for an account that spans a
-CDB's PDBs. A target the tool has not reached since the last rotation is
-therefore selected by age exactly like one it has, which is the trade §9 makes
-visible rather than hides: `status`'s `DB_PW_CHANGED` column is where that gap
-shows up, not in what `rotate` selects.
-
-**A rotation narrower than its promotion is refused before anything is
-staged** (#406). §5's promotion gate, asked of `rotate` up front: a selector that
-leaves out another target of a credential being rotated, or a sibling in the same
-document with a `pending` of its own, exits 8 naming the pairs. `apply` narrowed
-the same way changes what it was pointed at and withholds the promotion, because
-that is how a rollout is staged; a rotation has no such reading — it would draw a
-password, put it on part of the estate and stop at case 7 by construction, on
-every run. To rotate part of an estate at a time, `creds generate` then
-`creds apply` per target, and a final `apply` to promote.
+`generate`, `apply` and `check`, with their failure handling tied together.
 
 ```
-sopuli creds rotate --application orders-app
+sopuli creds rotate [--application acme]          # and the other selectors (§2)
                     [--strategy rollover|staged|direct]
                     [--max-age-days N]    # only rotate what is older than N
                     [--finish-rollover]   # end the window at the end of the run
+                    [--confirm]           # proceed without asking
+                    [--lockout-margin N]  # default 2; see §7
+                    [--force]             # waive account guardrails 2 to 5
                     [--dry-run]
 ```
+
+`--force` and `--lockout-margin` mean what they mean on `apply` (§5).
+
+**`--max-age-days` reads the vault, never the database** (Q9, decided in #87).
+`rotated_at` lives on the secret path, one value however many targets share it.
+So there is nothing to combine, as N database timestamps would need, and no
+"oldest, newest, or any" rule for an account that spans a CDB's PDBs. A target
+the tool has not reached since the last rotation is selected by age exactly like
+one it has reached. `status` shows that gap in its `DB_PW_CHANGED` column (§9);
+it does not affect what `rotate` selects.
+
+**A rotation narrower than its promotion is refused before anything is
+staged** (decided in #406). This is §5's promotion gate, asked of `rotate` at the
+start. A selector that leaves out another target of a credential being rotated,
+or a sibling in the same document with its own `pending`, exits 8 and names the
+pairs. `apply` narrowed the same way changes what it was pointed at and withholds
+the promotion, because that is how a rollout is staged. A rotation narrowed that
+way would draw a password, put it on part of the estate, and stop at case 7 on
+every run. To rotate part of an estate at a time, run `creds generate`, then
+`creds apply` per target, then a final `apply` to promote.
 
 **Sequence**
 
@@ -1677,117 +1650,109 @@ sopuli creds rotate --application orders-app
  9. release every lock, emit audit record
 ```
 
-Step 3 exists so that the common failures (wrong privileges, closed PDB,
-unreachable host) happen *before* anything is written anywhere. It is
-implemented and available on `creds apply` as `--preflight` (#283) — see §5,
-which also records why it is opt-in there and unconditional here.
+Step 3 makes the common failures (wrong privileges, closed PDB, unreachable host)
+happen *before* anything is written anywhere. `creds apply` offers the same
+survey as `--preflight` (§5).
 
 **Step 2 and the fence** (Q2, decided in #83). Locks live in the vault, one per
-**secret path** — not per account and not per target, because every target in a
-run receives the same value and two accounts may share one document. A run that
-touches several paths takes them all before the first mutation, in sorted order,
-and never blocks waiting: partial acquisition releases what it took and exits 7
-having applied nothing, which makes deadlock structurally impossible rather than
-unlikely.
+**secret path**, not per account and not per target. Every target in a run
+receives the same value, and two accounts may share one document. A run that
+touches several paths takes them all before the first change, in sorted order,
+and never waits. If it cannot take them all, it releases what it took and exits 7
+having applied nothing. So a deadlock cannot happen.
 
-The fence is the vault version the acquiring write returned, and it is re-read
-before every mutating call — each vault write and each `ALTER USER`. That is what
-makes step 5 safe to resume after a stall: if this run's lock expired and another
-took it over, the check fails and the run aborts before touching its remaining
-targets, rather than applying a password the vault no longer advertises. Release
-in step 9 happens in a `finally`, on every path including failure, and writes a
-`released` record rather than deleting one.
+The fence is the vault version that the acquiring write returned. The run reads
+it again before every change: each vault write and each `ALTER USER`. That makes
+step 5 safe to resume after a stall. If this run's lock expired and another run
+took it over, the check fails and the run aborts before it touches its remaining
+targets, instead of applying a password the vault no longer advertises. Step 9
+releases the lock in a `finally`, on every path including failure, and writes a
+`released` record instead of deleting one.
 
-### What the fence does in this build (#282)
+### How the fence is checked
 
-`creds apply` and `creds generate` re-read it, which is what makes the property
-above true of the tool rather than only of `sopuli/lock/`. Five things about it
-are decisions rather than transcription:
+`creds apply`, `creds generate` and `creds rotate` read the fence again before
+each change. These rules apply:
 
-**It is checked per document, not per run.** Before an `ALTER USER`, what has to
-still be this run's is *that account's* document lock — the one the change is
-about to be made under. Checking every lock the run holds would be a store read
-per held lock before every statement: on an estate of twenty documents, four
-hundred reads to establish twenty facts, nineteen of which nothing was about to
-act on. `LockManager.check()` with no arguments still checks everything, which is
-what a renewal needs, since a renewal writes to all of them.
+**It is checked per document, not per run.** Before an `ALTER USER`, the lock
+that must still belong to this run is *that account's* document lock, the one
+the change is made under. Checking every lock the run holds would mean a store
+read per lock before every statement. On an estate of twenty documents, that is
+four hundred reads to establish twenty facts, nineteen of which nothing was
+about to act on. `LockManager.check()` with no arguments still checks every lock,
+which a renewal needs, because a renewal writes to all of them.
 
 **The renewal is the boundary check.** The lease is extended between one target
-and the next, and because a renewal is itself a write it goes behind the fence
-like every other — so the boundary catches a takeover *before* the next target's
-first statement rather than after it.
+and the next. A renewal is itself a write, so it goes behind the fence like every
+other write. So the boundary catches a takeover *before* the next target's first
+statement, not after it.
 
-**A lock error is never a per-target finding.** Everything else that goes wrong
-with one account becomes a row in the table and the run carries on, which is
-exactly the wrong answer here: it would turn "somebody else owns this estate now"
-into a footnote and apply to the next account anyway. `LockError` is re-raised
-ahead of the per-account catch-all, and the run ends.
+**A lock error is never a finding for one target.** Anything else that goes wrong
+with one account becomes a row in the table, and the run carries on. Here that
+would be wrong: it would turn "somebody else owns this estate now" into a
+footnote and apply to the next account anyway. `LockError` is raised past the
+per-account handler, and the run ends.
 
 **Nothing is promoted after a takeover**, including documents whose own locks are
-still held. Not because the write would fail — the fence would catch it — but
-because a promotion asserts that every target holds this password, and a run
-stopped part way through has no standing to assert it.
+still held. The fence would catch the write, but that is not the reason. A
+promotion asserts that every target holds this password, and a run stopped part
+way through cannot assert that.
 
-**The exit code splits on what had been applied**, which is the split
-`sopuli/lock/errors.py` describes and deliberately leaves to the command: **7**
-where the run was fenced out before it changed anything, and **4** where it had
-already changed something. Reporting 7 after nine targets is the one answer that
-would tell a scheduler nothing happened at exactly the moment something did.
+**The exit code depends on what had been applied.** `sopuli/lock/errors.py`
+leaves this split to the command. The run exits **7** where it was fenced out
+before it changed anything, and **4** where it had already changed something.
+Exit 7 after nine targets would tell a scheduler that nothing happened, when
+something did.
 
-Exit 4 is then ambiguous by itself — a run whose targets failed exits 4 too, and
-that one *is* repaired by running `apply` again — so a fenced-out run carries the
-diagnostic `SOPULI-W011` and its text says what stopped it **instead of** the
-repair line #264 added. Advising a re-run while somebody else holds this estate's
-lock is the one piece of advice to withhold.
+Exit 4 alone is ambiguous: a run whose targets failed also exits 4, and that one
+*is* repaired by running `apply` again. So a fenced-out run carries the
+diagnostic `SOPULI-W011`, and its text says what stopped it **instead of** the
+`repair with:` line (§5). The tool must not advise a re-run while somebody else
+holds this estate's lock.
 
-`check` and `status` take no lock at all, and neither does any `--dry-run`.
-An hourly scheduled check that blocked rotations would be a worse problem than
-the one the lock solves.
+`check` and `status` take no lock, and neither does any `--dry-run`. An hourly
+scheduled check that blocked rotations would be a worse problem than the one the
+lock solves.
 
-**The record.** One per secret path, written under a `locks/` prefix on the same
-mount as the secret — `secret/data/locks/<path>` on KV v2 — so the secret's own
-version history stays clean for `previous` and rollback.
+**The record.** There is one record per secret path, written under a `locks/`
+prefix on the same mount as the secret: `secret/data/locks/<path>` on KV v2. So
+the secret's own version history stays clean for `previous` and rollback.
 
-Pre-flight asserts `cas_required` on the lock path rather than assuming it: that
-setting is what stops a *different* writer — an operator with a vault CLI — from
-replacing the record without a compare-and-set, and the tool cannot claim a
+The pre-flight checks `cas_required` on the lock path instead of assuming it.
+That setting stops a *different* writer, such as an operator with a vault CLI,
+from replacing the record without a compare-and-set. The tool cannot claim a
 guarantee it has not checked.
 
-**On a path with no metadata at all — the ordinary state before the first lock —
-pre-flight sets it** (#390). It used to read the absence as "new path, nothing to
-check" and go ahead, which created the path with `cas_required` unset and left
-every later run refused by the assertion above until somebody set it by hand.
-Reading a guarantee the tool could have arranged was the bug, and arranging it is
-safe to do first: configuring a path does not create a version, so the `cas: 0`
-write a first acquisition makes still succeeds (measured on Vault 2.0.4).
+**On a path with no metadata at all, the pre-flight sets it.** That is the normal
+state before the first lock. Setting it first is safe: configuring a path creates
+no version, so the `cas: 0` write that a first acquisition makes still succeeds
+(measured on Vault 2.0.4). Two runs of this tool racing for a new lock always had
+exactly one winner, because a `cas: 0` write succeeds only on a path with no
+history. The setting makes the **store** enforce the same rule on every other
+writer.
 
-What the fix does *not* close is a gap between runs of this tool. A first
-acquisition has always written with `cas: 0`, which succeeds only against a path
-with no history, so two runs racing for a new lock have always had exactly one
-winner. What was missing is the **store** enforcing on everybody else what the
-tool already did voluntarily.
+Where the store refuses the setting, the run goes ahead and reports
+`SOPULI-W019`. Vault grants metadata writes as a capability separate from data
+writes, so an ordinary policy refuses this one call. Stopping would break an
+install over a guarantee it never had. The run says that the path is unguarded,
+and names the remedy. The next run then meets the exit-5 refusal below. That is
+correct, because by then somebody has been told.
 
-Where the store will not have it — Vault grants metadata writes as a capability
-separate from data writes, so an ordinary policy refuses this one call — the run
-goes ahead and reports `SOPULI-W019`. Stopping would break an install over a
-guarantee it never had; the honest answer is that the path is unguarded, said out
-loud, with the remedy named. The next run then meets the exit-5 refusal below,
-which is correct: by then somebody has been told.
+**Both pre-flight refusals are exit 5, not exit 7.** Neither is a held lock. One
+is a store with no compare-and-set that nobody marked `locking: advisory-only`.
+The other is a path that does not require compare-and-set. Both are decided
+before any lock record is read or written. Exit 7 means "another process holds
+the lock", a condition that clears. These do not clear, so an unattended runner
+would retry forever. `sopuli lock break` answers 5 for the same fact, through
+`check_fenceable`. The second refusal is 5, not 9, because *this tool's*
+configuration is fine. The remedy is a vault command.
 
-**Both pre-flight refusals are exit 5, not exit 7** (#346). Neither is a held
-lock — one is a store with no compare-and-set that nobody marked
-`locking: advisory-only`, the other is a path that does not require one — and
-both are decided before any lock record is read or written. Exit 7 said "another
-process holds the lock", which is a condition that clears; these do not, so an
-unattended runner retried one for ever. `sopuli lock break` has always answered
-5 for the identical fact, through `check_fenceable`. The second refusal is 5
-rather than 9 because it is not *this tool's* configuration that is invalid —
-the file is fine, and the remedy is a vault command.
+`max_versions: 10` is recommended and **not** enforced. Pruning old versions does
+not reset the version counter, so fencing works with any value. Refusing a
+working vault over a housekeeping preference would cost something and protect
+nothing.
 
-`max_versions: 10` is recommended and deliberately **not** enforced. Pruning old
-versions does not reset the version counter, so fencing survives any value of it,
-and refusing a working vault over a housekeeping preference would be a guardrail
-that only costs.
+The lock record looks like this:
 
 ```json
 { "state": "held",
@@ -1798,37 +1763,34 @@ that only costs.
   "selection": "env=prod" }
 ```
 
-Nothing in it is a value: an account, a selection and a process, which is what
-makes it safe to print at exit 7. Default TTL is 15 minutes, renewed at each
-target boundary, and a lock counts as expired only past `expires_at` plus a
-60-second clock-skew margin. `acquired_at` does not move on renewal — it answers
-"how long has this been going on", which is the question somebody reading exit 7
-is actually asking.
+Nothing in it is a secret value: an account, a selection and a process. So it is
+safe to print at exit 7. The default TTL is 15 minutes, renewed at each target
+boundary. A lock counts as expired only after `expires_at` plus a 60-second
+clock-skew margin. `acquired_at` does not move on renewal. It answers "how long
+has this been going on", which is what somebody reading exit 7 wants to know.
 
-Three rules about reading and writing it, each of which is the safe side of a
-choice that could have gone the other way:
+These rules apply to reading and writing it. Each takes the safe side of a choice
+that could have gone the other way:
 
-- **Release writes, never deletes.** A KV v2 delete leaves the metadata behind,
-  after which a first acquisition can never compare-and-set against version 0
-  again — and that monotonic version *is* the fence.
-- **Anything not `released` is held**, including a state this version has never
-  heard of. Guessing that an unrecognised record is free is the one guess that
-  ends with two runs rotating one credential.
+- **Release writes; it never deletes.** A KV v2 delete leaves the metadata
+  behind. After that, a first acquisition can never compare-and-set against
+  version 0 again, and that increasing version *is* the fence.
+- **Anything not `released` is held**, including a state this version does not
+  know. Guessing that an unknown record is free could end with two runs rotating
+  one credential.
 - **A field this version does not know is kept**, because renewal rewrites the
-  whole payload. Otherwise a record written by a newer sopuli comes back
-  narrower than it went in.
+  whole payload. Otherwise a record written by a newer sopuli would lose fields.
 
-Implemented in `sopuli/lock/` (#95), which holds the keying, the record and the
-acquire/take-over/refuse decision as pure logic; the store, the fence and the
-`finally` are #96.
+`sopuli/lock/` holds the keying, the record and the acquire, take-over or refuse
+decision as pure logic.
 
-**Reading one without holding it** is `sopuli lock status` (#105): the declared
-set of secret paths, surveyed for records, with the holder reported the way exit
-7 reports it. It takes no lock — it is a `status` verb, and the rule above
-applies to it — so an hourly survey never blocks a rotation.
+**To read a lock without holding it**, use `sopuli lock status`. It surveys the
+declared set of secret paths for records, and reports each holder the way exit 7
+does. It takes no lock, because it is a `status` verb and the rule above applies
+to it. So an hourly survey never blocks a rotation.
 
-**Taking one back** is `sopuli lock break <vault>:<path>` (#149), deliberately a
-different command from the one that reads:
+**To take a lock back**, use `sopuli lock break <vault>:<path>`. It is a
+different command from the one that reads, on purpose:
 
 ```
 $ sopuli lock break vault-prod:apps/acme/appdb-beta --confirm
@@ -1839,309 +1801,302 @@ vault-prod:apps/acme/appdb-beta  expired  svc_sopuli@ci-runner-3  creds rotate  
 broke this lock at version 41; svc_sopuli@ci-runner-3 pid 8821 running creds rotate is fenced at version 42 and stops at its next check
 ```
 
-The argument is spelled the way exit 7 and `lock status` print it, so the
-invocation in a refusal is a paste. It writes a `released` record over the held
-one with `cas` set to the version it read — never a delete, for the reason above
-— and the resulting version bump is the fence: the run it was taken from stops at
-its next check rather than applying a password the vault no longer advertises.
-That is what makes the verb survivable, so a store that cannot fence is refused
-(exit 5) rather than given a version of it that guarantees nothing — and so is one
-declared `locking: advisory-only`, whatever the mount turns out to support, which
-is the combination `locking.break_expired` is already refused against.
+The argument is spelled the way exit 7 and `lock status` print it, so the command
+in a refusal can be pasted. It writes a `released` record over the held one, with
+`cas` set to the version it read. It never deletes, for the reason above. The
+version bump is the fence: the run it was taken from stops at its next check,
+instead of applying a password the vault no longer advertises. That is what
+makes breaking a lock safe. So a store that cannot fence is refused with exit 5.
+So is a store declared `locking: advisory-only`, whatever the mount supports;
+`locking.break_expired` is refused in the same combination.
 
-It takes confirmation. A lock that has **not** expired takes `--force` as well,
-and refusing one is exit 7 naming the holder — the answer to a colleague
-mid-rotation is usually to talk to them. `--dry-run` prints the plan and writes
-nothing; `safety.readonly` refuses the verb outright, on exit 8. A path with no
-record, or one already released, is exit 0 having changed nothing, which is what
-makes running it twice safe.
+It needs confirmation. A lock that has **not** expired also needs `--force`.
+Refusing one is exit 7, naming the holder: when a colleague is mid-rotation, the
+usual answer is to talk to them. `--dry-run` prints the plan and writes nothing.
+`safety.readonly` refuses the verb outright, with exit 8. A path with no record,
+or one already released, exits 0 having changed nothing, so running it twice is
+safe.
 
-It will clear a record at a path this config no longer declares — the leftover
-`lock status` surfaces (#150) is exactly the one nobody else can clear — and that
-is not a breach of invariant 5: the write lands under the store's `locks/` prefix,
-in a store `vaults:` declares, and never touches the secret the lock guards.
+It will clear a record at a path the config no longer declares. `lock status`
+reports such leftovers, and nothing else can clear them. That does not break
+invariant 5: the write lands under the store's `locks/` prefix, in a store that
+`vaults:` declares, and never touches the secret the lock guards.
 
 **Failure at each step**
 
 | Fails at | State afterwards | Recovery |
 |---|---|---|
-| 1–3 | nothing changed | fix and re-run |
-| 4 | nothing changed in the database; `pending` may exist | re-run `rotate`, or `generate` then `apply` |
-| 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair`; with rollover strategy there is no outage meanwhile |
-| 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` distinguishes "wrong password" from "account locked/expired" |
-| 7 | database has new, vault `current` still old | **highest-severity case**: `pending` still holds the right value, so `sopuli creds apply` completes it — it re-verifies every target and promotes; `rotate` does not retry the promote: a compare-and-set conflict means a writer outside the tool, and re-reading to merge over it would rewrite fields of accounts nobody selected |
-| 8 | promoted, and the read-back disagreed | the databases are converged and the vault is not serving what it accepted. Exit 4 carrying `SOPULI-W012`, which names the accounts; nothing needs undoing, and the place to look is the vault (a replica behind its primary) rather than any database |
-| any fence check, at 4–7 | this run's lock was taken over by another; whatever it had already applied stands | abort immediately, mutate nothing further, exit **7** if nothing had been applied and **4** if something had, carrying `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it |
+| 1–3 | nothing changed | fix and run again |
+| 4 | nothing changed in the database; `pending` may exist | run `rotate` again, or `generate` then `apply` |
+| 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair`; with the rollover strategy there is no outage meanwhile |
+| 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` tells "wrong password" from "account locked/expired" |
+| 7 | database has new, vault `current` still old | **the most severe case**: `pending` still holds the right value, so `sopuli creds apply` completes it. It verifies every target again and promotes. `rotate` does not retry the promotion: a compare-and-set conflict means a writer outside the tool, and reading again to merge over it would rewrite fields of accounts nobody selected |
+| 8 | promoted, and the read-back disagreed | the databases are converged and the vault is not serving what it accepted. Exit 4 with `SOPULI-W012`, which names the accounts. Nothing needs undoing; the place to look is the vault (a replica behind its primary), not any database |
+| any fence check, at 4–7 | another run took this run's lock; what this run already applied stands | abort at once, change nothing more, exit **7** if nothing had been applied and **4** if something had, with `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it |
 
-### What the verb does in this build (#284)
+### How `rotate` is built
 
-The sequence above is implemented, over parts that all existed by the time it was
-written — `generate`'s staging write, `apply`'s convergence and promotion,
-`finish-rollover`'s window, the lock's fence (#282) and the pre-flight (#283).
-Eight things about it are decisions rather than transcription.
+These rules are not visible in the sequence above.
 
-**It is not a wrapper, and the lock is why.** Each of the three verbs takes and
-releases its own, so between a `generate` that released and an `apply` that has
-not yet acquired, another run can stage a different `pending` — and this run
-would then apply and promote a password it never generated. One acquisition spans
-steps 2 to 9.
+**It is not a wrapper around the other verbs, because of the lock.** Each of
+`generate`, `apply` and `check` takes and releases its own lock. Between a
+`generate` that released and an `apply` that has not yet acquired, another run
+could stage a different `pending`. This run would then apply and promote a
+password it never generated. One acquisition covers steps 2 to 9.
 
-**The pre-flight is unconditional here and opt-in on `apply`.** §5 explains why it
+**The pre-flight is always on here, and opt-in on `apply`.** §5 explains why it
 is off by default there: a repair of one target should not pay for a survey of
-twenty. A rotation is the opposite case, and it also asks about a *larger* set —
-`apply` surveys the accounts it has something to apply, while `rotate` surveys
-everything it is about to rotate, because at step 3 there is no `pending`
-anywhere and a first rotation has no `current` either. Filtering on what the
-vault already holds would skip the whole estate on exactly the run whose
-pre-flight matters most.
+twenty. A rotation is the opposite case. It also checks a *larger* set. `apply`
+surveys the accounts it has something to apply to. `rotate` surveys everything it
+is about to rotate, because at step 3 there is no `pending` anywhere, and a first
+rotation has no `current` either. Filtering on what the vault already holds would
+skip the whole estate on the run whose pre-flight matters most.
 
 **A staging failure stops the run before any database is touched.** Row 4 says
-nothing changed in the database, and a rotation that staged two documents, failed
-on a third and applied the two anyway would make that row untrue for the estate
-somebody has to reason about afterwards. Exit 1 rather than 4: 4 means some
-targets succeeded and some failed, and here no target was attempted.
+nothing changed in the database. A rotation that staged two documents, failed on
+a third, and applied the two anyway would make that row untrue. It exits 1, not
+4: 4 means some targets succeeded and some failed, and here no target was tried.
 
-**Step 8 is a second read, not a comparison against what was written.** Reading
-back the object the run just wrote is the only way the check can find anything —
-what it is looking for is a store that acknowledged a write and then served
-something else, which is what a read replica behind its primary looks like. Only
-documents this run actually promoted are read back; one nobody staged into was
-never written, and one whose targets did not all confirm was deliberately left
-alone. A document that no longer holds the stage counts as a disagreement, on the
-grounds that "the vault has not got it" and "the vault has the wrong one" are the
-same operational fact to the application about to fetch it.
+**Step 8 is a second read, not a comparison with what was written.** The check
+looks for a store that acknowledged a write and then served something else, which
+is what a read replica behind its primary does. Only reading the object back can
+find that. Only documents this run promoted are read back. A document nobody
+staged into was never written, and one whose targets did not all confirm was
+left alone on purpose. A document that no longer holds the stage counts as a
+disagreement: "the vault has not got it" and "the vault has the wrong one" are
+the same fact to the application about to fetch it.
 
 **`--max-age-days` selects nothing whose age is unknown.** That is
-`creds status`'s rule (Q9, #87) reused rather than restated, and it is the branch
-that decides what this tool does the first night it is pointed at somebody else's
-estate: a freshly adopted vault has no `rotated_at` anywhere in it, and treating
-unknown as infinitely old would make the first scheduled run a rotation of every
-credential. An operator who wants that asks by leaving the flag off.
+`creds status`'s rule (Q9), and it decides what the tool does the first night it
+runs against an existing estate. A newly adopted vault has no `rotated_at`
+anywhere. Treating unknown as infinitely old would make the first scheduled run
+rotate every credential. An operator who wants that leaves the flag off.
 
-**The takeover split has one more case than `apply`'s.** §5's rule is 7 where the
-run was fenced out before it changed anything and 4 where it had already changed
-something. `rotate` reaches a database later than it reaches the vault, so a
-staged `pending` is a mutation that exists before any DDL does — and a run fenced
-out between two step-4 writes exits **4**, not 7, because 7 asserts nothing
-happened and a `pending` somebody has to clean up is something happening.
+**The takeover split has one more case than `apply`'s.** The rule is 7 where the
+run was fenced out before it changed anything, and 4 where it had already changed
+something. `rotate` writes to the vault before it reaches a database. So a staged
+`pending` is a change that exists before any DDL. A run fenced out between two
+step-4 writes exits **4**, not 7, because 7 asserts that nothing happened, and a
+`pending` that somebody has to clean up is something.
 
-**The fence reaches `--finish-rollover` too**, which is worth stating because the
-first version of this did not (found in review). Window-closing is the run's last
-mutation and the furthest from the acquisition at step 2, so it is the one most
-likely to be issued after a lease has already gone — and it is the one whose
-direction cannot be undone: a window nobody closed elapses on its own, and one
-closed by a run that had lost the estate cannot be reopened. So the closing path
-re-reads the fence before each statement where a caller holds a lock, and lets a
-`LockError` past its per-account catch-all rather than filing a takeover as one
-account's bad luck. **The standalone `creds finish-rollover` still takes no lock
-at all** — it writes to no store, and an hourly job that blocked rotations would
-be a worse problem than the one the lock solves — so the manager is an argument a
-caller supplies rather than something the verb acquires.
+**The fence also covers `--finish-rollover`.** Closing windows is the run's last
+change and the furthest from the acquisition at step 2, so it is the most likely
+to happen after a lease has gone. It also cannot be undone: a window nobody
+closed ends on its own, but one closed by a run that had lost the estate cannot
+be reopened. So the closing path reads the fence again before each statement
+where the caller holds a lock, and lets a `LockError` past its per-account
+handler. **The standalone `creds finish-rollover` still takes no lock.** It
+writes to no store, and an hourly job that blocked rotations would be a worse
+problem than the one the lock solves. So the lock manager is an argument the
+caller passes, not something the verb acquires.
 
 **Step 9's audit record is the run document.** `--output json` is the record a
-scheduler keeps, and `creds.rotate` was already in the run schema's command enum;
-the event stream is `--output jsonl`, which `creds check` was the first verb to
-emit (#9); `creds apply` and then `rotate` followed (#535). `password.applied`
-and `vault.promote` are where a stream that stops tells you the most, and
-`rotate` puts its staging events — per secret, not per target — ahead of the
-first target, in this section's own order (`03-json-output.md` §5).
+scheduler keeps. The event stream is `--output jsonl`. `password.applied` and
+`vault.promote` are the events that tell the most when a stream stops. `rotate`
+emits its staging events, one per secret and not per target, before the first
+target, in this section's order (`03-json-output.md` §5).
 
-**Confirmation, and what it is not.** §8 step 1 is "plan + confirm", so `rotate`
-prints the plan to stderr and asks; `--confirm` answers in advance and an
-unattended run without it is refused on exit 8 rather than left to an EOF abort.
-`apply` does not ask, and the difference is real: it converges an estate on a
-value somebody already staged and reviewed, while `rotate` invents the value and
-replaces what every application is using, across the whole selection, in one
-pass. The estate-wide `safety.confirm_environments` setting is a *different*
-gate, and `rotate` does not ask it as well: this prompt is unconditional, so the
-setting could only make it weaker.
+**Confirmation, and what it is not.** §8 step 1 is "plan + confirm". So `rotate`
+prints the plan to stderr and asks. `--confirm` answers in advance. An unattended
+run without it is refused with exit 8, instead of being left to abort at end of
+input. `apply` does not ask, for a real reason: it converges an estate on a value
+somebody already staged and reviewed. `rotate` invents the value and replaces
+what every application is using, across the whole selection, in one run. The
+estate-wide `safety.confirm_environments` setting is a *different* gate, and
+`rotate` does not ask it as well. This prompt is unconditional, so the setting
+could only make it weaker.
 
-**Rollback.** `previous` is retained so that
+**Rollback.** `previous` is kept so that
 `sopuli creds apply --source previous --confirm` can put the old password back on
-the database. This is a real operation, not a theoretical one — it is the escape
-hatch when an application turns out to have hard-coded the old password
-somewhere. Rollback is bounded: only one generation back, and only while the
-vault still holds `previous`. That bound is the decision, not the example (Q3,
-settled in #84): OCI holds exactly one `PREVIOUS`, and `01-configuration.md` §7's
-stage vocabulary — `current` / `pending` / `previous` — has nothing to address an
-older generation with. Recovery further back is a matter of reading the store's
-own version history, which not every backend has. Nor does every profile allow
-it: one that restricts password reuse is likely to refuse `previous` with
-`ORA-28007`, and there the escape hatch is a rollover window opened by the rotation itself (§5,
-#568).
+the database. This is a real operation: it is the way back when an application
+turns out to have the old password hard-coded somewhere. Rollback goes back only
+one generation, and only while the vault still holds `previous` (Q3, decided in
+#84). OCI holds exactly one `PREVIOUS`, and the stage vocabulary in
+`01-configuration.md` §7 (`current`, `pending`, `previous`) has no name for an
+older generation. Recovery further back means reading the store's own version
+history, which not every backend has. Not every profile allows a rollback
+either. A profile that restricts password reuse is likely to refuse `previous`
+with `ORA-28007`. There the way back is a rollover window opened by the rotation
+itself (§5).
 
 ---
 
 ## 9. `sopuli creds status`
 
-Read-only inventory, no login attempts, safe to run anywhere:
+A read-only inventory. It makes no login attempts, so it is safe to run anywhere.
+
+The sample below is from tier 1. `acme_batch_user`'s `rotated_at` in the vault
+was set back to 2026-07-01, and both passwords were changed on the database
+today:
 
 ```
-$ sopuli creds status --application orders-app --output text
+$ sopuli --config sopuli.yaml creds status --max-age-days 90
+Plan: 2 accounts x 1 target = 2 accounts   [dev]
 
-ACCOUNT       TARGET             VAULT_V  AGE    DB_PW_CHANGED  LOCK      PROFILE       ROLLOVER
-ORDERS_APP    cdb1-pdb-orders    7        12d    2026-07-23     OPEN      APP_PROFILE   24h configured
-ORDERS_APP    cdb1-pdb-billing   7        12d    2026-05-02     OPEN      DEFAULT       not configured
-ORDERS_BATCH  cdb1-pdb-orders    3        94d    2026-05-02     OPEN      APP_PROFILE   24h configured  ⚠ exceeds max_age 90d
+ACCOUNT          TARGET    INTENT  SECRET
+acme_app_user    free-pdb  none    vault-dev:acme/dev/acme
+acme_batch_user  free-pdb  none    vault-dev:acme/dev/acme
+
+shared secrets (1 document):
+SECRET                   TARGETS   ACCOUNTS
+vault-dev:acme/dev/acme  free-pdb  acme_app_user, acme_batch_user
+
+ACCOUNT          TARGET    STATE            VAULT_V  AGE    DB_PW_CHANGED  PROFILE          ROLLOVER
+acme_app_user    free-pdb  UNVERIFIABLE     4        0d     2026-10-06     DEFAULT          not configured
+acme_batch_user  free-pdb  ROLLOVER_ACTIVE  4        97d !  2026-10-06     SOPULI_ROLLOVER  window open
+
+2 accounts: 1 past max age
 ```
 
-The mismatch between vault age and `DB_PW_CHANGED` is a useful drift smell that
-costs no login attempt.
+**`AGE` is `rotated_at`, from the vault, and `--max-age-days` filters on it**
+(Q9, decided in #87). The `!` marks an age past the limit. `DB_PW_CHANGED` is
+read from the database for display only. It never decides a rotation. In the
+sample, both accounts' passwords changed on the database today, but only
+`acme_batch_user` is past the limit, because only the vault's clock is acted on.
+A difference between `AGE` and `DB_PW_CHANGED` is a sign of drift that costs no
+login attempt.
 
-### What shipped in #275
+These rules apply to `status`:
 
-The verb, the standard selectors, `--max-age-days`, and both output modes. Three
-things about it are decisions rather than transcription:
-
-**A healthy row reports `UNVERIFIABLE`, not `IN_SYNC`.** The one question an
-inventory cannot answer is the one `check` exists for — *does the vault's
-password actually work* — so this says it did not ask, in the detail column.
-`IN_SYNC` from a command that never tried would be agreement nobody measured,
-and it would be indistinguishable in a document from one `check` produced by
-spending a login.
+**A healthy row reports `UNVERIFIABLE`, not `IN_SYNC`.** An inventory cannot
+answer the question `check` exists for, *does the vault's password actually
+work*. So it says it did not ask. `IN_SYNC` from a command that never tried would
+be agreement nobody measured, and a document could not tell it apart from one
+that `check` produced by spending a login.
 
 **What it *can* say without asking** is the rest of the state model: an account
-the config declares and the database has not got, one locked or expired, a
-rotation somebody staged and never applied (`PENDING_APPLY` — visible in the
-vault alone), and a rollover window standing open.
+the config declares and the database does not have, an account that is locked or
+expired, a rotation that was staged and never applied (`PENDING_APPLY`, visible
+in the vault alone), and an open rollover window.
 
 **An unknown age is not an old one.** A credential this tool has never rotated
 has no `rotated_at`, and `--max-age-days` does not select it. Treating unknown as
-infinitely old would make the tool's first act against a freshly adopted estate a
-proposal to rotate all of it — which is the opposite of what somebody running an
-inventory over a new estate wants to find out.
+infinitely old would make the tool's first act on a newly adopted estate a
+proposal to rotate all of it. Somebody running an inventory on a new estate
+wants the opposite.
 
-**A target it cannot reach is exit 1**, which is `check`'s rule and for `check`'s
-reason: a survey with a hole in it must not look complete. The vault half of
-those rows is still filled in — the version and the age came from a document read
-before any database was dialled, and throwing them away because a listener was
-down would answer less than the run knows.
+**A target it cannot reach is exit 1**, as for `check`, and for the same reason:
+a survey with a gap must not look complete. The vault half of those rows is still
+filled in. The version and the age come from a document read before any database
+was dialled, and dropping them because a listener was down would report less
+than the run knows.
 
-In the run document, `password_age_days` keeps the meaning it has everywhere
-else — the **database's** age, from `PASSWORD_CHANGE_DATE`. The vault's age
-travels as a `warning` naming its source, because two clocks under one field name
-is exactly the confusion this section was written to prevent.
+In the run document, `password_age_days` means what it means everywhere else:
+the **database's** age, from `PASSWORD_CHANGE_DATE`. The vault's age is a
+`warning` that names its source, so that one field name never holds two clocks.
 
-**`AGE` is `rotated_at`, from the vault, and is what `--max-age-days` filters
-on** (Q9, decided in #87). `DB_PW_CHANGED` is read from the database purely
-for display — it never gates a rotation and nothing currently reads it back —
-which is why the ⚠ above marks only `ORDERS_BATCH`'s row, on its vault age
-past 90 days. `ORDERS_APP`'s `cdb1-pdb-billing` row shares that exact
-`DB_PW_CHANGED` date with `ORDERS_BATCH`, yet its vault age is 12d rather than
-94d: the same database-side history, two very different answers depending on
-which clock is asked, and only the vault's is acted on.
+### Where `DB_PW_CHANGED` comes from without `PASSWORD_CHANGE_DATE` (decided in #386)
 
-### Where `DB_PW_CHANGED` comes from without `PASSWORD_CHANGE_DATE` (#386, decided)
+Reasons and rejected options: [#386](../decisions/log.md#386).
 
-`DBA_USERS.PASSWORD_CHANGE_DATE` does not exist on every supported release.
-Measured 2026-09-08, it is present on 26ai and 21c and `ORA-00904` on **18c and
-11.2** — so 18c, a supported tier-2 target, had been silently in the same bucket
-as 11.2. Below it the column reads `-` and `password_age_days` is omitted from
-the run document.
+`DBA_USERS.PASSWORD_CHANGE_DATE` does not exist on every supported release. It
+is present on 26ai Free 23.26.2.0.0, 21.3.0.0.0 and 19.24.0.0.0, and absent
+(`ORA-00904`) on 18.4.0.0.0, 12.2.0.1.0 and 11.2.0.2.0 (`docs/measurements.md`).
+On 19.24.0.0.0 only the column's presence was checked. Where it is absent and no
+fallback answers, the column reads `-` and the run document omits
+`password_age_days`.
 
-Three options were on the table: leave it absent and say so, fall back to
-`SYS.USER$.PTIME`, or make it an eighth capability in P1's list. **Decided: the
-first two together.**
+- **The tool falls back to `SYS.USER$.PTIME` where the optional grant exists.**
+  `PTIME` moves on `ALTER USER … IDENTIFIED BY`, and equals the column to the
+  second where both exist. `CTIME` beside it does not move. So it is the same
+  clock, not an approximation. It needs no new privilege: it is the grant that
+  `02-oracle-privileges.md` §2 already offers for the `LCOUNT` guard, behind the
+  same `offline_verify` probe. **One source per release**: the column's presence
+  selects it, so `PTIME` is never read where the column exists, not even to fill
+  a `NULL`. A tier-1 test checks that the two are equal on every release that has
+  both.
+- **The tool says why when neither answers.** `SOPULI-W021` goes on each
+  affected `results[].warnings[]`, beside the missing field, with the driver's
+  reason: no such column and no grant (the grant fixes it), or a value that could
+  not be read (worth investigating). `creds status` prints the same reason once
+  per target under the table.
+- **It is not a capability.** The query is its own probe: `ORA-00904` *is* the
+  answer. Adding to P1's list would have changed the driver protocol, `doctor`,
+  the schema and the skip vocabulary to report a display column.
 
-- **Fall back to `SYS.USER$.PTIME` where the optional grant exists.** Measured on
-  all four releases: `PTIME` moves on `ALTER USER ... IDENTIFIED BY`, equals the
-  column to the second where both exist, and `CTIME` beside it does not move — so
-  it is the same clock rather than an approximation. It costs no new privilege:
-  it is the grant `02-oracle-privileges.md` §2 already offers for the `LCOUNT`
-  guard, gated on the same `offline_verify` probe. **One source per release**:
-  the column answering is what selects it, so `PTIME` is never read where the
-  column exists, not even to fill a `NULL`. That rule is what keeps a second
-  source from becoming the second opinion #383 warns about, and a tier-1 test pins
-  the equality on every release that has both.
-- **Say why when neither answers.** `SOPULI-W021`, on each affected
-  `results[].warnings[]` beside the missing field, carrying the driver's reason:
-  no such column and no grant (which the grant fixes), or a value that could not
-  be read (which is worth investigating). `creds status` prints the same reason
-  once per target under the table.
-- **Not a capability.** The query is its own probe — `ORA-00904` *is* the answer
-  — and adding to P1's binding list would have changed the driver protocol,
-  `doctor`, the schema and the skip vocabulary to report a display column.
-
-12.2.0.1.0 takes the fallback, and `PTIME` tracked a rotation there (#572); 12.1
-would take it too and is unmeasured (unverified: pw-changed-source) — see
-`docs/README.md`'s "Verify before implementing".
+12.2.0.1.0 takes the fallback, and `PTIME` tracked a rotation there. 12.1 would
+take the fallback too, and is unmeasured (unverified: pw-changed-source). See
+`docs/README.md`, "Verify before implementing".
 
 ---
 
 ## 10. Scenarios
 
-**S1 — First adoption of an existing account.** The account exists, its password
-is known to humans and not in the vault.
-`generate --promote` → `apply` → `check`. The tool never needs the old password.
+**S1: first adoption of an existing account.** The account exists, people know
+its password, and the vault does not have it. Run `generate --promote`, then
+`apply`, then `check`. The tool never needs the old password.
 
-**S2 — Scheduled 90-day rotation, zero downtime.** Nightly `check` (hash mode,
-exit 3 alerts). Weekly `rotate --max-age-days 90 --strategy rollover`. The app
-refreshes credentials within the rollover window; a follow-up job runs
-`finish-rollover` once the window has elapsed.
+**S2: scheduled 90-day rotation, no downtime.** A nightly `check` in hash mode,
+alerting on exit 3. A weekly `rotate --max-age-days 90 --strategy rollover`. The
+application refreshes its credentials within the rollover window, and a later
+job runs `finish-rollover` once the window has passed.
 
-**S3 — One PDB was down during the last rotation.** The other targets took the
-new password, and the promotion was withheld (invariant 7): `current` still holds
-the old password and `pending` the new one. Once the PDB is back, run `apply`
-without a target selector. It applies `pending` where a target does not hold it,
-confirms every target, and only then promotes. Idempotent for the ones already
-correct. `apply --target cdb1-pdb-billing` alone changes that PDB but still
-withholds the promotion (`SOPULI-W027`), because a narrowed run cannot confirm
-the targets it left out.
+**S3: one PDB was down during the last rotation.** The other targets took the
+new password, and the promotion was withheld (invariant 7). `current` still
+holds the old password, and `pending` the new one. Once the PDB is back, run
+`apply` without a target selector. It applies `pending` where a target does not
+hold it, confirms every target, and only then promotes. It changes nothing on the
+targets that are already correct. `apply --target cdb1-pdb-billing` alone changes
+that PDB but still withholds the promotion (`SOPULI-W027`), because a narrowed
+run cannot confirm the targets it left out.
 
-**S4 — Emergency rotation after a leak.** `rotate --strategy direct
---finish-rollover` — no grace window, old password invalid immediately, accepting
-application errors as the price. The audit record captures who and when.
+**S4: emergency rotation after a leak.**
+`rotate --strategy direct --finish-rollover`. There is no grace window, the old
+password stops working at once, and application errors are the price. The audit
+record says who and when.
 
-**S5 — Common user across a CDB.** One application entry, one secret, target
+**S5: common user across a CDB.** One application entry, one secret, target
 `cdb1-root`, `container_clause: ALL`. One statement covers every PDB.
 
-**S6 — Vault write succeeds, database is unreachable.** `pending` exists, nothing
-applied, `current` unchanged, applications unaffected. While the database is
-unreachable, `check` reports `ERROR` and exits 1. Once it is back, `check` finds
-no drift, because the database still holds `current`, and `creds status` shows
-the staged `pending`. Finish with `apply`, which applies the staged `pending`,
-confirms it, and promotes. Re-running `rotate` does not resume: it draws a fresh
-password and stages it over the old `pending`.
+**S6: the vault write succeeds and the database is unreachable.** `pending`
+exists, nothing is applied, `current` is unchanged, and applications are not
+affected. While the database is unreachable, `check` reports `ERROR` and exits 1.
+Once it is back, `check` finds no drift, because the database still holds
+`current`, and `creds status` shows the staged `pending`. Finish with `apply`,
+which applies the staged `pending`, confirms it and promotes. Running `rotate`
+again does not resume: it draws a new password and stages it over the old
+`pending`.
 
-**S7 — Application still holds the old password after the window closed.**
-Logins start failing. `check --include-previous` shows the old password is no
-longer accepted, which points at the application rather than the tool.
+**S7: the application still holds the old password after the window closed.**
+Logins start failing. `check --include-previous` shows that the old password is
+no longer accepted, which points at the application, not the tool.
 
 ---
 
 ## 11. Testing this
 
-Because the failure modes are all about ordering and partial failure, the test
-matrix is mostly fault injection. Environments, tiering and the capability-driven
-matrix are in [`../design/04-testing.md`](../design/04-testing.md); what follows
-is the UC-1 specific list.
+The failure modes are about ordering and partial failure, so most of the test
+matrix is fault injection. Environments, tiers and the capability-driven matrix
+are in [`../design/04-testing.md`](../design/04-testing.md). This is the UC-1
+list.
 
-- **Matrix:** Oracle 11.2 non-CDB / 18c and 21c XE / 23ai CDB+PDB / real 19.12+
-  with rollover configured, against HashiCorp KV v2, KV v1, OCI Vault and the
-  file backend. Note that rollover exists on 23ai Free and on a patched real
-  19.12+, but not on the buildable 19.3 image — so that capability has no
-  middle tier.
-- **Fault injection at every step of § 8:** kill the process between apply and
+- **Matrix:** Oracle 11.2.0.2.0 non-CDB, 18.4.0.0.0 and 21.3.0.0.0 XE, and 26ai
+  Free 23.26.2.0.0 CDB+PDB, plus the maintainer-only 19.3.0.0.0, 12.2.0.1.0 and
+  19.32.0.0.0 (`docs/maintainer-environments.md`), against HashiCorp KV v2, KV
+  v1, OCI Vault and the file backend. `docs/measurements.md` says which releases
+  have rollover. The buildable 19.3.0.0.0 image has none.
+- **Fault injection at every step of §8:** kill the process between apply and
   promote; make the vault unreachable mid-run; close a PDB mid-run; revoke
-  `ALTER USER` mid-run.
-- **Charset fuzzing:** generated passwords through the whole path — shell,
-  connect string, JDBC URL, `.env` file, PL/SQL literal.
-- **Lockout regression test:** run `check` against a deliberately drifted account
-  N times with `FAILED_LOGIN_ATTEMPTS 3` and assert the account never locks.
+  `ALTER USER` mid-run (open: #660).
+- **Charset fuzzing:** generated passwords through every path an operator uses:
+  shell, connect string, JDBC URL, `.env` file (open: #670). Never a PL/SQL
+  literal: invariant 13 keeps the password out of every PL/SQL block.
+- **Lockout regression test:** run `check` against a deliberately drifted
+  account N times with `FAILED_LOGIN_ATTEMPTS 3`, and assert the account never
+  locks.
 - **Verify-function test:** a profile with `ora12c_strong_verify_function` and a
-  policy that violates it — assert bounded regeneration and a clear final error.
-- **Idempotency test:** every command run twice; the second run reports
-  `unchanged` and emits no audit mutation record.
-- **Concurrency test:** two `rotate` runs on the same account; one must lose on
-  the lock with exit 7, and the final state must be consistent. The test stands
-  as written after #83 even though locks are keyed on the path rather than on the
-  account: two runs on one account resolve to one path, so they do contend.
-- **Fencing test:** steal a lock mid-run — expire it and let a second run take it
-  over — and assert the first aborts before its next `ALTER USER`. This is the
-  case that a session-scoped `DBMS_LOCK` would not have caught, since a stalled
-  session is still alive and still holding.
-- **Redaction test:** run everything, grep all output,
-  logs and trace for the generated password. Zero hits is a release gate.
+  policy that breaks it. Assert bounded regeneration and a clear final error.
+- **Idempotency test:** every convergent command run twice. The second run
+  reports `changed: false` and emits no mutation audit record (invariant 9).
+- **Concurrency test:** two `rotate` runs on the same account. One must lose on
+  the lock with exit 7, and the final state must be consistent. Locks are keyed
+  on the path, and two runs on one account resolve to one path, so they contend.
+- **Fencing test:** take a lock over mid-run, by expiring it and letting a second
+  run take it, and assert that the first run aborts before its next
+  `ALTER USER`. A session-scoped `DBMS_LOCK` would not catch this case, because a
+  stalled session is still alive and still holds its lock.
+- **Redaction test:** run everything, and search all output, logs and trace for
+  the generated password. Zero hits is a release gate.
 
 ---
 
