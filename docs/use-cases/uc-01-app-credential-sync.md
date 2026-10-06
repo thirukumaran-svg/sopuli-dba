@@ -1,6 +1,5 @@
 # UC-1 — Application database account credentials: vault as master, sync to database
 
-Status: draft / sketch
 Depends on: `../design/00-principles.md`, `../design/01-configuration.md`
 
 ---
@@ -23,9 +22,9 @@ vault, applies them to the database, and verifies that the two agree.
 source. If they disagree, the fix is to re-apply from the vault, not to read the
 database (which is impossible anyway — passwords are not readable).
 
-**Non-goals for UC-1.** Creating or dropping accounts, grants and roles, personal
-developer accounts (a separate use case), application-side reload/restart
-orchestration.
+**Non-goals for UC-1.** Creating or dropping accounts, grants and roles; personal
+accounts, which are UC-2 (`uc-02-personal-account-passwords.md`); and restarting
+or reloading the application.
 
 ---
 
@@ -41,61 +40,53 @@ sopuli creds status     # inventory: accounts, ages, versions, last rotation
 sopuli creds finish-rollover  # end an Oracle password rollover window early
 ```
 
-**There is no `creds promote`, and there is not going to be** (decided in #276,
-built out in #284). Earlier drafts of this document listed one for the case where
-a rotation is interrupted between applying and promoting. `apply` re-run already
-completes that: it reads the `pending`, the pre-flight login finds the database
-already accepts it, every account reports `IN_SYNC`, and the document is
-promoted — invariant 9's `changed: false` and the recovery path turn out to be
-the same code path. A cheap standalone `promote` that wrote the promotion
-*without* re-verifying was weighed and rejected: as a separate verb invoked later
-it would advertise a password to applications on the strength of a previous run's
-document, and re-verification is exactly what makes `apply` safe to point §8's
-worst row at.
+**There is no `creds promote` verb** (decided in #276). The case it would cover
+is a rotation interrupted after the databases changed and before the vault was
+promoted. Running `apply` again completes that case. It reads the `pending`, the
+login before the change finds that the database already accepts it, every
+account reports `IN_SYNC`, and the document is promoted. So the recovery path
+and invariant 9's `changed: false` are the same code path.
 
-**The run schema said otherwise until #392.** `creds.promote` sat in the
-`command` enum from the first draft through 1.20 — a name for a verb this
-paragraph had already declined, in the file `03-json-output.md` §8 points at as
-the definition of what the tool can produce. It is gone in 1.21, and §8 carries
-the rule that let a never-emitted enum value go on a minor bump.
+A separate `promote` that wrote the promotion without verifying again was
+rejected. Run later, it would advertise a password to applications because of an
+earlier run's document. Verifying again is what makes `apply` safe to use for
+§8's most severe failure.
 
-Separating `generate` from `apply` is deliberate: it lets an operator stage a new
-password, get a change window approved, and apply later — and it makes each half
-independently retryable.
+`generate` and `apply` are separate on purpose. An operator can stage a new
+password, get a change window approved, and apply it later. Each half can also be
+retried on its own.
 
 ### Common selectors
 
 Every command takes the same target/account selection options:
 
 ```
---application NAME      one entry from the `applications:` config section
-                        (omit it entirely in a single-application config)
---account NAME          repeatable; filters accounts within the selection
---target NAME           repeatable
+--application NAME      an entry from the `applications:` config section; alias --app
+                        (omit it in a single-application config)
+--account NAME          filters accounts within the selection
+--target NAME
 --group NAME            a named or selector-based group
 --select k=v[,k=v]      filter by target labels, e.g. --select env=dev,tenant=beta
---dry-run / --confirm / --output {text,json}
+--dry-run / --output {text,json,jsonl}
 ```
 
-**Three lines left this block in #392**, because they named flags the binary has
-not got. `--all` and `--limit N` were never built: with no selector at all a
-command already covers everything declared, which is what the paragraph below
-says and what makes `--all` a second spelling of nothing, and the ceiling
-`--limit` offered is `safety.max_targets` — a setting the resolver will not
-accept from the command line, for the reason `00-principles.md` P5 now gives.
-`jsonl` left for a third reason: at the time `--output` took `text` and `json`,
-and asking for `jsonl` was a usage error. Since #9 it is a real mode, offered by
-the verbs that stream (`03-json-output.md` §5) and refused by the rest. `invocation.selection` still carries `all` and
-`limit` as slots (`03-json-output.md` §1); a slot in a schema is a promise, and a
-line in a list shaped like help output is a claim.
+Each selector can be repeated.
 
-**These are filters over what the config declares, not a second way of addressing
-things.** The tool never acts on an account that is not in the config; a selector
-narrows the declared set, it cannot extend it. With no selector at all, a command
-covers everything declared — which is what makes `sopuli creds check` on its own
-a meaningful scheduled job.
+`--output jsonl` is accepted only by the verbs that stream events
+(`03-json-output.md` §5). Each verb lists its other options in its own section.
 
-Selection is resolved and printed *before* anything is touched. Every command
+There is no `--all` and no `--limit`. With no selector, a command already covers
+everything the config declares. The ceiling on how many targets a run may touch
+is `safety.max_targets`, which the command line cannot set (`00-principles.md`
+P5).
+
+**Selectors filter what the config declares. They are not a second way to name
+things.** The tool never acts on an account that is not in the config. A
+selector narrows the declared set and cannot extend it. With no selector, a
+command covers everything declared, so `sopuli creds check` alone is a useful
+scheduled job.
+
+The selection is resolved and printed before anything is touched. Every command
 starts by showing a plan.
 
 ---
@@ -108,16 +99,15 @@ For each (account, scope) pair the tool reasons about a small state:
 VaultState  = { current, pending?, previous?, version, updated_at, updated_by }
 DbState     = { exists, lock_status, profile, password_versions,
                 password_change_date, rollover_active?, scope }
-SyncState   = IN_SYNC | DRIFT | PENDING_APPLY | ROLLOVER_ACTIVE
-            | ACCOUNT_MISSING | LOCKED | UNVERIFIABLE
+SyncState   = the result's `state`; 03-json-output.md §3 lists the values
 ```
 
-`SyncState` is what `check` reports and what `apply` acts on. The three fields in
-the vault payload are the whole rotation mechanism:
+`SyncState` is what `check` reports and what `apply` acts on. The three stage
+fields in the vault payload, `password`, `pending` and `previous`, are the whole
+rotation mechanism:
 
 ```json
 {
-  "username": "ORDERS_APP",
   "password": "<current>",
   "pending":  "<generated, not yet applied>",
   "previous": "<the one before current>",
@@ -125,31 +115,31 @@ the vault payload are the whole rotation mechanism:
   "rotated_at": "2026-08-04T09:12:33Z",
   "rotated_by": "approle:sopuli-ci",
   "policy": "app-standard",
-  "targets": ["cdb1-pdb-orders", "cdb1-pdb-billing"]
+  "targets": ["appdb-alpha", "appdb-beta"]
 }
 ```
 
-On a store with native staging (OCI, AWSSM) these map to version stages instead
-of extra fields; the tool abstracts over that but reports which mechanism it used
-— with one exception, below.
+On a store with native staging (OCI, AWSSM), these map to version stages instead
+of extra fields. The tool hides that difference, but reports which mechanism it
+used. There is one exception, below.
 
-### The layout, and the one rule that covers both (Q7, decided in #85)
+### The layout, and the rule that covers both (Q7, decided in #85)
 
-The documented default is **one secret per application, a field per account** —
-`tenants/{tenant}#DB_CREDENTIALS/{account}`, the layout
-`../design/01-configuration.md` §2 already uses. One secret per account remains
-fully supported; a `secret` or `secret_template` naming a single field is the
+The documented default is **one secret per application, with a field per
+account**: `tenants/{tenant}#DB_CREDENTIALS/{account}`, the layout
+`../design/01-configuration.md` §2 uses. One secret per account is also fully
+supported. A `secret` or `secret_template` that names a single field uses the
 same code path.
 
-What differs between the two is only *how many accounts live in one document*,
-and the payload follows from one rule:
+The two layouts differ only in how many accounts live in one document. The
+payload follows from one rule:
 
 > **Every root-level key mirrors the shape of the current-stage container.**
 
-The container is what the configured ref addresses — the field, and any pointer
-below it. Where that is a scalar, `pending`, `previous` and the rotation stamps
-are scalars beside it, which is the payload above, unchanged. Where it is a map
-keyed by account, they are maps keyed the same way:
+The container is what the configured ref addresses: the field, and any pointer
+below it. Where the container is a scalar, `pending`, `previous` and the rotation
+stamps are scalars beside it, as in the payload above. Where it is a map keyed by
+account, they are maps keyed the same way:
 
 ```json
 { "DB_CREDENTIALS": { "acme_web_user": "<current>", "acme_api_user": "<current>" },
@@ -159,38 +149,36 @@ keyed by account, they are maps keyed the same way:
   "rotated_at":     { "acme_web_user": "2026-08-04T09:12:33Z", "acme_api_user": "…" },
   "rotated_by":     { "acme_web_user": "approle:sopuli-ci", "acme_api_user": "…" },
   "policy":         { "acme_web_user": "app-standard", "acme_api_user": "app-standard" },
-  "targets":        { "acme_web_user": ["cdb1-pdb-orders"], "acme_api_user": ["…"] } }
+  "targets":        { "acme_web_user": ["appdb-alpha"], "acme_api_user": ["…"] } }
 ```
 
-Three things fall out of it, and each is why the rule is worth stating as a rule:
+The rule has these consequences:
 
-- **No new pointer syntax, and no nesting of the triple.** `#DB_CREDENTIALS/…`
-  and `#pending/…` take the same pointer below the same key, so C14's
+- **No new pointer syntax, and no nested triple.** `#DB_CREDENTIALS/…` and
+  `#pending/…` take the same pointer below the same key. So C14's
   `@stage=pending` means "the `pending` sibling, same key" in both layouts.
 - **The ref an application reads does not change.** It still resolves to a
-  password string, which is what rules out the other candidate shape — an object
-  per account, holding its own triple. That would have made every consumer read a
-  document and dig, to save the tool a rule it needs anyway.
-- **The stamps sit beside the value they describe.** They are per-account because
-  a single account can be rotated inside a shared document, and a root-level
+  password string. That rules out the other candidate shape: an object per
+  account that holds its own triple. With that shape, every consumer would have
+  to read a document and look inside it, to save the tool a rule it needs anyway.
+- **The stamps sit beside the value they describe.** They are per account,
+  because one account can be rotated inside a shared document. A root-level
   `rotated_at` would then describe some of the document and not the rest.
-  `username` has no counterpart in the shared layout: the map key *is* the
-  username, and a second copy is a thing that can disagree with itself.
+  The document has no `username` key. In the shared layout the map key is the
+  username, and a second copy could disagree with it.
 
-**Native staging is the exception the first paragraph names.** An OCI or AWSSM
-version stage is per *secret*, so it cannot promote one account's `pending`
-without promoting every account's. A document holding more than one account's
-credential therefore emulates the three stages in payload fields even on a store
-that has them natively, and the run reports the emulated mechanism — which is
-the reporting §3 already requires, with the condition now made explicit rather
-than left to be discovered. Where each account has its own secret, native staging
-is used as before.
+**Native staging is the exception.** An OCI or AWSSM version stage belongs to
+the whole secret. It cannot promote one account's `pending` without promoting
+every account's. So a document that holds more than one account's credential
+keeps the three stages in payload fields, even on a store that has native
+stages. The run reports that mechanism. Where each account has its own secret,
+the tool uses native staging.
 
-**Sharing a document is not sharing a lock by accident.** Two accounts in one
-document contend, deliberately: Q2 keys the lock on the path, so the second run
-loses on the lock and exits 7 naming the holder, rather than racing to a lost
-update. Under the common workflow — rotate an application's accounts together —
-that is one lock, one document and one write for the whole application.
+**Two accounts in one document share a lock, on purpose.** Q2 keys the lock on
+the path. A second run on the same document loses on the lock and exits 7,
+naming the holder, instead of racing to a lost update. In the common workflow,
+where an application's accounts are rotated together, that is one lock, one
+document and one write for the whole application.
 
 **Why `pending` exists.** Ordering is the central risk in this use case:
 
@@ -200,12 +188,12 @@ that is one lock, one document and one write for the whole application.
   new password. Applications break at next credential fetch, and the correct
   password now exists nowhere.
 
-The `pending` field removes the window: the candidate is durably stored *before*
-the database is touched, but `current` — the field applications read — is only
-promoted after the database confirms. A crash at any point leaves a state the
-tool can resume, and `check` can explain.
+The `pending` field removes that window. The candidate is stored durably before
+the database is touched. `current`, the field applications read, is promoted
+only after the database confirms. A crash at any point leaves a state that the
+tool can resume and that `check` can explain.
 
-### `origin`: where a staged password came from (#311)
+### `origin`: where a staged password came from
 
 `generate` writes one more key beside `pending`, saying which of two things the
 staged value is:
@@ -215,262 +203,253 @@ staged value is:
 | `generated` | the tool drew it from the policy |
 | `supplied` | `--from-stdin` accepted it, and an external system dictated it |
 
-**It exists so that `apply` can tell them apart.** #268 decided that `apply`
-redraws on `ORA-28003`/`ORA-28007` rather than reporting and stopping, and a
-redraw is right for a password the tool drew and wrong for one an external system
-owns — replacing that silently makes the tool disagree with whoever dictated it.
-Nothing in the document recorded the difference, so `apply` had no way to ask.
+**It lets `apply` tell the two apart.** When the server refuses a password with
+`ORA-28003` or `ORA-28007`, `apply` draws a new one (§6.4). A new draw is right
+for a password the tool drew. It is wrong for a password that an external system
+owns: replacing it silently makes the tool disagree with whoever dictated it.
 
-Three rules, and each is a decision rather than a detail:
+These rules apply to `origin`:
 
-- **It describes `pending`, not the credential.** So it is written when a value
-  is staged and removed when `pending` is — it is not one of the rotation stamps,
-  which describe what is *current* and are refreshed at promotion. A key that
-  described `pending` on some documents and `current` on others would be a key
-  that can lie, and the thing reading it is deciding whether to replace somebody's
-  change ticket.
-- **Absent means unknown, and unknown means "do not redraw."** A document staged
-  before this key existed is exactly the case where guessing wrong overwrites a
-  dictated password. It self-heals on the next `generate`.
-- **A value going straight into `current` carries none.** There is nothing staged
-  for it to describe, and what applications are already holding is not something a
-  redraw may touch. Falling through to the rule above is the correct answer and
-  needs no special case.
+- **It describes `pending`, not the credential.** It is written when a value is
+  staged, and removed when `pending` is removed. It is not one of the rotation
+  stamps, which describe `current` and are refreshed at promotion. A key that
+  described `pending` in some documents and `current` in others could be wrong,
+  and the code that reads it decides whether to replace somebody's password.
+- **Absent means unknown, and unknown means "do not redraw".** A document with a
+  `pending` and no `origin` may hold a dictated password, and guessing wrong
+  would overwrite it. The next `generate` writes the key.
+- **A value written straight into `current` has no `origin`.** Nothing is staged
+  for it to describe, and a redraw must never touch what applications already
+  hold. The rule above covers this case, so it needs no special handling.
 
-It follows the mirror rule like every other root-level key: a scalar beside a
-scalar container, a map keyed by account beside a map. `origin` therefore joins
-the reserved root names, so a `secret:` ref may not name a field called `origin`.
+`origin` follows the mirror rule like every other root-level key: a scalar beside
+a scalar container, a map keyed by account beside a map. It is one of the
+reserved root names, so a `secret:` ref may not name a field called `origin`.
 
-Named `origin` rather than `source` because `apply --source` already names a
-*stage*, and two meanings of one word one flag apart is a collision somebody
-eventually reads the wrong way round.
+It is called `origin` and not `source` because `apply --source` already names a
+stage. One word with two meanings, one flag apart, would eventually be misread.
 
 ---
 
 ## 4. `sopuli creds generate`
 
-Generate a password per the policy and write it to the vault's `pending` slot.
-Does not connect to the database — except optionally to read constraints.
+Generate a password from the policy and write it to the vault's `pending` slot.
+It does not change the database. It may connect to read constraints.
 
 ```
-sopuli creds generate --application orders-app [--account ORDERS_APP]
-                      [--promote]         # write straight to `current` (no staging)
+sopuli creds generate --application acme [--account acme_web_user]
+                      [--promote]            # write straight to `current` (no staging)
                       [--overwrite-current]  # authorise replacing an existing `current`
-                      [--from-stdin]      # take a supplied password instead of generating
-                      [--policy NAME]     # override the policy
-                      [--offline]         # do not read constraints from any target
+                      [--from-stdin]         # take a supplied password instead of generating
+                      [--no-policy-check]    # accept a supplied password that violates the policy
+                      [--policy NAME]        # override the policy
+                      [--offline]            # do not read constraints from any target
+                      [--confirm]            # proceed without asking
 ```
 
 **Flow**
 
-1. Resolve selection and policy; resolve SecretRefs from templates.
-2. If reachable, connect to read *constraints* — **one connection per selected
-   target, not per account** — and let the strictest answer govern the draw. The
-   constraints that cannot govern anything are read on the same connection and
-   reported. If no target is reachable, fall back to the policy's declared limits
-   and say so in the output. `--offline` declines to ask at all.
-3. Generate from a CSPRNG. Reject and regenerate candidates that violate charset,
-   first-character, length-in-bytes, or composition requirements. Bounded retries.
-4. Acquire the lock for the secret path (Q2, #83) — which `generate` can do
-   precisely because the lock lives in the vault: this step never connects to a
-   database, so a database-side lock could not have protected the write below.
-5. Write to the vault: `pending = candidate` and `origin` beside it (§3), leave
-   `current` untouched. One write, both keys — a write that landed the password
-   and not its provenance would stage a password no later `apply` may redraw. Use
-   CAS where supported so a concurrent writer cannot be overwritten silently.
-   Under `--promote` that one write carries `current = candidate` instead, the
-   value `current` held moved into `previous` where there was one, and the §3
-   stamps. No `origin`: that key describes what `pending` holds, and a promote
-   writes no `pending`.
-6. Report new version, and the fact that the database has not changed.
+1. Resolve the selection and the policy. Resolve SecretRefs from templates.
+2. Where a target is reachable, connect to read its *constraints*: **one
+   connection per selected target, not per account**. The strictest answer
+   governs the draw. The constraints that cannot govern anything are read on the
+   same connection and reported. If no target is reachable, fall back to the
+   policy's declared limits and say so in the output. `--offline` skips this
+   step.
+3. Generate from a CSPRNG. Reject and regenerate candidates that break the
+   charset, first-character, length-in-bytes or composition rules. The retries
+   are bounded.
+4. Acquire the lock for the secret path (Q2, #83). `generate` can do this because
+   the lock lives in the vault. This step never connects to a database, so a
+   lock in the database could not protect the write below.
+5. Write to the vault: `pending = candidate` and `origin` beside it (§3). Leave
+   `current` untouched. One write carries both keys. A write that stored the
+   password without its `origin` would stage a password that no later `apply`
+   may redraw. Use CAS where the store supports it, so that a concurrent writer
+   cannot be overwritten silently. Under `--promote`, the one write instead
+   carries `current = candidate`, the old `current` moved into `previous` where
+   there was one, and the §3 stamps. It writes no `origin`, because that key
+   describes `pending` and a promote writes no `pending`.
+6. Report the new version, and that the database has not changed.
 
 **Notes**
 
-**What step 2 binds the draw with, and what it only reports** (#317). One thing
-binds it: the byte limit, counted in the target's character set. That is the
-*deterministic* constraint — a password too long in bytes, or holding characters
-the target will not accept, fails identically for every account in the selection
-and one policy fix ends it, which is exactly the class of refusal that can be
-moved from `apply` to here. The refusal names the target whose limit governed —
-the first, where several share the strictest. When a supplied password is
-refused, each violation names the target it came from (#598), since in an estate
-"the target" is not an answer invariant 4 accepts.
+**What step 2 uses to limit the draw, and what it only reports.** One reading
+limits the draw: the byte limit, counted in the target's character set. It is
+the *deterministic* constraint. A password too long in bytes, or with characters
+the target does not accept, fails the same way for every account in the
+selection, and one policy fix ends it. So this refusal can move from `apply` to
+here. The refusal names the target whose limit governed; where several share the
+strictest limit, it names the first. When a supplied password is refused, each
+violation names the target it came from, because in an estate "the target" does
+not say which one (invariant 4).
 
-The other three names in step 2 cannot bind anything, and are read so the run can
-**say** they are there:
+The other readings in step 2 cannot limit anything. The run reads them so
+that it can **say** they are there:
 
-- a **verify function** is arbitrary PL/SQL and cannot be consulted (invariants 13
-  and 14). Its *presence* is reported, including the not-knowing: from inside a
-  PDB a **common** profile's `PASSWORD_VERIFY_FUNCTION` reads as the literal
-  `FROM ROOT`, and reporting that as *none* would tell an operator that nothing
-  will judge their password when something will. §5's `--preflight` rule — *not
-  knowing is not a finding* — applied to a reading rather than a check;
-- **`PASSWORD_REUSE_*`** history is hashed, so the two resource values are
-  reported and never interpreted. The warning fires only under `--from-stdin`:
-  fresh randomness cannot collide with a history, and a supplied password is
-  whatever an external system dictated. A rollback is the other case where the
-  value is not fresh, and §5 reports it under its own code (#568);
-- **`PASSWORD_VERSIONS`** is which verifiers the account holds, reported as a
-  fact. Which of them a later rotation regenerates is the server's own
-  configuration and not this tool's.
+- A **verify function** is arbitrary PL/SQL, and the tool cannot call it
+  (invariants 13 and 14). The run reports whether there is one, including when
+  it cannot tell. From inside a PDB, a **common** profile's
+  `PASSWORD_VERIFY_FUNCTION` reads as the literal `FROM ROOT`. Reporting that as
+  *none* would tell an operator that nothing will judge the password when
+  something will. This is §5's `--preflight` rule, *not knowing is not a
+  finding*, applied to a reading.
+- **`PASSWORD_REUSE_*`** history is hashed, so the run reports the two resource
+  values and never interprets them. The warning fires only under `--from-stdin`.
+  A fresh random password cannot collide with the history, but a supplied
+  password is whatever an external system dictated. A rollback is the other case
+  where the value is not fresh, and §5 reports it under its own code.
+- **`PASSWORD_VERSIONS`** says which verifiers the account holds, and the run
+  reports it as a fact. Which verifiers a later rotation regenerates is the
+  server's configuration, not this tool's.
 
-So `ORA-28003` and `ORA-28007` stay unpredictable before the statement is issued
-and #312 handles them by redrawing. None of this is a prediction that a password
-will be refused; it is the run saying that something other than the policy will
-judge it. The readings go in the document's `constraints` section
-(`03-json-output.md`), the caveats in `diagnostics[]` as `SOPULI-W016` and
-`SOPULI-W017`, and both are printed under the constraints line in the default
-output — a warning nobody can see in a terminal is not surfaced.
+So `ORA-28003` and `ORA-28007` cannot be predicted before the statement runs,
+and `apply` handles them by drawing again (§6.4). None of these readings predicts
+that a password will be refused. They say that something other than the policy
+will judge it. The readings go in the document's `constraints` section
+(`03-json-output.md`), and the caveats in `diagnostics[]` as `SOPULI-W016` and
+`SOPULI-W017`. Both are printed under the constraints line in the default text
+output, because a warning that a terminal user cannot see is not surfaced.
 
-**Measured, on 26ai Free 23.26.2.0.0.** `FROM ROOT` is narrower than the
-paragraph above used to leave it looking: a local profile read from inside a PDB
-answers with its function's name, and `DEFAULT` — which is common — answers
-`NULL`. So the unreadable case is a user-created common profile seen from a PDB.
-A profile naming no verify function reports the **string** `NULL`, and
-`PASSWORD_REUSE_MAX`/`PASSWORD_REUSE_TIME` report `UNLIMITED`; both are vendor
-words in columns a reader expects other things in.
+On 26ai Free 23.26.2.0.0, `FROM ROOT` covers less than the first bullet
+suggests. A local profile read from inside a PDB answers with its function's
+name, and `DEFAULT`, which is common, answers `NULL`. So the unreadable case is
+a user-created common profile seen from a PDB. A profile with no verify function
+reports the **string** `NULL`, and `PASSWORD_REUSE_MAX` and
+`PASSWORD_REUSE_TIME` report `UNLIMITED`. Both are vendor words in columns where
+a reader expects other values.
 
-**There is no single strictest limit**, and the run does not invent one. A limit
-is a byte count *and* the character set it is counted in, which makes "stricter"
-a partial order: 128 bytes of `WE8MSWIN1252` holds more characters than 128 of
-`AL32UTF8` and holds *fewer distinct* ones, so neither contains the other. Every
-reading is kept and the two questions are asked separately:
+**There is no single strictest limit, and the run does not invent one.** A limit
+is a byte count *and* the character set it is counted in, so "stricter" is only a
+partial order. 128 bytes of `WE8MSWIN1252` hold more characters than 128 bytes
+of `AL32UTF8`, but *fewer distinct* characters, so neither contains the other.
+The run keeps every reading and asks two separate questions:
 
-- a **generated** password is drawn against the smallest byte count and nothing
-  else. §8's alphabets are ASCII and an ASCII character is one byte in every
-  character set the driver maps, so the count is the only thing that can bind it.
-- a **supplied** password (`--from-stdin`) is validated against *every* answered
-  target. A character storable in one target's set and not another's is a
-  violation there whichever target had the smallest count — and it is the
-  "characters the target will not accept" half of what this step is for. One
-  violation is reported once however many targets report it.
+- A **generated** password is drawn against the smallest byte count and nothing
+  else. The alphabets in `01-configuration.md` §8 are ASCII, and an ASCII
+  character is one byte in every character set the driver maps. So the count is
+  the only limit that applies.
+- A **supplied** password (`--from-stdin`) is checked against *every* target
+  that answered. A character that one target's set can store and another's
+  cannot is a violation on that target, whichever target had the smallest
+  count. One violation is reported once, however many targets report it.
 
-**Reading is not writing, and the lock's argument is unchanged.** `creds generate`
-takes the vault's advisory lock because there is no *change* here for a
-database-side lock to protect (Q2, #83). That was never the same claim as opening
-no session, and a read does not make one.
+**Reading is not writing, and the lock's reason is unchanged.** `creds generate`
+takes the vault's advisory lock because it makes no *change* that a lock in the
+database could protect (Q2, #83). That never meant it opens no session, and a
+read does not change the argument.
 
-- Generation and validation are `sopuli/passwords.py`, and step 3's "reject and
-  regenerate" runs against the *same* predicate `--from-stdin` uses. A policy that
-  declares no `length` is refused rather than defaulted; a policy no password could
+- Generation and validation are in `sopuli/passwords.py`. Step 3's "reject and
+  regenerate" uses the *same* check as `--from-stdin`. A policy that declares no
+  `length` is refused, not given a default. A policy that no password could
   satisfy is refused before any drawing, naming what is wrong
   (`01-configuration.md` §8).
-- `--from-stdin` exists for migration and for cases where an external system
-  dictates the password. It validates against policy and refuses on violation
-  unless `--no-policy-check` is passed, which is recorded in the audit event. It
-  reads `length:` as a minimum rather than as an exact figure — a password an
-  external system dictated is not weaker for being longer.
-- Generating twice without applying simply replaces `pending`. That is safe and
-  is reported as such — including a warning naming the version whose `pending`
-  was replaced, because anything already holding that password is now stale.
-  This is **outside invariant 9 rather than an exemption from it**, and it is
-  decided rather than assumed (#254): the invariant governs commands that
-  converge on a state, and a fresh draw has none. `apply` is the convergent half
-  and reports `changed: false` on a re-run. It read *the one exemption* until
-  H7 (#454) put UC-2's reset on the same footing for the same reason and
-  restated the invariant as a scope rule — this verb's behaviour is unchanged,
-  and what changed is that it is no longer a special case of one.
+- `--from-stdin` is for migration, and for cases where an external system
+  dictates the password. It checks the password against the policy and refuses
+  on a violation, unless `--no-policy-check` is passed. The audit event records
+  that flag. It reads `length:` as a minimum, not an exact figure, because a
+  dictated password is not weaker for being longer.
+- Generating twice without applying replaces `pending`. That is safe, and the run
+  says so. It warns, naming the version whose `pending` it replaced, because
+  anything that already holds that password is now stale. A fresh draw has no
+  target state to converge on, so this verb is outside invariant 9 (decided in
+  #254; reasons: [H7](../decisions/log.md#h7)). `apply` is the convergent half,
+  and it reports `changed: false` when run again.
 
-### `--promote`, and the exception it takes to invariant 7 (#257, decided)
+### `--promote`, and its exception to invariant 7 (decided in #257)
+
+The command below writes the drawn password straight to `current`:
 
 ```
 sopuli creds generate --application acme --promote [--overwrite-current]
 ```
 
-Write the drawn password straight to `current`, with no `pending` and no
-database touched. It exists for **S1 — first adoption of an existing account**:
-the account is there, its password is known to humans and is not in the vault,
-and `generate --promote` → `apply` → `check` adopts it without the tool ever
-needing the old password. Staging first would mean a `pending` nothing has read
-and a `current` that does not exist, then a promote of one into the other — two
-writes and an intermediate state, to describe a document with no rotation in
-progress.
+It writes no `pending` and touches no database. It is for **S1, first adoption
+of an existing account**. The account exists, people know its password, and the
+vault does not have it. `generate --promote`, then `apply`, then `check` adopt it,
+and the tool never needs the old password. Staging first would mean a `pending`
+nothing has read and a `current` that does not exist, then a promotion of one
+into the other: two writes and an intermediate state, for a document with no
+rotation in progress.
 
-**It takes invariant 7's one exception, and the exception is
-`--overwrite-current`.** The invariant says never promote before every target has
-confirmed, and `--promote` confirms nothing. Both readings were weighed (#257)
-and the wider one was chosen: the flag may write over an existing `current`,
-because refusing there outright would leave `--promote` unable to mean *I know
-what I am doing* — which is what an operator passing it is saying. What makes
-that safe to allow is not that the write is harmless; it is that the wider case
-has to be asked for by name:
+**`--overwrite-current` is invariant 7's exception.** The invariant says never
+promote before every target has confirmed, and `--promote` confirms nothing. The
+flag may write over an existing `current`. Refusing that outright would leave
+`--promote` unable to mean *I know what I am doing*, which is what an operator
+who passes it is saying. It is safe to allow because the operator has to ask for
+it by name:
 
-- **no `current` for that account** — nothing is reading the field being written,
-  so there is no window to protect. Written without a question, and without a
-  flag;
-- **a `current` exists** — the field every application reads is about to be
-  replaced by a password no database has been given, so the run refuses on
-  **exit 8** unless `--overwrite-current` was passed, naming the accounts. Exit 8
-  is "aborted, or confirmation declined", and a required authorisation nobody
-  gave is that: the file is not wrong and the run is not broken.
+- **The account has no `current`.** Nothing reads the field being written, so
+  there is no window to protect. The run writes it without a question or a flag.
+- **A `current` exists.** The field every application reads is about to be
+  replaced by a password that no database has. The run refuses on **exit 8**
+  unless `--overwrite-current` was passed, and names the accounts. Exit 8 means
+  "aborted, or confirmation declined", and a required authorisation that nobody
+  gave is that. The file is not wrong and the run is not broken.
 
-**No prompt, and identically so attended or not.** `--overwrite-current` is an
-authorisation you type, not a question you answer — `--force`'s register rather
-than `--confirm`'s. An operator who did not know some accounts had a `current`
-reads the refusal, then `--dry-run`, then decides; that is a better sequence than
-a y/n on a write to the field every application reads, and it makes a scheduled
-run behave exactly like a hand-run one.
+**There is no prompt, attended or not.** `--overwrite-current` is an
+authorisation you type, not a question you answer, like `--force` and unlike
+`--confirm`. An operator who did not know that some accounts had a `current`
+reads the refusal, runs `--dry-run`, and then decides. That is better than a y/n
+prompt on a write to the field every application reads, and a scheduled run
+behaves exactly like a run by hand.
 
 **The value `current` held moves into `previous`**, in the same write that
-replaces it — the prior password, never the one being written — or §8's rollback
-has nothing to roll back to. An account being seeded has no such value and gets
-no `previous`. One CAS write per document carries all of it, plus the §3 stamps,
-like every other write this command makes.
+replaces it. It is the prior password, never the one being written. Otherwise
+§5's rollback (`--source previous`) has nothing to roll back to. An account
+being seeded has no prior value and gets no `previous`. One CAS write per
+document carries all of this, plus the §3 stamps, like every other write this
+command makes.
 
-**Its own flag rather than `--confirm`, and the reason is reversibility.**
-`--confirm` was the obvious spelling — it already means *proceed without asking*
-on this verb, and P5 gives every mutating command one. It was refused because
-that meaning is scope-free by construction: every question this command learns to
-ask in future folds into it, so the flag's blast radius grows without anyone
-editing it, and an operator passing it because `safety.confirm_environments`
-covers prod would also be authorising an overwrite they had not thought about.
-The decisive argument is what each choice costs to undo. Shipping `--confirm`
-alone and adding a dedicated flag later **breaks** every script that relied on the
-first — a scheduled adoption run starts exiting 8. Shipping the dedicated flag
-and later letting `--confirm` satisfy it is purely permissive: nothing that
-worked stops working. On a gate protecting the field every application reads, take
-the choice you can walk back.
+**It has its own flag instead of `--confirm`, so that the choice can be undone.**
+`--confirm` already means *proceed without asking* on this verb, and P5 gives
+every mutating command one. That meaning has no scope: every question this
+command learns to ask in future folds into it. An operator who passes `--confirm`
+because `safety.confirm_environments` covers prod would also authorise an
+overwrite they had not thought about. The deciding argument is the cost of
+changing course later. Shipping `--confirm` alone and adding a dedicated flag
+later **breaks** every script that relied on `--confirm`: a scheduled adoption
+run starts exiting 8. Shipping the dedicated flag and later letting `--confirm`
+satisfy it breaks nothing. Reasons and rejected options:
+[#257](../decisions/log.md#257).
 
 **`--confirm` keeps its single meaning** and does not satisfy this gate. The two
-are asked for different things — assent to touching a listed *environment*, and
-authorisation to replace a *value* — and a run that needs both passes both.
+flags authorise different things: touching a listed *environment*, and replacing
+a *value*. A run that needs both passes both.
 
-**`--promote --dry-run` names the two groups separately**: accounts that would be
-**seeded** and accounts whose `current` would be **replaced** are different risks,
-and an operator should not have to count them. A preview is never gated, so it is
-also how somebody finds out they need the flag.
+**`--promote --dry-run` names the two groups separately.** Accounts whose
+`current` would be **seeded** and accounts whose `current` would be **replaced**
+are different risks, and an operator should not have to count them. A preview is
+never gated, so it is also how an operator finds out they need the flag.
 
-**The refusal is at plan time** (invariant 4), read from the documents before
-anything is written — and checked again under the lock, because a `current` that
-appears between the two would otherwise be overwritten by a run that was told
-there was none. Where the flag *was* passed, the second read has nothing to
-refuse: the overwrite is authorised whenever it is found.
+**The refusal happens at plan time** (invariant 4), from the documents read
+before anything is written. The run checks again under the lock, because a
+`current` that appears between the two reads would otherwise be overwritten by a
+run that was told there was none. Where the flag *was* passed, the second read
+has nothing to refuse.
 
-**What it reports is `VAULT_ONLY`** — the vault holds this password and no
-database has been asked. A new `state` value rather than a reused one: the other
-four candidates each assert something untrue (`03-json-output.md` §3), and
-`PENDING_APPLY` in particular would send `check` and `apply` looking for a
-`pending` that does not exist. `sopuli-run-1.20` carries it.
+**It reports `VAULT_ONLY`**: the vault holds this password and no database has
+been asked. It is its own `state` value, because the other candidates each say
+something untrue (`03-json-output.md` §3). `PENDING_APPLY` in particular would
+send `check` and `apply` looking for a `pending` that does not exist.
 
-**Any `pending` is cleared, with the `origin` describing it.** Not tidiness:
-`creds apply --source` defaults to `pending` where there is one, so a staged
-password left beside a freshly promoted one is a password the next `apply` would
-prefer — undoing this run without anybody asking it to. The promotion patch that
-`creds apply` uses already does this, and `--promote` reuses it rather than
-spelling a second promotion.
+**It clears any `pending`, and the `origin` that describes it.** `creds apply
+--source` defaults to `pending` where there is one. A staged password left beside
+a newly promoted one is a password the next `apply` would prefer, which would
+undo this run without anyone asking. `--promote` reuses the promotion patch that
+`creds apply` uses, which already clears it.
 
-**Measured end to end**, on tier 1 against Oracle Free 23.26.2.0.0 and a dev-mode
-Vault: `generate --promote` seeds `current` at v1, `apply` reads it with
+On tier 1 against Oracle Free 23.26.2.0.0 and a dev-mode Vault,
+`generate --promote` seeds `current` at v1. `apply` then reads it with
 `SOURCE: current` and reports `IN_SYNC` "changed and verified by login", and
-`check` then reports `IN_SYNC` "vault v1 verified by login". A second promote
-over that document refuses on exit 8 naming both accounts; with
-`--overwrite-current` it writes v2, and `previous` holds what v1's `current`
-held.
+`check` reports `IN_SYNC` "vault v1 verified by login". A second promote over that
+document refuses on exit 8, naming both accounts. With `--overwrite-current` it
+writes v2, and `previous` holds what v1's `current` held.
 
-**There is still no `creds promote` verb**, and this does not reopen #276. That
-decision is about promoting a *rotation* — advertising a password on the strength
-of an earlier run's document, without re-verifying. This promotes a password
-drawn in the same breath, for an account that has no rotation in flight.
+**This is not a `creds promote` verb**, and the reasons in §2 still hold. That
+decision is about promoting a *rotation*: advertising a password because of an
+earlier run's document, without verifying again. `--promote` writes a password
+drawn in the same run, for an account with no rotation in progress.
 
 ---
 
@@ -479,103 +458,133 @@ drawn in the same breath, for an account that has no rotation in flight.
 Take what the vault holds and make the database match it.
 
 ```
-sopuli creds apply --application orders-app
+sopuli creds apply --application acme
                    [--source {pending,current,previous}]  # default: pending if set, else current
                    [--confirm]                            # required for --source previous
                    [--strategy {rollover,staged,direct}]
                    [--preflight]                          # survey every target before writing anything
                    [--repair FILE]                        # act only on a run's unconfirmed set
+                   [--lockout-margin N]                   # default 2; see §7
+                   [--force]                              # waive account guardrails 2 to 5
 ```
 
 **Flow, per target**
 
-1. Connect using the target's admin credential (§ P2 bootstrap order).
-2. Verify scope: the connection really is in the container the config claims;
-   the database is open read-write; version and capabilities as expected.
-3. Verify the account exists and read its state (locked? profile? verifiers?).
-   Missing account → `ACCOUNT_MISSING`, do not create it (out of scope for UC-1).
-4. Change the password (see § 6 for the Oracle statement details). Where the
-   server refuses the *value* — a verify function, a reuse rule — draw another
-   and try again, bounded (§6.4).
-5. Verify immediately with a fresh connection as that user (§ 7).
-6. Record a per-target result.
+1. Connect with the target's admin credential (P2's bootstrap order).
+2. Verify the scope: the connection is in the container the config claims, the
+   database is open read-write, and the version and capabilities are as
+   expected.
+3. Verify that the account exists, and read its state: locked, profile,
+   verifiers. A missing account is `ACCOUNT_MISSING`. The tool does not create it
+   (Q8).
+4. Change the password (§6 has the Oracle statement). Where the server refuses
+   the *value*, because of a verify function or a reuse rule, and the tool drew
+   the staged password (`origin: generated`, §3), draw another, write it to the
+   vault's `pending`, and apply it again, a bounded number of times. A password
+   with any other `origin` is never redrawn. §6.4 has the rules.
+5. Verify at once, with a fresh connection as that user (§7).
+6. Record a result for the target.
 
 **After all targets**
 
-- All succeeded → promote in the vault: `previous = current`, `current = pending`,
-  clear `pending`, stamp `rotated_at`/`rotated_by`. Exit 0.
-- The run was narrower than the promotion → do **not** promote, and exit 4. See
+- All succeeded: promote in the vault. `previous = current`,
+  `current = pending`, clear `pending`, stamp `rotated_at` and `rotated_by`.
+  Exit 0.
+- The run was narrower than the promotion: do **not** promote, and exit 4. See
   *The promotion gate* below.
-- Some failed → do **not** promote. `pending` stays. Report per-target status and
-  exit 4 (partial). The remedy is `apply` again — narrowed by `--repair FILE`
-  where the run's document was captured — and it is safe to re-run either way.
-- All failed → nothing changed anywhere. Exit 1.
+- Some failed: do **not** promote. `pending` stays. Report the status per target
+  and exit 4 (partial). The remedy is to run `apply` again, narrowed by
+  `--repair FILE` where the run's document was captured. It is safe to run again
+  either way.
+- None confirmed: do not promote. Exit 1. Usually nothing changed. But where the
+  server accepted the statement and the verification then failed, that database
+  did change, and its row says the password was changed.
 
-**The promotion gate, stated once (decided in #406).** A secret document is
-promoted only when every (account, target) pair it needs has confirmed **in this
-run**, and the pairs it needs are counted over the **configuration**, not over
-what the run was narrowed to:
+These rules decide what `apply` does with each account:
 
-- **every target the same credential is declared on** — same document, same ref,
-  so one promotion moves the password every one of them is supposed to hold;
+- **The database is asked before it is changed.** Invariant 9 makes `apply` a
+  convergent verb, so it must know whether a change is needed. `apply` verifies
+  by login; it does not use `check --method hash`. So the tool verifies each
+  account first, under §7's mitigations, and leaves a password that already
+  works alone. The two logins are budgeted as one run's attempts. A `pass` under
+  an open rollover window is also a reason not to act, because applying again
+  would restart the window and report a change nobody asked for.
+- **A locked account is not changed at all,** unless the policy asks for an
+  unlock (below). The statement would succeed and the verification could never
+  pass. The run would end with a database whose password is in no vault stage,
+  which is the state §3's ordering exists to prevent. An *expired* account is
+  changed, as §6.4 says, because setting a password clears the expiry.
+- **An empty vault is a failure, not a quiet no-op.** Where neither stage holds
+  anything for a declared account, the run reports `ERROR`, naming
+  `creds generate`, instead of exiting 0 having changed nothing. `check` calls
+  the same situation `UNVERIFIABLE`, because for `check` it is only a gap in a
+  survey. `apply` cannot do what it was run to do.
+
+`--force` waives account guardrails 2 to 5 in `02-oracle-privileges.md` §4, and
+never check 1. The run document records each waiver in `results[].overridden`.
+`--lockout-margin` sets the lockout guard that §7 describes, for the logins
+`apply` makes.
+
+**The promotion gate (decided in #406).** A secret document is promoted only
+when every (account, target) pair it needs has confirmed **in this run**. The
+pairs it needs are counted over the **configuration**, not over what the run was
+narrowed to:
+
+- **every target on which the same credential is declared.** It is the same
+  document and the same ref, so one promotion moves the password that every one
+  of them should hold;
 - **on a forward promotion, every pair of every sibling account in the document
-  that has a `pending` of its own.** Its staged password may already be on its
-  database, which is exactly what an earlier partial run leaves, and a promotion
-  that skipped it would strand it there, database ahead of `current`. A sibling
-  with nothing staged has no rotation in flight and is not needed, which is what
-  keeps `--account` able to rotate one account in a shared document;
-- a rollback (`--source previous`) asks only the first. It refuses where
-  anything is staged, and a sibling's `previous` is not a rollback anybody asked
+  that has its own `pending`.** Its staged password may already be on its
+  database, which is what an earlier partial run leaves. A promotion that skipped
+  it would leave the database ahead of `current`. A sibling with nothing staged
+  has no rotation in progress and is not needed. That is why `--account` can
+  rotate one account in a shared document;
+- **a rollback (`--source previous`) needs only the first.** It refuses where
+  anything is staged, and a sibling's `previous` is not a rollback anyone asked
   for.
 
-A run narrowed past any of those — `--target`, `--select`, `--account` or
-`--repair` — still changes the databases it was pointed at, because that is how
-a rollout is staged target by target, and then **withholds the promotion**:
-`pending` stays, the run exits 4, and `SOPULI-W027` names the pairs it left out.
-The remedy is a run wide enough to include them, so the `repair with:` line on
-that run drops the selectors rather than echoing them back. It costs one login
-per pair the narrow run already converged, and reports `changed: false` for
-each. An account a guardrail skipped is inside the run, not outside it (#286
-decides what a skip means).
+A run narrowed past any of these, by `--target`, `--select`, `--account` or
+`--repair`, still changes the databases it was pointed at. That is how a rollout
+is staged target by target. It then **withholds the promotion**: `pending`
+stays, the run exits 4, and `SOPULI-W027` names the pairs it left out. The remedy
+is a run wide enough to include them, so the `repair with:` line of that run
+drops the selectors instead of repeating them. The wider run costs one login per
+pair the narrow run already converged, and reports `changed: false` for each. An
+account that a guardrail skipped is inside the run, not outside it
+(`02-oracle-privileges.md` §4 says what a skip means).
 
-**Why, when nothing failed.** Before #406 the gate counted only the pairs the
-run had visited, so `apply --target appdb-alpha` promoted an account whose other
-target still held the old password: the state invariant 7 exists to prevent,
-reached by a selector rather than by a failure, behind an exit 0. The two
-alternatives were leaving it and documenting the exception, and re-verifying the
-excluded pairs before promoting; the second connects to targets the operator
-deliberately excluded and costs the same logins as the wider run, so the gate
-refuses instead and asks for that run.
+The gate counts configured pairs, not visited pairs, because otherwise
+`apply --target appdb-alpha` would promote an account whose other target still
+holds the old password. That is the state invariant 7 exists to prevent, reached
+by a selector instead of a failure, with exit 0. Reasons and rejected options:
+[#406](../decisions/log.md#406).
 
-**Multi-target atomicity.** There is no distributed transaction across databases.
-The tool is explicit about this: it applies target by target, and the vault
-promotion is the single commit point that makes the new password visible to
-applications. Sequence for a group of PDBs sharing one secret:
+**Multi-target atomicity.** There is no distributed transaction across
+databases. The tool applies target by target, and the vault promotion is the
+single commit point that makes the new password visible to applications. The
+sequence for a group of PDBs that share one secret:
 
 ```
   pending written
      │
-     ├─ apply → PDB ORDERS   ok
-     ├─ apply → PDB BILLING  ok
+     ├─ apply → appdb-alpha  ok
+     ├─ apply → appdb-beta   ok
      │
   promote current  ← only now do applications see the new password
 ```
 
-If BILLING fails, ORDERS is already changed but `current` still holds the old
-password — which is exactly why **rollover strategy is the default on databases
-that support it**: during the rollover window both passwords work, so a partial
-apply causes no outage at all.
+If `appdb-beta` fails, `appdb-alpha` has already changed, but `current` still
+holds the old password. That is why **the rollover strategy is the default on
+databases that support it**. During the rollover window both passwords work, so
+a partial apply causes no outage.
 
-**Attributes.** `apply` may also enforce non-password attributes declared in the
-policy, each opt-in: account unlock and profile assignment. Each is reported as a
-separate change so the diff stays readable.
+**Attributes.** `apply` can also enforce non-password attributes that the
+policy declares, each opt-in: account unlock and profile assignment. Each is
+reported as a separate change, so the diff stays readable. The list is closed:
+a third attribute is a decision. `PASSWORD_EXPIRE` and tablespaces are not
+attributes, for the reasons below.
 
-This sentence used to name four. Two of them are built (#300, #301) and two turned
-out not to belong to this use case at all — `PASSWORD_EXPIRE` handling and
-default/temporary tablespaces. The reasons are below rather than in a commit
-message, because both read as missing features for as long as they stood here.
-
-### Account unlock, the first attribute (#300)
+### Account unlock
 
 ```yaml
 policies:
@@ -584,35 +593,32 @@ policies:
       unlock_if_locked: true      # default: false
 ```
 
-`apply` refuses to change a locked account's password — the statement would
-succeed, the verification could never pass, and the run would end holding a
-database whose password is in no vault stage. That refusal is right and it leaves
-a gap: a locked application account could not be rotated **at all**, and the
-operator unlocked it by hand, outside the tool. With the attribute declared, the
-run issues `ALTER USER … ACCOUNT UNLOCK` first and then does the work.
+`apply` refuses to change a locked account's password, for the reason given
+above. Without this attribute, a locked application account cannot be rotated
+at all, and the operator must unlock it by hand, outside the tool. With the
+attribute declared, the run issues `ALTER USER … ACCOUNT UNLOCK` first and then
+does the work.
 
-Four rules, and the first is the one the other three exist to protect:
+These rules apply, and the first is the one the others protect:
 
-- **opt-in, declared, never inferred.** Where the policy says nothing — which
-  includes an estate that declares no `policies:` at all — a locked account is
-  reported `LOCKED` exactly as before, and the message names the key that would
-  change that. A tool that unlocked an account because it found one locked would
-  be making a change nobody asked for during a credential rotation.
-- **before the first login, after the guardrails.** A locked account refuses every
-  login, so a pre-flight verification made before the unlock would spend an
-  attempt against the counter §7's margin protects and learn nothing. §4's
-  guardrails run first, because they decide whether this account may be touched at
-  all and an unlock is touching it.
-- **idempotent** (invariant 9). The driver reads the lock state and issues nothing
-  where there is no lock; the action is still reported, with `applied: false`. A
-  consumer inferring "not declared" from "not present" would be reading the policy
-  out of the results.
-- **it changes nothing about the promotion.** The unlock is a change to the
-  database like the password is, and `pending` still waits for every target to
-  confirm (invariant 7).
+- **Opt-in, declared, never inferred.** Where the policy says nothing, including
+  an estate with no `policies:` at all, a locked account is reported `LOCKED`.
+  The message names the key that would change that. A tool that unlocked an
+  account because it found one locked would make a change nobody asked for during
+  a credential rotation.
+- **Before the first login, after the guardrails.** A locked account refuses
+  every login. A verification login before the unlock would use up an attempt
+  against the counter that §7's margin protects, and learn nothing. The account
+  guardrails run first, because they decide whether this account may be touched
+  at all, and an unlock touches it.
+- **Idempotent** (invariant 9). The driver reads the lock state and issues
+  nothing where there is no lock. The action is still reported, with
+  `applied: false`. A consumer that read "not present" as "not declared" would be
+  reading the policy out of the results.
+- **No effect on the promotion.** The unlock is a change to the database, like
+  the password. `pending` still waits for every target to confirm (invariant 7).
 
-It reads as its own `actions[]` entry, which is what "reported as a separate
-change" means concretely:
+The unlock is its own `actions[]` entry:
 
 ```json
 "actions": [
@@ -622,11 +628,12 @@ change" means concretely:
 ]
 ```
 
-`LOCKED(TIMED)` — what a profile's `FAILED_LOGIN_ATTEMPTS` produces, and the state
-an account whose password has drifted is actually found in — is cleared by the
-same statement as a deliberate lock. The capability is `account_lock_state`.
+The same statement clears `LOCKED(TIMED)` and a deliberate lock.
+`LOCKED(TIMED)` is what a profile's `FAILED_LOGIN_ATTEMPTS` produces, and it is
+the state in which an account with a drifted password is usually found. The
+capability is `account_lock_state`.
 
-### Profile assignment, the second attribute (#301)
+### Profile assignment
 
 ```yaml
 policies:
@@ -635,40 +642,37 @@ policies:
       profile: acme_app_prof
 ```
 
-`apply` moves the account onto the named profile — `ALTER USER … PROFILE …` —
-where it is on a different one. The same four rules the unlock follows apply
-unchanged: opt-in, before the first login, idempotent, and no effect on the
-promotion. Three things are its own.
+`apply` moves the account onto the named profile with `ALTER USER … PROFILE …`
+where it is on a different one. The unlock's rules apply unchanged: opt-in, before
+the first login, idempotent, and no effect on the promotion. These rules are its
+own.
 
-**The tool assigns a profile and never creates or alters one.** `ALTER PROFILE`
-edits a shared object and so reaches accounts nobody selected; §3 of
-`02-oracle-privileges.md` keeps the privilege off the service account, and Q4
-(#88) decided it: never, in any credential-sync verb. `creds finish-rollover`
-takes the other half of that position — it *reports* the `ALTER PROFILE` an
-operator would run, and never issues it. Creating and altering profiles is UC-4's,
-provisioning (see the roadmap in `docs/README.md`), where a profile is part of
-making an account exist rather than a shared object a credential rotation reached
-sideways — an open question there, not one #88 closed.
+**The tool assigns a profile. It never creates or alters one** (Q4, decided in
+#88). `ALTER PROFILE` edits a shared object, so it reaches accounts nobody
+selected. `02-oracle-privileges.md` §3 keeps that privilege off the service
+account. `creds finish-rollover` follows the same rule: it *reports* the
+`ALTER PROFILE` an operator would run, and never issues it. Creating and
+altering profiles belongs to UC-4, provisioning (see the roadmap in
+`docs/README.md`). There a profile is part of making an account exist. Whether
+UC-4 alters profiles is open there; Q4 does not decide it.
 
-**A profile the target has not got is a pre-flight finding, not an `ORA-02380`
-half way through.** Which profiles exist is a property of each database, so an
-estate naming one that exists on nineteen PDBs and not the twentieth is an
-ordinary misconfiguration rather than an exotic one — and discovering it on the
-twentieth would leave nineteen accounts moved. `--preflight` asks for every
-account it is about to touch and the run refuses before anything is written;
-without the flag it is a refusal for that one account, before its own statement.
+**A profile the target does not have is a pre-flight finding, not an
+`ORA-02380` half way through.** Which profiles exist is a property of each
+database. An estate can easily name a profile that exists on nineteen PDBs and
+not on the twentieth. Finding that out on the twentieth would leave nineteen
+accounts moved. `--preflight` checks every account it is about to touch, and the
+run refuses before anything is written. Without the flag, the run refuses that
+one account, before its own statement.
 
-**Naming a `--strategy` across a move is refused.** This is the interaction that
-makes assignment more than a statement:
+**Naming a `--strategy` together with a profile move is refused.** A profile
+decides whether `ALTER USER … IDENTIFIED BY` opens a rollover window, so it
+decides the regime a rotation runs under.
 
-> a profile decides whether `ALTER USER … IDENTIFIED BY` opens a rollover window,
-> so it decides the regime a rotation runs under.
-
-`--strategy staged` is refused today against a profile that grants a window,
-because Oracle opens one regardless and reporting `staged` would tell an
-application team the old password had stopped working when it had not (§6.3). That
-check reads the profile the account holds **now** — which, for an account this run
-is about to move, is the profile it is leaving. So the pair is refused:
+`--strategy staged` is refused against a profile that grants a window, because
+Oracle opens one anyway. Reporting `staged` would tell an application team that
+the old password had stopped working when it had not (§6.3). That check reads the
+profile the account holds **now**. For an account this run is about to move, that
+is the profile it is leaving. So the run refuses the pair:
 
 ```
 --strategy staged cannot be honoured for 'acme_web_user' in 'appdb-prod-alpha':
@@ -680,292 +684,223 @@ afterwards -- naming a regime and changing the profile that decides one are two
 intentions for one run
 ```
 
-**With no `--strategy` there is nothing to refuse**, which is the ordinary case:
-the default regime is resolved per account *after* the attribute pass, from the
-profile the account ends on. So an estate that declares a profile and does not name
-a regime rotates correctly under the new one, first run.
+**With no `--strategy` there is nothing to refuse**, and that is the usual case.
+The default regime is resolved per account *after* the attribute pass, from the
+profile the account ends on. So an estate that declares a profile and names no
+regime rotates correctly under the new profile on the first run.
 
-For the two that were dropped, see below.
+### Why `PASSWORD_EXPIRE` is not an attribute
 
-### `PASSWORD_EXPIRE`: why there is no such attribute (#302, closed)
+Reasons and rejected options: [#302](../decisions/log.md#302).
 
-§5 listed "`PASSWORD_EXPIRE` handling" among the four opt-in attributes for as
-long as this document has existed. There is no operation left in it for UC-1, and
-saying so is worth more than an attribute nobody could have used correctly.
+**`apply` already clears an expiry, and that is not optional.** Setting a
+password clears `EXPIRED`. That is Oracle's behaviour, not a choice this tool
+makes. So §6.4 lists `ORA-28001` as *resolved by apply*, and `apply` does not
+treat an expired account as a reason to stop. An attribute for it would be a
+switch for something that is always true.
 
-**Clearing an expiry is already what `apply` does, and it is not opt-in.** Setting
-a password clears `EXPIRED` — that is Oracle's behaviour, not a choice this tool
-makes — which is why §6.4 lists `ORA-28001` as *resolvable by apply* and why
-`apply` deliberately does not treat an expired account as a reason to stop. An
-attribute for it would be a switch for something that is already true and cannot
-be turned off.
+**Expiring a password on purpose breaks the accounts this use case is about.**
+`ALTER USER … PASSWORD EXPIRE` after a rotation forces the next login to set a
+new password. An application account cannot answer that prompt. The run would
+write a password to the vault, put it on the database, and leave an account that
+logs in once into a session that demands a replacement no connection pool will
+supply. The run would also fail: an account that reads `EXPIRED` afterwards is
+never promoted (§5's promotion gate), and the run exits 4.
 
-**Which leaves expiring deliberately, and that breaks the accounts this use case
-is about.** `ALTER USER … PASSWORD EXPIRE` after a rotation forces the next login
-to set a new password. An application account cannot answer that prompt: the run
-would write a password to the vault, put it on the database, and leave an account
-that authenticates once into a session demanding a replacement no connection pool
-will supply. The tool would rotate the credential and break the application in one
-run — and it would *notice*, since an account that reads `EXPIRED` afterwards is
-never promoted (§5's confirmation gate) and the run exits 4. A feature whose
-successful use is a partial failure is not a feature.
+**It is a real operation for personal accounts.** A DBA who resets a person's
+password wants that person to change it at first logon. That is UC-2
+(`uc-02-personal-account-passwords.md`). There `account expire-password` does
+this, and so does the `PASSWORD EXPIRE` that the seen reset path always issues.
+There the password is handed over to a person, not synced to an application.
 
-**It is a real operation for a different use case.** A DBA rotating a *human*
-account wants exactly this: hand over a password that must be changed on first
-use. That belongs to a human-account use case, which is not written yet, and it
-brings its own vocabulary with it — a credential nobody stores in a vault, a
-handover rather than a sync, and no application to keep serving. Nothing about it
-fits UC-1's first sentence.
+Two neighbouring operations are often confused with it:
 
-**Two neighbours it would have collided with**, and both are why the phrase read
-as ambiguous rather than absent:
+- **"Make the old password stop working now"** is `--strategy direct` and
+  `creds finish-rollover` (§6.3). That is `ALTER USER … EXPIRE PASSWORD ROLLOVER
+  PERIOD`, a different statement. An attribute called `PASSWORD_EXPIRE` would be
+  a second way to ask for it.
+- **The grace period** is something the tool reports, not an attribute: §6.4
+  describes how `check` and `status` report it.
 
-- **"make the old password stop working now" already shipped**, as `--strategy
-  direct` (§6.3) and `creds finish-rollover` (§6.3). That is
-  `ALTER USER … EXPIRE PASSWORD ROLLOVER PERIOD`, a different statement, and it is
-  the only consumer of the `expire_password` capability today. An attribute
-  spelled `PASSWORD_EXPIRE` would have been a second way to ask for it.
-- **The grace period**, which §6.4 files as informational and surfaced in
-  `status`. That is a reporting question rather than an attribute — and looking
-  for it turned up a real one: `EXPIRED(GRACE)` is currently read as a hard
-  expiry, so `check` reports `EXPIRED` for an account whose password works and
-  never attempts the login that would prove it. #309, where the states have since
-  been measured: the status string is confirmed, the grace notice arrives as a
-  connection *warning* rather than an error, and `ORA-28002` — the code §6.4
-  names — is not what 26ai sends.
+### Why tablespaces are not an attribute
 
-### Tablespaces: provisioning, not rotation (#303, closed)
-
-§5's fourth attribute was default and temporary tablespace. It goes to UC-4
-(provisioning), for a reason that is about *when* rather than about *whether*:
+Default and temporary tablespace belong to UC-4, provisioning. Reasons and
+rejected options: [#303](../decisions/log.md#303).
 
 **`ALTER USER … DEFAULT TABLESPACE` moves no existing segment.** The account's
-objects stay exactly where they were; what changes is where the *next* one is
-created without an explicit `TABLESPACE` clause. During a credential rotation that
-is the worst kind of change — it reads as done, it is half done, and nobody
-looking at a rotation's output would think to check. During provisioning, where
-the account has no objects yet, it is simply part of creating one correctly.
+objects stay where they are. Only the place where the *next* object is created
+without a `TABLESPACE` clause changes. During a credential rotation, that change
+looks done but is only half done, and nobody reading a rotation's output would
+think to check. During provisioning, when the account has no objects yet, it is
+part of creating the account correctly.
 
-The same is true of the other things an account needs in order to exist — quotas,
-grants, roles. None of them is a *credential* and none of them belongs to a verb
-whose job is to make a database hold what a vault holds. Q8 already puts account
-creation in that use case; this is the same boundary one field along.
+The same is true of quotas, grants and roles. None of them is a credential, and
+none of them belongs to a verb whose job is to make a database hold what a vault
+holds. Q8 puts account creation in UC-4 for the same reason.
 
-So UC-1's attribute list is two, and it is closed rather than merely unfinished.
-A third would be a decision, not an implementation detail.
+### `--source`, and the rollback (decided in #265)
 
-### What shipped in #259, and what the flags above still describe
-
-The spine is implemented: read the source, set the password, verify, promote per
-document. `--strategy` arrived with #262 and is described in §6.3; `--source`
-with #265, and the rollback it exists for is §8. `--repair` arrived with #391
-and is described below. **Every flag in the sketch above is now built.**
-
-A second, `--continue-on-error`, was in that sketch and has been **removed from
-it** rather than built (#266); the section below says why, because a flag that
-merely stopped being mentioned would read as an omission for as long as anybody
-remembered it.
-
-Step 4's redraw is decided (#268) and built (#312). §6.4 carries the reasoning
-and the four rules.
-
-### `--source`, and the rollback (#265)
+The command below chooses which vault stage to apply:
 
 ```
 sopuli creds apply --source {pending,current,previous} [--confirm]
 ```
 
-Omitted, the default is unchanged: `pending` if one is staged, else `current`.
-Naming a stage reads **exactly** that one and **never falls back** — the fallback
-is the thing somebody passing the flag was trying to avoid, and silently applying
-`current` to an operator who asked for `previous` is a rollback that did not
-happen and said it did. So a stage that holds nothing is a reported failure
-naming *that* stage, because "no `previous` to roll back to" and "nothing staged
-at all" send somebody to different places and only one of them is
+Without the flag, the default is `pending` if one is staged, else `current`.
+Naming a stage reads **exactly** that stage and **never falls back**. An
+operator who names a stage is trying to avoid the fallback. Silently applying
+`current` when the operator asked for `previous` would be a rollback that did not
+happen and said it did. So a stage that holds nothing is a reported failure that
+names *that* stage. "No `previous` to roll back to" and "nothing staged at all"
+send the operator to different places, and only one of them is
 `creds generate`.
 
-`current` forces the repair path where a `pending` is staged: the staged password
-turns out to be wrong, and the estate goes back on what applications are actually
-reading, without discarding the `pending`. It owes the vault nothing, because the
-vault already holds what went on the database.
+`current` forces the repair path where a `pending` is staged. The staged password
+turns out to be wrong, and the estate goes back to what applications actually
+read, without discarding the `pending`. It writes nothing to the vault, because
+the vault already holds what went on the database.
 
-**`previous` is the rollback**, and it is the only invocation in this use case
-whose *success* stops an application's credential working. So it needs
-`--confirm`, and where nothing can be asked it refuses (exit 8) rather than
-prompting into a closed stdin. `--dry-run` needs no confirmation: a preview an
-operator has to authorise is a preview they will stop taking.
+**`previous` is the rollback.** Its *success* stops an application's credential
+from working. So it needs `--confirm`. Where nothing can ask, it refuses with
+exit 8 instead of prompting into a closed stdin. `--dry-run` needs no
+confirmation: if a preview had to be authorised, operators would stop running
+previews.
 
-**A rollback swaps the vault** (decided in #265). Once every target confirms,
-`current` takes the rolled-back value and `previous` takes the one just removed
-from the database — in the same single compare-and-set write a forward promotion
-uses, because it is the same arithmetic on the other neighbour. The estate ends
-consistent: applications fetch `current`, and `current` is what the databases
-have.
+**A rollback swaps the vault stages.** Once every target confirms, `current`
+takes the rolled-back value, and `previous` takes the value just removed from the
+database. This is the same single compare-and-set write a forward promotion uses,
+with the same arithmetic on the other neighbour. The estate ends consistent:
+applications fetch `current`, and `current` is what the databases have.
 
-**That is not a breach of "vault is master".** Invariant 6 is about the direction
-values travel, and both of these came out of the vault — no database was read for
-either. What changed is which stage is master, and an operator said so on the
+**This does not break "vault is master".** Invariant 6 is about the direction
+values travel. Both values came from the vault, and no database was read for
+either. Only which stage is master changed, and an operator said so on the
 command line.
 
-**A rollback is refused while a `pending` is staged.** Rolling back under a
-rotation in flight leaves the `pending` there, and the next `apply` moves the
-estate forward with it — undoing the undo, unattended, at whatever hour that run
-happens. Reported per account as `PENDING_APPLY`, the same word
+**A rollback is refused while a `pending` is staged.** A rollback during a
+rotation in progress leaves the `pending` in place. The next `apply` would then
+move the estate forward with it and undo the rollback, unattended, whenever that
+run happens. The account is reported as `PENDING_APPLY`, the word
 `creds finish-rollover` uses for the same fact.
 
-**A profile that restricts reuse usually refuses a rollback** (#568). `previous`
-is, by construction, the password the account held one change ago, whenever this
-tool made that change — so where `PASSWORD_REUSE_MAX` or `PASSWORD_REUSE_TIME`
-is anything but `UNLIMITED`, the value is the one most likely of any to be in the
-history, and the statement is likely to fail with `ORA-28007` — certain where
-one limit is `UNLIMITED` and the other a number, and dependent on elapsed time
-and intervening changes where both are numbers. Measured on ADB, whose own
-`DEFAULT` carries `4` / `1`, and on tier 1's `SOPULI_REUSE` (`5` / `UNLIMITED`):
-both refused, both failed safely, and `check` afterwards was `IN_SYNC` against
-`current`.
+**A profile that restricts reuse usually refuses a rollback** (decided in #568).
+`previous` is the password the account held one change ago. Where
+`PASSWORD_REUSE_MAX` or `PASSWORD_REUSE_TIME` is anything but `UNLIMITED`, it is
+the value most likely to be in the history, and the statement is likely to fail
+with `ORA-28007`. The failure is certain where one limit is `UNLIMITED` and the
+other is a number. Where both are numbers, it depends on the time elapsed and on
+changes made since. On ADB serverless 23.26.3.3.0, whose own `DEFAULT` profile
+has `4` / `1`, and on tier 1's `SOPULI_REUSE` profile (`5` / `UNLIMITED`) on
+Oracle Free 23.26.2.0.0, both rollbacks were refused, both failed safely, and
+`check` afterwards reported `IN_SYNC` against `current`.
 
 The run says so, and does not refuse in advance. Every rollback that reaches the
 statement on such a profile carries `SOPULI-W028`, one per target and profile,
-naming both values, whichever way the statement went. Reported rather than
-interpreted, which is §4's rule for the same two values: when both are numbers,
-Oracle's rule also counts the changes made outside the tool, which it cannot
-see, so a plan-time refusal would sometimes refuse a rollback that would have
-worked. A refused rollback is never redrawn — `previous` is the only value it
-has — and its row's hint says that rather than the driver's "draw another".
+naming both values, whether the statement succeeded or not. The run reports the
+values and does not interpret them, which is §4's rule for the same two values.
+When both are numbers, Oracle's rule also counts changes made outside the tool,
+which the tool cannot see. So a refusal at plan time would sometimes refuse a
+rollback that would have worked. A refused rollback is never redrawn, because
+`previous` is the only value it has. Its row's hint says that, instead of the
+driver's "draw another".
 
-**Under `--preflight` it is said before anything is sent** (#580). The survey
-already reads each account's state, profile limits included, so a rollback on a
-reuse-restricted profile raises the same `SOPULI-W028` there — under `--dry-run
---preflight`, which is "show me the plan and tell me whether it would work", and
-in a real run, where the run does not raise it a second time for the same target
-and profile. Raised ahead of the statement it is a prediction: it cannot know
-that an account turns out to hold the password already, which the run's own
-reading does. Nor is it raised where the run would first move the account to
-another profile: the limits read are then not the ones the statement meets, and
-the run's own reading covers it. A plain `--dry-run` still connects to nothing,
-and so cannot say it.
+**Under `--preflight`, the warning comes before anything is sent.** The survey
+already reads each account's state, including the profile limits. So a rollback
+on a reuse-restricted profile raises the same `SOPULI-W028` in the survey. This
+happens under `--dry-run --preflight`, which asks "show me the plan and tell me
+whether it would work", and in a real run, which then does not raise it a second
+time for the same target and profile. Raised before the statement, it is a
+prediction: it cannot know that an account already holds the password, which the
+run's own reading can. It is not raised where the run would first move the
+account to another profile, because the limits read are then not the ones the
+statement meets. The run's own reading covers that case. A plain `--dry-run`
+connects to nothing, so it cannot raise the warning.
 
 **On such a profile, the way back is a rollover window, not a rollback.** A
-profile with `PASSWORD_ROLLOVER_TIME` makes every rotation open one (§6.3): the
-old password keeps authenticating until `finish-rollover` or the window's end,
-which is exactly the escape hatch a rollback would have been, and it involves no
-reuse because nothing is set back. An estate whose baseline restricts reuse —
-CIS-style profiles set both limits — should plan its recovery around that
-window rather than around `--source previous`. The window is only there if it
-was opened by the rotation, though, so the decision has to be made before
-rotating, not after something breaks.
+profile with `PASSWORD_ROLLOVER_TIME` makes every rotation open a window (§6.3).
+The old password keeps working until `finish-rollover` or the end of the window.
+That gives the same way back a rollback would, with no reuse, because nothing is
+set back. An estate whose baseline restricts reuse should plan its recovery
+around that window, not around `--source previous`. CIS-style profiles set both
+limits. The window exists only if the rotation opened it, so the decision must be
+made before rotating, not after something breaks.
 
-Rollback stays bounded to one generation, which is Q3 (#84) and not this
-issue's to reopen: OCI holds exactly one `PREVIOUS`, and §7's stage vocabulary
-has nothing to address an older one with.
+Rollback goes back one generation only (Q3, decided in #84). OCI holds exactly
+one `PREVIOUS`, and the stage vocabulary in `01-configuration.md` §7 has no name
+for an older one.
 
-Three decisions inside the spine are worth stating here, because none of them is
-readable off the flag list:
+### `--preflight`, and what it checks before anything is written
 
-- **The database is asked before it is changed.** Invariant 9 names `apply` as
-  the convergent verb, and `apply` verifies by login: `check --method hash`
-  (#437) does not reach it, so a login is how `apply` knows whether a change is
-  needed. So each account is verified
-  first, under §7's mitigations and with both logins budgeted as one run's worth
-  of attempts, and a password that already works is left alone. A `pass` under an
-  open rollover window is still a reason not to act: re-applying would restart the
-  window and report a change nobody asked for.
-- **A locked account is not changed at all.** The statement would succeed and the
-  verification could never pass, which ends the run holding a database whose
-  password is in no vault stage — the state §3's ordering exists to prevent. An
-  *expired* one is changed, per §6.4: setting a password clears the expiry.
-- **An empty vault is a failure, not a quiet no-op.** Where neither stage holds
-  anything for a declared account, the run reports `ERROR` naming
-  `creds generate` rather than exiting 0 having converged nothing. `check` calls
-  the same situation `UNVERIFIABLE` because its survey merely has a gap in it;
-  `apply` cannot do the thing it was run to do.
+§8 step 3 belongs to `rotate`. It is available here too, because the same
+question is worth asking before a large `apply`: *would this work?* The survey
+makes one connection per target, before the first `ALTER USER`, and checks §8's
+list: reachable, the scope the file claims, the accounts declared, and the
+privileges needed.
 
-**A server that refuses the password is reported, never worked around.** §6.4
-says regenerate on ORA-28003 and ORA-28007, and this build does not: the value
-came from the vault's `pending`, which `generate` wrote and something may already
-be holding, so drawing a different one here would make the vault and the database
-disagree with what the operator staged. Regeneration inside `apply` is a design
-question and is filed rather than guessed at.
+**It is off by default.** A repair of one target should not pay for a survey of
+twenty. Without the flag, `apply` finds each of these problems per target as it
+goes, and reports them per account. An explicit `--strategy` also needs one
+connection per target for its own refusal. The survey and that refusal share
+**one pass on one connection**.
 
-### `--preflight`, and what it asks before anything is written (#283)
+**Every finding is reported, and one of them refuses.** A pre-flight lets an
+estate be fixed in one pass, so the table lists every finding. But a run has one
+exit code and one `error`. That one is the finding earliest in §8's order, the
+one closest to the cause. A target that could not be reached explains its own
+missing scope. A container that turned out to be the wrong one explains every
+account that was not found in it.
 
-§8 step 3 belongs to `rotate`, and it is available here because the same
-question is worth asking before a large `apply`: *would this work?* One
-connection per target, before the first `ALTER USER`, checking §8's own list —
-reachable, the scope the file claims, the accounts declared, the privileges
-needed.
-
-**Off by default**, which is the trade. A repair of one target should not pay for
-a survey of twenty, and without the flag `apply` discovers each of these per
-target as it goes and reports them per account — which is the right answer when
-nobody asked. `--strategy` already opened one connection per target for its own
-refusal (#262); the two are now **one pass on one connection** rather than two.
-
-**Every finding is reported and one of them refuses.** A pre-flight exists so an
-estate can be fixed in one pass, so the table lists all of them; but a run has
-one exit code and one `error`, and that one is the finding earliest in §8's
-order — the one closest to the cause. A target that could not be reached explains
-its own missing scope, and a container that turned out to be the wrong one
-explains every account that was not found in it.
-
-**Exit 1, because nothing changed anywhere**, which is what exit 1 already means
-for this verb. Not 9: the estate disagreeing with the file is not a file that
-could not be read, and `config validate` passes on every one of these. Not 5
-either — that is invariant 4's, and a capability the estate cannot honour is
-still `--strategy`'s own refusal, raised where it is found rather than collected
-among findings.
+**It exits 1, because nothing changed anywhere.** That is what exit 1 already
+means for this verb. It is not 9: an estate that disagrees with the file is not a
+file that could not be read, and `config validate` passes on all of these. It is
+not 5 either. Exit 5 is invariant 4's, and a capability the estate cannot honour
+is still `--strategy`'s own refusal, raised where it is found.
 
 **Not knowing is not a finding.** An open mode the driver could not read is not a
-read-only database, and a privilege audit the service account is not granted has
-established nothing either way — so it is reported as a warning and the run goes
-ahead. That is §7's rule for the `LCOUNT` guard applied here: a check that is not
-running says so rather than being silently skipped, and refusing over it would
-mean an estate that will not grant the audit view could never run a pre-flight at
-all.
+read-only database. A privilege audit that the service account may not run has
+established nothing. So each is reported as a warning, and the run goes ahead.
+This is §7's rule for the `LCOUNT` guard: a check that is not running says so,
+and is not skipped silently. Refusing over it would mean that an estate that does
+not grant the audit view could never run a pre-flight at all.
 
-**"Says so" means in the text as well as in the document** (#606). A survey that
-refuses prints every finding in its table, caveats included. A survey that passes
-prints no table, so its caveats are added to the run's notes: one note per target,
-naming what could not be established and the server's reason, with the accounts
-that share a cause on one line. They print on every such run, `--dry-run` or not,
-and `rotate`'s pre-flight prints them the same way. Leaving them JSON-only was
-considered and declined. It holds for a real run, whose own statements meet the
-same cause and name it per account. It fails for `--dry-run --preflight`, where
-nothing runs afterwards and a clean "nothing was applied" would answer "would it
-work" without saying part of the question went unasked.
+**These caveats are printed as well as written to the document** (decided in
+#606). A survey that refuses prints every finding in its table, caveats
+included. A survey that passes prints no table, so its caveats go in the run's
+notes. There is one note per target, naming what could not be established and
+the server's reason, with the accounts that share a cause on one line. They
+print on every such run, `--dry-run` or not. `rotate`'s pre-flight prints them
+the same way. Reasons: [#606](../decisions/log.md#606).
 
-**`--dry-run --preflight` surveys too.** It writes nothing and needs no lock, and
-"show me the plan, and tell me whether it would work" is the invocation somebody
-reaches for first — a flag that silently meant nothing there would be a trap.
+**`--dry-run --preflight` surveys too.** It writes nothing and needs no lock.
+"Show me the plan, and tell me whether it would work" is often the first command
+an operator runs. A flag that silently did nothing there would mislead.
 
-### `--continue-on-error`: why the flag is gone rather than built (#266)
+### There is no `--continue-on-error` (decided in #266)
 
-The sketch above used to carry `--continue-on-error`, described as the other
-half of a fail-fast default. It is removed, because **the behaviour its name
-promises is already what happens**, and the run-wide stops that are left are
-each something else wearing the same word.
+The behaviour that name promises is what `apply` already does. The run-wide
+stops that remain each exist for a different reason. Reasons and rejected
+options: [#266](../decisions/log.md#266).
 
-What a run does today when one part of it fails:
+This table shows what a run does when one part of it fails:
 
-| failure | today |
+| failure | what the run does |
 |---|---|
-| a target that will not connect | `ERROR` rows for its accounts, the run moves to the next target |
-| an account whose statement the server refuses | `ERROR` row, the run moves to the next account |
-| a **promotion** that fails | that document is not promoted, the others still are |
+| a target that will not connect | `ERROR` rows for its accounts; the run moves to the next target |
+| an account whose statement the server refuses | `ERROR` row; the run moves to the next account |
+| a **promotion** that fails | that document is not promoted; the others still are |
 | a **lock** somebody else holds | exit 7, nothing ran |
-| a **lock** this store or path cannot fence | exit 5, before anything is read or written (#346) |
-| a **fence check** that finds the lock stolen | abort, mutate nothing further, exit 7 or 4 |
+| a **lock** this store or path cannot fence | exit 5, before anything is read or written |
+| a **fence check** that finds the lock taken | abort, change nothing more, exit 7 or 4 |
 | a **pre-flight** blocking finding | exit 1, nothing was written |
 | a **capability** the estate cannot honour | exit 5, before anything is written |
 | a **vault document** that will not read | the store's own exit code, nothing ran |
 
-The first three rows are the flag's whole intent and they need no flag: §5 wants
-an estate surveyed rather than abandoned, so a failure that belongs to one
-target, one account or one document is confined to it.
+The first three rows are what the flag would be for, and they need no flag. A
+failure that belongs to one target, one account or one document stays confined
+to it.
 
-The first row is the one the flag was written for, so it is measured rather than
-described — an estate of two targets, the unreachable one **first**, against
-Oracle Free 26ai 23.26.2.0.0 and dev-mode Vault:
+The sample below is from an estate of two targets, with the unreachable one
+**first**, against Oracle Free 26ai 23.26.2.0.0 and a dev-mode Vault:
 
 ```
 ACCOUNT        TARGET       STATE    DETAIL
@@ -975,152 +910,130 @@ acme_web_user  appdb-alpha  IN_SYNC  changed and verified by login
 1 changed, 1 promoted to `current`, 1 not confirmed
 ```
 
-Exit 4. The target that could not be dialled did not end the run, the one after
-it was applied, and only the failed account's document was held back from
-promotion — which is every behaviour `--continue-on-error` was named for,
-without the flag. The same estate under `--preflight` refuses instead, at exit 1
-with `nothing was written`, which is the row below it.
+It exits 4. The target that could not be reached did not end the run, the one
+after it was applied, and only the failed account's document was held back from
+promotion. The same estate under `--preflight` refuses instead, with exit 1 and
+`nothing was written`.
 
-The remaining five rows are the ones `--continue-on-error` would have to reach in
-order to mean anything, and none of them is a candidate:
+The other rows are the stops a `--continue-on-error` flag would have to override,
+and none of them should move:
 
-- **the stolen lock must not move.** Another run is authoritative and this one
-  stops mutating (§8's "any fence check" row). A flag that overrode it would let
-  two runs write the same account, which is the outcome the fence exists to
-  prevent;
-- **the lock refusal must not move.** Exit 7 means nothing ran, and that is a
-  promise a scheduler reads (`../design/03-json-output.md` §6);
-- **the capability refusal must not move.** Invariant 4 makes a plan-time
-  refusal with its own exit code the required shape, not a preference;
-- **the pre-flight refusal could move, and should not be spelled this way.**
-  "Survey everything, then apply to the targets that cleared" is coherent — with
-  rollover as the default strategy a partial apply causes no outage — but it is
-  a guardrail override, and this command already has one. `--force` waives the
-  §4 account guardrails and records every waiver in the run document; an
-  operator who has read the findings and wants the run anyway is asking for the
-  same thing at estate scope. If that is ever wanted it belongs there, under the
-  flag whose name says what it does. It is not wanted yet: nobody has run a
-  pre-flight and wished it had been advisory, and a flag that only means
-  something when a *second* flag is passed is the trap `--dry-run --preflight`
-  is written to avoid;
-- **the unreadable vault document is a different question.** One document out of
-  twenty that cannot be read aborts before any `ALTER USER`, because the read is
-  one pass over every path the run needs. Degrading that to `ERROR` rows for the
-  affected accounts is arguable — it is the only one of the five that is
-  genuinely "keep going" — but it weakens the same "sopuli could not run"
-  promise exit 7 carries, and it is a change to what an exit code means rather
-  than a flag. It gets its own issue if the multi-store case ever makes it real.
+- **The taken lock must not move.** Another run owns the estate, and this one
+  stops changing things (§8's fence row). Overriding it would let two runs write
+  the same account, which the fence exists to prevent.
+- **The lock refusal must not move.** Exit 7 means nothing ran, and schedulers
+  rely on that (`../design/03-json-output.md` §6).
+- **The capability refusal must not move.** Invariant 4 requires a refusal at
+  plan time with its own exit code.
+- **The pre-flight refusal could move, but not under this name.** "Survey
+  everything, then apply to the targets that passed" is coherent: with rollover
+  as the default strategy, a partial apply causes no outage. But it is a
+  guardrail override, and this command already has one. `--force` waives the
+  account guardrails and records every waiver in the run document. If an
+  estate-wide override is ever wanted, it belongs under that flag. A flag that
+  means something only when a *second* flag is passed is the trap that
+  `--dry-run --preflight` avoids.
+- **The unreadable vault document is a different question.** If one document out
+  of twenty cannot be read, the run aborts before any `ALTER USER`, because it
+  reads every path it needs in one pass. Turning that into `ERROR` rows for the
+  affected accounts is arguable. But it weakens the "sopuli could not run"
+  promise that exit 7 also makes, and it changes what an exit code means, which
+  a flag should not do.
 
-So the honest scope was empty, and a flag documented as doing what the tool does
-anyway is worse than no flag: somebody passing it would conclude the runs where
-they did not pass it had behaved differently.
+A flag documented as doing what the tool does anyway is worse than no flag. An
+operator who passed it would conclude that the runs without it behaved
+differently.
 
-### `--repair`, and where the DRIFT list comes from (#264)
+### `--repair`, and where its list comes from (decided in #264)
+
+The command below acts only on what an earlier run left unconfirmed:
 
 ```
-sopuli creds apply --repair result.json   # act only on what that run left unconfirmed
+sopuli creds apply --repair result.json
 ```
 
-**The list comes from a previous run's document.** `--repair` takes a path to
-one — typically an `apply` that exited 4, or a `check` that exited 3 — and
-narrows this run to the (account, target) pairs it reported as not confirmed.
-Built in #391; what follows is what it does.
+**The list comes from an earlier run's document.** `--repair` takes the path to
+one, usually an `apply` that exited 4 or a `check` that exited 3. It narrows this
+run to the (account, target) pairs that the document reports as not confirmed.
+Reasons and rejected options: [#264](../decisions/log.md#264).
 
-**The filter is the row's state, never the document's exit code**, and that is
-deliberate rather than an omission (raised in review on #391). Refusing by exit
-code would refuse an `apply` that exited 1 — every target failed, nothing
-changed anywhere — which is the document *most* worth repairing from; and a
-`check` that exited 1 because one target was unreachable, where retrying is
-exactly the remedy. Nothing is lost by accepting them: `apply` verifies every
-pair before it touches it, and invariant 5 still bounds what it can reach. What
-the producer check refuses is a document from a command that reports no repair
-set at all, such as `creds generate`.
+**The filter is each row's state, never the document's exit code.** Refusing by
+exit code would refuse an `apply` that exited 1, where every target failed and
+nothing changed. That is the document *most* worth repairing from. It would also
+refuse a `check` that exited 1 because one target was unreachable, where trying
+again is the remedy. Accepting them loses nothing: `apply` verifies every pair
+before it touches it, and invariant 5 still limits what it can reach. The tool
+refuses a document from a command that reports no repair set at all, such as
+`creds generate`.
 
-**What it buys is logins, not capability.** `apply` is already idempotent: every
-account is verified before it is touched and one that already works is left
-alone, so an unnarrowed repair converges the estate correctly and expensively.
-The cost is one login per account per target — an attempt against the
-failed-login counter §7 exists to protect, a connection, and an audit entry in a
-database that had nothing wrong with it. Repairing one PDB in an estate of
-twenty-one spends twenty-one.
+**It saves logins; it adds no capability.** `apply` is already idempotent. Every
+account is verified before it is touched, and one that already works is left
+alone. So a repair without the flag converges the estate correctly, at a cost.
+The cost is one login per account per target: an attempt against the
+failed-login counter §7 protects, a connection, and an audit entry in a database
+that had nothing wrong with it. Repairing one PDB in an estate of twenty-one
+spends twenty-one logins.
 
-**Why not run `check`'s logic first, in the same process.** Because that is what
-this build already does. The pre-flight in the flow above *is* `check`'s
-comparison, and the `ALTER USER` is skipped where it passes — so a flag that ran
-it would spend exactly the logins `--repair` exists to save and change nothing
-else. It is not a narrower option; it is an empty one.
+**Why it does not run `check`'s logic first, in the same process.** `apply`
+already does. Its verification before the change *is* `check`'s comparison, and
+the `ALTER USER` is skipped where it passes. A flag that ran `check` first would
+spend exactly the logins `--repair` saves, and change nothing else.
 
-**Why not take the target list from the operator.** `--repair --target x` is
-`--target x` with more letters. `--select` already narrows the estate and #229
-adds the named-entity selectors; a second spelling of them would be a flag whose
-only distinguishing feature is that it is easier to get wrong.
+**Why it does not take the target list from the operator.**
+`--repair --target x` would be `--target x` with more letters. `--select`,
+`--target`, `--group` and `--account` already narrow the estate. A second
+spelling of them would only be easier to get wrong.
 
-**What the document form has to refuse, and what it does not.** A stale document
-describes a stale estate — but two properties bound that before any rule is
-written:
+**What the tool refuses in the document, and what it does not.** A stale
+document describes a stale estate. Two properties limit the harm before any rule
+is needed:
 
-- **it can only ever narrow.** Invariant 5 makes the config the whitelist, and
-  `--repair` feeds a filter rather than a target list. A pair the document names
-  and the config no longer declares is dropped, not acted on;
-- **a pair that has since been repaired costs one login and reports
-  `changed: false`,** because the pre-flight asks before it acts.
+- **It can only narrow.** Invariant 5 makes the config the whitelist, and
+  `--repair` feeds a filter, not a target list. A pair that the document names
+  and the config no longer declares is dropped, not acted on.
+- **A pair repaired since costs one login and reports `changed: false`,**
+  because `apply` checks before it acts.
 
-Acting on a stale document is therefore wasteful rather than dangerous, so
-freshness is a **warning naming the document's age** — `SOPULI-W020` — not a gate
-with a threshold in it: a threshold would have to be wrong for somebody, and the
-run it refused would have been safe. What *is* refused is a document describing a
-different estate, before a target is dialled. A repair aimed at the wrong estate
-is the one failure the two properties above do not catch.
+So acting on a stale document wastes logins but is not dangerous. Freshness is a
+**warning that names the document's age**, `SOPULI-W020`, not a gate with a
+threshold. Any threshold would be wrong for somebody, and the run it refused
+would have been safe. What the tool *does* refuse is a document that describes a
+different estate, before any target is dialled. A repair aimed at the wrong
+estate is the one failure the two properties above do not catch.
 
-**It reads `invocation.config_files`, not `config.sources[]`**, and this
-paragraph said the second until #391 built it. The `config` section is emitted by
-`config show` and `target list` only, so it is absent from every document this
-flag can be handed — the estate could not have been checked the way this was
-written. `invocation.config_files` was itself declared and never written until
-#402; a document produced before that carries none and is refused, on whether the
-field is *there* rather than on what version wrote it.
+**It reads `invocation.config_files`, not `config.sources[]`.** Only
+`config show` and `target list` emit the `config` section, so no document this
+flag accepts has it. A document with no `invocation.config_files` is refused.
+The check is on whether the field is present, not on the version that wrote the
+document.
 
-Paths and not their content, which decides one case worth naming: the same file
-copied to a second path is a different estate to this check, and moving a config
-file invalidates the documents produced over it. The message names both lists, so
-the operator can see which. Order matters too — it is the layering order (§5 of
-`01-configuration.md`), so the same files layered the other way round resolved
-different settings and are not the same estate.
+The check compares paths, not file contents. So the same file copied to a second
+path counts as a different estate, and moving a config file invalidates the
+documents produced with it. The message names both lists, so the operator can see
+which. Order matters too. It is the layering order (`01-configuration.md` §5),
+so the same files layered the other way round resolve different settings and are
+not the same estate.
 
 **The refusal exits 2, with no run document** (J7). That is what every other
-selector does when it does not resolve: `--target nosuch` already raises
-`ArgumentError` from `refuse_unknown`, and `--repair` feeds a filter, so a filter
-that does not resolve is an invocation that did not resolve. Exit 9 was the
-alternative and was declined in #391 — it means *fix your configuration*, and the
-configuration here is fine.
+selector does when it does not resolve. `--target nosuch` raises `ArgumentError`
+from `refuse_unknown`, and `--repair` feeds a filter, so a filter that does not
+resolve is an invocation that did not resolve. Exit 9 means *fix your
+configuration*, and the configuration here is fine.
 
-**A repair of a rotation is the DDL, not the promotion** (#406). A repair
-narrowed to one of a document's two accounts changes that account and then
-withholds the promotion, because the sibling the earlier run already applied
-still has its `pending` staged and nothing in this run asked its database
-anything — §5's promotion gate. So a partial rotation takes two runs to finish:
-`--repair` for the pairs that failed, then `apply` without the narrowing, which
-spends one login on each converged pair and promotes. A repair from `current` —
-drift, with nothing staged — has nothing to promote and still finishes in one.
+**A repair of a rotation applies the change; a later run promotes it.** Take a
+repair narrowed to one of a document's two accounts. It changes that account and
+then withholds the promotion, because the sibling that the earlier run already
+applied still has its `pending` staged, and this run did not check its database.
+That is §5's promotion gate. So a partial rotation takes two runs to finish:
+`--repair` for the pairs that failed, then `apply` without narrowing. The second
+run spends one login on each converged pair and promotes. A repair from
+`current`, which is drift with nothing staged, has nothing to promote and
+finishes in one run.
 
-**Exit 4 names the invocation that repairs it, and that part shipped.** A partial
-run's closing line says what to type, narrowed the way that run was narrowed and
-carrying `--config`, `--profile`, `--source` and `--strategy` so the repair
-resolves and acts the way the run did:
-
-```
-1 changed, 1 not confirmed
-repair with: sopuli creds apply --config estate.yaml --select env=prod
-```
-
-It **still** names the plain re-run now that `--repair` exists, and #391 found
-two reasons this section could not have known. The first: The emitter writes the JSON
-document or the human text and never both, so this line is only ever read in
-**text** mode — and a text-mode run leaves no document on disk for `--repair` to
-be pointed at. Replacing the line would hand a half-applied estate an invocation
-that cannot run, which is the same trap the paragraph above refuses.
-
-So the flag gets a second line instead, saying what it needs:
+**Exit 4 prints the command that repairs it.** A partial run's closing line says
+what to type. It is narrowed the way the run was narrowed, and it carries
+`--config`, `--profile`, `--source` and `--strategy`, so the repair resolves and
+acts the way the run did:
 
 ```
 1 changed, 1 not confirmed
@@ -1128,26 +1041,25 @@ repair with: sopuli creds apply --config estate.yaml --select env=prod
          or: --repair FILE, if you captured this run with --output json
 ```
 
-A JSON consumer needs no line at all: it has `results[]`, and
-`03-json-output.md` §7's recipe is the same filter the flag applies.
+The first line is the plain re-run. It works for both shapes of exit 4: targets
+that did not confirm, and an estate that confirmed while its vault was not
+promoted. The second shape is §8 case 7. Applications fetch a password the
+databases no longer have, so knowing what to type next matters most there.
 
-The second reason is that **the flag does not fix both shapes of exit 4.** On
-§8 case 7 — every target confirmed and the vault not promoted — there is no
-unconfirmed row for a repair set to be built from, so `--repair` would filter
-the estate to nothing and report `nothing to apply`. The plain re-run does fix
-it. So the flag's line is printed only where an unconfirmed row exists, while
-the re-run's is printed on both (found in review on #391).
+The `--repair` line is printed only where an unconfirmed row exists. On §8 case
+7, every target confirmed, so there is no unconfirmed row to build a repair set
+from. `--repair` would filter the estate to nothing and report
+`nothing to apply`.
 
-Both shapes of exit 4 get the line: targets that did not confirm, and an estate
-that confirmed while its vault was not promoted. The second is §8 case 7 —
-applications are fetching a password the databases no longer have — and it is the
-row where knowing what to type next matters most.
+The plain re-run is the first line, and not `--repair`, because the closing line
+is text output only. The emitter writes the JSON document or the text, never
+both. A text-mode run leaves no document on disk for `--repair` to read. A JSON
+consumer needs no line: it has `results[]`, and `03-json-output.md` §7's recipe
+is the same filter the flag applies.
 
-**The line is text only, and carries no diagnostic code.** `03-json-output.md`
-§3's rule is that a code exists for what the exit code cannot tell you, and here
-it tells you exactly: exit 4, with `results[]` already carrying the states a
-consumer would filter on. A code would be a third spelling of a fact the
-document holds twice.
+**The line carries no diagnostic code.** `03-json-output.md` §3's rule is that a
+code exists for what the exit code cannot tell you. Here exit 4 says it, and
+`results[]` already carries the states a consumer would filter on.
 
 ---
 
