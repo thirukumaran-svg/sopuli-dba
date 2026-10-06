@@ -54,6 +54,7 @@ from datetime import datetime, timedelta
 from sopuli.clock import utc_now
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Config
+from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE
 from sopuli.lock.keys import LockKey, acquisition_order, lock_key, normalise_path
 from sopuli.lock.manager import LOCK_PREFIX, MODE_CAS, MODE_NONE, lock_path
 from sopuli.lock.record import CLOCK_SKEW, LockRecord
@@ -220,16 +221,14 @@ def declared_locks(config: Config) -> tuple[LockKey, ...]:
         if binding.secret is None:
             continue
         if binding.vault is None:
-            # TODO(#672): `lock status` does not complete a binding's store from a
-            # profile or SOPULI_VAULT, as the `creds` verbs do.
             raise ConfigError(
                 f"account {binding.account!r} on target {binding.target!r} names no store, "
                 f"so there is no lock path to read",
                 at=ROOT.key("vaults"),
                 hint=(
-                    "name one on the ref, the entry, an override, the target, or "
-                    "`defaults.vault` -- `lock status` does not read a profile's "
-                    "`vault:` or SOPULI_VAULT for a binding"
+                    "name a store on the ref, the application entry, an override, the target, "
+                    "or `defaults.vault` -- or, for this run only, "
+                    f"`--profile <one with vault:>` or {DEFAULT_STORE_VARIABLE}=<store>"
                 ),
             )
         keys.append(lock_key(binding.secret, store=binding.vault))

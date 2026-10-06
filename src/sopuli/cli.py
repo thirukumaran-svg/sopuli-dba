@@ -3520,8 +3520,14 @@ def lock_status(
     # is unknown can match no discovered path -- so refusing over one made
     # `--select` fail on an account in an application the run was never going to
     # survey.
-    everything = resolvable_locks(config)
-    keys = declared_locks(filter_estate(config, selection))
+    #
+    # Both estates are completed from a profile's `vault:` and SOPULI_VAULT
+    # first (C15, #672), because a rotation run under them takes its lock in
+    # that store. The membership pass completes without refusing, as the
+    # promotion gate does: a SOPULI_VAULT naming an undeclared store is wrong
+    # only for a binding this run surveys, and the narrowed estate refuses that.
+    everything = resolvable_locks(_declared_estate(config))
+    keys = declared_locks(binding_stores.complete(filter_estate(config, selection), env=os.environ))
     # UC-2's locks are keyed on the reset record's path, which no binding
     # produces (#514). The prefix is declared and the keys under it are not
     # enumerable offline -- a predicate-declared personal account has no name

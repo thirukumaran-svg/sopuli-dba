@@ -26,6 +26,7 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli.cli import cli
+from sopuli.config.binding_stores import NoStoreError
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
 from sopuli.diagnostics import UNLISTABLE_STORE, WARNINGS
@@ -239,6 +240,93 @@ def test_a_command_that_acts_on_the_keys_still_refuses(
     assert isinstance(result.exception, ConfigError), result.exception
     assert result.exception.exit_code == ExitCode.CONFIG_INVALID
     assert "names no store" in str(result.exception)
+    assert "SOPULI_VAULT" in str(result.exception.hint)
+
+
+#: Where `beta`'s lock lives when a run completes its store from the environment
+#: or a profile, as `creds rotate` does before it takes the lock.
+GAMMA = LockKey(store="vault-dev", path="apps/beta/appdb-gamma")
+
+
+def test_sopuli_vault_completes_a_binding_with_no_store(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    with_locks: Stores,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#672. A rotation under SOPULI_VAULT locks in that store, so a survey looks there."""
+    monkeypatch.setenv("SOPULI_VAULT", "vault-dev")
+    with_locks((GAMMA, held()))
+
+    result = run(runner, write_config(UNRESOLVED_CONFIG), "--app", "beta", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.exception
+    found = {entry["path"]: entry for entry in section(result)["found"]}
+    assert found[GAMMA.path]["declared"] is True
+
+
+def test_a_profile_vault_completes_a_binding_with_no_store(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """#672. The profile is the other run-time source C15 names."""
+    with_locks((GAMMA, held()))
+    profiled = UNRESOLVED_CONFIG + "profiles:\n  dev:\n    vault: vault-dev\n"
+
+    result = run(
+        runner, write_config(profiled), "--app", "beta", "--profile", "dev", "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.exception
+    found = {entry["path"]: entry for entry in section(result)["found"]}
+    assert found[GAMMA.path]["declared"] is True
+
+
+def test_a_completed_binding_counts_as_declared_outside_the_selection(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    with_locks: Stores,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#672. The membership pass completes too, so `beta`'s lock is not a leftover.
+
+    Selected down to `acme`, `beta` is not surveyed. Listing `vault-dev` finds
+    its record, and the run's SOPULI_VAULT says that store is where `beta` locks,
+    so the record is this configuration's and the selector keeps it out of the
+    report. Without the completion it was reported as `declared: false`.
+    """
+    monkeypatch.setenv("SOPULI_VAULT", "vault-dev")
+    with_locks((DEV, held()), (GAMMA, held()))
+
+    result = run(runner, write_config(UNRESOLVED_CONFIG), "--app", "acme", "--output", "json")
+
+    paths = {entry["path"] for entry in section(result)["found"]}
+    assert DEV.path in paths
+    assert GAMMA.path not in paths
+
+
+def test_an_undeclared_sopuli_vault_refuses_only_where_it_is_used(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    with_locks: Stores,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SOPULI_VAULT naming no declared store is wrong only for a binding this run surveys.
+
+    `--app acme` surveys nothing that needs it, so the run goes ahead, as the
+    promotion gate does over a binding its selector left out (#578). `--app beta`
+    needs it, and refuses naming the variable.
+    """
+    monkeypatch.setenv("SOPULI_VAULT", "vault-nowhere")
+    with_locks((DEV, held()))
+    path = write_config(UNRESOLVED_CONFIG)
+
+    unaffected = run(runner, path, "--app", "acme")
+    refused = run(runner, path, "--app", "beta")
+
+    assert unaffected.exit_code == ExitCode.SUCCESS, unaffected.exception
+    assert isinstance(refused.exception, NoStoreError), refused.exception
+    assert refused.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert "SOPULI_VAULT" in str(refused.exception.hint)
 
 
 # ------------------------------------------------------------- what it surveys ---
