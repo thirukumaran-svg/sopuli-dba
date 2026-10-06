@@ -401,8 +401,8 @@ def _from_prompt(
 
     **A prompt never reads stdin**, which is how P5's "one stream, one reader"
     survives contact with this method. That rule reserves the pipe for at most
-    one secret per run and ``--from-stdin`` (UC-1 §5) already claims it on
-    ``creds apply``; a prompt that fell back to stdin on finding no terminal
+    one secret per run and ``--from-stdin`` (UC-1 §4) claims it on
+    ``creds generate``; a prompt that fell back to stdin on finding no terminal
     would be a second reader of the same stream, taking the password meant for
     the *account* and sending it to the database as the DBA's.
 

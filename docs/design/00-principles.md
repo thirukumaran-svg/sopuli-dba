@@ -1,6 +1,5 @@
 # sopuli-dba — Common Design Principles
 
-Status: draft / sketch
 Applies to: all commands and use cases
 
 These principles are binding on every feature. A use case document may refine them
@@ -18,108 +17,99 @@ its shape must not leak into the interface.
 
 ### Driver interface
 
+The interface is `sopuli/driver/protocol.py`. This sketch lists its methods:
+
+<!-- checked-list: driver-protocol -->
 ```
 Driver
   connect(target, credential) -> Session
 
 Session
-  scope() -> Scope                          # what this connection is, and can do
-  describe_user(account) -> UserState | none
-  resolve_profile(name) -> string | none     # how this database spells it, if it has it
+  scope() -> Scope                              # what this connection is, and what it may do
+  describe_user(account) -> UserState | None
   set_password(account, secret) -> ChangeResult
-  verify_password(account, secret, method) -> VerifyResult
-  apply_attributes(account, attrs) -> AttributeChange[]
+  suspend_account(account) -> AccountChange     # UC-2: lock an account on purpose
+  reset_password(account, secret, expire, keep_rollover) -> AccountChange[]   # UC-2 §4.1
+  expire_password(account) -> AccountChange[]   # UC-2: change at next logon
+  require_no_rollover_window(account) -> None   # refuses, or returns
+  apply_attributes(account, attributes) -> AttributeChange[]   # UC-1 §5
+  resolve_profile(profile) -> str | None        # how this database spells it, if it has it
+  resolve_role(role) -> str | None
+  accounts_matching(profile, role) -> str[]     # UC-2 §2 predicates
+  verify_password(account, secret, method, lockout_margin, attempts) -> VerifyResult
+  require_verifier(account, secret) -> None     # refuses, or returns
+  require_rollover(account) -> None             # refuses, or returns
+  finish_rollover(account) -> ChangeResult
   close()
 ```
 
-Four of those changed shape when the interface became code (#169), the way P2's
-`write` grew a compare-and-set when the advisory lock made it real. Each is a
-refinement of the same rule and none of them relaxes it:
+The interface has this shape for these reasons:
 
-- **The session carries the operations.** The sketch threaded a session through
-  every call and gave `capabilities()` no argument at all — which cannot be right
-  for an estate where twenty-one PDBs answer differently. Capabilities are cached
-  **per session**, so a flat interface needs a cache keyed on a connection, which
-  is this object with extra steps.
-- **`capabilities()` and `resolve_scope()` are one call.** Both are observed at
-  one moment, from one connection, and cached together, and the run document
-  already prints them as one `scope` object. Two calls would mean two caches and
-  a merge at the output layer.
-- **`user_exists` is `describe_user(...) is not none`.** A caller asking whether
-  an account exists asks what it is in the next breath; UC-1 §5 step 3 is one
-  step, not two.
-- **`opts` became `apply_attributes`' own `attrs`** (#300). It is where UC-1 §5's
-  opt-in attributes go, and it is typed — one field per attribute. An untyped bag
-  would accept a misspelled `container_clase: ALL` and silently do nothing, which
-  is the failure `01-configuration.md` §10 exists to prevent. `set_password` grew
-  no second argument: see below.
+- **The session carries the operations.** Capabilities are cached per session,
+  because the PDBs of one estate can answer differently. A flat interface would
+  need a cache keyed on a connection, and that is what a session object is.
+- **`scope()` returns the capabilities and the container scope together.** Both
+  are observed at one moment on one connection and cached together. The run
+  document prints them as one `scope` object.
+- **There is no `user_exists`.** A caller that asks whether an account exists
+  then asks what state it is in. `describe_user` answers both, and returns `None`
+  for an account that does not exist.
+- **`apply_attributes` takes a typed `AccountAttributes`, one field per
+  attribute, never a mapping.** A mapping would accept a misspelled key such as
+  `container_clase`, do nothing, and report no error. `01-configuration.md` §10
+  exists to prevent that failure.
+- **`apply_attributes` returns one `AttributeChange` per attribute.** UC-1 §5
+  reports each attribute as a separate change, so that the result says which
+  attribute changed. `set_password` takes no attributes and returns one
+  `ChangeResult`, because one result must not describe two changes.
+- **`resolve_profile` and `resolve_role` return the name as the database spells
+  it**, not a boolean. A quoted identifier is case-sensitive, and only the
+  dictionary's spelling may reach a statement (`02-oracle-privileges.md` §4).
+  UC-1 §8's pre-flight uses `resolve_profile` to check that a profile exists
+  before anything is written.
+- **A `require_*` method raises or returns nothing.** The tool calls it at plan
+  time, before any account is changed, so a run that cannot be done fails before
+  it starts (invariant 4). It raises instead of returning a value, so a caller
+  cannot ignore the answer.
+- **A method exists only when something calls it.** Each method is a demand on
+  every driver, so the protocol does not declare a method that no verb uses.
 
-`connect` is implemented (#176) — `OracleDriver` in
-`sopuli/driver/oracle/session.py`, which is also the module the driver registry
-imports for `type: oracle`, so that a missing client is a structured error
-rather than a traceback.
+`OracleDriver` in `sopuli/driver/oracle/session.py` implements the interface. It
+is also the module the driver registry imports for `type: oracle`, so a missing
+client is a structured error and not a traceback.
 
-**A driver is an object, and the split is load-bearing.** Everything the driver
-holds is a property of the *run* — which environment, which correlation id,
-which timeout budgets, where Instant Client lives — and everything `connect`
-takes is a property of the *target*. The first draft made `connect` a module
-function with four extra keyword arguments, which is not the interface above:
-a caller written against `Driver` would have got a `TypeError`, which is exactly
-the drift this sketch exists to prevent. `tests/driver/test_oracle_connect.py`
-asserts `isinstance(driver, Driver)` so the two cannot part company again.
+**The driver is an object, and `connect` takes only the target and the
+credential.** The driver holds what belongs to the run: the environment, the
+correlation id, the timeouts, and where Instant Client is. `connect` takes what
+belongs to the target. A module function with extra keyword arguments would not
+match `Driver`, and a caller written against `Driver` would get a `TypeError`.
+`tests/driver/test_oracle_connect.py` asserts `isinstance(driver, Driver)`, so
+the two stay the same.
 
-Three further decisions came with it, each a fork rather than a detail:
+The Oracle driver also follows these rules:
 
-- **Where Instant Client lives is resolved, not assumed.** `01-configuration.md`
-  §6's `SOPULI_ORACLE_CLIENT_LIB_DIR` first, then `runtime.oracle.client_lib_dir`
-  from the file, then the platform's own loader (P4's table). The config key had
-  been documented and parsed since the config layer was written and was ignored by
-  the first draft of this — a documented key that silently does nothing is worse
-  than one that does not exist.
-- **Thick-mode initialisation is lazy, on the first connect.**
-  `init_oracle_client` is process-global and effectively one-shot, so the
-  alternative was doing it at startup, where the failure is earliest. Lazy wins
-  because ADR-006 rule 3 says a base install opens no sockets and loads no
-  vendor client: an offline `config validate` that initialised Instant Client
-  would be working for a database it will never contact, and would *fail* on a
-  machine where that command is perfectly valid.
-- **One connection per target, never a shared session with `SET CONTAINER`.** A
-  CDB root and its PDBs are separate services. The alternative needs
-  `ALTER SESSION SET CONTAINER`, which `02-oracle-privileges.md` §2 lists as
-  optional and which the document's whole position is to avoid needing — the
-  grant set stays minimal, and a run that cannot reach one PDB fails for that
-  PDB rather than poisoning a session shared with others.
-- **The correlation id goes on every session**, including ones that turn out to
-  read nothing. §5's `DBMS_SESSION.SET_IDENTIFIER` is the join between the
-  tool's JSON, the database's own trail and the vault's metadata; a session that
-  appears in the trail unlabelled is the one somebody has to explain later.
+- **It finds Instant Client in a fixed order.** First
+  `SOPULI_ORACLE_CLIENT_LIB_DIR` (`01-configuration.md` §6), then
+  `runtime.oracle.client_lib_dir` from the file, then the platform's own loader
+  (P4's table).
+- **It initialises thick mode on the first connect, not at startup.**
+  `init_oracle_client` is process-global and runs once. At startup it would fail
+  earlier, but ADR-006 rule 3 says a base install loads no vendor client. An
+  offline `config validate` must not load Instant Client for a database it never
+  contacts, and must not fail on a machine where Instant Client is missing.
+- **It opens one connection per target, and never shares a session with
+  `SET CONTAINER`.** A CDB root and its PDBs are separate services. Sharing one
+  session needs `ALTER SESSION SET CONTAINER`, which `02-oracle-privileges.md` §2
+  lists as optional and avoids, to keep the grant set small. With one connection
+  per target, a PDB that cannot be reached fails alone and does not affect the
+  others.
+- **It sets the correlation id on every session**, including a session that
+  reads nothing. §5's `DBMS_SESSION.SET_IDENTIFIER` joins the tool's JSON, the
+  database's audit trail and the vault's metadata. A session without the label
+  appears in the audit trail and nobody can say which run it belonged to.
 
-`apply_attributes` was the one operation above that the code deliberately did
-**not** declare — the same seam P2 drew around `health` until #216 gave it a
-caller. A method on the protocol is a demand on every implementation, so
-declaring one nothing calls would oblige the Oracle driver to write a body for a
-caller that does not exist. **It arrived with #300**, the first of UC-1 §5's
-attributes, and it took two refinements of the sketch with it:
-
-- **`attrs` is a typed `AccountAttributes`, one field per attribute** — never a
-  mapping. `01-configuration.md` §10's rule: a bag would accept a misspelled key,
-  do nothing, and report that it had done nothing wrong.
-- **it returns one `AttributeChange` per attribute**, not the single
-  `ChangeResult` the sketch shows. §5 requires each attribute to be *reported as a
-  separate change so the diff stays readable*, and one result for four attributes
-  could not say which of them moved. `set_password` keeps its own `ChangeResult`
-  and grew no `opts`: a password set that also unlocked would be exactly the one
-  result describing two mutations that §5 rules out.
-
-`resolve_profile` arrived the same way, with #301's profile assignment: UC-1 §8's
-pre-flight has to know whether a profile a policy names exists on a target
-*before* anything is written, and the driver is the only thing that can answer it.
-It returns the **spelling** rather than a boolean, because a quoted identifier is
-case-sensitive and the dictionary's spelling is the only one that may reach a
-statement (`02-oracle-privileges.md` §4).
-
-`Scope` is the run document's `scope` object minus `labels`, which belong to the
-config rather than to anything a driver can observe.
+`Scope` is the run document's `scope` object without `labels`. Labels come from
+the config, and a driver cannot observe them.
 
 ### Capability negotiation
 
@@ -135,28 +125,26 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `password_reuse_policy` | Server may reject a generated password | yes (`PASSWORD_REUSE_*`, verify function) |
 | `expire_password` | Force expiry / end rollover | yes |
 | `account_lock_state` | Read and set lock state | yes |
-| `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, §2's grant set since #531 |
+| `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set |
 
 A command that needs a capability the target lacks must fail with a distinct exit
 code and a message naming the capability and the target — never a generic error.
 
-**A capability is what the session may *do*; where it is standing is
-`scope.type`.** These were briefly one idea — `container_scope` sat in this table
-until #195 — and separating them is not tidying. A root session that lacks the
-common grant and a PDB session that holds it are different failures, Oracle
-returns different codes for them (`ORA-01031` and `ORA-65040`), and only one of
-the two is fixed by granting anything. `scope.type` already distinguishes
-`non_cdb` / `cdb_root` / `pdb`, observed on the same connection at the same
-moment, so a capability restating it would be one fact with a second place to
-disagree — the reason `offline_verify_available` is `supports(offline_verify)`
-and not a field of its own.
+**A capability is what the session may do. Where the session is connected is
+`scope.type`.** They are separate facts. A root session that lacks the common
+grant and a PDB session that holds it are different failures. Oracle returns
+different codes for them (`ORA-01031` and `ORA-65040`), and only one of them is
+fixed by a grant. `scope.type` already says `non_cdb`, `cdb_root` or `pdb`, read
+on the same connection at the same moment. A capability that repeated it would be
+a second place for the same fact to disagree. For the same reason,
+`offline_verify_available` is `supports(offline_verify)` and not a separate field.
 
-**A capability that cannot be *determined* is not a capability that is absent.**
-A probe answers no when the view, the column or the grant is missing; anything
-else means the tool asked a question it should not have asked, and it refuses
-rather than reporting a plausible negative. #195 is the case: a probe invalid on
-every release read as a clean `--` for a full release cycle, because any failure
-counted as an answer.
+**A capability that cannot be determined is not a capability that is absent.** A
+probe answers no when the view, the column or the grant is missing. Any other
+error means the tool asked a wrong question, so it refuses instead of reporting
+a negative that looks plausible. Without this rule, a probe that was invalid on
+every release would read as a clean "no", because every failure would count as
+an answer.
 
 ### Oracle variants that must all work
 
@@ -166,25 +154,23 @@ counted as an answer.
   exist independently in many PDBs
 - **Application containers** (application root + application PDBs) — a distinct
   scope, not the same as CDB root
-- **OCI database services** — two different things on the wire. Autonomous
-  Database encrypts with TLS or mutual TLS over TCPS and uses no Native Network
-  Encryption; Base Database Service and Exadata Cloud are where NNE is
-  required. Measured for Autonomous and Base Database (#575); Exadata Cloud is
-  Oracle's documentation, not measured here.
-  The client is thick-mode for both (python-oracledb thick / godror), which is a
-  runtime prerequisite, not a configuration option — see *Why thick mode* below.
+- **OCI database services.** Autonomous Database encrypts with TLS or mutual TLS
+  over TCPS and uses no Native Network Encryption (NNE). Base Database Service
+  and Exadata Cloud require NNE. *Why thick mode* below gives the measurements.
+  The client is thick mode for all of them. Thick mode is a runtime
+  prerequisite, not a configuration option.
 - **RAC / Data Guard** — connect via service, not SID; on a physical standby the
   driver must detect `OPEN MODE = READ ONLY` and refuse write operations up front
   rather than failing mid-statement.
 
 ### Version-dependent behaviour to detect at runtime, never assume
 
-- Max password length: the tool enforces 30 bytes below 23 and 128 from 23
-  (#595). That is its rule, not a measured Oracle maximum on every release: a
-  31st byte is refused on 11.2, 12.2, 18c, 19.3 and 21c and 128 accepted on 26ai,
-  while 12.1 and a 23ai before 23.26 are unmeasured (unverified:
-  password-byte-limit). **Not 12.2**, the old key, which raised identifiers and
-  left passwords at 30
+- Maximum password length. The tool enforces 30 bytes below release 23 and 128
+  bytes from 23. This is the tool's rule, not a measured Oracle limit on every
+  release. A 31st byte is refused on 11.2, 12.2, 18c, 19.3 and 21c, and 128
+  bytes are accepted on 26ai. 12.1, and 23ai before 23.26, are not measured
+  (unverified: password-byte-limit). The limit does not change at 12.2: that
+  release raised the identifier limit and left passwords at 30 bytes.
 - Password verifiers present (`DBA_USERS.PASSWORD_VERSIONS`: 10G/11G/12C) and
   `SQLNET.ALLOWED_LOGON_VERSION_SERVER` — a generated password longer than 30
   bytes silently breaks clients still relying on 10G/11G verifiers
@@ -195,13 +181,13 @@ counted as an answer.
 The tool queries version and capabilities on connect and caches the result per
 session. It never branches on a version number typed into config.
 
-**Client reach is a separate constraint from server support.** Per Oracle's
-client/server interoperability matrix, a 23.x client supports servers from 19c
-onward; reaching an 11.2 server needs a 19.x client. Since Instant Client for
-macOS ARM64 exists only in 23.x, an 11.2 target cannot be reached from an
-Apple Silicon machine at all. `sopuli doctor` reports the installed client
-version and warns when a configured target is out of its reach, rather than
-letting the connection fail with a bare ORA error.
+**Client reach is a separate constraint from server support.** Oracle's
+client/server interoperability matrix says a 23.x client supports servers from
+19c onward, and an 11.2 server needs a 19.x client. Instant Client for macOS
+ARM64 exists only in 23.x, so an Apple Silicon machine cannot reach an 11.2
+target. `sopuli doctor` reports the installed client version and warns when a
+configured target is out of its reach, so the connection does not fail with a
+bare ORA error.
 
 ### Adding a second product later
 
@@ -217,20 +203,18 @@ targets:
       container: PDB1
 ```
 
-**A driver is an install extra**, on the same rule as a store: `python-oracledb`
-exists only to reach Oracle, so it arrives with `sopuli-dba[oracle]` and PostgreSQL
-would arrive with `sopuli-dba[postgres]`. `sopuli/driver/registry.py` implements
-it (#170), and the two registries share a mechanism rather than a message:
-`sopuli/extras.py` holds looking a module up without importing it and the
-three-way reading of a `ModuleNotFoundError`, because that discrimination is
-subtle and a second copy of it would drift. The sentences stay apart — a store is
-named by `vaults:` and a driver by a target's `type:`, and a message serving both
-would name neither. Binding stores and not drivers would read
-as arbitrary, and D3 already makes reaching Oracle a per-site runtime condition
-— Instant Client has to be installed either way. See P2's *Backends are install
-extras* and [ADR-006](../decisions/adr-006-optional-dependencies.md); D6 is
-unaffected, since an extra controls which dependencies are installed and not
-which modules exist.
+**A driver is an install extra**, by the same rule as a store.
+`python-oracledb` exists only to reach Oracle, so it comes with
+`sopuli-dba[oracle]`. PostgreSQL would come with `sopuli-dba[postgres]`.
+`sopuli/driver/registry.py` implements this. The driver registry and the store
+registry share `sopuli/extras.py`, which finds a module without importing it and
+reads a `ModuleNotFoundError` three ways. That logic is subtle, so it has one
+copy. The error messages stay separate: a store is named by `vaults:` and a
+driver by a target's `type:`, and one message for both would name neither.
+Instant Client must be installed to reach Oracle anyway (D3), so making the
+driver an extra adds no new condition. See P2's *Backends are install extras*
+and [ADR-006](../decisions/adr-006-optional-dependencies.md). D6 is unaffected:
+an extra controls which dependencies are installed, not which modules exist.
 
 ---
 
@@ -242,108 +226,98 @@ Vaults are pluggable behind a **secret store interface**. A secret is addressed 
 a *SecretRef* that is uniform across backends; only the resolution of that ref is
 backend-specific.
 
+The interface is `sopuli/store/protocol.py`. This sketch lists its methods:
+
+<!-- checked-list: store-protocol -->
 ```
 SecretStore
-  read(ref) -> SecretValue + metadata(version, created, custom)
-  write(ref, value, cas, opts) -> version
-  metadata(path) -> PathMetadata | none
-  list(prefix) -> [ref]
-  supports() -> StoreCapabilitySet
-  health() -> ok | degraded | unreachable
+  supports() -> capability set
+  health() -> StoreHealth                   # ok, degraded or unreachable, and the store's clock
+  read(path, version) -> Stored | None      # the document and the version it was read at
+  write(path, data, cas) -> version
+  patch(path, changes, cas) -> version      # RFC 7396 merge patch
+  metadata(path) -> PathMetadata | None
+  require_cas(path) -> None                 # makes the path refuse writes without a CAS
+  list(prefix) -> path[]
 ```
 
-Two of those arrived with the advisory lock (#83, #96) and were not in the
-original sketch. **`write` takes a compare-and-set version and returns the new
-one**, because that returned version is the lock's fencing token — a write that
-only said "ok" would leave the design with nothing to fence with. **`metadata`
-reads what a store knows about a path apart from its contents**, so pre-flight
-can check that a lock path is not configured to accept writes without a CAS: a
-guarantee the tool cannot check is one it should not claim.
+**`write` and `patch` take a compare-and-set version and return the new
+version.** The returned version is the advisory lock's fencing token. A write
+that returned only "ok" would leave the lock nothing to fence with.
 
-**`list` was in the sketch and is now specified** (#150). Four properties, all of
-them things a backend's own listing endpoint does not give a caller unaided, and
-each one a place two adapters would otherwise disagree:
+**`metadata` reads what a store knows about a path apart from its contents.**
+Pre-flight uses it to check that a lock path does not accept writes without a
+compare-and-set. The tool does not claim a guarantee it cannot check.
 
-- it returns **full paths**, which can be handed straight to `read` — not the
-  tails a KV mount answers with;
-- it is **recursive and returns leaves only**. KV answers one level at a time and
-  marks a subtree with a trailing `/`; walking that is the adapter's job, or every
-  caller writes the same walk once per backend;
-- **knowing about a path is not the same as having something to read.** A
-  soft-deleted path keeps its metadata in KV v2, so it is listed and reads as
-  nothing. That pair is exactly what `lock status` needs: a leftover record is
-  *found* by listing and then reported on by reading;
+**`list` has these properties.** A backend's own listing endpoint gives none of
+them directly, and without them two adapters would disagree:
+
+- it returns **full paths**, which can be passed straight to `read`, not the
+  tails a KV mount returns;
+- it is **recursive and returns leaves only**. KV answers one level at a time
+  and marks a subtree with a trailing `/`. The adapter walks the tree, so that no
+  caller writes the same walk for each backend;
+- **a path that is listed may have nothing to read.** A soft-deleted path keeps
+  its metadata in KV v2, so it is listed and reads as nothing. `lock status`
+  needs exactly this: it finds a leftover record by listing and reports on it by
+  reading;
 - the prefix matches on a **segment boundary**, so `locks` does not return
-  `locksmiths/db`, and it is **sorted**, so two surveys of one estate are the same
-  survey.
+  `locksmiths/db`. The result is **sorted**, so two surveys of one estate give
+  the same answer.
 
-A store without the capability **raises** rather than answering `()`: "I looked
-and found nothing" and "I cannot look" are the two answers a caller must never
-confuse, since it acts on the first by concluding there is nothing out there.
+A store without the `list` capability **raises** instead of returning `()`. "I
+looked and found nothing" and "I cannot look" are different answers. A caller
+acts on the first by concluding that nothing is there.
 
-**`read` takes a version** (#183), which is C14's `@version=N` and the first
-thing on this interface that exists for a *secret* rather than for a lock record.
-It is behind the `versioning` capability and a store without it **raises** rather
-than answering with the latest — the same rule as `list`, and for a sharper
-reason: a caller pins a version precisely because it does not want whatever is
-current, so substituting the current one is a rotation reading the wrong
-generation. KV v1 is the store that refuses.
+**`read` takes a version.** This is C14's `@version=N`. It needs the
+`versioning` capability, and a store without it **raises** instead of returning
+the latest version. A caller pins a version because it does not want the current
+one, so returning the current one would make a rotation read the wrong
+generation. KV v1 refuses.
 
-**`patch` applies an RFC 7396 merge patch** (#183), behind `merge_patch`. What
-makes `01-configuration.md` §7's "must not clobber siblings" a structural
-property rather than a careful one: the keys a run did not come for are never
-sent, so another account's password is neither read into the process nor written
-back. A store without the capability — or a Vault policy granting `update` and not
-`patch`, which is a policy and not a fault — falls back to a check-and-set
-read-modify-write, and the run **reports which of the two it used**, because they
-are not equally narrow. Both carry the same compare-and-set, so the difference is
-blast radius and never atomicity.
+**`patch` applies an RFC 7396 merge patch**, and needs the `merge_patch`
+capability. It makes `01-configuration.md` §7's "must not clobber siblings" a
+property of the structure: the tool never sends the keys a run did not come for,
+so another account's password is neither read into the process nor written back.
+A store without the capability falls back to a compare-and-set read-modify-write.
+So does a Vault policy that grants `update` and not `patch`; that is a policy, not
+a fault. The run **reports which of the two it used**, because the fallback sends
+more. Both use the same compare-and-set, so they differ in what they send, never
+in atomicity.
 
-The slice implemented is `sopuli/store/protocol.py`, and the secret side of it is
-`sopuli/store/credentials.py`: a SecretRef resolved against a stored document —
-field, JSON pointer, `@stage=`, and `@version=` — producing a `Secret` and the
-version it was read at, and the merge patch that changes one stage of one
-account. That module supplies primitives and decides no sequence: the
-`pending` → `current` ordering invariant 7 turns on is UC-1 §3's and belongs to
-`creds rotate`.
+`sopuli/store/credentials.py` is the secret side of the interface. It resolves a
+SecretRef against a stored document (field, JSON pointer, `@stage=` and
+`@version=`). It returns a `Secret` and the version it was read at, and it builds
+the merge patch that changes one stage of one account. It provides these
+operations and decides no order. The `pending` → `current` ordering that
+invariant 7 depends on is UC-1 §3's, and `creds rotate` carries it out.
 
-**`health` arrived with #216**, last of the sketch and deliberately so: its only
-consumer is `doctor`'s vault section, and the argument is the one P1 makes two
-paragraphs above about `apply_attributes` — a method on the protocol is a demand
-on every implementation, so declaring one nothing calls would oblige each backend
-to write a body for a caller that does not exist. It came with the command that
-asks the question.
+**`health` is asked by `doctor`'s vault section.** It differs from the other
+methods in these ways:
 
-Three things make it unlike everything else on this interface:
+- **it is not about a path.** It describes the store, not a document in it;
+- **it never raises for an unreachable store.** The other methods treat "could
+  not reach it" as a failure, because their callers wanted something done.
+  `doctor` asks in order to find out, and it surveys a whole estate, so one
+  unreachable vault must not stop the survey. `unreachable` is a value that
+  `health` returns, not an exception;
+- **it reports the store's clock.** `sopuli/lock/decide.py` compares a lease's
+  expiry with this machine's clock and allows `CLOCK_SKEW` for the difference. A
+  host whose clock is minutes out takes over locks that are still live, or
+  refuses locks that expired long ago. That looks like a locking bug, not an NTP
+  problem. The store's clock is the only other clock the lock depends on.
 
-- **it is not about a path**, so it is the one call that says something about the
-  store rather than about a document in it;
-- **it never raises for an unreachable store.** Every other method treats "could
-  not reach it" as a failure, because every other caller wanted something done;
-  this one is asked precisely in order to find out, and `doctor` surveys a whole
-  estate — one dead vault must not end the run before the next is tried. So
-  `unreachable` is a value it returns, not an exception it throws;
-- **it reports the store's clock**, and that is the part that is not a health
-  nicety. `sopuli/lock/decide.py` compares a lease's expiry against *this*
-  machine's clock and allows `CLOCK_SKEW` for the two disagreeing (#83). A host
-  minutes out takes over locks that are still live, or refuses ones long dead,
-  and the failure presents as a locking bug rather than as an NTP problem. The
-  skew is the assumption the lock rests on, measured against the only other clock
-  in the system that matters.
+The skew measurement corrects for latency and reports what it cannot know. The
+store answered somewhere inside the round trip, so half the round trip is the
+uncertainty of one request. A difference that a slow link could explain is not
+reported. A store that exposes no clock returns `None`, never a substitute. This
+host's clock is what is being tested, and a caller given it would compute a skew
+of zero and report agreement.
 
-The measurement is latency-corrected and reports what it does not know: the far
-end answered somewhere inside the round trip, so half the trip is the exact width
-of what one request cannot pin down, and a difference a slow link can account for
-is not reported as a finding. A store that exposes no clock answers `None` and
-never a substitute — this host's clock is the thing under test, and a caller
-handed it would compute a skew of zero and print it as agreement.
-
-A store that cannot report its own health has no third answer here, unlike `list`
-and `patch`: `unreachable` already covers "nothing came back", so there is
-nothing a capability flag would add. What it must not do is **write** to prove it
-is reachable — P5 makes `doctor` mutate nothing, and a check that left a lease
-behind would be a measurement that changes what it measures, on a mount a
-rotation is using.
+A store that cannot report its own health needs no capability flag:
+`unreachable` already covers "nothing came back". `health` must never **write**
+to prove the store is reachable. P5 makes `doctor` change nothing, and a check
+that left a lease behind would change the mount a rotation is using.
 
 ### Backends in scope
 
@@ -367,54 +341,52 @@ rotation is using.
 | `structured_value` (JSON inside a secret) | yes | yes | yes (base64 content) | yes |
 | `soft_delete` / undelete | yes | no | yes | no |
 
-**Capabilities are per capability, not a tier**, and the `list` row is what makes
-that concrete: KV v1 has no compare-and-set and enumerates perfectly well.
-Reporting an empty capability set because the interesting one is missing would
-deny `lock status` a leftover record it could have found.
+**Each capability stands alone; there are no tiers.** KV v1 has no
+compare-and-set, and it lists paths without any problem. Reporting no
+capabilities because one important capability is missing would stop `lock
+status` from finding a leftover record it could have found.
 
 Where a capability is missing the tool **emulates it in the secret payload**
 (explicit `current` / `pending` / `previous` fields) rather than pretending the
 guarantee exists. Emulation is not atomic; commands must say so in dry-run output.
 
-`list` is neither emulated nor fatal, and is the first capability with a third
-answer: a command that wanted it **reports what it could reach and says it could
-not look further**. Refusing would make `lock status` a command that works on some
-backends and not others, which is worse than a partial answer that admits to being
-one (#150).
+**`list` is neither emulated nor fatal.** A command that wanted it **reports what
+it could reach and says that it could not look further**. A refusal would make
+`lock status` work on some backends and not on others. A partial answer that says
+it is partial is better.
 
-**`merge_patch` is emulated, and visibly** (#183) — the read-modify-write above.
-It is the one capability whose emulation the run has to *announce* rather than
-merely perform, and the reason is that the emulation is not equivalent: it is
-equally safe against a concurrent writer and strictly wider in what it sends. A
-run that used it silently would look identical to one that did not.
+**`merge_patch` is emulated, and the run says so.** The emulation is the
+read-modify-write described above. It is as safe against a concurrent writer and
+it sends more. A run that used it without saying so would look the same as one
+that did not.
 
-**`versioning` is the second that cannot be emulated** (#183), and for a reason
-worth stating beside `cas`'s rather than assuming it follows: a version somebody
-wants to read back is a version the store had to have kept *at the time*, and
-nothing written into a payload afterwards can manufacture one. So `@version=N`
-against KV v1 is refused with `UNSUPPORTED_CAPABILITY` and a message naming the
-ref, and never answered with the current document. Note what this does *not*
-touch — the three **stages** are emulated in the payload on every backend but
-OCI, and that emulation is unaffected: `@stage=pending` works perfectly well on a
-store with no versions, because a stage is a key beside the value rather than a
-generation of it.
+**`versioning` cannot be emulated.** To read a version back, the store must have
+kept it at the time it was written. Nothing written into a payload later can
+create it. So `@version=N` against KV v1 is refused with `UNSUPPORTED_CAPABILITY`
+and a message that names the ref. It is never answered with the current document.
+The three **stages** are a different matter. They are emulated in the payload on
+every backend except OCI, and `@stage=pending` works on a store with no versions,
+because a stage is a key beside the value and not a generation of it.
 
-**`cas` is the one capability that cannot be emulated**, since "not atomic" is
-precisely what it is for. A store without it therefore gets no lock rather than a
-weaker one: P5's advisory lock refuses on KV v1 and the file backend unless that
-store is explicitly configured down to `locking: advisory-only`, where the record
-is written without CAS and every run says so (issue #83, `01-configuration.md`
-§3a).
+**`cas` cannot be emulated either**, because its purpose is atomicity. A store
+without it gets no lock, not a weaker lock. P5's advisory lock refuses KV v1 and
+the file backend unless the store is configured as `locking: advisory-only`. Then
+the record is written without compare-and-set, and every run says so
+(`01-configuration.md` §3a).
 
 ### Backends are install extras (D9, ADR-006)
 
 A backend's client is installed only by the sites that use that backend. The
 base install carries what every invocation uses; a vendor client is an extra.
+These commands install the base and each extra:
 
+<!-- checked-list: extras -->
 ```
 pip install sopuli-dba                 # config, selection, schema — no network client
-pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
+pip install "sopuli-dba[oracle]"       # + python-oracledb, to reach Oracle
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
+pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
+pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel
 pip install "sopuli-dba[all]"          # everything
 ```
 
@@ -423,12 +395,13 @@ pip install "sopuli-dba[all]"          # everything
 | base | CLI framework, YAML parser, `pywin32` on Windows, sopuli itself | `sopuli` |
 | store extras | one vendor client per secret store | `sopuli-dba[<store>]` |
 | driver extras | one database driver per product (P1) | `sopuli-dba[<product>]` |
+| channel extras | the client a delivery channel needs | `sopuli-dba[notify]` |
 | `all` | every extra above | `sopuli-dba[all]` |
 
 This is packaging, not architecture: nothing above about `SecretStore`, the
 SecretRef, or capability negotiation changes. What changes is that P2's
-pluggability becomes true at *install* time and not only at import time. Three
-rules make that real rather than cosmetic:
+pluggability becomes true at install time and not only at import time. These
+rules make that real:
 
 1. **A vendor client is imported inside its backend module, never at package
    import time.** The registry maps `type:` to a module path and imports on
@@ -445,30 +418,27 @@ rules make that real rather than cosmetic:
    exit 9
    ```
 
-3. **Nothing in base opens a socket.** That is the property being defended, and
-   the dependency set is what makes it testable: a base install can import none
-   of the clients the backends reach with — `httpx`, the OCI SDK,
-   `python-oracledb`. The stdlib's `urllib` is importable in every Python and
-   always will be, so it is covered by intent rather than by assertion: base
-   code does not reach the network, whatever it would reach it with.
+3. **Nothing in base opens a socket.** The dependency set makes this testable: a
+   base install cannot import any of the clients the backends use — `httpx`, the
+   OCI SDK, `python-oracledb`. The standard library's `urllib` can be imported in
+   every Python, so the rule covers it by intent, not by test: base code does not
+   reach the network by any means.
 
-Every command that does not open a connection works with no backend installed —
-`config validate`, `config show --resolved --explain`, `target list`. This is
-what makes the boundary honest rather than a trick: declaring a store is config,
-and only *reaching* one needs its client, so a file naming eleven backends
-validates with none of them installed. A backend that is configured but not
-installed is a `config validate` **warning** and a `doctor` **failure**;
-`doctor` lists installed and configured backends on every run, not only when the
-two disagree.
+Every command that does not open a connection works with no backend installed:
+`config validate`, `config show --resolved --explain`, `target list`. Declaring a
+store is config, and only reaching it needs its client, so a file that names
+every backend validates with none of them installed. A backend that is
+configured but not installed is a `config validate` **warning** and a `doctor`
+**failure**. `doctor` lists installed and configured backends on every run, not
+only when they differ.
 
-Why it is a decision and not a packaging detail: sopuli's subject is
-credentials, so its dependency tree is something a security review will actually
-read, and vendor SDKs carry constraints that collide — the OCI SDK pins
-`cryptography` and `pyOpenSSL` and vendors its own `requests`, which a site
-using neither OCI Vault nor OCI-hosted databases should not inherit. Extras are
-also a published interface: narrowing base later breaks installs that never
-named an extra, while widening it never does. Full reasoning, and the six
-questions this closed, in [ADR-006](../decisions/adr-006-optional-dependencies.md).
+This is a decision and not a packaging detail. sopuli handles credentials, so a
+security review will read its dependency tree. Vendor SDKs also carry
+constraints that conflict: the OCI SDK pins `cryptography` and `pyOpenSSL` and
+bundles its own `requests`, and a site that uses no OCI service should not get
+them. Extras are also a published interface: making base smaller later breaks
+installs that never named an extra, while making it larger never does. The full
+reasoning is in [ADR-006](../decisions/adr-006-optional-dependencies.md).
 
 ### Authenticating to the vault
 
@@ -495,23 +465,21 @@ Sources, in order of preference:
 
 Storing the admin password in the config file is not supported at all.
 
-Resolution is `sopuli/admin.py` (#175), which turns one of the four into a
-`Secret` at connect time; `01-configuration.md` §3a specifies the sources and
-the four decisions that resolving them forces — the refusal when a target names
-no source, what `prompt` does with no terminal, how a prompt is shared across
-targets, and why the environment source is flagged rather than refused.
+`sopuli/admin.py` resolves one of these sources into a `Secret` at connect time.
+`01-configuration.md` §3a specifies the sources and the rules that come with
+them, such as the refusal when a target names no source, what `prompt` does
+with no terminal, how one prompt is shared across targets, and why the
+environment source is flagged and not refused.
 
-**The same shape, one layer earlier: the vault's own credential.** The list above
-is about reaching the *database*; reaching the *store* has the identical problem,
-and it is worth naming as the same problem rather than discovering it twice. A
-SecretRef cannot be the answer there — a ref is resolved *by* an authenticated
-store, so it cannot be what authenticates one — which is the list above with its
-second entry struck out, since the second entry is the circular one. What is left
-is external/machine identity (AppRole, Kubernetes, instance principal), a file
-in its place, an interactive act, and the environment. `--vault-token-file` is the
-command-line form of the file case, and it takes a **path** for the reason
-invariant 1 gives: a token as an option *value* is visible in `ps`. Decided in
-issue #145, recorded in [ADR-007](../decisions/adr-007-vault-token-flag.md);
+**The vault's own credential has the same problem.** The list above is about
+reaching the database. Reaching the store needs a credential too. A SecretRef
+cannot provide it, because a ref is resolved by an authenticated store. That
+removes the second source from the list. What remains is an external or machine
+identity (AppRole, Kubernetes, instance principal), a file, an interactive
+prompt, and the environment. `--vault-token-file` is the command-line form of
+the file source. It takes a **path**, for the reason invariant 1 gives: a token
+as an option value is visible in `ps`.
+[ADR-007](../decisions/adr-007-vault-token-flag.md) records the decision, and
 `01-configuration.md` §3a is the specification.
 
 ---
@@ -528,54 +496,57 @@ precedence order applies everywhere**, and the tool can print it.
 
 ```
 1. Command-line option              --vault-addr https://…
-2. Environment variable             SOPULI_VAULT_ADDR
+2. Environment variable             SOPULI_VAULT_ADDR, then VAULT_ADDR
 3. Profile block in config          profiles.ci.vaults.hcv-prod.addr
 4. Target/vault-level setting       vaults.hcv-prod.addr
 5. Top-level defaults in config     defaults.vaults.hcv-prod.addr
 6. Built-in default                 (compiled into the tool)
 ```
 
+**Within layer 2, a `SOPULI_*` variable outranks the third-party variable for
+the same setting**, so `SOPULI_VAULT_ADDR` beats `VAULT_ADDR`. The
+third-party variables are Vault's own, such as `VAULT_ADDR` and
+`VAULT_NAMESPACE`; `sopuli/config/vault_env.py` maps them to settings. The
+resolver records them as the sources `env` and `env_thirdparty`, and
+`sopuli/settings/registry.py` declares them as separate members of `Layer`.
+
 Layers 3 to 5 all name the store, because **`vault:` is a store name everywhere
-in the config and never a block** — the same word `SOPULI_VAULT` and a SecretRef's
-`[<vault>:]` prefix already use, with `SOPULI_VAULT__HCV_PROD__ADDR` as the
-environment form of the same addressing. Settings *of* a store are therefore
-written under `vaults:` keyed by its name, which `defaults:` and a profile may
-each carry as a partial entry. C13, decided in #31; `01-configuration.md` §3a
-and §5 are the specification.
-
-Layers 2 to 5 of that merge are implemented (`sopuli/config/vault_layers.py`,
-#136, #153 and #154) and go through the one resolver in `sopuli/settings/`, which
-is what makes `vaults.*.tls.verify` ratchet rather than being overwritten by
-whichever layer is higher. All of them are merged in one pass, because resolving
-two of them first and folding the rest in afterwards reports the winner of the
-first pass rather than the layer somebody has to edit. So **the direction is
-worth reading off the table rather than off the word "patch"**: `defaults:` is
-*below* the declaration and fills gaps; only a profile and the environment are
-above it.
-
-Layer 1 arrived in #422 and is **one key wide**: `--vault-addr` hoists
-`vaults.*.addr` onto the command line and no flag hoists any other reach key. It
-addresses the store `SOPULI_VAULT` or `defaults.vault` names —
-`01-configuration.md` §6's rule, shared
-with the variables rather than restated, so the command line cannot become a
-second definition of "the default store" — and is refused where neither names
-one. There is no named `--vault-addr NAME=URL`: a run touching two stores uses
-`SOPULI_VAULT__<NAME>__ADDR`. `01-configuration.md` §6 has the reasoning,
-including why an *address* earns a flag when `mount` does not.
-Layer 2 comes in two spellings, decided in #154 —
-`SOPULI_VAULT__HCV_PROD__ADDR` names a store, and the unnamed `SOPULI_VAULT_ADDR`
-applies to whichever store `SOPULI_VAULT` or `defaults.vault` names, refusing
-rather than guessing when neither does. `01-configuration.md` §6 is the
+in the config and never a block**. `SOPULI_VAULT` and a SecretRef's `[<vault>:]`
+prefix use the same word, and `SOPULI_VAULT__HCV_PROD__ADDR` is the environment
+form of the same addressing. Settings of a store are therefore written under
+`vaults:`, keyed by its name, and `defaults:` and a profile may each carry a
+partial entry. C13 is the decision; `01-configuration.md` §3a and §5 are the
 specification.
 
-**The config file is read at the boundary, before a verb runs** (#153). It has to
-be: a profile is layer 3 and may supply `output`, and a run whose output format
-is settled after the verb started has already chosen an emitter. So
-`sopuli/invocation.py` discovers the file, reads it under whichever profile
-`--profile` or `SOPULI_PROFILE` asked for, and resolves all six layers; a verb
-receives the loaded config rather than loading one. The run document is opened
-first, over the command line alone, so that an unreadable file still reports
-itself on exit 9 with a document (J7).
+`sopuli/config/vault_layers.py` merges layers 2 to 5 through the one resolver in
+`sopuli/settings/`. That is why `vaults.*.tls.verify` ratchets instead of being
+overwritten by the highest layer. All the layers are merged in one pass. If two
+were resolved first and the rest folded in later, the tool would report the
+winner of the first pass, not the layer an operator has to edit. Read the
+direction from the table: `defaults:` is *below* the declaration and fills gaps;
+only a profile and the environment are above it.
+
+**Layer 1 has one flag for a vault key: `--vault-addr`.** It sets
+`vaults.*.addr`, and no flag sets any other key of a store. It addresses the
+store that `SOPULI_VAULT` or `defaults.vault` names, by the rule in
+`01-configuration.md` §6 that the variables use, so the command line does not
+define "the default store" a second time. It is refused when neither names a
+store. There is no `--vault-addr NAME=URL`: a run that uses two stores sets
+`SOPULI_VAULT__<NAME>__ADDR`. `01-configuration.md` §6 explains why an address
+has a flag and `mount` does not.
+
+Layer 2 has two spellings for an address. `SOPULI_VAULT__HCV_PROD__ADDR` names a
+store. `SOPULI_VAULT_ADDR` has no name and applies to the store that
+`SOPULI_VAULT` or `defaults.vault` names. When neither names one, the tool
+refuses instead of guessing. `01-configuration.md` §6 is the specification.
+
+**The tool reads the config file before a verb runs.** It must: a profile is
+layer 3 and may set `output`, and a verb that has started has already chosen how
+to write its output. So `sopuli/invocation.py` finds the file, reads it under the
+profile that `--profile` or `SOPULI_PROFILE` names, and resolves all the layers.
+A verb receives the loaded config; it does not load one. The run document is
+opened first, from the command line alone, so that an unreadable file still
+reports itself with exit 9 and a document (J7).
 
 A profile is named after **how the run was invoked** — `interactive`, `ci`,
 `scheduled` — never after an environment. `--profile prod` reads like a target
@@ -588,71 +559,55 @@ per execution context (CI job, container) and must be able to redirect a shared
 config without editing it. Rationale for CLI above env: the operator typing the
 command expresses the most specific intent available.
 
-**Layer 1 is one layer.** A CLI parser that accepts a flag both before and after
-the subcommand does not thereby create two layers: it is the same person, in the
-same command line, at the same moment, so there is no authority to rank. Both
-positions resolve as `cli` and the position, where it matters, is recorded in
-`source_detail`. Safety flags are accepted in the trailing position only, so no
-group-position value ever reaches the resolver — see `adr-002-cli-framework.md`.
+**Layer 1 is one layer.** The CLI parser accepts some flags both before and after
+the subcommand. Both positions are the same person, in the same command line, at
+the same moment, so there is nothing to rank. Both resolve as `cli`, and
+`source_detail` records the position where it matters. Safety flags are accepted
+in the trailing position only, so a group-position value never reaches the
+resolver — see `adr-002-cli-framework.md`.
 
-Two deliberate exceptions, documented as such:
+**Safety settings only ratchet toward safe** (invariant 10). No source can relax
+them. `SAFETY_SETTINGS` in `sopuli/settings/registry.py` lists them, and
+`tests/settings/test_ratchet.py` checks each one. They include the `--dry-run`
+flag, `readonly: true`, `safety.max_targets`, `safety.confirm_environments` and
+`safety.delivery.allowed_methods`.
 
-- **Third-party env vars** (`VAULT_ADDR`, `VAULT_TOKEN`, `ORACLE_HOME`,
-  `TNS_ADMIN`, `OCI_CLI_PROFILE`) are honoured but rank *below* the `SOPULI_*`
-  equivalent, so `SOPULI_VAULT_ADDR` beats `VAULT_ADDR`.
-- **Safety settings only ratchet toward safe.** `--dry-run`, `--confirm`,
-  `safety.max_targets`, `readonly: true` and `safety.delivery.allowed_methods`
-  cannot be relaxed by any source.
-  Two of those are flags and three are settings, and the spelling is not
-  decoration: this bullet said `--max-targets` until #392, for a flag that has
-  never existed and that P5 below now explains will not. The newest of the three
-  is scoped `safety.delivery.*` for the same reason — it is a **safety axis**
-  restricting what UC-2 delivery may do, not a key of the `delivery:` block it
-  governs, and a reader who filed it there would look for it in the wrong file. If config
-  says `readonly: true`, no command-line flag re-enables writes — including
-  `--force`, which is not a setting and has no layer to arrive on. The first
-  command to consume `readonly` is `lock break` (#149), which refuses on **exit
-  8**: the file is not invalid, so this is not exit 9; the operator declined in
-  advance by writing it, which is what exit 8 already means. `--dry-run` is
-  refused with it, because "under `readonly` the mutating verbs are unavailable
-  and the read-only verb is how you ask" is a rule that holds without being
-  reasoned about per flag.
+- If the config says `readonly: true`, no flag re-enables writes. That includes
+  `--force`, which is not a setting and has no layer. A run that would mutate a
+  `readonly` target is refused at plan time (see the end of this section).
+  `lock break` refuses under `readonly` with **exit 8**: the file is valid, so it
+  is not exit 9, and the operator declined in advance by writing it, which is
+  what exit 8 means. `--dry-run` is refused with it as well. Under `readonly` the
+  mutating verbs are unavailable, and the read-only verbs are how to ask.
+- `safety.delivery.allowed_methods` is scoped under `safety.delivery.*` because it
+  restricts what UC-2 delivery may do. It is not a key of the `delivery:` block
+  it governs, and a reader who looked for it there would look in the wrong place.
 
-**`safety.delivery.allowed_methods` is the fifth ratcheted setting, and the
-first whose merge is not given by its type** (H6, #453). It restricts which UC-2
-delivery methods an estate may use, and it merges by **intersection**: a layer may
-narrow the set, never restore a method a lower layer removed. `01-configuration.md`
-§9 has the shape and the rules that come with it; what belongs here is why it is
-not a union like `confirm_environments`, which would have fitted the existing
-machinery without a line of new code.
+**`safety.delivery.allowed_methods` merges by intersection** (H6). It restricts
+which UC-2 delivery methods an estate may use. A layer may narrow the set, but
+never restore a method that a lower layer removed. `01-configuration.md` §9 has
+the shape and its rules. It is not a union like `confirm_environments`, because
+of what each does on **upgrade**. A `forbidden_methods` union names what is
+refused, so a method added in a later release is allowed by every estate that has
+not heard of it. The guard widens without anyone noticing, and it guards putting
+a live credential on a wire (UC-2 §6). An `allowed_methods` intersection names
+what is allowed, so the same new method is unusable until somebody writes it
+down. Failing closed costs a merge shape in the registry. Failing open would cost
+a guarantee on every upgrade.
 
-The answer is what the two do on **upgrade**. A `forbidden_methods` union names
-what is refused, so a method added in a later release is permitted by every estate
-that has not yet heard of it — the guard widens silently, and it is a guard in
-front of putting a live credential on a wire (UC-2 §6). An `allowed_methods`
-intersection names what is permitted, so the same new method is unusable until
-somebody writes it down. Fail-closed costs a shape in the registry; fail-open costs
-a guarantee on every upgrade, and this is not a setting to be wrong about cheaply.
+**Layer 4 of the safety settings is merged later than layers 3 and 5.** A
+`safety:` block under `defaults` or a profile belongs to the run, and it is
+resolved with everything else before the verb runs. A block on a target or a
+group is different: which blocks apply depends on which targets the run reaches,
+and no selector has been applied yet. So a verb merges them after it has
+narrowed its estate and before it builds its plan. It uses the same resolver and
+the same ratchet, in one pass over the earlier and the new contributions, for the
+reason the `vaults.*` layers are merged in one pass.
 
-**Layer 4 of the safety settings is merged later than layers 3 and 5** (#424).
-A `safety:` block under `defaults` or a profile is a property of the run and is
-resolved at the boundary with everything else; one on a target or a group is not,
-because which of them applies depends on which targets the run is about to reach
-and no selector has been applied yet. So a verb merges those once it has narrowed
-its estate and before it builds its plan — the same resolver, the same ratchet,
-one pass over prior and new contributions together, for the reason the `vaults.*`
-layers are merged in one pass: resolving two layers first and folding the rest in
-afterwards reports the winner of the first pass rather than the layer somebody has
-to edit.
-
-This is written here because for most of the project it was true of the
-documents and false of the tool. The keys parsed, validated, ratcheted and
-appeared in `config show`, and nothing read the answer: `readonly: true` on a
-target stopped no mutation. A site that marked its production population
-`readonly` had been getting no protection and nothing said so. **The refusal is
-whole-run**, at plan time, naming the marked targets and the selectors that would
-leave them out — `01-configuration.md` §3a has the decision and what the other two
-readings cost.
+**A run that reaches a `readonly` target is refused as a whole**, at plan time.
+The refusal names the marked targets and the selectors that would leave them
+out. `01-configuration.md` §3a has the decision and what the other two readings
+would cost.
 
 ### Making precedence debuggable
 
@@ -672,21 +627,19 @@ safety.max_targets = 1                                [defaults]
 Secret values are always redacted here. Anything resolved from a source the tool
 considers low-assurance is marked.
 
-The `safety.max_targets` line is the one worth being able to see. A setting that
-was *requested* and did not win is invisible in the result and obvious in this
-view, which is the difference between "the ratchet works" as a claim and as
-something an operator can check. It also reaches `--output json`: the same
-defeated request is a warning in `diagnostics[]`, on every run rather than only
-when `--explain` was asked for.
+The `safety.max_targets` line matters most. A setting that was requested and did
+not win is invisible in the result and visible in this view, so an operator can
+check that the ratchet works. It also reaches `--output json`: the same defeated
+request is a warning in `diagnostics[]` on every run, not only when `--explain`
+was asked for.
 
-**`--explain` does not require `--resolved`**, although the example above was
-once written with both. Where a setting came from is the same answer in the
-declared view and the resolved one, because provenance does not depend on target
-expansion — unlike `--select`, which has nothing to filter until the estate
-exists. In `--output json` it widens `invocation.options` to include settings
-answered by a built-in default, which the document otherwise omits as not having
-changed behaviour. One producer, one shape, two questions about how much of it to
-show. Implemented in `sopuli/output/explain_view.py`.
+**`--explain` does not require `--resolved`.** Where a setting came from is the
+same in the declared view and the resolved one, because provenance does not
+depend on target expansion. `--select` is different: it has nothing to filter
+until the estate exists. In `--output json`, `--explain` widens
+`invocation.options` to include settings answered by a built-in default, which
+the document otherwise leaves out because they changed nothing. One producer and
+one shape answer both questions. `sopuli/output/explain_view.py` implements it.
 
 ### Config file discovery
 
@@ -700,26 +653,26 @@ First match wins; `--config` may be repeated to layer files:
 5. `/etc/sopuli/config.yaml` (Linux/macOS) / `%PROGRAMDATA%\sopuli\config.yaml` (Windows)
 
 **A path that was named behaves differently from one that was searched.** Steps 1
-and 2 name a file, and a named file that is missing is an error — never a reason
-to try step 3. A CI job whose `SOPULI_CONFIG` has a typo must not quietly run
-against the system config instead; that is the whole estate read from a file
-nobody chose. Steps 3 to 5 are searched, so an absent one is skipped, which is
-what "first match wins" means. An empty `SOPULI_CONFIG` counts as unset, and a
-Windows location whose variable is unset is left out rather than guessed at.
+and 2 name a file, and a named file that is missing is an error, never a reason
+to try step 3. A CI job whose `SOPULI_CONFIG` has a typo must not run against the
+system config instead, because that reads the whole estate from a file nobody
+chose. Steps 3 to 5 are searched, so an absent file is skipped, which is what
+"first match wins" means. An empty `SOPULI_CONFIG` counts as unset. A Windows
+location whose variable is unset is left out, not guessed.
 
-Finding nothing at all is an error listing everywhere it looked. A command with
-no config has no whitelist, and invariant 5 makes that the one thing it cannot
-proceed without. Implemented in `sopuli/config/discovery.py`.
+Finding nothing at all is an error that lists every place the tool looked. A
+command with no config has no whitelist, and invariant 5 makes the whitelist a
+requirement. `sopuli/config/discovery.py` implements discovery.
 
 Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-1.8.schema.json`, generated from the
-config layer by `sopuli/config/schema.py` so that it cannot drift from what the
-tool actually accepts. It is structural: an editor pointed at it catches the
-typo, and the cross-key rules stay in the validators, where an error can name the
-key. `01-configuration.md` §9b lists which rules fall on which side.
+The schema is `docs/schemas/sopuli-config-1.8.schema.json`. `sopuli/config/schema.py`
+generates it from the config layer, so it cannot drift from what the tool
+accepts. It is structural: an editor that uses it catches a typo, and the rules
+that span several keys stay in the validators, where an error can name the key.
+`01-configuration.md` §9b lists which rules are on which side.
 
 ---
 
@@ -745,61 +698,57 @@ equivalent.
 | Terminal | ANSI colour, off when not a TTY or `NO_COLOR` | same, with VT mode enabled; plain fallback |
 | Exit codes | identical numeric set on all platforms | same |
 
-The stream encoding row is the one that has actually bitten. On Windows an
-attached console is UTF-8, but a *redirected* stream falls back to the locale
-codepage — and redirection is how a scheduled run is captured
+**Stream encoding.** On Windows an attached console is UTF-8, but a redirected
+stream uses the locale codepage. A scheduled run is captured by redirection
 (`sopuli creds check > nightly.log`). Under cp1252 an em dash reaches a UTF-8
-reader as mojibake, and anything outside the codepage — box drawing, a check
-mark, an arrow — raises `UnicodeEncodeError` and kills the command mid-write.
-The tool therefore forces UTF-8 on all three standard streams at startup, before
-any argument parsing, so that a usage error is written correctly too. stdin is
-included because the failure there is the quiet one: a password read under
-cp1252 becomes a *different* password with no error at all, surfacing much later
-as an authentication failure.
+reader as mojibake, and a character outside the codepage, such as box drawing, a
+check mark or an arrow, raises `UnicodeEncodeError` and stops the command
+mid-write. The tool therefore forces UTF-8 on all three standard streams at
+startup, before it parses arguments, so that a usage error is also written
+correctly. stdin is included because its failure is silent: a password read
+under cp1252 becomes a different password with no error, and it appears much
+later as an authentication failure.
 
-Because Instant Client is required at runtime on every platform, packaging is
-"install the client, then install sopuli" regardless of implementation language.
-`sopuli doctor` checks client presence and version, `TNS_ADMIN`, wallet
-readability (#215), vault reachability and clock skew (#216), reports which
-backends are installed against which the config declares (P2, #214), and prints a
-per-platform remediation hint.
+Instant Client is required at runtime on every platform, so installation is
+"install the client, then install sopuli". `sopuli doctor` checks the client's
+presence and version, `TNS_ADMIN`, wallet readability, vault reachability and
+clock skew. It reports which backends are installed against which the config
+declares (P2), and prints a remediation hint for the platform.
 
-The last of those pairs two things that look unrelated and are not. A vault's
-clock is the *other* clock in the system: `sopuli/lock/decide.py` compares a
-lease's expiry against this machine's and allows `CLOCK_SKEW` for the two
-disagreeing, so a host outside that window takes over locks that are still live
-or refuses ones long dead — and it presents as a locking bug rather than as an
-NTP problem. Measuring it beside reachability is what makes the assumption
-visible before a rotation depends on it. An unreachable vault fails the run at
-exit 1, the same as an unreachable target; a degraded one and a skewed clock
-warn, because `doctor` must not refuse to survey an estate over a condition the
-person running it did not create.
+**`doctor` measures the vault's clock beside its reachability.** The vault's
+clock is the other clock in the system. `sopuli/lock/decide.py` compares a
+lease's expiry with this machine's clock and allows `CLOCK_SKEW` for the
+difference. A host outside that window takes over locks that are still live, or
+refuses locks that expired long ago, and that looks like a locking bug, not an
+NTP problem. Measuring the clock shows the problem before a rotation depends on
+it. An unreachable vault fails the run with exit 1, the same as an unreachable
+target. A degraded vault and a skewed clock are warnings, because `doctor` must
+still survey the estate when the person running it did not cause the problem.
 
 ### Why thick mode (D3)
 
-Three independent reasons, and any one of them would be enough:
+Each of these reasons is enough on its own:
 
 1. **Native Network Encryption.** python-oracledb thin mode does not implement
-   it, and a server that requires it refuses the connection. That is Base
-   Database Service and Exadata Cloud, whose default `sqlnet.ora` sets
-   `SQLNET.ENCRYPTION_SERVER` to require it, and any on-prem database configured
-   the same way. **Measured for Base Database Service** on 19.32.0.0.0 (#575):
-   the shipped `sqlnet.ora` sets both `SQLNET.ENCRYPTION_SERVER` and
-   `SQLNET.CRYPTO_CHECKSUM_SERVER` to `REQUIRED`, and thin is refused with
-   `DPY-3001`. **Exadata Cloud is Oracle's documented default, not measured
-   here**, and no Exadata run is planned.
+   NNE, and a server that requires NNE refuses the connection. Base Database
+   Service and Exadata Cloud require it: their default `sqlnet.ora` sets
+   `SQLNET.ENCRYPTION_SERVER` to require it. So does any on-premises database
+   configured the same way. **Measured for Base Database Service** on
+   19.32.0.0.0: the shipped `sqlnet.ora` sets both `SQLNET.ENCRYPTION_SERVER` and
+   `SQLNET.CRYPTO_CHECKSUM_SERVER` to `REQUIRED`, and thin mode is refused with
+   `DPY-3001`. **For Exadata Cloud this is Oracle's documented default, not
+   measured here**, and no Exadata run is planned.
 2. **Oracle 11.2.** Thin mode connects only to 12.1 and later, and 11.2 is a
    release this tool supports.
 3. **`auth: external`.** A wallet-based `/@alias` logon through an external
    password store needs the Oracle client libraries.
 
 **Autonomous Database is not on that list.** It encrypts with TLS or mutual TLS
-over TCPS and does not use NNE at all — measured on ADB serverless 23.26.3.3.0
-(#575), where a thin connection succeeds through the wallet and neither mode
-negotiates an NNE algorithm. The tool
-still reaches it in thick mode, because there is one
-mode and not one per target; what is wrong is saying that "OCI-hosted databases
-require NNE", which this document used to.
+over TCPS and does not use NNE. Measured on ADB serverless 23.26.3.3.0: a thin
+connection succeeds through the wallet, and neither mode negotiates an NNE
+algorithm. The tool still reaches it in thick mode, because the tool has one
+mode and not one mode per target. It is wrong to say that every OCI-hosted
+database requires NNE.
 
 **SQLcl connecting "thin" to an NNE-required database is not a counter-example.**
 That is JDBC thin, a separate pure-Java driver that implements NNE. It says
@@ -809,36 +758,35 @@ None of this reopens D3: thick mode, always, on every target.
 
 ### Why macOS is best-effort rather than supported or excluded (D5)
 
-The obvious blocker turned out not to exist. Oracle ships **Instant Client for
-macOS ARM64** — 23.26.x, notarized DMGs, with SQL\*Plus and the OCI libraries —
-so thick-mode drivers work on Apple Silicon. Intel macOS has its own 19.x line.
-Thin mode remains unusable for this tool on every platform, for the three
-reasons above, but that is not a macOS-specific problem.
+The obvious blocker does not exist. Oracle ships **Instant Client for macOS
+ARM64** — 23.26.x, notarized DMGs, with SQL\*Plus and the OCI libraries — so
+thick-mode drivers work on Apple Silicon. Intel macOS has its own 19.x line.
+Thin mode is unusable for this tool on every platform, for the reasons
+above, but that is not a macOS problem.
 
-What actually argues against a supported tier:
+These are the reasons against a supported tier:
 
-- **You cannot run an Oracle database on macOS.** There has been no macOS server
-  build since 10g, and Oracle's container images are `linux/amd64` only — under
+- **An Oracle database cannot run on macOS.** There has been no macOS server
+  build since 10g, and Oracle's container images are `linux/amd64` only. Under
   emulation on Apple Silicon they are unsupported and unreliable. A macOS
-  developer or CI runner therefore cannot run the integration suite locally; it
-  needs a remote database. That is the real cost, and it is a testing-
-  infrastructure cost rather than a code cost.
+  developer or CI runner therefore cannot run the integration suite locally and
+  needs a remote database. The cost is in testing infrastructure, not in code.
 - **Apple Silicon cannot reach an 11.2 database.** Only the 23.x client exists
-  for ARM64, and a 23 client supports 19c and later. Intel macOS keeps a 19.x
-  client that does reach 11.2, but Intel Macs are on their way out.
-- **No evidence of demand.** There is no DBA-specific OS survey. The Stack
-  Overflow 2024 figures (Windows 47.6%, Linux 40%, macOS 31.8%, professional,
-  multi-select) describe a population skewed toward web and application
-  developers, and cannot be read across to DBAs.
+  for ARM64, and a 23 client supports 19c and later. Intel macOS has a 19.x
+  client that reaches 11.2, but Intel Macs are going out of use.
+- **There is no evidence of demand.** There is no DBA-specific OS survey. The
+  Stack Overflow 2024 figures (Windows 47.6%, Linux 40%, macOS 31.8%,
+  professional, multi-select) describe mostly web and application developers,
+  and do not apply to DBAs.
 
-What argues against *excluding* it: in Python there is essentially no
-macOS-specific code. Path handling, `NO_COLOR`, and the keyring backend are
-abstractions Windows already forces. Excluding macOS would save nothing and would
-have to be undone the first time someone asks.
+The reason against *excluding* macOS: in Python there is almost no
+macOS-specific code. Path handling, `NO_COLOR` and the keyring backend are
+abstractions that Windows already requires. Excluding macOS would save nothing,
+and the exclusion would have to be undone the first time someone asks.
 
-So: keep the code portable, keep macOS out of the README's support statement,
-run no macOS CI, and revisit only if a real user turns up. If one does, the first
-question is where their test database lives.
+So the code stays portable, the README's support statement leaves macOS out, and
+there is no macOS CI. Revisit this only if a real user asks. If one does, the
+first question is where their test database runs.
 
 ---
 
@@ -847,104 +795,89 @@ question is where their test database lives.
 **Safety**
 
 - Every mutating command supports `--dry-run` and prints the exact plan, redacted.
-- Every mutating command supports **`--confirm`**, with **one exception named
-  below**: UC-2's seen reset refuses it as a usage error (exit 2), because there
-  the prompt is what establishes that a person is present (#439). **Interactive
-  confirmation is required where the configuration asks for it, and nowhere
-  else** — decided in #294, and this bullet is the rewrite that decision called
-  for. It asked for three triggers and only one survives:
+- Every mutating command supports **`--confirm`**, with one exception: UC-2's
+  seen reset refuses it as a usage error (exit 2), because there the prompt
+  establishes that a person is present. **The tool asks for confirmation where
+  the configuration asks for it, and nowhere else.** D10 has the decision. The
+  table shows which triggers exist:
 
   | trigger | status |
   |---|---|
-  | the run reaches an environment in `safety.confirm_environments` | **built** (#292) |
-  | ~~the target is marked `environment: prod`~~ | **declined** — it is a built-in `[prod]` in everything but name, and `01-configuration.md` §9 forbids a built-in that takes part in a union ratchet: no layer could ever remove `prod` again. §9's own worked example of the trap is `confirm` |
-  | ~~blast radius exceeds `max_targets` (default 1)~~ | **declined** — it would make every multi-target mutation prompt on an estate that wrote no safety block at all, and `max_targets` is a *ceiling* rather than a confirmation threshold. An unset one is no limit, which is not the same claim as a default limit the tool chose |
+  | the run reaches an environment in `safety.confirm_environments` | **built** |
+  | ~~the target is marked `environment: prod`~~ | **declined** — it would be a built-in `[prod]` under another name, and `01-configuration.md` §9 forbids a built-in in a union ratchet, because no layer could ever remove `prod` again. §9's own example of the problem is `confirm` |
+  | ~~blast radius exceeds `max_targets` (default 1)~~ | **declined** — every multi-target mutation would prompt on an estate that wrote no safety block. `max_targets` is a ceiling, not a confirmation threshold. An unset `max_targets` is no limit, which is not the same as a default limit chosen by the tool |
 
-  **The two declined triggers are declined, not deferred**, which is the half
-  worth writing down: an estate that marks a target `environment: prod` and does
-  not list `prod` gets no prompt, and that is the specified behaviour rather than
-  a gap. `sopuli/safety.py` and `tests/test_cli_confirm_environments.py` pin both.
+  **The declined triggers are declined, not deferred.** An estate that marks
+  a target `environment: prod` and does not list `prod` gets no prompt, and that
+  is the specified behaviour. `sopuli/safety.py` and
+  `tests/test_cli_confirm_environments.py` test both.
 
-  Two gates confirm without consulting the setting, and are unaffected: `creds
-  rotate` confirms unconditionally under UC-1 §8 step 1, and `lock break` always
-  has. **A third is built** (#441): UC-2's seen (`manual`) reset, where the DBA
-  sees a working password, confirms every time — decided on review of #457,
-  `../use-cases/uc-02-personal-account-passwords.md` §2.
+  Some gates confirm every time, without reading the setting: `creds rotate`
+  (UC-1 §8 step 1), `lock break`, and UC-2's seen (`manual`) reset, where the
+  DBA sees a working password (`../use-cases/uc-02-personal-account-passwords.md`
+  §2).
 
-  **That third gate is the one `--confirm` does not answer** (#439), and it is the
-  only such gate in the tool. For the other two and for the setting, `--confirm` is
-  the yes given in advance. Here it is refused as a usage error, because the prompt
-  is not a formality to be waived: the run is about to print a working password to
-  a screen, and a yes given ahead of time asserts that somebody is watching when
-  the *point* of the gate is to establish that somebody is. It is the same claim
-  the seen path's terminal check makes, made twice deliberately — invariant 2 in
-  `CLAUDE.md` carries both.
+  **`--confirm` does not answer the seen reset's gate.** For the other gates and
+  for the setting, `--confirm` is a yes given in advance. Here it is a usage
+  error, because the prompt is not a formality. The run is about to print a
+  working password to a screen. A yes given in advance claims that somebody is
+  watching, and the purpose of the gate is to establish that somebody is. The
+  seen path's terminal check makes the same claim, on purpose. Invariant 2 in
+  `CLAUDE.md` covers both.
 
-  A profile's `confirm: false` says nobody could be asked, which makes a gated run
-  *refuse* (exit 8) rather than proceed.
+  A profile's `confirm: false` says that nobody can be asked. A run that needs
+  confirmation then *refuses* (exit 8) instead of proceeding.
 
-  **The flag is `--confirm`, and there is no `--yes` alias.** This bullet
-  promised one from the first draft and nothing ever built it, which #294's
-  review caught: a spec naming a flag the binary does not have is the same defect
-  as a trigger that never fires, one document over. Struck rather than
-  implemented — the alias buys an operator four keystrokes and costs the CLI a
-  second spelling of one flag, and if a site wants it that is a change to D2's
-  grammar rather than a footnote here.
-- **`safety.max_targets` prevents a wildcard from hitting 200 PDBs by accident,
-  and it is a setting rather than a flag.** This bullet offered
-  `--limit`/`--max-targets` from the first draft and nothing ever built either,
-  which is #294's `--yes` defect one bullet along (#392). Struck rather than
-  implemented, and the striking is a statement about the registry rather than a
-  preference: `sopuli/settings/registry.py` declares the setting on
-  `(PROFILE, OBJECT, DEFAULTS)`, `Setting.layers` is *enforced*, and a
-  contribution from an undeclared layer raises — so the flag is not merely
-  absent, it would be refused by the resolver until that tuple gained
-  `Layer.CLI`.
+  **The flag is `--confirm`, and there is no `--yes` alias.** An alias would save
+  an operator four keystrokes and give the CLI two spellings of one flag. Adding
+  one would be a change to D2's grammar.
+- **`safety.max_targets` stops a wildcard from reaching 200 PDBs by accident. It
+  is a setting, not a flag.** There is no `--limit` or `--max-targets`.
+  `sopuli/settings/registry.py` declares the setting on
+  `(PROFILE, OBJECT, DEFAULTS)`. The resolver enforces `Setting.layers` and
+  raises on a contribution from an undeclared layer, so a flag would be refused
+  until the tuple included `Layer.CLI`.
 
-  **Invariant 10 is not the argument against it**, and saying so is worth a line
-  because it looks like the argument. `safety.max_targets` is `MergePolicy.RATCHET`
-  and an `int` ratchets to the *minimum*, so a CLI contribution could only lower
-  the ceiling — safe by construction, exactly as `safety.dry_run` is safe on
-  `Layer.CLI` today. What is actually missing is the case for widening the tuple.
-  A ceiling that lives in the file a reviewer reads says what an estate permits;
-  one an operator can also pass per run says what an operator chose, and those
-  are different claims to put in `invocation.options`. If anyone wants the flag,
-  that is where the argument is won — a registry entry and the reason for it, not
-  a footnote here.
-- Mutating operations take an advisory **lock** keyed on the secret path being
-  mutated, so two operators or two CI jobs cannot rotate the same credential
-  concurrently. The lock lives in the vault, is compare-and-set guarded, and
-  carries a fencing token that is re-checked before every mutation (Q2, decided
-  in issue #83). This bullet said "account+target" until then; neither half was
-  right. Per-target is meaningless when every target receives the same value, and
-  per-account misses two accounts sharing one document. The mutated resource is
-  the vault document, and compare-and-set operates on exactly that.
-  `check`, `status` and every `--dry-run` take no lock at all — otherwise an
-  hourly scheduled check blocks rotations. `sopuli lock status` reads the
-  records without taking one (#105), which is how anybody other than the holder
-  finds out what exit 7 was about; it also **lists** each store's lock prefix, so
-  a record left at a path the config no longer declares is reported rather than
-  invisible (#150, marked `declared: false`). That is not a breach of invariant
-  5 — the config whitelists what the tool may *touch*, and a survey touches
-  nothing.
-- **Breaking a lock is a verb, and it is not self-service** (#149).
+  **Invariant 10 does not forbid the flag.** `safety.max_targets` is
+  `MergePolicy.RATCHET`, and an `int` ratchets to the minimum, so a flag could
+  only lower the ceiling. That is safe, as `safety.dry_run` is safe on
+  `Layer.CLI`. The flag is missing because nobody has made the case for it. A
+  ceiling in the file a reviewer reads says what an estate permits. A ceiling an
+  operator passes per run says what that operator chose, and
+  `invocation.options` would report two different claims. Adding the flag means
+  adding `Layer.CLI` to the registry entry, with the reason.
+- Mutating operations take an advisory **lock** keyed on the vault path of the
+  secret they change, so two operators or two CI jobs cannot rotate the same
+  credential at the same time. The lock lives in the vault, is guarded by
+  compare-and-set, and carries a fencing token that is checked again before
+  every mutation (Q2). The key is the path, not the account or the target. Every
+  target receives the same value, so a per-target lock means nothing, and a
+  per-account lock misses two accounts that share one document. The vault
+  document is what changes, and compare-and-set works on exactly that.
+  `check`, `status` and every `--dry-run` take no lock. Otherwise an hourly
+  scheduled check would block rotations. `sopuli lock status` reads the lock
+  records without taking a lock, so anyone can find out what an exit 7 was about.
+  It also **lists** each store's lock prefix, so it reports a record left at a
+  path that the config no longer declares, marked `declared: false`. That does
+  not break invariant 5: the config whitelists what the tool may change, and a
+  survey changes nothing.
+- **Breaking a lock is a verb, and it is not self-service.**
   `sopuli lock break <vault>:<path>` writes a `released` record over the held
-  one, with `cas` set to the version it read — never a delete, because a delete
-  leaves the metadata behind and a first acquisition could then never
-  compare-and-set against version 0 again. The write bumps the version, which
-  **fences** whoever held it: their next check fails and they stop before their
-  next mutation. That fence is what makes the verb survivable, so a store that
-  cannot fence is refused with exit 5 rather than served a weaker version of it —
-  **including one declared `locking: advisory-only`, whatever it turns out to
-  support.** The declaration decides, because `locking.break_expired` is refused
-  against the same combination (#94) and two guards disagreeing about one
-  configuration is worse than either answer. It takes confirmation, and a lock that has *not* expired takes
-  `--force` as well; refusing one is exit 7, naming the holder, in the words a
-  rotation losing the same lock would use. It may clear a record at a path this
-  config does not declare — the leftover `lock status` surfaces is precisely the
-  one nobody else can clear — and invariant 5 is untouched because the write
-  lands under the store's lock prefix, in a store `vaults:` declares, and never
-  on the secret the lock guards.
+  one, with `cas` set to the version it read. It never deletes the record: a
+  delete leaves the metadata behind, and a first acquisition could then never
+  compare-and-set against version 0 again. The write increases the version, and
+  that **fences** the holder: its next check fails, and it stops before its next
+  mutation. The fence is what makes the verb safe, so a store that cannot fence is
+  refused with exit 5. This includes a store declared `locking: advisory-only`,
+  whatever it supports. The declaration decides, because `locking.break_expired`
+  is refused for the same combination, and two guards must not disagree about one
+  configuration. `lock break` asks for confirmation. A lock that has not expired
+  also needs `--force`. Without it the verb refuses with exit 7, naming the
+  holder, in the same words a rotation that lost the lock would use. The verb may
+  clear a record at a path the config does not declare, because nothing else can
+  clear the leftover that `lock status` finds. Invariant 5 still holds: the write
+  goes under the lock prefix of a store that `vaults:` declares, never to the
+  secret the lock guards.
 
 **Idempotency**
 
@@ -956,42 +889,36 @@ tool safe to run from a scheduler.
 
 - Human output by default; `--output json` for one machine-readable object,
   `--output jsonl` to stream per-target events. Scripts consume JSON, never text.
-  **`jsonl` is offered only by a verb that streams** (#9): `creds check`,
-  `creds apply`, `creds rotate`, `creds generate` and `account reset-password`
-  (#535) today.
-  Any other verb refuses it as a usage error rather than emitting a stream
-  thinner than its document — `03-json-output.md` §5 has the rule, and the
-  event schema is `../schemas/sopuli-event-1.7.schema.json`.
+  **Only a verb that streams accepts `jsonl`.** `STREAMING_COMMANDS` in
+  `sopuli/invocation.py` lists them, and the refusal names them. Any other verb
+  refuses `jsonl` as a usage error instead of emitting a stream with less in it
+  than its document. `03-json-output.md` §5 has the rule, and the event schema is
+  `../schemas/sopuli-event-1.7.schema.json`.
 - One structured audit record per mutation: who (OS user + vault identity), what
   (account, target, operation), when, correlation id, result. Never the secret.
 - A log level, an optional log file, and an explicit statement in the docs that
-  secrets are redacted from all output including tracebacks. **This bullet said
-  `--log-level` until #392, and there is no such flag.** `profiles: log_level` is
-  parsed and validated and has no consumer — the state `sopuli/invocation.py`
-  calls "waiting for a consumer" — so what is true today is that the level can be
-  *written*, not that anything reads it. Whether the flag ever joins the setting
-  is D2's grammar, and naming one here before that is decided is the defect #392
-  was opened about.
+  secrets are redacted from all output including tracebacks. There is no
+  `--log-level` flag. `profiles: log_level` is parsed and validated, and nothing
+  reads it: a level can be written, and it has no effect. Whether a flag is
+  added is a question for D2's grammar.
 
 **Secret hygiene**
 
 - Secrets are never passed as command-line arguments (visible in `ps` and in the
   Windows process list). They come from stdin, a file, or a vault ref. Where a
   flag must name a secret it names its **location**: `--vault-token-file PATH`,
-  never `--vault-token VALUE` (#145). The vault-ref branch of this rule does not
-  reach vault auth itself — see P2's bootstrap note.
-- **One stream, one reader.** stdin carries at most one secret per run, and a
-  command that would need two refuses at plan time rather than reading them in an
-  order nobody can see. This is banked before anything needs it, because the
-  collision is already there: `--from-stdin` (UC-1 §5) claims the pipe for a
-  supplied password on `creds apply`, so there is no `--vault-token-stdin` — the
-  rule has to exist before that flag can, not after somebody discovers the clash.
+  never `--vault-token VALUE`. The vault-ref source cannot authenticate to the
+  vault itself — see P2's bootstrap note.
+- **One stream, one reader.** stdin carries at most one secret per run. A command
+  that would need two refuses at plan time, instead of reading them in an order
+  nobody can see. `creds generate --from-stdin` (UC-1 §4) reads a supplied
+  password from stdin, so there is no `--vault-token-stdin`.
 - Never written to temp files, never logged, never in exception messages.
   Redaction is applied at the output sink, not hopefully at each call site.
 - On Oracle the tool must document that `ALTER USER ... IDENTIFIED BY` text can
   reach SQL trace, `V$SQL` and some audit paths, and what it does to minimise it.
 
-**Exit codes** (draft)
+**Exit codes**
 
 | Code | Meaning |
 |---|---|
@@ -1006,15 +933,14 @@ tool safe to run from a scheduler.
 | 8 | aborted by user / confirmation declined |
 | 9 | configuration invalid — missing, unreadable, or refused by validation |
 
-**2 and 9 are deliberately not the same code.** They were, until J7 (issue #8)
-needed them on opposite sides of one seam: a usage error has no invocation, an
-invalid config has a perfectly good one. That is what decides whether a run
-document exists — see `03-json-output.md` §6 — and "empty stdout plus exit 2" is
-only a usable rule for a consumer if exit 2 never carries one.
+**2 and 9 are different codes on purpose.** A usage error has no invocation. An
+invalid config has a complete invocation. That difference decides whether a run
+document exists (J7, `03-json-output.md` §6). "Empty stdout and exit 2" is a rule
+a consumer can rely on only if exit 2 never comes with a document.
 
-It also reads better for the operator. Exit 2 means *fix your command line*;
-exit 9 means *fix your config file*. Different people, different moments: one is
-somebody typing, the other is a deployed artefact a scheduler is running.
+The split also helps the operator. Exit 2 means *fix your command line*. Exit 9
+means *fix your config file*. These are different people at different times: one
+is somebody typing, the other is a deployed file that a scheduler runs.
 
 ---
 

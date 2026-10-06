@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -28,8 +29,10 @@ import pytest
 
 from repo_files import requires_repo
 from sopuli.cli import cli
+from sopuli.driver.protocol import Driver, Session
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.palette import Role, role_for_state
+from sopuli.store.protocol import SecretStore
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN_SCHEMA = ROOT / "docs" / "schemas" / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
@@ -47,6 +50,9 @@ EXPECTED = frozenset(
         ("docs/design/03-json-output.md", "run-document"),
         ("docs/design/03-json-output.md", "enum state"),
         ("docs/design/03-json-output.md", "enum action_kind"),
+        ("docs/design/00-principles.md", "driver-protocol"),
+        ("docs/design/00-principles.md", "store-protocol"),
+        ("docs/design/00-principles.md", "extras"),
     }
 )
 
@@ -206,3 +212,39 @@ def test_the_run_document_sketch_has_every_result_property() -> None:
         end += 1
 
     assert _keys(text[match.end() : end - 1]) == list(_schema()["$defs"]["result"]["properties"])
+
+
+#: A method in a protocol sketch: a name at the start of an indented line, then `(`.
+SKETCH_METHOD = re.compile(r"^\s+([a-z_]+)\(")
+
+
+def _methods(*protocols: type) -> list[str]:
+    return [
+        name
+        for protocol in protocols
+        for name, value in vars(protocol).items()
+        if callable(value) and not name.startswith("_")
+    ]
+
+
+def _sketch_methods(kind: str) -> list[str]:
+    block = _block("docs/design/00-principles.md", kind)
+    return [match.group(1) for line in block if (match := SKETCH_METHOD.match(line))]
+
+
+def test_the_driver_sketch_is_the_driver_protocol() -> None:
+    assert sorted(_sketch_methods("driver-protocol")) == sorted(_methods(Driver, Session))
+
+
+def test_the_store_sketch_is_the_store_protocol() -> None:
+    assert sorted(_sketch_methods("store-protocol")) == sorted(_methods(SecretStore))
+
+
+def test_the_install_lines_are_the_extras() -> None:
+    requires_repo(ROOT / "pyproject.toml")
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    # `dev` is for contributors, not an install a site chooses.
+    extras = set(project["optional-dependencies"]) - {"dev"}
+    text = "\n".join(_block("docs/design/00-principles.md", "extras"))
+
+    assert sorted(re.findall(r"sopuli-dba\[([a-z]+)\]", text)) == sorted(extras)
