@@ -225,3 +225,32 @@ what it was used for during the Actions incident in #233.
 - Every action in every workflow is pinned to a commit SHA, with the tag in a
   comment beside it.
 - No manual tagging.
+
+## Documentation drift audit
+
+The tests in the `docs` CI job check references, lists, command lines and
+markers. They cannot check a sentence such as "no setting can refuse a dry run"
+against the code. The drift audit checks those sentences. Sonnet agents read
+each area of the documents and the comments in `src/`, check each claim against
+the code, and report the claims that are false. The project skill
+`.claude/skills/doc-drift-audit/SKILL.md` runs it, and says how to verify and
+record the findings.
+
+**Run the audit after every 50 merged pull requests.** One run costs about 1.4
+million Sonnet tokens and 15 minutes, plus the time to verify and file the
+findings. That is too much for every release, because minor releases ship
+several times a week and patch releases ship for small fixes. A count of merged
+pull requests follows the amount of change, which is what makes text go stale. A
+release never triggers the audit by itself.
+
+To see whether an audit is due, count the pull requests merged since the last
+one. The last audit is the newest issue titled `docs: drift audit`, or #626 if
+there is none:
+
+```bash
+gh pr list --state merged --search "merged:>2026-10-06" --limit 100 --json number --jq length
+```
+
+Replace the date with the date of the last audit. Each audit is recorded in its
+own issue, with the numbers the skill lists, so that the next run can be
+compared with it.
