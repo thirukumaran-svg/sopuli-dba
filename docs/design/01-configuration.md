@@ -1,6 +1,5 @@
-# sopuli-dba — Configuration Reference (draft)
+# sopuli-dba — Configuration Reference
 
-Status: draft / sketch
 Depends on: `00-principles.md` (P3 defines precedence)
 
 ---
@@ -81,7 +80,7 @@ personal_accounts:
     policy: personal-standard
 ```
 
-**`personal_accounts:` is UC-2's**, decided in H1 (#449) and specified in
+**`personal_accounts:` is UC-2's** ([H1](../decisions/log.md#h1)), specified in
 [`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §2.
 It is deliberately *not* an application binding, for the reason the next section
 gives: nothing masters a personal account's password, so none of the three things
@@ -137,8 +136,7 @@ reset_records:
 ```
 
 **`reset_records:` is where UC-2 journals a reset** — *who* reset a personal
-account, by which path, and where it was delivered — decided in H2 (#450), built
-in #468, and specified in
+account, by which path, and where it was delivered ([H2](../decisions/log.md#h2)). It is specified in
 [`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §3.
 
 | Key | Meaning |
@@ -165,9 +163,8 @@ each writer.
 **Its path is also what UC-2's advisory lock keys on** (UC-2 §3.3), which is why the
 block is a prerequisite of the reset verb rather than an accessory to it. Nothing
 else about locking changes: the same `locks/` prefix, the same CAS, the same
-fencing token, the same `lock break`. Built in #512, and `lock status` surveys
-them from #514 — by listing this prefix rather than by enumerating keys under it,
-because the block declares a region and a predicate-declared account has no name
+fencing token, the same `lock break`. `lock status` finds these locks by listing
+this prefix, not by enumerating keys under it, because the block declares a region and a predicate-declared account has no name
 until a database is asked.
 
 **Absent is a documented mode rather than an error.** The seen path may have no
@@ -190,21 +187,20 @@ delivery:
 
 **`delivery:` is how a personal account's new password reaches its owner**,
 specified in
-[`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §6
-and built in #440.
+[`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §6.
 
 | Key | Meaning |
 |---|---|
-| `method` | one of six, below. Absent means `vault_wrapped` |
+| `method` | one of the methods below. Absent means `vault_wrapped` |
 | `<method>` | a sub-block of the same name, carrying that method's own settings |
-| `notify` | the low-trust channel that says a password is ready (#442) |
+| `notify` | the low-trust channel that says a password is ready |
 
 The methods are `vault_wrapped`, `vault_path`, `one_time_link`,
-`onepassword_share`, `manual` and `smtp_encrypted`. **Five are *unseen*** — the
-tool puts the value where only the person can fetch it, and nobody else sees it.
-**`manual` is the one *seen* method**, printing a working password to the DBA's
-terminal; it is `CLAUDE.md` invariant 2's fourth permitted plaintext path, and
-UC-2 §6.5 has the five guards that keep it narrow.
+`onepassword_share`, `manual` and `smtp_encrypted`. **Every method except
+`manual` is *unseen***: the tool puts the value where only the person can fetch
+it, and nobody else sees it. **`manual` is the *seen* method.** It prints a
+working password to the DBA's terminal. It is `CLAUDE.md` invariant 2's fourth
+permitted plaintext path, and UC-2 §6.5 has the guards that keep it narrow.
 
 **`vault_wrapped` is the default because it works against a stock Vault.** Every
 other unseen method needs infrastructure the tool does not create — identity auth
@@ -232,8 +228,7 @@ of the two (§9b's whole division is that the schema is the incomplete check). S
 is a claim about the file's grammar, and the second is a claim about a method's
 settings, which belongs to that method's issue.
 
-**`manual:` is the first sub-block with keys** (#441). It takes one, and it is
-required rather than defaulted:
+**`manual:` requires `force_expire: true`**, and the key has no default:
 
 ```yaml
 delivery:
@@ -242,8 +237,8 @@ delivery:
     force_expire: true
 ```
 
-`force_expire: true` is #439's fifth guard, and the only one of the five that
-lives in the file rather than in a run. `false` is **refused rather than
+`force_expire: true` is one of the seen path's guards (UC-2 §6.5), and the one
+that lives in the file rather than in a run. `false` is **refused rather than
 honoured**, and the key is required rather than defaulted to `true`, for the same
 reason: defaulting would give the guard silently to an estate that never wrote it
 *and* to one that deliberately asked for the opposite, so the file would say one
@@ -252,7 +247,7 @@ The block is read only when `manual` is the selected method, so a `manual:` bloc
 kept beside `method: vault_wrapped`, for switching between them, is still
 unjudged.
 
-**`vault_wrapped:` is the second, and the default method's** (#444):
+**`vault_wrapped:`** is the default method's sub-block:
 
 ```yaml
 delivery:
@@ -283,25 +278,22 @@ chosen something. This is the case that shows why each method's keys belong to t
 method's issue: the answer is a fact about the service behind it, and nothing in a
 config layer could know it.
 
-**What is inside the other four sub-blocks is not validated yet**, so a typo inside
-one is accepted — which is why **`config validate` warns when the selected method
-is not implemented in this build** rather than letting a clean parse read as a
-working delivery. `manual` and `vault_wrapped` are the two that are.
+**The tool does not validate the keys inside the other methods' sub-blocks**, so
+a typo inside one is accepted. That is why **`config validate` warns when the
+selected method is not implemented in this build**, so that a clean parse does
+not read as a working delivery. `IMPLEMENTED` in `sopuli/config/delivery.py`
+lists the methods this build serves.
 
-**The published schema still leaves every sub-block open, and #444 is what
-established that it has to** (§9b). The plan was that each method's issue would
-close its own; the first one to try found that it cannot unconditionally, because an
-*unselected* sub-block is left unjudged by the tool on purpose — so `required:
-["ttl"]`, or a pattern on it, or `additionalProperties: false` would refuse a file
-the tool accepts, which is the one direction this document forbids. Closing a
-sub-block needs a **conditional** schema — `if` on `method`, `then` the constraints
-— and the condition is not trivial either, since `method` is optional and its
-absence *selects* `vault_wrapped`. That is one shape serving all six methods and
-worth building once a second method has keys to close; until then the tool is the
-stricter of the two, which is the safe asymmetry.
+**The published schema leaves every sub-block open** (§9b). The tool leaves an
+*unselected* sub-block unjudged on purpose, so `required: ["ttl"]`, a pattern on
+it, or `additionalProperties: false` would refuse a file the tool accepts. That is
+the direction this document forbids. Closing a sub-block needs a **conditional**
+schema: `if` on `method`, `then` the constraints. The condition is not simple,
+because `method` is optional and its absence *selects* `vault_wrapped`. Without
+that schema, the tool is the stricter of the two, which is the safe direction.
 
-**`notify:` nests here** rather than beside `delivery:`, because it is a property
-of a delivery rather than of a run — and **its grammar landed in #442**:
+**`notify:` nests here**, not beside `delivery:`, because it is a property of a
+delivery, not of a run:
 
 ```yaml
 delivery:
@@ -322,8 +314,8 @@ delivery:
 | `webhook.template` | the message, required |
 
 **`url` is named rather than written** because a chat incoming-webhook URL embeds
-its own credential, so a literal one is a credential in a file people commit. #442
-also asked that it be redacted wherever the configuration is shown, and the
+its own credential, so a literal one is a credential in a file people commit. The
+URL must also stay hidden wherever the configuration is shown, and the
 MaterialRef makes that *structural*: the model holds a location, so there is no
 value to redact and no step to remember.
 
@@ -345,7 +337,7 @@ implementation gets it wrong:
   containing one does not meet a refusal about a placeholder nobody wrote.
 
 **The enum holds one value and is not padded out**, which is the opposite call from
-`delivery.method` and the difference is real: UC-2 §6.2 *defines* six delivery
+`delivery.method` and the difference is real: UC-2 §6.2 *defines* the delivery
 methods, so listing only the ones with tickets would be a contract shaped by
 project bookkeeping. Nothing defines a set of notify channels — `smtp` and `chat`
 are "their own issues if needed" — so inventing two values would publish a
@@ -532,8 +524,8 @@ applications:
 Both `ci` and `scheduled` above set `method: hash`, and **a profile's `method`
 reaches no consumer**. The value is valid and recognised, and nothing reads it:
 `check`'s default is `login` unconditionally, regardless of profile
-(`02-oracle-privileges.md` §2, decided in #86). A caller who wants the
-comparison passes `--method hash` on the command line (#437). Running one of
+(`02-oracle-privileges.md` §2). A caller who wants the comparison passes
+`--method hash` on the command line. Running one of
 these profiles without the flag verifies by `login`. That is the documented
 default rather than a substitution, but it is not what the profile appears to
 ask for, so a scheduled job should pass the flag explicitly.
@@ -581,12 +573,13 @@ what *should* be true.
 Note also what the last line does **not** do: `--profile scheduled` changes how
 the run behaves, not which targets it touches. That distinction is §5.
 
-### The selectors, and the one rule that separates them (#297)
+### The selectors, and the one rule that separates them
 
-Five flags, on every command that acts on the estate: `--select` for labels, and
-`--target`, `--account`, `--group` and `--application` for names. `--app` is an
-accepted alias for the last. All are repeatable. These examples were written
-before any but `--select` existed, and were what #297 was filed over.
+The selectors are flags: `--select` for labels, and `--target`, `--account`,
+`--group` and `--application` for names. `--app` is an accepted alias for
+`--application`. All are repeatable. The `account` verbs take every selector
+except `--application`, because a personal account belongs to no application.
+`lock break` takes none, because it names one lock path (P5).
 
 **They combine as *and*.** `--application acme --select env=dev` is acme's
 accounts on dev targets, not their union. An *or* would need a selector
@@ -796,7 +789,7 @@ defaults:
 This is the environment table's shape written in the file: §6 already has
 `SOPULI_VAULT` for the default store's *name* and
 `SOPULI_VAULT__VAULT_DEV__ADDR` for one setting of one named store, so the two
-sides of the config now address a store the same way. It also keeps every layer
+sides of the config address a store the same way. It also keeps every layer
 of P3 stating which store it is talking about, which the alternative — a key
 meaning "whichever store is active" — could not: auth written for dev would
 follow a changed `vault:` to prod without anything in the file having changed.
@@ -820,15 +813,15 @@ keys are independent facts about one connection, and one of them is a guardrail,
 so replacing the block whole would let a layer mentioning only `ca_file` drop a
 `verify: true` it never spoke about.
 
-§5 has the profile case and the keys a profile may patch. Implemented in
-`sopuli/config/vault_layers.py` for all three layers the file supplies — the
-declaration and `defaults:` in #136, the active profile's block in #153 — merged
-in one pass so that `tls.verify` ratchets across the three at once.
+§5 has the profile case and the keys a profile may patch.
+`sopuli/config/vault_layers.py` merges the layers the file supplies (the
+declaration, `defaults:` and the active profile's block) in one pass, so that
+`tls.verify` ratchets across all of them at once.
 
 ### `locking:` — on a store, and as a block
 
 P5's advisory lock lives in the vault, keyed on the secret path being mutated
-(Q2, decided in #83). Two keys configure it, and they are one decision seen from
+(Q2). Two keys configure it, and they are one decision seen from
 two ends.
 
 **On a store**, `locking:` says whether that store can hold a real lock:
@@ -863,7 +856,7 @@ defaults:
     break_expired: true         # default: off
 ```
 
-`sopuli lock break` is the attended form of the same act (#149), and the two are
+`sopuli lock break` is the attended form of the same act, and the two are
 deliberately different mechanisms: this key is a standing permission for a runner
 with nobody watching, and the verb is a person naming one path. They emit the same
 warning code, because it is the same event.
@@ -906,8 +899,8 @@ may **not**: there is nowhere in a scalar to say where the material comes from.
 | `instance_principal`, `resource_principal` | none |
 | `config_file`, `session_token` | optionally `profile` |
 
-**What a HashiCorp store can actually perform today** (#138): `token`,
-`approle`, `kubernetes`, `userpass`. `oidc` parses and is refused at plan time
+**A HashiCorp store can perform** `token`, `approle`, `kubernetes` and
+`userpass`. `oidc` parses and is refused at plan time
 with a message saying *not implemented yet* rather than *unsupported* — ADR-005
 records why the gap is small: the hard part is the browser launch, the local
 callback listener and the `state`/`nonce` handling, which is CLI work that no
@@ -968,13 +961,13 @@ reason for it:
 
 - **A source chain stays inside one method.** `method: token` falls through
   `--vault-token-file PATH` → `$SOPULI_VAULT_TOKEN` → `$VAULT_TOKEN` →
-  `~/.vault-token`, and stops there. An earlier draft fell through to AppRole
-  after that; falling into a *different* method makes an authentication failure
-  impossible to explain. The `SOPULI_` variable is in the chain because §6 ranks
+  `~/.vault-token`, and stops there. It never falls through to another method,
+  such as AppRole: that would make an authentication failure impossible to
+  explain. The `SOPULI_` variable is in the chain because §6 ranks
   every honoured third-party variable below its `SOPULI_*` equivalent — one
   order, stated in one place, rather than a second one implied here.
-- **The flag takes a path, and `--vault-token` is refused** (#145,
-  [ADR-007](../decisions/adr-007-vault-token-flag.md)). A token as a
+- **The flag takes a path, and `--vault-token` is refused**
+  ([ADR-007](../decisions/adr-007-vault-token-flag.md)). A token as a
   command-line *value* is visible in `ps` and in the Windows process list, which
   invariant 1 forbids without qualification — and the vault-ref escape in P5's
   wording cannot apply here, because a ref is resolved *by* an authenticated
@@ -1085,8 +1078,7 @@ prefix it resolves in the target's own `vault:`. It is required — there is no
 default admin path to fall back on, and a credential tool guessing at one is how a
 run authenticates as something nobody chose.
 
-**Which store serves it** is `bindings._vault_for`'s chain with one link removed
-(#483). An admin credential belongs to a *target* rather than to an application,
+**Which store serves it** is `bindings._vault_for`'s chain with one link removed. An admin credential belongs to a *target* rather than to an application,
 so an `applications:` entry's `vault:` and an `overrides:` patch's have nothing
 to say about it, and what is left is: the ref's own prefix, the target's
 `vault:`, `defaults.vault`, then the run's own layers — `SOPULI_VAULT` and a
@@ -1112,7 +1104,7 @@ authenticating from a wallet builds no store client, because the `vault` branch
 is the only caller and the supplier is a function; an estate of thirty-four
 targets sharing one vault authenticates once rather than thirty-four times,
 which is also the difference between one entry in that vault's audit log and
-thirty-four. **"Once per run" counts `doctor`'s `vaults` survey too** (#489).
+thirty-four. **"Once per run" counts `doctor`'s `vaults` survey too.**
 The survey opens every declared store and puts each client it opened into the
 run's client map, the one every other reader takes its stores from, so an admin
 credential in a surveyed store reuses that login. A store the survey could
@@ -1132,7 +1124,7 @@ does not scale past one admin credential, so `password_env:` says which variable
 holds this one; absent, it is that pair. Either way this source stays flagged
 low-assurance wherever it is reported.
 
-**And "flagged" means `SOPULI-W022`** (#477). Every command that connects emits
+**And "flagged" means `SOPULI-W022`.** Every command that connects emits
 one per target whose credential came from a low-assurance source; `doctor`
 prints it as well, and the others leave it in `diagnostics[]`. P2 asks for the
 flag *in output* and text is the default output, so something has to print it —
@@ -1145,10 +1137,7 @@ what a reader does about it.
 
 It is a flag and never a refusal: P2 supports this source, and bootstrapping an
 estate that has no other way in is what it is for. What is owed is that the run
-says so — and until #477 nothing did. `Resolved.low_assurance` was computed on
-every run since #175 and read by nothing, which is the failure mode this
-document's own wording invites: the property existed, it was tested, and the
-sentence above was false of every run that had ever been made.
+says so.
 
 The flag follows `admin.LOW_ASSURANCE`, the set, rather than `method == "env"`.
 A second low-assurance source joins the set and is flagged everywhere at once,
@@ -1169,21 +1158,21 @@ Both are checked against the *expanded* estate, so an `overrides:` patch that
 introduces the combination is caught too.
 
 **Whether the wallet is actually there is a runtime question, not a load-time
-one** (#215). Both rules above are about the file and are errors; whether
+one.** Both rules above are about the file and are errors; whether
 `TNS_ADMIN` names a directory holding a readable `cwallet.sso` is about the
 machine, changes between one host and the next, and is reported by `sopuli
 doctor` in its `wallet` section rather than refused here. Loading a config on a
 laptop for an estate that runs elsewhere is the common case, and a loader that
 demanded a local wallet would break it.
 
-#### What happens when one of these is resolved (#175)
+#### What happens when one of these is resolved
 
 Parsing says where the material lives; resolution reads it, and it happens **at
 connect time rather than at load time** — `sopuli/admin.py`, beside
 `sopuli/material.py` and for its reason: prompting and reading the environment
 are I/O, and `04-testing.md` §4 keeps the config layer free of it as an
-architecture requirement. Four decisions fall out of doing it, and each is
-written here because each is silent when it goes wrong.
+architecture requirement. The decisions below follow from it. Each is written
+here because each is silent when it goes wrong.
 
 **A target that names no source is refused, not guessed at.** `admin:` is
 optional and so is `auth:` inside it, so a target can reach a connection having
@@ -1198,7 +1187,7 @@ reversible half: deciding later that a bare variable implies `method: env` only
 widens what works.
 
 **Whether there is a terminal is decided once, at the CLI boundary**, and the
-prompter travels from there (#476). `invocation.terminal_prompter()` builds a
+prompter travels from there. `invocation.terminal_prompter()` builds a
 `PasswordPrompt(ask=getpass.getpass)` when `sys.stdin` is a terminal and `None`
 when it is not; `_pass_invocation` builds exactly one per run and hangs it on the
 `Invocation`, and every command that connects passes it to `admin.resolve`.
@@ -1210,34 +1199,34 @@ passing every other test in this section.
 The boundary owns the decision because it is the only layer that knows the
 process's own streams; `sopuli/admin.py` never names `getpass`, which would put
 a terminal read one import away from the config layer. The question itself goes
-through `output/tty.py`'s tolerant probe (#416) rather than `stdin.isatty()`,
+through `output/tty.py`'s tolerant probe rather than `stdin.isatty()`,
 because a detached stdin — a scheduler, a service manager — *raises* on being
 asked, and that is precisely the run whose answer must be "nobody is watching".
 On Windows the probe also requires a console, since `isatty()` is true there for
-`NUL` — the stdin a scheduled task is most likely to have (#549).
+`NUL` — the stdin a scheduled task is most likely to have.
 The question is never written to stdout: `getpass` puts it on the controlling
 terminal, or on stderr, and stdout carries the run document (J1).
 
-**`auth: prompt` with no terminal fails, and fails as exit 8** — aborted, not
-config-invalid. The file is right, the invocation is right, and the run stopped
+**`auth: prompt` with no terminal fails, and the right exit code is 8** —
+aborted, not config-invalid. The file is right, the invocation is right, and the run stopped
 because it needed a human and there was not one; sending a scheduler's owner to
 a config file with nothing wrong with it is the worse message. The same
 condition is answerable *before* anything is touched — `needs_prompt()` over the
 selected estate — which is invariant 4's shape applied to a source rather than
-to a capability. Both guards exist: the plan phase does not yet, and the one that
-must not be forgotten is the one nearest the pipe.
+to a capability. Nothing calls `needs_prompt()` in the plan phase (open: #481).
+The guard nearest the pipe is the one that must not be missing, and it is in
+place.
 
-**Exit 8 is not yet what a run actually exits with**, and that is tracked rather
-than implied: every command that connects treats a target it cannot reach as a
-per-target finding, so `NobodyToAskError` currently lands in that target's entry
-and the run exits 1. Reconciling the two — a plan-phase refusal for the mutating
-verbs, and what `doctor` should do when it surveys thirty targets and one of them
-wanted a password — is #481.
+**A run exits 1 for this today, not 8** (open: #481). Every command that connects
+treats a target it cannot reach as a per-target finding, so `NobodyToAskError`
+lands in that target's entry and the run exits 1. #481 decides two things: a
+plan-phase refusal for the mutating verbs, and what `doctor` does when one of the
+targets it surveys needs a password.
 
 **A prompt never reads stdin**, which is how P5's *one stream, one reader*
-survives contact with this method. `--from-stdin` (UC-1 §5) claims the pipe for
-the *account's* new password, so a prompt falling back to stdin would read that
-and send it to the database as the DBA's. Refusing when there is no terminal
+survives contact with this method. `creds generate --from-stdin` (UC-1 §4) reads
+the *account's* new password from the pipe, so a prompt falling back to stdin
+would read that and send it to the database as the DBA's. Refusing when there is no terminal
 makes the collision impossible rather than merely discouraged: a prompter exists
 only when stdin is a terminal, and a terminal is not carrying a piped password,
 so the two sources are mutually exclusive by construction and no ordering
@@ -1281,9 +1270,9 @@ included — and it is wrapped once, at that boundary, rather than by each
 supplier. Invariant 2's argument applies to itself here: a supplier that forgot
 would put a bare `str` where `repr` prints it in full.
 
-**An empty answer is refused there, before anything is sent, and is not cached**
-(#601). Oracle has no empty password, so one can never authenticate; sent, it
-came back as `DPY-4001` under `connectivity`, which points the reader at the
+**An empty answer is refused there, before anything is sent, and is not cached.**
+Oracle has no empty password, so one can never authenticate. If it were sent, it
+would come back as `DPY-4001` under `connectivity`, which points the reader at the
 listener for what was one keystroke at their own terminal, and it costs a failed
 login against a password-authenticated admin account's lockout counter. The
 refusal is an `AdminCredentialError` — `config`, the class an empty `method: env`
@@ -1295,7 +1284,7 @@ the re-ask within a run. **Only `""` is empty**: whitespace is an answer, becaus
 Oracle can hold a quoted password of spaces.
 
 **`SOPULI_DB_ADMIN_USER` outranks a target's `username:`** (P3: the environment
-is layer 3, the file is layer 4) and is **ignored under `external`**. The
+is layer 2, the target is layer 4) and is **ignored under `external`**. The
 asymmetry with the refusal above is deliberate: a `username:` written beside a
 wallet is somebody claiming something about *this* target and is worth stopping
 for, while the variable is ambient and set once for a whole run — refusing a run
@@ -1346,14 +1335,14 @@ rejects the ordinary spelling on every run. The same rule already applies to
 
 **An unresolved scope does not satisfy an assertion.** Where the driver reports
 `unknown`, a declared scope is an error rather than a pass: a claim that could not
-be checked is not a claim that held, and treating "we could not tell" as agreement
-is the mistake that made a broken capability probe look like a measurement (#195).
+be checked is not a claim that held. Treating "we could not tell" as agreement
+would let a broken capability probe look like a measurement.
 
 **Open mode is checked separately, and only by the commands that write.** UC-1 §5
 step 2 asks for read-write as part of pre-flight, but `check` reads and must keep
 working against a physical standby — so refusing one belongs to `apply` rather
 than to having connected. Implemented in
-`sopuli/driver/oracle/capabilities.py` (#177) as `assert_scope` and
+`sopuli/driver/oracle/capabilities.py` as `assert_scope` and
 `require_read_write`, which are two calls for that reason.
 
 **They do not constrain each other.** `scope: pdb` with no `container` is fine
@@ -1370,7 +1359,7 @@ keeps its own guardrail (UC-1 §6.2) and belongs to an application, not here.
 | Key | Meaning |
 |---|---|
 | `match` | **required** — the labels a target must carry. May not be empty: a group matching everything is `--all` with a name that hides what it does |
-| `safety` | a `safety:` block, so a whole population can be marked `readonly` in one place. It applies to a run that reaches any target the group matches — nothing has to select *by* the group (#424) |
+| `safety` | a `safety:` block, so a whole population can be marked `readonly` in one place. It applies to a run that reaches any target the group matches — nothing has to select *by* the group |
 
 ### `safety:`, wherever it appears
 
@@ -1405,7 +1394,7 @@ built-in default. §9 resolves safety by taking the *safest* of all layers rathe
 than the last one, and "safest of all layers" needs to know which layers said
 nothing.
 
-#### Where a block may be written, and when each one is merged (#424)
+#### Where a block may be written, and when each one is merged
 
 `defaults` and a profile are properties of the **run**, so they are resolved at
 the boundary before a verb starts. A target's and a group's are not: which of
@@ -1421,18 +1410,11 @@ agree.
 reached, and a block on it says nothing about this run. A group speaks when it
 matches a target that is in the plan.
 
-This was parsed and enforced by nothing until #424. `readonly: true` on a target
-did not stop a mutation, a `max_targets` on one bounded no run, and a
-`confirm_environments` on one asked nobody anything — the keys validated cleanly,
-appeared in `config show`, and refused nothing. A config that reads like
-protection and is not is worse than no setting, and this is the one direction
-invariant 10 must not fail in.
-
 #### What `readonly` does when it fires
 
-**It refuses the whole run, at plan time** (#424). A run that reaches one
-readonly target does not apply to the others and report the first as skipped.
-Three readings were on the table and this is the decided one:
+**It refuses the whole run, at plan time.** A run that reaches one readonly
+target does not apply to the others and report the first as skipped. The other
+readings were rejected:
 
 - **Skipping the marked targets** would make `readonly` mean two different things
   depending on where it was written — a refusal under `defaults`, a filter on a
@@ -1481,13 +1463,13 @@ it: under `readonly` the mutating verbs are unavailable, and the read-only verb
 is how you ask.
 
 **`lock break` is the one mutating verb a target's or a group's block does not
-reach**, and that is a decision rather than a verb that was missed (#424, raised
-in review on #425). Three reasons, and the third is the one that settles it:
+reach**, and that is a decision, not a verb that was missed. The last of these
+reasons settles it:
 
 - It addresses a **vault document by path** and takes no selector, so there is no
   estate for layer 4 to arrive from. It acts on the lock named whether or not the
-  configuration declares a binding for it, which is #150's decision and the whole
-  reason the verb can clear a leftover at a path the file no longer names.
+  configuration declares a binding for it. That is why the verb can clear a
+  leftover at a path the file no longer names.
 - `readonly` on a *target* is a statement about that database. The lock is not
   the database, and breaking it changes no credential — it takes an advisory lock
   and fences its holder.
@@ -1501,17 +1483,13 @@ in review on #425). Three reasons, and the third is the one that settles it:
 `defaults` and a profile still refuse it, and there the statement is a different
 one and coherent: *this file may not write anything*, lock store included.
 
-#### Seeing what a file guards (#426)
+#### Seeing what a file guards
 
-A block's effect is enforced; **where it is written** is a separate question, and
-until #426 nothing answered it. `config show --explain` reports the *run's*
-settings, and `config show` applies no selector and builds no plan, so
+A block's effect is enforced; **where it is written** is a separate question.
+`config show --explain` reports the *run's* settings, and `config show` applies no selector and builds no plan, so
 `safety.readonly = false [built-in default]` is the correct answer there for a
 file whose target sets it — §9 defines that phrase as *nothing else spoke*, and
-about the run, nothing did. The row was never the defect. The defect was that
-nothing else in the command said a block existed.
-
-`config show` now carries a **`safety` section**: one row per key, by the key that
+about the run, nothing did. So `config show` also has a **`safety` section**: one row per key, by the key that
 writes it, over every place a block may appear.
 
 ```
@@ -1526,14 +1504,14 @@ targets[0].safety.max_targets                               1
 targets[0].safety.readonly                                  true
 ```
 
-Four things about it are decisions:
+These are decisions:
 
 - **Every block, not only the object layer.** `defaults` and a profile are already
   visible in `--explain`'s table, and omitting them here would make this section
-  its own half-truth — a map of a file's guards with two of the six kinds of place
+  its own half-truth — a map of a file's guards with some kinds of place
   missing. The two views answer different questions and both are worth having.
 - **One row per key, not per block**, because a key path is what gets edited and a
-  block writes up to three of them. Deduplicated by that path, which collapses a
+  block writes several of them. Deduplicated by that path, which collapses a
   target set's template to one row however many targets it generates — the
   template is one line in the file.
 - **An `overrides:` entry is its own line.** Reporting a patched key against the
@@ -1555,22 +1533,17 @@ The section is absent from a file that writes no block.
 and any `overrides:` entry have been ratcheted together, or `null`. `defaults`, a
 profile and a group are not folded in — none is a property of a target, and
 folding them would make one object's answer depend on four while hiding which.
-Schema 1.22, additive (`03-json-output.md`).
+`03-json-output.md` has the field.
 
-#### What `confirm_environments` does when it fires (#292)
+#### What `confirm_environments` does when it fires
 
-Parsed since this document was written and **enforced since #292**, which is
-longer than it should have been: the key validated cleanly, merged under the
-ratchet, appeared in `config show`, and was read by nothing — a config that read
-like protection and was not, which is worse than the setting not existing.
-
-`creds generate`, `creds apply` and `creds finish-rollover` consult it. `creds
+Every mutating verb consults it except `creds rotate` and `lock break`. `creds
 rotate` does not, and that is not an omission: UC-1 §8 step 1 makes its
 confirmation unconditional, so the setting could only ever make that gate weaker.
 `lock break` does not either, for the same reason one step further along — it
 always confirms and takes `--force` on top.
 
-Four things about it are decisions:
+These are decisions:
 
 - **It matches the environments the *run* reaches**, not the ones the file
   declares. `plan.blast_radius.environments` is the list, which is what that
@@ -1578,9 +1551,8 @@ Four things about it are decisions:
   prod merely because prod exists elsewhere in the estate — a gate that asked
   every time is one that gets switched off within a week.
 - **`--confirm` satisfies it.** P5 says every mutating command supports
-  `--confirm` — and only that, since #294 struck the `--yes` alias P5 had
-  promised and nothing ever built — and this setting says these environments are not entered
-  without an explicit yes; the flag is that yes, given in advance. So the setting
+  `--confirm`, and this setting says these environments are not entered without
+  an explicit yes; the flag is that yes, given in advance. So the setting
   configures *where a yes is required*, not a second gate that a yes cannot
   answer. A scheduler adds one flag rather than keeping an environment list in
   step with its config.
@@ -1594,24 +1566,20 @@ Four things about it are decisions:
   assenting to. Prompting before printing the plan would ask for a yes to the
   question the operator ran the command to see.
 
-`--force` does not satisfy it and is not consulted: P3 (#89) puts `--force` on
+`--force` does not satisfy it and is not consulted: P3 puts `--force` on
 the *account* guardrails of `02-oracle-privileges.md` §4 and never on a safety
 setting. It is not a setting, has no layer to arrive on, and so has nothing to
 relax (invariant 10).
 
-**There is no built-in list, and that is load-bearing.** P5 used to say
-confirmation was required by default when "the target is marked
-`environment: prod`", which reads like a built-in `confirm_environments: [prod]`
-— and §9 forbids exactly that: a built-in taking part in a union ratchet is an
-unremovable floor, so no layer could ever remove `prod` again. §9's own worked
-example of the trap is `confirm`.
+**There is no built-in list, and that matters.** Requiring confirmation by
+default for a target marked `environment: prod` would be a built-in
+`confirm_environments: [prod]`. §9 forbids that: a built-in in a union ratchet is
+a floor that no layer could ever remove. §9's own worked example of the trap is
+`confirm`.
 
-**§9 won, and P5 was reworded** (#294, C17). The two documents could not both be
-honoured as written, and the tie-breaker was which of them would be doing damage
-if it were wrong: a §9 that yields here gains an unremovable floor and loses the
-property that makes the whole precedence table legible, while a P5 that yields
-loses a default some estates would have wanted and that any of them can write in
-one line. So confirmation is **opt-in**, `environment: prod` is a label like any
+C17 decided this. If §9 gave way here, it would gain an unremovable floor and
+lose the property that makes the precedence table readable. A default that some
+estates would want is the smaller loss, and any estate can write it in one line. So confirmation is **opt-in**, `environment: prod` is a label like any
 other, and a site that wants the prompt lists `prod` — which is the thing the
 estate was always going to have to do for `staging` or `uat` anyway.
 
@@ -1784,10 +1752,9 @@ Without profiles this lives in environment variables scattered across a workflow
 file — unversioned, unreviewed, and invisible when someone asks why the nightly
 run behaved differently from the one they just did by hand.
 
-The clearest evidence the need is real: an earlier draft had
-`policies.*.verify.scheduled_method`, which is run-context configuration hiding
-inside a password policy because there was nowhere else to put it. That key is
-gone; a profile overriding `verify.method` replaces it.
+Without profiles, a setting such as the verification method for scheduled runs
+would have to live in a password policy. A policy describes credentials, not how
+a run is invoked.
 
 ### What a profile may contain
 
@@ -1799,12 +1766,12 @@ A closed list. Anything else is a validation error.
 | `vaults.<name>.*` | how to *reach* a named store — everything except the three below. This is what lets a profile say "token from a laptop, AppRole from CI" without re-declaring the store. Not `type`, and not `non_production` or `locking` — see below (C13) |
 | `verify.method` | `login` \| `hash` \| `both` \| `none` |
 | `verify.lockout_margin` | how close to `FAILED_LOGIN_ATTEMPTS` to stop trying |
-| `safety.*` | `max_targets`, `confirm_environments`, `readonly` |
-| `locking.break_expired` | may an unattended run take over an expired lock (#83)? The profile is where this belongs: it is a property of running without anybody watching |
+| `safety.*` | any key of a `safety:` block (§3a): `max_targets`, `confirm_environments`, `readonly`, `delivery.allowed_methods` |
+| `locking.break_expired` | may an unattended run take over an expired lock? The profile is where this belongs: it is a property of running without anybody watching |
 | `confirm` | whether interactive confirmation is possible at all. `false` makes every gate that would prompt refuse with exit 8 instead, even at a terminal; `--confirm` still answers in advance, except for the seen reset, which then cannot run. Unset means "ask if stdin is a terminal" |
 | `output` | `text` \| `json` \| `jsonl` |
 | `log_level`, `log_file` | |
-| `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs. `connect_timeout_s` defaults to 30 s — a connection that times out has applied nothing. `query_timeout_s` defaults to **no bound**, deliberately: a call timeout cancels the round trip without undoing what the server did with it, and `ALTER USER` is not transactional, so an imposed default turns a slow success into a run that cannot say whether the password changed. Invariant 7 has no answer for that state; an operator may still set one. **Both are consulted** (#360): `_timeouts()` in `sopuli/cli.py` resolves the pair and hands them to every driver the tool builds, so a profile narrowing either changes what the connection does. Wiring `query_timeout_s` did not change what the tool *imposes* — the built-in is still no bound, for the reason above — only what an operator can reach on purpose. This row has been wrong twice: it once said neither key was consulted, and then that only one was, while `connect_timeout_s` had a reader that was reading a mapping the name was never put into. Which is why the claim now lives in the registry and in `tests/settings/test_settings_are_wired.py` (#358) rather than in this sentence |
+| `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs. `connect_timeout_s` defaults to 30 s — a connection that times out has applied nothing. `query_timeout_s` defaults to **no bound**, deliberately: a call timeout cancels the round trip without undoing what the server did with it, and `ALTER USER` is not transactional, so an imposed default turns a slow success into a run that cannot say whether the password changed. Invariant 7 has no answer for that state; an operator may still set one. **Both are consulted**: `_timeouts()` in `sopuli/cli.py` resolves the pair and passes it to every driver the tool builds, so a profile narrowing either changes what the connection does. `tests/settings/test_settings_are_wired.py` checks that each has a reader |
 | `rotation.strategy` | e.g. force `staged` where no human can watch a rollover. Only `strategy` — `rollover_hours` and the rest describe the credential's lifecycle, which belongs to the estate |
 
 ### Reaching a store differently, without redeclaring it
@@ -1841,15 +1808,13 @@ against, and `locking: advisory-only` is the operator conceding a store cannot
 hold P5's lock. A profile that could set either would be a way to relax a safety
 setting from the invocation context, which invariant 10 forbids outright.
 
-**Everything else is patchable**, which is the rule rather than the four keys the
-table above used to list: that list was written before `namespace`, `timeout_s`
-and the `tls:` block existed (#135). Stating it as the complement means a key
+**Everything else is patchable.** Stating the rule as the complement means a key
 added to a vault entry becomes patchable unless somebody writes down why it is
 not — which fails loudly for whoever adds the next guardrail and quietly for
 nobody.
 
-Applied as of #153, in the same single pass that merges layers 4 and 5
-(`sopuli/config/vault_layers.py`). Resolving those two first and folding the
+`sopuli/config/vault_layers.py` applies it in the same single pass that merges
+layers 4 and 5. Resolving those two first and folding the
 profile in afterwards would give the right *value* for an overridden key and the
 wrong *provenance* — and for `tls.verify`, the one vault key under the ratchet,
 it would report the winner of the first pass rather than the layer somebody has
@@ -1936,7 +1901,7 @@ safety.max_targets = 1       [defaults.safety.max_targets]
 
 That last line is the case worth being able to see. The source is the key path
 rather than the layer word plus the profile name — the same choice `defaults.*`
-rows already make (#53): the question the view answers is *what do I edit*, and a
+rows make: the question the view answers is *what do I edit*, and a
 key path answers it while `[profile scheduled]` sends somebody looking.
 
 `invocation.profile` is reported whether or not the profile changed anything,
@@ -1956,24 +1921,21 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 | `SOPULI_CONFIG` | config file path |
 | `SOPULI_PROFILE` | active profile (§5) — the usual way a CI job or scheduler selects one |
 | `SOPULI_VAULT` | default vault name — layer 2 of the same setting `defaults.vault` writes |
-| `SOPULI_VAULT_ADDR` | address of the **default** store: whichever one `SOPULI_VAULT` or `defaults.vault` names. Refused when neither does — see *Which store is "the active" one* below. `--vault-addr` is the same setting one layer up (#422) |
+| `SOPULI_VAULT_ADDR` | address of the **default** store: whichever one `SOPULI_VAULT` or `defaults.vault` names. Refused when neither does — see *Which store is "the active" one* below. `--vault-addr` is the same setting one layer up |
 | `SOPULI_VAULT_TOKEN` | token for the active vault. Outranked by `--vault-token-file` and by a store's own `token:` (§3a); there is deliberately no flag carrying a token value, so this is the answer where writing one to disk is awkward |
-| `SOPULI_VAULT__VAULT_DEV__ADDR` | address of a *specific* named vault. `ADDR` is the only key addressable this way today; any other spelling under `SOPULI_VAULT__` is refused, naming what is available |
+| `SOPULI_VAULT__VAULT_DEV__ADDR` | address of a *specific* named vault. Another key under `SOPULI_VAULT__` is refused, and the message names the keys that can be addressed this way |
 | `SOPULI_DB_ADMIN_USER` / `SOPULI_DB_ADMIN_PASSWORD` | admin credentials (password is low-assurance, flagged in output). The password pair is the default for `admin.auth: { method: env }`; a target may name its own variable with `password_env:` (§3a) |
-| `SOPULI_ORACLE_CLIENT_LIB_DIR` | Oracle client directory for thick mode. Read at the first connect (#176) and passed to `init_oracle_client(lib_dir=…)`. Outranks `runtime.oracle.client_lib_dir` (P3: environment is layer 3, the file is layer 6); with neither set the platform's own loader decides, which is the ordinary Linux install and needs nothing |
+| `SOPULI_ORACLE_CLIENT_LIB_DIR` | Oracle client directory for thick mode. Read at the first connect and passed to `init_oracle_client(lib_dir=…)`. Outranks `runtime.oracle.client_lib_dir` (P3: the environment is layer 2, and the file is below it); with neither set the platform's own loader decides, which is the ordinary Linux install and needs nothing |
 | `SOPULI_OUTPUT` | `text` \| `json` \| `jsonl` |
 | `SOPULI_NO_COLOR` / `NO_COLOR` | disable colour — set and not empty, whatever the value. Outranked by an explicit `--color always`; see `03-json-output.md` §1 for the full precedence |
 | `SOPULI_DRY_RUN` | force dry-run globally (safety ratchet: no flag turns it off). Set and non-empty is the whole answer, whatever the value — `SOPULI_DRY_RUN=0` means dry-run |
 
-Honoured third-party variables, ranked *below* their `SOPULI_*` equivalent:
-`VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_NAMESPACE`, `VAULT_CACERT`,
-`OCI_CLI_PROFILE`, `OCI_CLI_CONFIG_FILE`, `TNS_ADMIN`, `ORACLE_HOME`,
-`NLS_LANG`, `HTTPS_PROXY`, `NO_PROXY`.
-
-Of that list, `VAULT_ADDR`, `VAULT_NAMESPACE` and `VAULT_CACERT` reach a store's
-`addr`, `namespace` and `tls.ca_file`, on the default store, at P3's layer 3.
-`VAULT_TOKEN` is auth material rather than a setting and belongs to §3a's token
-chain; the rest wait for the subsystems that read them.
+Vault's own `VAULT_ADDR`, `VAULT_NAMESPACE` and `VAULT_CACERT` reach the default
+store's `addr`, `namespace` and `tls.ca_file`. They are in P3's layer 2, ranked
+*below* their `SOPULI_*` equivalents. `VAULT_TOKEN` is auth material, not a
+setting, and belongs to §3a's token chain. The tool resolves no other
+third-party variable. Libraries read some themselves: the Oracle client reads
+`TNS_ADMIN` and `NLS_LANG`, and `httpx` reads `HTTPS_PROXY` and `NO_PROXY`.
 
 **`VAULT_SKIP_VERIFY` is the one exception.** It is read and **refused** with a
 config error rather than honoured or silently ignored (ADR-005): it names the
@@ -1995,7 +1957,7 @@ other.
 
 The alternative, following whichever store the current binding resolved to, is
 the `vault_settings:` block C13 rejected, spelled as a variable: it lets a
-setting written for dev follow a changed `vault:` into prod. Decided in #154.
+setting written for dev follow a changed `vault:` into prod.
 
 Where nothing names a default store, the two halves answer differently:
 
@@ -2008,7 +1970,7 @@ Where nothing names a default store, the two halves answer differently:
   failing a run over somebody else's variable would be taking a position on an
   environment the tool does not own. The warning appears in `diagnostics[]`.
 
-### `--vault-addr` — layer 1, and the only flag of its kind (#422)
+### `--vault-addr` — layer 1, and the only flag of its kind
 
 ```
 $ sopuli config show --vault-addr https://vault-standby.example.com:8200
@@ -2031,7 +1993,7 @@ Exit 9. The `NOTE` column says which key was layered and not which layer did it,
 which is true of every one of them. Which layer did it is
 `config show --explain`'s answer — see *Which layer wrote it* below.
 
-Three things were decided with it, and the third is the one that keeps it small.
+These decisions came with it. The last one keeps it small.
 
 **It addresses the store this section already defines as the active one** — what
 `SOPULI_VAULT` or `defaults.vault` names — and is refused where neither does. It
@@ -2051,7 +2013,7 @@ touches and an address is definitionally per-store, so the multi-store case here
 really does fall back to the environment rather than merely preferring it.
 
 **There is no `--vault-mount`, `--vault-namespace` or anything else.** One flag
-per reach key would be six spellings of what `vaults:` already says once. The
+per reach key would repeat, key by key, what `vaults:` already says once. The
 case for this one is specific: an **address** is the thing an operator redirects
 for a single run — a standby, a test instance, a port-forward — and every other
 way to do that outlives the command. `env VAR=… sopuli …` is a clean one-shot on
@@ -2064,12 +2026,11 @@ It takes both parser positions, like every global option that is not a safety
 flag: both are layer 1, the same person in the same command line, so neither
 outranks the other (P3).
 
-### Which layer wrote it (#428)
+### Which layer wrote it
 
-`addr` is the one key seven different sources can write, and for as long as the
-`NOTE` column was the only report of it, all seven produced the same line. A
-store whose address came from a colleague's exported `VAULT_ADDR` looked
-identical to one an operator redirected on purpose, and *why is this run talking
+`addr` can be written by many sources, and the `NOTE` column prints the same line
+for all of them. A store whose address came from a colleague's exported
+`VAULT_ADDR` looks identical there to one an operator redirected on purpose, and *why is this run talking
 to that vault* is the first question when a rotation lands somewhere unexpected.
 
 `config show --explain` answers it, as rows in the same `settings` table the
@@ -2101,11 +2062,11 @@ declaration writing the mount and the KV version, and the active profile
 redirecting the address. The other sections of that run's output are elided; the
 table is not.
 
-The seven sources render as `[cli --vault-addr]`,
+The sources render as `[cli --vault-addr]`,
 `[env SOPULI_VAULT__VAULT_DEV__ADDR]`, `[env SOPULI_VAULT_ADDR]`,
 `[env_thirdparty VAULT_ADDR]`, `[profiles.<name>.vaults.<store>.addr]`,
-`[vaults.<store>.addr]` and `[defaults.vaults.<store>.addr]`. Four decisions are
-in that table rather than in its layout.
+`[vaults.<store>.addr]` and `[defaults.vaults.<store>.addr]`. These decisions are
+in that table rather than in its layout:
 
 **The rows join the run's table rather than getting a section.** They are
 settings of the same chain, merged by the same resolver — and P3's own worked
@@ -2133,20 +2094,17 @@ provenance to report; `NOTE` still says `layered: auth`. It is also the one part
 of a store entry that addresses credentials, and a section whose every value is a
 setting is not where those belong.
 
-One knock-on, found in review of #428: `vaults.*.<key>` is the name the resolver
-is **asked** with — §9's registry is a literal, so a store's settings are one
-entry with `*` where the name goes — and it is not a name anybody can be told.
-Nothing quoted it back until this view existed; now the ratchet note under a
-defeated `tls.verify` does, and so does the warning every command that loads the
-file emits. Both name the concrete store, and they are renamed once where the
-merge happens rather than in either view — one sentence spelled two ways, three
+`vaults.*.<key>` is the name the resolver is **asked** with — §9's registry is a
+literal, so a store's settings are one entry with `*` where the name goes — and
+it is not a name anybody can be told. The ratchet note under a defeated
+`tls.verify`, and the warning every command that loads the file emits, both name
+the concrete store. The name is replaced once, where the merge happens, not in
+either view — one sentence spelled two ways, three
 lines apart, is the defect §9's single resolver exists to make impossible.
 
 `config show --output json` carries the same answer for a consumer, as
 `config.vaults[]` — see `03-json-output.md`. It is there in **both** shapes,
-which is the part of this that was not a provenance question at all: `--explain`
-emitted `config.declared`, the address the *file* wrote, and `--resolved` dropped
-stores entirely, so no mode of the command told a script which vault a run would
+`--explain` and `--resolved`, so a script can find out which vault a run would
 talk to.
 
 ### Naming a store in a variable
@@ -2231,7 +2189,7 @@ safety-critical part, and the failure at the far end of a malformed ref is a
 password written where the application does not read it.
 
 **Resolving** one — turning a parsed ref plus a stored document into a value, and
-back — is `sopuli/store/credentials.py` (#183), and it is a separate layer on
+back — is `sopuli/store/credentials.py`, and it is a separate layer on
 purpose: the address is decided when the file is read and the document is not
 touched until something connects. Two things it settles that the grammar above leaves open. The
 value has to be a **string**: a ref landing on a map has addressed the wrong
@@ -2298,7 +2256,7 @@ far end of a malformed one is a password written where nobody reads it.
 Normalising costs one thing, and it is the only thing: a ref whose stage was
 written in upper case does not render back byte-for-byte. `@stage=PENDING` comes
 out of `config show` as `@stage=pending`. The trade is worth it, because two refs
-that differ only in the case of a stage now compare equal — which is what
+that differ only in the case of a stage compare equal — which is what
 "addresses the same secret" ought to mean.
 
 That it stays the *only* thing is why `@version=007` is refused rather than read
@@ -2346,13 +2304,13 @@ label, all eleven share one password — legal and often intended, but the plan
 output states it explicitly so it is never accidental.
 
 "States it explicitly" is `config show --resolved`'s **shared secrets** section
-and the run document's `shared_secrets` (#110), which report both ways a document
-can be shared: the targets bound to it, and — since Q7 made one document per
-application the default — the accounts whose credentials it holds. They are read
+and the run document's `shared_secrets`, which report both ways a document can
+be shared: the targets bound to it, and the accounts whose credentials it holds.
+One document per application is the default (Q7), so the second is common. They are read
 from the file rather than from the store, so the answer is available offline and
 is the same on two runs of the same command.
 
-**An application's ref must have somewhere to stage into** (#111). Where the
+**An application's ref must have somewhere to stage into.** Where the
 store emulates the three stages in payload fields — every backend in P2's table
 but OCI — `pending` and `previous` are keys *beside* the container, so two refs
 that parse perfectly well still cannot be rotated:
@@ -2369,7 +2327,7 @@ binding in `sopuli/config/bindings.py`, on the *rendered* ref, which is what let
 it be exact about two things a check on the written template could not be: the
 tokens are already substituted, and the store is known.
 
-**And no two accounts may stage into the same place** (#255). The rule above is
+**And no two accounts may stage into the same place.** The rule above is
 about a ref with *nowhere* to stage; this one is about a set of refs that all
 have the same somewhere:
 
@@ -2418,7 +2376,7 @@ binding pointing at a store that does not exist — or one that later exists and
 belongs to somebody else.
 
 **Writing into a shared JSON document.** One secret per application with a field
-per account is the **documented default** (Q7, decided in #85; the payload shape
+per account is the **documented default** (Q7; the payload shape
 is `../use-cases/uc-01-app-credential-sync.md` §3). One secret per account stays
 fully supported — it is the same code path with one account in the map.
 
@@ -2428,7 +2386,7 @@ check-and-set read-modify-write; a concurrent change aborts the write rather tha
 overwriting. Sibling properties in the same secret — application settings and the
 like — are never touched.
 
-**What triggers the fallback** (#183) is either of two things, and neither is a
+**What triggers the fallback** is either of two things, and neither is a
 failure. A store with no merge-patch endpoint — KV v1 — is answered by
 `supports()` before anything is sent. A Vault **policy** granting `update` and
 not `patch` is not: `patch` is a capability of the mount, while whether this
@@ -2444,9 +2402,8 @@ password is never read into the process, and under the fallback the whole
 document goes out. Equally safe against a concurrent writer, and not equally
 narrow.
 
-Aborting is worth stating as a rule rather than as caution, because the reason
-changed once the lock landed. A mutating run holds the advisory lock on the
-**path** (Q2, #83), so no other run of this tool can be writing that document. A
+Aborting is a rule, not caution. A mutating run holds the advisory lock on the
+**path** (Q2), so no other run of this tool can be writing that document. A
 compare-and-set conflict therefore means a *foreign* writer — somebody at a vault
 CLI. Re-reading and merging over them is exactly the read-modify-write that
 rewrites fields belonging to accounts nobody selected, which invariant 5 exists to
@@ -2512,14 +2469,14 @@ attributes this run may enforce.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `unlock_if_locked` | bool | `false` | `apply` issues `ALTER USER … ACCOUNT UNLOCK` for a locked account before setting its password (#300) |
-| `profile` | string | — | the profile this account is to sit on. `apply` issues `ALTER USER … PROFILE …` where the account is on a different one (#301) |
+| `unlock_if_locked` | bool | `false` | `apply` issues `ALTER USER … ACCOUNT UNLOCK` for a locked account before setting its password |
+| `profile` | string | — | the profile this account is to sit on. `apply` issues `ALTER USER … PROFILE …` where the account is on a different one |
 
-**These two are the whole list, and it is closed.** §5 named four attributes; the
-other two never became keys here and never will. `PASSWORD_EXPIRE` handling
-(#302) is not an operation this use case has — clearing an expiry is what `apply`
-already does, and expiring one deliberately breaks an application account — and
-default/temporary tablespaces (#303) belong to UC-4, provisioning, because
+**The list is closed.** UC-1 §5 also considered `PASSWORD_EXPIRE` handling and
+default/temporary tablespaces, and neither is a key here. `PASSWORD_EXPIRE`
+handling is not an operation this use case has — clearing an expiry is what
+`apply` already does, and expiring one deliberately breaks an application
+account — and default/temporary tablespaces belong to UC-4, provisioning, because
 assigning one moves no existing segment and so is a half-change during a rotation
 and the right thing during a create. UC-1 §5 has the argument for both; the
 roadmap in `docs/README.md` has the use cases they went to.
@@ -2537,9 +2494,9 @@ never an `ORA-02380` part way through an estate.
 **The tool assigns a profile and never creates or alters one.** `ALTER PROFILE`
 edits a shared object, so it reaches accounts nobody selected; §3 of
 `02-oracle-privileges.md` keeps the privilege off the service account, and Q4
-(#88) decided it: never, in any credential-sync verb. Creating and altering
-profiles is UC-4's, provisioning (see the roadmap in `docs/README.md`), and #88
-leaves that question open rather than foreclosing it.
+decided it: never, in any credential-sync verb. Creating and altering profiles is
+a question for UC-4, provisioning (see the roadmap in `docs/README.md`), and Q4
+leaves it open.
 
 **Naming a profile and naming a `--strategy` in one run is refused** where the
 assignment would actually move the account. A profile decides whether a rotation
@@ -2570,8 +2527,8 @@ it belongs in P3's layer 6, where `config show --explain` can attribute it.
 ### Generation, and what "compliant" means
 
 One definition, used twice. `creds generate` draws candidates from a CSPRNG and
-keeps the first compliant one; `creds apply --from-stdin` runs a supplied password
-through the same predicate (UC-1 §4). Two implementations would eventually
+keeps the first compliant one; `creds generate --from-stdin` runs a supplied
+password through the same predicate (UC-1 §4). Two implementations would eventually
 disagree, and the disagreement would be a password the tool wrote and then refused.
 
 `length` is read slightly differently by each, which is deliberate: generation
@@ -2620,23 +2577,13 @@ the profile beneath it — the operator at the keyboard is the more specific int
 The third-party layer does not appear, because `output` has none: `VAULT_ADDR`
 ranking below `SOPULI_VAULT_ADDR` and below `--vault-addr` is §6's to show, being
 a setting of a store rather than of the run. A store's keys are nonetheless *in*
-this table — as `vaults.<store>.<key>` rows beneath the run's, since #428 — and
+this table — as `vaults.<store>.<key>` rows beneath the run's — and
 the reason to work `output` rather than `addr` through here is that this section
 is about the chain and §6 is about the store.
 
-**These examples are pasted, not written** (#409). They were once drawn on
-`--vault-addr` and `--method`, and at the time neither flag existed — `sopuli`
-rejected both before any precedence was consulted, so the documented outcomes
-were predictions. `output` was chosen over marking the old blocks illustrative
-because it has a real layer at every level shown, which leaves nothing in this
-section excused from running. **`--vault-addr` has since been built** (#422) and
-these examples were still not moved back onto it: §6 is where its own chain is
-worked through, and it is the longer one — seven sources across six layers, with
-a third-party variable ranked between two of them. That paragraph used to add
-that a store's settings "never appear in the `settings` table this section is
-showing", which was true when it was written and stopped being true in #428.
-Fixing the sentence rather than the example on the strength of it: `output` is
-still the setting with one clean layer at every level.
+**These examples are pasted from real runs.** They use `output` because it has a
+real layer at every level shown. `vaults.*.addr` has a longer chain, and §6 works
+through it.
 
 Safety ratchet — `defaults.safety.readonly: true`, and a `ci` profile that tries
 to undo it with `safety: { readonly: false }`:
@@ -2651,8 +2598,6 @@ Exit 8. The profile is the higher layer and loses anyway, and the refusal names
 `defaults`, the layer that has to be edited — ties and ratchets resolve toward the
 config key, not toward the layer that asked to relax it. `readonly` has no flag, so
 there is nothing on the command line to try; `--dry-run` is refused the same way.
-This example used to be written on `--no-dry-run`, which does not exist, and
-printed a refusal no run could reach (#409).
 
 Multiple `--config` files layer left to right (deep merge for maps, replace for
 lists). The asymmetry is deliberate: a mapping is a set of named settings, so an
@@ -2671,20 +2616,19 @@ profile, and unlike everything else these do **not** follow last-one-wins: the
 resolved value is the *safest* of all layers — lowest `max_targets`, union of
 `confirm_environments`, `readonly: true` if any layer sets it.
 
-**A target's and a group's are merged later than the rest** (#424). They are
+**A target's and a group's are merged later than the rest.** They are
 layer 4 and they go through this same resolver, but they cannot be resolved at
 the boundary with the others: which of them applies depends on which targets the
 run is about to reach, and no selector has run yet. So a verb merges them once it
 has narrowed its estate and before it builds its plan. §3a says which blocks
 speak and what `readonly` does when one fires; the merge itself is the ordinary
 one, and the reported location is the lowest-authority contributor as it is
-everywhere else. Until #424 this second merge did not exist, and the three keys
-refused nothing wherever a target or a group wrote them.
+everywhere else.
 
 ### The unit that gets resolved is a setting, not an option
 
-`readonly` has no flag at all. `verify.method` arrives from a profile block.
-`--dry-run` will have both a flag and `SOPULI_DRY_RUN`. A resolver keyed on
+`readonly` has no flag at all. `output` can come from a profile block.
+`--dry-run` has both a flag and `SOPULI_DRY_RUN`. A resolver keyed on
 command-line options would leave half the things that need a merge policy with
 nowhere to declare one.
 
@@ -2705,9 +2649,9 @@ Otherwise the table above describes intent rather than behaviour.
 | Policy | Rule | Applies to |
 |---|---|---|
 | `override` | the highest-authority layer wins | everything not below |
-| `ratchet` | the *safest* layer wins, whichever it is | `safety.dry_run`, `safety.readonly`, `safety.max_targets`, `safety.confirm_environments`, `safety.delivery.allowed_methods`, `locking.break_expired` |
+| `ratchet` | the *safest* layer wins, whichever it is | every setting in `SAFETY_SETTINGS`, such as `safety.readonly`, `locking.break_expired` and `vaults.*.tls.verify`. §3a's `tls:` says why certificate verification is a safety setting |
 
-The ratcheted set is invariant 10's, and it is one frozenset in
+The ratcheted set is invariant 10's, and it is one frozenset, `SAFETY_SETTINGS`, in
 `sopuli/settings/registry.py` so it can be reviewed at a glance. A setting
 declaring `ratchet` without being in it — or the reverse — fails to construct,
 so the two cannot drift apart.
@@ -2721,7 +2665,7 @@ ratchets toward its safe value, an integer to the minimum, a list to the union �
 and the fourth is declared, because the type could not give it.
 
 **The declared one is `safety.delivery.allowed_methods`, which ratchets by
-intersection** (H6, #453). It restricts which UC-2 delivery methods an estate may
+intersection** ([H6](../decisions/log.md#h6)). It restricts which UC-2 delivery methods an estate may
 use, and each layer may only narrow the set: a higher-authority layer cannot
 restore a method a lower one removed, which is what makes it a ratchet rather than
 a list somebody can edit upward. It cannot be read off the type because
@@ -2750,8 +2694,7 @@ union does not:
   evaluation order to document and no second spelling of one guard. Adding the
   second key is a decision rather than an addition.
 
-**Which boolean value is the safe one is declared per setting**, and it was not
-worth saying until `locking.break_expired` arrived (#83). `readonly: true`
+**Which boolean value is the safe one is declared per setting.** `readonly: true`
 refuses more, so one layer asking for it is enough. `break_expired: true`
 refuses *less* — it is permission rather than a guard — so there the layer saying
 `false` is the one that must win, and one layer withholding permission is enough.
@@ -2759,7 +2702,7 @@ Merging both with "true wins" would have advertised a guardrail while doing the
 opposite of one. The direction is a field on the setting rather than something
 inferred from its name, because a ratchet that reads its polarity out of a string
 flips silently the day somebody renames a setting. `relax-but-bounded` was
-considered for `--force` and deliberately not built, and P3's answer (#89) is why
+considered for `--force` and deliberately not built, and P3's answer is why
 it is not needed: `--force` overrides the *account* guardrails of
 `02-oracle-privileges.md` §4, never a safety setting, so it is not a setting at
 all. That is invariant 10 made structural — a flag with no entry in the registry
@@ -2865,22 +2808,19 @@ So a file the schema accepts may still be refused by `sopuli config validate`,
 and that is the intended division rather than a gap. The schema is the fast,
 local, incomplete check; the tool is the complete one.
 
-**Incomplete, never looser** — the division only works in one direction (#501). A
-file the *tool* accepts and the schema refuses inverts it: the editor reports an
-error on a file that runs, which teaches people to stop trusting the editor. The
-case that broke it was a key written with nothing under it. YAML reads
+**Incomplete, never looser** — the division only works in one direction. A file
+the *tool* accepts and the schema refuses inverts it: the editor reports an error
+on a file that runs, which teaches people to stop trusting the editor. The case
+to watch is a key written with nothing under it. YAML reads
 `safety:` with an empty body as `null`, and the builders read that null as *the
 key is absent* — while the schema types the property as an object and refuses it.
 So **key presence decides, never the value**: a builder asks whether the key was
 written and hands anything present to the field helper, which names the key when
-it refuses. `optional_bool` and `optional_int` already worked that way, which is
-why `max_targets: null` and `readonly: null` were refused in the same block that
-accepted `safety: null` and `confirm_environments: null`.
+it refuses.
 
-Reading the null as absence is also the dangerous direction for these two in
-particular: both are guards, so `confirm_environments: null` was silently
-"confirm nothing, anywhere" and `safety: null` was silently a layer with no
-guard on it at all. A file that says either is a file whose author thinks it says
+Reading the null as absence is also the dangerous direction for guards:
+`confirm_environments: null` would silently mean "confirm nothing, anywhere", and
+`safety: null` would silently be a layer with no guard on it at all. A file that says either is a file whose author thinks it says
 something else.
 
 ### Pointing an editor at it
@@ -2906,8 +2846,7 @@ is as valid as the form above.
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
 URL because JSON Schema identifiers conventionally do, and it matches the sibling
 schemas — but nothing serves it, so it is not a value to paste after `$schema=`.
-Use a path to a local copy. (If the schema is ever served from somewhere stable,
-the URL form belongs here beside the path form, and this paragraph goes away.)
+Use a path to a local copy.
 
 **Every complete example in this documentation carries the comment.** Not
 decoration: the line is the only part of using the schema that has to be
@@ -2941,11 +2880,9 @@ trustworthy for exactly the case it exists to serve. The command that actually
 needs the client is where this becomes an error (§3a).
 
 **Missing means "this machine cannot serve it", not "the client is absent"**
-(E4, widened in #238). Three of the four types in §3a have no module in this
-build, so the narrower reading validated a file whose every store was unusable
-as `ok: 0 warnings` — and warned about `oci` only where the machine happened to
-lack the SDK, which is a fact about the laptop rather than about the file. Both
-halves warn now, and the wording carries which is which:
+(E4). A type with no backend module in this build warns, and so does a type whose
+client is not installed. Without the first, a file whose every store was unusable
+would validate as `ok: 0 warnings`. The wording says which case it is:
 
 ```console
 $ sopuli config validate
@@ -2960,9 +2897,8 @@ Ordered by backend `type:` rather than by the order the stores are written in �
 the survey's order, so a reader comparing this against `doctor`'s table is
 reading the same list twice rather than two shuffles of it.
 
-The second is a warning `pip` cannot act on, and that is the price of the wide
-reading. The action it names is still real — *do not deploy this file yet* — and
-it is temporary by construction, where the silence it replaced was not.
+The first is a warning `pip` cannot act on. The action it names is still real:
+*do not deploy this file yet*.
 
 **The same survey `doctor` reads, at a different level.** One function answers
 "can this machine serve it" for the whole tool (`sopuli/diagnostics.py`'s
@@ -3010,7 +2946,7 @@ notices until a rotation.
   or the intersection, and picking one silently is how a whitelist stops being
   readable. Two entries are the union, written down
 - a name declared **both** as an application account and a personal one → error
-  naming both sections (H1, #449). The two carry different guarantees — mastered
+  naming both sections ([H1](../decisions/log.md#h1)). The two carry different guarantees — mastered
   by a secret, or handed to a person — so a name in both is ambiguous about which
   applies, and the tool refuses rather than choosing. Compared
   case-insensitively, because `sopuli/config/selection.py` casefolds and one
@@ -3032,7 +2968,7 @@ notices until a rotation.
 - a target with `environment: prod` referencing a vault marked
   `non_production: true` → error
 - `locking.break_expired: true` anywhere in the file while any vault is
-  `locking: advisory-only` → error naming both ends (#83). Either alone is
+  `locking: advisory-only` → error naming both ends. Either alone is
   legitimate; together they are an unattended run taking over a lock with no
   fence to stop the run it took it from, which is how two runners end up applying
   different passwords to different targets. Both halves are written in the file,
@@ -3095,7 +3031,7 @@ notices until a rotation.
   rotates a production password into whatever that is
 - a binding with a secret ref, no store named for it anywhere — not the ref's own
   prefix, not the entry, an override, the target, or `defaults.vault` — **and**
-  `vaults:` declaring nothing at all → error (C15, #118). A profile's `vault:`
+  `vaults:` declaring nothing at all → error (C15). A profile's `vault:`
   and `SOPULI_VAULT` are both still able to complete a binding like this, since
   neither is consulted until a run picks one (§5, §9) — but only by naming a
   store the file declared, and there is nothing here to name. Where `vaults:`
@@ -3103,7 +3039,7 @@ notices until a rotation.
   `vault` resolves to `None`, `config show --resolved` renders it as `-`, and
   the first command that actually needs a store is where the exact answer
   belongs (invariant 4) — see §3's binding chain and `config/bindings.py`.
-  **That answer is `config/binding_stores.py` (#250):** a command that needs a
+  **That answer is `config/binding_stores.py`:** a command that needs a
   store calls `complete()`, which fills the gap from `SOPULI_VAULT` (layer 2) or
   the active profile's `vault:` (layer 3) and validates the name against
   `vaults:`, then `refuse_unresolved()`, which is invariant 4's plan-time
@@ -3151,7 +3087,7 @@ notices until a rotation.
   keys and the flag that sets each one where there is a flag. They are parsed
   and validated, and no run reads them: `--strategy`, `--max-age-days`,
   `--method` and `--lockout-margin` are the only way in, and `check` defaults to
-  `login` whatever a policy says (#86, #610)
+  `login` whatever a policy says
 - config file **accessible** to others → refuse to run (P4). Wider than "readable"
   on purpose: the file holds no secrets (C5), so the risk it carries is
   *tampering*, and a group-writable config is the worse version of that — anyone
