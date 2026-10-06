@@ -1,16 +1,12 @@
 """Secret stores (P2).
 
-:mod:`sopuli.store.protocol` is the interface, grown a method at a time as
-something needed one: #83's lock reads and writes a record, #150 added listing,
-#183 added a version-pinned read, and #216 completed P2's sketch with
-``health`` -- the one method that is not about a path and the one that reports
-an unreachable store rather than raising at it;
-:mod:`sopuli.store.memory` is a KV v2 emulation that keeps the lock's tests in
-tier 0 and doubles as the reference reading of those semantics. The real
-backends -- HashiCorp KV v2 first, per P2's priority order -- arrive with the
-rest of the interface.
+:mod:`sopuli.store.protocol` is the interface. ``health`` is the one method
+that is not about a path, and the one that reports an unreachable store rather
+than raising at it. :mod:`sopuli.store.memory` is a KV v2 emulation that keeps
+the tests in tier 0 and is the reference reading of those semantics.
+:mod:`sopuli.store.hashicorp` is the HashiCorp Vault backend, for KV v1 and v2.
 
-:mod:`sopuli.store.credentials` is the secret side of P2's interface (#183): the
+:mod:`sopuli.store.credentials` is the secret side of P2's interface: the
 lock reads and writes a *record*, and this reads and writes a **credential** -- a
 §7 SecretRef resolved against a stored document, honouring ``@version=`` and
 ``@stage=``, and a merge patch that changes one account's password without
@@ -26,9 +22,8 @@ backend module is what ``tests/store/test_install_shape.py`` fails on.
 
 :func:`sopuli.store.registry.connect` is the front door: a config entry in, an
 authenticated store out, with the backend chosen by ``type:``. Everything above
-this package -- ``lock status`` today, the ``creds`` verbs next -- goes through
-it rather than importing a backend by name, which is what keeps the choice of
-store in the config file where §3a puts it.
+this package goes through it rather than importing a backend by name, which is
+what keeps the choice of store in the config file where §3a puts it.
 """
 
 from sopuli.store.credentials import (

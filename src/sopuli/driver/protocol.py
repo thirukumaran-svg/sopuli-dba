@@ -8,9 +8,9 @@ connect.
 
 Deliberately a :class:`~typing.Protocol` rather than a base class, for the reason
 :mod:`sopuli.store.protocol` gives: an implementation should not have to import
-this in order to satisfy it. The Oracle driver will be written against
-``oracledb`` and checked against this by mypy, which keeps the interface a
-description of what the commands need rather than a place to put shared code.
+this in order to satisfy it. The Oracle driver is written against ``oracledb``
+and checked against this by mypy, which keeps the interface a description of
+what the commands need rather than a place to put shared code.
 
 **Four things changed shape between P1's sketch and this file**, and each is a
 refinement rather than a disagreement -- the same way P2's ``write`` grew a
@@ -57,23 +57,16 @@ since assigning a tablespace moves no existing segment. A third field on
 :class:`AccountAttributes` would be a decision rather than an implementation
 detail.
 
-What is **not** deferred, and is worth saying because it looks like an omission:
-there is no ``offline_verify`` path in :meth:`Session.verify_password` beyond a
-method name. Whether the ``T:`` verifier in ``SYS.USER$.SPARE4`` can be
-reproduced client-side is #90: it reproduces byte-for-byte on the releases
-measured (26ai, 21c, 18c -- #432; 19.3 -- #548; 12.2 -- #572), and
-degradation is settled (#433) -- compare
-the ``12C`` verifier only, and an account without one fails at plan time
-(invariant 4) rather than falling back to a weaker verifier. Settled for 19c
-on 19.32.0.0.0, a release update (#581); 12.1 is unread. Had it failed,
-``--method hash`` **and ``--method both``** would have been dropped from the CLI
-entirely -- ``both`` is login plus that same comparison, so it cannot outlive
-it. Neither is built yet. So the
-vocabulary is representable -- it is the run document's, and the document was
-written before the doubt -- while
-:data:`OFFLINE_VERIFY` exists in this build to gate UC-1 §7's ``LCOUNT`` guard
-and the ``PTIME`` fallback for :attr:`UserState.password_changed_at` (#386) --
-two reads of ``SYS.USER$``, and no verification.
+:meth:`Session.verify_password` takes a ``method``. ``login`` logs in. ``hash``
+reproduces the ``T:`` verifier in ``SYS.USER$.SPARE4`` client-side and compares
+it, with no login attempt. ``both`` does the comparison and then logs in. The
+releases on which the verifier reproduces are the ``06_verifier_reproduce.sql``
+rows of ``docs/measurements.md``. Only
+the ``12C`` verifier is compared: an account without one fails at plan time
+(invariant 4) rather than falling back to a weaker verifier (#433).
+:data:`OFFLINE_VERIFY` gates ``hash`` and ``both``, UC-1 §7's ``LCOUNT`` guard,
+and the ``PTIME`` fallback for :attr:`UserState.password_changed_at`, because all
+of them read ``SYS.USER$``.
 """
 
 from __future__ import annotations
@@ -113,8 +106,8 @@ PASSWORD_ROLLOVER = "password_rollover"
 
 #: A password can be verified against a stored hash without a login attempt.
 #: Oracle: needs the optional ``SELECT ON SYS.USER$`` grant, which #86 decided is
-#: **not** part of the default install. In this build it gates UC-1 §7's
-#: ``LCOUNT`` guard; whether it ever gates ``--method hash`` is #90.
+#: **not** part of the default install. It gates ``--method hash`` and ``both``,
+#: UC-1 §7's ``LCOUNT`` guard, and the ``PTIME`` fallback.
 OFFLINE_VERIFY = "offline_verify"
 
 #: The tool can read password profile parameters. Note *read*: altering a
@@ -226,9 +219,8 @@ ATTRIBUTE_SET = "attribute_set"
 #: :class:`AttributeChange` -- a value outside ``ATTRIBUTE_KINDS`` carried in a
 #: field documented as one of them would be a contract saying two things.
 #:
-#: It is also not yet in the run schema's ``action_kind`` enum: nothing emits a
-#: document with it until the verb ships, and an enum value with no emitter is a
-#: contract promising something that cannot happen.
+#: The run schema's ``action_kind`` enum lists it, because ``account suspend``
+#: reports it.
 ACCOUNT_LOCK = "account_lock"
 
 #: Set an account's password: ``ALTER USER … IDENTIFIED BY`` (UC-2 §4.1).

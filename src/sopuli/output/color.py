@@ -3,9 +3,8 @@
 This module answers one question — *is colour on?* — and deliberately stops
 there. It does not style anything and owns no palette. What colour *means* is
 fixed by the JSON contract's vocabulary (`state`, `by_state`, `drift`,
-`unverifiable`, `failed`) and rendered by whichever library wins ADR-003; that
-decision is open, and a helper here that wrapped one library's styling would
-quietly settle it. The gate and the renderer are separable, so they are
+`unverifiable`, `failed`) and rendered by :mod:`sopuli.output.palette` with click
+alone, as ADR-003 decided. The gate and the renderer are separable, so they are
 separated.
 
 The control surface is specified in three places already: P4 in
@@ -103,10 +102,9 @@ def enable_virtual_terminal(stream: TextIO) -> bool:
 
     Non-Windows platforms have nothing to enable, so the answer is yes.
 
-    No ``colorama``: it is the obvious dependency for this, and taking it would
-    prejudge ADR-003 by putting a display library in the tree before the
-    decision is made. Twenty lines of ``ctypes`` against two documented
-    ``kernel32`` calls is the smaller commitment.
+    No ``colorama``: it is the obvious dependency for this, but ADR-003 keeps
+    display libraries out of the tree. A few lines of ``ctypes`` against two
+    documented ``kernel32`` calls is the smaller commitment.
     """
     if sys.platform != "win32":
         return True

@@ -77,8 +77,8 @@ class MaterialError(ConfigError):
     credential (#138). That one means "we found it and it was not accepted";
     this one means "there was nothing to send".
 
-    No ``error.code``: J3 is open, the error registry holds one number allocated
-    by hand, and a second allocated the same way would answer nothing. The
+    No ``error.code``: J3 is open, the error registry's numbers are allocated by
+    hand, and another allocated the same way would answer nothing. The
     message names the variable or the path, which is what an operator acts on.
     """
 

@@ -162,17 +162,16 @@ def record_path(records: ResetRecords, *, target: str, account: str) -> str:
     account) pairs end up sharing a record. Nothing validates a `targets:` key or
     an `accounts:` entry against a path grammar -- both are "a non-empty string"
     -- so a target called ``a/b`` with account ``jdoe`` and a target called ``a``
-    with account ``b/jdoe`` derive the same path today. That is one journal
+    with account ``b/jdoe`` would derive the same path. That is one journal
     describing two accounts, and one lock where there should be two, which is the
     exact failure this pair is keyed on to prevent. ``.`` and ``..`` are refused
     for #344's reason: under a prefix they walk out of it.
 
     :class:`ValueError` rather than a :class:`~sopuli.config.errors.ConfigError`,
     matching :func:`~sopuli.config.secret_refs.normalise_path`'s own boundary: no
-    file is malformed, and the caller is a verb that turns this into a plan-time
-    refusal naming the target and the account (invariant 4). **That verb does not
-    exist yet**, so what this guarantees today is that the failure is specific and
-    tested rather than a bare traversal error from two frames down.
+    file is malformed. ``account reset-password`` derives every path at plan time
+    and turns this into a refusal naming the target and the account
+    (invariant 4).
     """
     for noun, value in (("target", target), ("account", account)):
         _reject_unusable_component(noun, value)

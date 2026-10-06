@@ -135,23 +135,17 @@ GLOBAL_PARAMS = (
 #: when it has a built-in default -- ``output`` is ``text`` on a bare command
 #: line. Listing them is what asks the resolver the question; a setting left off
 #: this list is simply never asked, which is why it is short and explicit rather
-#: than "everything in the registry". It grows as consumers arrive, and #153 is
-#: where most of it arrived at once: the config file now reaches this resolver, so
-#: the safety block and `locking.break_expired` have layers to come from and
-#: `profile` has something to select.
+#: than "everything in the registry". A setting joins it when something reads it.
 #:
-#: `verify.method`, `confirm` and `log_level` are still absent, and a profile may
-#: still write every one of them: they are parsed, validated and waiting for a
-#: consumer, which is the rule `sopuli/settings/registry.py` states.
+#: `verify.method` and `log_level` are absent. A profile may write them: they
+#: are parsed and validated, but nothing reads them, which is the rule
+#: `sopuli/settings/registry.py` states.
 #:
-#: **The `db` budgets are here now** (#360). They were in the paragraph above --
-#: "waiting for a consumer" -- after one had already arrived: `_timeouts()` reads
-#: `db.connect_timeout_s` off `Invocation.resolved`, and a name absent from this
-#: tuple is never *in* that mapping, so the read returned `None` on every run and
-#: the built-in was used whatever the profile said. A key with a consumer and no
-#: entry here is the quietest way to be inert: it looks wired from both ends and
-#: is joined in the middle by nothing. `tests/settings/test_settings_are_wired.py`
-#: now refuses that shape.
+#: **A setting with a reader must be listed here.** A name absent from this tuple
+#: is never in `Invocation.resolved`, so a read of it returns `None` on every run
+#: and the built-in is used whatever the profile said. That key looks wired from
+#: both ends and is joined in the middle by nothing.
+#: `tests/settings/test_settings_are_wired.py` refuses that shape.
 #: `vaults.*` is absent for a different reason -- it is resolved inside the file,
 #: by `sopuli/config/vault_layers.py`, because it describes a store rather than
 #: a run. `vault` is the one next to it that *is* a run setting and so is here
@@ -515,9 +509,10 @@ def global_options(func: F) -> F:
     ``tests/test_cli_precedence.py`` walks the command tree and fails if a verb is
     missing it.
 
-    ``--dry-run`` is here from the start because invariant 8 requires every
-    mutating command to support it. Nothing mutates yet, so it only reaches the
-    run document -- but no future command has to remember to add the flag.
+    ``--dry-run`` is here because invariant 8 requires every mutating command to
+    support it. Putting it on every verb means no new command has to remember to
+    add the flag. On a verb that mutates nothing, it only reaches the run
+    document.
     """
     return _options(_pass_invocation(func), hidden=False)
 

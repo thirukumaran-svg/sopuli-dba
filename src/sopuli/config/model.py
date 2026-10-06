@@ -11,11 +11,6 @@ two reasons: a frozen dataclass with a dict field has an ``__hash__`` that raise
 which is a landmine to leave lying around, and sorted pairs make error messages
 and plan output deterministic instead of dependent on YAML key order.
 
-:class:`Config` deliberately carries only what has been validated so far. The
-remaining sections -- ``policies``, ``defaults``, ``profiles``, ``runtime`` --
-are recognised at the top level but not yet modelled, and arrive as fields here
-rather than as a reshaping of it.
-
 Sections that YAML writes as a mapping (``vaults``, ``target_sets``, ``groups``)
 are stored as tuples in document order, with the map key copied onto the object
 as its name. Document order is what error messages want; output that needs a

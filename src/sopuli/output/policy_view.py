@@ -5,16 +5,13 @@ question somebody actually has: *what do the passwords look like*. This renders
 samples so they can answer it — offline, drawing from
 :func:`sopuli.passwords.generate`, writing nothing anywhere.
 
-**This module holds one of the tool's two output-layer ``reveal()`` calls, and it
-is the third exception to invariant 2.** It was *the only one* until #441 built
-UC-2's seen path, whose reveal lives in :mod:`sopuli.output.reset_view` and is
-invariant 2's fourth exception -- narrowed more strictly than this one, because
-its justification is weaker: that is a credential somebody can log in with, and
-this is a sample. The rule is that no code path emits plaintext except
-the vault write and the driver call; a sample is neither, and it is allowed
-because *a sample is not a credential*: nothing authenticates with it, it is never
-stored, and it guards nothing. What keeps the exception narrow is structural
-rather than careful:
+**The ``reveal()`` call in this module is invariant 2's third exception.** A
+sample is neither the vault write nor the driver call. It is allowed because *a
+sample is not a credential*: nothing authenticates with it, it is never stored,
+and it guards nothing. UC-2's seen path, in :mod:`sopuli.output.reset_view`, is
+the fourth exception. Its guards are stricter, because it shows a credential
+somebody can log in with. What keeps this exception narrow is structural rather
+than careful:
 
 * the plaintext appears only under ``--reveal``, and only in text output
 * :func:`build_section` — the ``--output json`` half — has no access to it at all,
@@ -88,10 +85,9 @@ def render_samples(
             _classes(description),
         ]
         if reveal:
-            # Invariant 2's third exception. One of two `reveal()` calls in the
-            # output layer -- `output/reset_view.py` has the fourth exception's --
-            # and `tests/test_reveal_sites.py` holds the pair to exactly that.
-            # See this module's docstring for why it is allowed.
+            # Invariant 2's third exception. `tests/test_reveal_sites.py` lists
+            # this module as a permitted site. See this module's docstring for
+            # why it is allowed.
             row.append(sample.reveal())
         rows.append(row)
 

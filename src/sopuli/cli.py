@@ -1,13 +1,11 @@
 """The ``sopuli`` command line.
 
 Grammar is noun-verb (D2): ``sopuli <noun> <verb>``. Each noun is a
-:class:`click.Group`, each verb a command inside it. The ``config`` verbs,
-``target list`` and ``policy sample`` touch nothing outside the file; ``lock
-status`` is the first verb that opens a socket and ``lock break`` the first that
-writes through one, and both seams are worth keeping visible rather than letting
-them blur one command at a time.
+:class:`click.Group`, each verb a command inside it. Some verbs, such as the
+``config`` verbs, ``target list`` and ``policy sample``, touch nothing outside the
+file. Others open a socket to a store or a database, and some write through it.
 
-Six things about the structure are deliberate:
+These things about the structure are deliberate:
 
 **The configuration is read by the boundary, not by the verbs.** A profile is
 precedence layer 3 and can supply ``output``, so the file has to be read before a
@@ -32,11 +30,11 @@ ever looks like a credential — with two exceptions it checks rather than trust
 ``--vault-token-file`` carries a *path*, and ``--vault-token`` exists only to be
 refused (#145, ADR-007).
 
-**One command prints a password on purpose.** ``policy sample --reveal`` is
-invariant 2's third exception, because a sample is not a credential: nothing
-authenticates with it and it is never stored. What keeps that narrow lives in
-:mod:`sopuli.output.policy_view`; what lives here is the refusal to combine it
-with ``--output json``.
+**Some commands print a password on purpose.** ``policy sample --reveal`` and
+the seen path of ``account reset-password`` are exceptions to invariant 2. The
+guards that keep each one narrow live in :mod:`sopuli.output.policy_view` and
+:mod:`sopuli.output.reset_view`. What lives here is the refusal to combine
+``--reveal`` with ``--output json``.
 
 **One command is not a run at all** (#413). ``about`` prints compiled-in text:
 no options, no configuration, no settings, no estate, no socket, and no
@@ -50,13 +48,14 @@ rather than an exception to it -- ``doctor`` is already that shape.
 ``tests/test_cli_precedence.py`` names it in ``NOT_A_RUN`` and then holds the
 whole shape, so it cannot half-rejoin the machinery by accident.
 
-**One command mutates, and the gates it goes through are not its own** (#149).
-``lock break`` asks :func:`sopuli.safety.refuse_if_readonly` before it opens a
-store, :func:`sopuli.lock.takeover.check_fenceable` before it reads one, and
-:func:`sopuli.lock.takeover.plan_break` before it writes -- three refusals in
-three modules, each of which is a decision the command does not get to make
-locally. What is left here is the order they happen in, the confirmation, and the
-document. The verbs that mutate a database will inherit the same arrangement.
+**A mutating command goes through gates that are not its own.** Each one asks
+:func:`sopuli.safety.refuse_if_readonly` before it opens anything. A verb that
+changes a database asks again once the estate is loaded, because a target's
+``readonly`` is known only then. ``lock break`` also asks
+:func:`sopuli.lock.takeover.check_fenceable` before it reads the store and
+:func:`sopuli.lock.takeover.plan_break` before it writes. Each gate is a decision
+the command does not make locally. What is left in the verb is the order of the
+gates, the confirmation, and the document.
 """
 
 from __future__ import annotations
@@ -5002,11 +5001,10 @@ def _constraints_for(
 ) -> Constraints:
     """What the selected targets say a password may be (#317, UC-1 §4 step 2).
 
-    **One connection per target, not per account.** §4 asks for "one
-    representative target", which for a command whose unit of work is an account
-    and whose selection routinely puts several accounts on one database means:
-    ask each distinct target once, and let the strictest answer govern. Asking
-    per account would multiply connections by a factor the config decides.
+    **One connection per target, not per account** (§4 step 2). A selection
+    routinely puts several accounts on one database, so each distinct target is
+    asked once, and the strictest answer governs. Asking per account would
+    multiply connections by a factor the config decides.
 
     **Every failure here is a caveat, not an error.** A target that will not
     answer costs the run nothing but strictness, and §4 says so plainly: fall back

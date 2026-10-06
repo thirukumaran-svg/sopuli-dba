@@ -1,11 +1,10 @@
 """What `account reset-password` reports, and the one place it prints a password.
 
-**This module holds the second ``reveal()`` call in the tool, and that is
-invariant 2's fourth permitted plaintext path** (#439, #441). The first is
-:mod:`sopuli.output.policy_view`, whose justification is that *a sample is not a
-credential*: nothing authenticates with it, it is never stored, and it guards
-nothing. This one is different and weaker -- it is a credential somebody can log
-in with -- so the narrowing around it is stricter rather than equal.
+**The ``reveal()`` call in this module is invariant 2's fourth permitted
+plaintext path.** The third is :mod:`sopuli.output.policy_view`, whose
+justification is that *a sample is not a credential*: nothing authenticates with
+it, it is never stored, and it guards nothing. This one is weaker: it is a
+credential somebody can log in with. So the guards around it are stricter.
 
 What makes it allowable is not that it is harmless but that the exposure is
 **deliberate, witnessed and time-limited**: an operator asked for the seen path
@@ -52,9 +51,8 @@ _STATUS = 22
 def render_password(secret: Secret, *, account: str) -> str:
     """The seen path's one emission -- the whole of invariant 2's fourth exception.
 
-    **The only ``reveal()`` outside the tests besides `policy_view`'s**, and it
-    is a function rather than an inline call so that the exception has a name, a
-    docstring and exactly one caller. `sopuli/cli.py` reaches it only after the
+    It is a function rather than an inline call so that the exception has a name,
+    a docstring and exactly one caller. `sopuli/cli.py` reaches it only after the
     delivery method is known to be `manual`, the output is known to be text,
     stdout is known to be a terminal, and a human has answered a prompt.
 
@@ -69,7 +67,7 @@ def render_password(secret: Secret, *, account: str) -> str:
     is what makes that a property of the contract rather than of this function's
     good behaviour.
     """
-    # Invariant 2's fourth exception, the second and last `reveal()` in the tool.
+    # Invariant 2's fourth exception, and the only `reveal()` in this module.
     # Everything that makes it allowable happened before this line was reached.
     return "\n".join(
         [

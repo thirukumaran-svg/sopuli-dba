@@ -220,14 +220,16 @@ def declared_locks(config: Config) -> tuple[LockKey, ...]:
         if binding.secret is None:
             continue
         if binding.vault is None:
+            # TODO(#672): `lock status` does not complete a binding's store from a
+            # profile or SOPULI_VAULT, as the `creds` verbs do.
             raise ConfigError(
                 f"account {binding.account!r} on target {binding.target!r} names no store, "
                 f"so there is no lock path to read",
                 at=ROOT.key("vaults"),
                 hint=(
                     "name one on the ref, the entry, an override, the target, or "
-                    "`defaults.vault` -- a profile's `vault:` and SOPULI_VAULT do not "
-                    "reach bindings yet (#136)"
+                    "`defaults.vault` -- `lock status` does not read a profile's "
+                    "`vault:` or SOPULI_VAULT for a binding"
                 ),
             )
         keys.append(lock_key(binding.secret, store=binding.vault))

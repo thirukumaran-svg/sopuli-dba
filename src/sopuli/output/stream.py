@@ -71,9 +71,9 @@ def reconfigure_stream(stream: TextIO | None) -> bool:
     direction: a password read from a redirected stdin under cp1252 is decoded
     wrongly and *silently* -- it becomes a different password, and the failure
     surfaces later as an authentication error against the database. That is a
-    worse outcome than the stdout crash, and no command reads stdin yet, so it
-    costs nothing to be right about it now (invariant 1: passwords arrive on
-    stdin, a file, or a vault ref -- never argv).
+    worse outcome than the stdout crash, and stdin is one of the ways a password
+    arrives (invariant 1: passwords arrive on stdin, a file, or a vault ref --
+    never argv).
     """
     reconfigure = getattr(stream, "reconfigure", None)
     if reconfigure is None:

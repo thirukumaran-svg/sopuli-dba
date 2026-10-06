@@ -335,8 +335,8 @@ def needs_prompt(target: ExpandedTarget) -> bool:
     it is still deciding what to do.
 
     :func:`resolve` refuses on the same condition rather than trusting the plan
-    to have asked. Two guards, because the plan phase does not exist yet and the
-    one that must not be forgotten is the one nearest the pipe.
+    to have asked, because the guard that must not be forgotten is the one
+    nearest the pipe. TODO(#481): the plan phase does not call this.
     """
     auth = _auth(target)
     return auth is not None and auth.method == PROMPT

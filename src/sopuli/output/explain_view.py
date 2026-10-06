@@ -15,8 +15,8 @@ can check.
 A view over :mod:`sopuli.settings`, and nothing more: it renders
 :class:`~sopuli.settings.resolver.Resolved` values that the resolver produced and
 decides nothing about precedence itself. That is also what makes it testable
-against settings the tool cannot yet supply -- a secret-valued one, or a profile
-that tried to relax a ratchet -- which is most of them today.
+against values that are hard to produce from a real run, such as a profile that
+tried to relax a ratchet.
 
 Three rendering rules are decisions rather than layout:
 

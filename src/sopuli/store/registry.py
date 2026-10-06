@@ -18,7 +18,7 @@ modules exist; installing a package cannot register a backend.
 
 Declaring a store is config and reaching one is not (``01-configuration.md``
 §3a). Everything in this module is on the second side of that line: a config
-naming eleven backends loads, validates and prints with none of them installed,
+naming many backends loads, validates and prints with none of them installed,
 and nothing here runs until a command resolves a store to a client.
 """
 
@@ -133,12 +133,13 @@ class BackendNotImplementedError(ConfigError):
     A separate class from :class:`BackendNotInstalledError` because the two are
     the same ``ModuleNotFoundError`` and completely different problems. Nothing
     the operator installs fixes this one, so it must never carry an install line
-    -- and it is live right now, since `01-configuration.md` §3a accepts four
-    backend types and none of the modules exists yet.
+    -- and it is reachable, because `01-configuration.md` §3a accepts backend
+    types that :data:`BACKENDS` maps to a module this build does not have.
 
-    No ``error.code``: the registry in ``03-json-output.md`` §3 has one number
-    and it means the other thing. Allocating a second here would be answering J3
-    (how codes are allocated) as a side effect of an import failure.
+    No ``error.code``: the numbers in ``03-json-output.md`` §3 are allocated by
+    hand, and none of them means this. Allocating another here would be
+    answering J3 (how codes are allocated) as a side effect of an import
+    failure.
     """
 
 

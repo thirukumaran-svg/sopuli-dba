@@ -27,9 +27,9 @@ path* but *is the store there at all, and does its clock agree with ours*.
 
 Deliberately a :class:`~typing.Protocol` rather than a base class. A store
 implementation should not have to import this to satisfy it: the HashiCorp
-adapter will be written against Vault's API and checked against this by mypy,
-which is the arrangement that keeps the interface a description of what the lock
-needs rather than a place to put shared code.
+backend is written against Vault's HTTP API and checked against this by mypy,
+which keeps the interface a description of what the commands need rather than a
+place to put shared code.
 """
 
 from __future__ import annotations

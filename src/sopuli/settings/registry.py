@@ -4,8 +4,8 @@ P3 defines one precedence chain and invariant 10 says safety settings only
 ratchet toward safe. Both rules are about *settings* rather than about command
 line options, and the distinction is the whole reason this module exists.
 
-`readonly` has no flag at all. `verify.method` arrives from a profile block.
-`--dry-run` will eventually have a flag *and* an environment variable. A resolver
+`readonly` has no flag at all. A profile block can write `verify.method`.
+`--dry-run` has a flag *and* an environment variable. A resolver
 keyed on click options would leave half the things needing a merge policy with
 nowhere to declare one. So the unit is a setting -- ``safety.dry_run``,
 ``output`` -- with an entry declaring its type, which layers may supply it, and
@@ -433,19 +433,16 @@ def _vault_setting(
 
 #: Every setting the resolver knows about.
 #:
-#: Deliberately only what has a producer today plus the safety block, which
-#: :mod:`sopuli.config.safety` already parses and which is the reason the ratchet
-#: exists at all. Entries for settings nothing reads yet -- ``verify.method``, the
-#: ``db`` timeouts -- would be a contract stated in a place no test can mean
-#: anything about; they arrive with their consumers. Profile activation (#153)
-#: did not change that: a profile may write ``verify.method``, the config layer
-#: validates it, and it reaches no setting until something verifies.
+#: Deliberately only settings something reads, plus the safety block, which is
+#: the reason the ratchet exists at all. An entry for a setting nothing reads
+#: would be a contract stated in a place no test can mean anything about. So a
+#: profile may write ``verify.method``, and the config layer validates it, but it
+#: is not a setting here: ``creds check`` takes its method from ``--method``.
 #:
-#: The ``vaults.*`` entries arrived with theirs (#136): a top-level ``vaults:``
-#: declaration and a ``defaults.vaults:`` block are two layers of one setting, so
-#: there is a merge to have an opinion about. Their :attr:`Layer.PROFILE` is
-#: supplied as of #153, in the same single pass, which is what makes a profile
-#: able to say "token from a laptop, AppRole from CI" about one store.
+#: The ``vaults.*`` entries are here because a top-level ``vaults:`` declaration,
+#: a ``defaults.vaults:`` block and a profile's ``vaults:`` are layers of one
+#: setting, so there is a merge to have an opinion about. That is what lets a
+#: profile say "token from a laptop, AppRole from CI" about one store.
 #:
 #: :attr:`Layer.OBJECT` for the ``safety.*`` settings is supplied by
 #: :func:`~sopuli.settings.sources.estate_contributions` rather than by
@@ -455,13 +452,10 @@ def _vault_setting(
 #: :func:`sopuli.safety.for_estate` does that second merge, through this same
 #: resolver and on the same contributions, so the ratchet stays one mechanism.
 #:
-#: **This comment used to say the merge happened elsewhere, and it did not**
-#: (#424). For as long as it said so, ``readonly: true`` on a target parsed,
-#: validated, appeared in ``config show`` and refused nothing -- a guard failing
-#: in the one direction it must not fail in, described in a docstring as though
-#: it worked. The enforcement in :func:`~sopuli.settings.resolver._checked` could
-#: not catch it: it refuses a layer a setting does not declare, and never
-#: requires one to arrive.
+#: **A verb that skips** :func:`sopuli.safety.for_estate` **ignores**
+#: ``readonly: true`` **on a target.** The enforcement in
+#: :func:`~sopuli.settings.resolver._checked` cannot catch that: it refuses a layer
+#: a setting does not declare, and never requires one to arrive.
 SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
     {
         setting.name: setting

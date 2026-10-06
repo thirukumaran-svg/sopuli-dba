@@ -2,30 +2,20 @@
 
 J3 asks for stable machine-readable codes so that consumers branch on a code
 rather than grepping a message, and says they get a documented registry. This is
-that registry, opened by the first warning that needed one: #83 requires the
-``advisory-only`` weakening to appear in **every run's** output rather than only
-in the config file, which is only useful if a consumer can recognise it.
+that registry.
 
-**J3 itself stays open**, and the way this registry has grown is the evidence.
-What is decided is the spelling ``SOPULI-Wnnn``, which `03-json-output.md`
-already used as its example, and that these ten warnings have codes: the two the
-advisory lock needed (#83), a configured-but-uninstalled backend (#130), a store
-that does not verify its certificate (#135), a store that could not be listed
-(#150), an uninstalled driver (#170), the wallet pair (#215), and the vault
-survey's pair (#216). Every one was allocated by hand, at the moment something
-needed it.
+**J3 itself is open.** What is decided is the spelling ``SOPULI-Wnnn``, and that
+the warnings below have codes. Each was allocated by hand, when something needed
+it. Whether *every* warning gets one -- most of the config layer's §10 findings
+do not -- and how numbers are allocated across categories are the open part.
 
-Whether *every* warning gets one -- the config layer's §10 findings still do not
--- and how numbers are allocated across categories is the part of J3 nobody has
-answered, and ten hand-picked numbers answer it no better than two did.
-
-What #216 did settle, narrowly and only for `doctor`, is **when a finding gets a
-diagnostic at all**: one for what the exit code cannot tell you. An unreachable
-store fails the run, so anything watching the exit code already knows and the
-entry in ``vaults[]`` names it -- exactly as an unreachable *target* has been an
-entry and never a diagnostic since #212. A store that answered and cannot serve,
-or a clock outside the lock's tolerance, leaves the run exiting 0 with something
-still wrong, and that is what a diagnostic is for.
+For `doctor`, it is settled **when a finding gets a diagnostic at all**: one
+for what the exit code cannot tell you. An unreachable store fails the run, so
+anything watching the exit code already knows and the entry in ``vaults[]``
+names it -- exactly as an unreachable *target* is an entry and never a
+diagnostic. A store that answered and cannot serve, or a clock outside the
+lock's tolerance, leaves the run exiting 0 with something still wrong, and that
+is what a diagnostic is for.
 
 A code, once emitted, is part of the contract in the same way an enum value is
 (``03-json-output.md`` §8): adding one is a minor bump, changing what one means

@@ -3,9 +3,8 @@
 :mod:`sopuli.config.secret_refs` parses a ref when the file is read and
 :mod:`sopuli.payload` computes where each stage lives inside a document. Neither
 has ever *read* one. This is the join: a ref, a store, and the value the ref
-addresses -- which is what ``creds check`` is blocked on and what
-:data:`sopuli.admin.RefReader` has been declared as a callable waiting for since
-#175.
+addresses. The ``creds`` verbs and the admin credential's ``method: vault`` read
+through it.
 
 **What this module does not do is decide a sequence.** It supplies primitives;
 the ``pending`` → ``current`` ordering that makes rotation safe is UC-1 §3's and

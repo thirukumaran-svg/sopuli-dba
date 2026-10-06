@@ -299,9 +299,8 @@ class Emitter:
         did to an estate, and one carrying a `command` that acts on nothing would
         be a JSON contract entry for a screen that has no JSON form.
 
-        Stripping only ever removes, so it commits to nothing that ADR-003 has
-        to decide. ``click.unstyle`` is the existing CLI dependency's own
-        function for it, not a display-library choice.
+        ``click.unstyle`` is the CLI dependency's own function for it, so it
+        adds no display library (ADR-003).
         """
         if not self.use_color():
             text = click.unstyle(text)

@@ -1,7 +1,6 @@
 """§8's charsets, as characters rather than as prose.
 
-Until now the four charsets existed only in a documentation table and in one
-error hint. Two things need them as data: :mod:`sopuli.passwords`, which draws
+Two things need the charsets as data: :mod:`sopuli.passwords`, which draws
 from them, and :mod:`sopuli.config.policies`, which has to answer whether a
 ``require:`` block is satisfiable by the alphabet the policy actually chose.
 
@@ -11,13 +10,11 @@ digit; ``special`` is *everything else in the alphabet*. That definition is what
 makes ``require: { special: 1 }`` answerable for ``charset: custom``, where the
 alphabet is whatever somebody typed.
 
-**Why this lives in the config layer.** ``config/policies.py`` needs it, and
-``config/__init__.py`` imports ``policies`` eagerly -- so an alphabet module
-sitting beside the generator would be imported *by* the config package and would
-in turn import it, which is an import cycle through the package's ``__init__``.
-A leaf inside the layer has no back edge. Nothing here imports the generator.
+**Why this lives in the config layer.** ``config/policies.py`` validates a
+policy against it, and the config layer does no I/O. A leaf module inside the
+layer keeps validation free of the generator: nothing here imports it.
 
-One deliberate difference from §8's table, and the reason §8 now spells it out:
+One deliberate difference from a plain reading of "printable ASCII":
 ``printable_ascii`` is printable ASCII except space **and except** ``"``.
 Invariant 11 rejects a password containing ``"`` rather than escaping it -- Oracle
 quoted identifiers have no escape for it -- so an alphabet containing one could

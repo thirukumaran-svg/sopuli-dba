@@ -10,9 +10,8 @@ The last of the four is the one that is **expected to fail on a correct install*
 there, so :func:`password_file_member` answers `None` where nobody could look --
 and the guardrail turns that into a caveat rather than into a pass.
 
-Five things here were measured on 26ai Free 23.26.2.0.0 rather than reasoned
-about, and each would have been got wrong by reasoning. The fifth arrived later
-than the others, with #309.
+These things were measured on 26ai Free 23.26.2.0.0 rather than reasoned
+about, and reasoning would have got each of them wrong.
 
 **Rollover state is in ``ACCOUNT_STATUS``, and nowhere else.** No column in any
 `DBA_*` view mentions rollover — the dictionary was searched, not assumed. What
@@ -87,20 +86,18 @@ takes the fallback, and ``PTIME`` moved with a rotation there (#572); 12.1 would
 take it too and is unmeasured (unverified: pw-changed-source).
 
 **``EXPIRED(GRACE)`` is a value of ``ACCOUNT_STATUS``, and it contains the token
-``EXPIRED``.** Measured 2026-09-02, later than the four above, because #309 turned
-on it. The grace state compounds like the rest, and the hard expiry was measured
+``EXPIRED``.** The grace state compounds like the rest, and the hard expiry was measured
 alongside it as a control — it is the fourth value below:
 
     EXPIRED(GRACE)                    EXPIRED(GRACE) & LOCKED
     EXPIRED(GRACE) & LOCKED(TIMED)    EXPIRED
 
-So the token reading below makes :attr:`~sopuli.driver.protocol.UserState.expired`
-``True`` for an account whose password still works — which is #309 and is **not
-fixed here**, because what `check` should report instead is an open decision.
-What the measurement settles is that the fix is safe to make: every locked form
-carries ``LOCKED`` and therefore parses ``locked=True``, and every caller tests
-``locked`` before ``expired``. Excluding ``(GRACE)`` from ``expired`` cannot make
-a locked account read as open.
+So a token reading alone would make :attr:`~sopuli.driver.protocol.UserState.expired`
+``True`` for an account whose password still works. :func:`login_state`
+therefore excludes ``EXPIRED(GRACE)`` from ``expired`` and reports it as
+``in_grace``. That is safe: every locked form carries ``LOCKED`` and therefore
+parses ``locked=True``, and every caller tests ``locked`` before ``expired``.
+Excluding ``(GRACE)`` from ``expired`` cannot make a locked account read as open.
 """
 
 from __future__ import annotations

@@ -143,26 +143,16 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
 
     Only the settings that have a consumer appear, which is the rule
     :mod:`sopuli.settings.registry` states and this is the other end of it. §5's
-    list is longer -- ``verify.method``, ``confirm``, the ``db`` budgets -- and
-    those keys are parsed, validated and waiting; they join here when something
-    reads them, and a contribution for a setting nothing consults would be
-    refused by :func:`sopuli.invocation._wired` anyway.
+    list is longer -- ``verify.method`` among it -- and those keys are parsed
+    and validated, but they join here only when something reads them. A
+    contribution for a setting nothing consults would be refused by
+    :func:`sopuli.invocation._wired` anyway.
 
-    **A profile's ``db:`` block is here now** (#360), which is the change the
-    previous version of this paragraph described in advance: the two names
-    "join ``RESOLVED_SETTINGS`` and this function together, in the change that
-    gives them a consumer". They now have one -- :func:`sopuli.cli._timeouts`
-    hands both to every driver the tool builds.
-
-    #176's review is why they were held back, and the reasoning was right for its
-    moment: emitting a contribution for a setting no command consults makes
-    :func:`sopuli.invocation._wired` refuse it, and a run document reporting that
-    ``profiles.ci.db.connect_timeout_s`` influenced a run it could not have
-    influenced is the lie that guard exists to prevent. What went wrong is that
-    ``_timeouts`` acquired a *reader* for ``connect_timeout_s`` without either
-    half of this joining it -- so the read hit a mapping the name was never in,
-    returned ``None`` on every run, and the built-in was used whatever the
-    profile said. Half-wired reads as wired from both ends.
+    **A setting with a reader needs both halves.** It needs a contribution here
+    and an entry in ``RESOLVED_SETTINGS``. A reader without them reads a mapping
+    the name is never in, gets ``None`` on every run, and uses the built-in
+    whatever the profile said. The profile's ``db:`` block has both:
+    :func:`sopuli.cli._timeouts` hands its values to every driver the tool builds.
 
     ``vaults.<name>.*`` is deliberately absent. It is the one part of a profile
     that is applied inside the file (:mod:`sopuli.config.vault_layers`), because

@@ -142,9 +142,9 @@ class DriverNotImplementedError(ConfigError):
     ``TARGET_TYPES`` -- and discovering then that the failure path is a
     ``KeyError`` is discovering it in the worst way.
 
-    No ``error.code``: the registry has one number for the other thing, and
-    allocating a second here would answer J3 as a side effect of an import
-    failure.
+    No ``error.code``: the registry's numbers are allocated by hand, and none of
+    them means this. Allocating another here would answer J3 as a side effect of
+    an import failure.
     """
 
 
