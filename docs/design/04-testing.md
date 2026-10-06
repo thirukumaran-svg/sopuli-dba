@@ -1,6 +1,5 @@
 # sopuli-dba — Testing strategy
 
-Status: draft / sketch. Nothing here has been run.
 Depends on: `00-principles.md` (P1 capabilities), `../use-cases/uc-01-app-credential-sync.md` §11
 
 ---
@@ -8,127 +7,112 @@ Depends on: `00-principles.md` (P1 capabilities), `../use-cases/uc-01-app-creden
 ## 1. The constraint that shapes everything
 
 **Contributors cannot pull an Oracle Enterprise Edition image.** Images built
-from Oracle installation binaries may not be redistributed, so a public CI job
-cannot `docker pull` a 19c image and neither can anyone who forks the repo.
+from Oracle installation binaries may not be redistributed. A public CI job
+cannot `docker pull` a 19c image, and neither can anyone who forks the
+repository.
 
-Three consequences, and they are easier to design for now than to retrofit:
+This has three consequences:
 
-1. The **public test suite must be fully green on freely pullable images alone**
-   (23ai/26ai Free, 21c XE, 18c XE, PostgreSQL, HashiCorp Vault). If a
-   contributor's PR cannot go green on their own machine, they stop contributing.
-2. Everything version-specific must **skip, not fail**, when its environment is
-   absent. A skipped test reports *why* it skipped.
-3. The versions only the maintainer can run — 19c EE, 11.2, real OCI — form a
-   **pre-release matrix**, not a per-commit one.
+1. The **public test suite must pass on freely pullable images alone**: 26ai
+   Free, 21c XE, 18c XE, 11g XE, PostgreSQL and HashiCorp Vault. A contributor
+   who cannot make a pull request pass on their own machine stops contributing.
+2. A test that needs a particular environment **skips, not fails**, when that
+   environment is absent. A skipped test reports why it skipped.
+3. The environments only the maintainer can run, 19c EE, 12.2 EE and OCI, form a
+   **pre-release matrix**. They do not run on every commit.
 
-This is also why the matrix is capability-driven rather than version-driven (§3).
+This is also why the matrix is keyed on capabilities, not versions (§3).
 
 ---
 
 ## 2. Environment inventory
 
-### Freely pullable — the public tier
+### Freely pullable: the public tier
 
 | Environment | Image | Covers |
 |---|---|---|
-| Oracle 23ai/26ai Free | `gvenzl/oracle-free`, or `container-registry.oracle.com/database/free` | CDB+PDB, common users, password rollover, schema privileges (P7 test) |
-| Oracle 21c XE | `gvenzl/oracle-xe:21` | CDB+PDB on an older line, unified auditing |
-| Oracle 18c XE | `gvenzl/oracle-xe:18` | 12.2+ password length, no rollover — good negative case |
-| Oracle 11g XE | `gvenzl/oracle-xe:11.2.0.2-slim` | non-CDB, 30-byte passwords, 10G/11G verifiers, `DBA_AUDIT_TRAIL` |
+| Oracle 23ai/26ai Free | `gvenzl/oracle-free`, or `container-registry.oracle.com/database/free` | CDB and PDB, common users, password rollover, 128-byte passwords, schema privileges (the P7 test) |
+| Oracle 21c XE | `gvenzl/oracle-xe:21` | CDB and PDB on an older line, password rollover, unified auditing |
+| Oracle 18c XE | `gvenzl/oracle-xe:18` | no rollover, which makes it a negative case; passwords limited to 30 bytes |
+| Oracle 11g XE | `gvenzl/oracle-xe:11.2.0.2-slim` | non-CDB, 30-byte passwords, 10G and 11G verifiers, `DBA_AUDIT_TRAIL` |
 | PostgreSQL 13–18 | `postgres:<v>` | the second driver, when it exists |
-| SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | third driver, later |
+| SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | a third driver, later |
 | HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
 | File / age backend | none needed | the non-production store |
 
+`test/compose.yaml` has a service for each Oracle release, and
+[`../maintainer-environments.md`](../maintainer-environments.md) §1 says how to
+point a config or the automated suite at one.
+
 **"23ai" and "26ai" are the same database.** Oracle renamed Oracle Database 23ai
-to Oracle AI Database 26ai in October 2025; 26ai adds functionality on top of the
-same codebase, with no change to the architecture or existing APIs, and it inherits
-23ai's Lifetime Support Policy. The numbering scheme changed at the same time:
-in `23.26.2.0.0` the **23** is the codebase, the **26** is the release-update year
-(2026), and the third digit is the quarter — so the version now tells you the date
-of the RU. A 23ai instance becomes 26ai by applying the 23.26.0 RU, and 23ai is no
-longer separately downloadable.
+to Oracle AI Database 26ai in October 2025. 26ai adds features to the same
+codebase, and 23ai is no longer downloadable on its own. In a version such as
+`23.26.2.0.0`, the **23** is the codebase, the **26** is the year of the release
+update, and the third number is the quarter. This has two consequences:
 
-Two consequences for this matrix:
+- A result from `gvenzl/oracle-free:latest` is the result for the 23ai line.
+  Where this document says "23ai Free", it means this image.
+- **Name the release number, not the marketing name.** `23.26.2.0.0` says what
+  was tested. "26ai" does not, because next quarter's 26ai is a different release
+  update. [`../measurements.md`](../measurements.md) has the rule and the
+  releases measured.
 
-- **There is no pre-26ai 23ai to test, and no way to obtain one.** A result from
-  `gvenzl/oracle-free:latest` *is* a result for the 23ai line. Where this document
-  says "23ai Free" it means exactly this image. P7 ("do 23ai schema privileges
-  cover `ALTER USER`?") was answered here rather than being blocked on finding a
-  23ai instance — **no, `ORA-00990`** (`02-oracle-privileges.md` §2.1).
-- **Qualify findings by release number, not by marketing name.** `23.26.2.0.0`
-  says what was tested; "26ai" does not, since next quarter's 26ai is a different
-  RU. Verified 2026-08-17 as `Oracle AI Database 26ai Free Release 23.26.2.0.0`,
-  CDB `FREE` plus `FREEPDB1`, reaching `healthy` in 30–60 s.
-
-The 11g XE tag exists and works, so 11.2 support (D7) is cheap: it stays a tier-2
-compose service and never needs building from `oracle/docker-images`. Verified
-2026-08-08 against `gvenzl/oracle-xe:11.2.0.2-slim`
-(`sha256:a546a62d6574d125c6520011cad328748c869038d52cd94ca4eb0fed7407d1fe`) —
-starts clean as `Oracle Database 11g Express Edition Release 11.2.0.2.0`, non-CDB,
-SID `XE`, `AL32UTF8`. See §8 T1.
-
-The image is published for **linux/amd64 only**. That is a second, independent
-reason Apple Silicon cannot exercise 11.2 locally, on top of the 23.x-client
-limitation in D7.
+The 11g XE image is published for **linux/amd64 only**. That is a second reason,
+beside the 23.x client limit in D7, why Apple Silicon cannot test 11.2 locally.
+Reasons: [T1](../decisions/log.md#t1).
 
 ### Maintainer-only tier
 
 | Environment | How | Why it cannot be public |
 |---|---|---|
-| Oracle 19c EE 19.3.0.0.0 | **preferred:** Oracle's prebuilt `container-registry.oracle.com/database/enterprise:19.3.0.0`, as `test/compose.yaml`'s `oracle-19c` service under `--profile oracle19c` (#548). Fallback: built from `oracle/docker-images` + downloaded binaries | pulling it takes an Oracle account and the repository's licence accepted on the registry website; not redistributable either way |
-| Oracle 12c EE 12.2.0.1.0 | Oracle's prebuilt `container-registry.oracle.com/database/enterprise:12.2.0.1-slim`, as `test/compose.yaml`'s `oracle-12c` under `--profile oracle12c` (#572). A 2017 image, and unlike the 19c ones in three ways that matter: no DBCA (it untars prebuilt datafiles; open in about 30 s, the PDB service registered at 95 s), no user-script hook (`test/oracle-init-12c/init.sh` is run once by hand, and the healthcheck waits for it), and a **`WE8DEC`** database rather than `AL32UTF8`. Service names carry `.localdomain`. 12.1 has no known image | the same registry terms as 19.3 |
-| Oracle 19.12+ | patched 19c. The same registry repository also carries `enterprise:19.19.0.0` — the only other 19c tag there (checked 2026-09-27, #548) — which is above the 19.12 rollover floor and so the one pullable 19c that can open a window. **It is a linux/arm64-only image and needs an arm64 host**: under QEMU on the x86 maintainer machine the instance does not start (`ORA-01096` from PMON, 2026-09-28), so it is `test/compose.yaml`'s `oracle-19c-ru` for an arm64 Docker host and **never run**: #565 closed when no OCI A1 host could be launched. A current RU is an OCI Base Database Service DB system, created by `test/oci-dbcs/new-db-system.ps1` and reached through an OCI Bastion session: **19.32.0.0.0, run 2026-10-01 (#581)** — the leak probe in all three positions, the leak extensions, the verifier layout and reproduction, `00_install.sql` in both modes, and a rollover window end to end with the tool. `maintainer-environments.md` §5 has the route, and the scripts' `STATUS:` headers the results | rollover is unavailable on the 19.3 base, prebuilt or built; the DB system bills by the hour |
-| Real 19c / 26ai / ADB | personal OCI tenancy | NNE, thick mode, Autonomous behaviour. ADB serverless 26ai 23.26.3.3.0 run 2026-09-28 (#479): the install script, a rotation and its `changed: false` re-run, the verify function and reuse limits, and a rollover window with `finish-rollover`. Run again 2026-10-01 (#575) for the transport: python-oracledb thin connects over `tcps`, and no NNE algorithm is negotiated in either mode. `maintainer-environments.md` §6 has the setup |
-| OCI Vault | personal OCI tenancy | no faithful local emulator |
+| Oracle 19c EE 19.3.0.0.0 | Oracle's prebuilt `container-registry.oracle.com/database/enterprise:19.3.0.0`, the `oracle-19c` service under `--profile oracle19c`. [`../maintainer-environments.md`](../maintainer-environments.md) §2 | pulling it needs an Oracle account and the licence accepted on the registry website |
+| Oracle 12c EE 12.2.0.1.0 | Oracle's prebuilt `enterprise:12.2.0.1-slim`, the `oracle-12c` service under `--profile oracle12c`. It differs from the 19c images: no DBCA, an init script run once by hand, a `WE8DEC` database, and service names ending in `.localdomain`. [`../maintainer-environments.md`](../maintainer-environments.md) §3. No image is known for 12.1 | the same registry terms as 19.3 |
+| Oracle 19c EE 19.19.0.0.0 | `enterprise:19.19.0.0`, the `oracle-19c-ru` service. It is above 19.12, so it can open a rollover window, but the image is linux/arm64 only, and under emulation on an x86 host the instance does not start. It has never run. [`../maintainer-environments.md`](../maintainer-environments.md) §4 | the same registry terms, and an arm64 host |
+| Oracle 19c release update | an OCI Base Database Service DB system, created by `test/oci-dbcs/new-db-system.ps1` and reached through an OCI Bastion session. [`../maintainer-environments.md`](../maintainer-environments.md) §5 | the DB system is billed by the hour |
+| Autonomous Database | a personal OCI tenancy. [`../maintainer-environments.md`](../maintainer-environments.md) §6 | needs an OCI tenancy |
+| OCI Vault | a personal OCI tenancy | no faithful local emulator |
 
-### Emulators — smoke tests only
+What each of these has run, and on which release, is in
+[`../measurements.md`](../measurements.md).
 
-`localstack` (Secrets Manager — confirm which tier), `lowkey-vault` (Azure Key
-Vault, has a Python example), `cameritelabs/oci-emulator` and Floci (OCI). Treat
-all of these as "the code path runs" evidence. **The authoritative test for a
-cloud store is the real service**, which is what the OCI tenancy is for. Emulator
-fidelity is unknown and unowned; never let a green emulator test be the reason a
-release is cut.
+### Emulators: smoke tests only
 
-### Two Oracle behaviours containers do not give you
+The emulators are `localstack` (Secrets Manager; whether the free tier includes
+it is T3), `lowkey-vault` (Azure Key Vault, which has a Python example),
+`cameritelabs/oci-emulator` and Floci (OCI). A passing emulator test shows only
+that the code path runs. **The authoritative test for a cloud store is the real
+service.** That is what the OCI tenancy is for. Nobody knows or maintains the
+emulators' fidelity, so a green emulator test is never the reason to cut a
+release.
 
-- **Gradual password rollover** needs 19.12+. The 19c base — prebuilt or built — is 19.3.
-  Rollover therefore gets tested on 23ai Free (public tier), on 21c XE (tier 2,
-  and the *only* thing between them — run 2026-09-08 for #380: `apply` opens the
-  window, `status` and `check --include-previous` report it rather than calling it
-  drift, `finish-rollover` closes it early and a second run reports
-  `changed: false`, all identical to 26ai) and on real OCI 19c (maintainer tier).
-  19.12 to 19.x is covered on **19.32.0.0.0** (2026-10-01, #581), an OCI DB
-  system, with `SOPULI_SVC` as installed by `00_install.sql` rather than SYSTEM:
-  `doctor` probes `password_rollover` present, `apply` opens the window,
-  `status` and `check --include-previous` report it, an `apply` re-run reports
-  nothing changed, and `finish-rollover` closes it and then reports no window
-  open. What it found: 19.32.0.0.0 renders `PASSWORD_ROLLOVER_TIME` in seconds
-  where 26ai renders days, and the window's length was reported 86400 times too
-  long. Fixed by reading the unit off the value (#583), and re-run on a fresh
-  19.32.0.0.0 DB system the same day: `58m left`, `1h configured`.
-- **Native Network Encryption**, one of the three things that force thick mode
-  (`00-principles.md`, *Why thick mode*), is properly
-  exercised only against a real NNE-required server. It can be **approximated
-  locally**: set `SQLNET.ENCRYPTION_SERVER = required` in a container's
-  `sqlnet.ora` and assert that a thin-mode connection fails with `DPY-3001` and
-  that the tool's diagnostics say something useful. That covers the failure path;
-  the success path still needs a real server that enforces it — Base Database
-  Service, **not** Autonomous, which encrypts with TLS and would prove nothing
-  about NNE. Both are measured (#575, `maintainer-environments.md` §5 and §6): on a **19.32.0.0.0**
-  DB system (2026-10-01, #581) the shipped `sqlnet.ora` requires encryption and
-  checksumming, thin is refused with `DPY-3001`, and thick negotiates AES256 and
-  SHA256; on **ADB serverless 23.26.3.3.0** (2026-10-01) thin connects over
-  `tcps` through the wallet and neither mode negotiates an NNE algorithm. The
-  local approximation (`--profile nne`) is still unrun.
+### Two Oracle behaviours that containers do not give you
+
+- **Gradual password rollover** needs 19.12 or later, and every 19c container
+  that runs here is 19.3. Rollover is tested on 26ai Free (tier 1), on 21c XE
+  (tier 2), and on a 19c release update in an OCI DB system (tier 3). Releases
+  do not report the rollover time in the same unit: 19.32.0.0.0 reports
+  `PASSWORD_ROLLOVER_TIME` in seconds, and 26ai in days.
+  `sopuli/driver/oracle/rollover.py` explains how the driver tells them apart.
+- **Native Network Encryption** (NNE) is one of the reasons for thick mode
+  (`00-principles.md`, *Why thick mode*). Only a real server that requires NNE
+  tests it properly. The `nne` compose profile approximates one locally: its
+  `sqlnet.ora` sets `SQLNET.ENCRYPTION_SERVER = required`, so a thin-mode
+  connection must fail with `DPY-3001`, and the tool's diagnostics must say
+  something useful. That covers the failure path. The profile has never been run
+  ([`../maintainer-environments.md`](../maintainer-environments.md) §9). The
+  success path needs a server that enforces NNE: Base Database Service, **not**
+  Autonomous Database. Autonomous Database encrypts with TLS, so it proves
+  nothing about NNE. Both are measured in
+  [`../maintainer-environments.md`](../maintainer-environments.md) §5 and §6.
 
 ---
 
 ## 3. Capability-driven matrix
 
 Tests declare the capabilities they need. The harness probes each target once per
-session, and skips with a reason when a capability is absent.
+session, and skips a test with a reason when a capability is absent.
+
+The markers look like this:
 
 ```python
 @requires_capability("password_rollover")
@@ -144,16 +128,16 @@ def test_rotate_falls_back_to_staged_strategy(oracle_target):
     ...
 ```
 
-Two things this buys beyond convenience:
+This gives two things beyond convenience:
 
-- **The test suite validates the capability model itself.** If a driver claims
-  `password_rollover` on 18c XE, the rollover test runs and fails there — which
-  is the bug. Version-keyed skips would have hidden it.
-- **New environments cost nothing.** Point the harness at a new container or a
-  real database and the right subset runs. Adding 23ai did not require editing
-  test files.
+- **The test suite checks the capability model itself.** If a driver claims
+  `password_rollover` on 18c XE, the rollover test runs there and fails. That
+  failure is the bug. A skip keyed on the version would have hidden it.
+- **A new environment costs nothing.** Point the harness at a new container or a
+  real database, and the right subset of tests runs. No test file changes.
 
-Report the resolved matrix at the end of a run, so "green" is never ambiguous:
+At the end of a run the harness prints the resolved matrix, so that "green" is
+never ambiguous. It has this shape:
 
 ```
 capabilities exercised
@@ -166,87 +150,84 @@ password_reuse_policy      ✓         ✓       ✓       ✓        ✓
 23 tests skipped (capability absent), 0 skipped (environment unavailable)
 ```
 
-The second skip count is the one to watch: capability skips are correct, missing
-environments are a coverage gap.
+Watch the second skip count. A skip for an absent capability is correct. A skip
+for an absent environment is a gap in coverage.
 
-**Two of those dashes are the connecting account, not the release**, and they are
-worth naming because a dash that looks wrong is what #195 turned out to be.
-`common_users` asks whether the session holds `ALTER USER` *granted commonly*,
-and the lane connects as `SYSTEM`, which holds it through a role — so
-`USER_SYS_PRIVS` reads nothing and the capability is absent. `offline_verify`
-needs `SELECT ON SYS.USER$`, which #86 made an optional grant and which `SYSTEM`
-does not hold on 23ai Free either. Both were measured, both are correct, and
-neither is fixed by editing the probe: they are fixed by connecting as an account
-the install script has granted.
+**A dash can describe the connecting account, not the release.** Two of the
+dashes above are like that:
 
-Implemented in `tests/oracle_harness.py` and the tier-1 fixtures in
-`tests/conftest.py` (#174). Three things about it are decisions rather than
-mechanics:
+- `common_users` asks whether the session holds `ALTER USER` *granted commonly*.
+  The test lane connects as `SYSTEM`, which holds it through a role, so
+  `USER_SYS_PRIVS` returns nothing and the capability is absent.
+- `offline_verify` needs `SELECT ON SYS.USER$`. That is an optional grant (P2),
+  and `SYSTEM` does not hold it on 23ai Free.
 
-- **The probes are keyed on P1's capability list, not on a list of their own.**
-  The sketch in `test/capabilities.py` asked about three things no driver
-  reports and missed three that are capabilities — and a harness keyed on its
-  own list cannot do the job claimed above, because validating the model
-  requires asking the same question the driver answers. A test asserts the two
-  lists are one list, so a new capability has to choose a side.
-- **Not everything is a query.** Every supported Oracle can expire a password
-  and lock an account; those are properties of the product, not of the instance.
-  Writing `select 1 from dual` for them would look like a probe and measure
-  nothing, which is worse than saying so — a reader would believe it. They are
-  declared structural, with the reason attached, and the report can therefore
-  distinguish *asked and told yes* from *there was nothing to ask*.
-- **Three absences, three messages.** `oracledb` missing, Instant Client missing
-  and the database unreachable are different findings, and only the third is
-  what most people mean by "no test environment". Reporting the other two that
-  way sends somebody to `docker` for a `pip` problem — so the skip names which
-  it was, and the Instant Client case reads as itself rather than as `DPI-1047`.
+Both results are correct. Editing the probe does not change them. Connecting as
+an account that the install script has granted does.
 
-The report is ASCII rather than the check marks drawn above. P4's cp1252 story
-is exactly this: a redirected stream on Windows takes the locale codepage, and a
-box-drawing character kills the writer mid-line. A test report that cannot
-survive being piped into a log is not much of a report.
+The harness is `tests/oracle_harness.py`, with the tier-1 fixtures in
+`tests/conftest.py`. Three things about it are decisions, not mechanics:
+
+- **The probes use P1's capability list, not a list of their own.** To check the
+  capability model, the harness must ask the same question the driver answers. A
+  test asserts that the two lists are one list, so a new capability must be put
+  on one side or the other.
+- **Not everything is a query.** Every supported Oracle release can expire a
+  password and lock an account. Those are properties of the product, not of the
+  instance. A query such as `select 1 from dual` would look like a probe and
+  measure nothing. So these capabilities are declared structural, with the
+  reason attached, and the report shows the difference between *asked, and the
+  answer was yes* and *there was nothing to ask*.
+- **Three absences, three messages.** A missing `oracledb`, a missing Instant
+  Client and an unreachable database are different findings. Only the third is
+  what most people mean by "no test environment". If the other two were
+  reported the same way, someone would look for a `docker` problem when the
+  problem is `pip`. So the skip names which one it was, and the Instant Client
+  case is reported as itself, not as `DPI-1047`.
+
+The real report uses ASCII, not the check marks drawn above. On Windows, a
+redirected stream uses the locale code page, and a box-drawing character stops
+the writer mid-line (P4). A test report must survive being piped into a log.
 
 ### Install shape is a dimension too (ADR-006)
 
-Capabilities describe what the thing at the far end can do. **Install shape
-describes what this machine can reach at all**, and it is a matrix dimension for
-the same reason: a property nobody exercises is a property nobody has.
+Capabilities describe what the server can do. **Install shape describes what
+this machine can import at all.** It is a matrix dimension for the same reason:
+a property that nothing exercises is not a property you have.
 
 | Shape | Installed | What it proves |
 |---|---|---|
-| base | `pip install .` | the boundary in rule 3: none of the backends' clients importable, and the offline commands still work |
-| one extra | `pip install ".[<name>]"`, each in turn | that backend imports on its own — no extra silently depends on a sibling |
-| `all` | `pip install ".[all]"` | the shape every other test runs under, and the only one where a full suite is meaningful |
+| base | `pip install .` | the boundary in ADR-006 rule 3: no backend's client is importable, and the offline commands still work |
+| one extra | `pip install ".[<name>]"`, each in turn | that backend imports on its own; no extra depends on another without saying so |
+| `all` | `pip install ".[all]"` | the shape every other test runs under, and the only one where the full suite means something |
 
-Base and `all` are cheap enough to run on every PR commit; both are tier 0 and
-neither needs a container. The per-extra cells are one install and one import
-each, and they matter most for the extra nobody develops against — the one whose
-missing sibling import is discovered by a user rather than by CI.
+Base and `all` run on every commit of a pull request that changes code. Both
+are tier 0, and neither
+needs a container. Each per-extra cell is one install and one import. They
+matter most for an extra that nobody develops against, where a missing import
+would otherwise be found by a user.
 
-The developer environment is `sopuli-dba[all]`, which is exactly why the base cell
-has to exist: every ordinary test passes there whether or not base is clean, so
-nothing else in the suite can see rule 3 break.
+The developer environment is `sopuli-dba[all]`. That is why the base cell must
+exist: every ordinary test passes there whether or not the base install is
+clean, so nothing else in the suite can see rule 3 break.
 
-**A claim about the process needs a process of its own** (#506). Rule 3 — asking
-whether a client is installed must not import it — was asserted as `"oracledb"
-not in sys.modules` inside the suite, which is a statement about the whole
-session rather than about the call: anything that imported the client earlier
-makes it false, and the driver fixtures do exactly that. It passed because
-`test_driver_registry` sorts before `test_oracle_*`, so the guard held by
-alphabetical accident and reddened on any order that moved one Oracle module
-earlier. A guard that passes or fails by ordering is one that gets dismissed as
-flaky the first time it goes red, which is how a real regression is waved
-through.
+**A claim about the process needs a process of its own.** Rule 3 says that
+asking whether a client is installed must not import it. A check such as
+`"oracledb" not in sys.modules` inside the test session depends on every test
+that ran before it. Any test that imported the client earlier makes it false,
+and the driver fixtures do import it. Such a check passes or fails with the
+order of the tests. A check that fails only in some orders gets dismissed as
+flaky, and then a real regression gets dismissed too.
 
-The rule it leaves is two-part, and both halves are worth having: a test whose
-subject is **what importing did** runs in a subprocess (`tests/test_import_order.py`
-and `tests/store/test_install_shape.py` already do), and a test whose subject is
-**what one call did** asserts on the call — patch the import machinery and let
-the function name itself. The subprocess makes the claim true; the patch makes
-the failure legible. Where the property is only observable when a vendor package
-is installed, the subprocess supplies a stub one on `PYTHONPATH` rather than
-reading whatever this machine happens to have, which is the same trick this
-section's base cell plays with its import blocker.
+So there are two rules:
+
+- A test whose subject is **what importing did** runs in a subprocess.
+  `tests/test_import_order.py` and `tests/store/test_install_shape.py` do this.
+  Where the property can only be seen with a vendor package installed, the
+  subprocess puts a stub package on `PYTHONPATH`. It does not depend on what
+  this machine happens to have installed.
+- A test whose subject is **what one call did** asserts on that call: it patches
+  the import machinery, and the failure names the function.
 
 ---
 
@@ -254,36 +235,40 @@ section's base cell plays with its import blocker.
 
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
-| 0 | every PR commit | public CI (`ci.yml`) | < 60 s | unit tests, config parsing and validation, target-set expansion, precedence resolution, SecretRef parsing, password generation and charset rules, redaction, the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`, `lock status` and `lock break` with the store handed in — including the live/expired/nothing matrix, which is a comparison rather than a container and a sleep — and the install-shape assertions in §3 |
-| 1 | every PR | public CI (`tier1.yml`, #184) | < 10 min | Oracle 23ai Free + Vault dev: the full UC-1 happy path, idempotency, drift, locking |
-| 2 | nightly | public CI | < 30 min | 21c XE, 18c XE, 11g XE, PostgreSQL matrix; fault injection |
-| 3 | pre-release | maintainer | manual | 19c EE (`--profile oracle19c`), real OCI 19c/26ai/ADB, OCI Vault, the release gates in §6 |
+| 0 | every commit of a pull request that changes code | public CI (`ci.yml`) | < 60 s | unit tests; config parsing and validation; target-set expansion; precedence resolution; SecretRef parsing; password generation and charset rules; redaction; the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`; `lock status` and `lock break` with the store passed in, including whether a lock is live, expired or absent; the install-shape checks in §3 |
+| 1 | every pull request that changes code | public CI (`tier1.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking |
+| 2 | by hand | a developer's machine, `docker compose --profile tier2` | < 30 min | 21c XE, 18c XE and 11g XE; fault injection (open: #660) |
+| 3 | before a release | maintainer | by hand | 19c and 12.2 EE, OCI DB systems and Autonomous Database, OCI Vault, the release gates in §6 |
 
-**The tier-1 lane installs Oracle Instant Client, and has to** (#184). D3 makes
-thick mode mandatory — thin mode has no Native Network Encryption, no 11.2 and no
-external authentication — so a runner
-without the client would skip every driver test while reporting green. Basic Lite
-is a free download needing no account, which keeps §1's rule intact: a fork can
-do exactly what the lane does.
+A pull request that changes only documentation runs the `docs` job in `ci.yml`
+instead of tiers 0 and 1. No workflow runs tier 2. To run the suite against a tier-2 release, follow
+[`../maintainer-environments.md`](../maintainer-environments.md) §1, *Pointing
+the automated suite at another release*.
 
-**A missing environment fails that lane rather than skipping.**
-`SOPULI_TEST_TIER1=required` turns "no environment" into a failure and leaves
-capability skips alone, which is §3's distinction made operational: a job that
-exists to run tier 1 and reports green while skipping all of it is worse than no
-job, because it gets quoted as evidence. Everywhere else — a laptop, a fork with
-no stack up — the same tests skip with a reason, which is §1 working.
+**The tier-1 lane installs Oracle Instant Client.** It has to. D3 makes thick
+mode mandatory, because thin mode has no Native Network Encryption, no 11.2 and
+no external authentication. A runner without the client would skip every driver
+test and still report green. Instant Client Basic Lite is a free download that
+needs no account, so a fork can do exactly what the lane does, as §1 requires.
 
-Tier 0 needs no containers at all and should stay that way — it is what makes the
-inner development loop tolerable. Every pure-logic concern above (precedence,
-templating, charsets, redaction) is deliberately testable without a database,
-which is a reason to keep those layers free of I/O.
+**A missing environment fails that lane; it does not skip.**
+`SOPULI_TEST_TIER1=required` turns "no environment" into a failure, and leaves
+capability skips alone. This is §3's distinction put to use. A job that exists to
+run tier 1, skips all of it and reports green is worse than no job, because
+people quote it as evidence. Everywhere else, such as a laptop or a fork with no
+stack running, the same tests skip with a reason, as §1 requires.
 
-**Container lifecycle.** Most Oracle containers take minutes to start — 11g XE
-slim is the exception, ready in about 15 seconds because it ships pre-built
-datafiles. Do not create one per test. One long-running container per version per session; reset state
-between tests by dropping and recreating the test accounts and profiles, not the
-container. `testcontainers-python` handles session-scoped containers; a
-`compose.yaml` plus fixtures works equally well and is easier to run by hand.
+Tier 0 needs no containers, and it must stay that way: it is what makes the
+inner development loop fast. Every pure-logic concern above (precedence,
+templating, charsets, redaction) can be tested without a database. That is a
+reason to keep those layers free of I/O.
+
+**Container lifecycle.** Most Oracle containers take minutes to start. 11g XE
+slim starts in about 15 seconds, because it ships prebuilt datafiles. Do not
+create a container per test. Run one container per release per session. Between
+tests, drop and recreate the test accounts and profiles, not the container. The
+stack is `test/compose.yaml`, and the harness starts nothing itself
+([T2](../decisions/log.md#t2)).
 
 ---
 
@@ -291,322 +276,274 @@ container. `testcontainers-python` handles session-scoped containers; a
 
 ### Pure logic (tier 0, no database)
 
-- config validation: unknown keys, both `accounts:` and `applications:` present,
-  duplicate generated target names, unresolved `{placeholder}`, an `overrides`
-  key naming a target that is not generated
-- target-set expansion: per-outer-value inner dimensions, override application,
-  label assignment
-- precedence: every layer in P3, including the safety ratchet and the
-  third-party-env ranking
-- SecretRef parsing, including `#field/json/pointer` and `@version=`/`@stage=`
-- the staged payload layout (Q7, #85): that Q7's two layouts produce the same
-  arithmetic under one rule, and that a merge patch **omits** every sibling
-  account rather than rewriting it with what was last read. The second is the
-  interesting one — a patch that names a sibling is indistinguishable from a
-  correct one until two accounts share a document, so it is asserted on what the
-  patch does not contain
-- password generation: charset, first character, byte length in a given database
-  character set, composition requirements — each asserted over enough draws that
-  "usually" fails. Two things output cannot show are pinned as well: that the
-  source of randomness is the CSPRNG rather than `random`, and that no message
-  about a rejected candidate repeats any of it
-- redaction: the serialiser cannot emit a secret value
-- **statement shape: the generated SQL is never a PL/SQL block, and never binds
-  the password.** Assert against the statement text the Oracle driver layer
-  produces — it must match `ALTER USER … IDENTIFIED BY …` directly, with no
-  `BEGIN`/`DECLARE`/`EXECUTE IMMEDIATE` wrapper and no bind placeholder where the
-  password goes. Invariants 13 and 14. This belongs in tier 0 because it needs no
-  database, and it belongs *here* rather than being left to review because the
-  measured 26ai result is counter-intuitive: wrapping the DDL in a block is the
-  instinct that looks safer and is the one thing that actually leaks
-  (`02-oracle-privileges.md` §4). A later refactor that introduces a wrapper —
-  batching several rotations, say — breaks it silently and no database test would
-  notice, because the DDL itself stays clean either way
-- **install shape (ADR-006): a base install can import none of the backends'
-  clients** — `httpx`, the OCI SDK, `python-oracledb`, and every name added to
-  an extra afterwards. Assert against the resolved environment, not against
-  source: the property is "an operator who ran `pip install sopuli-dba` cannot open
-  a socket", and a grep for imports would pass on a machine where the extras
-  happen to be present. The assertion is over that dependency set rather than
-  over "an HTTP client", because `urllib` is importable in every Python — the
-  stdlib is base code's own discipline (ADR-006 rule 3), not something a
-  packaging test can hold. This is the one in the pair that regresses silently: it breaks the
-  first time someone adds a convenient module-level import, and nothing else
-  notices, because the developer environment is `sopuli-dba[all]`. Held in two
-  halves, because neither is sufficient alone: `tests/store/test_install_shape.py`
-  blocks the clients at the import system and imports every sopuli module outside
-  a backend, which runs in any environment and names the module that broke it,
-  and CI's `install-shape` job installs base for real and asserts the clients are
-  absent, which is the only check that can see `pyproject.toml` itself go wrong
-- **the absent-backend path, per backend (ADR-006).** Resolve a store whose
-  extra is uninstalled and assert the whole contract: the message names the
-  correct extra, `error.category` is `config`, `error.code` is `SOPULI-20001`,
-  and the exit code is 9. Without it, the clean error rots into a traceback the
-  first time a module is renamed — a rename that no other test can see, since
-  every other test imports the module successfully
-- the advisory lock: acquire, fence, renew and release against an in-memory KV v2
-  fake with an injected clock — including the fencing case, where a lock is
-  stolen mid-run and the original must abort before its next mutation. That case
-  belongs here rather than in tier 2 because none of it is I/O: what makes a
-  stolen lock detectable is a version comparison, and the store that supplies the
-  version can be a dictionary. The tier-1 version below then checks the same
-  property against a real Vault rather than discovering it there
+- **Config validation:** unknown keys; both `accounts:` and `applications:`
+  present; duplicate generated target names; an unresolved `{placeholder}`; an
+  `overrides` key naming a target that is not generated.
+- **Target-set expansion:** inner dimensions per outer value, overrides, label
+  assignment.
+- **Precedence:** every layer in P3, including the safety ratchet and the
+  ranking of third-party environment variables.
+- **SecretRef parsing,** including `#field/json/pointer` and
+  `@version=`/`@stage=`.
+- **The staged payload layout** (Q7): Q7's two layouts give the same result
+  under one rule, and a merge patch **omits** every sibling account instead of
+  rewriting it with the value last read. The second check asserts on what the
+  patch does *not* contain. A patch that names a sibling looks correct until two
+  accounts share a document.
+- **Password generation:** charset, first character, byte length in a given
+  database character set, and composition requirements. Each is asserted over
+  enough draws that a rule that holds only "usually" fails. Two things that
+  output cannot show are also checked: that the randomness comes from the
+  CSPRNG, not from `random`, and that no message about a rejected candidate
+  repeats any part of it.
+- **Redaction:** the serialiser cannot emit a secret value.
+- **Statement shape: the generated SQL is never a PL/SQL block, and never binds
+  the password** (invariants 13 and 14). The test checks the statement text that
+  the Oracle driver produces. It must be `ALTER USER … IDENTIFIED BY …` directly,
+  with no `BEGIN`, `DECLARE` or `EXECUTE IMMEDIATE` wrapper, and no bind
+  placeholder where the password goes. This belongs in tier 0 because it needs no
+  database. It belongs in a test, not only in review, because the measured
+  result is surprising: the wrapper looks safer and is the form that leaks
+  (`02-oracle-privileges.md` §4). A database test would not notice a wrapper
+  added later, for example to batch several rotations, because the DDL itself
+  stays clean either way.
+- **Install shape (ADR-006): a base install can import none of the backends'
+  clients:** `httpx`, the OCI SDK, `python-oracledb`, and any name added to an
+  extra later. The check runs against the installed environment, not the source.
+  The property is "an operator who ran `pip install sopuli-dba` cannot open a
+  socket", and a search of the source for imports would pass on a machine where
+  the extras happen to be installed. The check covers that dependency set, not
+  "any HTTP client": `urllib` is importable in every Python, so keeping base code
+  to the standard library is ADR-006 rule 3's discipline, and no packaging test
+  can enforce it. This property breaks silently: one convenient module-level
+  import breaks it, and nothing else notices, because developers install
+  `sopuli-dba[all]`. Two checks hold it, because neither is enough alone:
+  - `tests/store/test_install_shape.py` blocks the clients at the import system
+    and imports every sopuli module outside a backend. It runs in any
+    environment, and it names the module that broke the rule.
+  - CI's `install-shape` job installs the base package for real and asserts that
+    the clients are absent. Only this check can see a mistake in
+    `pyproject.toml` itself.
+- **The absent-backend path, for each backend (ADR-006).** Resolve a store whose
+  extra is not installed, and assert the whole contract: the message names the
+  right extra, `error.category` is `config`, `error.code` is `SOPULI-20001`, and
+  the exit code is 9. Every other test imports the module successfully, so
+  without this test a renamed module would turn the clean error into a
+  traceback, and nothing would notice.
+- **The advisory lock:** acquire, fence, renew and release, against an in-memory
+  KV v2 fake with an injected clock. This includes the fencing case: a lock is
+  stolen mid-run, and the original holder must stop before its next change. The
+  case belongs in tier 0 because none of it is I/O. A stolen lock is detected by
+  comparing versions, and a dictionary can supply the versions. The tier-1 test
+  below then checks the same property against a real Vault.
 
 ### Against a database (tiers 1–3)
 
-Carried over from UC-1 §11, with the environment each one needs:
+These come from UC-1 §11. The second column is the environment each one needs.
 
 | Test | Needs |
 |---|---|
-| UC-1 happy path: generate → apply → verify → promote | any |
-| Idempotency: every **convergent** command twice, second reports `unchanged`; and for the two that draw fresh randomness — `creds generate`, `account reset-password` — that the second run says what it replaced (invariant 9, #254, #454) | any |
-| Drift: change a password out of band, `check` reports DRIFT, exit 3 | any |
-| **Lockout regression**: profile with `FAILED_LOGIN_ATTEMPTS 3`, run `check` against a drifted account 5×, assert the account never locks | any |
-| Verify-function: profile with `ora12c_strong_verify_function` and a violating policy — bounded regeneration, then a clear error carrying the server message. **Assert on the error, never on `DBA_PROFILES`**: in a PDB a *common* profile's `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` rather than the function name, so a dictionary check reports an unconfigured profile while the function is in fact enforcing (`ORA-28003` + `ORA-20000`). Measured for #317: a profile created *in* the PDB answers with the function's name, so a fixture that builds one locally can read it back — which is why `creds generate` reports three states and not two | any |
-| Password reuse: `PASSWORD_REUSE_MAX`, assert no blind retry on ORA-28007 | any |
-| **30-byte password limit** — a policy asking for more must be refused at *plan* time, not by `ORA-00972` mid-`apply`. Measured 2026-09-08 (#380): 31 bytes is refused on 11g XE, 18c XE **and 21c XE**, and accepted on 26ai; **19c 19.3.0.0.0 refuses it too** (2026-09-27, #548), and a 40-character policy there fails mid-`apply` exactly as on 21c. So does **12.2.0.1.0** (2026-09-29, #572) — the release the limit is keyed to. **19.32.0.0.0** accepts 30 bytes and refuses 128 (2026-10-01, #581; 31 not tried), and `creds generate` there printed `constraints: 128 bytes` on the build of the day. The two halves of the old wording do not travel together — see the next row. `sopuli/driver/oracle/limits.py` keyed the limit to 12.2, which was wrong on every measured release from 12.2 to 21c (#383); since #595 it keys it to 23, and a 40-character policy on 21c XE is refused by `creds generate` at plan time, exit 9 | 21c XE / 19.3 EE / 18c XE / 12.2 EE / 11g XE |
-| 10G/11G verifiers, and no `T:` — so `--method hash` must refuse rather than guess. Measured 2026-09-08: `SYS.USER$.SPARE4` carries `S:` alone on 11g and `S:` plus `T:` on 18c, 21c and 26ai, and on 19.3 EE (2026-09-27, #548), 12.2 EE (2026-09-29, #572) and 19.32 EE (2026-10-01, #581) (#382, #90). The field layout and salt offsets behind that were read 2026-09-15 by `sql/oracle/05_verifier_layout_probe.sql` (#431), and `06_verifier_reproduce.{sql,py}` regenerated every stored `T:`/`t:` digest client-side the same day (#432). #433 confirmed the refusal: 11g's absent `12C` (and a forced `10G 11G 12C` account on 18c) fix the rule that `hash` compares `12C` only and fails at plan time when there is none | 11g XE, 18c XE |
-| **The non-CDB shape**, which is not a missing capability but a different set of questions Oracle will answer. `SYS_CONTEXT('USERENV','CON_NAME')` *raises* (`ORA-02003`) rather than answering NULL; `DBA_USERS` has no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or `COMMON`; `USER_SYS_PRIVS` has no `COMMON`; there are no audit policies. Each of those took something down that had nothing to do with containers — the privilege audit blanked a whole target row while exiting 0 (#382) | 11g XE |
-| **DDL text retention is not uniform** (unverified: ddl-text-versions). `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and on no later release measured, so invariant 13's *conclusion* is release-dependent even though its reasoning is not. Decided in #387: documented, not warned about and not refused. That is only defensible while the record is accurate, so a release claimed as supported gets `02_password_leak_probe.sql` run against it. The releases are in [`../measurements.md`](../measurements.md); the change is somewhere in (11.2, 12.2], and 12.1 is unmeasured | every version claimed |
-| Common user + `CONTAINER=ALL`, and refusal outside `CDB$ROOT` | any CDB |
-| Rollover: both passwords valid during the window; `finish-rollover` ends it | 23ai Free, real 19.12+ (19.32.0.0.0, #581: the window opens and closes, and since #583 its length reads right) |
-| Rollover *absent*: `--strategy rollover` fails at plan time, not execution. **Measured on 18c 2026-09-08 (#381), and it had never run anywhere before that** — `test_a_release_without_rollover_refuses_at_plan_time` carries `@requires_no_capability(password_rollover)`, so on 26ai, the only server the suite had ever met, it skipped every time. Exit 5 under `--dry-run`, `error.category` `capability`, `error.target_capability` `password_rollover`, the `plan` emitted beside the refusal, and `doctor` reporting `password_rollover` absent one command earlier | 18c XE, 11g XE |
-| `DBA_USERS` columns do not arrive together, and a fallback that assumes they do gives up a guardrail. `ORACLE_MAINTAINED` is present from 12.1 and `PASSWORD_CHANGE_DATE` only from 19c, so 18c has one and not the other (measured 2026-09-08, #381; the 19c end confirmed on 19.24.0.0.0, 2026-09-17). Narrowing on the first `ORA-00904` made 18c answer as 11.2 and read `vendor_maintained` as `None`, which silently switched guardrail check 2 off on a release that can answer it. Three query shapes now, all projecting the same columns | 18c XE, 11g XE |
-| Standby refusal: `OPEN MODE = READ ONLY` detected before any DDL | real OCI |
-| NNE: thin mode fails with `DPY-3001`, diagnostics are useful | container with `SQLNET.ENCRYPTION_SERVER=required` |
-| Schema-privilege regression (P7, answered): `GRANT ALTER USER ON SCHEMA` must still fail with `ORA-00990`, while `GRANT SELECT ANY TABLE ON SCHEMA` must still succeed. **Assert both** — without the control, a future release that dropped schema privileges entirely would look like the same pass. A newly-succeeding `ALTER USER` grant re-opens the privilege model, so this is a test worth keeping rather than a question worth deleting | 23-codebase (tier 1) |
-| Shared JSON document: writing one account's password leaves siblings byte-identical | any + Vault |
-| KV v1 degradation: no versioning, staging emulated in payload, and the tool says so | Vault KV v1 mount |
-| `lock status` reads a record the tool did not write: a config entry opens a store, authenticates, and reports somebody else's held lock — and the survey leaves the version counter where it found it, because `status` takes no lock (#105) | Vault |
-| `list` agrees between the fake and the real mount (#150): full readable paths, recursion through subtree markers, a prefix that stops on a segment boundary, and — the one a dictionary-backed fake would never produce on its own — a soft-deleted path that is still listed and still reads as nothing, because KV v2 lists metadata and metadata outlives data | Vault, both mounts |
-| `lock status` reports a record at a path the config does not declare (#150), marked `declared: false`, and a store with no `list` capability warns (`SOPULI-W005`) instead of failing the survey — so the command does not become one that works on some backends and not others | Vault |
-| `lock break` takes a record the tool did not write, with a compare-and-set against a version Vault issued, and **the manager that held it fails its next check** (#149). The fence is the whole reason the verb is allowed to exist, and it is the one thing about it a fake cannot establish: a store that counts integers agrees with the tool by construction | Vault |
+| UC-1 happy path: `creds generate`, then `creds apply`, which verifies every target and promotes, then `creds check` | any |
+| Idempotency: every **convergent** command run twice reports `changed: false` the second time. `creds generate` and `account reset-password` draw a fresh password, so for them the second run must say what it replaced (invariant 9) | any |
+| Drift: change a password out of band; `check` reports `DRIFT` and exits 3 | any |
+| **Lockout regression:** with a profile set to `FAILED_LOGIN_ATTEMPTS 3`, run `check` five times against a drifted account; the account never locks | any |
+| Verify function: a profile with `ora12c_strong_verify_function` and a policy that violates it. The tool regenerates a bounded number of times, then fails with a clear error that carries the server's message. **Assert on the error, never on `DBA_PROFILES`.** In a PDB, a *common* profile's `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT`, not the function's name, so the dictionary shows an unconfigured profile while the function is enforcing (`ORA-28003` with `ORA-20000`). A profile created *in* the PDB shows the function's name. That is why `creds generate` reports three states, not two | any |
+| Password reuse: with `PASSWORD_REUSE_MAX` set, the tool does not retry blindly on `ORA-28007` | any |
+| **The password length limit.** A policy that asks for more bytes than the release allows is refused at *plan* time, not by `ORA-00972` during `apply`. Below Oracle 23 the limit is 30 bytes, and from 23 it is 128 bytes. `sopuli/driver/oracle/limits.py` holds the limit. The results per release are in [`../measurements.md`](../measurements.md) | 21c XE, 18c XE, 11g XE, 19.3 EE, 12.2 EE |
+| Verifiers: 11g has 10G and 11G verifiers and no `T:`, so `--method hash` must refuse at plan time, not guess. `hash` compares the `12C` verifier only. `sql/oracle/05_verifier_layout_probe.sql` reads the verifier layout, and `06_verifier_reproduce.{sql,py}` recomputes each stored digest on the client. The results per release are in [`../measurements.md`](../measurements.md) | 11g XE, 18c XE |
+| **The non-CDB shape.** This is not a missing capability. Oracle answers a different set of questions. `SYS_CONTEXT('USERENV','CON_NAME')` *raises* `ORA-02003` instead of returning NULL. `DBA_USERS` has no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or `COMMON`. `USER_SYS_PRIVS` has no `COMMON`. There are no audit policies. Code unrelated to containers can break on any of these. The privilege audit once blanked a whole target row and still exited 0 | 11g XE |
+| **DDL text retention differs between releases** (unverified: ddl-text-versions). `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and on no later release measured. Invariant 13's reasoning holds everywhere, but its conclusion depends on the release. The decision is to document this, not to warn or refuse ([P8](../decisions/log.md#p8)). That is defensible only while the record is accurate, so every release claimed as supported gets `02_password_leak_probe.sql` run against it. The releases are in [`../measurements.md`](../measurements.md) | every release claimed |
+| Common user with `CONTAINER=ALL`, and the refusal outside `CDB$ROOT` | any CDB |
+| Rollover: both passwords are valid during the window, and `finish-rollover` ends it | 26ai Free, a real 19.12 or later |
+| Rollover *absent*: `--strategy rollover` fails at plan time, not during execution. It exits 5 under `--dry-run`, with `error.category` `capability` and `error.target_capability` `password_rollover`, and the `plan` beside the refusal. `doctor` reports `password_rollover` absent. The test carries `@requires_no_capability(password_rollover)`, so it skips on 26ai and runs only on a release without rollover | 18c XE, 11g XE |
+| `DBA_USERS` columns: `ORACLE_MAINTAINED` exists from 12.1, and `PASSWORD_CHANGE_DATE` only from 19c. So 18c has one and not the other. If the driver assumed both arrive together, 18c would answer like 11.2, read `vendor_maintained` as `None`, and silently switch off guardrail check 2 on a release that can answer it. The driver uses three query shapes, which all return the same columns | 18c XE, 11g XE |
+| Standby refusal: `OPEN MODE = READ ONLY` is detected before any DDL | real OCI |
+| NNE: thin mode fails with `DPY-3001`, and the diagnostics are useful | the `nne` profile |
+| Schema-privilege regression (P7): `GRANT ALTER USER ON SCHEMA` must still fail with `ORA-00990`, and `GRANT SELECT ANY TABLE ON SCHEMA` must still succeed. **Assert both.** Without the second, a release that dropped schema privileges entirely would also pass. If the `ALTER USER` grant ever succeeds, the privilege model needs review | 23 codebase (tier 1) |
+| Shared JSON document: writing one account's password leaves its siblings byte-identical | any, with Vault |
+| KV v1 degradation: no versioning, staging emulated in the payload, and the tool says so | Vault KV v1 mount |
+| `lock status` reads a record the tool did not write: a config entry opens a store, authenticates, and reports a lock held by someone else. The survey leaves the version counter unchanged, because `status` takes no lock | Vault |
+| `list` gives the same answers on the fake and on the real mount: full readable paths; recursion through subtree markers; a prefix that stops at a segment boundary; and a soft-deleted path that is still listed but reads as nothing. A dictionary-backed fake would never produce the last case by itself. KV v2 lists metadata, and metadata outlives data | Vault, both mounts |
+| `lock status` reports a record at a path the config does not declare, marked `declared: false`. A store with no `list` capability warns with `SOPULI-W005` instead of failing the survey, so the command works on every backend | Vault |
+| `lock break` takes a record the tool did not write, with a compare-and-set against a version that Vault issued, and **the manager that held it fails its next check.** The fence is the reason the verb may exist, and a fake cannot establish it: a store that counts integers agrees with the tool by construction | Vault |
 
 ### Running it, which is not the same as testing it
 
-The table above is what CI asserts. This is the step before writing any of it,
-and it is a rule rather than a habit: **a change to what the tool reads from a
-target or a store, writes to one, or reports about one is verified by running the
-verb against a real one before the PR opens.** Tier 1 is the floor — it is the
-stack that comes up locally — and tiers 2 and 3 stay the pre-release matrix §1
-describes.
+The table above is what CI asserts. This rule comes before writing any of it:
+**a change to what the tool reads from a target or a store, writes to one, or
+reports about one is verified by running the verb against a real one before the
+pull request opens.** Tier 1 is the minimum, because it is the stack that runs
+locally. A change may use tier 2 or 3 when it needs to.
 
-**A floor, not a ceiling.** While the repository is private there are no
-contributors for §1's constraint to protect, so nothing stops a change reaching
-for a harder environment when it deserves one. §1 starts capping this at tier 1
-when the repository goes public, and that is the point to revisit the wording
-rather than now.
-
-The point is not coverage; CI runs tier 1 on every pull request. The point is
-that **a test asserts what its author already suspected**, and the failures worth
-catching here are the ones nobody thought to suspect. Three that got through:
+CI already runs tier 1 on every pull request that changes code, so the point is
+not coverage. The
+point is that **a test asserts what its author already suspected.** A real run
+catches the faults nobody suspected. These got through before:
 
 | What happened | Why no test would have caught it |
 |---|---|
-| A `creds check` sample was written into this repository's documents before the command was run, and the command did not print it (#309) | the sample was prose, and prose is not executed |
-| `ORA-28002` is the documented grace-period code; 26ai sends `ORA-28098` or `ORA-28011` depending on the profile, on a connection that **succeeds** (#322) | the dead branch matched a constant nobody had ever seen the server produce |
-| A diagnostic query reported the probing session itself — in one run out of two (#326) | a single green run is not a measurement of an intermittent fault |
+| A `creds check` sample was written into a design document before the command was run, and the command did not print it | the sample was prose, and prose is not executed |
+| `ORA-28002` is the documented code for the grace period. 26ai sends `ORA-28098` or `ORA-28011`, depending on the profile, on a connection that **succeeds** | the code checked for a constant that nobody had seen the server send |
+| A diagnostic query reported the probing session itself, in one run out of two | one green run does not measure an intermittent fault |
 
-Two rules follow from those, and they are the whole of it:
+Two rules follow:
 
-1. **Paste real output.** Any sample in a design document, a PR body, a docstring
-   or an issue comes from a run that happened. Never write what a command *would*
-   print.
-2. **Measure, do not reason, about a vendor's behaviour.** What an error code is,
-   whether it arrives as an exception, what a status column spells — these are
-   facts about somebody else's software. `02-oracle-privileges.md` §4 and
-   `sopuli/driver/oracle/accounts.py` record several that came out the opposite
-   way from the obvious guess.
+1. **Paste real output.** Every sample in a design document, a pull request
+   body, a docstring or an issue comes from a run that happened. Never write what
+   a command *would* print.
+2. **Measure a vendor's behaviour; do not reason about it.** What an error code
+   is, whether it arrives as an exception, how a status column is spelled: these
+   are facts about someone else's software. `02-oracle-privileges.md` §4 and
+   `sopuli/driver/oracle/accounts.py` record several that were the opposite of
+   the obvious guess.
 
-### Fault injection (tier 2)
+### Fault injection (tier 2) (open: #660)
 
-The UC-1 §8 failure table is a test list. Each row asserts the documented
-recovery, not merely that the tool did not crash:
+The failure table in UC-1 §8 is a test list. Each row asserts the documented
+recovery, not only that the tool did not crash:
 
 | Injection | Assert |
 |---|---|
-| kill the process between `password_set` and `vault_promote` | `pending` still holds the new value; `check` reports `PENDING_APPLY`; `promote` completes it |
-| vault unreachable mid-run | nothing applied, or applied-but-not-promoted; never silently promoted |
-| close a PDB mid-run (multi-target) | partial success, exit 4, other targets untouched; `apply --repair` fixes it |
-| revoke `ALTER USER` mid-run | clean authorization error, no half-written state |
-| two `rotate` runs on one account concurrently | one loses the lock with exit 7; final state consistent |
-| steal a held lock mid-run: expire it, let a second run take it over | the first run's next fence check fails, and it aborts before its next `ALTER USER`. Nothing half-applied from a stale plan |
-| kill a run holding a lock, then start another | by default the second refuses with exit 7, reporting the holder and that the lock has expired — breaking one is not self-service. Under `locking.break_expired` it takes it with a CAS write that bumps the version, which fences the zombie if it ever wakes |
-| vault returns a stale read after write | post-verify catches it and reports rather than promoting |
+| kill the process between `password_set` and `vault_promote` | `pending` still holds the new value; `check` reports `PENDING_APPLY`; a second `creds apply` completes the promotion |
+| vault unreachable mid-run | nothing applied, or applied and not promoted; never promoted silently |
+| close a PDB mid-run (several targets) | partial success, exit 4, other targets untouched; `creds apply --repair` with the run document fixes it |
+| revoke `ALTER USER` mid-run | a clean authorization error, and no half-written state |
+| two `rotate` runs on one account at once | one loses the lock and exits 7; the final state is consistent |
+| steal a held lock mid-run: let it expire, and let a second run take it over | the first run's next fence check fails, and it stops before its next `ALTER USER`. Nothing from a stale plan is half-applied |
+| kill a run that holds a lock, then start another | by default the second run refuses with exit 7, and reports the holder and that the lock has expired. Breaking a lock is not self-service. Under `locking.break_expired`, the second run takes the lock with a compare-and-set write that increases the version, which fences the killed run if it ever resumes |
+| the vault returns a stale read after a write | the post-verify step catches it and reports it, instead of promoting |
 
-Mechanics: `docker pause`/`stop` for the database, and a TCP proxy (toxiproxy or
-equivalent) between the tool and both the database and the vault for latency,
-truncation and connection-drop faults. Process kills are easiest driven from the
-`jsonl` event stream — wait for `seq` of `password.applied`, then `SIGKILL`.
-That the event stream makes this testable is a good sign the stream is right.
+The mechanics: `docker pause` or `docker stop` for the database, and a TCP proxy
+(the `toxiproxy` service) between the tool and both the database and the vault,
+for latency, truncation and dropped connections. Process kills are easiest to
+drive from the `jsonl` event stream: wait for the `seq` of `password.applied`,
+then send `SIGKILL`.
 
 ---
 
 ## 6. Release gates
 
-Not tests that can be skipped. A release does not happen if any of these is red.
+These are not tests that may be skipped. A release does not happen if any of
+them is red.
 
-1. **Redaction.** Run the full suite, then grep every
-   artefact — stdout, stderr, log files, JSON output, audit records — for every
-   generated password. Zero hits.
+1. **Redaction.** Run the full suite, then search every artefact (stdout,
+   stderr, log files, JSON output, audit records) for every generated password.
+   There must be no hits.
 
    **`policy sample --reveal` is excluded by name**, and so is UC-2's seen reset
-   (`03-json-output.md` §4 has its rule). That command prints a password because printing one is what it is for
-   (invariant 2's third exception: a sample is not a credential, since nothing
-   authenticates with it and it is never stored). Excluding it would weaken the
-   gate if it stopped there, so the gate gains the narrower property in exchange:
-   **no JSON document contains a sample value, `--reveal` or not** — which holds
-   because the run schema gives a `sample` object no value property, and because
-   `--reveal` with `--output json` is refused. Grep the JSON artefacts of a
-   `policy sample` run for the values it printed; zero hits.
-2. **Password leakage into Oracle.** Run `sql/oracle/02_password_leak_probe.sql`
-   on each supported major version. It plants one canary per execution path —
-   client-issued `CREATE USER`, client-issued `ALTER USER`, `EXECUTE IMMEDIATE`
-   with the password as a literal in the block, and `EXECUTE IMMEDIATE` with it
-   assembled at runtime — then sweeps every source a statement's text can come to
-   rest in. Whatever it finds is written up in `02-oracle-privileges.md` §4, and
-   what is still outstanding is recorded below. This is the empirical check that
-   §4 refuses to assume.
+   (`03-json-output.md` §4 has its rule). `policy sample --reveal` prints a
+   password because that is its purpose. This is invariant 2's third exception:
+   a sample is not a credential, because nothing authenticates with it and it is
+   never stored.
 
-   **Three positions per version, and they are not interchangeable:**
+   The exclusion alone would weaken the gate, so the gate adds a narrower
+   property: **no JSON document contains a sample value, with or without
+   `--reveal`.** This holds because the run schema gives a `sample` object no
+   value property, and because `--reveal` with `--output json` is refused.
+   Search the JSON artefacts of a `policy sample` run for the values it printed.
+   There must be no hits.
+2. **Password leakage into Oracle.** Run `sql/oracle/02_password_leak_probe.sql`
+   on each supported major release. It plants one canary per execution path:
+   `CREATE USER` from the client, `ALTER USER` from the client, `EXECUTE
+   IMMEDIATE` with the password as a literal in the block, and `EXECUTE
+   IMMEDIATE` with the password assembled at runtime. It then searches every
+   place where a statement's text can be kept. The findings are in
+   `02-oracle-privileges.md` §4. This is the measurement that §4 refuses to
+   replace with an assumption.
+
+   **Run it in three positions on each release.** They are not interchangeable:
 
    | # | Connect to | `svc_user` | What it establishes |
    |---|---|---|---|
    | 1 | the PDB service | the account holding `ALTER USER` and nothing else | **the only position that proves the audit policy works.** This is how sopuli operates |
-   | 2 | the PDB service | `sys` | the SYSDBA path, including the `audit_file_dest` greps that only `AUDIT_SYS_OPERATIONS` populates |
+   | 2 | the PDB service | `sys` | the SYSDBA path, including the `audit_file_dest` searches, which only `AUDIT_SYS_OPERATIONS` populates |
    | 3 | the CDB service | a common `C##` account | that container scope does not change the answer |
 
-   Position 1 is the one that carries the result, and it has a validity check that
-   must be read before its findings are believed: **§3's output must say
-   `isdba=FALSE`.** SYS's actions are captured by MANDATORY unified auditing
-   regardless of any policy, so a run that reports `isdba=TRUE` demonstrates
-   nothing about `SOPULI_PROBE_POL` — the trail would look identical with no policy
-   at all. Confirm alongside it that the `ALTER USER` rows in §5 are attributed to
-   the service account rather than to `SYS`.
+   Position 1 carries the result. Before you believe its findings, check that
+   the probe's section 3 prints **`isdba=FALSE`**. Mandatory unified auditing
+   captures SYS's actions whatever the policy, so a run that reports
+   `isdba=TRUE` shows nothing about `SOPULI_PROBE_POL`: the trail would look the
+   same with no policy at all. Also check that the `ALTER USER` rows in section 5
+   are attributed to the service account, not to `SYS`.
 
-   Two more reading rules, both of which turn an apparent pass into a non-result:
-   a `clean` on a `pop=n` column is an absence of evidence and the sweep labels it
-   `INCONCLUSIVE`; and `DBA_HIST_SQLTEXT` needs an AWR snapshot taken *before* the
-   sweep, so it stays untested until one is (unverified: ddl-text-awr).
+   Two more rules turn an apparent pass into no result:
+   - A `clean` on a `pop=n` column is an absence of evidence, and the probe
+     labels it `INCONCLUSIVE`.
+   - `DBA_HIST_SQLTEXT` needs an AWR snapshot taken *before* the search
+     (unverified: ddl-text-awr). `sql/oracle/10_awr_snapshot_probe.sql` takes
+     one.
 
-   **Where it stands.** Which positions ran on which release is in
-   [`../measurements.md`](../measurements.md), and the findings are in
-   `02-oracle-privileges.md` §4. The one release that disagrees is 11.2, whose
-   `V$SQLSTATS` keeps the `ALTER USER` text (#387). When something is unrun,
-   name the *surface*, not the position. A position covers several surfaces:
-   position 2's `audit_file_dest` greps mean something only with
+   `sql/oracle/04_password_leak_extensions.sql` adds the surfaces that need more
+   setup: trace files, OS audit files, self-rotation, and `IDENTIFIED BY
+   VALUES`. Run it with the probe.
+
+   Which positions ran on which release is in
+   [`../measurements.md`](../measurements.md). When something has not run, name
+   the *surface*, not the position. A position covers several surfaces. For
+   example, position 2's `audit_file_dest` searches mean something only with
    `AUDIT_SYS_OPERATIONS = TRUE`, so a position 2 run without it leaves that
    surface unrun.
 
-   Outstanding, and none of it is a pass:
+   These are not yet measured, and none of them is a pass:
 
    | Open | Why it blocks a claim |
    |---|---|
-   | **12.1** unrun (unverified: ddl-text-versions) | 11.2 keeps the DDL text and 12.2.0.1.0 does not, so the change is in (11.2, 12.2]. 12.1 is the one release left in it, and there is no known image. Read the 11.2 result as *11.2 does*, never as *everything older does* |
-   | **Other 19c release updates** | 19.3.0.0.0 and 19.32.0.0.0 agree. One release update is not every release update, so name the release when quoting a result |
-   | **AWR, for 11.2** (unverified: ddl-text-awr) | On 19.32.0.0.0, the only database here with the Diagnostics Pack, the wrapped literal (C3) reaches `DBA_HIST_SQLTEXT` and stays for the 8 days that DB system keeps AWR. The plain `ALTER USER` does not, because it has no cursor. Whether 11.2's retained `ALTER USER` reaches AWR needs an 11.2 with the pack: every image in this stack ships `control_management_pack_access = NONE` |
-
-   Closed by #407 on 2026-09-11, on 26ai 23.26.2.0.0 and 21c 21.3.0.0.0, and
-   recorded in `02-oracle-privileges.md` §4 with the version on every row:
-
-   | Was open | Answer |
-   |---|---|
-   | **Trace files** — the `grep` of `Diag Trace` | **does not capture the password**, which retires an assumption rather than confirming it. Level 12 writes the cursor truncated — `ALTER USER sopulitest IDE` — across five traced sessions on two releases. The wrapped form leaks in full, so this is invariant 13 on a fifth surface |
-   | **OS audit files**, `svc_user = sys` | 21c writes the DDL **masked** to the OS file, one verbatim canary in 646 `ACTION` lines and it is the PL/SQL wrapper. **26ai writes no user-management DDL there at all**, so its clean grep is `pop=n` in OS-file form and is recorded as absent rather than clean |
-   | **Self-rotation** (probe section 6a) | **audited and masked on both secrets** — `IDENTIFIED BY * REPLACE *`, attributed to the account itself. Privilege auditing does not miss it, so "rotations are audited" holds for this path too |
-   | **`IDENTIFIED BY VALUES`** (probe section 6b) | **the verifier is masked** — `IDENTIFIED BY VALUES *` — and appears in no OS audit file and no trace file |
-
-   The last three were comments in the probe rather than code, which is why they
-   sat unrun from the first version of the gate to #407. They are
-   `sql/oracle/04_password_leak_extensions.sql` now, and that is the general
-   lesson rather than a filing decision: **a check that is a comment is a check
-   that does not run.**
+   | **12.1** (unverified: ddl-text-versions) | 11.2 keeps the DDL text and 12.2.0.1.0 does not, so the change is somewhere after 11.2 and no later than 12.2. 12.1 is the one release left in that range, and no image is known for it. Read the 11.2 result as *11.2 keeps it*, never as *every older release keeps it* |
+   | **Other 19c release updates** | 19.3.0.0.0 and 19.32.0.0.0 agree. One release update is not every release update, so name the release when you quote a result |
+   | **AWR on 11.2** (unverified: ddl-text-awr) | Whether 11.2's retained `ALTER USER` reaches AWR needs an 11.2 database with the Diagnostics Pack. Every image in this stack sets `control_management_pack_access = NONE` |
 3. **Schema conformance.** Every sample and recorded output validates against the
-   published JSON Schema. Already wired: the schemas and example in
-   `docs/schemas/` validate today, the config schema is asserted to be what the
-   config layer generates, and `01-configuration.md`'s own worked example is
-   validated against it.
-4. **Lockout.** The lockout regression test passes on every Oracle version in the
-   matrix. A tool that locks production accounts while checking them is worse
+   published JSON Schema. The schemas and the example in `docs/schemas/`
+   validate, a test asserts that the config schema is the one the config layer
+   generates, and `01-configuration.md`'s worked example is validated against
+   it.
+4. **Lockout.** The lockout regression test passes on every Oracle release in the
+   matrix. A tool that locks production accounts while it checks them is worse
    than no tool.
-5. **Idempotency.** Every **convergent** command twice, everywhere,
-   `changed: false` on the second run.
+5. **Idempotency.** Every **convergent** command, run twice anywhere, reports
+   `changed: false` the second time.
 
-   The qualifier is invariant 9's and is stated here in the same words, because
-   a gate that said *every command* would be one no release could pass: `creds
-   generate` and `account reset-password` draw fresh randomness and have nothing
-   to converge on, so each reports `changed: true` every run by design (#254,
-   #454). They are not skipped by this gate — what is asserted of them is the
-   other half of that decision, that the second run **says what it replaced**.
+   The qualifier is invariant 9's, in the same words. A gate that said *every
+   command* could never pass. `creds generate` and `account reset-password`
+   draw a fresh password and have nothing to converge on, so they report
+   `changed: true` on every run by design. The gate still checks them: the
+   second run must **say what it replaced**.
 6. **The lock holds under contention, and a stolen lock stops the run that lost
-   it** (#106). `tests/store/test_lock_concurrency.py`, against a real Vault:
-   two genuinely concurrent processes take one lock and exactly one wins, the
-   loser exits 7 having changed nothing, and a holder whose record is overwritten
-   mid-run fails its next fence check.
+   it.** `tests/store/test_lock_concurrency.py` runs against a real Vault. Two
+   concurrent processes take one lock and exactly one wins; the loser exits 7
+   and has changed nothing; and a holder whose record is overwritten mid-run
+   fails its next fence check.
 
-   **Two processes, not two managers over one dictionary.** Tier 0 covers both
-   properties already and cannot cover this one: it forces the race by driving
-   the store in a chosen order, which proves the manager reacts correctly to a
-   lost compare-and-set but never lets two runs actually start together. A gate
-   that only ever ran in-process is not the gate a release note claims.
+   **Two processes, not two managers over one dictionary.** Tier 0 covers the
+   same properties, but it forces the race by driving the store in a chosen
+   order. That proves the manager reacts correctly to a lost compare-and-set,
+   but it never lets two runs start together. A gate that only ran in one
+   process would not be the gate a release note claims.
 
-   The two facts about the *store* rather than the manager are asserted here for
-   the same reason: that `cas: 0` fails forever on a deleted path — the fact
-   behind "release writes a record, never deletes one" — and what a KV v1 mount
-   with no compare-and-set does and does not promise. The second asserts a
-   **weakness** on purpose: a run reporting `cas` there would be claiming a
-   guarantee it does not have, and that is the failure worth catching.
+   Two facts about the *store* are asserted here for the same reason:
+   - `cas: 0` fails forever on a deleted path. This is why release writes a
+     record and never deletes one.
+   - A KV v1 mount has no compare-and-set. The test asserts that **weakness**
+     on purpose: a run that reported `cas` there would claim a guarantee it does
+     not have.
 
-   **The split cuts both ways, and #197 is the case that showed it.** That
-   second gate asserted that two racers on the KV v1 mount *both* acquire, and
-   it was asserting a coin flip: `acquire` reads the path before it writes on
-   `advisory-only` exactly as on `required`, so a racer whose read lands after
-   the other's write is correctly denied. Both outcomes are legal and which one
-   appears is a fact about how a loaded machine schedules two processes. It
-   passed for as long as it did because an idle machine wins the toss every
-   time; the lane added in #184 is what finally ran it enough to lose.
+   **Tier 0 owns claims about ordering. Tier 1 owns claims about simultaneity.**
+   Each tier can force exactly one of the two:
+   - Tier 1 cannot assert an *interleaving*, such as two runs that both read
+     before either writes. The window is inside `acquire`, nothing outside can
+     hold it open, and two processes started together land in it only
+     sometimes. A test that asserted it would be a coin flip. On the KV v1 mount,
+     tier 1 asserts only what holds on every run, whatever the scheduler did: no
+     run gets a fence, every run reports `mode: none`, and a denial is never a
+     *lost* compare-and-set, because the mount has none to lose. A test against a
+     planted record asserts the last point deterministically.
+   - The interleaving itself, that two runs *can* hold one advisory lock at
+     once, is asserted in `tests/lock/test_manager.py`, where a barrier holds the
+     window open. Its docstring explains why the outcome there does not depend on
+     the scheduler, and the same interleaving against a store with `cas` still
+     gives exactly one winner.
 
-   So a claim about an **interleaving** — two runs both reading before either
-   writes — cannot be made from this side either, for the mirror of the reason
-   the one-winner claim cannot be made from tier 0. The window is inside
-   `acquire`, no handshake reaches into it, and two processes released together
-   land in it only sometimes. What tier 1 asserts is what holds on every run
-   whatever the scheduler did: nobody is handed a fence, every run reports
-   `mode: none`, and a denial is never a *lost* compare-and-set, because on a
-   mount without `cas` there is none to lose. That last one is also asserted
-   deterministically beside it, against a planted record, since the raced form
-   reaches it only when the timing cooperates.
-
-   The interleaving claim itself — two runs *can* hold one advisory lock at once
-   — moved to `tests/lock/test_manager.py`, where the window can be held open:
-   a store that parks each racer's first read on a barrier until they have all
-   looked, so no write happens until every read has answered against the empty
-   path. Threads are the mechanism and not the subject — **no outcome depends on
-   which one the scheduler favours**, only on an ordering that is imposed, which
-   is what separates this from the coin flip it replaces.
-
-   Two overrides make it honest rather than convenient, and both were forced by
-   review. The barrier is per thread's *first* read, because `release` and
-   `check` read too and a barrier they also hit would deadlock the moment one
-   racer finished first. And `write` takes a lock, because `MemoryStore` has
-   never had to be thread-safe and its compare-and-set is a check followed by an
-   increment — two threads can both pass it and both commit, which would have
-   made the contrast below flaky in exactly the way this whole change is about.
-   A real store serialises writes; the fake does too, now that anything calls it
-   from two threads.
-
-   The contrast is the part that makes it a test about locking rather than about
-   a double that was told to lie: the *same* interleaving against a store that
-   has `cas` still yields exactly one winner. Which one loses is not asserted —
-   an outcome worth asserting is one the ordering cannot change.
-
-   The rule this leaves: **tier 0 owns claims about ordering, tier 1 owns claims
-   about simultaneity.** Each tier can force exactly one of them, and a claim
-   asserted on the wrong side of that line is a coin flip whether or not it has
-   started losing yet.
-
-   A tool that lets two runs rotate one credential at once is worse than one with
-   no locking at all, because the second at least does not claim otherwise.
+   A tool that lets two runs rotate one credential at once is worse than a tool
+   with no locking at all, because the second one does not claim to protect you.
 
 ---
 
@@ -614,15 +551,16 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 
 - **Never a real account name, host, tenant or path.** Fixtures use the same
   fictional vocabulary as `01-configuration.md`: application `acme`, accounts
-  `acme_*_user`, tenants `alpha…theta`, hosts under `example.com`, documentation
-  IPs from `192.0.2.0/24`.
+  `acme_*_user`, tenants `alpha` to `theta`, hosts under `example.com`, and
+  documentation IPs from `192.0.2.0/24`.
 - Each test creates its own accounts under a per-run prefix and drops them
   afterwards, so a failed run leaves nothing that breaks the next one.
-- Profiles used by tests (`FAILED_LOGIN_ATTEMPTS 3`, rollover configured, verify
-  function attached) are created by the harness, never assumed to exist.
-- The Vault dev container starts empty; every test seeds what it needs. No shared
-  fixture state between tests — this is a concurrency-sensitive tool and shared
-  fixtures would hide exactly the bugs worth finding.
+- The harness creates the profiles that tests use (`FAILED_LOGIN_ATTEMPTS 3`,
+  rollover configured, a verify function attached). Tests never assume they
+  exist.
+- The Vault dev container starts empty, and every test seeds what it needs.
+  Tests share no fixture state. This tool is sensitive to concurrency, and
+  shared fixtures would hide exactly the bugs worth finding.
 
 ---
 
@@ -630,10 +568,10 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 
 | # | Question | Leaning |
 |---|---|---|
-| ~~T1~~ | ~~Does `gvenzl/oracle-xe:11` exist?~~ | **resolved 2026-08-08: yes**, `11.2.0.2-slim`, amd64-only. See §2. Reasons: [T1](../decisions/log.md#t1) |
-| ~~T2~~ | ~~`testcontainers-python` or `compose.yaml` + fixtures?~~ | **resolved 2026-08-20 in #174: compose.** The harness starts nothing; `SOPULI_TEST_ORACLE_DSN` points it elsewhere. Reasons: [T2](../decisions/log.md#t2) |
+| ~~T1~~ | ~~Does `gvenzl/oracle-xe:11` exist?~~ | **decided: yes** (#1), `11.2.0.2-slim`, amd64 only. See §2. Reasons: [T1](../decisions/log.md#t1) |
+| ~~T2~~ | ~~`testcontainers-python` or `compose.yaml` + fixtures?~~ | **decided: compose** (#174). The harness starts nothing; `SOPULI_TEST_ORACLE_DSN` points it elsewhere. Reasons: [T2](../decisions/log.md#t2) |
 | T3 | Is LocalStack Secrets Manager in the community tier? | verify before committing to it as the AWS path |
 | T4 | Does OCI Vault cost enough to matter in a test loop? | check pricing; if so, tier 3 only and reuse one secret |
-| ~~T5~~ | ~~Public CI provider~~ | **resolved 2026-08-09: GitHub Actions.** See `../workflow.md`. Reasons: [T5](../decisions/log.md#t5) |
+| ~~T5~~ | ~~Public CI provider~~ | **decided: GitHub Actions.** See `../workflow.md`. Reasons: [T5](../decisions/log.md#t5) |
 | T6 | Do we need a real Data Guard standby to test the read-only refusal? | probably: a closed PDB is not the same failure. Defer until a driver bug argues for it |
 | T7 | Snapshot/restore for faster Oracle resets | **deferred**: start with drop-and-recreate; revisit if tier 2 exceeds its budget |

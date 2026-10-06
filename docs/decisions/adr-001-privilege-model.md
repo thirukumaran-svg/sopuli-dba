@@ -117,27 +117,26 @@ equally. Both have since been measured. The releases each ran on are in
 [`../measurements.md`](../measurements.md).
 
 - **Whether `ALTER USER` statement text leaks the password into `V$SQL` or
-  `UNIFIED_AUDIT_TRAIL`.** On every release measured, no cursor for the DDL is
-  retained in `V$SQL`. The probe also found a leak that neither model would have
-  caught by reasoning: an anonymous PL/SQL block whose own text carries the
-  password as a literal is retained verbatim, because Oracle's protection is
-  keyed to the `CREATE/ALTER USER` statement rather than to the password. That
-  is invariant 13. From 12.2 on, unified audit masks the statement to
-  `IDENTIFIED BY *` at write time, in the base table `AUDSYS.AUD$UNIFIED` as well
-  as the view, and the block is the only leak. 11.2 has no unified auditing, and
-  there `V$SQLSTATS` also keeps the plain `ALTER USER` text. 12.1 is unrun
-  (unverified: ddl-text-versions). A traced session does not capture the
-  password, because the cursor is written cut short (#407). The probe is
-  `sql/oracle/02_password_leak_probe.sql`, its extensions are
-  `sql/oracle/04_password_leak_extensions.sql`, the findings are in
-  `../design/02-oracle-privileges.md` §4, and what is still open is in
+  `UNIFIED_AUDIT_TRAIL`.** On every release measured, `V$SQL` keeps no cursor
+  for the DDL. The probe also found a leak that neither model would have caught
+  by reasoning: Oracle keeps the text of an anonymous PL/SQL block verbatim, and
+  if the block carries the password as a literal, the password is kept with it.
+  Oracle's protection is tied to the `CREATE USER` and `ALTER USER` statements,
+  not to the password. That is invariant 13. From 12.2, unified auditing masks
+  the statement to `IDENTIFIED BY *` when it writes the record, in the base table
+  `AUDSYS.AUD$UNIFIED` as well as the view, and the block is the only leak. 11.2
+  has no unified auditing, and its `V$SQLSTATS` also keeps the plain `ALTER USER`
+  text. 12.1 is not measured (unverified: ddl-text-versions). A traced session
+  does not capture the password, because the trace file cuts the statement
+  short. The probe is `sql/oracle/02_password_leak_probe.sql`, its extensions
+  are `sql/oracle/04_password_leak_extensions.sql`, the findings are in
+  `../design/02-oracle-privileges.md` §4, and what is not yet measured is in
   `../design/04-testing.md` §6 gate 2.
-- **The `T:` (12C) verifier in `SYS.USER$.SPARE4`.** Its layout is read (#431),
-  a client-side derivation reproduces it byte for byte (#432), and the
-  degradation rule is settled (#433): compare `T:` only, and an account with no
-  `12C` fails at plan time. The details are in
-  `../design/02-oracle-privileges.md` §2. `--method hash` depends on this. It is
-  settled for 19c and not claimed on 12.1.
+- **The `T:` (12C) verifier in `SYS.USER$.SPARE4`.** Its layout is known, a
+  derivation on the client reproduces it byte for byte, and the rule for a
+  missing verifier is settled: `--method hash` compares `T:` only, and an account
+  with no `12C` verifier fails at plan time. The details are in
+  `../design/02-oracle-privileges.md` §2.
 
 If this decision is ever reversed, write the package fresh against the design as
 it stands then, rather than recovering the draft from git history.

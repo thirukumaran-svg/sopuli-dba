@@ -170,26 +170,7 @@ answer for that method.
 
 ## Follow-ups
 
-- Pin the Vault image tag in `../../test/compose.yaml`; the probes validated
-  against whatever `:latest` resolved to.
-- Declare sopuli's supported Vault floor and run the probes as a matrix over
-  it. They established shape-invariance within one build, not version
-  stability.
-- Promote `vault_cas_probe.py` to a tier-0 regression test, with fixture paths
-  in the `acme` / `alpha…theta` vocabulary. (Its `CasConflictError` finding is
-  already promoted, in `../../tests/store/test_hashicorp_cas_conflict.py`.)
-- ~~Add the `cas_required`-but-missing case~~ — **done in #104**, in the
-  conformance suite, where it found a real divergence: `MemoryStore` reported it
-  as a `CasConflictError` and nothing had raced. `max_versions`-exhaustion is
-  still open.
-- Drop `cap_add: [IPC_LOCK]` from the vault service in `compose.yaml`; Vault
-  2.0.2 removed the capability at build time.
-- ~~`_errors.py` is specifiable now~~ — **done in #104.** All three of Vault's
-  check-and-set 400s were measured rather than read: the conflict (`…did not
-  match the current version`), the `cas_required`-but-missing case (`…required
-  for this call`) and the malformed one (`error parsing check-and-set
-  parameter`). The last is the one this ADR did not anticipate — it does *not*
-  open with `check-and-set parameter`, so a prefix match would have missed it
-  while a substring match would have caught all three. The full-phrase rule
-  handles both, and all three are pinned in
-  `../../tests/store/test_hashicorp_transport.py`.
+- Declare sopuli's supported Vault floor, and run the probes as a matrix over
+  it. The probes showed that the response shape is the same within one build,
+  not that it is stable across versions.
+- Add the `max_versions`-exhaustion case to the store conformance suite.
