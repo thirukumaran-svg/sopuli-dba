@@ -35,6 +35,7 @@ from sopuli.config.model import Config
 from sopuli.config.selection import Selection, filter_estate
 from sopuli.exit_codes import ExitCode
 from sopuli.safety import (
+    ALLOWED_METHODS,
     CONFIRM_ENVIRONMENTS,
     MAX_TARGETS,
     READONLY,
@@ -46,14 +47,6 @@ from sopuli.safety import (
 from sopuli.settings import Layer, Resolved
 from sopuli.settings.resolver import resolve_all
 from sopuli.settings.sources import config_contributions, estate_contributions
-
-#: The setting H6 added, spelled here rather than imported from `sopuli.safety`.
-#: Nothing refuses on it yet -- no delivery method is implemented -- and a
-#: constant beside `READONLY` would make `tests/settings/test_settings_are_wired.py`
-#: read the name as wired while no gate consults it, which is the shape that
-#: whole sweep exists to catch. It is declared inert in the registry, and this is
-#: what inert looks like from a test.
-ALLOWED_METHODS = "safety.delivery.allowed_methods"
 
 TARGET = {
     "type": "oracle",

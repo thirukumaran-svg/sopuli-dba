@@ -192,16 +192,15 @@ def test_the_block_is_a_mapping_not_a_list() -> None:
     assert "delivery" in str(raised.value)
 
 
-# ----------------------------------------------- nothing can deliver yet ---
+# --------------------------------------------- a method this build lacks ---
 
 
 def test_an_unimplemented_method_warns_that_nothing_serves_it() -> None:
     """A `delivery:` block that validates silently reads as delivery being
     configured, and the operator would find out otherwise at the moment a password
     had already been drawn."""
-    # `one_time_link` rather than `vault_wrapped`, which #444 implemented. The
-    # test is about the warning and not about which method happens to be
-    # missing, so it moves to one that still is -- and there are four left.
+    # The test is about the warning, not about which method is missing, so it
+    # uses one this build does not implement.
     notice = unserviceable(built(method="one_time_link", one_time_link={}))
 
     assert notice is not None

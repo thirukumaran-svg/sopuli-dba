@@ -108,9 +108,9 @@ def _validate_json(path: Path) -> dict[str, Any]:
 def _refuse(*_: object, **__: object) -> None:
     """Stand in for the first thing that resolves a store to a client.
 
-    Raised from `discover` because nothing resolves a store yet (#104). What the
-    tests below are about is what the boundary does with it, which does not
-    depend on where inside the run it was raised.
+    Raised from `discover`, which every run calls early, so that the tests need
+    no store. What the tests below are about is what the boundary does with it,
+    which does not depend on where inside the run it was raised.
     """
     raise BackendNotInstalledError(
         'vault "oci-prod" declares type "oci", but that backend is not installed',
@@ -289,10 +289,10 @@ def test_resolving_an_uninstalled_backend_exits_nine_with_the_code(
 ) -> None:
     """E5, at the boundary that turns the exception into an exit code.
 
-    **No command resolves a store to a client yet** -- the first one arrives with
-    #104 -- so the error is raised from the first thing `config validate` calls.
-    What is under test is what the boundary does with it, which is the same
-    wherever inside a run it is raised: exit 9, `config`, and the code.
+    The error is raised from the first thing `config validate` calls, so the
+    test needs no store. What is under test is what the boundary does with it,
+    which is the same wherever inside a run it is raised: exit 9, `config`, and
+    the code.
 
     Through `main` rather than the runner, because the exit code is the contract
     and `main` is what maps a `ConfigError` onto it.

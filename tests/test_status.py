@@ -5,9 +5,9 @@ will report from two dictionary views and a vault document, and what it refuses
 to conclude because concluding it would need a login.
 
 The property worth the most here is that **an unknown age is not an old one**.
-`--max-age-days` will be what `rotate` selects on, and treating "this tool has
-never rotated it" as infinitely old would make the first act against a freshly
-adopted estate a rotation of everything in it.
+`--max-age-days` is what `rotate` selects on, and treating "this tool has never
+rotated it" as infinitely old would make the first act against a freshly adopted
+estate a rotation of everything in it.
 """
 
 from __future__ import annotations

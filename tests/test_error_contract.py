@@ -398,10 +398,10 @@ def test_a_lock_denial_exits_seven_with_the_holder(
 ) -> None:
     """P5's exit 7, and the one thing an operator wants when they see it.
 
-    The exception carries its own category and hint (#83); the boundary reports
-    what the error says about itself rather than inferring anything from its
-    type. Nothing takes a lock yet -- no `creds` command exists -- so it is
-    injected here, on the path a denial will actually take.
+    The exception carries its own category and hint; the boundary reports what
+    the error says about itself rather than inferring anything from its type.
+    The denial is injected, so the test needs no store holding a lock: what is
+    under test is the boundary, which is the same wherever the denial is raised.
 
     Exit 7 is what an escaping lock error means: the run stopped over a lock
     before it had anything to report. A command that had already applied changes
@@ -482,8 +482,8 @@ def test_an_abort_exits_eight_with_a_document(
     and the process exits 8, because `exit_code` in the document is defined as
     equal to the process's.
 
-    Nothing prompts yet, so the abort is injected -- but the path is the one a
-    declined confirmation will take, and a Ctrl-C already takes today.
+    The abort is injected, so the test needs no terminal. The path is the one a
+    declined confirmation and a Ctrl-C both take.
     """
 
     def abort(*args: object, **kwargs: object) -> None:

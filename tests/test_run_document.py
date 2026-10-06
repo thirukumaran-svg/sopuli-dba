@@ -186,9 +186,8 @@ def test_an_option_omits_a_source_detail_it_does_not_have() -> None:
 def test_a_list_valued_option_reaches_json_as_an_array() -> None:
     """``confirm_environments`` resolves to a tuple, which JSON has no type for.
 
-    No command emits one yet -- the safety block needs the config layer to reach
-    the resolver -- but the conversion is here rather than at whichever call site
-    first needs it, for the reason redaction is.
+    The conversion is here rather than at each call site that emits one, for the
+    reason redaction is.
     """
     emitted = Option(value=("dev", "prod"), source="defaults").to_dict()
 

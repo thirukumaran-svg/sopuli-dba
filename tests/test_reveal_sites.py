@@ -1,35 +1,31 @@
-"""Every place the tool turns a `Secret` back into plaintext, pinned (#441).
+"""Every place the tool turns a `Secret` back into plaintext, pinned.
 
 `CLAUDE.md` invariant 2 permits the vault write, the driver call, `policy sample
---reveal`, UC-2's seen reset, and -- since #444 -- the wrapping token an unseen
-delivery hands back. Each is argued for in the module
-that holds it, and each is supposed to stay where it is -- #439's first guard is
-literally *one reveal site, and there must be no third*.
+--reveal`, UC-2's seen reset, and the wrapping token an unseen delivery hands
+back. Each is argued for in the module that holds it, and each must stay where
+it is. The seen path's first guard is *one reveal site*.
 
-**Nothing enforced that until this file.** The count lived in three docstrings,
-one of which said "the only `reveal()` call in the tool" and was true when it was
-written and false the day UC-2's seen path landed. A guard that is a sentence in
-a docstring is a guard that decays silently, which is the failure
-`tests/settings/test_settings_are_wired.py` exists for one layer over -- and this
-is the same sweep applied to the invariant that matters most.
+A guard that is only a sentence in a docstring decays silently. This file checks
+the set of sites instead, as `tests/settings/test_settings_are_wired.py` does for
+settings.
 
 **A tripwire, not a proof.** What it checks is where `.reveal()` is *called*, by
 parsing the tree rather than grepping, so a call inside a comment or a docstring
 does not count and a call spelled `getattr(secret, "reveal")()` would not be
-caught. The four real ones are all ordinary attribute calls; catching the clever
-form needs dataflow analysis, and every instance so far has been the simple one.
+caught. Every real call is an ordinary attribute call; catching the clever form
+needs dataflow analysis.
 
 Adding a site means adding it here **and** to invariant 2, in the same change.
 That is the point: the edit is small, and it is impossible to make by accident.
 
-**Two classes of site, and the list has always held both.** Invariant 2 enumerates
-the paths a *password* may take, and those are the entries that carry a number. The
-others -- the vault login, the token on the wire, and since #442 a webhook URL --
-are credentials the tool *presents to a service it is calling*, which is a separate
-and already-accepted class: a credential that never reached the wire would
-authenticate nothing. Adding one of those is not a new exception to invariant 2, and
-saying so here is what keeps somebody from either renumbering the invariant or
-sneaking a password path in under this heading.
+**Two classes of site.** Invariant 2 enumerates the paths a *password* may
+take, and those are the entries that carry a number. The others -- the vault
+login, the token on the wire, and a webhook URL -- are credentials the tool
+*presents to a service it is calling*, which is a separate and already-accepted
+class: a credential that never reached the wire would authenticate nothing.
+Adding one of those is not a new exception to invariant 2, and saying so here is
+what keeps somebody from either renumbering the invariant or sneaking a password
+path in under this heading.
 """
 
 from __future__ import annotations
@@ -43,7 +39,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "sopuli"
 #:
 #: Keyed by path rather than counted, because a count would stay green while a
 #: reveal moved from the driver call into, say, a log formatter -- and the
-#: location is the entire argument in three of the four cases.
+#: location is most of the argument for each site.
 PERMITTED = {
     "driver/oracle/client.py": "the driver call -- invariant 2's second exception",
     "output/policy_view.py": "`policy sample --reveal` -- the third; a sample is not a credential",
@@ -106,8 +102,8 @@ def test_every_reveal_site_is_one_invariant_2_permits() -> None:
     assert not unexpected, (
         f"plaintext is revealed somewhere invariant 2 does not permit: {unexpected}. "
         f"Either move it behind one of the permitted sites, or -- if it is genuinely a "
-        f"fifth exception -- say so in `CLAUDE.md` invariant 2 and add it to PERMITTED "
-        f"here. A fifth exception is a decision, not an implementation detail."
+        f"new exception -- say so in `CLAUDE.md` invariant 2 and add it to PERMITTED "
+        f"here. A new exception is a decision, not an implementation detail."
     )
 
 
@@ -128,7 +124,7 @@ def test_the_permitted_list_has_not_gone_stale() -> None:
 
 
 def test_the_seen_path_reveals_in_exactly_one_place() -> None:
-    """#439's first guard, asserted rather than described.
+    """The seen path's first guard, asserted rather than described.
 
     The whole of UC-2's fourth exception is that there is *one* site, in the seen
     path's own view module, reachable only where the delivery method is `manual`.

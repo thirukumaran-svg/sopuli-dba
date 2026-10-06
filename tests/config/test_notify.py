@@ -148,13 +148,12 @@ def test_a_literal_brace_is_not_a_placeholder() -> None:
     assert built(template="{{ok}} for {account}") is not None
 
 
-# ------------------------------------------------------- nothing sends yet ---
+# --------------------------------------------- whether a channel can send ---
 
 
 def test_a_served_channel_with_its_client_installed_warns_about_nothing() -> None:
-    """`webhook` is implemented since #442's second part, and `httpx` is installed
-    in the dev environment -- so there is nothing to say. This test said the
-    opposite while part 1 was the whole of it."""
+    """`webhook` is implemented, and `httpx` is installed in the dev environment,
+    so there is nothing to say."""
     assert unserviceable(built()) is None
 
 

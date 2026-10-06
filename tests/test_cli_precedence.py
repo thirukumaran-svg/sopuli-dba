@@ -487,7 +487,7 @@ def test_a_source_cannot_wire_a_setting_by_producing_it(
         )
 
 
-def test_a_profile_block_no_command_consults_yet_still_loads(
+def test_a_profile_block_no_command_consults_still_loads(
     runner: CliRunner, write_config: Any
 ) -> None:
     """The other direction from the test above, and the one that was missing.
@@ -503,12 +503,9 @@ def test_a_profile_block_no_command_consults_yet_still_loads(
     of the far more ordinary thing the guard can break: a key the file is allowed
     to contain.
 
-    **`db:` was the subject here and has graduated** (#360): both budgets now have
-    a consumer and are contributed, so the block no longer stands for "accepted
-    and unread" and this test would go on passing while asserting nothing.
-    `log_level` does stand for it -- parsed, closed against `LOG_LEVELS`, read by
-    nothing -- and it is written *beside* the `db:` block, so one config still
-    covers both.
+    `log_level` is the key that stands for "accepted and unread": parsed, closed
+    against `LOG_LEVELS`, and read by nothing. It is written *beside* the `db:`
+    block, which is read, so one config covers both.
     """
     # `write_config` rather than a hand-written file: it sets 0600, which P4's
     # permission check requires on POSIX. Writing it by hand passed on Windows
@@ -917,8 +914,7 @@ def test_every_defeated_request_is_reported_as_a_diagnostic(
 def test_explain_attributes_a_profile_supplied_value_to_layer_three(
     runner: CliRunner, estate: Path
 ) -> None:
-    """P3's "making precedence debuggable", for the layer that until now could not
-    produce a single row in that table."""
+    """P3's "making precedence debuggable", for the profile layer."""
     result = runner.invoke(
         cli, ["config", "show", "--config", str(estate), "--profile", "laptop", "--explain"]
     )
@@ -935,8 +931,8 @@ def test_a_profile_key_with_no_consumer_reaches_no_setting(
     runner: CliRunner, write_config: WriteConfig
 ) -> None:
     """§5's list is longer than the registry's, deliberately. `verify.method` is
-    parsed and validated and reaches nothing, because nothing verifies yet -- and
-    a row in `invocation.options` for it would claim otherwise."""
+    parsed and validated and reaches nothing: `creds check` takes its method from
+    `--method`. A row in `invocation.options` for it would claim otherwise."""
     path = write_config("version: 1\nprofiles:\n  ci:\n    verify:\n      method: hash\n")
 
     result = runner.invoke(

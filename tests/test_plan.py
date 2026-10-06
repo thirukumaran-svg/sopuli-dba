@@ -1,7 +1,6 @@
-"""What a run intends, before it does any of it (#247).
+"""What a run intends, before it does any of it.
 
-The section every `creds` verb needs and nothing yet emits. Two properties carry
-most of these tests:
+The run document's `plan` section. Two properties carry most of these tests:
 
 * **It is a function of the config and the selection, and of nothing else.**
   `03-json-output.md` requires a real run to emit the plan it would have emitted

@@ -9,9 +9,9 @@ One accept and one reject per rule, and the rejects assert on the *message*: a
 rule that fires without saying which key is wrong has not finished its job.
 
 **What is deliberately not tested here** is the degradation itself -- that a
-reset with no block configured warns and runs. Nothing resets yet, so there is no
-run to warn during; the block's absence is tested for what this layer can see,
-which is that it produces ``None`` rather than an empty destination.
+reset with no block configured warns and runs. That needs a run, so the verb's
+tests hold it. This layer tests what it can see: an absent block produces
+``None`` rather than an empty destination.
 """
 
 from __future__ import annotations

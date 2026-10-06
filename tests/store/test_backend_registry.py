@@ -1,4 +1,4 @@
-"""The registry that maps ``vaults.*.type`` to a module (#130, #134).
+"""The registry that maps ``vaults.*.type`` to a module.
 
 Everything here is about **telling three failures apart**. All three arrive as
 ``ModuleNotFoundError``, only one of them is "install the extra", and the one
@@ -6,10 +6,9 @@ that is easiest to get wrong -- a bad import inside a backend module -- is the
 expensive one: collapsing it into the first sends somebody to `pip` forever over
 a typo of ours.
 
-The backends are faked rather than real. `sopuli.store.hashicorp` does not exist
-yet, so with the real mapping every case here would take the same branch (the
-module is missing) and the test would prove nothing about the branch it claims
-to be about. Fake modules written into ``tmp_path`` let each failure be produced
+The backends are faked rather than real. With the real mapping, each backend
+always takes the same branch, so a test could not choose which failure it
+produces. Fake modules written into ``tmp_path`` let each failure be produced
 deliberately, one at a time.
 """
 
@@ -82,11 +81,10 @@ def test_the_mapping_is_strings_and_not_imports() -> None:
     build its table, every extra would be a base dependency and the rest of the
     design would be decoration.
 
-    Asserted on the table rather than on ``sys.modules``, which is what this
-    checked until a backend existed (#104): now that `sopuli.store.hashicorp` is
-    real, any test module importing it puts it in ``sys.modules`` for the whole
-    session, and the assertion measured test collection order rather than the
-    registry. The property itself is held properly in
+    Asserted on the table rather than on ``sys.modules``: any test module that
+    imports `sopuli.store.hashicorp` puts it in ``sys.modules`` for the whole
+    session, so that assertion would measure test collection order rather than
+    the registry. The property itself is held properly in
     ``test_install_shape.py``, in a subprocess, where "was it imported" is a
     question with one answer.
     """
@@ -172,7 +170,7 @@ def test_a_missing_client_is_config_and_exit_nine() -> None:
 
 
 def test_an_unwritten_backend_is_not_a_pip_problem(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Live right now: §3a accepts four types and no backend module exists yet.
+    """Reachable: §3a accepts backend types this build has no module for.
 
     The distinction is the whole point of having two classes. Nothing the
     operator installs fixes this one, so the message must not carry an install

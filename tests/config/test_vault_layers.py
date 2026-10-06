@@ -296,8 +296,8 @@ def test_a_layer_that_writes_no_auth_leaves_the_declaration_s_alone() -> None:
 
 
 def test_a_profile_s_block_is_parsed_and_kept() -> None:
-    """Validated now, applied when something selects a profile (#153). The
-    refusals are the half that is useful without activation."""
+    """A profile's `vaults:` block is validated and kept whether or not the
+    profile is active. The tests below apply it."""
     config = build_config(
         document(profiles={"ci": {"vaults": {STORE: {"addr": "https://ci.example.com"}}}})
     )
