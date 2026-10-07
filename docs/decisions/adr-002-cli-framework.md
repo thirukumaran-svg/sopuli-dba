@@ -44,8 +44,8 @@ preference:
    a dependency for.
 2. **A real exception hierarchy.** `ClickException` / `UsageError` give one
    place to attach the rule that errors carry a vendor code, a category and a
-   hint, and one place to later answer whether `--output json` should emit a
-   document on a usage error. `argparse.ArgumentParser.error()` calls
+   hint, and one place to apply [J7](log.md#j7): a usage error (exit 2) emits
+   no `--output json` document. `argparse.ArgumentParser.error()` calls
    `sys.exit` directly; intercepting it means subclassing the parser, which is
    the kind of thing discovered after twenty commands exist.
 
@@ -66,7 +66,7 @@ argparse, while giving up argparse's explicitness too.
 
 ## Consequences
 
-- One runtime dependency. Minor next to D3, which already makes Instant Client a
+- Click is one more runtime dependency. That is minor next to D3, which already makes Instant Client a
   hard runtime prerequisite on every platform.
 - Global options are a shared `global_options` decorator applied per verb, *and*
   a `group_options` decorator on the group. A new command that forgets the first

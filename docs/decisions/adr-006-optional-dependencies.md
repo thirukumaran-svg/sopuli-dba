@@ -185,8 +185,8 @@ three registries — stores, drivers, and now channels — all answer the same q
 the same way, and `tests/store/test_install_shape.py` derives its exemptions from all
 three rather than from a hand-kept list.
 
-**A channel with nothing to install needs no extra**, and one is coming: a future
-`smtp` channel sends with the standard library, so
+**A channel with nothing to install needs no extra.** An `smtp` channel, for
+example, would send with the standard library. So
 `sopuli.notify.registry.Notifier.extra` is optional exactly as a store's is. The
 category is "the client a channel posts with", not "every channel".
 

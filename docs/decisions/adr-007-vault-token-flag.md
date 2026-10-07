@@ -165,8 +165,8 @@ available.
 
 ## `--vault-token-stdin` is deferred, and its rule is banked now
 
-stdin is not taken because `--from-stdin` (UC-1 §5) already claims the pipe for a
-supplied password on `creds apply`. Two readers, one stream.
+stdin is not taken because `creds generate --from-stdin` (UC-1 §5) already claims
+the pipe for a supplied password. Two readers, one stream.
 
 The constraint that a future `--vault-token-stdin` would have to satisfy is
 written into P5 **today**, before the flag exists: *one stream, one reader; a

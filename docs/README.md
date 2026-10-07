@@ -57,7 +57,7 @@ on which Oracle release, and what it showed.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.8.schema.json](schemas/sopuli-config-1.8.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.31.schema.json](schemas/sopuli-run-1.31.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-run-1.31.schema.json](schemas/sopuli-run-1.31.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.7.schema.json](schemas/sopuli-event-1.7.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -320,7 +320,7 @@ closed while the measurement is still open: #87, #383 and #387 are. Release-by-r
 
 ### Password text kept by Oracle
 
-These three entries share a setup. The probe is
+These entries share a setup. The probe is
 `sql/oracle/02_password_leak_probe.sql` and its extensions are
 `sql/oracle/04_password_leak_extensions.sql`. The findings are in
 `design/02-oracle-privileges.md` §4 and `design/04-testing.md` §6 gate 2.
