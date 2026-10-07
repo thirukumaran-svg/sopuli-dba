@@ -248,7 +248,7 @@ a diff.
 
 These rules apply to every document in the repository, to code comments and to
 docstrings. Some older text does not follow them yet; it is being rewritten
-(open: #674, #686). New and changed text follows them now.
+(open: #674). New and changed text follows them now.
 
 ### Write in plain English
 

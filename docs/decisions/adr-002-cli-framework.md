@@ -75,13 +75,11 @@ argparse, while giving up argparse's explicitness too.
 - Both parser positions are accepted for the inert options and both are layer 1;
   the verb's value wins where both were given. See `sopuli/invocation.py`.
 
-### The position asymmetry, and how it was resolved (#10)
+### The position asymmetry (decided in #10)
 
-This ADR originally recorded `sopuli --output json config show` as a usage error,
-and said the fix — if the asymmetry ever mattered — was a custom `click.Group`
-reconciling group-level and command-level options.
-
-It mattered, and the fix is narrower than a custom `Group`. Declaring the option
+An option such as `--output` is accepted both before and after the verb:
+`sopuli --output json config show` works. This needs no custom `click.Group`
+reconciling group-level and command-level options. Declaring the option
 in both places is mechanically fine: click hands back both values, and
 `default=None` distinguishes "not given" from "given the default", including for
 `is_flag` options. What was missing was not parsing but a *rule* about which one

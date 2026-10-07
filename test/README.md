@@ -1,41 +1,43 @@
 # Test environments
 
-**tier0 and tier1 verified working 2026-08-17** — both come up, Vault mounts both
-KV versions, Oracle initialises and the profiles in `oracle-init/` are created.
-**21c verified working 2026-09-08** (#380) — `oracle-xe21` comes up in about a
-minute, the `oracle-init/` profiles are created including `SOPULI_ROLLOVER`, and
-the whole suite is green against both `XEPDB1` and the `XE` root. **Set
-`AUDIT_TRAIL` before believing anything about auditing on it** — the image ships
-`NONE`, on which nothing is captured at all, not even the Oracle-supplied
-`ORA_LOGON_FAILURES` policy after a real failed logon. `alter system set
-audit_trail=db,extended scope=spfile` and restart; quoting the value is
-`ORA-00096`.
-**18c verified working 2026-09-08** (#381) — same again, and it is the version
-the matrix keeps for what it *cannot* do: `password_rollover` is absent, so
-`doctor` reports 5 capabilities rather than 6 and `--strategy rollover` is exit 5
-at plan time. `SOPULI_ROLLOVER` is not created there, by design — step 4 of
-`oracle-init/01_test_profiles.sql` reports and carries on — so a test needing a
-second profile must use `SOPULI_REUSE`. The `AUDIT_TRAIL` note above applies to
-this image too.
-**11g verified working 2026-09-08** (#382) — the fastest of the four, healthy in
-well under a minute. It is the one whose *shape* differs rather than its
-capabilities: a non-CDB, so `SYS_CONTEXT('USERENV','CON_NAME')` **raises**
-(`ORA-02003`) rather than answering NULL; no unified auditing, so
-`01_audit_policy.sql` refuses; no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or
-`COMMON` columns; and `ora12c_strong_verify_function` does not exist, so
-`SOPULI_STRONG` is absent alongside `SOPULI_ROLLOVER`. **Read #387 before
-quoting any leak result from it**: `V$SQLSTATS` retains the `ALTER USER` text
-there, which no other release in the matrix does.
-**19.3 EE added 2026-09-27** (#548), under a profile of its own, `oracle19c`,
-and maintainer-only: see `docs/maintainer-environments.md` §2 before pulling it.
-**19.19 EE added 2026-09-28** (#565), profile `oracle19c-ru` — **arm64 hosts
-only**; on x86 it does not start under emulation, and it is unrun on arm64.
-A current RU is an OCI DB system instead, not a compose service: 19.32.0.0.0,
-from `oci-dbcs/new-db-system.ps1` (#581).
-**12.2.0.1 EE added 2026-09-29** (#572), profile `oracle12c`, maintainer-only on
-the same terms as 19.3, plus a one-time `docker exec` after its first start —
-see `docs/maintainer-environments.md` §3.
-`nne` and `emulators` are still unrun.
+What each environment is, and what to know before using it:
+
+- **tier 0** brings up Vault, with both KV versions mounted, and PostgreSQL.
+- **tier 1** adds Oracle Free, with the profiles in `oracle-init/`.
+- **21c XE** (`oracle-xe21`) is healthy in about a minute. The `oracle-init/`
+  profiles are created, including `SOPULI_ROLLOVER`. **Set `AUDIT_TRAIL` before
+  you believe anything about auditing on it.** The image ships `NONE`, which
+  captures nothing, not even the Oracle-supplied `ORA_LOGON_FAILURES` policy
+  after a real failed logon. Run `alter system set audit_trail=db,extended
+  scope=spfile` and restart. Quoting the value gives `ORA-00096`.
+- **18c XE** (`oracle-xe18`) is the release the matrix keeps for what it
+  *cannot* do. It has no `password_rollover`, so `doctor` reports one capability
+  fewer and `--strategy rollover` exits 5 at plan time. `SOPULI_ROLLOVER` is not
+  created there, by design: step 4 of `oracle-init/01_test_profiles.sql` reports
+  and carries on. A test that needs a second profile must use `SOPULI_REUSE`.
+  The `AUDIT_TRAIL` note above applies here too.
+- **11g XE** (`oracle-xe11`) is the fastest to start. Its *shape* differs, not
+  only its capabilities. It is a non-CDB, so `SYS_CONTEXT('USERENV','CON_NAME')`
+  **raises** `ORA-02003` instead of returning NULL. It has no unified auditing,
+  so `01_audit_policy.sql` refuses. It has no `ORACLE_MAINTAINED`,
+  `PASSWORD_CHANGE_DATE` or `COMMON` columns. `ora12c_strong_verify_function`
+  does not exist, so `SOPULI_STRONG` is absent beside `SOPULI_ROLLOVER`. Read
+  its rows in [`../docs/measurements.md`](../docs/measurements.md) before you
+  quote a leak result from it: `V$SQLSTATS` keeps the `ALTER USER` text there.
+- **19.3 EE** has a profile of its own, `oracle19c`, and is maintainer-only. Read
+  `docs/maintainer-environments.md` §2 before you pull it.
+- **19.19 EE**, profile `oracle19c-ru`, runs on **arm64 hosts only**. On x86 it
+  does not start under emulation, and it has not been run on arm64. A current
+  release update is an OCI DB system instead, not a compose service: see
+  `oci-dbcs/new-db-system.ps1`.
+- **12.2.0.1 EE**, profile `oracle12c`, is maintainer-only on the same terms as
+  19.3, and needs a one-time `docker exec` after its first start. See
+  `docs/maintainer-environments.md` §3.
+- `nne` and `emulators` have not been run.
+
+The releases each environment was measured on are in
+[`../docs/measurements.md`](../docs/measurements.md).
+
 Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testing.md).
 
 ## Quick start
@@ -138,24 +140,19 @@ without `-v`.
   swallows them, so it exits 0 and still prints `kv (v2) and kv1 (v1) mounted` —
   harmless, but the errors are the first thing anyone debugging this stack will
   find. A `vault secrets list | grep -q` guard before each enable would silence it.
-- **`hashicorp/vault:latest` was 2.x, not 1.x, as of 2026-08-17** — the version
-  that first surfaced this is now pinned (`hashicorp/vault:2.0.4`) rather than
-  tracked as `:latest`, because `tests/store/test_hashicorp_cas_conflict.py`
+- **Vault is pinned to `hashicorp/vault:2.0.4`**, not tracked as `:latest`,
+  because `tests/store/test_hashicorp_cas_conflict.py`
   asserts on Vault's own error wording and an upstream bump has to be a
   deliberate line change here, not a silent moving target.
-- **`gvenzl/oracle-free:latest` is now 26ai** (`23.26.2.0.0`) — which is the *same
-  database* as 23ai, renamed in October 2025, not a newer version. So this image is
-  the 23ai line, and results from it apply to it; there is no separate 23ai to
-  obtain. Cite the release number rather than the name, because next quarter's 26ai
+- **`gvenzl/oracle-free:latest` is 26ai**, which is the *same database* as 23ai
+  under a new name, not a newer version. So this image is the 23ai line, and
+  results from it apply to it; there is no separate 23ai to obtain. Cite the release number rather than the name, because next quarter's 26ai
   is a different RU. Detail in
   [`../docs/design/04-testing.md`](../docs/design/04-testing.md) §2.
-- Oracle reaches `healthy` in **30–60 s**, not the 1–2 minutes assumed here — the
-  image ships a pre-built database. The `start_period: 120s` is generous rather
-  than necessary.
-
-*(T1 — whether `gvenzl/oracle-xe:11-slim` exists — is settled: it does, it starts
-in ~15 s, and `oracle-init/01_test_profiles.sql` runs against it. Oracle 11.2
-support is cheap and stays in tier 2.)*
+- Oracle Free usually reaches `healthy` in **30–60 s**, because the image ships
+  a pre-built database. The `start_period: 120s` is generous, not necessary.
+- `gvenzl/oracle-xe:11.2.0.2-slim`, the image `oracle-xe11` uses, exists and
+  `oracle-init/01_test_profiles.sql` runs against it, so Oracle 11.2 stays in tier 2 ([T1](../docs/decisions/log.md#t1)).
 
 ## What is *not* here, on purpose
 
@@ -181,7 +178,7 @@ The public test suite must be green using only what a contributor can pull —
 | `capabilities.py` | sketch of capability probing and the pytest skip markers |
 | `vault_cas_probe.py` | exploratory spike: what a real Vault CAS conflict looks like on the wire (#103, #104). Run by hand; the regression it found lives in `../tests/store/test_hashicorp_cas_conflict.py` instead |
 | `vault_auth_probe.py` | exploratory spike behind [ADR-005](../docs/decisions/adr-005-vault-client.md): whether `hvac`'s auth surface was worth the dependency (#103) — it wasn't. Run by hand |
-| `paths_ignore_probe.py` | which files under `docs/`, `sql/` and `examples/` — **and the root `README.md` and `CLAUDE.md`** — a **skipped lane** actually opens, and whether either workflow's prose allowlist covers one of them (#375, #458). Not "the suite": since #458 it deselects the modules `ci.yml`'s `docs` job runs, because what that job covers is not a hole in the list. Run by hand with tier 1 up — with no containers ~100 tests skip and whatever they read is invisible to it. Exits non-zero on a conflict, so `ci.yml`'s and `tier1.yml`'s lists stay measured rather than guessed. **Two things #458 changed**: the two root files were outside its watched set, so no drift involving either could ever be reported, although both are on the prose list and `tests/test_verification_register.py` scans both; and it now **deselects** the `DOCS_LANE` modules, because `ci.yml`'s `docs` job runs those on exactly the pull requests where the other lanes are skipped — so the question is what a *skipped lane* reads, not what the suite reads. Adding a test that reads prose means adding it to `DOCS_LANE` **and** to that job, or this goes quiet about whatever it reads |
+| `paths_ignore_probe.py` | which files under `docs/`, `sql/` and `examples/` — **and the root `README.md` and `CLAUDE.md`** — a **skipped lane** actually opens, and whether either workflow's prose allowlist covers one of them. Not "the suite": it deselects the modules `ci.yml`'s `docs` job runs, because what that job covers is not a hole in the list. Run by hand with tier 1 up — with no containers ~100 tests skip and whatever they read is invisible to it. Exits non-zero on a conflict, so `ci.yml`'s and `tier1.yml`'s lists stay measured rather than guessed. It watches the two root files because both are on the prose list and `tests/test_verification_register.py` scans both. It **deselects** the `DOCS_LANE` modules because `ci.yml`'s `docs` job runs those on exactly the pull requests where the other lanes are skipped, so the question is what a *skipped lane* reads, not what the suite reads. Adding a test that reads prose means adding it to `DOCS_LANE` **and** to that job, or this goes quiet about whatever it reads |
 | `k8s_eso_probe.py` | the evidence behind [`../docs/scenarios/kubernetes-eso.md`](../docs/scenarios/kubernetes-eso.md) §7: stands up Vault, the External Secrets Operator and the document's own manifests on a throwaway cluster, and checks that ESO reads what sopuli wrote. Needs Kubernetes rather than compose — see below. Run by hand |
 
 Test accounts are created and dropped per test under a per-run prefix. Only the

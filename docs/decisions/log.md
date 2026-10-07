@@ -285,10 +285,10 @@ the register.
   environment variables scattered across workflow files, where nobody reviews
   it. A profile that could change the scope would be a selector that does not
   look like one, which is dangerous in a tool that rotates credentials.
-  An earlier draft had `policies.*.verify.scheduled_method`, run context hidden
-  in a password policy, and a profile overriding `verify.method` replaced it.
 - **Rejected:**
   - Profiles that also select targets: a selector in disguise.
+  - `policies.*.verify.scheduled_method`: run context hidden in a password
+    policy.
 
 ## C11
 
@@ -1349,8 +1349,7 @@ the register.
   a call timeout cancels the round trip without undoing what the server did,
   and `ALTER USER` is not transactional, so a rotation cut off at the wrong
   moment cannot say whether the password changed. An operator may still choose
-  a timeout. Estates that already set either key get it on their next run, so
-  the change was released as a behaviour change.
+  a timeout.
 - **Rejected:**
   - Read the key only for verbs that do not mutate: one setting with two
     behaviours.
@@ -1403,8 +1402,7 @@ the register.
   not green. Colour never carries meaning on its own, and JSON output is never
   coloured.
 - **Why:** In a wall of monospace, `IN_SYNC` and `FAILED` looked the same until
-  read. Before this, one colour did all the work and the views disagreed about
-  which states to colour. Green next to yellow is the pairing a reader with
+  read. Green next to yellow is the pairing a reader with
   deuteranopia cannot tell apart, and that is exactly the distinction this tool
   reports.
 - **Rejected:**

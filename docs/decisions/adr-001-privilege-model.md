@@ -95,15 +95,15 @@ pattern, revisit this **for that runner's credential only**. A lighter option to
 try first: a read-only account for scheduled `check`, and an `ALTER USER` account
 used only by interactive `apply`/`rotate`.
 
-**The second trigger, P7, is now closed.** The hope was that the schema privileges
-introduced in the 23 codebase would cover `ALTER USER`
-(`GRANT ALTER USER ON SCHEMA app_web_user TO sopuli_svc`), giving scoped direct
-grants the least-privilege property the package was meant to provide at none of its
-cost. Tested 2026-08-17 on 26ai 23.26.2.0.0: **`ORA-00990: missing or invalid
-privilege`**, with `GRANT SELECT ANY TABLE ON SCHEMA` succeeding in the same session
-to prove the feature itself works. Exactly as the reasoning predicted — schema
-privileges scope privileges over objects *inside* a schema, and `ALTER USER` acts on
-the account as a principal. Evidence in `../design/02-oracle-privileges.md` §2.1.
+**Schema privileges are not a reason to revisit it (P7).** If the schema privileges
+of the 23 codebase covered `ALTER USER`
+(`GRANT ALTER USER ON SCHEMA app_web_user TO sopuli_svc`), scoped direct grants
+would have the least-privilege property the package was meant to provide, at none
+of its cost. They do not. On 26ai 23.26.2.0.0 the grant fails with
+**`ORA-00990: missing or invalid privilege`**, and `GRANT SELECT ANY TABLE ON
+SCHEMA` succeeds in the same session, which shows the feature itself works. Schema
+privileges scope privileges over objects *inside* a schema, and `ALTER USER` acts
+on the account as a principal. Evidence in `../design/02-oracle-privileges.md` §2.1.
 
 So the unattended-runner case above is the **only** remaining reason to revisit this
 decision, and it is about credential custody rather than about a narrower grant
@@ -111,10 +111,9 @@ being available. No such grant exists to be had.
 
 ## Note on the implementation
 
-The package implementation was drafted and has been deleted. It was never
-executed, and two things in it were never resolved. Both apply to the direct model
-equally. Both have since been measured. The releases each ran on are in
-[`../measurements.md`](../measurements.md).
+There is no package implementation. Two questions that a package would have had
+to answer apply to the direct model equally, and both are measured. The releases
+each ran on are in [`../measurements.md`](../measurements.md).
 
 - **Whether `ALTER USER` statement text leaks the password into `V$SQL` or
   `UNIFIED_AUDIT_TRAIL`.** On every release measured, `V$SQL` keeps no cursor

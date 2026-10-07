@@ -254,15 +254,14 @@ is for an owner who still knows the old password.
 
 ### `account suspend`
 
-Disabling an account, the offboarding case, is `sopuli account suspend`. The name
-was settled before it reached the JSON contract, where renaming a verb is a major
-bump (invariant 12). `lock` already means something else in this CLI:
+Disabling an account, the offboarding case, is `sopuli account suspend`. The verb
+is not `lock`, because `lock` already means something else in this CLI:
 `lock status` and `lock break`, the advisory locks on vault paths. A second sense
-of that word would give one surface two meanings. Of the three ways out, living
-with the collision, renaming this verb, or renaming the advisory-lock noun, the
-second costs nothing.
+of that word would give one surface two meanings. The other choices are to live
+with that, or to rename the advisory-lock noun. Naming this verb differently
+costs nothing.
 
-**The verb is renamed, not the state.** `suspend` is what a DBA does to a
+**Only the verb has a different name, not the state.** `suspend` is what a DBA does to a
 person's account when they leave. `LOCKED` is what `ACCOUNT_STATUS` then says,
 and §5 depends on that word meaning Oracle's fact, not the tool's. The statement
 is `ALTER USER … ACCOUNT LOCK`.

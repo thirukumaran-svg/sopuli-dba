@@ -108,17 +108,14 @@ explicit default timeouts (`requests` defaults to none, and the lock is held
 while we work), and because it takes a real `SSLContext`, which is what makes
 `vaults.*.tls.ca_path` and `vaults.*.tls.server_name` expressible.
 
-**`httpx` ships in `sopuli-dba[hashicorp]`.** This consequence originally read
-"`httpx` is a base dependency", on the grounds that a generic transport is not a
-vendor client and so #130's extras rule does not reach it. That is right about
-`httpx` and wrong about the outcome: #130 landed with rule 3 stated as *nothing
-in base opens a socket*, tested as "a base install can import none of the
-clients the backends reach with", and `httpx` in base falsifies that exactly as
-a vendor SDK would. Nothing else in base wants `httpx`, so the extra costs
-nothing and keeps the property holdable by a test. The client choice above is
-untouched — this is where the dependency is declared, not which dependency it
-is. See [ADR-006](adr-006-optional-dependencies.md) (E2). Lands with #104, not
-with this decision.
+**`httpx` ships in `sopuli-dba[hashicorp]`, not in the base package.** A generic
+transport is not a vendor client, so it could look like a base dependency. But
+ADR-006's rule 3 is *nothing in base opens a socket*, tested as "a base install
+can import none of the clients the backends reach with", and `httpx` in base
+breaks that exactly as a vendor SDK would. Nothing else in base wants `httpx`, so
+the extra costs nothing and keeps the property testable. This is where the
+dependency is declared, not which dependency it is. See
+[ADR-006](adr-006-optional-dependencies.md) (E2).
 
 **Error mapping lives at the transport boundary** —
 `sopuli/store/hashicorp/_errors.py`, one module, never at call sites and never

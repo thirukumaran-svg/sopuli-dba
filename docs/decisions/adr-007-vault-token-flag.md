@@ -55,8 +55,7 @@ thought.
 
 **`--vault-token-file PATH`.** It hoists the `token: { file: … }` shape
 `01-configuration.md` §3a already documents onto the command line, the same way
-`--vault-addr` hoists `vaults.*.addr` (which was written as an analogy to a flag
-that did not exist, and became a true one in #422). No new grammar, no new concept, and the
+`--vault-addr` hoists `vaults.*.addr`. No new grammar, no new concept, and the
 auth-methods list in P2 already said "token (`VAULT_TOKEN`, token file, token
 helper)".
 
@@ -206,11 +205,20 @@ a fifth step in the chain.
   credential could occupy**, which is invariant 1 made structural rather than
   remembered. `sopuli/store/registry.py`, the HashiCorp backend and
   `sopuli/cli.py` forward the path the same way.
-- `tests/test_cli_smoke.py`'s invariant-1 guard gains an allowlist of exactly two
-  option names, each held to its reason by a test: one takes a path, one refuses.
+- `tests/test_cli_smoke.py`'s invariant-1 guard has an allowlist of option names,
+  each held to its reason by a test: `--vault-token-file` takes a path, and
+  `--vault-token` exists only to be refused.
   The list is a literal rather than a suffix rule, so a third entry is a line
   somebody has to write and defend — `--password-file` should not be admitted by
   a pattern.
+- **No other `vaults.*` key gets a flag** (decided in #422). `--vault-addr`
+  exists and goes through the same merge, placed by `01-configuration.md` §6's
+  rule rather than by one of its own. One flag per reach key would be six
+  spellings of what `vaults:` says once, and the argument for `--vault-addr` is
+  specific to an address. There is no named form either: the multi-store case is
+  `SOPULI_VAULT__<NAME>__ADDR`. That is where this ADR's unnamed
+  `--vault-token-file` differs from it, a token being plausibly one per run and
+  an address never.
 
 ## The cost accepted
 
@@ -225,12 +233,3 @@ goes unguarded.
 ## Follow-ups
 
 - `--vault-token-stdin`, if anything ever needs it, against P5's one-stream rule.
-- ~~The remaining CLI hoists of `vaults.*`~~ — **closed by #422, and closed
-  narrowly.** `--vault-addr` exists and goes through the same merge, placed by
-  `01-configuration.md` §6's rule rather than by one of its own. The other reach
-  keys got no flag and are not going to: one per key would be six spellings of
-  what `vaults:` says once, and the argument that earned this one is specific to
-  an address. There is no named form either — the multi-store case is
-  `SOPULI_VAULT__<NAME>__ADDR`, which is where this ADR's own unnamed
-  `--vault-token-file` differs from it, a token being plausibly one per run and
-  an address never.

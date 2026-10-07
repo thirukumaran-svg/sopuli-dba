@@ -351,7 +351,7 @@ These come from UC-1 §11. The second column is the environment each one needs.
 | Password reuse: with `PASSWORD_REUSE_MAX` set, the tool does not retry blindly on `ORA-28007` | any |
 | **The password length limit.** A policy that asks for more bytes than the release allows is refused at *plan* time, not by `ORA-00972` during `apply`. Below Oracle 23 the limit is 30 bytes, and from 23 it is 128 bytes. `sopuli/driver/oracle/limits.py` holds the limit. The results per release are in [`../measurements.md`](../measurements.md) | 21c XE, 18c XE, 11g XE, 19.3 EE, 12.2 EE |
 | Verifiers: 11g has 10G and 11G verifiers and no `T:`, so `--method hash` must refuse at plan time, not guess. `hash` compares the `12C` verifier only. `sql/oracle/05_verifier_layout_probe.sql` reads the verifier layout, and `06_verifier_reproduce.{sql,py}` recomputes each stored digest on the client. The results per release are in [`../measurements.md`](../measurements.md) | 11g XE, 18c XE |
-| **The non-CDB shape.** This is not a missing capability. Oracle answers a different set of questions. `SYS_CONTEXT('USERENV','CON_NAME')` *raises* `ORA-02003` instead of returning NULL. `DBA_USERS` has no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or `COMMON`. `USER_SYS_PRIVS` has no `COMMON`. There are no audit policies. Code unrelated to containers can break on any of these. The privilege audit once blanked a whole target row and still exited 0 | 11g XE |
+| **The non-CDB shape.** This is not a missing capability. Oracle answers a different set of questions. `SYS_CONTEXT('USERENV','CON_NAME')` *raises* `ORA-02003` instead of returning NULL. `DBA_USERS` has no `ORACLE_MAINTAINED`, `PASSWORD_CHANGE_DATE` or `COMMON`. `USER_SYS_PRIVS` has no `COMMON`. There are no audit policies. Code unrelated to containers can break on any of these, for example by blanking a whole target row in the privilege audit while the run still exits 0 | 11g XE |
 | **DDL text retention differs between releases** (unverified: ddl-text-versions). `V$SQLSTATS` keeps the `ALTER USER` statement on 11.2 and on no later release measured. Invariant 13's reasoning holds everywhere, but its conclusion depends on the release. The decision is to document this, not to warn or refuse ([P8](../decisions/log.md#p8)). That is defensible only while the record is accurate, so every release claimed as supported gets `02_password_leak_probe.sql` run against it. The releases are in [`../measurements.md`](../measurements.md) | every release claimed |
 | Common user with `CONTAINER=ALL`, and the refusal outside `CDB$ROOT` | any CDB |
 | Rollover: both passwords are valid during the window, and `finish-rollover` ends it | 26ai Free, a real 19.12 or later |
@@ -378,13 +378,13 @@ locally. A change may use tier 2 or 3 when it needs to.
 CI already runs tier 1 on every pull request that changes code, so the point is
 not coverage. The
 point is that **a test asserts what its author already suspected.** A real run
-catches the faults nobody suspected. These got through before:
+catches the faults nobody suspected. Faults like these pass every test:
 
-| What happened | Why no test would have caught it |
+| Fault | Why no test catches it |
 |---|---|
-| A `creds check` sample was written into a design document before the command was run, and the command did not print it | the sample was prose, and prose is not executed |
-| `ORA-28002` is the documented code for the grace period. 26ai sends `ORA-28098` or `ORA-28011`, depending on the profile, on a connection that **succeeds** | the code checked for a constant that nobody had seen the server send |
-| A diagnostic query reported the probing session itself, in one run out of two | one green run does not measure an intermittent fault |
+| A sample in a design document is written before the command is run, and the command prints something else | the sample is prose, and prose is not executed |
+| The vendor documents one error code and the server sends another. `ORA-28002` is the documented code for the grace period, and 26ai sends `ORA-28098` or `ORA-28011`, depending on the profile, on a connection that **succeeds** | the code checks for a constant that nobody has seen the server send |
+| A fault is intermittent, such as a diagnostic query that reports the probing session itself in one run out of two | one green run does not measure an intermittent fault |
 
 Two rules follow:
 

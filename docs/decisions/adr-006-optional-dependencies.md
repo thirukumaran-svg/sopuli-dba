@@ -139,15 +139,13 @@ operator their file is broken when it is not would make `config validate` less
 trustworthy for the case it exists to serve — and validating on a laptop a
 config that runs elsewhere is the common case, not the strange one.
 
-**"Cannot serve" is the wide reading, and it was not always** (amended in #238).
-The word originally in this paragraph was *uninstalled*, and it was implemented
-as *the client is not on this machine* — which left the validator silent about
-`file` and `keyring`, whose backends do not exist in this build for anybody, and
-silent about `oci` on any machine that happened to carry the SDK. Three of the
-four types in `01-configuration.md` §3a have no module, so a file declaring all
-four reported one warning, and which one depended on the laptop rather than on
-the file. A validator quiet about a store that cannot work is failing at its one
-job, so E4 now covers both halves:
+**"Cannot serve" is the wide reading** (decided in #238). It covers a backend
+this build has no module for, as well as a client that is not installed. The
+narrow reading, *the client is not on this machine*, would leave the validator
+silent about a backend that does not exist in this build for anybody, and silent
+about `oci` on any machine that happens to carry the SDK. Then which warnings a
+file got would depend on the laptop, not on the file. A validator quiet about a
+store that cannot work is failing at its one job, so E4 covers both halves:
 
 | What is wrong | What the warning says |
 |---|---|

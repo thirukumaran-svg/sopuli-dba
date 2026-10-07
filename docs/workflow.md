@@ -67,8 +67,7 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   switch off a test while leaving it green. `test/paths_ignore_probe.py` measures
   what the **skipped** lanes open — it deselects the modules the `docs` job
   runs, since those are covered — and `tests/test_workflow_prose_list.py` keeps
-  the two copies of the list equal. The lists drifted seven patterns behind the tree between
-  #370 and #373, which is what #375 fixed.
+  the two copies of the list equal.
 - **A prose-only pull request still runs the `docs` job**, and that is what makes
   the skipping above safe (#458). Its tier-0 tests read the files the prose list
   ignores:
@@ -102,20 +101,18 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   - `tests/test_measurements.py` checks that `docs/measurements.md` and the
     header of each script in `sql/oracle/` name the same Oracle releases.
 
-  Without the job a typo'd slug or a
-  documented flag the CLI has not got merges green, which is what happened on
-  #457: docs-only, every lane skipped, and green only because the suite had been
-  run by hand.
+  Without the job, a mistyped slug or a
+  documented flag the CLI does not have would merge green, because every other
+  lane skips on a prose-only pull request.
 
-  **The direction was measured rather than argued.** When this was decided, the
-  two modules then in the lane accounted for all 21 ignored files the suite
-  opened, and ran in 0.75 s; deleting their
+  **The direction rests on a measurement, not an argument.** The job runs only the
+  tier-0 modules that read ignored files, and they take seconds. Deleting their
   paths from the prose list instead — effectively all of `docs/**` — buys the
   same safety for roughly twenty billed `ci` minutes plus ten of tier 1 on every
   documentation pull request. The job runs only when the heavy lanes do not,
   since the `test` matrix already covers these modules on a code change.
 
-  Two consequences worth knowing before touching any of this. The probe now
+  Two consequences worth knowing before touching any of this. The probe
   **deselects** those modules, because the question is what a *skipped lane*
   reads rather than what the suite reads, and `tests/test_workflow_prose_list.py`
   asserts the job and the probe name the same modules. And `tier1.yml` needs no
@@ -149,14 +146,13 @@ protection is unavailable on a private repository on the free plan** —
 repository public". So CI reports a status, and nothing stops a red PR being
 merged anyway.
 
-This is recorded rather than assumed closed. The workflow exists now so that
-closing the gap later is a settings change and not a project: when the repository
+The gap is open. `ci ok` exists so that closing it is a settings change and not
+a project: when the repository
 goes public (or the plan changes), **add `ci ok` as the required status check.
 One name, and not `lint` or the `test` cells** — that job name is the contract,
 and renaming it silently disables the requirement.
 
-That is a change from what this paragraph used to say, and it is measured rather
-than reasoned (#375, verified on #379). `ci.yml` skips its lanes on a prose-only
+`ci.yml` skips its lanes on a prose-only
 pull request — `changes` decides, and `lint`, `test` and `install shape` carry
 `if: needs.changes.outputs.code == 'true'` — because a job skipped by an `if:`
 reports `skipped`, which protection accepts, while a whole workflow skipped by
