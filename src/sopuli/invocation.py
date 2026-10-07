@@ -277,10 +277,10 @@ class Invocation:
     #: reached. A run that authenticates by wallet builds one and never calls it.
     #:
     #: ``None`` is the refusal P5 needs rather than an absent feature:
-    #: :func:`sopuli.admin._from_prompt` turns it into exit 8, and the reason a
-    #: prompter exists *only* under a terminal is that a terminal is not
-    #: carrying a piped password -- so ``--from-stdin`` and this can never be
-    #: two readers of one stream.
+    #: :func:`sopuli.safety.refuse_if_nobody_to_ask` turns it into exit 8 on a
+    #: verb that changes something, and the reason a prompter exists *only*
+    #: under a terminal is that a terminal is not carrying a piped password --
+    #: so ``--from-stdin`` and this can never be two readers of one stream.
     prompt: Prompter | None = None
     #: Every secret store this run has opened, by name.
     #:
@@ -697,12 +697,13 @@ def terminal_prompter(stdin: TextIO | None) -> Prompter | None:
     known, and everything below takes it as an argument.
 
     ``None`` when stdin cannot answer to being a terminal, which is a refusal and
-    not a missing feature -- :func:`sopuli.admin._from_prompt` turns it into
-    exit 8 with a message naming the three sources that need nobody. The
-    condition is stdin and deliberately not stderr: what is being protected is
-    P5's *one stream, one reader*, and the stream ``--from-stdin`` claims is
-    stdin. A run with a piped password therefore builds no prompter at all, so
-    the two can never both read the pipe.
+    not a missing feature -- :func:`sopuli.safety.refuse_if_nobody_to_ask` and
+    :func:`sopuli.admin._from_prompt` turn it into a refusal naming the three
+    sources that need nobody. The condition is stdin and deliberately not
+    stderr: what is being protected is P5's *one stream, one reader*, and the
+    stream ``--from-stdin`` claims is stdin. A run with a piped password
+    therefore builds no prompter at all, so the two can never both read the
+    pipe.
 
     :func:`~sopuli.output.tty.is_a_terminal` rather than ``stdin.isatty()``,
     because ``isatty()`` can raise: under a scheduler or a service manager stdin is

@@ -1207,21 +1207,33 @@ On Windows the probe also requires a console, since `isatty()` is true there for
 The question is never written to stdout: `getpass` puts it on the controlling
 terminal, or on stderr, and stdout carries the run document (J1).
 
-**`auth: prompt` with no terminal fails, and the right exit code is 8** —
-aborted, not config-invalid. The file is right, the invocation is right, and the run stopped
-because it needed a human and there was not one; sending a scheduler's owner to
-a config file with nothing wrong with it is the worse message. The same
-condition is answerable *before* anything is touched — `needs_prompt()` over the
-selected estate — which is invariant 4's shape applied to a source rather than
-to a capability. Nothing calls `needs_prompt()` in the plan phase (open: #481).
-The guard nearest the pipe is the one that must not be missing, and it is in
-place.
+**`auth: prompt` with no terminal fails, and a verb that changes something
+exits 8** — aborted, not config-invalid. The file is right, the invocation is
+right, and the run stopped because it needed a human and there was not one;
+sending a scheduler's owner to a config file with nothing wrong with it is the
+worse message. The condition is answerable *before* anything is touched, which
+is invariant 4's shape applied to a source rather than to a capability.
+`safety.refuse_if_nobody_to_ask()` asks `needs_prompt()` over every target the
+run may connect to, judged from the config before any vault document is read.
+If any target would prompt, the whole run is refused, and the message names
+every such target and its `admin.auth` key. A target where nothing is staged or
+due is still counted: a run that needs a password on some days and not on
+others is not one a scheduler can rely on, so it is refused every time and the
+operator narrows it. A `--dry-run` is refused too when its preview connects. `creds apply
+--dry-run` with no `--preflight` and no `--strategy` reads only the vault, so it
+still prints its plan. The
+verbs that call it are `creds apply`, `creds rotate`, `creds finish-rollover`,
+`account suspend`, `account expire-password` and `account reset-password`.
+`resolve()` refuses on the same condition at connect time, because the guard
+nearest the pipe is the one that must not be missing.
 
-**A run exits 1 for this today, not 8** (open: #481). Every command that connects
-treats a target it cannot reach as a per-target finding, so `NobodyToAskError`
-lands in that target's entry and the run exits 1. #481 decides two things: a
-plan-phase refusal for the mutating verbs, and what `doctor` does when one of the
-targets it surveys needs a password.
+**A verb that only reads reports the target and exits 1.** `doctor`,
+`creds check`, `creds status` and `account list` treat a target they cannot
+reach as one target's finding, so the refusal lands in that target's entry and
+the survey goes on to the next. One target nobody can reach must not hide what
+the others say. `creds generate` is not gated either: it reads the targets only
+for their password limits, and a target it cannot read is a caveat, not an
+error. Decision [#481](../decisions/log.md#481).
 
 **A prompt never reads stdin**, which is how P5's *one stream, one reader*
 survives contact with this method. `creds generate --from-stdin` (UC-1 §4) reads

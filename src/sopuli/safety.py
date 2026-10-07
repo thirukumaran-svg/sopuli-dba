@@ -28,10 +28,11 @@ what differs is exactly those two class attributes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from sopuli.config.errors import ConfigError
+from sopuli.admin import UNATTENDED_SOURCES, NobodyToAskError, Prompter, auth_at, needs_prompt
+from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Config, ExpandedTarget
 from sopuli.config.selection import matches
@@ -274,9 +275,7 @@ def _marked_hint(marked: tuple[ReadonlyTarget, ...], *, escapable: bool) -> str:
     "narrow the run" would be advice that cannot work, so the message says so and
     names the verbs that read instead.
     """
-    named = ", ".join(f"{one.name} ({one.location})" for one in marked[:NAMED_TARGETS])
-    if len(marked) > NAMED_TARGETS:
-        named += f", and {len(marked) - NAMED_TARGETS} more"
+    named = _named([f"{one.name} ({one.location})" for one in marked])
     them = "it" if len(marked) == 1 else "them"
     reads = "read instead with `sopuli creds check` or `sopuli creds status`"
     escape = (
@@ -285,6 +284,14 @@ def _marked_hint(marked: tuple[ReadonlyTarget, ...], *, escapable: bool) -> str:
         else f"no narrowing of this run can avoid {them}, so {reads}"
     )
     return f"readonly: {named}; no layer can relax it (invariant 10) -- {escape}"
+
+
+def _named(items: Sequence[str]) -> str:
+    """``items`` joined, cut at :data:`NAMED_TARGETS` with a count of the rest."""
+    named = ", ".join(items[:NAMED_TARGETS])
+    if len(items) > NAMED_TARGETS:
+        named += f", and {len(items) - NAMED_TARGETS} more"
+    return named
 
 
 def refuse_if_over_limit(
@@ -338,6 +345,69 @@ def refuse_if_over_limit(
             f"narrow the run with --select, --target or --group, or raise the "
             f"ceiling where it is written"
         ),
+    )
+
+
+def refuse_if_nobody_to_ask(
+    targets: Sequence[ExpandedTarget], prompt: Prompter | None, *, action: str
+) -> None:
+    """Stop a mutating command that would ask for a password nobody can type.
+
+    ``prompt`` is ``None`` when stdin is not a terminal
+    (:func:`~sopuli.invocation.terminal_prompter`). A target with
+    ``auth: prompt`` then cannot be reached, and every run that reaches it fails
+    on it. Invariant 4 says such a run says so before it touches anything, so
+    this asks :func:`~sopuli.admin.needs_prompt` over the selected targets
+    first. Without it, a run would change the targets it can reach and then fail
+    on the one it cannot, and a rollover left half applied is one that cannot be
+    promoted (invariant 7).
+
+    **Only the mutating verbs call this** (decision #481). A verb that only reads,
+    such as ``doctor`` or ``creds check``, keeps going past a target it cannot
+    reach and reports it, because one target nobody can reach must not hide what
+    the others say.
+
+    **``targets`` is every target the run may connect to**, judged from the
+    config before any vault document is read, and the caller decides it. That
+    is more than the run will always reach: a ``creds`` verb skips an account
+    with nothing staged or nothing due, and only the vault says which those are.
+    A run that needs a password on some days and not on others is not one a
+    scheduler can rely on, so it is refused every time, and the operator narrows
+    it.
+
+    A ``--dry-run`` whose preview connects is refused like the real run, before
+    the plan is printed, as the ``readonly`` and ``max_targets`` refusals are.
+    ``creds apply --dry-run`` with no ``--preflight`` and no ``--strategy`` reads
+    only the vault, so its caller passes no targets and it still prints its plan.
+
+    The refusal points at each target's ``admin.auth`` key, because that is the
+    line to edit for a run that has to go unattended. One target's key is the
+    error's location; several are each named with theirs.
+    """
+    if prompt is not None:
+        return
+    asking = [target for target in targets if needs_prompt(target)]
+    if not asking:
+        return
+    if len(asking) == 1:
+        message = (
+            f"{action} reaches target {asking[0].name!r}, which asks for its admin "
+            f"password interactively, and there is nobody here to ask"
+        )
+        at = auth_at(asking[0])
+    else:
+        named = _named([f"{one.name} ({auth_at(one)})" for one in asking])
+        message = (
+            f"{action} reaches {len(asking)} targets that ask for their admin passwords "
+            f"interactively, and there is nobody here to ask: {named}"
+        )
+        at = ROOT
+    them = "it" if len(asking) == 1 else "them"
+    narrow = f"narrow the run so it does not reach {them}, " if len(asking) < len(targets) else ""
+    raise NobodyToAskError(
+        message,
+        at=at,
+        hint=f"nothing was changed; run it from a terminal, {narrow}or {UNATTENDED_SOURCES}",
     )
 
 

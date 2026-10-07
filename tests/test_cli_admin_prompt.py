@@ -37,7 +37,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner, Result
 
-from sopuli.admin import PasswordPrompt
+from sopuli.admin import NobodyToAskError, PasswordPrompt
 from sopuli.cli import cli
 from sopuli.driver.protocol import (
     PASS,
@@ -460,22 +460,97 @@ def test_the_typed_password_reaches_the_driver_on_the_creds_verbs(
     assert asked == ["password for C##SOPULI_SVC on appdb-alpha: "]
 
 
-@pytest.mark.parametrize("verb", [["creds", "check"], ["creds", "apply"]])
-def test_the_creds_verbs_refuse_without_a_terminal(
+def test_creds_check_reports_the_target_without_a_terminal(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    creds_estate: Callable[[], list[Credential]],
+    asked: list[str],
+    watching: Callable[[bool], None],
+) -> None:
+    """A verb that only reads keeps a per-target finding and exits 1 (#481)."""
+    watching(False)
+    seen = creds_estate()
+    config = write_config(CHECK_CONFIG)
+
+    result = runner.invoke(cli, ["creds", "check", "--config", str(config)])
+
+    assert seen == []
+    assert asked == []
+    assert result.exit_code == ExitCode.FAILURE
+    assert "nobody here to ask" in result.output
+
+
+#: `CHECK_CONFIG` with a personal account, for the `account` verbs.
+ACCOUNT_CONFIG = (
+    CHECK_CONFIG
+    + """personal_accounts:
+  - accounts: [acme_dev_alice]
+delivery:
+  method: vault_wrapped
+  vault_wrapped: { ttl: 15m }
+"""
+)
+
+
+@pytest.mark.parametrize(
+    ("verb", "body"),
+    [
+        (["creds", "apply"], CHECK_CONFIG),
+        (["creds", "apply", "--dry-run", "--preflight"], CHECK_CONFIG),
+        (["creds", "rotate"], CHECK_CONFIG),
+        (["creds", "finish-rollover"], CHECK_CONFIG),
+        (["account", "suspend", "--account", "acme_dev_alice"], ACCOUNT_CONFIG),
+        (["account", "expire-password", "--account", "acme_dev_alice"], ACCOUNT_CONFIG),
+        (["account", "reset-password", "--account", "acme_dev_alice"], ACCOUNT_CONFIG),
+    ],
+    ids=" ".join,
+)
+def test_a_mutating_verb_refuses_before_it_connects(
     runner: CliRunner,
     write_config: WriteConfig,
     creds_estate: Callable[[], list[Credential]],
     asked: list[str],
     watching: Callable[[bool], None],
     verb: list[str],
+    body: str,
 ) -> None:
-    """A per-target finding on these verbs too, and no connection attempted."""
+    """Decision #481: the whole run stops at exit 8, and nothing is touched.
+
+    `seen` being empty is the observable: no connection was opened, so no target
+    was changed and no rollover was left half applied.
+    """
+    watching(False)
+    seen = creds_estate()
+    config = write_config(body)
+
+    result = runner.invoke(cli, ["--config", str(config), *verb])
+
+    assert isinstance(result.exception, NobodyToAskError), result.output
+    assert result.exception.exit_code == ExitCode.ABORTED
+    assert "appdb-alpha" in str(result.exception)
+    assert seen == []
+    assert asked == []
+
+
+def test_an_apply_preview_that_does_not_connect_is_not_refused(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    creds_estate: Callable[[], list[Credential]],
+    asked: list[str],
+    watching: Callable[[bool], None],
+) -> None:
+    """With no `--preflight` and no `--strategy`, the preview reads only the vault.
+
+    It needs no admin password, so it prints its plan with nobody at a terminal
+    (invariant 8).
+    """
     watching(False)
     seen = creds_estate()
     config = write_config(CHECK_CONFIG)
 
-    result = runner.invoke(cli, [*verb, "--config", str(config)])
+    result = runner.invoke(cli, ["--config", str(config), "creds", "apply", "--dry-run"])
 
+    assert result.exception is None, result.output
+    assert result.exit_code == ExitCode.SUCCESS
     assert seen == []
     assert asked == []
-    assert "nobody here to ask" in result.output

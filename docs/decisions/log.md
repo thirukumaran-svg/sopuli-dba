@@ -1571,6 +1571,32 @@ the register.
   - `--confirm` answering the prompt: a shell alias would remove the one guard
     between a DBA and a password they will see.
 
+## #481
+
+- **Decided:** 2026-10-07, #481
+- **Question:** `auth: prompt` with no terminal was meant to exit 8, and every
+  verb reported it as one target's finding and exited 1. Where does the run stop?
+- **Decision:** A verb that changes something checks every target it may connect
+  to, judged from the config, before it reads the vault or connects. If any of them would ask for a password and stdin is
+  not a terminal, the whole run is refused at exit 8, and the message names
+  those targets. A `--dry-run` is refused when its preview connects, and
+  `creds apply --dry-run` without `--preflight` or `--strategy` does not. A verb that only reads, such as `doctor`,
+  `creds check` or `creds status`, reports the target as unreachable and exits 1.
+  `creds generate` is not gated: it reads the targets only for password limits,
+  and a target it cannot read is already a caveat, not an error.
+- **Why:** A mutating run that cannot reach one target would change the others
+  and then fail, and a rollover left half applied cannot be promoted. Refusing
+  before anything is touched is invariant 4's shape. A survey is different: one
+  target nobody can reach must not hide what the others say.
+- **Rejected:**
+  - Let the refusal stop every verb: `doctor` would stop at the first target
+    that asks, which is the opposite of what it is for.
+  - Exit 8 only when every selected target was refused: a scheduler cannot write
+    a reliable branch on an exit code that depends on a count.
+  - Check only the targets with something staged or due: that needs the vault
+    read first, and the same scheduled run would pass on some days and fail on
+    others.
+
 ## #525
 
 - **Decided:** 2026-09-25, #525

@@ -236,7 +236,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
 | — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
 | — | — | Should `doctor` check that a TNS alias resolves? | open | | #240 |
-| — | — | `auth: prompt` with no terminal never exits 8 | open | | #481 |
 | — | — | The reset lock when journal and delivery are different vaults | open | | #516 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
 | — | — | Is logging to a file needed? | open | | #629 |
