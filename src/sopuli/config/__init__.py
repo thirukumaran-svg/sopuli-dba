@@ -14,7 +14,7 @@ filesystem, so keeping it separate is what lets the schema layer be tested with
 a dict and no I/O at all (``04-testing.md`` §4 makes that an architecture
 requirement, not a test convenience).
 
-Every section of ``01-configuration.md`` is now modelled, every
+Every section of ``01-configuration.md`` is modelled, every
 :class:`~sopuli.config.model.TargetSet` is expanded into the targets it
 generates (:mod:`sopuli.config.expansion`), and every name written in one
 section is resolved against the section that declares it. Those three run in
@@ -33,20 +33,18 @@ from typing import TYPE_CHECKING, Final
 
 #: Every name this package re-exports, and the submodule it comes from.
 #:
-#: **Imported on demand rather than at module scope** (#363), which is a fix to
-#: the import graph rather than a performance tweak. Importing *any*
-#: ``sopuli.config.X`` runs this file, and this file used to import ``bindings``
-#: and ``sharing`` eagerly -- so :mod:`sopuli.payload`, which needs two exception
-#: types and a :class:`KeyPath` from :mod:`sopuli.config.errors`, dragged in the
-#: two modules that import :mod:`sopuli.payload` straight back. The dependency
-#: that closed the loop was never the one it looked like, and #357 was the same
-#: shape one package over.
+#: **Imported on demand rather than at module scope**, which keeps the import
+#: graph free of a loop rather than being a performance tweak. Importing *any*
+#: ``sopuli.config.X`` runs this file. If this file imported ``bindings`` and
+#: ``sharing`` eagerly, :mod:`sopuli.payload`, which needs two exception types
+#: and a :class:`KeyPath` from :mod:`sopuli.config.errors`, would drag in the two
+#: modules that import :mod:`sopuli.payload` straight back.
 #:
 #: A flat table rather than a clever walk, because the failure mode of a clever
 #: one is a name that silently stops being exported.
 #: ``tests/config/test_package_exports.py`` holds it to ``__all__`` in both
 #: directions and checks every name resolves to the same object the submodule
-#: holds, so this cannot drift from the eager version it replaced.
+#: holds, so the table cannot drift from the submodules.
 _EXPORTS: Final[dict[str, str]] = {
     "AT_SELECT": "selection",
     "AccountPolicy": "model",

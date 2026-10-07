@@ -39,7 +39,7 @@ SAFETY_DELIVERY_KEYS = ("allowed_methods",)
 def read_safety(container: dict[str, Any], *, at: KeyPath) -> Safety | None:
     """``safety:`` where the key is written, ``None`` where it is absent.
 
-    **Key presence decides, not the value** (#501), which is the rule
+    **Key presence decides, not the value**, which is the rule
     :func:`~sopuli.config.fields.optional_bool` already follows for ``readonly``
     inside the block. ``safety:`` with nothing indented under it is ``null``, and
     reading that as *no block* is how a ``readonly`` somebody thought they had
@@ -88,7 +88,7 @@ def build_safety(raw: Any, *, at: KeyPath) -> Safety:
 def _build_delivery(raw: Any, *, at: KeyPath) -> SafetyDelivery:
     """Read a ``safety.delivery:`` sub-block that is known to be written.
 
-    **Key presence decides, not the value** (Copilot's review of #500), which is
+    **Key presence decides, not the value**, which is
     how :func:`~sopuli.config.fields.optional_bool` reads ``readonly`` two lines
     up. ``delivery:`` with nothing under it is ``null``, and the published schema
     types the property as an object -- so accepting it here would make the tool
@@ -97,7 +97,7 @@ def _build_delivery(raw: Any, *, at: KeyPath) -> SafetyDelivery:
     refuses the null.
 
     **Which methods, not which method.** ``delivery.method`` names the one an
-    estate uses and lives in its own top-level block (#440); this says which ones
+    estate uses and lives in its own top-level block; this says which ones
     it *may* use, and it is a safety axis rather than a delivery key -- a reader
     who looked for it beside ``method:`` would be looking in the layer that gets
     overridden rather than in the one that ratchets.

@@ -91,12 +91,11 @@ def read_material(
     complaint about a line that is wrong for a much more specific reason. Numbers
     count: an unquoted ``role_id: 1234`` is the same mistake in YAML's clothing.
 
-    ``noun`` and ``example`` exist because this reader stopped being only auth's
-    (#442). A webhook URL is a MaterialRef for C9's reason -- it embeds its own
+    ``noun`` and ``example`` exist because this reader serves more than auth. A
+    webhook URL is a MaterialRef for C9's reason -- it embeds its own
     credential -- and telling somebody who pasted a chat URL that "auth material is
     named, not written here", with `SOPULI_VAULT_SECRET_ID` as the example, answers
-    a question they did not ask. Both default to what every auth caller already
-    said, so the defaults are the existing behaviour rather than a new one.
+    a question they did not ask. Both default to the wording auth callers use.
     """
     if isinstance(raw, str | int | float):
         raise ConfigError(
@@ -148,9 +147,9 @@ def read_method(
     the caller's to supply because this module knows only that a key is *absent*:
     a vault's material is a MaterialRef, a target's ``admin.auth.secret`` is a
     SecretRef, and an identity field such as ``role`` is written inline. A sentence
-    fixed here would be wrong for one of those positions, and "required for this
-    method: role_id, secret_id" -- which is what it used to say -- was wrong for
-    all of them, because it repeated the message instead of answering it (#70).
+    fixed here would be wrong for one of those positions. A message such as
+    "required for this method: role_id, secret_id" is wrong for all of them,
+    because it repeats the message instead of answering it.
 
     It returns a predicate **without its verb** -- "named, not written -- ``{ env:
     NAME }``" rather than "is named" -- because :func:`_explain` groups the keys

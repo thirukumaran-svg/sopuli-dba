@@ -251,7 +251,7 @@ def build_target_selector(raw: Any, *, at: KeyPath) -> TargetSelector:
     """`targets:` is a list of names, `{group: NAME}` or `{match: {...}}` (§3).
 
     Public because `personal_accounts:` takes the same key with the same three
-    forms (H1, #449). It is documented as an application-entry key and it is not
+    forms (H1). It is documented as an application-entry key and it is not
     one exclusively, so the builder is shared rather than written twice -- two
     copies of a selector are two things to keep in step with `groups:`.
     """

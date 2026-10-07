@@ -1,4 +1,4 @@
-"""Merging P3's layers for one store (C13, #136 and #154).
+"""Merging P3's layers for one store (C13).
 
 `00-principles.md` P3 puts one precedence chain over everything, and five of its
 six layers reach a store:
@@ -11,8 +11,8 @@ six layers reach a store:
     5. Top-level defaults in config     defaults.vaults.hcv-prod.addr
 
 with the third-party variables of layer 3 -- ``VAULT_ADDR`` and friends -- ranked
-between 2 and 3, as P3's second exception says. **Layer 1 arrived in #422**, and
-it is one key wide: ``--vault-addr`` hoists ``vaults.*.addr`` onto the command
+between 2 and 3, as P3's second exception says. **Layer 1 is one key wide**
+(decision #422): ``--vault-addr`` hoists ``vaults.*.addr`` onto the command
 line and nothing else does, so there is no ``--vault-mount`` beside it.
 :func:`sopuli.config.vault_env.vault_cli_contributions` places it, on purpose --
 which store an unnamed setting addresses is §6's question and it has one answer.
@@ -20,8 +20,7 @@ which store an unnamed setting addresses is §6's question and it has one answer
 **The environment is collected next door**, in :mod:`sopuli.config.vault_env`,
 which owns §6's spellings and the question the unnamed variables raise -- which
 store is "the active" one. What arrives here is contributions, already addressed
-to a store and a key, so this function stays what it was: the place where the
-layers meet.
+to a store and a key, so this function is the place where the layers meet.
 
 **The direction is the thing most likely to be got wrong.** A top-level
 ``vaults:`` entry *outranks* ``defaults.vaults:``, so the ``defaults:`` block
@@ -30,7 +29,7 @@ The word "patch" reads the other way and is right only for a profile, which is
 layer 3 and above the declaration.
 
 **Every layer is merged in one pass**, which is why the active profile has to be
-known before this runs (#153). Resolving 4 against 5 first and folding 3 in
+known before this runs. Resolving 4 against 5 first and folding 3 in
 afterwards would give the right *value* for an overridden key and the wrong
 *provenance* for it -- and for ``tls.verify``, whose ratchet is the reason this
 goes through the resolver at all, it would report the winner of the first pass
@@ -169,16 +168,15 @@ def _merge(
     """One store, resolved key by key. Returns it and any defeated relaxation.
 
     **Every store goes through the resolver, including one nobody patched**
-    (#428). This used to return early for that case, on the grounds that a single
-    contribution resolves to itself and the two paths therefore agree -- which is
-    true of the *value* and was the whole of what this function kept. It now keeps
-    the provenance too, and a store with no layers has provenance worth reporting:
+    (decision #428). A single contribution resolves to itself, so skipping the
+    resolver for that store would give the same *value*. It would lose the
+    provenance, and a store with no layers has provenance worth reporting:
     ``[vaults.vault-dev.addr]`` is the answer "the file wrote it, here", and it is
     only distinguishable from "nobody wrote it" because the pair exists.
 
-    :attr:`~sopuli.config.model.Vault.patched` is unaffected either way. It names
+    :attr:`~sopuli.config.model.Vault.patched` does not depend on this. It names
     the keys some *other* layer supplied, which is the ``layer is not OBJECT``
-    test below rather than anything the early return was guarding.
+    test below.
     """
     values: dict[str, Any] = {}
     patched: list[str] = []
@@ -293,17 +291,17 @@ def _resolve_key(
     this store by :mod:`sopuli.config.vault_env`. Which is higher is the
     resolver's business and not restated here.
 
-    **The answer is renamed to the concrete store on the way out** (#428, found
-    in review). :func:`setting_name` is what the registry has to be asked with --
-    ``vaults.*.tls.verify``, for the reason its own docstring gives -- and it is
-    not what a reader can be told: the ``*`` stands for every store at once and is
-    not a key anybody can edit. That distinction had nowhere to be made until
-    something quoted the name back, and two things now do.
+    **The answer is renamed to the concrete store on the way out**
+    (decision #428). :func:`setting_name` is what the registry has to be asked
+    with -- ``vaults.*.tls.verify``, for the reason its own docstring gives --
+    and it is not what a reader can be told: the ``*`` stands for every store at once and is
+    not a key anybody can edit. Two things quote the name back.
     :func:`~sopuli.settings.ratchet_note` puts it in the sentence a defeated
     ``tls.verify`` produces -- which reaches an operator twice, as a warning on
     every command that loads the file and as the continuation line under this
-    store's row in ``config show --explain``, where ``vaults.*.tls.verify stays
-    true`` sat directly beneath a row named ``vaults.vault-dev.tls.verify``.
+    store's row in ``config show --explain``. Without the rename, the text
+    ``vaults.*.tls.verify stays true`` would sit directly beneath a row named
+    ``vaults.vault-dev.tls.verify``.
 
     Renamed **here** rather than in either view, because there are two of them and
     they must not spell one sentence two ways -- the argument

@@ -114,7 +114,7 @@ def _build_profile(name: str, raw: Any, *, at: KeyPath) -> Profile:
         log_level=_closed(entry, "log_level", allowed=LOG_LEVELS, noun="log level", at=at),
         log_file=optional_string(entry, "log_file", at=at),
         db=_build_db(entry.get("db"), at=at.key("db")),
-        # Applied at layer 3 when this profile is the active one (#153), by
+        # Applied at layer 3 when this profile is the active one, by
         # `sopuli.config.vault_layers`. The refusals are useful either way: a
         # profile writing `vaults.<name>.locking` is wrong whether or not any run
         # ever selects it, and `config validate` is where somebody finds that out.
@@ -134,7 +134,7 @@ def select_profile(
     the file's default. **A typo must not quietly give you interactive behaviour
     in a scheduler**, which is the whole of rule 6.
 
-    Exactly one, and no composition: C11 settled that in #31, so there is a name
+    Exactly one, and no composition: C11 settled that, so there is a name
     here and never a list.
 
     The error points at ``defaults.profile`` when that is where the name was

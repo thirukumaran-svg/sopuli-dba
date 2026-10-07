@@ -1,9 +1,9 @@
-"""The `reset_records:` block: where UC-2 journals a reset (H2, #450, #468).
+"""The `reset_records:` block: where UC-2 journals a reset (H2).
 
 UC-1's vault payload answers three questions at once -- when a password last
 changed, what to roll back to, and where the lock lives -- because the payload
 *is* the secret and all three are facts about it. UC-2 has no payload, and H2
-(#450) split the three apart: the **database** answers *when*, **nothing**
+splits the three apart: the **database** answers *when*, **nothing**
 answers *what to roll back to* because rollback is not a UC-2 operation, and this
 block says where the record that answers *who, which path and where delivered*
 lives.
@@ -15,7 +15,7 @@ pair is what two concurrent resets collide on, and the prefix is the only part o
 it an operator chooses.
 
 **It is not the delivery target, and must not be read as one.** On the unseen
-path the password is written where only the *person* can read it (#444, #447);
+path the password is written where only the *person* can read it;
 this is the DBA side's own journal, holds no password in any representation, and
 is readable by anyone who may know *that* a reset happened without thereby being
 able to use it. Two objects, two lifetimes -- UC-2 §3.5.
@@ -79,11 +79,11 @@ def _build_prefix(block: dict[str, Any], *, at: KeyPath) -> str:
 
     **A traversal segment is refused here rather than normalised**, with a
     located message, which is :func:`~sopuli.config.secret_refs.parse_secret_ref`'s
-    arrangement applied to the one other place a file names a store path (#344). The
-    backstop in ``normalise_path`` raises a bare :class:`ValueError`, and a config
-    file is entitled to be told which key is wrong; more to the point, a ``..`` under
-    a prefix walks out of it, and what it would walk into here is whatever else the
-    estate keeps in that store.
+    arrangement applied to the one other place a file names a store path
+    (decision #344). The backstop in ``normalise_path`` raises a bare
+    :class:`ValueError`, and a config file is entitled to be told which key is
+    wrong; more to the point, a ``..`` under a prefix walks out of it, and what it
+    would walk into here is whatever else the estate keeps in that store.
     """
     where = at.key("prefix")
     if "prefix" not in block:

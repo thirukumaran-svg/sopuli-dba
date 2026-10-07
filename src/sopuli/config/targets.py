@@ -12,7 +12,7 @@ Three values are read from closed sets -- ``type``, ``oracle.scope`` and
 ``admin.auth.method``. A free string there loads happily and then connects
 somewhere other than where the author meant, and this file is the whitelist
 (invariant 5). Where the reference has not named the vocabulary, the set holds
-only what it *has* named and the error says so; see issue #27.
+only what it *has* named and the error says so.
 
 ``admin:`` says which of P2's bootstrap sources reaches the database, in the same
 grammar as a vault's ``auth:`` (:mod:`sopuli.config.auth`) and with a different
@@ -193,7 +193,7 @@ def read_admin_auth(raw: Any, *, at: KeyPath) -> AdminAuth | None:
 
 
 def _shape(key: str) -> str:
-    """How one `admin.auth` key is written, for the error about a missing one (#70).
+    """How one `admin.auth` key is written, for the error about a missing one.
 
     Only `method: vault` requires anything, and what it requires is a whole
     SecretRef -- which is the answer somebody staring at "needs `secret`" wants,

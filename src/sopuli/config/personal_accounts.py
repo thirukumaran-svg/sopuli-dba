@@ -1,4 +1,4 @@
-"""The `personal_accounts:` section: who the tool may hand a password to (H1, #449).
+"""The `personal_accounts:` section: who the tool may hand a password to (H1).
 
 UC-2's accounts belong to **people**, and an application entry is the wrong shape
 for them: `01-configuration.md` §1 defines one as *these accounts are mastered by
@@ -137,7 +137,7 @@ def reject_cross_declaration(
     The two carry **different guarantees** -- one is mastered by a secret and
     synced from it, the other is handed to a person and mastered by nothing -- so
     a name in both makes the whitelist ambiguous about which applies, and the
-    validator refuses rather than picking. H1 (#449) decided this; UC-2 §2 is
+    validator refuses rather than picking. H1 decided this; UC-2 §2 is
     where the reasoning lives.
 
     Only the enumerated form can be checked here. A **predicate** is resolved

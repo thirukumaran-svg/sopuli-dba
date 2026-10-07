@@ -200,7 +200,7 @@ def _expand(target_set: TargetSet) -> list[ExpandedTarget]:
     # Read before the overrides are applied, because that is the only moment the
     # template's own block still exists per target: `_patch_safety` merges key by
     # key, so a patch's `readonly: false` replaces a template's `true` and the
-    # safer of the two is gone (#424). Rendered rather than raw -- a
+    # safer of the two is gone (decision #424). Rendered rather than raw -- a
     # `confirm_environments` entry may carry a placeholder, and an unrendered one
     # reaching a setting would be the one string in the estate with its braces
     # intact.
@@ -445,12 +445,11 @@ def _patch_target(
     resolution belongs to the precedence work; this only decides what the target
     layer says.
 
-    **That last paragraph was load-bearing and very nearly stopped being true**
-    (#424, found in review). It holds only while the template and the override
-    are two things the ratchet can see. Merged here they become one target-layer
-    value, and a run narrowed to the patched target has nothing left to be safest
-    *of* -- a `readonly: false` in an override would simply win. So the
-    template's block is kept on
+    **That last paragraph holds only while the template and the override are two
+    things the ratchet can see** (decision #424). Merged here they become one
+    target-layer value, and a run narrowed to the patched target has nothing left
+    to be safest *of* -- a `readonly: false` in an override would simply win. So
+    the template's block is kept on
     :attr:`~sopuli.config.model.ExpandedTarget.template_safety` and both reach
     the resolver, which is what makes the claim structural rather than merely
     stated.
@@ -564,7 +563,7 @@ def _patch_safety(
         # one list into another and producing a set neither block contains.
         # Widening is not a way round the ratchet -- `target_safety` contributes
         # the template's block as well, so both reach the resolver and the
-        # intersection is taken over the two (#424).
+        # intersection is taken over the two (decision #424).
         delivery=base.delivery if patch.delivery is None else patch.delivery,
     )
 

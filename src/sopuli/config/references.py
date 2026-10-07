@@ -153,7 +153,7 @@ def _vault_references(config: Config) -> list[_Reference]:
         found.append(_Reference(config.defaults.vault, ROOT.key("defaults").key("vault")))
     found.extend(_patch_references(config.defaults.vaults, at=ROOT.key("defaults")))
 
-    # UC-2's reset journal (#468). Checked here rather than left to the verb
+    # UC-2's reset journal. Checked here rather than left to the verb
     # that writes one, because a dangling name is a misspelling either way and
     # the file is open now -- and because the failure it would otherwise produce
     # arrives *after* a password has already changed (UC-2 §3.4), which is the
@@ -161,7 +161,7 @@ def _vault_references(config: Config) -> list[_Reference]:
     if config.reset_records is not None:
         found.append(_Reference(config.reset_records.vault, ROOT.key("reset_records").key("vault")))
 
-    # UC-2's delivery target (#444), on the same argument one block over and with
+    # UC-2's delivery target, on the same argument one block over and with
     # it sharpened: a misspelled store here is discovered when the run opens it,
     # which on the unseen path is *before* the DDL (§6.4) -- so the reset refuses
     # and nobody is worse off. That is the good case. The bad one is a name that
@@ -183,7 +183,7 @@ def _vault_references(config: Config) -> list[_Reference]:
 
 
 def _patch_references(patches: Sequence[VaultPatch], *, at: KeyPath) -> list[_Reference]:
-    """The names a partial `vaults:` block writes (C13, #136).
+    """The names a partial `vaults:` block writes (C13).
 
     A patch **names** a store rather than declaring one, which is the whole of
     C13: one `vaults:` name means one thing everywhere, including in the audit
@@ -344,7 +344,7 @@ def _check_non_production_vaults(config: Config) -> None:
 
 
 def _check_breaking_locks_without_a_fence(config: Config) -> None:
-    """#83: `locking.break_expired` and an `advisory-only` store are incompatible.
+    """Q2: `locking.break_expired` and an `advisory-only` store are incompatible.
 
     Breaking an expired lock is only safe because of the fence: the takeover write
     bumps the vault's version, so the run that was broken discovers it at its next

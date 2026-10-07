@@ -1,4 +1,4 @@
-"""Which store a binding uses, once the run is known (C15's plan-time half, #250).
+"""Which store a binding uses, once the run is known (C15's plan-time half).
 
 A store can be named in **seven** places. `_vault_for` resolves five of them
 while the file is being read -- the ref's own prefix, the application entry's
@@ -9,7 +9,7 @@ deliberately **not** in that chain: a profile's ``vault:`` and ``SOPULI_VAULT``,
 because both are properties of a *run* and bindings are built once, at load.
 
 So a perfectly good file can finish loading with ``binding.vault is None``, and
-#118 decided that is a real temporary state rather than an error: `config show
+C15 decided that is a real temporary state rather than an error: `config show
 --resolved` renders it ``-``, and the command that actually needs a store is what
 fails.
 
@@ -24,7 +24,7 @@ property of the shell a run happened to start in -- must not silently redirect a
 rotation to a different vault. The variable fills holes; it does not repoint
 arrows.
 
-**Not a registry setting, and that is #250's decision** (option 2 of two). The
+**Not a registry setting** (decision #250, option 2 of two). The
 tempting alternative was to widen ``vault`` in :mod:`sopuli.settings.registry` to
 accept ``Layer.PROFILE`` and let the one resolver answer this. It was rejected
 because that setting means something narrower than it looks: it answers *which
@@ -119,8 +119,8 @@ def refuse_unresolved(config: Config, *, action: str) -> None:
     """Stop a command that needs a store for a binding which has none.
 
     Invariant 4: fail at **plan time**, naming the thing and the target, rather
-    than partway through with a generic error. This is the refusal C15 (#118)
-    put in "the command that actually needs a store", and the reason it lives
+    than partway through with a generic error. This is the refusal C15
+    puts in "the command that actually needs a store", and the reason it lives
     here rather than in :mod:`sopuli.plan` is that a plan is a pure function of
     the config while this depends on the environment the run started in.
 

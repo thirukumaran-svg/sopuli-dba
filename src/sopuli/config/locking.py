@@ -1,4 +1,4 @@
-"""The two keys the advisory lock reads (Q2, decided in #83).
+"""The two keys the advisory lock reads (Q2).
 
 P5's lock lives in the vault: one compare-and-set guarded record per secret path,
 carrying a fencing token that is re-checked before every mutation. Two things

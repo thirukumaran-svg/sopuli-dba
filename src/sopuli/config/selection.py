@@ -29,7 +29,7 @@ from sopuli.config.errors import ROOT, ArgumentError
 from sopuli.config.model import Config, ExpandedTarget, Pairs, Target, TargetSelector, as_dict
 
 #: One (account, target) pair, which is the row :class:`Config.bindings` is keyed
-#: by and the unit a repair set is written in (#402, #391).
+#: by and the unit a repair set is written in.
 #:
 #: Not called ``Pair``: this module already spends that word on a label pair, and
 #: two things called a pair in one file is the sort of collision that survives
@@ -47,7 +47,7 @@ KEY_SEPARATOR = "="
 #:
 #: That location is also why these raise `ArgumentError` rather than a plain
 #: `ConfigError`: nothing is wrong with any file, so the exit code is 2 and there
-#: is no run document (J7, issue #8). The message shape is identical.
+#: is no run document (J7). The message shape is identical.
 AT_SELECT = ROOT.key("--select")
 
 
@@ -55,12 +55,10 @@ AT_SELECT = ROOT.key("--select")
 class Selection:
     """Everything the command line said about *which* of the estate to act on.
 
-    `01-configuration.md` §2 and §3 have shown these flags in their examples
-    since they were written, and `--select` was the only one that existed (#297).
-    They are one object rather than five arguments because every command that
-    narrows an estate narrows it the same way, and because the run document
-    reports the set as given -- ``invocation.selection`` has carried slots for
-    all of them since the schema was written.
+    `01-configuration.md` §2 and §3 show these flags in their examples. They are
+    one object rather than five arguments because every command that narrows an
+    estate narrows it the same way, and because the run document reports the set
+    as given in ``invocation.selection``.
 
     **Every member narrows; none extends** (invariant 5). They combine as *and*,
     which is the same rule `--select`'s own pairs already follow: `--application
@@ -250,8 +248,7 @@ def filter_estate(config: Config, selection: Selection) -> Config:
     nothing. Groups are therefore evaluated as their own predicate rather than
     merged into the label match: merging would let a group's labels silently
     overwrite the ones the operator typed, and would turn two groups into one
-    conjunction that can match nothing an operator asked for (found in review on
-    #299).
+    conjunction that can match nothing an operator asked for.
     """
     if selection.is_everything:
         return config
@@ -290,14 +287,14 @@ def filter_estate(config: Config, selection: Selection) -> Config:
 
 
 def filter_to_pairs(config: Config, pairs: Iterable[AccountTarget]) -> Config:
-    """The estate reduced to a named set of (account, target) pairs (#402).
+    """The estate reduced to a named set of (account, target) pairs.
 
     What :class:`Selection` cannot express. Its members are independent
     dimensions combined as *and*, so the nearest thing to a pair set --
     ``accounts={a, b}`` with ``targets={x, y}`` -- is their **cross product**,
     which is strictly wider. For ``{a@x, b@y}`` that is four pairs where two were
     wanted, and the two extra are exactly the logins ``creds apply --repair``
-    exists to save (#391, UC-1 §``--repair``).
+    exists to save (UC-1 §``--repair``).
 
     Invariant 5 holds the same structural way :func:`filter_estate` does: this
     only ever *removes* from ``bindings`` and ``expanded_targets``, so no pair
@@ -365,8 +362,7 @@ def refuse_unknown(config: Config, selection: Selection) -> None:
     # whose `targets:` selector matches nothing is validly declared and yields no
     # binding, and refusing its name as undeclared would report a typo the
     # operator did not make -- while the thing they actually want to know, that
-    # the entry currently reaches no target, is what the empty run tells them
-    # (found in review on #299).
+    # the entry currently reaches no target, is what the empty run tells them.
     _refuse_missing(
         "--application",
         selection.applications,

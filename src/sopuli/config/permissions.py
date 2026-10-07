@@ -10,9 +10,9 @@ master record; this file decides which vault entry that is.
 That is why the POSIX check is on ``0o077`` -- any group or other access -- and
 not only on the read bits that ``01-configuration.md`` §10 names. Refusing a
 world-*readable* file while accepting a group-*writable* one would be guarding
-the smaller problem. The doc has been updated to match.
+the smaller problem.
 
-**Two callers, one check.** ``--vault-token-file`` (#145) points at a bearer
+**Two callers, one check.** ``--vault-token-file`` points at a bearer
 token on disk, which is exactly the thing this guards against being readable by
 somebody else, so it goes through here too -- with ``what`` naming which file the
 message is about. It is deliberately *not* extended to every ``file:``
@@ -64,7 +64,7 @@ def check_permissions(path: Path, *, what: str = "config file") -> None:
 
     ``what`` opens every message this raises. It is a parameter rather than a
     fixed string because the second caller guards a token file rather than the
-    config (#145), and "config file is accessible to others" pointing at
+    config, and "config file is accessible to others" pointing at
     ``~/.vault-token`` would send somebody to edit the wrong file.
     """
     if sys.platform == "win32":
