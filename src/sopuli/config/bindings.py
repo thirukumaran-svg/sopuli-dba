@@ -78,7 +78,7 @@ def build_bindings(config: Config) -> tuple[Binding, ...]:
 def _check_stages_do_not_collide(
     bindings: Sequence[Binding], config: Config, *, where: Mapping[str | None, KeyPath]
 ) -> None:
-    """No two accounts may stage into the same place in one document (#255).
+    """No two accounts may stage into the same place in one document.
 
     ``_check_stageable`` refuses a ref with *nowhere* to stage. This refuses a
     set of refs that all have the **same** somewhere -- which is what
@@ -90,9 +90,9 @@ def _check_stages_do_not_collide(
     It cannot live beside ``_check_stageable``, which is called per binding with
     no view of its siblings. It is a property of the set, so it runs once every
     binding exists -- which is still load time, and still before any command has
-    done anything (invariant 4). Until #255 it was caught at the write boundary
-    by ``sopuli.generate.group``, one lock and one printed plan too late, and by
-    the wrong audience: this is a defect in the *file*, so it is what
+    done anything (invariant 4). ``sopuli.generate.group`` also guards it at the
+    write boundary, but that is one lock and one printed plan too late, and the
+    wrong audience: this is a defect in the *file*, so it is what
     ``config validate`` should say.
 
     **Only where staging is emulated**, for ``_check_stageable``'s own reason:
@@ -100,7 +100,7 @@ def _check_stages_do_not_collide(
     is no root ``pending`` key for two accounts to contend over.
 
     **Only where the store is known.** A binding whose ``vault`` is still ``None``
-    is one C15 (#118) completes later from a profile or ``SOPULI_VAULT``, and its
+    is one C15 completes later from a profile or ``SOPULI_VAULT``, and its
     backend -- and therefore whether this rule applies at all -- is not knowable
     from the file alone. Those are left to ``generate.group``'s guard, which is
     the second reason that guard stays.
@@ -208,15 +208,15 @@ def _check_store_declared(secret: SecretRef | None, config: Config, *, at: KeyPa
 def _check_has_somewhere_to_resolve_from(
     secret: SecretRef | None, store: str | None, config: Config, *, at: KeyPath
 ) -> None:
-    """#118: a ref with no store, and no `vaults:` block to point one at later.
+    """A ref with no store, and no `vaults:` block to point one at later.
 
     ``store`` is `None` here means none of §3's chain named one -- not the ref's
     own prefix, not the entry, not an override, not the target, not
     ``defaults.vault``. That is not always a mistake: a profile's `vault:` is
     deliberately left out of the chain (`_vault_for`'s docstring), because which
     profile is active is a property of a *run* and bindings are built once at
-    load, and the same is true of `SOPULI_VAULT` (P3, issue #10). Both can still
-    complete this binding once a run picks one -- but only if the file declared
+    load, and the same is true of `SOPULI_VAULT` (P3, decision #10). Both can
+    still complete this binding once a run picks one -- but only if the file declared
     somewhere for them to point *at*. `config show --resolved` already renders a
     `-` for this binding rather than a verdict, and the command that actually
     needs a store is where the exact answer belongs (invariant 4).
@@ -226,8 +226,8 @@ def _check_has_somewhere_to_resolve_from(
     -- a store name resolves against what the file declared (invariant 5; see
     `references.py`'s own dangling-name rule) -- so no run of this file can ever
     rotate this account, and that is true regardless of profile or environment.
-    Refusing here is `config validate` catching the case #111 was raised about,
-    rather than every target discovering it separately at plan time.
+    Refusing here is `config validate` catching the case early, rather than
+    every target discovering it separately at plan time.
     """
     if secret is None or store is not None or config.vaults:
         return
@@ -245,16 +245,15 @@ def _check_has_somewhere_to_resolve_from(
 def _check_stageable(
     secret: SecretRef | None, store: str | None, config: Config, *, at: KeyPath
 ) -> None:
-    """A rendered ref must have somewhere to stage into (#111, Q7 in #85).
+    """A rendered ref must have somewhere to stage into (Q7).
 
     :func:`~sopuli.payload.stage_layout` refuses a ref naming a whole secret --
     nothing to put ``pending`` and ``previous`` beside -- and one whose field is a
     key the mirror rule generates, which would put the current stage and a
-    staging sibling in one place. Both refusals already existed; what this does is
-    move *when* they happen, from the first rotation to the moment the file is
-    read. §1 calls the account→secret binding the safety-critical part, and
-    invariant 4 wants a command that cannot succeed to fail before it has written
-    anything.
+    staging sibling in one place. This check makes both refusals happen when the
+    file is read, not at the first rotation. §1 calls the account→secret binding
+    the safety-critical part, and invariant 4 wants a command that cannot succeed
+    to fail before it has written anything.
 
     Here rather than in :mod:`sopuli.config.references` for two reasons, both of
     which turn on this being the rendered ref rather than the written one:
@@ -349,7 +348,7 @@ def _vault_for(
 
     This is the chain the reference writes, and only that chain. The `SOPULI_*`
     and command-line layers above it are P3's and belong to the precedence
-    resolver (issue #10): a config file can be read without knowing what
+    resolver (decision #10): a config file can be read without knowing what
     environment it will be read in.
     """
     if secret is not None and secret.vault is not None:

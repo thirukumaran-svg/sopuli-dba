@@ -1,4 +1,4 @@
-"""§6's vault variables, as contributions to one store's settings (#154).
+"""§6's vault variables, as contributions to one store's settings.
 
 The environment's half of C13. A store's settings belong to the store rather
 than to the run, so ``vaults.<name>.*`` is merged **inside the file** rather than
@@ -90,8 +90,8 @@ SEPARATOR = "__"
 DEFAULT_STORE_VARIABLE = "SOPULI_VAULT"
 DEFAULT_STORE_SETTING = "vault"
 
-#: The one flag that hoists a store's setting onto the command line (#422), and
-#: layer 1 of ``vaults.*.addr``. Spelled once, here rather than in
+#: The one flag that hoists a store's setting onto the command line, and layer 1
+#: of ``vaults.*.addr`` (decision #422). Spelled once, here rather than in
 #: :mod:`sopuli.cli`, because the string is both the option click parses and the
 #: ``source_detail`` a refusal names -- and :data:`~sopuli.material.TOKEN_FLAG`
 #: already set that precedent for the same reason.
@@ -159,11 +159,11 @@ def default_store(env: Mapping[str, str], declared: str | None) -> Resolved | No
     one makes the absence matter. The same goes for a name that resolves to no
     declared store -- it is refused by whoever *depends* on the answer, below,
     rather than here. ``defaults.vault`` already has such a caller in
-    :func:`sopuli.config.references.check_references`; ``SOPULI_VAULT`` gained
-    one in #250: :func:`sopuli.config.binding_stores.complete` reads the variable
-    directly to fill a binding's store at plan time (C15, #118). It resolves the
-    name itself rather than calling this, because the two answer different
-    questions -- this one is *which store §6's unnamed variables address*.
+    :func:`sopuli.config.references.check_references`; ``SOPULI_VAULT`` has
+    one too (decision #250): :func:`sopuli.config.binding_stores.complete` reads
+    the variable directly to fill a binding's store at plan time (C15). It
+    resolves the name itself rather than calling this, because the two answer
+    different questions -- this one is *which store §6's unnamed variables address*.
 
     The boundary resolves this same setting again for ``invocation.options``
     (:mod:`sopuli.settings.sources`). Both build the same two contributions and
@@ -294,13 +294,13 @@ def _refuse_unrecognised(env: Mapping[str, str], *, known: set[str], stores: Seq
 def vault_cli_contributions(
     addr: str | None, *, stores: Sequence[str], active: Resolved | None
 ) -> dict[str, dict[str, list[Contribution]]]:
-    """``--vault-addr``, placed on the default store (#422). Layer 1.
+    """``--vault-addr``, placed on the default store (decision #422). Layer 1.
 
     In this module rather than beside the flag, and that is the decision rather
     than convenience. §6 already answers "which store does an unnamed setting
     address" -- the one ``SOPULI_VAULT`` or ``defaults.vault`` names, refusing
     where neither does, never the store the current binding happened to resolve
-    to (C13's rejected `vault_settings:`, #154). A flag resolving that question
+    to (C13's rejected `vault_settings:`). A flag resolving that question
     its own way would be a *second definition of the default store*, one layer
     above the first, and the two would agree until the day they did not. So it
     goes through :func:`_place`, which is the same code the variables use.
@@ -358,9 +358,9 @@ def _place(
 ) -> tuple[list[tuple[str, str, Contribution]], tuple[ConfigWarning, ...]]:
     """Put every source that names no store onto the default one, or say why not.
 
-    One function for the variables and the flag (#422), so that "which store is
-    the active one" has exactly one answer however it was asked. ``asked`` is
-    ``(where it was written, setting key, layer, value)``.
+    One function for the variables and the flag (decision #422), so that
+    "which store is the active one" has exactly one answer however it was asked.
+    ``asked`` is ``(where it was written, setting key, layer, value)``.
 
     **Everything this tool owns refuses; only a third-party variable warns.** The
     split is §6's and it is about whose environment it is: ``SOPULI_VAULT_ADDR``

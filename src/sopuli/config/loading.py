@@ -88,13 +88,13 @@ TOP_LEVEL_KEYS = (
     "secret_template",
     "policy",
     "overrides",
-    # UC-2's personal accounts, which are a declaration and not a binding (H1,
-    # #449). Beside the application keys rather than among them: nothing masters
-    # one, so it shares no key with the form above.
+    # UC-2's personal accounts, which are a declaration and not a binding (H1).
+    # Beside the application keys rather than among them: nothing masters one, so
+    # it shares no key with the form above.
     "personal_accounts",
-    # UC-2's reset journal: where a reset is recorded, never what it set (#468).
+    # UC-2's reset journal: where a reset is recorded, never what it set.
     "reset_records",
-    # UC-2's delivery: how the new password reaches the person (#440).
+    # UC-2's delivery: how the new password reaches the person.
     "delivery",
 )
 
@@ -281,13 +281,13 @@ def build_config(
     than at the boundary because **layer 3 is applied while the file is being
     built** -- a profile's ``vaults:`` block patches a store declaration, and
     :mod:`sopuli.config.vault_layers` merges all three file layers in one pass
-    (§5, #153). ``None`` means neither said anything, which leaves
+    (§5). ``None`` means neither said anything, which leaves
     ``defaults.profile`` to answer, and a name nothing declares is refused here
     the same way every other dangling name in the file is.
 
     ``env`` arrives for the same reason and one layer higher: §6's
     ``SOPULI_VAULT__VAULT_DEV__ADDR`` addresses a *store*, so it belongs to the
-    same merge rather than to the invocation (#154). Empty by default -- nothing
+    same merge rather than to the invocation. Empty by default -- nothing
     in this package reads ambient state, and a caller that wants the process's
     own environment passes it (:func:`sopuli.invocation.load_config_layers`).
     """
@@ -309,7 +309,7 @@ def build_config(
     # Before anything else looks at either section: a name in both makes the
     # whitelist ambiguous about which guarantee applies, and every later step --
     # expansion, references, bindings -- would be reasoning about an account
-    # that means two things (H1, #449).
+    # that means two things (H1).
     reject_cross_declaration(config.applications, config.personal_accounts)
     # Exactly one profile is active (§5 rule 1), and it has to be settled before
     # the vault layers are merged: layer 3 *is* the active profile's `vaults:`
@@ -321,7 +321,7 @@ def build_config(
         ),
     )
     # The file's own precedence layers, merged before anything reads a store
-    # (C13, #136). Before `check_references`, because that is where §10's
+    # (C13). Before `check_references`, because that is where §10's
     # unverified-transport warning asks a store whether it verifies its
     # certificate -- and the answer has to be the effective one, or a
     # `defaults:` block could turn verification off without warning.
@@ -341,7 +341,7 @@ def build_config(
 
 #: The flag that supplies each policy key a run does not read, or ``None`` where
 #: nothing does. A policy's `rotation:` and `verify:` are parsed and validated,
-#: and every run takes these from the command line instead (#610).
+#: and every run takes these from the command line instead.
 _UNREAD_POLICY_KEYS: dict[str, dict[str, str | None]] = {
     "rotation": {
         "strategy": "--strategy",
@@ -354,12 +354,12 @@ _UNREAD_POLICY_KEYS: dict[str, dict[str, str | None]] = {
 
 
 def _policy_warnings(config: Config) -> tuple[ConfigWarning, ...]:
-    """Say that a policy's `rotation:` or `verify:` keys change nothing (#610).
+    """Say that a policy's `rotation:` or `verify:` keys change nothing.
 
     The keys validate, so a file writing them reads as configuring something.
-    It does not: the verbs take these from flags, and `check` defaults to
-    `login` whatever a policy says (Q1, #86). One warning per block, naming the
-    keys written and the flag that does the job, where there is one.
+    It does not (decision #610): the verbs take these from flags, and `check`
+    defaults to `login` whatever a policy says (Q1). One warning per block,
+    naming the keys written and the flag that does the job, where there is one.
     """
     found = []
     for policy in config.policies:
@@ -389,7 +389,7 @@ def _policy_warnings(config: Config) -> tuple[ConfigWarning, ...]:
 
 
 def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
-    """Say that a configured delivery method cannot deliver yet (#440).
+    """Say that a configured delivery method cannot deliver yet.
 
     A load-time warning rather than a check inside one verb, so every command
     reports it the same way -- `config validate` in text, and `diagnostics[]` for
@@ -415,7 +415,7 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
                 ),
             )
         )
-    # The notify channel's own (#442). A second warning rather than a widened
+    # The notify channel's own. A second warning rather than a widened
     # first: an estate can have a working delivery and an inert notification, and
     # one sentence covering both would have to say "something here does not work"
     # -- which is the message that sends somebody to read the whole block.

@@ -1,12 +1,12 @@
 """Generating the published config JSON Schema from the config layer itself.
 
-P3 requires a **published** JSON Schema for config files. #20 validated with
-hand-written builders instead, deliberately: the rules that matter here do not
-express well in JSON Schema, and the errors #20 asked for name the offending key
-rather than listing every ``oneOf`` branch that failed to match. That decision
-stands. What was still missing is the artefact -- something a YAML language
-server can be pointed at, so that editing a 130-line config gives completion and
-inline errors instead of a round trip through the tool.
+P3 requires a **published** JSON Schema for config files. Hand-written
+builders validate the config, deliberately: the rules that matter here do not
+express well in JSON Schema, and the builders' errors name the offending key
+rather than listing every ``oneOf`` branch that failed to match. This module adds
+the artefact: something a YAML language server can be pointed at, so that
+editing a 130-line config gives completion and inline errors instead of a round
+trip through the tool.
 
 **Generated, not maintained beside the model.** Two hand-written descriptions of
 one schema drift, and the one that drifts silently is the published one, because
@@ -64,21 +64,21 @@ from sopuli.config import (
 #: one tracks the schema contract the way `sopuli-run-1.11` does -- a new optional
 #: key is a minor bump and does not touch a file that already says `version: 1`.
 #:
-#: 1.0 became 1.1 when `locking:` arrived (#83): a store's `locking:` and a
+#: 1.0 became 1.1 with `locking:`: a store's `locking:` and a
 #: `locking:` block under `defaults` and a profile, all optional, so every file
 #: valid under 1.0 is valid under 1.1.
 #:
-#: 1.1 became 1.2 with a vault's transport settings (#135, ADR-005): `namespace`,
+#: 1.1 became 1.2 with a vault's transport settings (ADR-005): `namespace`,
 #: `timeout_s` and the `tls:` block. Optional again -- a file that named none of
 #: them means exactly what it did before -- which is what makes it a minor bump
 #: rather than the other kind.
 #:
-#: 1.2 became 1.3 with C13's partial `vaults:` blocks (#136): a `vaults:` key
+#: 1.2 became 1.3 with C13's partial `vaults:` blocks: a `vaults:` key
 #: under `defaults:` and inside a profile, holding entries that patch a store
 #: rather than declare one. Minor for the same reason once more -- and the
 #: interesting half is what the new shape *refuses*, since `type`,
 #: `non_production` and `locking` are absent from it by construction.
-#: 1.3 became 1.4 with UC-2's `personal_accounts:` (H1, #449, #467): a top-level
+#: 1.3 became 1.4 with UC-2's `personal_accounts:` (H1): a top-level
 #: list of accounts that belong to people, by name or by a predicate over a
 #: profile or a role. Optional like every bump before it, so a file that declares
 #: only applications means exactly what it did. What the shape *refuses* is again
@@ -87,7 +87,7 @@ from sopuli.config import (
 #: a personal account's password and two ways of saying which accounts would leave
 #: the whitelist ambiguous.
 #:
-#: 1.4 became 1.5 with UC-2's `reset_records:` (H2, #450, #468): a top-level
+#: 1.4 became 1.5 with UC-2's `reset_records:` (H2): a top-level
 #: block naming the store and prefix a reset is journalled under. Optional like
 #: every bump before it, and here the optionality is the *specified* behaviour
 #: rather than a compatibility courtesy -- a reset with no destination configured
@@ -96,36 +96,27 @@ from sopuli.config import (
 #: a hash or a verifier, and none is coming, because a record that could leak the
 #: thing it records would be worse than no record.
 #:
-#: 1.5 became 1.6 with UC-2's `delivery:` (§6, #440): a top-level block naming how
+#: 1.5 became 1.6 with UC-2's `delivery:` (§6): a top-level block naming how
 #: a personal account's new password reaches its owner, with one sub-block per
 #: method. Optional like every bump before it. **The sub-blocks are open objects
-#: here, deliberately**: which keys `vault_wrapped:` takes is #444's and
-#: `one_time_link:`'s is #445's, so a closed set now would be a schema asserting a
-#: shape nobody has decided. Each method's issue closes its own, and until then an
-#: editor offers the method names and checks nothing inside them -- which is why
-#: `sopuli config validate` warns that no method is implemented rather than
-#: letting a clean parse read as a working delivery.
-#:
-#: **#444 did not bump this, and that is a finding rather than an omission.** The
-#: 1.6 note below promises that "each method's issue closes its own" sub-block, and
-#: `vault_wrapped` is the first issue in a position to try. It cannot, because a
-#: sub-block for an *unselected* method is deliberately left unjudged by the
-#: builder (#440, `01-configuration.md` §9b's rule that an unselected block is how
-#: somebody switches between configurations). Any constraint published here --
-#: `required: ["ttl"]`, a pattern on it, `additionalProperties: false` -- would
+#: here, deliberately.** The builder leaves a sub-block for an *unselected*
+#: method unjudged (`01-configuration.md` §9b's rule that an unselected block is
+#: how somebody switches between configurations). Any constraint published here
+#: -- `required: ["ttl"]`, a pattern on it, `additionalProperties: false` -- would
 #: refuse a file the tool accepts, which is the one direction §9b forbids: the
 #: schema is the fast incomplete check, and the tool must never be the looser of
-#: the two.
+#: the two. An editor offers the method names and checks nothing inside them.
+#: The tool checks the selected method's keys where that method is built, and
+#: `sopuli config validate` warns where the selected method is not built, so a
+#: clean parse does not read as a working delivery.
 #:
-#: Closing a sub-block therefore needs a **conditional** schema -- `if` on
-#: `method`, `then` the constraints -- and the condition is not a one-liner either,
-#: because `method` is optional and its absence *selects* `vault_wrapped`. That is
-#: worth doing and it is not #444's: it is one shape that serves all six methods,
-#: and it should be built once when a second method has keys to close. Until then
-#: the sub-blocks stay open and the tool is the stricter of the two, which is the
-#: safe asymmetry.
+#: Closing a sub-block would need a **conditional** schema -- `if` on `method`,
+#: `then` the constraints -- and the condition is not a one-liner, because
+#: `method` is optional and its absence *selects* `vault_wrapped`. One such shape
+#: would serve all six methods. Until it exists the sub-blocks stay open and the
+#: tool is the stricter of the two, which is the safe asymmetry.
 #:
-#: 1.6 became 1.7 with `safety.delivery.allowed_methods` (H6, #453, #498): a
+#: 1.6 became 1.7 with `safety.delivery.allowed_methods` (H6): a
 #: `delivery:` sub-block of every `safety:` block, holding the set of UC-2
 #: delivery methods that layer permits. Optional like every bump before it, and
 #: absent means *no constraint* rather than the empty set -- which is the one
@@ -134,7 +125,7 @@ from sopuli.config import (
 #: and no run under it could deliver anything; and there is no `forbidden_methods`
 #: counterpart, now or later, so an editor offering one is offering a key the
 #: tool refuses.
-#: 1.7 became 1.8 when `delivery.notify:` got a grammar (#442): `method`, and a
+#: 1.7 became 1.8 when `delivery.notify:` got a grammar: `method`, and a
 #: `webhook:` block with a MaterialRef `url` and a `template`. **Closed, where
 #: `vault_wrapped:` could not be** -- and the difference is the whole of the note
 #: above. A method's sub-block is left unjudged when that method is not selected,
@@ -989,7 +980,7 @@ _APPLICATION_TYPES: dict[str, Schema] = {
 
 
 def _personal_account() -> Schema:
-    """One `personal_accounts:` entry (H1, #449).
+    """One `personal_accounts:` entry (H1).
 
     ``minProperties`` is not the rule here and would be the wrong one: an entry
     must name **exactly one** of ``accounts``, ``profile`` and ``role``, which is
@@ -1028,14 +1019,15 @@ def _personal_account() -> Schema:
 
 
 def _delivery() -> Schema:
-    """The `delivery:` block -- how UC-2 hands a password over (§6, #440).
+    """The `delivery:` block -- how UC-2 hands a password over (§6).
 
     ``method`` is the closed set and the sub-blocks are **open objects**, which is
-    the one thing about this schema worth explaining. A method's keys belong to
-    that method's issue, so closing them here would publish a shape nobody has
-    decided -- and the generator's own rule, that an object's properties come from
-    the constant its builder validates against, has no constant to read for a
-    section whose builder deliberately validates only the shape.
+    the one thing about this schema worth explaining. The builder judges a
+    method's keys only where that method is selected, so closing them here would
+    refuse a file the tool accepts. The generator's own rule, that an object's
+    properties come from the constant its builder validates against, does not
+    apply: `MANUAL_KEYS` and `WRAPPED_KEYS` hold only while their method is
+    selected, and the methods that are not built have no constant.
 
     ``method`` is **not required**: absent means :data:`~sopuli.config.delivery.DEFAULT_METHOD`,
     and §6.2 says why that default is `vault_wrapped` rather than the
@@ -1080,14 +1072,14 @@ def _delivery() -> Schema:
 
 
 def _notify() -> Schema:
-    """`delivery.notify:` -- the low-trust channel (#442, UC-2 §6.1).
+    """`delivery.notify:` -- the low-trust channel (UC-2 §6.1).
 
-    **Closed, unlike a delivery method's sub-block**, and the difference is the
-    one #444 established: a method's settings are left unjudged when that method
-    is not selected, so any constraint published for them would refuse a file the
-    tool accepts. `notify:` has no such exemption -- it is read whichever delivery
-    method is selected, because a notification is a property of the delivery as a
-    whole -- so closing it here refuses exactly what the builder refuses.
+    **Closed, unlike a delivery method's sub-block**, and the difference is this:
+    a method's settings are left unjudged when that method is not selected, so
+    any constraint published for them would refuse a file the tool accepts.
+    `notify:` has no such exemption -- it is read whichever delivery method is
+    selected, because a notification is a property of the delivery as a whole --
+    so closing it here refuses exactly what the builder refuses.
 
     The template's placeholders are **not** expressed as a pattern. A regex that
     approximated :func:`sopuli.config.notify.check_template` would be a second,
@@ -1147,7 +1139,7 @@ def _notify() -> Schema:
 
 
 def _reset_records() -> Schema:
-    """The `reset_records:` block -- where UC-2 journals a reset (H2, #468).
+    """The `reset_records:` block -- where UC-2 journals a reset (H2).
 
     Both keys are required, and ``prefix`` having no default is a decision rather
     than an omission: a default would put records somewhere the file does not

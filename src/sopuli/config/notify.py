@@ -1,4 +1,4 @@
-"""The `delivery.notify:` block: saying a password is ready (UC-2 §6.1, #442).
+"""The `delivery.notify:` block: saying a password is ready (UC-2 §6.1).
 
 UC-2 §6.1 is the one binding rule of the whole delivery section:
 
@@ -6,11 +6,11 @@ UC-2 §6.1 is the one binding rule of the whole delivery section:
     secret may not. "Your new password is ready" may go anywhere; the password,
     or anything that retrieves it, may not.
 
-**This module is where the second half is enforced**, and #442 asked for exactly
-that — "the template can never reference the password itself, and that is
-enforced, not documented." Enforced *here*, in the config layer, because the
-alternative is finding out at send time, by which point a password has been drawn
-and the run has something to lose.
+**This module is where the second half is enforced**: the template can never
+reference the password itself, and that is enforced, not documented. It is
+enforced *here*, in the config layer, because the alternative is finding out at
+send time, by which point a password has been drawn and the run has something
+to lose.
 
 **The enforcement is the closed set, not a list of forbidden words**, and the
 difference is the whole reason this file is worth reading. A blocklist of
@@ -42,18 +42,18 @@ from sopuli.notify import PLACEHOLDERS
 from sopuli.notify.registry import NOTIFIERS
 
 #: The methods this block may select. **One, and deliberately not padded out.**
-#: `delivery.method` lists all six of UC-2 §6.2's values even where nobody has
-#: written the code, because that section *defines* the set and an enum shaped by
-#: which values had tickets would be a contract shaped by project bookkeeping.
-#: Nothing defines a set of notify channels: §6.3 shows `webhook` and #442 says
-#: `smtp` and `chat` get "their own issues if needed". Inventing two values to
-#: make the enum look finished would publish a contract nobody has decided.
+#: `delivery.method` lists all six of UC-2 §6.2's values even where the code is
+#: not written, because that section *defines* the set and an enum shaped by what
+#: is built would be a contract shaped by project bookkeeping. Nothing defines
+#: a set of notify channels: §6.3 shows `webhook` and no other. Inventing two
+#: values to make the enum look finished would publish a contract nobody has
+#: decided.
 WEBHOOK = "webhook"
 
 NOTIFY_METHODS = (WEBHOOK,)
 
-#: The methods this build can serve. `webhook` since #442's second part, which is
-#: what opens the socket -- part 1 read and refused configuration and sent nothing.
+#: The methods this build can send with, not only parse. Sending opens a socket,
+#: so a method's client is an install extra (ADR-006).
 IMPLEMENTED: tuple[str, ...] = (WEBHOOK,)
 
 #: The keys the block itself takes.
@@ -87,9 +87,8 @@ WEBHOOK_KEYS = ("url", "template")
 #: **This is not the guard.** Every name outside :data:`PLACEHOLDERS` is refused
 #: whether or not it appears here, and a reader who mistook this for the
 #: enforcement would be one widening away from a hole. What it buys is that an
-#: operator who wrote `{wrap_token}` -- a reasonable thing to want, and the exact
-#: example #442 itself used before §6.1 settled the question -- is told *why* the
-#: tool will not do it, rather than being told the word is misspelled.
+#: operator who wrote `{wrap_token}` -- a reasonable thing to want -- is told
+#: *why* the tool will not do it, rather than being told the word is misspelled.
 NAMED_SECRETS = (
     "password",
     "secret",
@@ -169,12 +168,12 @@ def check_template(template: str, *, at: KeyPath) -> None:
     for _, field, spec, conversion in Formatter().parse(template):
         if field is None:
             continue
-        # **Not `field.strip()`, and not a discarded spec** (Copilot's finding on
-        # #520). `str.format` does neither: `{ account }` looks up the key
-        # ``" account "`` and raises `KeyError`, and `{expires_at:%Y}` applies
-        # ``%Y`` to a string and raises `ValueError`. Both passed this walk in the
-        # first build and raised in `render()` -- which happens after the password
-        # has changed, and is the one place UC-2 §6 has no answer for.
+        # **Not `field.strip()`, and not a discarded spec.** `str.format` does
+        # neither: `{ account }` looks up the key ``" account "`` and raises
+        # `KeyError`, and `{expires_at:%Y}` applies ``%Y`` to a string and raises
+        # `ValueError`. A walk that accepted either would let `render()` raise --
+        # which happens after the password has changed, and is the one place UC-2
+        # §6 has no answer for.
         #
         # Refused rather than normalised. Trimming the name would accept a template
         # this validator and `str.format` read differently, and the estate wrote the
@@ -242,11 +241,11 @@ def unserviceable(notify: Notify | None) -> str | None:
     block that validates clean reads as a channel that will send, and finding out
     otherwise once a password has changed is the failure that costs something.
 
-    **Says what cannot send, not what will happen** (#520). The first wording ended
-    "so nothing will be sent when a password is delivered", which implied a password
-    *would* be delivered -- true when this warning was written and false since the
-    missing client became a plan-time refusal. What happens is the caller's to say,
-    and `sopuli/config/loading.py` says it in the hint.
+    **Says what cannot send, not what will happen.** A wording such as
+    "so nothing will be sent when a password is delivered" would imply a password
+    *would* be delivered, which is false where the missing client is a plan-time
+    refusal. What happens is the caller's to say, and `sopuli/config/loading.py`
+    says it in the hint.
 
     **Two conditions, and only the second survives a full install.** A method this
     build has no code for is one answer; a method whose *client* is not installed is

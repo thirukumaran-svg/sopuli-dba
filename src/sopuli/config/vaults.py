@@ -75,10 +75,8 @@ UNPATCHABLE_KEYS = {
 
 #: What a partial entry may carry: the complement, never a second list.
 #:
-#: §5's table names ``addr`` / ``mount`` / ``kv_version`` / ``auth``, written
-#: before ``namespace``, ``timeout_s`` and ``tls`` existed (#135). Deriving it
-#: means a key added to :data:`VAULT_KEYS` becomes patchable unless somebody
-#: writes down why it is not, which is the direction that fails safe for
+#: Deriving it means a key added to :data:`VAULT_KEYS` becomes patchable unless
+#: somebody writes down why it is not, which is the direction that fails safe for
 #: readers of the file and loudly for whoever adds a guardrail.
 PATCHABLE_KEYS = tuple(key for key in VAULT_KEYS if key not in UNPATCHABLE_KEYS)
 
@@ -192,14 +190,14 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
         non_production=optional_bool(entry, "non_production", at=at) or False,
         # Absent means `required`, which is the whole point of the default: a
         # store gets a real lock unless somebody wrote down that it cannot have
-        # one (#83).
+        # one.
         locking=build_lock_mode(entry, at=at),
         **_reach(entry, at=at),
     )
 
 
 def build_vault_patches(container: dict[str, Any], *, at: KeyPath) -> tuple[VaultPatch, ...]:
-    """A ``vaults:`` block under ``defaults:`` or in a profile (C13, #136).
+    """A ``vaults:`` block under ``defaults:`` or in a profile (C13).
 
     Partial entries: every key optional, and ``type`` not accepted at all --
     because there is nothing here to declare. The store is declared once, at the
@@ -264,7 +262,7 @@ def _reach(entry: dict[str, Any], *, at: KeyPath) -> dict[str, Any]:
 
 
 def _shape(key: str) -> str:
-    """How one `auth:` key is written, for the error about a missing one (#70).
+    """How one `auth:` key is written, for the error about a missing one.
 
     The distinction P2 draws, in the one place a reader needs it: material is
     *named* and identity is *written*. Answered per key because a method can
@@ -325,8 +323,8 @@ def _build_tls(raw: Any, *, at: KeyPath) -> VaultTls | None:
         client_key=optional_string(entry, "client_key", at=at),
         server_name=optional_string(entry, "server_name", at=at),
         # Stays None when unwritten. `VaultTls.verified` is the effective value;
-        # the distinction is for the ratchet that arrives with C13's partial
-        # blocks (#136), which has to tell "nobody said" from "somebody agreed".
+        # the distinction is for the ratchet over C13's partial blocks, which has
+        # to tell "nobody said" from "somebody agreed".
         verify=optional_bool(entry, "verify", at=at),
     )
 
@@ -379,11 +377,11 @@ def _build_auth(raw: Any, *, at: KeyPath) -> VaultAuth | None:
 #:
 #: Settings *of* a store are reached by naming it under `vaults:`, which
 #: `defaults:` and a profile may each carry as partial entries patching a
-#: top-level declaration (:func:`build_vault_patches`, #136). That is C13, decided
-#: in #31, and it is §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair
-#: written in the file rather than a second addressing scheme. So the block form
-#: this refuses is specifically a mapping written directly under `vault:`, which
-#: is the shape that would name no store at all.
+#: top-level declaration (:func:`build_vault_patches`). That is C13, and it is
+#: §6's `SOPULI_VAULT` / `SOPULI_VAULT__VAULT_DEV__ADDR` pair written in the
+#: file rather than a second addressing scheme. So the block form this refuses is
+#: specifically a mapping written directly under `vault:`, which is the shape
+#: that would name no store at all.
 VAULT_IS_A_NAME = (
     "`vault:` is a store name everywhere in this file (see `SOPULI_VAULT`); "
     "settings of a store go under `vaults:` keyed by its name, which `defaults:` "

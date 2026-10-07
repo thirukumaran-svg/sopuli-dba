@@ -27,7 +27,7 @@ is settled the way that keeps a realistic ref working:
 * ``/`` inside the ``#`` part starts the JSON pointer, because a field name is
   one segment and everything after it addresses into that field's document.
 
-**The qualifier vocabularies are the tool's** (C14, decided in #40). ``version``
+**The qualifier vocabularies are the tool's** (C14). ``version``
 and ``stage`` are the two §7 names, an unknown qualifier is refused, and so is an
 unknown *value*: a stage outside ``current`` / ``pending`` / ``previous``, or a
 version that is not a whole number from 1 upwards. Both stores in scope have a
@@ -49,13 +49,12 @@ from dataclasses import dataclass
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 
 #: Path segments that address something other than a document. Refused rather
-#: than dropped, everywhere a path is read (#344).
+#: than dropped, everywhere a path is read (decision #344).
 #:
 #: The ref grammar owns this rule: it is a statement about what a path may say,
 #: and the lock layer is one of its consumers rather than its author.
-#: :func:`normalise_path` below -- the other place that enforces it -- now lives
-#: here for that same reason, having spent a while in ``sopuli.lock.keys`` making
-#: a cycle out of the argument (#357).
+#: :func:`normalise_path` below -- the other place that enforces it -- lives
+#: here for that same reason.
 TRAVERSAL = frozenset({".", ".."})
 
 #: The qualifiers §7 names. Closed, because a misspelt one would otherwise
@@ -65,7 +64,7 @@ VERSION = "version"
 STAGE = "stage"
 QUALIFIERS = (VERSION, STAGE)
 
-#: The stages a ref may name (C14, #40). UC-1 §2's three states, which are also
+#: The stages a ref may name (C14). UC-1 §2's three states, which are also
 #: three of OCI's five rotation states. ``LATEST`` and ``DEPRECATED`` are left
 #: out on purpose: ``LATEST`` is an upload-ordering artefact with no counterpart
 #: in a payload of JSON fields, and ``DEPRECATED`` names a *set* of versions
@@ -171,7 +170,7 @@ def parse_secret_ref(text: str, *, at: KeyPath = ROOT) -> SecretRef:
     # Refused here as well as at the lock key, and this is the one an operator
     # sees: a ref in a file gets a message with a location, rather than the
     # `ValueError` backstop `normalise_path` raises for a path that reached it
-    # some other way (#344). A `..` does not address a document -- it walks out
+    # some other way. A `..` does not address a document -- it walks out
     # of whatever prefix the caller put it under, which for a lock is the
     # `locks/` prefix that keeps lock writes off the secret itself.
     traversal = sorted({segment for segment in path.split("/") if segment in TRAVERSAL})
@@ -204,15 +203,15 @@ def normalise_path(path: str) -> str:
     Empty segments are dropped -- ``apps//acme/db`` and ``apps/acme/db`` are one
     document, and two keys for it would be two locks that never contend.
 
-    **`.` and `..` are refused rather than dropped** (#344). Dropping them would
-    silently rewrite the path the operator typed, so `lock status` and `lock
-    break` would disagree about which record they mean; keeping them was worse
-    still. `lock_path()` prefixes a key with ``locks/``, and a `..` walks
-    straight back out of that prefix: before this refusal existed,
-    ``lock break 'kv:../secrets/acme/db'`` built ``locks/../secrets/acme/db``,
-    which httpx collapsed to the *secret's* own path, and the run CAS-wrote a
-    lock record onto the credential document. Measured against a real Vault,
-    which is how it was found.
+    **`.` and `..` are refused rather than dropped** (decision #344). Dropping
+    them would silently rewrite the path the operator typed, so `lock status` and
+    `lock break` would disagree about which record they mean; keeping them was
+    worse still. `lock_path()` prefixes a key with ``locks/``, and a `..` walks
+    straight back out of that prefix: without this refusal,
+    ``lock break 'kv:../secrets/acme/db'`` would build
+    ``locks/../secrets/acme/db``, which httpx collapses to the *secret's* own
+    path, and the run would CAS-write a lock record onto the credential
+    document. Decision #344 records the case.
 
     :func:`sopuli.lock.keys.lock_key` says normalisation can only ever *merge*
     keys, "which over-locks at worst". **This refusal is what makes that true.**
@@ -301,7 +300,7 @@ def _split_qualifier(text: str, *, at: KeyPath) -> tuple[str, int | None, str | 
 
 
 def _version(value: str, text: str, *, at: KeyPath) -> int:
-    """A pinned version, as an integer (C14, #40).
+    """A pinned version, as an integer (C14).
 
     Both stores in scope number versions with integers, so a ref that does not is
     refused here rather than at the far end of a rotation. ``isascii`` as well as

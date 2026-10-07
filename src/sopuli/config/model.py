@@ -161,7 +161,7 @@ class Binding:
 
 @dataclass(frozen=True)
 class SafetyDelivery:
-    """The ``delivery:`` sub-block of a ``safety:`` block (H6, #453, #498).
+    """The ``delivery:`` sub-block of a ``safety:`` block (H6).
 
     A block of its own rather than a ``delivery_allowed_methods`` field, because
     the key path is what an operator edits and what every message names:
@@ -204,7 +204,7 @@ class Safety:
 
 @dataclass(frozen=True)
 class Locking:
-    """A ``locking:`` block, under ``defaults`` or a profile (Q2, #83).
+    """A ``locking:`` block, under ``defaults`` or a profile (Q2).
 
     Optional for the reason :class:`Safety`'s fields are, and inverted for a
     reason of its own: ``break_expired`` is the first ratcheted boolean whose
@@ -299,7 +299,7 @@ class VaultTls:
 
     ``verify`` is the field that is not ordinary config. §3a puts it under P3's
     safety ratchet, so it stays ``None`` when unwritten rather than defaulting to
-    ``True`` here: once a profile or ``defaults:`` can patch a store (C13, #136),
+    ``True`` here: once a profile or ``defaults:`` can patch a store (C13),
     "nobody said" and "somebody wrote true" have to stay distinguishable, or the
     ratchet cannot tell a layer that declined to speak from one that agreed. Read
     it through :attr:`verified`.
@@ -347,12 +347,12 @@ class Vault:
     tls: VaultTls | None = None
     auth: VaultAuth | None = None
     non_production: bool = False
-    #: ``required`` or ``advisory-only`` (#83). Unlike the fields above this one
+    #: ``required`` or ``advisory-only``. Unlike the fields above this one
     #: takes its default here rather than staying ``None``: a store either offers
     #: compare-and-set or it does not, and no other precedence layer has an
     #: opinion about one store, so there is nothing to be safest of later.
     locking: str = "required"
-    #: The keys some layer other than this entry supplied (C13, #136), sorted.
+    #: The keys some layer other than this entry supplied (C13), sorted.
     #:
     #: Provenance rather than data: every field above already holds the effective
     #: value, and this says which of them did not come from the ``vaults:`` block
@@ -362,19 +362,19 @@ class Vault:
     #: a different part of the file.
     #:
     #: Key names, not layers. Which layer won is :attr:`settings`' answer and
-    #: belongs in ``--explain`` beside every other setting (#153); what belongs
+    #: belongs in ``--explain`` beside every other setting; what belongs
     #: here is the one bit a reader of this table needs, which is *this was not
     #: written here*.
     patched: tuple[str, ...] = ()
-    #: Every merged key with the layer that supplied it (#428), as sorted pairs.
+    #: Every merged key with the layer that supplied it, as sorted pairs
+    #: (decision #428).
     #:
-    #: The rest of :attr:`patched`'s sentence, kept rather than thrown away.
-    #: :mod:`sopuli.config.vault_layers` resolves each reach key through
-    #: :mod:`sopuli.settings` and had the :class:`~sopuli.settings.Resolved` in
-    #: hand already; for as long as only the key *name* survived, three different
-    #: layers writing ``addr`` produced one indistinguishable ``layered: addr``
-    #: and no view could tell an address an operator redirected on purpose from
-    #: one a colleague's exported ``VAULT_ADDR`` supplied.
+    #: The rest of :attr:`patched`'s answer. :mod:`sopuli.config.vault_layers`
+    #: resolves each reach key through :mod:`sopuli.settings` and keeps the
+    #: :class:`~sopuli.settings.Resolved`. With only the key *name*, three
+    #: different layers writing ``addr`` would look the same, and no view could
+    #: tell an address an operator redirected on purpose from one a colleague's
+    #: exported ``VAULT_ADDR`` supplied.
     #:
     #: **Every key that has a value, not only the layered ones.** A store whose
     #: ``mount`` came from its own ``vaults:`` entry gets a pair too, because
@@ -392,7 +392,7 @@ class Vault:
 class VaultPatch:
     """A partial ``vaults:`` entry, written under ``defaults:`` or in a profile.
 
-    C13 (#31): **`vault:` is a store name everywhere and never a block**, so a
+    C13: **`vault:` is a store name everywhere and never a block**, so a
     layer that wants to say something *about* a store names it under ``vaults:``
     -- the file's half of §6's ``SOPULI_VAULT__VAULT_DEV__ADDR``.
 
@@ -617,16 +617,15 @@ class ExpandedTarget:
     patched: tuple[str, ...] = ()
     #: The ``safety:`` block the **template** wrote, where an ``overrides:``
     #: entry patched it -- ``None`` everywhere else, the patched value being the
-    #: only one there is (#424).
+    #: only one there is.
     #:
     #: Kept because a patch merges key by key, so the flattened
     #: :attr:`Target.safety` can hold an override's ``readonly: false`` over a
     #: template's ``true`` and the safer of the two is gone before anything can
-    #: ratchet them. That was harmless while nothing enforced a target's block
-    #: and is not now: both reach
+    #: ratchet them. Both reach
     #: :func:`~sopuli.settings.sources.estate_contributions` as separate
-    #: contributions, and the one resolver takes the safest -- which is what
-    #: ``_patch_target`` has always claimed happens (invariant 10, §9).
+    #: contributions, and the one resolver takes the safest (invariant 10, §9;
+    #: decision #424).
     template_safety: Safety | None = None
 
     @property
@@ -711,8 +710,8 @@ class AccountPolicy:
     """
 
     unlock_if_locked: bool | None = None
-    #: The profile this account is to sit on (#301). A *name*, resolved against
-    #: the database rather than against anything in the file: which profiles
+    #: The profile this account is to sit on (decision #301). A *name*, resolved
+    #: against the database rather than against anything in the file: which profiles
     #: exist is a property of each target.
     profile: str | None = None
 
@@ -759,14 +758,14 @@ class Profile:
     log_level: str | None = None
     log_file: str | None = None
     db: ProfileDb = field(default_factory=ProfileDb)
-    #: Partial entries patching stores declared at the top level (C13, #136).
+    #: Partial entries patching stores declared at the top level (C13).
     #:
     #: Layer 3, the highest the file can supply, so these **override** what the
     #: declaration wrote -- which is the case §5 exists for: token from a laptop,
     #: AppRole from CI, one store, one name in the audit trail.
     #:
-    #: Applied when this profile is the one :attr:`Config.active_profile` names
-    #: (#153), in the same pass that merges layers 4 and 5. A declared profile
+    #: Applied when this profile is the one :attr:`Config.active_profile` names,
+    #: in the same pass that merges layers 4 and 5. A declared profile
     #: nobody selected patches nothing: §5 rule 1 makes exactly one active.
     vaults: tuple[VaultPatch, ...] = ()
 
@@ -780,7 +779,7 @@ class Defaults:
     profile: str | None = None
     safety: Safety | None = None
     locking: Locking | None = None
-    #: Partial entries patching stores declared at the top level (C13, #136).
+    #: Partial entries patching stores declared at the top level (C13).
     #:
     #: Layer 5, so these are **outranked by the declaration itself**: they supply
     #: keys the ``vaults:`` entry did not write rather than replacing ones it did.
@@ -835,7 +834,7 @@ class ConfigWarning:
 
 @dataclass(frozen=True)
 class PersonalAccountRule:
-    """One rule in `personal_accounts:` -- accounts belonging to people (H1, #449).
+    """One rule in `personal_accounts:` -- accounts belonging to people (H1).
 
     Named for the **rule** rather than the accounts because one entry is not one
     account: it is a list of names, or a predicate that stands for however many
@@ -878,7 +877,7 @@ class PersonalAccountRule:
 
 @dataclass(frozen=True)
 class ResetRecords:
-    """Where UC-2 journals a reset -- a store and a prefix (H2, #450, #468).
+    """Where UC-2 journals a reset -- a store and a prefix (H2).
 
     One destination for the estate rather than one per account, because the
     record's own path is derived from the (target, account) pair rather than
@@ -901,15 +900,15 @@ class ResetRecords:
 
 @dataclass(frozen=True)
 class ManualDelivery:
-    """`delivery.manual:` -- the seen path's settings (#439, #441).
+    """`delivery.manual:` -- the seen path's settings.
 
     One key, and it is **required rather than defaulted**. `manual` is the only
     method that shows a working password to somebody who is not its owner, and
     what makes that allowable is not that it is harmless but that the exposure is
     deliberate, witnessed and *time-limited* (UC-2 §1). Expiry is what ends it: a
     `manual` delivery without `force_expire: true` would be an exposure with no
-    end, so the fifth of #439's five guards refuses one at plan time rather than
-    quietly supplying the safe value.
+    end, so the fifth of the five guards (decision #439) refuses one when the file
+    is loaded, rather than quietly supplying the safe value.
 
     **Defaulting it to `True` would have been worse than refusing**, which is why
     it is a required key and not a field with a default. An estate that never
@@ -924,7 +923,7 @@ class ManualDelivery:
 
 @dataclass(frozen=True)
 class WrappedDelivery:
-    """`delivery.vault_wrapped:` -- the default method's settings (#444).
+    """`delivery.vault_wrapped:` -- the default method's settings.
 
     One key, and it is **required rather than defaulted** for the same reason
     `manual`'s is: a wrapping token's whole safety story is that it stops working,
@@ -956,13 +955,13 @@ class WrappedDelivery:
 
 @dataclass(frozen=True)
 class WebhookNotify:
-    """`delivery.notify.webhook:` -- where to post, and what to say (#442).
+    """`delivery.notify.webhook:` -- where to post, and what to say.
 
     ``url`` is a :class:`MaterialRef` rather than a string, and that is C9 doing
     real work rather than being applied uniformly: a chat incoming-webhook URL
     *embeds its own credential*, so a plain string here would put one in a file
     people commit and in every rendering of that file. Holding a location instead
-    means the redaction the issue asked for is structural -- there is no value to
+    means the redaction is structural -- there is no value to
     redact, because the model never has one.
 
     ``template`` is the estate's own sentence, which is why the tool never authors
@@ -997,42 +996,40 @@ class Notify:
 
 @dataclass(frozen=True)
 class Delivery:
-    """How a personal account's new password reaches its owner (UC-2 §6, #440).
+    """How a personal account's new password reaches its owner (UC-2 §6).
 
     ``method`` is one of :data:`~sopuli.config.delivery.DELIVERY_METHODS`, and it
     is the whole type on purpose.
 
-    **The per-method sub-block is validated and not retained**, which is #440's
-    boundary made structural rather than remembered. That issue builds the block
-    and the check that the selected method brought settings; *which* keys a method
-    takes is its own issue, because the answer is a fact about the service behind
-    it -- a response-wrapping token is single-use by construction, so `num_uses`
-    is a config error rather than a key with a default (#444), and nothing in a
-    config layer can know that. A field holding the sub-block as opaque pairs
-    would carry unvalidated content through the model and invite a consumer to
-    read it, which is the shape of the mistake `01-configuration.md` §1 calls the
-    one with the worst consequences. Each method's issue adds its own typed field.
+    **A per-method sub-block reaches the model only as a typed field.** Every
+    sub-block is checked for shape, and the selected method must have brought
+    one. *Which* keys a method takes is a fact about the service behind it -- a
+    response-wrapping token is single-use by construction, so `num_uses` is a
+    config error rather than a key with a default -- and nothing in a config layer
+    can know that. A field holding the sub-block as opaque pairs would carry
+    unvalidated content through the model and invite a consumer to read it, which
+    is the shape of the mistake `01-configuration.md` §1 calls the one with the worst consequences.
+    Each built method has a typed field of its own. A method that is not built
+    has none, and its sub-block is not retained.
 
-    The same applies to `notify:` (#442), which nests under delivery because it is
+    The same applies to `notify:`, which nests under delivery because it is
     a property of a delivery rather than of a run -- and which may never carry the
     secret or anything that retrieves it (UC-2 §6.1), a rule its own builder must
     enforce because it needs the template grammar.
 
-    **`manual` is the first method to claim its field** (#441), which is the shape
-    #440 described in advance: each method's issue adds a typed field of its own
-    rather than a bag. It is ``None`` where `manual` is not the selected method --
-    an unselected method's settings are not read, and a field holding them would
+    **`manual` has a typed field of its own**, as each built method does, rather
+    than a bag. It is ``None`` where `manual` is not the selected method -- an
+    unselected method's settings are not read, and a field holding them would
     invite a consumer to act on a block the run is not using.
     """
 
     method: str
-    #: `manual`'s settings, where `manual` is selected (#439, #441).
+    #: `manual`'s settings, where `manual` is selected.
     manual: ManualDelivery | None = None
-    #: `vault_wrapped`'s settings, where it is selected (#444). The second method
-    #: to claim a field, and the shape #440 predicted holds: a typed field per
-    #: method, ``None`` for every method the run is not using.
+    #: `vault_wrapped`'s settings, where it is selected. Each built method has a
+    #: typed field, ``None`` for every method the run is not using.
     vault_wrapped: WrappedDelivery | None = None
-    #: The channel that says a password is ready (#442), or ``None`` where the
+    #: The channel that says a password is ready, or ``None`` where the
     #: estate configured none. Read whichever `method` is selected, unlike a
     #: method's own sub-block: a notification is a property of the delivery as a
     #: whole, and the template is the estate's sentence rather than the tool's --
@@ -1041,7 +1038,7 @@ class Delivery:
 
     @property
     def is_seen(self) -> bool:
-        """Whether this method shows a working password to the DBA (#439).
+        """Whether this method shows a working password to the DBA.
 
         The one property of a delivery the rest of the tool branches on, and it is
         a method comparison rather than a flag somebody sets: a path is seen
@@ -1056,19 +1053,19 @@ class Config:
 
     version: int
     applications: tuple[Application, ...] = ()
-    #: UC-2's personal accounts, by name or by predicate (H1, #449). Separate
+    #: UC-2's personal accounts, by name or by predicate (H1). Separate
     #: from `applications` because the two carry different guarantees, and a
     #: name may not appear in both -- see
     #: :func:`~sopuli.config.personal_accounts.reject_cross_declaration`.
     personal_accounts: tuple[PersonalAccountRule, ...] = ()
     #: Where UC-2's reset journal lives, or `None` where the file declares no
-    #: destination (#468). `None` is a documented mode rather than a default
+    #: destination. `None` is a documented mode rather than a default
     #: waiting to be filled in: a reset with nowhere to journal warns and runs,
     #: because the seen path may have no store at all and refusing would take
     #: the fallback away from the estates it exists for (UC-2 §3.1, §3.4).
     reset_records: ResetRecords | None = None
-    #: How UC-2 hands a password over, or `None` where the file says nothing
-    #: (#440). `None` is not `vault_wrapped`: an estate that configured no
+    #: How UC-2 hands a password over, or `None` where the file says nothing.
+    #: `None` is not `vault_wrapped`: an estate that configured no
     #: delivery has not silently chosen one, and a reset with nowhere to deliver
     #: is a refusal for the verb to make rather than a default to materialise
     #: here.
@@ -1089,7 +1086,7 @@ class Config:
     groups: tuple[Group, ...] = ()
     policies: tuple[Policy, ...] = ()
     profiles: tuple[Profile, ...] = ()
-    #: The one profile this run is invoked under, or ``None`` (§5, #153).
+    #: The one profile this run is invoked under, or ``None`` (§5).
     #:
     #: A property of the *run* rather than of the file, and it lives here anyway
     #: because it is what makes layer 3 reachable: `vaults:` patching happens
