@@ -385,7 +385,7 @@ def _build_auth(raw: Any, *, at: KeyPath) -> VaultAuth | None:
 VAULT_IS_A_NAME = (
     "`vault:` is a store name everywhere in this file (see `SOPULI_VAULT`); "
     "settings of a store go under `vaults:` keyed by its name, which `defaults:` "
-    "and a profile may each carry. See C13, decided in #31"
+    "and a profile may each carry. See C13"
 )
 
 

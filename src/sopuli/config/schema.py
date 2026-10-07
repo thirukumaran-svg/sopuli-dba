@@ -355,13 +355,13 @@ def _locking() -> Schema:
                     "May an unattended run take over a lock past its expiry, plus a "
                     "60-second skew margin? Off unless written. Safe to exist only "
                     "because the takeover fences the run it broke, so it is refused "
-                    "beside a store marked `locking: advisory-only` (#83)."
+                    "beside a store marked `locking: advisory-only` (Q2)."
                 ),
             },
         },
         description=(
             "The advisory lock, which lives in the vault and is keyed on the secret "
-            "path being mutated (00-principles.md P5, #83). Config-only: breaking a "
+            "path being mutated (00-principles.md P5; Q2). Config-only: breaking a "
             "lock has no flag, per invariant 10."
         ),
     )
@@ -417,7 +417,7 @@ def _vault_types() -> dict[str, Schema]:
                 "mutating command refuses on a store that cannot lock. "
                 "`advisory-only` is the operator saying so deliberately -- the "
                 "record is still written, every run warns, and the run document "
-                "reports lock.mode: none (#83)."
+                "reports lock.mode: none (Q2)."
             ),
         },
     }
@@ -467,9 +467,9 @@ def _vault_patches() -> Schema:
         "description": (
             "Settings *of* stores declared at the top level, keyed by name. `vault:` "
             "is always a store name and never a block, so a layer that wants to say "
-            "something about a store names it here (C13, decided in issue #31). The "
-            "entries are partial: they patch a declaration rather than making one, and "
-            "a name not declared under the top-level `vaults:` is an error. Under "
+            "something about a store names it here (C13). The entries are partial: they "
+            "patch a declaration rather than making one, and a name not declared under "
+            "the top-level `vaults:` is an error. Under "
             "`defaults:` this is precedence layer 5, so it is outranked by the "
             "declaration; in a profile it is layer 3, so it outranks it (P3)."
         ),
@@ -1108,9 +1108,9 @@ def _notify() -> Schema:
                         "description": (
                             "Where to post. Named rather than written (C9): a chat "
                             "incoming-webhook URL embeds its own credential, so a literal "
-                            "one here is a credential in a file people commit -- and it is "
-                            "what makes the redaction #442 asked for structural, since the "
-                            "model never holds a value to redact."
+                            "one here is a credential in a file people commit -- and naming "
+                            "it makes the redaction structural, since the model never holds "
+                            "a value to redact."
                         ),
                     },
                     "template": {
@@ -1130,7 +1130,7 @@ def _notify() -> Schema:
             ),
         },
         description=(
-            "The low-trust channel that says a password is ready (#442). It may never "
+            "The low-trust channel that says a password is ready. It may never "
             "carry the password or anything that retrieves it (UC-2 6.1), which is "
             "enforced by the placeholder set being closed rather than by a list of "
             "forbidden words."
@@ -1314,7 +1314,7 @@ def _root() -> Schema:
         "personal_accounts": _array(
             _ref("personal_account"),
             minItems=1,
-            description="Accounts belonging to people, for UC-2's reset (H1, #449).",
+            description="Accounts belonging to people, for UC-2's reset (H1).",
         ),
         "reset_records": _ref("reset_records"),
         "delivery": _ref("delivery"),
