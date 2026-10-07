@@ -65,9 +65,9 @@ pytest
 ```
 
 All compose services use profiles, so stop them with
-`docker compose --profile '*' down`. Tier 2 and 3 environments are
-maintainer pre-release coverage; unavailable capabilities must skip with a
-reason, not fail. Never branch on an Oracle version: probe and use capabilities.
+`docker compose --profile '*' down`. Tier 2 runs by hand on a developer's
+machine with freely pullable XE images; tier 3 is maintainer-only. Unavailable
+capabilities must skip with a reason, not fail. Never branch on an Oracle version: probe and use capabilities.
 
 ## Architecture
 

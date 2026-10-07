@@ -186,8 +186,11 @@ What follows from that:
   freely pullable images** — Oracle Free, the XE editions, PostgreSQL,
   HashiCorp Vault. If a contributor cannot go green on their own machine, they
   stop contributing.
-- **Tiers 2 and 3 are the maintainer's pre-release matrix** — built 19c, 11.2 in
-  some configurations, real Oracle Cloud. Do not expect to run them.
+- **Tier 2 runs by hand on your own machine**, with
+  `docker compose --profile tier2` and the freely pullable 21c, 18c and 11g XE
+  images. No workflow runs it. See `docs/design/04-testing.md` §3.
+- **Tier 3 is the maintainer's**: 19c and 12.2 Enterprise Edition, and real
+  Oracle Cloud. Do not expect to run it.
 - **Anything that needs an environment you do not have must skip, not fail**, and
   a skipped test says *why* it skipped. Tests declare the capabilities they need.
   **Never branch on a version number** — query the database for what it can do
@@ -245,7 +248,7 @@ a diff.
 
 These rules apply to every document in the repository, to code comments and to
 docstrings. Some older text does not follow them yet; it is being rewritten
-(open: #674). New and changed text follows them now.
+(open: #674, #686). New and changed text follows them now.
 
 ### Write in plain English
 

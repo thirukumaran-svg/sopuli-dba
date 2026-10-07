@@ -177,8 +177,8 @@ request through. `ci ok` needs `changes` like any other lane, so a failure there
 is a failure here. Tier 1 needs none of this — it is not among the required
 checks, so it can keep filtering on the trigger.
 
-**Nothing runs on `main` itself any more**, and that is not a widening of this
-gap. Because a `pull_request` run tests the merge result, the commit that lands on
+**`ci` and `tier 1` do not run on a push to `main`**, and that is not a
+widening of this gap. Because a `pull_request` run tests the merge result, the commit that lands on
 `main` has already been tested — as long as the branch was current when it merged.
 Two pull requests open at once is where that stops being true: the second one's
 last run predates the first one landing, and nothing here enforces up-to-date

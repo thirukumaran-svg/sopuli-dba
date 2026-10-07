@@ -34,9 +34,9 @@ Start one with its profile, from `test/`:
 docker compose --profile tier2 up -d oracle-xe21
 ```
 
-One Instant Client 23.x reaches all of them. `doctor` prints
-`reaches 19.1 and later` beside an 18c or 11g target that it has just reached.
-That line is Oracle's support statement, not a measurement.
+One Instant Client 23.x reaches all of them. `doctor`'s client report prints
+`reaches 19.1 and later` even on a run that has just reached an 18c or 11g
+target. That line is Oracle's support statement, not a measurement.
 
 Below Oracle 23, the password limit is 30 bytes, so a policy with `length:`
 above 30 is refused at plan time on these releases. On 23 and later the limit is
@@ -397,9 +397,9 @@ Other states to try:
 
 | Do this | Expect |
 |---|---|
-| `unset TNS_ADMIN` | `$TNS_ADMIN is unset, so there is nowhere to read a wallet from` |
-| point `TNS_ADMIN` at a missing directory | `is missing or not readable by this user` |
-| leave only `ewallet.p12` | `no readable cwallet.sso ... needs a passphrase this tool cannot supply` |
+| `unset TNS_ADMIN` | `no wallet directory to check: $TNS_ADMIN is unset and no sqlnet.ora named one` |
+| point `TNS_ADMIN` at a missing directory | `it is missing, or not readable by this user` |
+| leave only `ewallet.p12` | `no readable cwallet.sso ... which needs a passphrase this tool has no way to supply` |
 | grant `BUILTIN\Users` read on `cwallet.sso` | `SOPULI-W008`: the auto-login wallet is not private |
 | add a `sqlnet.ora` with `WALLET_LOCATION` pointing elsewhere | `searched` follows it, and says `(from sqlnet.ora WALLET_LOCATION)` |
 

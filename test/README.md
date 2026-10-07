@@ -61,8 +61,8 @@ up a tier can never tear something down.
 
 Oracle containers are deliberately long-running. Tests reset state by dropping
 and recreating accounts, never by recreating the container — startup dominates
-everything else. **Nothing in this file enforces that**: no service declares a
-volume but the two 19c ones and 12.2, so any teardown discards the database and the next
+everything else. **Nothing in this file enforces that**: no service has a named
+data volume but the two 19c ones and 12.2, so any teardown discards the database and the next
 `up` re-initialises from scratch.
 
 ## Teardown, which is not what you would guess
@@ -93,7 +93,7 @@ without `-v`.
 
 | Service | Port | Notes |
 |---|---|---|
-| vault | 8200 | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>** — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` and `agent-registry/`, so three KV mounts exist and a test asserting on the mount list must expect them |
+| vault | 8200 | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>** — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
 | postgres | 5432 | `postgres` / `sopuli-test` |
 | oracle-free | 1521 | 23ai/26ai Free — CDB + PDB, rollover |
 | oracle-xe21 | 1522 | 21c XE |
