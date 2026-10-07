@@ -1,11 +1,14 @@
 """``config show --explain`` -- every effective setting, and where it came from.
 
-P3 calls this "making precedence debuggable" and gives the format:
+P3 calls this "making precedence debuggable". An excerpt of the output:
 
-    vault.addr         = https://vault.example.com:8200   [env SOPULI_VAULT_ADDR]
-    verify.method      = hash                             [profile ci]
-    safety.max_targets = 1                                [defaults]
-                         profile ci asked for 200; safety only ratchets toward safe
+    db.query_timeout_s  = 120  [profiles.ci.db.query_timeout_s]
+    safety.max_targets  = 4    [defaults.safety.max_targets]
+                          profiles.ci.safety.max_targets asked for 200; safety.max_targets
+                          stays 4 (defaults.safety.max_targets) -- safety settings only
+                          ratchet toward safe
+
+The real ratchet note is one line; it is wrapped here to fit.
 
 The last line is the one worth being able to see. A setting that was *requested*
 and did not win is invisible in the result and obvious here, which is the

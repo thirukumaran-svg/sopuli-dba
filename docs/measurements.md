@@ -16,9 +16,8 @@ the same releases the *Scripts* table below lists for it. When you run a script
 on a new release, update both.
 
 The tier-1 suite in CI is not a measurement here. It pulls the moving
-`gvenzl/oracle-free:latest` image, and it does not run on a pull request that
-changes only prose. So a green CI run does not show which release it ran on, and
-the suite has no rows in this file.
+`gvenzl/oracle-free:latest` image, so a green CI run does not show which
+release it ran on. The suite has no rows in this file.
 
 ## Releases
 

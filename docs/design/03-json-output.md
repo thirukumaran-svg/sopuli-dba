@@ -561,8 +561,8 @@ Every effective option that changed behaviour, with the precedence layer it came
 from:
 
 ```json
-"verify.method": { "value": "hash", "source": "profile",
-                   "source_detail": "profiles.scheduled.verify.method" }
+"db.query_timeout_s": { "value": 120, "source": "profile",
+                        "source_detail": "profiles.ci.db.query_timeout_s" }
 ```
 
 This is the machine-readable form of `config show --explain` (P3). When someone
@@ -580,7 +580,7 @@ entry means.
 **`source_detail` is a location, never a value.** It is the flag as typed (`-o`
 is recorded as `-o`), the variable name, or the config key. It exists so that
 somebody can find the setting in their own command line or CI job definition.
-That is why the profile layer points at `profiles.ci.verify.method`, not just
+That is why the profile layer points at `profiles.ci.db.query_timeout_s`, not just
 `"profile"`. No code path puts a value in this field, so it is inside §4's
 redaction rule by construction.
 

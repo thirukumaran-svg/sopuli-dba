@@ -103,9 +103,10 @@ Two reasons make the result general, not one observation:
 Oracle lists the privileges that schema privileges exclude in *Configuring
 Privilege and Role Authorization*.
 
-**Consequences.** Nothing in §1 changes. The P7 reason to reconsider the
-definer-rights package is gone, so the unattended runner in §6 is the only one
-left ([ADR-001](../decisions/adr-001-privilege-model.md)). And no server-side
+**Consequences.** Nothing in §1 changes. Schema privileges offer no narrower
+grant, so they are no reason to revisit the decision against a definer-rights
+package. Its one remaining trigger is the unattended runner in §6
+([ADR-001](../decisions/adr-001-privilege-model.md)). And no server-side
 setting limits which accounts the service account can reach, so §4's client-side
 guardrails do all of that work.
 
@@ -660,40 +661,40 @@ does.
 `EXECUTE ON DBMS_LOCK` cannot be audited, and no grant changes that.
 
 The three states look like this. Each is an excerpt from `doctor
---check-privileges` against a PDB service account on 26ai Free 23.26.2.0.0. The
-default install:
+--check-privileges` against a PDB service account on 26ai Free 23.26.2.0.0,
+created by `sql/oracle/00_install.sql` in `PDB` mode. The default install:
 
 ```
-TARGET       REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-appdb-alpha  yes        pdb    FREEPDB1   READ WRITE  5
-  appdb-alpha: not checked, and not visible from here: EXECUTE ON DBMS_LOCK, SYSDBA, SYSOPER
-  appdb-alpha: SYSDBA and SYSOPER need SELECT on V$PWFILE_USERS, which 02-oracle-privileges.md §2 leaves optional: GRANT SELECT ON SYS.V_$PWFILE_USERS to the service account to audit them
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+  free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK, SYSDBA, SYSOPER
+  free-pdb: SYSDBA and SYSOPER need SELECT on V$PWFILE_USERS, which 02-oracle-privileges.md §2 leaves optional: GRANT SELECT ON SYS.V_$PWFILE_USERS to the service account to audit them
 ```
 
 The same account with the grant taken, holding neither privilege. One row is
 left unchecked, and there is nothing to suggest about it:
 
 ```
-TARGET       REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-appdb-alpha  yes        pdb    FREEPDB1   READ WRITE  5
-  appdb-alpha: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+  free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
 ```
 
 The same account granted `SYSDBA`. The finding is reported and, under P5, is
 not fatal: the run exits 0.
 
 ```
-TARGET       REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-appdb-alpha  yes        pdb    FREEPDB1   READ WRITE  5
-  appdb-alpha: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
-  appdb-alpha: over-granted, and the tool needs none of it: SYSDBA
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+  free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
+  free-pdb: over-granted, and the tool needs none of it: SYSDBA
 ```
 
 ---
 
-## 4. Guardrails, now client-side
+## 4. Client-side guardrails
 
-With no package, the account-safety checks are in the tool. They are not a
+The account-safety checks are in the tool, not in the database. They are not a
 security boundary: a stolen service credential bypasses them. They protect
 against typos, and against a config change that reaches more accounts than
 intended. An operator with `SYSDBA` never had more than that from them.
@@ -872,13 +873,12 @@ ALTER USER "ORDERS_APP" IDENTIFIED BY "<generated>";
   §5's second attribute). The profile name follows the same identifier rules, and
   is the spelling read back from `DBA_PROFILES`, for the same reason as the
   username.
-- **No function builds `ALTER PROFILE`.** The credential-sync verbs assign a
+- **The tool never issues `ALTER PROFILE`.** The credential-sync verbs assign a
   profile and never edit one, because a profile is shared and editing it reaches
-  accounts nobody selected (§3, UC-1 Q4). If UC-4 needs to author profiles, it
-  needs a builder this grant set does not allow, and a principal of its own.
-  Because nothing builds the statement, there is no call site to review. This is
-  how invariant 2 keeps plaintext to `reveal()` instead of masking at each call
-  site.
+  accounts nobody selected (§3, UC-1 Q4). `alter_profile_ddl()` in
+  `driver/oracle/rollover.py` builds the statement only as text in a message,
+  for an operator to run. If UC-4 needs to author profiles, it needs a grant
+  this set does not include, and a principal of its own.
 - **The built statement redacts itself.** It carries a password, so it is as
   sensitive as one. Every string form of it is `ALTER USER "X" IDENTIFIED BY
   ***`, which is also what `--dry-run` prints. The plaintext is reachable only
@@ -967,7 +967,7 @@ row.
 | OS audit files on the 23 codebase | **The surface is gone, so a clean search there measures nothing.** On 26ai 23.26.2.0.0, `AUDIT_SYS_OPERATIONS = TRUE` is accepted and writes nothing useful: five files, each a session header and one `ACTION` line for the same internal call, and no `CREATE`, `ALTER` or `DROP USER` text. Traditional auditing is desupported from the 23 codebase, and this parameter belongs to it | Read it as an empty column, as the search labels one `INCONCLUSIVE`. There is nothing to protect here on the 23 codebase. That is a different claim from "we looked and found nothing" |
 | **Self-rotation**: `IDENTIFIED BY … REPLACE …` | **Audited, with both passwords masked.** The trail records `ALTER USER sopulitest IDENTIFIED BY * REPLACE *`, attributed to the account itself, not to a service account. The unified policy `ACTIONS ALTER USER` records it, and so does traditional `AUDIT USER` where it exists. The `REPLACE` clause carries the account's current password, masked with the same `*`. Not measured: self-rotation under a password verify function, which receives both passwords | The concern was that this path uses no `ALTER USER` privilege, so privilege auditing could miss it. It does not: **"rotations are audited" holds for self-rotation too**, which UC-1b needs. The tool does not have this path |
 | **`IDENTIFIED BY VALUES`**: the verifier | **Masked.** The trail records `ALTER USER sopulitest IDENTIFIED BY VALUES *`, and under a level-12 trace the DDL is cut short at the same character as the password form. No raw verifier appears in a trace file or an OS audit file. On 19.32.0.0.0 it is masked in the unified trail and absent from both `DBA_AUDIT_TRAIL` and `audit_file_dest`. That traditional half is absent, not clean, and the cause is not known | A restore-from-verifier path, if one is ever added, does not widen the audit exposure. The verifier can still be attacked offline wherever it can be read, which is ADR-001's question. The probe needs `SELECT ON SYS.USER$`; without it, this row is unanswered, not clean. A verifier written as a literal into a PL/SQL block leaks like any other literal (invariant 13) |
-| Network | encrypted when NNE or TLS is in use | `sopuli doctor` warns about an unencrypted connection |
+| Network | encrypted when NNE or TLS is in use | The tool does not check or report whether a connection is encrypted (open: #697). Require NNE or TLS on the server |
 | Tool's own output and logs | redacted at the output serialiser | covered by the redaction release gate, UC-1 §11 |
 
 Run `sql/oracle/02_password_leak_probe.sql` in the three positions its header
@@ -992,7 +992,7 @@ to test.
 
 ## 5. Auditing
 
-With no package there is no `SOPULI_AUDIT` table. The database-side trail is
+The tool installs no audit table in the database. The database-side trail is
 unified auditing alone. It is the trail to trust, because it does not depend on
 the tool behaving correctly.
 

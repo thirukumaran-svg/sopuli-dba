@@ -612,16 +612,20 @@ would cost.
 ### Making precedence debuggable
 
 `sopuli config show --explain` prints every effective setting with the layer it
-came from:
+came from. This excerpt is its `settings` section, from a run with
+`--profile ci`, where the profile asks for `max_targets: 200` and the config's
+`defaults` set 4:
 
 ```
-vault.addr         = https://vault.example.com:8200   [env SOPULI_VAULT_ADDR]
-vault.auth.method  = approle                          [config vaults.hcv-prod]
-verify.method      = hash                             [profile ci]
-db.timeout_s       = 30                               [built-in default]
-targets            = 4 targets from group "prod-pdbs" [cli --group]
-safety.max_targets = 1                                [defaults]
-                     ↑ profile ci asked for 200; safety only ratchets toward safe
+  db.connect_timeout_s            = 30                                      [built-in default]
+  db.query_timeout_s              = 120                                     [profiles.ci.db.query_timeout_s]
+  output                          = text                                    [cli --output (verb)]
+  profile                         = ci                                      [cli --profile (group)]
+  safety.max_targets              = 4                                       [defaults.safety.max_targets]
+                                    profiles.ci.safety.max_targets asked for 200; safety.max_targets stays 4 (defaults.safety.max_targets) -- safety settings only ratchet toward safe
+  safety.readonly                 = false                                   [built-in default]
+  vaults.vault-prod.addr          = https://vault.example.com:8200          [env SOPULI_VAULT_ADDR]
+  vaults.vault-prod.mount         = kv                                      [vaults.vault-prod.mount]
 ```
 
 Secret values are always redacted here. Anything resolved from a source the tool
@@ -954,7 +958,7 @@ is somebody typing, the other is a deployed file that a scheduler runs.
 | D4 | Config format | YAML only; JSON accepted since it is valid YAML. Reasons: [D4](../decisions/log.md#d4) | decided |
 | D5 | macOS tier | Best-effort and untested: portable code, no support claim, no macOS CI (P4). Reasons: [D5](../decisions/log.md#d5) | decided |
 | D6 | Plugin model for drivers/stores | in-tree first; entry-point plugin API only after a second driver exists. Reasons: [D6](../decisions/log.md#d6) | decided |
-| D7 | Minimum Oracle version | 11.2 stays in scope; re-affirmed 2026-09-09 (#387) after the `V$SQLSTATS` finding. Reasons: [D7](../decisions/log.md#d7) | decided |
+| D7 | Minimum Oracle version | 11.2 stays in scope. Reasons: [D7](../decisions/log.md#d7) | decided |
 | D8 | CLI framework | click. See `../decisions/adr-002-cli-framework.md`. Reasons: [D8](../decisions/log.md#d8) | decided |
 | D9 | Dependency layering | Vendor clients are install extras, and base opens no sockets. See `../decisions/adr-006-optional-dependencies.md`. Reasons: [D9](../decisions/log.md#d9) | decided |
 | D10 | Which confirmation triggers are built in | **none** (#294); `safety.confirm_environments` is the only trigger. Reasons: [D10](../decisions/log.md#d10) | decided |
