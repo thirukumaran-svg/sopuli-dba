@@ -1,40 +1,36 @@
-"""What a connection turned out to be, and what it can do (#177).
+"""What a connection turned out to be, and what it can do.
 
 Invariant 3, made real: **ask the database, cache per session, branch on the
 capability.** Nothing here reads a version from a file, and nothing here is
 reachable from a command that has not connected.
 
-Two things about this module are decisions rather than mechanics, and both were
-bought with a measurement (#195).
+Two things about this module are decisions rather than mechanics.
 
-**A probe that fails is not automatically a "no".** The first version of this
-idea lived in ``tests/oracle_harness.py`` and read *any* exception as absent, on
-the reasonable-sounding grounds that a missing view, a missing column and a
-missing grant all mean the same thing to a caller. They do. What that rule also
-swallowed was ``ORA-02003: invalid USERENV attribute`` -- a probe asking a
-question Oracle does not have -- which then reported ``container_scope`` absent
-on every database the tool ever touched, including the ones where it was plainly
-present, and looked exactly like a measurement while doing it. So the negative
-answers are enumerated (:data:`ABSENT_CODES`) and everything else is
+**A probe that fails is not automatically a "no".** Reading *any* exception as
+absent is tempting, because a missing view, a missing column and a missing grant
+all mean the same thing to a caller. They do. That rule would also swallow
+``ORA-02003: invalid USERENV attribute`` -- a probe asking a question Oracle does
+not have -- and report the capability absent on every database, including the
+ones where it is present, looking exactly like a measurement (decision #195,
+measured on 26ai 23.26.2.0.0). So the
+negative answers are enumerated (:data:`ABSENT_CODES`) and everything else is
 :class:`ProbeError`. The tool refuses rather than guesses, which is CLAUDE.md's
-rule, and the failure that hid for a release cycle would now arrive on the first
-run.
+rule.
 
-**One question per capability, several round trips.** #177 asks whether the probe
-set should be one statement or many. Many, and not reluctantly: each answer is
-attributable to the question that produced it, a probe that fails names itself,
-and the alternative is a single ``select`` whose seventh column silently becomes
-``null`` on the release nobody tested. A session opens once and answers eight
-short questions against ``dual`` and two dictionary views; the cost is not
-measurable next to the connection itself.
+**One question per capability, several round trips.** The probe set is many
+statements, not one, and not reluctantly: each answer is attributable to the
+question that produced it, a probe that fails names itself, and the alternative
+is a single ``select`` whose seventh column silently becomes ``null`` on the
+release nobody tested. A session opens once and answers eight short questions
+against ``dual`` and two dictionary views; the cost is not measurable next to
+the connection itself.
 
 **Nothing here imports ``oracledb``.** The SQL, the reading of an answer and the
 mapping onto a :class:`~sopuli.driver.protocol.Scope` are pure, so they are
 tier 0 and the tier-1 lane exercises the same code it tests. It is also what lets
 ``tests/oracle_harness.py`` import :data:`PROBES` rather than keep a second copy:
 §3's claim that the suite validates the capability model only holds while the
-harness and the driver are asking the same questions, and #195 is what it looks
-like when they are not.
+harness and the driver are asking the same questions.
 """
 
 from __future__ import annotations
@@ -79,8 +75,8 @@ class ProbeError(DriverError):
 
     Distinct from a capability being absent, which is an ordinary outcome and
     not an exception at all. This is *the tool asked something it should not
-    have asked*, or *the database broke while answering* -- and #195 is the
-    argument for the two never sharing a word again.
+    have asked*, or *the database broke while answering* -- and the two must
+    never share a word (decision #195).
     """
 
     category = "database"
@@ -95,7 +91,7 @@ class ProbeError(DriverError):
 #: * ``ORA-00904`` -- the column is not there, which is how a feature added in a
 #:   later release announces itself to a query written for it.
 #: * ``ORA-01031`` -- the privilege is not held. `offline_verify` is the case
-#:   this exists for: #86 made ``SELECT ON SYS.USER$`` an optional grant, so its
+#:   this exists for: ``SELECT ON SYS.USER$`` is an optional grant (decision P2), so its
 #:   absence is the ordinary configuration rather than a fault.
 #: * ``ORA-41900`` -- the ``READ`` privilege is not held, which is what a modern
 #:   release says instead of ``ORA-00942`` when the asker is privileged enough to
@@ -113,7 +109,7 @@ ABSENT_CODES = frozenset({"ORA-00942", "ORA-00904", "ORA-01031", "ORA-41900"})
 #: One question per capability, each answering with a truthy first column.
 #:
 #: ``common_users`` is the one worth reading twice, because it asks about a
-#: **privilege** and not about a place. Measured on 26ai (#195): an account
+#: **privilege** and not about a place. Measured on 26ai 23.26.2.0.0 (decision #195): an account
 #: holding ``ALTER USER`` commonly reads 1 here and successfully alters a common
 #: user from the root; an account holding the identical privilege *locally* reads
 #: 0 and gets ``ORA-01031`` for the same statement. Where the session is standing
@@ -164,7 +160,7 @@ CONTAINER_NAME = "select sys_context('userenv','con_name') from dual"
 #: capability. It is 11.2 saying it has never heard of containers, and from
 #: :data:`APPLICATION_ROOT` or :data:`APPLICATION_PDB` it is a release before 12.2
 #: saying it has never heard of *application* containers. From
-#: :data:`CLOUD_SERVICE` it is 11.2 saying it is not a cloud service (#437). Those
+#: :data:`CLOUD_SERVICE` it is 11.2 saying it is not a cloud service. Those
 #: are the only questions in this module where that code carries information --
 #: one ``USERENV`` attribute each, and the same conclusion: the release has not
 #: got it, so the answer is no.
@@ -176,7 +172,7 @@ NO_CONTAINERS = "ORA-02003"
 
 #: The other two of P1's five scopes. Both need **no grant**, which is the whole
 #: reason they are asked here rather than of ``V$PDBS`` or ``CDB_PDBS``: measured
-#: on 26ai (#204, ``sql/oracle/03_app_container_probe.sql``), a service account
+#: on 26ai (``sql/oracle/03_app_container_probe.sql``), a service account
 #: holding exactly ``02-oracle-privileges.md`` §2's PDB-mode grants reads both in
 #: a session where all three views carrying the same fact are ``ORA-00942``.
 #:
@@ -192,8 +188,8 @@ YES = "YES"
 #: cannot, and Oracle says so with ``ORA-65040`` rather than a privilege error.
 ROOT_CONTAINER = "CDB$ROOT"
 
-#: Which Autonomous Database service this is, or nothing (#437). Needs no grant.
-#: Measured: ``OLTP`` on ADB serverless 23.26.3.3.0 (2026-10-02); NULL on 26ai
+#: Which Autonomous Database service this is, or nothing. Needs no grant.
+#: Measured: ``OLTP`` on ADB serverless 23.26.3.3.0; NULL on 26ai
 #: Free 23.26.2.0.0, 21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0; ``ORA-02003`` on
 #: 11g XE 11.2.0.2.0. 12.2 and 19c are unmeasured, and either answer reads as no.
 #: Oracle documents other values for other ADB workloads, which is why
@@ -214,7 +210,7 @@ def read(cursor: Cursor, statement: str, **binds: Any) -> Any:
 
     The rule :data:`ABSENT_CODES` describes, in the one place that applies it --
     which is why a caller with a bind variable comes here rather than reaching
-    for the cursor directly. #178's 11.2 fallback depends on it: ``ORA-00904``
+    for the cursor directly. The 11.2 fallback depends on it: ``ORA-00904``
     *is* the answer to "does this release have ``PASSWORD_CHANGE_DATE``", and it
     only reads as an answer where this rule is applied.
 
@@ -285,7 +281,7 @@ def cloud_service_of(cursor: Cursor) -> str | None:
     """The Autonomous Database service this session is on, or ``None``.
 
     Non-``None`` means Autonomous: the attribute is set only there. On ADB no
-    account can read ``SYS.USER$`` -- not even ``ADMIN`` (#478) -- so a refusal
+    account can read ``SYS.USER$`` -- not even ``ADMIN`` -- so a refusal
     that told an operator to grant it would be advice nobody can follow.
     """
     return _userenv(cursor, CLOUD_SERVICE)
@@ -302,7 +298,7 @@ def application_of(cursor: Cursor) -> str | None:
 
     **Asked only from within a container that would otherwise be ``pdb``**, which
     is what keeps this free. An application container has its own container name
-    and never ``CDB$ROOT`` (#204), so this is a refinement of one answer rather
+    and never ``CDB$ROOT``, so this is a refinement of one answer rather
     than two more round trips on every connection: a non-CDB and a root session
     pay nothing, and an application root pays one.
 

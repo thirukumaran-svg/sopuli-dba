@@ -1,4 +1,4 @@
-"""Is there a wallet here, and can this process read it (P4, #215).
+"""Is there a wallet here, and can this process read it (P4).
 
 `01-configuration.md` §3a: a target using ``auth: external`` connects as
 ``/@alias``, and a secure external password store -- an Oracle wallet -- supplies
@@ -33,8 +33,8 @@ whether reading works.
 **Nothing here fails the run.** An unreadable wallet is not a separate verdict:
 it rides on the target's own reachability, which the connection attempt decides a
 moment later. This explains that failure rather than pre-empting it. A wallet
-other people can read is reported the same way and for the reason #213 settled
-for over-granted accounts -- it is somebody else's file and somebody else's
+other people can read is reported the same way and for the reason decision P5
+gives for over-granted accounts -- it is somebody else's file and somebody else's
 decision to fix, and a `doctor` that refused to run over it would block the
 person who ran it, mid-incident, over a condition they did not create.
 

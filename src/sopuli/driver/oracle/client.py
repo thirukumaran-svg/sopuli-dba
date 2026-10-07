@@ -1,4 +1,4 @@
-"""What reaching Oracle needs, decided without reaching it (#176).
+"""What reaching Oracle needs, decided without reaching it.
 
 The half of connecting that is arithmetic: which arguments a target and a
 credential add up to, how long to wait, and what to say when Instant Client is
@@ -109,9 +109,9 @@ def missing_client(detail: str, *, platform: str | None = None) -> ClientError:
     """The refusal, keeping the driver's own diagnosis and adding ours.
 
     ``detail`` is python-oracledb's message and it goes in verbatim, because it
-    names *which* library failed to load and often why. #184 is the worked
-    example from this project's own CI: the client was installed, on the path,
-    and still gave ``DPI-1047`` -- because Ubuntu 24.04 renamed ``libaio.so.1``.
+    names *which* library failed to load and often why. For example, the client
+    can be installed, on the path, and still give ``DPI-1047`` -- because Ubuntu
+    24.04 renamed ``libaio.so.1``.
     A message that had replaced that detail with our own tidier sentence would
     have cost another round trip, which is CLAUDE.md's "never swallow a vendor
     code" arriving from the client side rather than the server's.
@@ -195,7 +195,7 @@ def connect_arguments(
 #: a violation of invariant 3: the rule is that the tool never branches on a
 #: version *of the database from a config file*, and this is the version of the
 #: **client library on this machine**, asked of the library itself. There is no
-#: database to ask, which is the whole point -- `doctor` (#182) answers "is this
+#: database to ask, which is the whole point -- `doctor` answers "is this
 #: 11.2 target out of reach" before anybody waits on a connection that cannot
 #: succeed (P4).
 CLIENT_REACH: dict[int, tuple[int, int]] = {

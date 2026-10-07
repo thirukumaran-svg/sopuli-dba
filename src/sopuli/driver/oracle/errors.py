@@ -50,8 +50,8 @@ from typing import Any
 from sopuli.driver.protocol import AuthenticationError, DriverError
 from sopuli.exit_codes import ExitCode
 
-#: The script that grants the service account what it needs, as a hint names it
-#: (#612). One spelling, so a hint cannot name a file that is not there.
+#: The script that grants the service account what it needs, as a hint names it.
+#: One spelling, so a hint cannot name a file that is not there.
 INSTALL_SCRIPT = "sql/oracle/00_install.sql"
 
 # ------------------------------------------------------------------- kinds ---
@@ -299,7 +299,7 @@ class MappedError(DriverError):
         self.exit_code = diagnosis.exit_code
         # The one thing above the driver that needs this answer cannot ask a
         # `Diagnosis` for it: `sopuli.apply` is vendor-neutral and does not import
-        # this module (#312). Carried onto the instance, where `DriverError`
+        # this module. Carried onto the instance, where `DriverError`
         # declares it, so the boundary reads one attribute whoever raised it.
         self.regenerate = diagnosis.regenerate
         self.diagnosis = diagnosis

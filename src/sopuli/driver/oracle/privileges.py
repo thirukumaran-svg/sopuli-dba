@@ -1,22 +1,23 @@
-"""What the service account holds that it should not (#213, §3).
+"""What the service account holds that it should not (§3).
 
 ``02-oracle-privileges.md`` §3 lists what the tool must **not** be granted, and
 says why the list is worth checking rather than assuming: over-granting is what
 happens when somebody is debugging a permissions problem at 17:00 on a Friday,
 and the tool should notice rather than quietly benefit from it.
 
-**This reports; it does not enforce.** #173 is the refusal, §4 is the guardrail
-set, and neither is here. P5 is now decided — ``doctor`` **warns** and does not
-fail — for the reason the leaning gave: failing would block somebody mid-incident
-over a condition they did not create and cannot fix from this side.
+**This reports; it does not enforce.** The refusal is
+:mod:`sopuli.driver.guardrails`, §4 is the guardrail set, and neither is here.
+``doctor`` **warns** and does not fail (decision P5): failing would block
+somebody mid-incident over a condition they did not create and cannot fix from
+this side.
 
 ## It is self-inspection, and that is what makes it possible
 
 The obvious implementation reads ``DBA_SYS_PRIVS`` for this grantee, and it does
 not work: an account holding exactly §2's grants gets ``ORA-00942`` from it,
-measured on 26ai in #178. A correctly installed tool would report nothing at all,
-which is the same failure #178 found for ``DBA_ROLE_PRIVS`` and #195 for a
-capability probe — the answer that looks like good news and means "I could not
+measured on 26ai. A correctly installed tool would report nothing at all,
+which is the same failure as for ``DBA_ROLE_PRIVS`` and for a capability probe
+(decision #195) — the answer that looks like good news and means "I could not
 look".
 
 So the audit asks about *itself*, from views that need no grant:
@@ -27,7 +28,7 @@ So the audit asks about *itself*, from views that need no grant:
                         can this account actually do"
 ``USER_SYS_PRIVS``      the same account's *direct* grants, with ``COMMON`` — the
                         column ``SESSION_PRIVS`` does not have
-``DBA_ROLE_PRIVS``      granted roles, traversed. In §2's grant set since #207,
+``DBA_ROLE_PRIVS``      granted roles, traversed. In §2's grant set,
                         and the one view here that can be refused
 ======================= =========================================================
 
@@ -47,13 +48,12 @@ dropped one of its rows would read as a clean audit. The same applies to a view
 that raises: "I looked and found nothing" and "I could not look" are answers a
 report must never merge.
 
-``SYSDBA`` and ``SYSOPER`` were the other two, and since #341 they are answered
-wherever the estate lets them be. They live in ``V$PWFILE_USERS``, which §2 makes
-an **optional** grant (#296, §2) rather than one it never gives — so the question
-is asked, and the rows join :data:`UNAUDITABLE` only where the answer came back
-absent. That was the merge this module exists to refuse, arrived at from the
-other side: on an estate that had taken the grant, the report said *I could not
-look* about something it could have read.
+The ``SYSDBA`` and ``SYSOPER`` rows of §3 are answered wherever the estate lets
+them be. They live in ``V$PWFILE_USERS``, which §2 makes an **optional** grant
+rather than one it never gives -- so the question is asked, and the rows join
+:data:`UNAUDITABLE` only where the answer came back absent. Saying *I could not
+look* about something the tool could have read is the merge this module exists
+to refuse, seen from the other side.
 """
 
 from __future__ import annotations
@@ -102,13 +102,12 @@ FORBIDDEN_ROLES = ("DBA", "PDB_DBA", "CDB_DBA")
 #: privileges do -- which is a design question rather than a query, so the row is
 #: named as unaudited here rather than half-answered.
 #:
-#: It was three rows until #341. ``SYSDBA`` and ``SYSOPER`` left because their
-#: view became askable (:data:`PASSWORD_FILE_PRIVILEGES`); this one has no view
-#: to ask, which is why "make the audit complete" is not what that change did.
+#: ``SYSDBA`` and ``SYSOPER`` are not here because their view is askable
+#: (:data:`PASSWORD_FILE_PRIVILEGES`); this one has no view to ask.
 UNAUDITABLE = ("EXECUTE ON DBMS_LOCK",)
 
 #: §3's remaining two rows, which live in ``V$PWFILE_USERS`` -- **askable on the
-#: estates that took §2's optional grant, and unaudited on the rest** (#341).
+#: estates that took §2's optional grant, and unaudited on the rest**.
 #:
 #: In this order, because :data:`PWFILE_QUERY` answers them in it. The two are
 #: kept apart rather than collapsed into one "in the password file" answer for
@@ -158,8 +157,8 @@ PWFILE_QUERY = (
 #: Here rather than on :class:`~sopuli.driver.protocol.PrivilegeAudit`, for the
 #: reason :data:`~sopuli.diagnostics.GUARDRAIL_REMEDIES` gives about the same
 #: grant: the audit's shape is product-neutral and a ``GRANT`` statement is a
-#: fact about Oracle. Carried at all because since #296 the reason these two rows
-#: go unaudited is "you may enable this" rather than "this cannot be known", and
+#: fact about Oracle. Carried at all because the reason these two rows go
+#: unaudited is "you may enable this" rather than "this cannot be known", and
 #: only one of those has a next action.
 PASSWORD_FILE_REMEDY = (
     "SYSDBA and SYSOPER need SELECT on V$PWFILE_USERS, which "
@@ -174,12 +173,11 @@ PASSWORD_FILE_REMEDY = (
 REQUIRED_PRIVILEGES = ("CREATE SESSION", "ALTER USER")
 
 #: §2's dictionary grants, **asked by reading the view rather than by reading a
-#: grant table** (#225).
+#: grant table**.
 #:
-#: The alternative was ``USER_TAB_PRIVS`` plus ``ROLE_TAB_PRIVS``, and #225 filed
-#: the composition of those two as the design question this had to answer. It
-#: does not have to: probing dissolves it. Three reasons, in ascending order of
-#: how much they would have cost.
+#: The alternative is ``USER_TAB_PRIVS`` plus ``ROLE_TAB_PRIVS``, which raises a
+#: design question about composing the two. Probing dissolves it, for three
+#: reasons.
 #:
 #: * **A role-derived grant needs no special handling**, because a view you can
 #:   read is a view you can read however the grant arrived. That *is* the
@@ -206,12 +204,12 @@ REQUIRED_READS = {
     "SELECT ON V_$INSTANCE": "select count(*) from v$instance where rownum = 1",
 }
 
-#: §2 grants these, and **no pre-flight requires them** (#531). ``DBA_ROLES`` is
+#: §2 grants these, and **no pre-flight requires them**. ``DBA_ROLES`` is
 #: read only to resolve a ``role:`` predicate in `account list`, which is gated on
 #: the ``role_lookup`` capability instead. Kept out of :data:`REQUIRED_READS`
 #: because `creds apply` and `rotate` refuse on a missing required read, and an
-#: estate installed before #531 must keep rotating without a grant only a UC-2
-#: listing uses.
+#: estate installed without it must keep rotating, because only a UC-2
+#: listing uses the grant.
 PREDICATE_READS = {"SELECT ON DBA_ROLES": "select count(*) from dba_roles where rownum = 1"}
 
 #: §2 grants this one **in the root only**, so its absence in a PDB is the
@@ -270,8 +268,8 @@ def classify(
     be read makes the audit partial, and a partial audit is a finding to report
     rather than a reason to abandon a ``doctor`` run with twenty targets left.
 
-    ``password_file`` is three-valued in the shape the answer actually has
-    (#341): which of :data:`PASSWORD_FILE_PRIVILEGES` came back held, or ``None``
+    ``password_file`` is three-valued in the shape the answer actually has:
+    which of :data:`PASSWORD_FILE_PRIVILEGES` came back held, or ``None``
     where the optional grant was not taken and nobody could look. The empty tuple
     is therefore a *reading* -- asked, holds neither -- and is the case a
     two-valued parameter would have merged with the third.
@@ -339,7 +337,7 @@ def audit(cursor: Any, *, scope_type: str = "") -> PrivilegeAudit:
     does not know says so instead of asserting the commonest case -- the report
     then omits the row rather than inventing a finding about it.
 
-    The password-file probe is one more of the same kind, added by #341: §2's
+    The password-file probe is one more of the same kind: §2's
     optional grant makes ``V$PWFILE_USERS`` readable on the estates that took it,
     and :data:`~sopuli.driver.oracle.capabilities.ABSENT_CODES` makes its absence
     an enumerated negative rather than a failure. Run unconditionally, because
@@ -432,13 +430,12 @@ def _common_privileges(cursor: Any) -> frozenset[str]:
     common" is the true answer. :func:`classify` then treats it exactly as it
     treats a PDB whose grants are all local.
 
-    ``USER_SYS_PRIVS.COMMON`` arrived with multitenant in 12.1. On 11.2 the
+    ``USER_SYS_PRIVS.COMMON`` came with multitenant, in 12.1. On 11.2 the
     column does not exist and this query is ``ORA-00904`` -- measured on 11g XE
-    11.2.0.2.0 (#382), where it took the whole of `doctor --check-privileges`
-    down with it: the target reported ``-`` for scope, ``0`` capabilities and a
-    bare ORA- code, **while still exiting 0**. The audit is three reads per
-    target and this was the only one with no answer for a release that cannot
-    take the question.
+    11.2.0.2.0. An unhandled ``ORA-00904`` would take the whole of
+    `doctor --check-privileges` down with it. The audit is three reads per target
+    and this is the only one with no answer for a release that cannot take the
+    question.
     """
     try:
         rows = _rows(cursor, USER_SYS_PRIVS_QUERY)

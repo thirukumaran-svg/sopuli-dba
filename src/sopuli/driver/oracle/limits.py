@@ -1,7 +1,6 @@
-"""How long a password may be here, and in what character set (#179).
+"""How long a password may be here, and in what character set.
 
-`#171 <https://github.com/villebase/sopuli-dba/issues/171>`_ made a
-:class:`~sopuli.passwords.ByteLimit` a required argument to
+A :class:`~sopuli.passwords.ByteLimit` is a required argument to
 :func:`~sopuli.driver.oracle.statements.alter_user_password`, precisely so a
 statement cannot be built by somebody who never found out. This is where the
 answer comes from.
@@ -16,7 +15,7 @@ harness, and the version here is :attr:`~sopuli.driver.protocol.Scope.db_version
 **The character set needs no grant.** ``NLS_DATABASE_PARAMETERS`` answered
 ``AL32UTF8`` to a service account holding exactly `02-oracle-privileges.md` §2's
 grants and nothing else -- measured, because a probe requiring a grant nobody
-made is the failure #178 already found once. It is the *database* character set
+made fails in a way that looks like an answer. It is the *database* character set
 rather than the session's, which is what §8 specifies: the limit is counted in
 the character set the server stores the password in, not the one this client
 happens to be speaking.
@@ -51,10 +50,9 @@ from sopuli.passwords import ByteLimit
 #: The *database* character set (§8), not the session's.
 CHARSET_QUERY = "select value from nls_database_parameters where parameter = 'NLS_CHARACTERSET'"
 
-#: 128 bytes from 23, 30 below it (#383, #595).
+#: 128 bytes from 23, 30 below it.
 #:
-#: **Not 12.2**, which is where this floor used to be and why it was called
-#: ``LONG_IDENTIFIER_FLOOR``: 12.2 raised *identifiers* from 30 bytes to 128, and
+#: **Not 12.2**: 12.2 raised *identifiers* from 30 bytes to 128, and
 #: passwords did not move with them. A 31st byte is ``ORA-00972`` on 11.2, 12.2,
 #: 18.4, 19.3 and 21.3, and 19.32 refuses 128; 26ai 23.26 accepts 128. So the
 #: floor is somewhere in (21.3, 23.26], and ``23`` is the only one this module can
@@ -96,7 +94,7 @@ def max_bytes(db_version: str | None) -> int:
 
 
 def describe_max_bytes() -> str:
-    """The rule :func:`max_bytes` applies, in words, for help text (#612).
+    """The rule :func:`max_bytes` applies, in words, for help text.
 
     Built from the constants so that moving the floor moves the help with it.
     """

@@ -1,12 +1,12 @@
-"""Gradual password rollover: the profile check, the window, the finish (#181).
+"""Gradual password rollover: the profile check, the window, the finish.
 
 What makes zero-downtime rotation real, and the default strategy where the
 capability exists (UC-1 §6.3). During a window **both the old and the new
 password authenticate**, which is why a partial apply across several PDBs causes
 no outage at all under this strategy.
 
-Measured on 26ai Free 23.26.2.0.0, because three of these would have been got
-wrong by reasoning.
+Measured on 26ai Free 23.26.2.0.0, because reasoning would get three of these
+wrong.
 
 **Both passwords really do work, and the finish really does end it.** With
 `PASSWORD_ROLLOVER_TIME 1/24` on the profile, an account rotated from
@@ -19,7 +19,7 @@ wrong by reasoning.
 1/24`` reads back as the string ``.0416``. Anything parsing it as an integer --
 which is the obvious thing to do beside ``FAILED_LOGIN_ATTEMPTS`` -- refuses a
 correctly configured profile. **And it is not always days**: 19.32.0.0.0 reads
-the same profile back as ``3600``, in seconds (#583), which :func:`days` tells
+the same profile back as ``3600``, in seconds, which :func:`days` tells
 apart by range.
 
 **Finishing a window that is not open is accepted silently.** The server returns
@@ -34,10 +34,9 @@ views were searched for a column named for rollover and there is none;
 admits to it. So :func:`window_end` **derives** the value from two that were
 read -- the password change date and the profile's rollover time -- and it is
 the one field in :class:`~sopuli.driver.protocol.UserState` that is computed
-rather than reported. That is a deliberate reversal of the placeholder #178
-left, taken because #181 asks for when the window ends and ``null`` is a worse
-answer than Oracle's own documented arithmetic over two measured inputs. It is
-populated **only while a window is actually open**, since ending one early
+rather than reported. Reporting ``null`` instead would be a worse answer than
+Oracle's own documented arithmetic over two measured inputs. It is populated
+**only while a window is actually open**, since ending one early
 leaves the change date untouched and the derivation pointing into a future that
 no longer applies.
 """
@@ -49,14 +48,14 @@ from datetime import datetime, timedelta
 
 #: What ``PASSWORD_ROLLOVER_TIME`` means when rollover is switched off. The
 #: resource exists on every release that has the feature, so its *presence* is
-#: the capability (#177) and its *value* is whether this profile uses it. 26ai
-#: reads "off" back as ``0`` and 19.32.0.0.0 as ``-1`` (#583); :func:`days`
+#: the capability and its *value* is whether this profile uses it. 26ai
+#: reads "off" back as ``0`` and 19.32.0.0.0 as ``-1``; :func:`days`
 #: returns this for both.
 DISABLED = 0.0
 
 #: Oracle bounds the resource at one hour to 60 days, and renders it in days on
 #: 26ai (``1/24`` reads ``.0416``) but in **seconds** on 19.32.0.0.0 (``1/24``
-#: reads ``3600``, ``7`` reads ``604800``; #583). The two renderings of that
+#: reads ``3600``, ``7`` reads ``604800``). The two renderings of that
 #: range do not overlap -- days ``(0, 60]``, seconds ``[3600, 5184000]`` -- so
 #: the value says which unit it is in, and nothing here asks which release
 #: produced it (invariant 3).
@@ -74,7 +73,7 @@ def days(limit: str | None) -> float | None:
     takes, and anything else unparseable is ``None`` rather than a guess -- a
     window length nobody can read is not a window length of zero.
 
-    **The unit is read off the value** (#583, decided there): zero or below is
+    **The unit is read off the value**: zero or below is
     off and returns :data:`DISABLED`; ``(0, 60]`` is days; ``[3600, 5184000]``
     is seconds and is converted. Anything else -- between the two ranges, or past
     the larger -- is a value no profile can hold, so it is ``None`` rather than
@@ -111,7 +110,7 @@ def is_enabled(limit: str | None) -> bool:
     uses it. `--strategy rollover` needs both, and they fail differently: an
     absent capability is exit 5 naming the capability and the target, while a
     profile set to zero is a configuration the operator can change -- and the
-    tool reports the ``ALTER PROFILE`` for it rather than issuing one (Q4/#88,
+    tool reports the ``ALTER PROFILE`` for it rather than issuing one (Q4,
     and `02-oracle-privileges.md` §3's must-not-grant list).
     """
     value = days(limit)
@@ -129,7 +128,7 @@ def window_end(changed_at: datetime | None, limit: str | None) -> datetime | Non
     server, which is why it says so here.
 
     ``None`` when either input is missing, which includes 11.2, where
-    ``PASSWORD_CHANGE_DATE`` does not exist (#87) -- and where rollover does not
+    ``PASSWORD_CHANGE_DATE`` does not exist -- and where rollover does not
     exist either, so the pair are never both wanted.
 
     **Fails closed rather than raising.** :func:`days` already caps the value at
@@ -152,7 +151,7 @@ def alter_profile_ddl(profile: str, rollover_days: str = "1") -> str:
 
     **Reported, never issued.** Profiles are shared, so changing one affects
     accounts nobody selected, and `02-oracle-privileges.md` §3 keeps
-    ``ALTER PROFILE`` off the service account deliberately. Q4 (#88) decided
+    ``ALTER PROFILE`` off the service account deliberately. Q4 decides
     that the tool never alters a profile, and this function is that answer: it
     reports the statement for an operator to run.
     """

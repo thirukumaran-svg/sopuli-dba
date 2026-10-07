@@ -1,11 +1,11 @@
-"""Deciding whether to try a login, and reading what came back (#180).
+"""Deciding whether to try a login, and reading what came back.
 
 UC-1 §7's whole argument in one module: **a tool that locks production accounts
 while checking them is worse than no tool.** Everything here exists to make the
 attempt that never happens as reportable as the one that did.
 
-Four behaviours were measured on 26ai Free 23.26.2.0.0 before any of this was
-written, and two of them come out the opposite way round from the obvious guess.
+Four behaviours were measured on 26ai Free 23.26.2.0.0, and two of them come out
+the opposite way round from the obvious guess.
 
 **A wrong password is ``ORA-01017`` and takes ``LCOUNT`` up by one; a right one
 puts it back to zero.** Mitigation 3 is therefore not code -- the database does
@@ -42,15 +42,15 @@ verdict, which is the honest answer and not a failure.
 That is UC-1 §7's trade taken at face value: an account nobody can verify is a
 worse report and a better outcome than an account nobody can log into.
 
-**A further behaviour was measured later, on 2026-09-02 and the same release,
-and it contradicts one of the constants below.** A password in its grace period does
+**A further behaviour, measured on the same release, contradicts one of the
+constants below.** A password in its grace period does
 *not* answer with an error at all: the login **succeeds**, and the notice arrives
 as ``connection.warning`` -- ``ORA-28098`` where the profile limits
 ``PASSWORD_GRACE_TIME``, ``ORA-28011`` where it does not. ``ORA-28002`` was not
 produced in either shape.
 
 **On 19.3.0.0.0 the code is the documented one, and the shape is the same**
-(2026-09-28, #479, twice, thick mode): the login succeeds and
+(twice, thick mode): the login succeeds and
 ``connection.warning`` carries ``ORA-28002: the password will expire within 1
 days``, on a profile that limits ``PASSWORD_GRACE_TIME``. 21c sends ``ORA-28002``
 too, seen in SQL*Plus by ``09_reset_from_expired_probe.sql``, though not through
@@ -94,7 +94,7 @@ PASSWORD_EXPIRED = "ORA-28001"
 #: grace-period login succeeds and the notice arrives as ``connection.warning``:
 #: ``ORA-28098`` or ``ORA-28011`` on 26ai, and this very code on 19.3, still as a
 #: warning rather than raised. Kept because 18c and 11.2 are unmeasured, and 21c
-#: only in SQL*Plus; see the module docstring, #309 and #322.
+#: only in SQL*Plus; see the module docstring.
 PASSWORD_IN_GRACE = "ORA-28002"
 INVALID_CREDENTIALS = "ORA-01017"
 
@@ -126,10 +126,10 @@ def margin_reason(
     * **``UNLIMITED``** -- there is no lockout on this profile, so there is
       nothing to protect and the attempt goes ahead.
     * **``failed_logins is None``** -- ``SELECT ON SYS.USER$`` was never granted
-      (#86 made it optional), so the guard is *unavailable*. The attempt still
-      goes ahead, because #86 also decided `check` runs without a
-      site-specific grant -- but the caller is expected to say so plainly rather
-      than let an absent guard look like a satisfied one.
+      (an optional grant, decision P2), so the guard is *unavailable*. The attempt still
+      goes ahead, because `check` runs without a site-specific grant -- but the
+      caller is expected to say so plainly rather than let an absent guard look
+      like a satisfied one.
     """
     if failed_login_limit is None or failed_login_limit.upper() == UNLIMITED:
         return None
@@ -163,7 +163,7 @@ def margin_reason(
 #: not resolve, ``ORA-12541`` for a listener that is down, ``ORA-28040`` for a
 #: logon protocol client and server cannot agree -- is a failure of the run and
 #: is raised. Folding those into ``unavailable`` would let an unreachable target
-#: look like an account-level finding, and #172 has already classified each of
+#: look like an account-level finding, and the error mapping classifies each of
 #: them into its own category and exit path for exactly that reason.
 VERIFICATION_CODES = frozenset(
     {INVALID_CREDENTIALS, ACCOUNT_LOCKED, PASSWORD_EXPIRED, PASSWORD_IN_GRACE}
@@ -208,34 +208,32 @@ def result_for(code: str | None, message: str | None = None) -> tuple[str, str |
 
 def _detail(summary: str, code: str, message: str | None) -> str:
     """``summary (ORA-xxxxx): what the server said``, with the server's own
-    wording preserved rather than rewritten (#172)."""
+    wording preserved rather than rewritten."""
     text = f"{summary} ({code})"
     return f"{text}: {message}" if message else text
 
 
 def warning_detail(code: str | None, message: str | None) -> str:
-    """What the server said on a login that **succeeded** (#322).
+    """What the server said on a login that **succeeded**.
 
     A connection can carry a diagnostic without failing: a password in its grace
     period connects and Oracle attaches the notice to the connection rather than
-    raising. Nothing read it, so it was discarded on every path -- which is the
-    rule CLAUDE.md states as *never swallow an ORA- code*, broken in the one place
-    where no exception makes it obvious.
+    raising. Discarding it would break the rule CLAUDE.md states as *never swallow
+    an ORA- code*, in the one place where no exception makes it obvious.
 
     **The code is data, not a branch.** :func:`result_for` above matches specific
     codes because each means a different verdict; there is no verdict to reach
     here -- the login worked -- so this formats whatever arrived and matches
     nothing. That is not laziness: the same condition is ``ORA-28098`` where a
     profile limits ``PASSWORD_GRACE_TIME`` and ``ORA-28011`` where it does not,
-    both measured on 26ai, and a fixed list would have been wrong on the second
-    the day it was written.
+    both measured on 26ai, and a fixed list would be wrong on the second.
 
     **One line, and the code said once.** ``oracledb`` hands back a message that
     repeats its own code and appends a documentation URL on a second line, so the
     verbatim text through :func:`_detail` reads *the server warned on this login
     (ORA-28098): ORA-28098: ...* over two lines. That is tolerable in the
     ``detail`` of a failure, which is where :func:`result_for` puts it and where
-    it has stayed since #172; it is not tolerable in a warning, which is rendered
+    it stays; it is not tolerable in a warning, which is rendered
     as a line under a table beside other accounts' lines. So the server's own
     sentence is kept and the two pieces of packaging around it are not -- the same
     trade :func:`sopuli.store.survey._first_line` makes, for the same reason.

@@ -17,7 +17,7 @@ tidier and would leak.
 The rule holds everywhere; the "nothing in ``V$SQL`` to mask" half of it does
 not. On 11.2 the plain DDL is retained as well -- not in ``V$SQL``, which has no
 cursor for it there either, but in ``V$SQLSTATS``, which keeps its own copy
-(#387; ``docs/design/02-oracle-privileges.md`` §4). Wrapping is still strictly
+(``docs/design/02-oracle-privileges.md`` §4). Wrapping is still strictly
 worse there, so nothing this module does changes, and nothing it could do would
 help: a release that retains the statement retains what the statement contains.
 
@@ -58,7 +58,7 @@ from sopuli.secrets import REDACTED, Secret
 #: What a common user's name starts with in a CDB. Oracle's default, and
 #: deliberately hard-coded: ``COMMON_USER_PREFIX`` is a settable parameter, so a
 #: site could in principle change it. If that ever turns out to matter it is a
-#: probe on connect (#177) and not a config key -- invariant 3 says ask the
+#: probe on connect and not a config key -- invariant 3 says ask the
 #: database, and nothing here should ask a file.
 COMMON_PREFIX = "C##"
 
@@ -83,7 +83,7 @@ class PasswordNotAdmissibleError(DriverError):
     because an unset one reads like an oversight beside the neighbours here that
     do set theirs. P5's table has no code for a policy refusal, and inventing an
     unpublished number for a scheduler to branch on is not this module's to do:
-    exit codes are a published contract. Generic failure is also what #172 gave
+    exit codes are a published contract. Generic failure is also the exit code of
     the server's own policy refusals (``ORA-28003``, ``ORA-28007``), so the
     family agrees; a new code for it would be a change to P5.
     """
@@ -96,10 +96,10 @@ class ContainerScopeError(DriverError):
 
     Exit 9 and ``config``, because that is what the operator fixes: an estate
     that points a ``C##`` account at a PDB target, or a target whose ``dsn:``
-    now reaches somewhere other than the file says. It is discovered on connect
-    rather than at load, which does not make it less of a config error --
-    #177's scope-assertion mismatch is the same shape and should land the same
-    way.
+    reaches somewhere other than the file says. It is discovered on connect
+    rather than at load, which does not make it less of a config error. A
+    scope-assertion mismatch on connect is the same shape and should land the
+    same way.
 
     Refusing here rather than letting the server answer is UC-1 §6.2's rule.
     ``ORA-65040`` in the middle of a rotation is a worse version of this
@@ -132,7 +132,7 @@ class IdentifierError(DriverError):
 class Identifier:
     """A name, in the spelling the database itself gave back.
 
-    A username in almost every use, and since #301 a **profile name** as well.
+    A username in almost every use, and a **profile name** as well.
     One type rather than two, because the rule it exists to enforce is the same
     for both -- an Oracle quoted identifier is case-sensitive and has no escape
     for a ``"`` -- and the only part that is username-specific,
@@ -144,7 +144,7 @@ class Identifier:
     string from config*. This type is how that stops being a sentence somebody
     has to remember -- :func:`alter_user_password` cannot be called with a
     ``str``, so the only way to reach a statement is through a value that came
-    from a dictionary read (#178).
+    from a dictionary read.
 
     **A plan may still name accounts, and does not need one of these.** A plan
     is printed before anything connects, so what it names is what the config
@@ -267,8 +267,8 @@ def container_clause(account: Identifier, scope: Scope) -> str:
       an error or a different account than the one the estate meant.
     * **an application root.** An application container is a *distinct* scope:
       ``CONTAINER=ALL`` there applies within the application container only.
-      Measured against a real one (#204,
-      ``sql/oracle/03_app_container_probe.sql``), the hazard is sharper than that
+      Measured against a real one
+      (``sql/oracle/03_app_container_probe.sql``), the hazard is sharper than that
       and points the other way -- in an application root **every** account is
       application-common, a local one cannot be created at all (``ORA-65049``),
       and a statement carrying no container clause is already container-wide.
@@ -283,12 +283,12 @@ def container_clause(account: Identifier, scope: Scope) -> str:
       make, so the tool cannot tell an intended container-wide rotation from an
       accidental one and refuses instead.
 
-    **An application PDB is not refused**, and that is a change from the first
-    draft of this rule rather than an omission. Measured in #204: a local account
-    there is entirely ordinary -- ``common=NO``, a plain ``ALTER USER`` accepted
+    **An application PDB is not refused.** Measured with
+    ``sql/oracle/03_app_container_probe.sql``: a local account there is
+    entirely ordinary -- ``common=NO``, a plain ``ALTER USER`` accepted
     -- and an application-common one is refused by Oracle itself, ``ORA-65066``
     with no clause and ``ORA-65040`` with ``CONTAINER=ALL``. Refusing the scope
-    would have blocked the working case in order to prevent one the server already
+    would block the working case in order to prevent one the server already
     prevents. It takes the ordinary path below, where a ``C##`` name is refused by
     the common-user branch -- correctly, and for a second reason: such an account
     cannot exist there either.
@@ -299,8 +299,8 @@ def container_clause(account: Identifier, scope: Scope) -> str:
     produced anyway. A **common** account is refused, because appending
     ``CONTAINER=ALL`` is a claim to be in the root and an unresolved scope is
     precisely not knowing that. Whether a scope the driver could not resolve may
-    be acted on at all is a question for the connection (#177), one layer
-    earlier than this.
+    be acted on at all is a question for the connection, one layer earlier
+    than this.
     """
     if scope.type == "app_root":
         raise ContainerScopeError(
@@ -385,11 +385,11 @@ def alter_user_password(
     those two come from, because the safe form is not the one that looks safe.
 
     Both arguments are typed rather than stringly: ``account`` is a spelling the
-    database gave back (#178) and ``secret`` is a
+    database gave back and ``secret`` is a
     :class:`~sopuli.secrets.Secret`, so neither a config string nor a bare
     password can reach SQL by accident.
 
-    ``expire`` appends ``PASSWORD EXPIRE`` -- UC-2 §4.1's seen form (#441), where
+    ``expire`` appends ``PASSWORD EXPIRE`` -- UC-2 §4.1's seen form, where
     the owner must change the password at first logon and the expiry is what ends
     the DBA's exposure. **A suffix here and a second statement in §4.3**, which
     is not an inconsistency: this clause is part of how the password is set, and
@@ -415,13 +415,13 @@ def alter_user_password(
 
 
 def alter_user_profile(account: Identifier, profile: Identifier, *, scope: Scope) -> Statement:
-    """``ALTER USER "…" PROFILE "…"`` -- UC-1 §5's profile assignment (#301).
+    """``ALTER USER "…" PROFILE "…"`` -- UC-1 §5's profile assignment.
 
     **`ALTER USER`, never `ALTER PROFILE`.** The two differ by one word and by
     everything else: this moves one account the config already whitelists onto a
     profile that exists, while ``ALTER PROFILE`` edits a shared object and so
     reaches accounts nobody selected. `02-oracle-privileges.md` §3 keeps that
-    privilege off the service account deliberately and Q4 (#88) decided that the
+    privilege off the service account deliberately and Q4 decides that the
     tool never alters a profile -- so there is no function in this module that
     builds one, which is the form that refusal takes here.
 
@@ -440,7 +440,7 @@ def alter_user_profile(account: Identifier, profile: Identifier, *, scope: Scope
 
 
 def unlock_account(account: Identifier, *, scope: Scope) -> Statement:
-    """``ALTER USER "…" ACCOUNT UNLOCK`` -- the first of UC-1 §5's attributes (#300).
+    """``ALTER USER "…" ACCOUNT UNLOCK`` -- one of UC-1 §5's attributes.
 
     Clears ``LOCKED`` and ``LOCKED(TIMED)`` alike: Oracle has one statement for
     both, and the timed lock a failed-login limit produced is exactly the one an
@@ -464,16 +464,16 @@ def unlock_account(account: Identifier, *, scope: Scope) -> Statement:
 
 
 def lock_account(account: Identifier, *, scope: Scope) -> Statement:
-    """``ALTER USER "…" ACCOUNT LOCK`` -- the offboarding half of the pair (#463).
+    """``ALTER USER "…" ACCOUNT LOCK`` -- the offboarding half of the pair.
 
-    The write counterpart of :func:`unlock_account`, and of the refusal H4 (#455)
-    introduced: a personal reset refuses an account in this state, because on a
+    The write counterpart of :func:`unlock_account`, and of the refusal H4
+    introduces: a personal reset refuses an account in this state, because on a
     personal account somebody chose it. It is coherent for one use case to refuse
     to clear the state and to offer the verb that sets it.
 
     **The state this produces is `LOCKED`, and that is a different string from
     the `LOCKED(TIMED)` a failed-login limit produces** -- measured on 26ai Free
-    23.26.2.0.0 in #455 (``sql/oracle/07_lock_and_rollover_probe.sql`` Q4). The
+    23.26.2.0.0 (``sql/oracle/07_lock_and_rollover_probe.sql`` Q4). The
     distinction is the whole reason a plan can tell a lock somebody chose from
     one Oracle applied, so it is a fact this statement depends on rather than a
     detail about it. Also measured there: ``ALTER USER … IDENTIFIED BY`` does not
@@ -495,7 +495,7 @@ def lock_account(account: Identifier, *, scope: Scope) -> Statement:
 
 
 def expire_password(account: Identifier, *, scope: Scope) -> Statement:
-    """``ALTER USER "…" PASSWORD EXPIRE`` -- force a change, set nothing (#525).
+    """``ALTER USER "…" PASSWORD EXPIRE`` -- force a change, set nothing.
 
     The **bare** form: no ``IDENTIFIED BY``, so no password is drawn, sent or
     held. That is what separates it from :func:`alter_user_password`'s

@@ -1,6 +1,6 @@
-"""Which module serves a ``targets.*.type``, imported on first use (#170).
+"""Which module serves a ``targets.*.type``, imported on first use.
 
-ADR-006 rules 1 and 2, applied to drivers exactly as #134 applied them to
+ADR-006 rules 1 and 2, applied to drivers exactly as they are applied to
 stores. A vendor client is imported inside its own module when something
 actually connects, and a target declaring a driver this machine has not
 installed is a structured error naming the extra that supplies it:
@@ -50,10 +50,9 @@ from sopuli.extras import installed as extras_installed
 #: parsing the message.
 #:
 #: Allocated by hand, beside ``SOPULI-20001``'s store equivalent, and **J3 is
-#: still open**: how codes are apportioned across categories is undecided, #130
-#: allocated two this way, and this is the third. Recording that it was a
-#: hand allocation is the point -- a number chosen in passing is exactly what a
-#: registry is supposed to stop.
+#: still open**: how codes are apportioned across categories is undecided.
+#: Recording that it was a hand allocation is the point -- a number chosen in
+#: passing is exactly what a registry is supposed to stop.
 DRIVER_NOT_INSTALLED = "SOPULI-20002"
 
 
@@ -98,7 +97,7 @@ class DatabaseDriver:
 #: promise this dict should pre-announce.
 DRIVERS: dict[str, DatabaseDriver] = {
     "oracle": DatabaseDriver(
-        # The module that *connects*, not the package above it (#176). The whole
+        # The module that *connects*, not the package above it. The whole
         # value of resolving through here is that a missing client arrives as
         # `DriverNotInstalledError` rather than a traceback, and that only works
         # if the import being caught is the one that pulls the client in. The
@@ -161,9 +160,7 @@ def resolve(target: Target) -> ModuleType:
     """Import the module serving ``target``'s ``type:``, or say why it cannot.
 
     Returns the module, which exposes ``connect(target, credential, *, env,
-    correlation_id, timeouts)`` -- settled in #176, once there was an
-    implementation to hold the shape, exactly as the store registry settled its
-    own when `connect` existed rather than before.
+    correlation_id, timeouts)``.
     """
     driver = DRIVERS[target.type]
     try:

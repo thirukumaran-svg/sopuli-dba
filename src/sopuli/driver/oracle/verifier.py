@@ -1,4 +1,4 @@
-"""Comparing a password with an account's stored 12C verifier, client-side (#437).
+"""Comparing a password with an account's stored 12C verifier, client-side.
 
 What `check --method hash` runs instead of a login: read ``SYS.USER$.SPARE4``,
 regenerate the 12C digest from the vault's password and the verifier's own salt,
@@ -8,8 +8,8 @@ and a locked account can be compared as readily as an open one.
 
 The derivation is ported from ``sql/oracle/06_verifier_reproduce.py``, the
 evidence behind ``02-oracle-privileges.md`` §2, and nothing about it is guessed.
-It reproduced byte-for-byte on 26ai, 21c, 18c (#432), 19.3.0.0.0 (#548),
-12.2.0.1.0 (#572) and 19.32.0.0.0 (#581). 12.1 is unread::
+The releases on which it reproduced byte-for-byte are the
+``06_verifier_reproduce.sql`` rows of ``docs/measurements.md``. 12.1 is unread::
 
     salt   = the last 16 bytes of the T: blob (its 32 trailing hex characters)
     inter  = PBKDF2-HMAC-SHA512(password_utf8, salt || b"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)
@@ -18,11 +18,11 @@ It reproduced byte-for-byte on 26ai, 21c, 18c (#432), 19.3.0.0.0 (#548),
 **The 12C verifier and only it.** ``S:`` (11G, SHA-1) and the 10G DES hash are
 weaker than a login, so comparing either would report a check stronger than the
 one performed. They are never a fallback, and an account with no 12C verifier
-is :data:`NO_VERIFIER` rather than a comparison against something else (#433).
+is :data:`NO_VERIFIER` rather than a comparison against something else.
 
 **Two 12C verifiers mean a rollover window.** During one, ``SPARE4`` carries
 ``T:`` for the *previous* password and ``t:`` for the *current* one, sharing a
-salt (#432; on a real 19.12+ by 19.32, #581). Outside a window there is one,
+salt (measured on 26ai 23.26.2.0.0 and 19.32.0.0.0). Outside a window there is one,
 ``T:``, and it is current. :func:`compare` says which one the password
 reproduced, because that is the thing a login cannot tell: during a window both
 passwords authenticate.
@@ -60,8 +60,8 @@ SPEEDY_KEY = b"AUTH_PBKDF2_SPEEDY_KEY"
 
 #: The count Oracle generates the stored verifier with. **Not stored in
 #: ``SPARE4``**: the server sends it at logon as ``AUTH_PBKDF2_VGEN_COUNT``, read
-#: as 4096 on every release whose wire could be read (#431), and shown by the
-#: reproduction on 19.32, whose NNE hid the wire (#581). A release that used
+#: as 4096 on every release whose wire could be read, and shown by the
+#: reproduction on 19.32, whose NNE hid the wire. A release that used
 #: another would make every comparison a mismatch, which is why the releases are
 #: listed in the module docstring rather than assumed.
 ITERATIONS = 4096
@@ -98,7 +98,7 @@ class NotComparableError(ValueError):
     """The password cannot be compared here, because the server did not hash it.
 
     Oracle derives the verifier from the password *as the database holds it*,
-    after conversion to the database character set (#572: on WE8DEC, ``Ω``
+    after conversion to the database character set (on WE8DEC, ``Ω``
     became ``¿`` and the verifier reproduced from that). Where the character set
     holds the password exactly, the conversion changes nothing and its UTF-8 is
     what was hashed. Where it cannot, the stored password is a lossy substitute

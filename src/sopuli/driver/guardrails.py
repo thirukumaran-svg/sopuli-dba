@@ -39,26 +39,23 @@ the command layer applies.
 
 ### Refused, permitted, or *could not establish*
 
-The third answer arrived with #296, and it arrived because it was missing:
-``UserState.password_file_member`` was ``None`` for every account on every path,
-nothing populated it, and ``if state.password_file_member:`` therefore read
-"nobody looked" as "not a member". Check 3 had never fired and could not.
+The third answer exists because ``if state.password_file_member:`` would read
+``None`` ("nobody looked") as "not a member", and check 3 would never fire.
 
-Reading it (:func:`sopuli.driver.oracle.accounts.password_file_member`) does not
-by itself fix that, because the view is deliberately outside §2's grant set: the
-answer for most estates is still *unknown*. What fixes it is that unknown is now
-a :class:`Caveat` — reported at warning level, refusing nothing, and pointing at
-the optional grant that would settle it. "I looked and found nothing" and "I
-could not look" are answers a safety report must never merge, which is what
-:mod:`sopuli.driver.oracle.privileges` already says one layer up about the same
-view.
+Reading the view (:func:`sopuli.driver.oracle.accounts.password_file_member`)
+does not settle it, because the view is deliberately outside §2's grant set: the
+answer for most estates is *unknown*. Unknown is a :class:`Caveat`: reported at
+warning level, refusing nothing, and pointing at the optional grant that would
+settle it. "I looked and found nothing" and "I could not look" are answers a
+safety report must never merge, which is what
+:mod:`sopuli.driver.oracle.privileges` says one layer up about the same view.
 
 ### `--force` overrides 2 to 5, and never 1
 
-Decided in #89. `DBSNMP` is the case it exists for: rotating its password is
-ordinary DBA work and it is `ORACLE_MAINTAINED`, so a tool with no override does
-not prevent that rotation — it moves it to SQL\\*Plus, where nothing records that
-it happened. An audited override is the better failure.
+This is decision P3 in ``docs/decisions/log.md``. `DBSNMP` is the case it exists
+for: rotating its password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a
+tool with no override does not prevent that rotation — it moves it to SQL\\*Plus,
+where nothing records that it happened. An audited override is the better failure.
 
 **It takes two deliberate acts, not one.** `--force` alone will not rotate
 `DBSNMP`: check 1 still applies, so the account has to be declared in
@@ -188,13 +185,13 @@ class Refusal:
 class Caveat:
     """One check that could not be run, on an account nothing refused.
 
-    The third answer :class:`Review` grew in #296, and the reason it is a type
-    rather than a ``None`` somewhere is that "I looked and found nothing" and "I
-    could not look" are answers a safety report must never merge --
-    :mod:`sopuli.driver.oracle.privileges` says so about ``SYSDBA`` in the
-    privilege audit, and guardrail 3 was making exactly that merge one layer
-    down. A check with no input reads as a pass, and a pass is what a guardrail
-    is there not to give away by accident.
+    A :class:`Review` carries three answers: refused, passed, and this one, *could
+    not check*. It is a type rather than a ``None`` somewhere because "I looked and
+    found nothing" and "I could not look" are answers a safety report must never
+    merge -- :mod:`sopuli.driver.oracle.privileges` says so about ``SYSDBA`` in the
+    privilege audit, and guardrail 3 would make exactly that merge one layer down. A
+    check with no input reads as a pass, and a pass is what a guardrail is there not
+    to give away by accident.
 
     **A caveat does not refuse**, and that is the decision rather than a
     consequence of where the field sits. Check 3's input is ``V$PWFILE_USERS``,
@@ -243,7 +240,7 @@ class Review:
     account: str
     refusals: tuple[Refusal, ...] = ()
     overridden: tuple[Refusal, ...] = ()
-    #: Checks that could not be run at all (#296). Reported, never refusing --
+    #: Checks that could not be run at all. Reported, never refusing --
     #: see :class:`Caveat`. Unaffected by ``force``, because there is nothing to
     #: waive: a check that produced no answer produced no refusal either, and a
     #: run that would have overridden the answer had it come still did not get
@@ -256,8 +253,8 @@ class Review:
         """Whether the tool may proceed against this account.
 
         Caveats are **not** consulted. A check that could not be run has refused
-        nothing, and #296 decided that an unestablished guardrail reports rather
-        than blocks -- the alternative refuses every account on every estate
+        nothing: an unestablished guardrail reports rather than blocks, because the
+        alternative refuses every account on every estate
         installed exactly as §2 documents.
         """
         return not self.refusals
@@ -292,7 +289,7 @@ def review(state: UserState, *, declared: Collection[str], force: bool = False) 
     ``force`` waives checks 2 to 5 and never check 1, and what it waives is
     reported in :attr:`Review.overridden` rather than dropped.
 
-    **A check with no input is neither**, and that is the third answer #296 added:
+    **A check with no input is neither**, and that is the third answer:
     it lands in :attr:`Review.caveats`, refuses nothing, and survives ``force``
     untouched. Check 3 is the only one that can produce one today.
     """
@@ -329,11 +326,10 @@ def review(state: UserState, *, declared: Collection[str], force: bool = False) 
     if state.password_file_member:
         found.append(Refusal(PASSWORD_FILE, name, "the account is in the password file"))
     elif state.password_file_member is None:
-        # The third answer, and the ordinary one (#296). `V$PWFILE_USERS` is not
+        # The third answer, and the ordinary one. `V$PWFILE_USERS` is not
         # in §2's grant set, so a correctly installed service account gets here
         # -- which is why this is a caveat and not a refusal. What it must not
-        # be is silence: an unread check reads as a pass, and check 3 read as one
-        # for every account of every run from the day it was written until this.
+        # be is silence: an unread check reads as a pass.
         caveats.append(
             Caveat(
                 PASSWORD_FILE,
