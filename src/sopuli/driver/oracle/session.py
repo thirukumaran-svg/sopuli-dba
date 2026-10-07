@@ -1,4 +1,4 @@
-"""Opening a connection, and putting the run's id on it (#176).
+"""Opening a connection, and putting the run's id on it.
 
 The first code in this project that opens a socket to a database, and the module
 :data:`sopuli.driver.registry.DRIVERS` imports for ``type: oracle``. It imports
@@ -8,7 +8,7 @@ installed" as a structured error instead of a traceback (ADR-006 rule 1). The
 package above it stays clean, so :mod:`.statements` and :mod:`.client` remain
 importable -- and testable -- with no client on the machine.
 
-Two decisions the issue asked for, made here and stated rather than implied.
+Two decisions, made here and stated rather than implied.
 
 **Thick-mode initialisation happens lazily, on the first connect.**
 ``init_oracle_client`` is process-global and effectively one-shot, so the choice
@@ -186,10 +186,9 @@ def initialise(
 
     **The config key is a parameter rather than something read here**, for the
     reason the whole driver layer is arranged that way: this module must not
-    reach for a :class:`~sopuli.config.model.Config`. #176's review found it
-    ignored outright -- a documented key that silently did nothing, which is
-    worse than one that does not exist -- and threading it through
-    :class:`OracleDriver` is where a run-scoped fact belongs.
+    reach for a :class:`~sopuli.config.model.Config`. A documented key that
+    silently did nothing is worse than one that does not exist, so
+    :class:`OracleDriver` carries it: that is where a run-scoped fact belongs.
     """
     global _initialised
     with _INITIALISING:
@@ -203,9 +202,9 @@ def initialise(
             # Anything else the client raised on the way up. Mapped rather than
             # re-raised, because `connect` promises that every failure arrives
             # classified -- an unmapped vendor exception escaping from *here*
-            # would be the one place the promise did not hold, and #172's
-            # fallback already preserves the vendor code and message for a code
-            # it has no specific rule for.
+            # would be the one place the promise did not hold, and the
+            # classifier's fallback preserves the vendor code and message for a
+            # code it has no specific rule for.
             raise from_error(error).as_error() from error
         _initialised = True
 
@@ -214,16 +213,10 @@ def initialise(
 class OracleSession:
     """One open connection, and everything done through it.
 
-    **Now a** :class:`sopuli.driver.protocol.Session`, which it was deliberately
-    not until #180. The protocol is structural, so this became one by acquiring
-    the last of its methods rather than by declaring anything -- ``scope`` (#177),
-    ``describe_user`` (#178), ``set_password`` (#179) and ``verify_password``
-    (#180). ``tests/driver/test_oracle_verify.py`` asserts the ``isinstance``,
-    so the claim is checked rather than asserted in prose.
-
-    ``apply_attributes`` arrived with #300, which gave it its first caller --
-    `creds apply` enforcing UC-1 §5's account unlock. It was absent until then on
-    the rule that a method on a Protocol is a demand on every implementation.
+    **A** :class:`sopuli.driver.protocol.Session`. The protocol is structural, so
+    this class satisfies it by having the methods, not by declaring anything.
+    ``tests/driver/test_oracle_verify.py`` asserts the ``isinstance``, so the
+    claim is checked rather than asserted in prose.
     """
 
     connection: Any
@@ -242,17 +235,17 @@ class OracleSession:
     _limit: ByteLimit | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
-        """What this connection is, and what it can do (#177).
+        """What this connection is, and what it can do.
 
         Probed on first call and **cached for the life of the session**
         (invariant 3). Twenty-one PDBs answer differently, so the cache is per
         session and never per driver, and the answer is never derived from a
         version in a file.
 
-        **On first call, not during** :meth:`OracleDriver.connect`, and #177's
-        "on connect" means *from the connection rather than from a config file*
-        rather than *eagerly*. Three reasons, in ascending order of how much they
-        would cost to get wrong:
+        **On first call, not during** :meth:`OracleDriver.connect`. P1's "on
+        connect" means *from the connection rather than from a config file*, not
+        *eagerly*. Three reasons, in ascending order of how much they would cost
+        to get wrong:
 
         * ``connect`` promises what connecting is. Probing inside it would make
           an ``ORA-`` from a dictionary read arrive as a connection failure,
@@ -260,7 +253,7 @@ class OracleSession:
           problem that is neither.
         * The probe is several round trips, and not every session wants them.
         * **It would break verification.** Verification logs in on a fresh
-          connection as the account *being verified* (#180), and that session
+          connection as the account *being verified*, and that session
           holds none of §2's grants, so a probe on every connection would fail
           there.
 
@@ -272,7 +265,8 @@ class OracleSession:
         The probe raises rather than degrades. A capability that is absent is an
         ordinary result and comes back as a smaller set; a probe that could not
         be *answered* is :class:`~sopuli.driver.oracle.capabilities.ProbeError`,
-        because #195 is what a run looks like when those two share a word.
+        because a run where those two share a word reports a failed probe as an absent
+        capability (decision #195).
         """
         if self._scope is None:
             with self.connection.cursor() as cursor:
@@ -280,7 +274,7 @@ class OracleSession:
         return self._scope
 
     def privileges(self) -> PrivilegeAudit:
-        """What this session holds that §3 says it should not (#213).
+        """What this session holds that §3 says it should not.
 
         **Not folded into** :meth:`scope`, unlike the capability probe, and the
         difference is who asks. Every command calls ``scope()``; only
@@ -289,7 +283,7 @@ class OracleSession:
         connection to answer a question nobody asked is the cost the flag exists
         to avoid. Uncached for the same reason: it is asked once per run.
 
-        Reporting is not enforcing (#173), and this never refuses. P5 is decided
+        Reporting is not enforcing, and this never refuses. P5 is decided
         — over-granting **warns**.
         """
         with self.connection.cursor() as cursor:
@@ -300,22 +294,22 @@ class OracleSession:
             return audit(cursor, scope_type=self.scope().type)
 
     def describe_user(self, account: str) -> UserState | None:
-        """The account's state, or ``None`` if there is no such account (#178).
+        """The account's state, or ``None`` if there is no such account.
 
         ``None`` is UC-1's ``ACCOUNT_MISSING`` and not an error -- the tool does
         not create accounts (Q8). The reads are all on the baseline grant set,
-        so `check` needs no site-specific privilege to run (#86).
+        so `check` needs no site-specific privilege to run (decisions P2 and Q1).
 
         One read goes further where the optional grant was made: on a release
         with no ``DBA_USERS.PASSWORD_CHANGE_DATE``, the date comes from
-        ``SYS.USER$.PTIME`` (#386). Asked of the capability probe, which is
+        ``SYS.USER$.PTIME`` (decision #386). Asked of the capability probe, which is
         cached, so a session without the grant never issues the read at all.
         """
         with self.connection.cursor() as cursor:
             return describe(cursor, account, user_dollar=self.scope().supports(OFFLINE_VERIFY))
 
     def password_constraints(self, account: str) -> AccountConstraints | None:
-        """What this target says about a password for one account (#317).
+        """What this target says about a password for one account.
 
         The reporting half of UC-1 §4 step 2 -- a verify function, the reuse
         resources and the verifiers the account holds. **Nothing gates on any of
@@ -334,9 +328,9 @@ class OracleSession:
     def byte_limit(self) -> ByteLimit:
         """How long a password may be here, in this database's character set.
 
-        Cached per session. #171 makes this a required argument to the statement
-        builder so that nobody can build one without having found out, and this
-        is the finding out.
+        Cached per session. The statement builder takes the limit as a required
+        argument so that nobody can build a statement without having found it
+        out, and this is the finding out.
         """
         if self._limit is None:
             with self.connection.cursor() as cursor:
@@ -344,13 +338,13 @@ class OracleSession:
         return self._limit
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
-        """Issue the ``ALTER USER`` (#179), and let a rejection be a rejection.
+        """Issue the ``ALTER USER``, and let a rejection be a rejection.
 
-        **The driver does not regenerate.** #179 asks where UC-1 §4's bounded
-        loop lives, and it is not here: a driver that drew another password on
+        **The driver does not regenerate.** UC-1 §4's bounded loop does not live
+        here: a driver that drew another password on
         `ORA-28003` would be putting a value into the database that the vault has
         never seen, which is the ordering UC-1 §3 exists to prevent. So a
-        rejection is reported -- classified by #172 as ``password_rejected`` or
+        rejection is reported -- classified by the error mapper as ``password_rejected`` or
         ``password_reused``, category ``policy`` -- and the command that owns
         both the generator and the vault write owns the loop.
 
@@ -366,13 +360,12 @@ class OracleSession:
         The name in the statement is the spelling the dictionary gave back, not
         the caller's, because an Oracle quoted identifier is case-sensitive.
 
-        **A read-only target is refused here, before anything is built.** #177
-        put :func:`~sopuli.driver.oracle.capabilities.require_read_write` in the
-        mutating callers' hands rather than in ``assert_scope``, so that `creds
-        check` keeps working against a physical standby -- and this is the
-        mutating caller. Leaving it to a command that does not exist yet would
-        have been a refusal that cannot fire, which P1 asks for *up front*
-        precisely so it does not arrive as a failed ``ALTER USER`` half way
+        **A read-only target is refused here, before anything is built.** The
+        mutating callers call
+        :func:`~sopuli.driver.oracle.capabilities.require_read_write`, rather than
+        ``assert_scope`` doing it, so that `creds check` keeps working against a
+        physical standby. This is a mutating caller. P1 asks for the refusal *up
+        front*, so that it does not arrive as a failed ``ALTER USER`` half way
         through a run.
         """
         require_read_write(self.scope(), target=self.target.name)
@@ -409,7 +402,7 @@ class OracleSession:
     def apply_attributes(
         self, account: str, attributes: AccountAttributes
     ) -> tuple[AttributeChange, ...]:
-        """Enforce UC-1 §5's opt-in account attributes (#300).
+        """Enforce UC-1 §5's opt-in account attributes.
 
         One entry per attribute the caller declared, whether or not it needed
         doing. Nothing is inferred: an ``AccountAttributes`` with nothing set
@@ -417,9 +410,9 @@ class OracleSession:
         attributes pays no round trip for them.
 
         **Read-write is refused here as it is in** :meth:`set_password`, and for
-        the same reason: this is a mutating caller, and #177 put the check in the
-        mutating callers' hands so that `creds check` keeps working against a
-        physical standby.
+        the same reason: this is a mutating caller, and the mutating callers
+        make the check so that `creds check` keeps working against a physical
+        standby.
         """
         if not attributes.requested():
             return ()
@@ -438,7 +431,7 @@ class OracleSession:
 
         The capability is checked because reading ``DBA_PROFILES`` is what
         :data:`~sopuli.driver.protocol.PROFILE_MANAGEMENT` means -- *read*, and
-        only read: altering a profile is Q4 (#88) and this driver builds no
+        only read: altering a profile is Q4 and this driver builds no
         statement that would.
         """
         require_capability(self.scope(), PROFILE_MANAGEMENT, target=self.target.name)
@@ -454,12 +447,11 @@ class OracleSession:
         operation, and a target whose only shortcoming is about profiles must
         not refuse a role predicate.
 
-        This used to say ``DBA_ROLES`` was in ``02-oracle-privileges.md`` §2's
-        grant set. It was not (#531), so on a correctly installed service
-        account the read was ``ORA-00942``, which read as "no such role", and
-        every ``role:`` predicate in `account list` was refused as a
-        misspelling. §2 grants it now, and an estate installed before that is
-        refused here, at plan time, naming the grant.
+        ``DBA_ROLES`` is in ``02-oracle-privileges.md`` §2's grant set (decision
+        #531). Without the grant the read is ``ORA-00942``, which would read as
+        "no such role" and refuse every ``role:`` predicate in `account list` as
+        a misspelling. A service account that lacks it is refused here, at plan
+        time, naming the grant.
         """
         require_capability(
             self.scope(),
@@ -497,11 +489,10 @@ class OracleSession:
     def _assign_profile(self, account: str, profile: str) -> AttributeChange:
         """``ALTER USER … PROFILE …``, or report that the account is already on it.
 
-        **Never ``ALTER PROFILE``** (Q4, #88). What moves is one account the
-        config whitelists; the profile itself is left exactly as its owner wrote
-        it, which is the half of #181's position this shares -- that one reports
-        the ``ALTER PROFILE`` an operator would run and never issues it, and this
-        one never has cause to.
+        **Never ``ALTER PROFILE``** (Q4). What moves is one account the config
+        whitelists; the profile itself is left exactly as its owner wrote it. The
+        :mod:`sopuli.driver.oracle.rollover` check reports the ``ALTER PROFILE`` an
+        operator would run and never issues it, and this method never has cause to.
 
         **The state is read first**, which is invariant 9 here as everywhere in
         this method's neighbours: an account already on the profile is a
@@ -568,7 +559,7 @@ class OracleSession:
         ``LOCKED``. That is a change worth reporting rather than a no-op on a
         technicality -- the timed lock expires on its own under
         ``PASSWORD_LOCK_TIME`` and this one does not, and a personal reset
-        refuses a deliberate ``LOCKED`` (H4, #455) while it clears a timed one.
+        refuses a deliberate ``LOCKED`` (H4) while it clears a timed one.
         So the two states differ in exactly what this verb is for.
 
         The capability is checked for the reason :meth:`_unlock` gives: it is
@@ -657,12 +648,12 @@ class OracleSession:
                     "`LOCKED` without `(TIMED)` is somebody's decision -- an offboarding, "
                     "usually -- and handing the account a working password would undo it "
                     "silently. Unlock it deliberately first if that is what you mean "
-                    "(H4, #455)"
+                    "(H4)"
                 ),
             )
 
-        # Built before the first statement is issued, never between them
-        # (Copilot's review of #504). `alter_user_password` validates: invariant
+        # Built before the first statement is issued, never between them.
+        # `alter_user_password` validates: invariant
         # 11 refuses a password containing `"`, and `admissible` refuses one over
         # the target's byte limit. Building it inside the sequence would let that
         # refusal arrive *after* `ACCOUNT UNLOCK` had already run, leaving a
@@ -678,7 +669,7 @@ class OracleSession:
             expire=expire,
         )
 
-        # **What committed travels with the failure** (#528). DDL commits as it
+        # **What committed travels with the failure.** DDL commits as it
         # goes, so a statement that fails after an earlier one ran cannot take the
         # earlier one back -- a timed lock already cleared, or a password already
         # live -- and an exception alone would let the caller report the account
@@ -728,7 +719,7 @@ class OracleSession:
         ``changed`` is always ``True``, for :meth:`set_password`'s reason: *is
         the password already this value* is not a question a database can answer,
         so there is nothing to converge on. Invariant 9 does not govern this verb
-        at all (#454) -- a fresh draw has no fixed point -- and a row claiming
+        at all -- a fresh draw has no fixed point -- and a row claiming
         ``changed: false`` here could only be a guess.
         """
         self._issue(statement)
@@ -755,25 +746,21 @@ class OracleSession:
         one statement and nothing else -- but reporting ``changed: true`` for it
         would be the same lie :meth:`finish_rollover` reads its state to avoid.
 
-        **Two conditions, not one** (Copilot's review of #504, and then a
-        measurement). The profile granting a window says the reset is about to
-        open one; a window already being open says something about the account
-        right now. They do come apart, which is the half of the review that was
-        right: setting a profile's ``PASSWORD_ROLLOVER_TIME`` to zero leaves an
-        already-open window reading ``OPEN & IN ROLLOVER``, so ``rollover_time``
-        says no and ``rollover_active`` says yes.
+        **Two conditions, not one.** The profile granting a window says the reset
+        is about to open one; a window already being open says something about
+        the account right now. They come apart: setting a profile's
+        ``PASSWORD_ROLLOVER_TIME`` to zero leaves an already-open window reading
+        ``OPEN & IN ROLLOVER``, so ``rollover_time`` says no and
+        ``rollover_active`` says yes.
 
-        **What that state does is not what it looks like**, measured twice on
-        26ai Free 23.26.2.0.0 on 2026-09-20 because guessing would have put the
-        wrong sentence here. The review's stated consequence was that the old
-        password stays valid; on this release it does not -- the profile change
-        kills it immediately, ``ORA-01017``, and only the *status* is stale.
-        Closing is still right, for two reasons that survive that correction: the
-        status is what an operator reads and what `creds status` reports, and the
-        statement makes it true again (measured: accepted, and the account goes
-        to ``OPEN``); and the measurement is one release, while a release where
-        the old password *does* outlive the profile change is exactly the review's
-        case with its consequence intact.
+        **What that state does is not what it looks like.** Measured on 26ai Free
+        23.26.2.0.0: the profile change kills the old password immediately
+        (``ORA-01017``), and only the *status* is stale. Closing is still right,
+        for two reasons. The status is what an operator reads and what `creds
+        status` reports, and the statement makes it true again (the account goes
+        to ``OPEN``). And the measurement covers one release; a release where the
+        old password *does* outlive the profile change would need the close for
+        its own sake.
 
         So the wider condition is safe under both readings and costs one
         silently-accepted statement under the one that holds here.
@@ -809,7 +796,7 @@ class OracleSession:
         )
 
     def expire_password(self, account: str) -> tuple[AccountChange, ...]:
-        """Close an open window, then expire: #525's two statements, one read.
+        """Close an open window, then expire: two statements, one read.
 
         **One `describe_user` for both decisions**, for :meth:`reset_password`'s
         reason: two reads are two chances to see two different states.
@@ -819,7 +806,7 @@ class OracleSession:
         is the order of refusals -- read-only, capability, existence -- and every
         one of them lands before the first statement is issued.
 
-        ``state.expired`` already excludes ``EXPIRED(GRACE)`` (#309), which is
+        ``state.expired`` already excludes ``EXPIRED(GRACE)``, which is
         exactly the reading this needs: a grace-period password still logs in,
         so expiring it is a change rather than a no-op.
         """
@@ -854,7 +841,7 @@ class OracleSession:
         Keyed on ``rollover_active`` alone, unlike :meth:`_reset_close_window`,
         which also closes where the profile merely grants a window. The reset
         needs the wider test because its own ``IDENTIFIED BY`` opens a window; a
-        bare ``PASSWORD EXPIRE`` opens none (measured, #525 E6), so a profile
+        bare ``PASSWORD EXPIRE`` opens none (measured; decision #525), so a profile
         that grants one with none open has nothing to close.
 
         ``rollover_active`` is read from the status, so it also catches the
@@ -881,7 +868,7 @@ class OracleSession:
 
         Read from the state taken before statement 1, which is safe: closing a
         window changes the ``IN ROLLOVER`` component and never the ``EXPIRED``
-        one (measured, #525 E8 and E9).
+        one (measured; decision #525).
         """
         if state.expired:
             return AccountChange(
@@ -995,7 +982,7 @@ class OracleSession:
         lockout_margin: int = DEFAULT_MARGIN,
         attempts: int = 1,
     ) -> VerifyResult:
-        """Does this password work here (#180) -- asked at most once, or not at all.
+        """Does this password work here -- asked at most once, or not at all.
 
         **One attempt, and no retry** (UC-1 §7 mitigation 1). The signature takes
         one secret and returns one result precisely so there is no shape for a
@@ -1007,13 +994,13 @@ class OracleSession:
         taken from a :class:`UserState` the caller happens to be holding: every
         failed login moves it, including ones this tool did not make, so a value
         carried from earlier in the run is a lockout guard computing on a number
-        that has since moved. That is also why the state read here is
+        that has moved. That is also why the state read here is
         :func:`~sopuli.driver.oracle.accounts.login_state` rather than
-        ``describe`` -- #86 decided `check` needs no site-specific grant, and
+        ``describe`` -- `check` needs no site-specific grant (decisions P2 and Q1), and
         roles are a guardrail input for mutations, not for reading.
 
         Where ``SELECT ON SYS.USER$`` was never granted the guard is
-        **unavailable**, the attempt still goes ahead (#86), and the result says
+        **unavailable**, the attempt still goes ahead, and the result says
         so in ``detail`` rather than letting an absent guard read like a
         satisfied one.
         """
@@ -1124,7 +1111,7 @@ class OracleSession:
         self._verifier_answer(account, secret)
 
     def _compare_verifier(self, account: str, secret: Secret) -> VerifyResult:
-        """``method="hash"``: compare with the stored 12C verifier, and log in as nobody (#437).
+        """``method="hash"``: compare with the stored 12C verifier, and log in as nobody.
 
         **No authentication attempt**, so none of ``login``'s guards apply: no
         counter moves, nothing is spent, and the lockout margin has nothing to
@@ -1133,7 +1120,7 @@ class OracleSession:
         from the account's status, where it has always come from.
 
         **Four refusals, each an** :class:`UnsupportedCapabilityError` **naming
-        the target**, and none falls back to anything (#433, invariant 4):
+        the target**, and none falls back to anything (invariant 4):
 
         * the session cannot read ``SYS.USER$``, so there is no verifier to read;
         * the account has no 12C verifier -- 11g, or ``PASSWORD_VERSIONS``
@@ -1142,7 +1129,7 @@ class OracleSession:
         * a ``T:``/``t:`` token is not the 160 hex characters every release read
           has stored, so the format is one the comparison was never measured on;
         * the database character set cannot hold the password exactly, so the
-          server hashed a converted copy that cannot be reproduced (#572).
+          server hashed a converted copy that cannot be reproduced.
 
         A pass says which verifier the password reproduced, because during a
         rollover window that is the one thing a login cannot tell: both passwords
@@ -1169,7 +1156,7 @@ class OracleSession:
     ) -> VerifyResult:
         """``method="both"``: the comparison, and then a login only if it passed.
 
-        **The order is the decision** (#437, 2026-10-02): the comparison costs
+        **The order is the decision**: the comparison costs
         nothing, so it goes first, and a mismatch is reported as ``fail`` without
         spending a login on a value already shown to be wrong. Lockout budget is
         what UC-1 §7 exists to protect, and a login that cannot change the answer
@@ -1253,7 +1240,7 @@ class OracleSession:
                     f"{state.name} has no 12C verifier (PASSWORD_VERSIONS "
                     f"{' '.join(state.password_versions) or 'unknown'}), and the comparison "
                     "uses 12C and only 12C -- the older ones are weaker than a login, so "
-                    "they are never a fallback (#433); verify by `login`, or reset the "
+                    "they are never a fallback; verify by `login`, or reset the "
                     "password where 12C is allowed so the account gets one"
                 ),
             )
@@ -1263,10 +1250,10 @@ class OracleSession:
     def _unreadable_verifier_hint(self) -> str:
         """Why ``SYS.USER$`` cannot be read here, in the words that fit this target.
 
-        **Two different situations, decided separately** (#437, 2026-10-02). On an
+        **Two different situations, decided separately.** On an
         ordinary database the grant is optional and absent, and granting it is the
         remedy. On Autonomous Database no account can read ``SYS.USER$``, ``ADMIN``
-        included (#478), so the same advice would send an operator after a grant
+        included, so the same advice would send an operator after a grant
         that does not exist. The capability probe cannot tell the two apart -- both
         answer ``ORA-00942`` -- so this asks ``CLOUD_SERVICE``, and only here.
         """
@@ -1287,15 +1274,14 @@ class OracleSession:
         """One login as ``name``, on a connection of its own.
 
         Returns the outcome, the detail explaining it, and -- on a login that
-        succeeded while the server had something to say -- that warning (#322).
+        succeeded while the server had something to say -- that warning.
         The third is ``None`` on every other path, including every failure: a
         connection that raised has no ``warning`` attribute to read, and the
         diagnostic it did carry is already in the detail.
 
         A **fresh connection as that user** is what UC-1 §5 step 6 asks for --
-        the admin session proves nothing about this account's password. #180
-        leaves the hygiene to be decided here, and it is: the connection is
-        closed in a ``finally``, and a failure to close it is **not** allowed to
+        the admin session proves nothing about this account's password. The
+        connection is closed in a ``finally``, and a failure to close it is **not** allowed to
         change the answer. The login already happened; reporting a verification
         failure because the socket did not shut politely would turn a tidy-up
         problem into drift, and drift starts rotations.
@@ -1314,8 +1300,8 @@ class OracleSession:
             if not is_verification_outcome(diagnosis.code or None):
                 # Not an answer about the password. A DSN that does not resolve,
                 # a listener that is down, a logon protocol nobody can agree --
-                # #172 has classified each into its own category and exit path,
-                # and folding them into `unavailable` would let an unreachable
+                # the error mapper classifies each into its own category and exit
+                # path, and folding them into `unavailable` would let an unreachable
                 # target look like an account-level finding.
                 raise diagnosis.as_error() from error
             outcome, detail = result_for(diagnosis.code or None, diagnosis.message)
@@ -1335,10 +1321,10 @@ class OracleSession:
             with suppress(Exception):
                 set_identifier(connection, self.correlation_id)
             # Read **before** the `finally` closes the connection, and defensively:
-            # `warning` arrived in python-oracledb 2.0 and is absent on older
+            # `warning` exists from python-oracledb 2.0 and is absent on older
             # clients, so `getattr` is what keeps this from turning a working
             # verification into an AttributeError on a machine with an older
-            # driver (#322).
+            # driver.
             outcome, detail = result_for(None)
             return outcome, detail, self._connection_warning(connection)
         finally:
@@ -1350,7 +1336,7 @@ class OracleSession:
     def _connection_warning(connection: Any) -> str | None:
         """The diagnostic a successful connection is carrying, or ``None``.
 
-        ``Connection.warning`` arrived in python-oracledb 2.0 and is ``None`` on
+        ``Connection.warning`` exists from python-oracledb 2.0 and is ``None`` on
         an ordinary login. Read through :func:`getattr` because an older client is
         a machine this tool still has to verify on, and an ``AttributeError`` here
         would turn a working verification into a crash over a diagnostic nobody
@@ -1390,7 +1376,7 @@ class OracleSession:
 
         **The tool never issues that DDL.** Profiles are shared, so changing one
         affects accounts nobody selected, and `02-oracle-privileges.md` §3 keeps
-        ``ALTER PROFILE`` off the service account deliberately. Q4 (#88) decided
+        ``ALTER PROFILE`` off the service account deliberately. Q4 decides
         that the tool never alters a profile, so it reports the statement
         instead.
         """
@@ -1399,7 +1385,7 @@ class OracleSession:
         # the first one has no local remedy: no `ALTER PROFILE` reaches it, and
         # the version is the answer. So it says which strategies remain rather
         # than leaving the reader to find `--strategy` in `--help` and guess
-        # which of its three values this release can serve (#381).
+        # which of its three values this release can serve.
         require_capability(
             self.scope(),
             PASSWORD_ROLLOVER,
@@ -1446,17 +1432,17 @@ class OracleSession:
         driver that just issued it would report ``changed: true`` for a run that
         did nothing, every time.
 
-        **Whose window it is, is not decided here.** #181 asks the question and
-        it has `lock break`'s shape, but the shapes diverge where it matters: a
-        lock carries a record naming its holder, and a rollover window carries
-        nothing at all -- the database cannot say which run opened one. So the
-        driver is the mechanism and reports the facts a caller needs
-        (``rollover_active``, and the derived ``rollover_ends_at``), and the
+        **Whose window it is, is not decided here.** The question "whose window is
+        this?" has `lock break`'s shape, but the shapes diverge where it matters: a lock carries a
+        record naming its holder, and a rollover window carries nothing at all --
+        the database cannot say which run opened one. So the driver is the
+        mechanism and reports the facts a caller needs (``rollover_active``, and
+        the derived ``rollover_ends_at``), and the
         decision belongs to the command, which has the vault's view of whether
         the applications have moved on. Putting an ownership guard here would be
         a guard built on a fact this layer cannot observe.
 
-        **A read-only target is refused first** (#521), as every other mutating
+        **A read-only target is refused first**, as every other mutating
         method here is. `creds finish-rollover` refuses a standby before it
         spends a login (:func:`sopuli.finish_rollover.settled_before_closing`);
         this is the driver's own guard, so no caller reaches the DDL without it.
@@ -1512,8 +1498,7 @@ class OracleSession:
 class OracleDriver:
     """P1's :class:`~sopuli.driver.protocol.Driver`, for Oracle.
 
-    **A class rather than a module-level function**, which is #176's review
-    correcting the first draft. P1 says ``connect(target, credential) ->
+    **A class rather than a module-level function.** P1 says ``connect(target, credential) ->
     Session``, and a function needing four more keyword arguments is not that
     interface -- a caller written against the protocol would get a ``TypeError``,
     which is the drift the protocol exists to prevent.
@@ -1537,11 +1522,11 @@ class OracleDriver:
 
         Every failure comes back through :mod:`sopuli.driver.oracle.errors`, so
         an ``ORA-`` code keeps its number, its category and the server's own
-        wording (#172) -- CLAUDE.md's rule that a vendor code is mapped and never
+        wording -- CLAUDE.md's rule that a vendor code is mapped and never
         swallowed.
 
-        **The target is not added to the message here**, and that is #172's
-        design rather than an omission: the server's wording is preserved rather
+        **The target is not added to the message here**, by design rather
+        than omission: the server's wording is preserved rather
         than rewritten, and the command knows which target it asked for while
         this layer only knows the one it was handed. A caller reporting across an
         estate has the name already.
@@ -1598,10 +1583,10 @@ def set_identifier(connection: Any, correlation_id: str) -> None:
 
 
 def client_version() -> tuple[int, ...]:
-    """The Instant Client's version, for ``sopuli doctor`` (#182).
+    """The Instant Client's version, for ``sopuli doctor``.
 
-    Needs thick mode up but **not** a database, which is the property #182 wants:
-    P4 requires the doctor report whether a target is out of the client's reach
+    Needs thick mode up but **not** a database, which is the property the doctor
+    wants: P4 requires the doctor report whether a target is out of the client's reach
     -- a 23.x client reaches 19c and later, so an 11.2 target cannot be reached
     from Apple Silicon at all -- and that is an answer worth giving before
     anybody waits on a connection that cannot succeed.
