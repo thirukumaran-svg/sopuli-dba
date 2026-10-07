@@ -47,7 +47,7 @@ VAULT_KEYS = (
     "locking",
 )
 
-#: ``tls:`` (ADR-005). Five paths and a boolean, and the boolean is the one
+#: ``tls:`` (ADR-005). Four paths, a host name and a boolean. The boolean is the one
 #: that is not ordinary config -- see :class:`~sopuli.config.model.VaultTls`.
 TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")
 

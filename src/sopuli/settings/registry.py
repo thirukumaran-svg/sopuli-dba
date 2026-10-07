@@ -60,7 +60,7 @@ can read the ratcheted set without one. Which store a contribution came from is 
 -- ``defaults.vaults.vault-dev.tls.verify`` -- where locations already live.
 :mod:`sopuli.config.vault_layers` builds those names.
 
-Two settings that look like they belong here and do not:
+Flags that look like they belong here and do not:
 
 * ``--color`` -- :func:`sopuli.output.color.resolve_color` owns it, and mixes in
   TTY detection and Windows VT-mode probing, which are not precedence layers.

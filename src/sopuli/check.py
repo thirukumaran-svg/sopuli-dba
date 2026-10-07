@@ -287,8 +287,9 @@ def grace_warning(user: UserState | None, *, now: datetime | None = None) -> str
     **Not derived from the login.** The obvious source is `ORA-28002`, which
     ``verification.py`` still names -- and which 26ai does not send: a grace login
     *succeeds*, and the notice arrives as a connection warning carrying
-    `ORA-28098` or `ORA-28011` depending on the profile, which nothing reads
-    (#322). ``ACCOUNT_STATUS`` says ``EXPIRED(GRACE)`` in every shape and needs no
+    `ORA-28098` or `ORA-28011` depending on the profile. The CLI reports that
+    warning as ``SOPULI-W014``, but a warning is not a state.
+    ``ACCOUNT_STATUS`` says ``EXPIRED(GRACE)`` in every shape and needs no
     login at all, so that is what this asks. It also means the sentence is the
     same on a run where the lockout guard declined to try.
 

@@ -57,8 +57,8 @@ def open_store(vault: Vault, *, token: Secret) -> SecretStore:
     """The store for ``vault``, with a token already in hand.
 
     Kept beside :func:`connect` rather than folded into it: a token that came
-    from somewhere else -- a test's dev-mode root token, a future `sopuli
-    doctor` reusing one -- is a legitimate caller, and the KV data plane has no
+    from somewhere else, such as a test's dev-mode root token, is a legitimate
+    caller, and the KV data plane has no
     business knowing how the token was obtained.
     """
     mount = vault.mount if vault.mount is not None else DEFAULT_MOUNT

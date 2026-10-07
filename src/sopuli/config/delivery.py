@@ -324,17 +324,15 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
     `notify:`'s keys are #442's, and the rule that governs it is UC-2 §6.1's
     rather than this module's: the channel that notifies may be low-trust and the
     channel that carries the secret may not, so a template referencing a wrapping
-    token or a one-time link is refused rather than rendered. That check needs the
-    template grammar, which arrives with the channel.
+    token or a one-time link is refused rather than rendered.
+    :func:`sopuli.config.notify.build_notify` reads its keys and makes that check
+    with the template grammar.
     """
     for name in DELIVERY_METHODS:
         if name in block:
             mapping(block[name], at=at.key(name))
     if "notify" in block:
         mapping(block["notify"], at=at.key("notify"))
-    # Its keys are read by `build_notify` (#442) rather than left for later, which
-    # is why the sentence that used to follow here -- "that check needs the template
-    # grammar, which arrives with the channel" -- is gone: the grammar arrived.
 
 
 def unserviceable(delivery: Delivery | None) -> str | None:

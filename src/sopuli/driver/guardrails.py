@@ -116,7 +116,7 @@ ADMIN_ROLES = frozenset({"DBA", "PDB_DBA", "CDB_DBA", "AUDIT_ADMIN"})
 #:   operator clears with `--force`, audited. Those costs are not symmetrical.
 #: * **It is a constant rather than a data file.** It is Oracle's list, not the
 #:   site's, so nothing about it is configurable — and a file would need a
-#:   schema, a loader and an error path for a fixed set of forty strings.
+#:   schema, a loader and an error path for a fixed set of strings.
 #:
 #: Verifying it against the 11g XE image is a tier-2 test nobody has written
 #: (`04-testing.md` §2); until then it is reasoning, and it is labelled as such.

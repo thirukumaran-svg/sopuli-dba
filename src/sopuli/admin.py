@@ -2,8 +2,8 @@
 
 ``admin:`` has been parsed since the config layer was written
 (:mod:`sopuli.config.targets`) and validated against its target
-(:mod:`sopuli.config.references`), and nothing has ever resolved one. This is
-the database half of what :mod:`sopuli.material` did for vault material: turn a
+(:mod:`sopuli.config.references`). This module resolves it when a command
+connects. It is the database half of what :mod:`sopuli.material` did for vault material: turn a
 named source into a :class:`~sopuli.secrets.Secret`.
 
 P2's bootstrap list, in its order of preference:

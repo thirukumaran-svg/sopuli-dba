@@ -752,7 +752,7 @@ def doctor(
 ) -> str:
     """Check that every target can be reached, and report what it is.
 
-    The first command that connects, and it **mutates nothing** -- everything
+    It connects to every target, and it **mutates nothing** -- everything
     the `creds` verbs depend on either works here or is reported as the reason
     it does not. A `status`-shaped verb (P5): it takes no lock, so an hourly one
     never blocks a rotation.
@@ -761,7 +761,8 @@ def doctor(
     point is to survey an estate and say which parts of it are unwell, so one
     unreachable database must not end the run before the next target is tried.
     Each failure lands in its own ``targets[]`` entry with the vendor code and
-    the server's own message, and the exit code reflects how many.
+    the server's own message. An unreachable target fails the run at exit 1,
+    unless a configured driver or backend is missing, which is exit 9 (below).
 
     **Install shape is reported on every run, not only when it is wrong**
     (ADR-006 E6). Which backends and drivers this build can serve, which the
@@ -3457,9 +3458,9 @@ def lock_status(
     would block the rotations it exists to report on, and the concurrency gate
     would start failing for the wrong reason.
 
-    **This is the first verb that opens a socket.** `config show`, `target list`
-    and `policy sample` are offline by design and safe to point at a production
-    config from a laptop; this one authenticates to every store its selection
+    **It opens a connection.** `config show`, `target list` and `policy sample`
+    are offline by design and safe to point at a production config from a
+    laptop; this one authenticates to every store its selection
     touches and reads from it. Nothing it reads is a secret -- a lock record
     carries an identity, a command and two timestamps, and never a value -- but
     the connection is real, and `--select` is how a survey is kept to the estate
@@ -8208,8 +8209,7 @@ def creds_finish_rollover(
     wrong.
 
     **No lock, and no vault write.** Nothing in any store changes, so there is
-    nothing for the advisory lock to protect -- this is the second verb after
-    `creds check` that leaves every document alone.
+    nothing for the advisory lock to protect.
 
     **An account with no window open reports no change.** That is the ordinary
     result for a scheduled job, and invariant 9: issuing the statement anyway is

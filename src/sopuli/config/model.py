@@ -289,7 +289,7 @@ class VaultAuth:
 class VaultTls:
     """``tls:`` on a vault -- how the transport to it is verified (ADR-005).
 
-    All five paths are plain strings and **not** MaterialRefs, which looks
+    The four paths and ``server_name`` are plain strings and **not** MaterialRefs, which looks
     inconsistent beside :class:`VaultAuth` until you ask what each one is: a CA
     bundle and a server name are not credentials, and ``client_key`` names a
     *path* rather than holding a key, so nothing here is a secret the config file
