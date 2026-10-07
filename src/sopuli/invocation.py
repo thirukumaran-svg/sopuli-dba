@@ -4,7 +4,7 @@ This is the binding layer: click parameters and ``SOPULI_*`` variables in,
 :class:`~sopuli.settings.resolver.Resolved` values out, with the provenance the
 JSON contract's ``invocation.options`` needs. The merge rules themselves are not
 here; they are in :mod:`sopuli.settings`, and this module's whole job is to feed
-that one resolver rather than grow a second one beside it (#10).
+that one resolver rather than grow a second one beside it (decision #10).
 
 **click parses in two stages, and both are layer 1.** The group's parser consumes
 what it knows until the first non-option token -- the subcommand -- and hands the
@@ -18,12 +18,12 @@ layer"). Position is recorded in ``source_detail`` and nowhere else.
 **Except for the safety set, which is trailing-only.** ``--dry-run`` is declared
 on the group as a hidden *trap* that refuses rather than resolves, and the rule
 is written for the set rather than for that one flag: ``--confirm`` and
-``--force``, which P3 decided in #89 does exist, belong to it too and are
-declared on the verbs that take them. This note named ``--max-targets`` in that
-set until #392 -- there is no such flag, ``safety.max_targets`` does not declare
-``Layer.CLI``, and ``00-principles.md`` P5 says why it is a setting rather than a
-flag. ``--force`` belongs by *position* though not by merge policy: it overrides
-account guardrails rather than ratcheting a safety setting
+``--force``, which decision P3 keeps, belong to it too and are declared on the
+verbs that take them. ``--max-targets`` is not in that set, because there is no
+such flag: ``safety.max_targets`` does not declare ``Layer.CLI``, and
+``00-principles.md`` P5 says why it is a setting rather than a flag (decision
+#392). ``--force`` belongs by *position* though not by merge policy: it
+overrides account guardrails rather than ratcheting a safety setting
 (``02-oracle-privileges.md`` §4), but group position and verb position express
 the same intent for it as for the others, so there is nothing to merge there
 either. Group position and verb position express identical intent for a safety
@@ -42,7 +42,7 @@ answer them with "no such option" -- correct, and teaching nothing about why.
 Worse would be accepting it and doing nothing, which is a run that looks like it
 accounted for authentication and did not. So it is declared, hidden, in both
 positions, and :func:`check_vault_token` refuses it before anything else in a run
-happens (#145, ADR-007). The value it carried dies in the parser callback: what
+happens (ADR-007). The value it carried dies in the parser callback: what
 travels is a boolean saying the flag was written.
 
 **Which position wins where both were given.** The verb's, for the inert options:
@@ -50,16 +50,15 @@ most specific wins, and nothing is at stake. ``--config`` is the exception in
 shape rather than in rule -- it is a list that layers left to right (§9), so both
 positions are *kept*, group first, exactly as repeating the flag would.
 
-**The config file is read here, before the verb runs** (#153). It used to be read
-by each verb, and profile activation is what made that impossible: a profile is
-layer 3, it can supply ``output``, and a run whose output format is settled after
-the verb has started has already chosen an emitter. So the boundary discovers the
-file, reads it with the profile the command line asked for, and resolves all six
-layers -- and a verb receives the loaded config on its :class:`Invocation` rather
-than loading one of its own. Every verb needed the file anyway; what changes is
-that none of them decides *when*.
+**The config file is read here, before the verb runs.** Profile activation is why:
+a profile is layer 3, it can supply ``output``, and a run whose output format is
+settled after the verb has started has already chosen an emitter. So the boundary
+discovers the file, reads it with the profile the command line asked for, and
+resolves all six layers -- and a verb receives the loaded config on its
+:class:`Invocation` rather than loading one of its own. Every verb needs the
+file; none of them decides *when* it is read.
 
-It happens in two steps, and the order is J7's (#8) rather than convenience.
+It happens in two steps, and the order is J7's rather than convenience.
 :func:`resolve_invocation` runs first over the command line and the environment
 alone, which opens the run document -- so a file that turns out to be unreadable
 has somewhere to report itself, on exit 9 with a document, instead of failing
@@ -148,8 +147,8 @@ GLOBAL_PARAMS = (
 #: `tests/settings/test_settings_are_wired.py` refuses that shape.
 #: `vaults.*` is absent for a different reason -- it is resolved inside the file,
 #: by `sopuli/config/vault_layers.py`, because it describes a store rather than
-#: a run. `vault` is the one next to it that *is* a run setting and so is here
-#: (#154): it names which store the run defaults to, which is what §6's unnamed
+#: a run. `vault` is the one next to it that *is* a run setting and so is here:
+#: it names which store the run defaults to, which is what §6's unnamed
 #: `SOPULI_VAULT_ADDR` and `VAULT_ADDR` need before they know what they address.
 #: It is resolved twice per run for that reason -- here, so the document reports
 #: where the name came from, and again in `sopuli/config/vault_env.py`, which
@@ -195,7 +194,7 @@ class GlobalOptions:
     profile_name: str | None = None
     dry_run: bool = False
     vault_token_file: Path | None = None
-    #: ``--vault-addr``'s value, or ``None`` (#422). Layer 1 of
+    #: ``--vault-addr``'s value, or ``None``. Layer 1 of
     #: ``vaults.*.addr``, and unlike every other global option it is consumed
     #: while the *file* is being built rather than at this boundary -- a store's
     #: settings belong to the store, so they are merged in
@@ -259,14 +258,14 @@ class Invocation:
     #: store, by :func:`sopuli.material.resolve_token`, so a command that opens
     #: no socket never reads it and no invocation ever holds a credential.
     vault_token_file: Path | None = None
-    #: ``--vault-addr``'s value, or ``None`` (#422). Held rather than resolved
+    #: ``--vault-addr``'s value, or ``None``. Held rather than resolved
     #: here: it is a setting of a *store*, so it joins the merge inside the file
     #: (:func:`sopuli.config.vault_layers.apply_vault_layers`), which is why
     #: :func:`load_config_layers` is the one place that reads it.
     vault_addr: str | None = None
     resolved: Mapping[str, Resolved] = field(default_factory=dict)
-    #: How ``auth: prompt`` asks, or ``None`` when nobody is at a terminal
-    #: (#476). Built once per run by :func:`_pass_invocation`, because
+    #: How ``auth: prompt`` asks, or ``None`` when nobody is at a terminal.
+    #: Built once per run by :func:`_pass_invocation`, because
     #: :class:`~sopuli.admin.PasswordPrompt` caches its answers and one instance
     #: is what makes §3a's "one prompt covers every target that declares the
     #: same credential" true -- a second instance would ask again for a
@@ -283,7 +282,7 @@ class Invocation:
     #: carrying a piped password -- so ``--from-stdin`` and this can never be
     #: two readers of one stream.
     prompt: Prompter | None = None
-    #: Every secret store this run has opened, by name (#483).
+    #: Every secret store this run has opened, by name.
     #:
     #: **The run's client cache**, filled by ``cli._stores_for`` -- so the lock
     #: stores, an application's binding stores and a target's ``method: vault``
@@ -291,7 +290,7 @@ class Invocation:
     #: it is for: those are opened by different calls at different moments, and
     #: without somewhere per-run to put them a config keeping its admin
     #: credential and its application documents in one vault authenticated to it
-    #: twice (Copilot's review of #488).
+    #: twice.
     #:
     #: A client per *name* is safe because every one is built the same way, from
     #: the ``vaults:`` entry and this run's token file, and nothing ever closes
@@ -300,7 +299,7 @@ class Invocation:
     #: It holds no secret: a client knows how to fetch one, and what it fetches
     #: is wrapped on the way out.
     stores: dict[str, SecretStore] = field(default_factory=dict)
-    #: The configuration, read by the boundary before the verb ran (#153).
+    #: The configuration, read by the boundary before the verb ran.
     #:
     #: ``None`` only where no file has been read: an :class:`Invocation` built
     #: directly in a test, or the preliminary one that exists between the command
@@ -335,7 +334,7 @@ class Invocation:
         Compared against the resolved value rather than through
         :attr:`output_mode`, so that a format this build does not have answers
         ``False`` instead of raising. A run can reach here holding one: a
-        variable or a profile may carry any string (#153),
+        variable or a profile may carry any string,
         :func:`check_output_mode` refuses it, and the refusal travels out through
         the exit handler -- which asks this question on the way past. Raising
         there would replace a usage error naming ``profiles.ci.output`` with a
@@ -415,8 +414,8 @@ def refresh_document(document: RunDocument, invocation: Invocation) -> RunDocume
     """Re-state what this run was asked to do, after a layer joined.
 
     Called twice per run -- once when the document is opened over the command
-    line and the environment, once when the config file's three layers arrive
-    (#153). The same document both times, so a run keeps one ``correlation_id``
+    line and the environment, once when the config file's three layers arrive.
+    The same document both times, so a run keeps one ``correlation_id``
     and one ``started_at`` however many layers it took to settle.
 
     ``options`` reports what *changed behaviour*, which is the schema's own
@@ -430,15 +429,15 @@ def refresh_document(document: RunDocument, invocation: Invocation) -> RunDocume
     safely refused, and a run that says nothing about it is the surprise
     invariant 10 exists to prevent. The notes are *replaced* rather than
     appended, because the second call resolves the same settings again and would
-    otherwise say each one twice. Nothing else has written a diagnostic yet: this
-    runs before the verb does.
+    otherwise say each one twice. Nothing else has written a diagnostic at this
+    point: this runs before the verb does.
 
-    ``config_files`` is filled on the second call and only then (#402), which is
+    ``config_files`` is filled on the second call and only then, which is
     what the two-call arrangement is for: the first happens before a file has
     been read, so there is nothing to name, and a run that never loads one keeps
     the field absent rather than empty.
 
-    **Resolved, not as given** (#391, found in review). ``discover`` keeps an
+    **Resolved, not as given.** ``discover`` keeps an
     explicit ``--config estate.yaml`` relative, and a relative path is only
     meaningful beside the working directory that produced it -- which no later
     reader has. `creds apply --repair` compares this list against its own run's
@@ -678,7 +677,7 @@ def load_config_layers(invocation: Invocation, *, env: Mapping[str, str]) -> Loa
         profile=invocation.value("profile"),
         env=env,
         # Layer 1 of `vaults.*.addr`, and the one global option that has to arrive
-        # here rather than at the resolver above (#422): a store's settings are
+        # here rather than at the resolver above: a store's settings are
         # merged inside the file, because they describe the store rather than the
         # run. `--profile` already reaches this function for its own version of
         # that reason, so this is the shape rather than a new one.
@@ -688,7 +687,7 @@ def load_config_layers(invocation: Invocation, *, env: Mapping[str, str]) -> Loa
 
 
 def terminal_prompter(stdin: TextIO | None) -> Prompter | None:
-    """How ``auth: prompt`` asks, when there is somebody to ask (#476).
+    """How ``auth: prompt`` asks, when there is somebody to ask.
 
     The half of ``sopuli/admin.py`` that lives out here, and it is out here for
     the reason that module's :data:`~sopuli.admin.Asker` note gives: naming
@@ -706,7 +705,7 @@ def terminal_prompter(stdin: TextIO | None) -> Prompter | None:
     the two can never both read the pipe.
 
     :func:`~sopuli.output.tty.is_a_terminal` rather than ``stdin.isatty()``,
-    which is #416's whole point: under a scheduler or a service manager stdin is
+    because ``isatty()`` can raise: under a scheduler or a service manager stdin is
     detached, and a detached stream raises on being asked. That is exactly the
     run whose answer must be "nobody is watching" rather than a traceback from
     inside the code that was finding out.
@@ -745,12 +744,12 @@ def _wired(contributions: dict[str, list[Contribution]], name: str) -> list[Cont
     return contributions[name]
 
 
-#: The verbs that accept ``--output jsonl`` (#9), by :func:`command_path`.
+#: The verbs that accept ``--output jsonl``, by :func:`command_path`.
 #:
 #: A verb is here because it streams something the document would otherwise
 #: carry only at exit -- `check`'s per-target results as each target finishes,
 #: `apply`'s, `rotate`'s and `generate`'s locks, reads, writes, database changes
-#: and promotions as they happen (#535).
+#: and promotions as they happen.
 #: One that is not refuses the mode rather than accepting it and emitting
 #: ``run.started`` and ``run.finished`` with its findings missing: ``jsonl`` and
 #: ``json`` are promised to describe the same run (``03-json-output.md`` §1), and
@@ -770,7 +769,7 @@ def check_output_mode(invocation: Invocation) -> None:
     what makes it fixable -- the same variable can be inherited from a CI image
     nobody in the room chose.
 
-    **And a format this verb does not have** (#9): ``jsonl`` is refused by any
+    **And a format this verb does not have**: ``jsonl`` is refused by any
     verb outside :data:`STREAMING_COMMANDS`, for the same reason and on the same
     exit -- the request names a real mode, but not one this run can produce.
 
@@ -780,7 +779,7 @@ def check_output_mode(invocation: Invocation) -> None:
     honour one it failed to read. It does not matter that the value arrived in a
     variable rather than in argv -- the invocation did not resolve either way.
 
-    A profile is the third source (#153), and gets the same answer for the same
+    A profile is the third source, and gets the same answer for the same
     reason, exit 2 rather than a bad-configuration exit 9: what failed is not the
     file but the run's ability to say anything about itself, and a document is
     the thing that cannot be produced. The message names ``profiles.ci.output``,
@@ -968,14 +967,13 @@ def _pass_invocation(func: F) -> F:
             raise
         invocation.emitter().emit(invocation.document, text)
         if invocation.document.exit_code:
-            # The comment above says `exit_code` in the document always equals
-            # the process's, and until #182 nothing tested it: every implemented
-            # verb finished on SUCCESS, so a verb that finished otherwise would
-            # have emitted a document saying so and exited 0 anyway.
+            # The document's `exit_code` always equals the process's: a verb that
+            # finished non-zero would otherwise emit a document saying so and
+            # exit 0 anyway.
             #
-            # `doctor` is the first verb whose failure is a *finding* rather than
-            # an exception -- an unreachable target is what the command is for --
-            # so it is the first that can finish non-zero without raising. P5
+            # `doctor`'s failure is a *finding* rather than an exception -- an
+            # unreachable target is what the command is for -- so it finishes
+            # non-zero without raising. P5
             # exists so schedulers can branch on the number, and a survey that
             # always exits 0 is one nothing can alert on.
             raise SystemExit(invocation.document.exit_code)
@@ -1054,7 +1052,7 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
     change here beyond passing one along -- which is the arrangement working.
 
     A lock error carries its category the same way and **splits on which one it
-    is** (#83). Neither carries an exit code of its own, unlike ``ConfigError``,
+    is**. Neither carries an exit code of its own, unlike ``ConfigError``,
     because the right code depends on what the run had already done:
 
     * :class:`~sopuli.lock.errors.LockDeniedError` is exit 7. It is raised while
@@ -1068,17 +1066,13 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
       finishes its own document on exit 4 and never reaches here; reaching here
       means nobody could say, so it is generic failure.
 
-    A driver error carries its own too, and #287 is when that stopped being
-    anticipated and started happening. Until then every one of them fell into the
-    catch-all below and was reported as ``internal`` on exit 1 -- including
-    :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`, which meant
-    invariant 4's *distinct exit code* was 1 like everything else, the hint was
-    folded into the message rather than into the field it has, and the message a
-    consumer read was prefixed with the exception's class name.
+    A driver error carries its own too. Without that, every one would fall into the
+    catch-all below and be reported as ``internal`` on exit 1 -- including
+    :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`, whose *distinct
+    exit code* (invariant 4) would be 1 like everything else, with the hint folded
+    into the message instead of the field it has.
 
-    Anything else is ``internal`` on exit 1. When vault errors arrive they bring
-    their own categories and vendor codes, and they pass through a scrubber first
-    (``03-json-output.md`` §4) -- until then this catch-all repeats what the text
+    Anything else is ``internal`` on exit 1. This catch-all repeats what the text
     boundary already prints to stderr, and no more.
     """
     if isinstance(exc, ConfigError):
@@ -1090,9 +1084,9 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
         # Same arrangement as ConfigError above: the exception carries its
         # category and its exit code, so a login failure reaches exit 6 (P5) and
         # a sealed store reaches generic failure without this function knowing
-        # which is which. Before #138 every store failure landed in the
-        # catch-all below and exited 1 as `internal`, which was a lie about a
-        # failure the tool understood perfectly well.
+        # which is which. Without this branch, a store failure would land in
+        # the catch-all below and exit 1 as `internal`, which would be a lie about
+        # a failure the tool understands perfectly well.
         return ExitCode(exc.exit_code), Error(
             category=exc.category, message=exc.message, hint=exc.hint
         )

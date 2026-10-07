@@ -45,38 +45,38 @@ from sopuli.output.document import Diagnostic, DiagnosticLevel
 from sopuli.store.protocol import OK
 from sopuli.store.survey import VaultReport
 
-#: A store is holding locks it cannot guard (``locking: advisory-only``, #94).
+#: A store is holding locks it cannot guard (``locking: advisory-only``).
 ADVISORY_LOCKING = "SOPULI-W001"
 
 #: A lock was taken from whoever held it -- automatically, because it was past
 #: its expiry and ``locking.break_expired`` permits that, or deliberately by
-#: ``sopuli lock break`` (#149). One code, because it is one event: what differs
+#: ``sopuli lock break``. One code, because it is one event: what differs
 #: is whether a config key or a person decided it, and a consumer alerting on
 #: "somebody's lock was taken" wants both.
 LOCK_TAKEN_OVER = "SOPULI-W002"
 
-#: A ``vaults:`` entry names a backend **this machine cannot serve** (#130,
-#: #238) -- its client is not installed, or this build has no module for it.
+#: A ``vaults:`` entry names a backend **this machine cannot serve** -- its
+#: client is not installed, or this build has no module for it.
 #: One code for both, because they are one outage and differ only in the
 #: remedy, which the message carries; splitting them would make a consumer
 #: alerting on an unusable store subscribe to two.
 MISSING_BACKEND = "SOPULI-W003"
 
 #: A store in the survey has no ``list`` capability, so the report covers only
-#: the paths the configuration declares (#150).
+#: the paths the configuration declares.
 UNLISTABLE_STORE = "SOPULI-W005"
 
-#: A ``targets:`` entry names a driver this machine cannot serve (#170), read
+#: A ``targets:`` entry names a driver this machine cannot serve, read
 #: as widely as :data:`MISSING_BACKEND` is.
 #: Its own code rather than a widening of :data:`MISSING_BACKEND`, whose
 #: registered description names a ``vaults:`` entry: one code meaning "some
 #: backend or other is missing" would leave a consumer unable to tell a store it
 #: cannot reach from a database it cannot reach, which are different outages.
-#: Hand-allocated, like #130's pair, and J3 is still open.
+#: Hand-allocated, like :data:`MISSING_BACKEND`, and J3 is still open.
 MISSING_DRIVER = "SOPULI-W006"
 
 #: An account's password is in its grace period: past ``PASSWORD_LIFE_TIME`` and
-#: inside the window ``PASSWORD_GRACE_TIME`` grants (#309, UC-1 §6.4).
+#: inside the window ``PASSWORD_GRACE_TIME`` grants (UC-1 §6.4).
 #:
 #: **A warning beside a state, never a state.** The account may be `IN_SYNC` or
 #: it may have drifted, and ``state`` is one field -- a value of its own here
@@ -85,7 +85,7 @@ MISSING_DRIVER = "SOPULI-W006"
 #: expiring on Friday*, which is the report worth paging on.
 PASSWORD_GRACE_PERIOD = "SOPULI-W013"
 
-#: A login **succeeded** and the server attached a diagnostic to it (#322).
+#: A login **succeeded** and the server attached a diagnostic to it.
 #:
 #: Its own code rather than a widening of :data:`PASSWORD_GRACE_PERIOD`, and the
 #: two do co-occur: a grace-period account produces both, because they are
@@ -98,7 +98,7 @@ PASSWORD_GRACE_PERIOD = "SOPULI-W013"
 LOGIN_WARNING = "SOPULI-W014"
 
 #: `creds generate` could not read a target's password constraints, so the
-#: policy's declared length governed the draw (#317, UC-1 §4 step 2).
+#: policy's declared length governed the draw (UC-1 §4 step 2).
 #:
 #: A **warning** rather than an error because §4 makes the fallback legitimate:
 #: staging a password for an estate that is down is a thing operators do, and the
@@ -117,12 +117,12 @@ LOGIN_WARNING = "SOPULI-W014"
 CONSTRAINTS_UNREAD = "SOPULI-W015"
 
 #: An account's profile names a password verify function, or whether it names one
-#: could not be established (#317, UC-1 §4 step 2).
+#: could not be established (UC-1 §4 step 2).
 #:
 #: **Reported, never acted on.** A verify function is arbitrary PL/SQL and cannot
 #: be consulted before the ``ALTER USER`` is issued (invariants 13 and 14), so
 #: this does not gate a draw and is not a prediction that one will be refused --
-#: #312 answers a refusal by redrawing. It says that something other than the
+#: the run answers a refusal by redrawing. It says that something other than the
 #: policy will judge this password, which is a thing an operator who has just
 #: staged one should not have to learn from `apply`.
 #:
@@ -138,7 +138,7 @@ CONSTRAINTS_UNREAD = "SOPULI-W015"
 VERIFY_FUNCTION_UNCHECKABLE = "SOPULI-W016"
 
 #: An account's profile restricts password reuse, and this run was given a
-#: password rather than drawing one (#317, UC-1 §4 step 2).
+#: password rather than drawing one (UC-1 §4 step 2).
 #:
 #: **Only under ``--from-stdin``**, which is the whole reason it is a separate
 #: code from :data:`VERIFY_FUNCTION_UNCHECKABLE`. A drawn password is fresh
@@ -157,11 +157,11 @@ VERIFY_FUNCTION_UNCHECKABLE = "SOPULI-W016"
 PASSWORD_REUSE_ENFORCED = "SOPULI-W017"
 
 #: A §4 account guardrail could not be run, because the fact it checks could not
-#: be read (#296). The run went ahead; the check did not.
+#: be read. The run went ahead; the check did not.
 #:
-#: Its own code for #216's rule -- a code exists for what the exit code cannot
-#: tell you. This run exits 0 with every account applied, and the thing that is
-#: not in the exit code, the states, or ``results[].overridden`` is that one of
+#: Its own code, because a code exists for what the exit code cannot tell you.
+#: This run exits 0 with every account applied, and the thing that is not in the
+#: exit code, the states, or ``results[].overridden`` is that one of
 #: the five checks contributed nothing to the answer. An operator who reads
 #: ``changed: true`` and no refusal is entitled to believe five checks passed.
 #:
@@ -179,14 +179,14 @@ PASSWORD_REUSE_ENFORCED = "SOPULI-W017"
 #: would otherwise be told the same fact forty times.
 GUARDRAIL_UNCHECKED = "SOPULI-W018"
 
-#: An estate uses ``auth: external`` and this machine has no wallet it can read
-#: (#215). Its own code rather than a widening of anything above: the remedy is a
+#: An estate uses ``auth: external`` and this machine has no wallet it can read.
+#: Its own code rather than a widening of anything above: the remedy is a
 #: file on this machine, and a consumer that alerts on "sopuli cannot reach a
 #: store" is watching a different outage from one that alerts on "the wallet the
 #: service account authenticates with has gone".
 WALLET_UNUSABLE = "SOPULI-W007"
 
-#: A wallet file somebody other than its owner can reach (#215, P4). Separate
+#: A wallet file somebody other than its owner can reach (P4). Separate
 #: from :data:`WALLET_UNUSABLE` because the two are opposite conditions -- one
 #: says the credential is not there, the other says it is there and everyone can
 #: have it -- and because only the second is something to alert on rather than to
@@ -194,13 +194,13 @@ WALLET_UNUSABLE = "SOPULI-W007"
 WALLET_NOT_PRIVATE = "SOPULI-W008"
 
 #: This host's clock is further from a configured store's than the advisory lock
-#: allows (#216, #83). Its own code because it is the only finding in the vault
+#: allows. Its own code because it is the only finding in the vault
 #: survey that is neither visible in the exit code nor a property of the store:
 #: it is a property of the pair, and the machine to fix is usually this one.
 CLOCK_SKEW_BEYOND_TOLERANCE = "SOPULI-W009"
 
 #: A configured store answered and cannot serve this run: sealed, standing by,
-#: not initialised, or refusing the credential it was opened with (#216).
+#: not initialised, or refusing the credential it was opened with.
 #:
 #: Separate from an *unreachable* store, which gets no code at all -- that one
 #: fails the run, so a consumer watching the exit code already knows, and the
@@ -210,7 +210,7 @@ CLOCK_SKEW_BEYOND_TOLERANCE = "SOPULI-W009"
 STORE_DEGRADED = "SOPULI-W010"
 
 #: This run's lock was taken over while it was running, found at a fence check
-#: (#282, UC-1 §8). The run stopped before its next mutation and promoted
+#: (UC-1 §8). The run stopped before its next mutation and promoted
 #: nothing; what it had already applied stands.
 #:
 #: Its own code because it is the one thing the exit code cannot say. A fenced-out
@@ -218,8 +218,8 @@ STORE_DEGRADED = "SOPULI-W010"
 #: two want opposite responses. The second is repaired by running `apply` again;
 #: the second run of the first would be denied at exit 7 if it is lucky, and the
 #: person reading the output needs to know that somebody else is mid-rotation on
-#: this estate before they decide anything. That is #216's rule exactly: a code
-#: exists for what the exit code cannot tell you.
+#: this estate before they decide anything. The rule is the same: a code exists
+#: for what the exit code cannot tell you.
 #:
 #: Distinct from :data:`LOCK_TAKEN_OVER`, which is the *other* side of the same
 #: event -- there, this run did the taking and says so; here, it was taken from.
@@ -228,9 +228,9 @@ STORE_DEGRADED = "SOPULI-W010"
 LOCK_LOST = "SOPULI-W011"
 
 #: A rotation promoted a document and then read a different password back out of
-#: it (#284, UC-1 §8 step 8).
+#: it (UC-1 §8 step 8).
 #:
-#: Its own code for #216's reason: the exit code cannot say this. The run exits 4,
+#: Its own code, because the exit code cannot say this. The run exits 4,
 #: which it would also do with half its targets failed -- and those two are
 #: opposite situations. Here *every* database took the new password and the
 #: promotion was acknowledged; the estate is converged and it is the vault that
@@ -245,14 +245,13 @@ LOCK_LOST = "SOPULI-W011"
 ROTATION_UNCONFIRMED = "SOPULI-W012"
 
 #: A lock path was created without the store being made to require a
-#: compare-and-set on it, because this run's credential may not set metadata
-#: (#390).
+#: compare-and-set on it, because this run's credential may not set metadata.
 #:
 #: Emitted once per path, on the run that creates it and never again -- a path
 #: whose metadata *is* set never reaches this, and one somebody else created
 #: without it is refused outright rather than warned about.
 #:
-#: Its own code, and #216's rule is what earns it: the exit code cannot say this.
+#: Its own code, because the exit code cannot say this.
 #: The run succeeds, the lock it took was itself written under a compare-and-set,
 #: and the fence held for every mutation -- so nothing in the result is wrong.
 #: What is missing is the store enforcing the same rule on *other* writers, which
@@ -267,7 +266,7 @@ ROTATION_UNCONFIRMED = "SOPULI-W012"
 LOCK_PATH_UNGUARDED = "SOPULI-W019"
 
 #: The document ``creds apply --repair`` was handed is old enough to be worth
-#: saying so (#391, UC-1 §``--repair``).
+#: saying so (UC-1 §``--repair``).
 #:
 #: A warning and never a refusal, which is the decision this code exists to
 #: carry: a threshold that stopped the run would have to be wrong for somebody,
@@ -278,14 +277,14 @@ LOCK_PATH_UNGUARDED = "SOPULI-W019"
 #:
 #: It names the age rather than quoting the threshold, because what the reader
 #: does with "eleven days" is decide whether that is still the estate they are
-#: looking at, and no constant here can decide it for them. The condition the
-#: exit code cannot report (#216's rule): the run exits 0 having done less than
+#: looking at, and no constant here can decide it for them. It is a condition the
+#: exit code cannot report: the run exits 0 having done less than
 #: the operator may have expected, and nothing else in the document says the
 #: narrowing came from something written last week.
 REPAIR_DOCUMENT_STALE = "SOPULI-W020"
 
 #: The database would not say when an account's password was last set, and the
-#: message says why (#386).
+#: message says why.
 #:
 #: **It exists to make an omission legible.** `results[].password_age_days` is a
 #: documented field that is simply absent when the date is unknown, and `creds
@@ -303,23 +302,22 @@ REPAIR_DOCUMENT_STALE = "SOPULI-W020"
 #: Reported and never acted on, like the date itself: nothing gates on it (Q9).
 PASSWORD_CHANGE_DATE_UNKNOWN = "SOPULI-W021"
 
-#: A target's admin credential came from the environment (#477). P2 says the
+#: A target's admin credential came from the environment. P2 says the
 #: ``env`` source is "supported, and flagged low-assurance in output", and
 #: ``01-configuration.md`` §3a says twice that it "stays flagged wherever it is
-#: reported". Until this code existed, :attr:`sopuli.admin.Resolved.low_assurance`
-#: was computed on every run and read by nothing.
+#: reported". This code is what reports :attr:`sopuli.admin.Resolved.low_assurance`.
 #:
-#: **It is #216's rule exactly**: a code exists for what the exit code cannot
-#: tell you. The run connects, succeeds and exits 0 -- the credential worked --
-#: and nothing else in the document says *how* the tool got hold of it. A reader
-#: cannot distinguish a run that authenticated from a wallet from one that
+#: **A code exists for what the exit code cannot tell you.** The run connects,
+#: succeeds and exits 0 -- the credential worked -- and nothing else in the
+#: document says *how* the tool got hold of it. A reader cannot distinguish a
+#: run that authenticated from a wallet from one that
 #: authenticated from a variable some CI job exported, and those are different
 #: claims about how well guarded the estate is.
 #:
 #: **Keyed on assurance, not on the method.** :data:`sopuli.admin.LOW_ASSURANCE`
 #: is the set, so a second low-assurance source starts emitting this without
-#: finding every reporting site again -- which is the mistake the property's
-#: existing docstring was already written to avoid.
+#: finding every reporting site again -- which is the mistake the comment on
+#: :data:`sopuli.admin.LOW_ASSURANCE` warns against.
 #:
 #: **One per target per run**, and the message names the variable rather than
 #: the method: ``Resolved.source`` is the half an operator can act on, because
@@ -332,14 +330,10 @@ PASSWORD_CHANGE_DATE_UNKNOWN = "SOPULI-W021"
 LOW_ASSURANCE_ADMIN = "SOPULI-W022"
 
 #: `account list` had no reset journal to read, so its ``RESET_AT`` column is
-#: empty (UC-2 §3.4, #490).
+#: empty (UC-2 §3.4).
 #:
-#: **Allocated with the verb that raises it**, which is this one and not the
-#: reset. #468 built the `reset_records:` block and deliberately left this code
-#: unallocated, because nothing could emit it: a code computed on every run and
-#: read by nothing is what :data:`LOW_ASSURANCE_ADMIN` was written to fix. The
-#: emitter turned out to be the *listing* verb — §3.4's absence is stated for a
-#: reset, and it is `account list` that has a documented column to leave empty
+#: **Raised by the listing verb**, not by the reset. §3.4's absence is stated for
+#: a reset, and it is `account list` that has a documented column to leave empty
 #: because of it.
 #:
 #: **It is `SOPULI-W021`'s rule applied to the other date column.** §2 says so
@@ -355,7 +349,7 @@ LOW_ASSURANCE_ADMIN = "SOPULI-W022"
 NO_RESET_JOURNAL = "SOPULI-W023"
 
 #: A reset wrote no record, because the configuration declares no
-#: `reset_records:` block (UC-2 §3.4's first absence, #511).
+#: `reset_records:` block (UC-2 §3.4's first absence).
 #:
 #: **Its own code rather than** :data:`NO_RESET_JOURNAL`, which says the same
 #: thing about a different verb: that one explains an empty column in a listing,
@@ -375,7 +369,7 @@ NO_RESET_JOURNAL = "SOPULI-W023"
 NO_RESET_RECORD = "SOPULI-W024"
 
 #: The reset succeeded and its record could not be written (UC-2 §3.4's second
-#: absence, #511).
+#: absence).
 #:
 #: **A warning on a successful run**, never a rollback and never a non-zero exit.
 #: The password has already changed and the person still needs it, so failing the
@@ -387,7 +381,7 @@ NO_RESET_RECORD = "SOPULI-W024"
 #: not write, or a store that is not there.
 RESET_RECORD_UNWRITTEN = "SOPULI-W025"
 
-#: The reset succeeded and nobody could be told it was waiting (#442).
+#: The reset succeeded and nobody could be told it was waiting.
 #:
 #: **A warning on a successful run**, for :data:`RESET_RECORD_UNWRITTEN`'s reason
 #: and more easily: by the time anything is posted the password has changed and the
@@ -403,8 +397,8 @@ RESET_RECORD_UNWRITTEN = "SOPULI-W025"
 #: remedy is to tell the person directly today and fix the URL afterwards.
 NOTIFICATION_UNSENT = "SOPULI-W026"
 
-#: A document was not promoted because this run was narrower than the promotion
-#: (#406). Invariant 7 asks that every target confirm before `current` moves, and
+#: A document was not promoted because this run was narrower than the promotion.
+#: Invariant 7 asks that every target confirm before `current` moves, and
 #: a run cannot confirm a pair it was told to leave out.
 #:
 #: **Its own code for `SOPULI-W011`'s reason**: the run exits 4, and so does one
@@ -415,7 +409,7 @@ NOTIFICATION_UNSENT = "SOPULI-W026"
 PROMOTION_WITHHELD = "SOPULI-W027"
 
 #: A rollback applied `previous` to an account whose profile restricts password
-#: reuse (#568). `previous` is, by construction, a password the account held one
+#: reuse. `previous` is, by construction, a password the account held one
 #: change ago whenever this tool made that change, so it is the value most likely
 #: of any to be in the reuse history -- which is `ORA-28007`, measured on ADB's
 #: own `DEFAULT` (`4` / `1`) and on tier 1's `SOPULI_REUSE` (`5` / `UNLIMITED`).
@@ -427,15 +421,13 @@ PROMOTION_WITHHELD = "SOPULI-W027"
 #: password" would be told something false about a rollback.
 #:
 #: Reported rather than refused, and the values reported rather than interpreted,
-#: which is UC-1 §4's rule and the decision #568 took: when both limits are
+#: which is UC-1 §4's rule (decision #568): when both limits are
 #: numbers, whether the reuse is allowed depends on changes made outside the tool,
 #: which it cannot see. Raised on every rollback that reaches the statement on
 #: such a profile, whichever way the statement went.
 ROLLBACK_REUSE_RESTRICTED = "SOPULI-W028"
 
-#: The server refused a password and the run drew another (#312, UC-1 §6.4).
-#: Until #610 these two were emitted as ``password_redrawn`` and
-#: ``password_not_redrawn``, outside this registry and its spelling.
+#: The server refused a password and the run drew another (UC-1 §6.4).
 PASSWORD_REDRAWN = "SOPULI-W029"
 
 #: The server refused a password and the run was not allowed to draw another.
@@ -685,7 +677,7 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
 
 
 def constraint_diagnostics(found: Constraints, *, supplied: bool = False) -> list[Diagnostic]:
-    """What `creds generate` says about what it read from the estate (#317).
+    """What `creds generate` says about what it read from the estate.
 
     Two kinds of thing, and they differ in a way the reader can act on:
 
@@ -840,7 +832,7 @@ def _accounts(names: Sequence[str]) -> str:
     return ", ".join(names)
 
 
-#: What to do about a guardrail that could not be run, by check (#296).
+#: What to do about a guardrail that could not be run, by check.
 #:
 #: Here rather than on :class:`~sopuli.driver.guardrails.Caveat`, because a
 #: remedy is a grant on one product and the guardrails are product-neutral by
@@ -857,7 +849,7 @@ GUARDRAIL_REMEDIES: Mapping[str, str] = MappingProxyType(
 
 
 def guardrail_diagnostics(caveats: Sequence[tuple[str, Caveat]]) -> list[Diagnostic]:
-    """§4's checks that could not be run, as the warnings a consumer reads (#296).
+    """§4's checks that could not be run, as the warnings a consumer reads.
 
     ``caveats`` is (target, caveat) pairs, in the order the run produced them --
     the target is the command's to know and the caveat is the guardrail's, which
@@ -901,7 +893,7 @@ def guardrail_diagnostics(caveats: Sequence[tuple[str, Caveat]]) -> list[Diagnos
 
 
 def rollback_reuse(readings: Sequence[tuple[str, UserState]]) -> list[Diagnostic]:
-    """A rollback against a profile that restricts reuse, as a warning (#568).
+    """A rollback against a profile that restricts reuse, as a warning.
 
     ``readings`` is (target, account state) pairs for the rollbacks that reached
     the statement, in the order the run produced them. The caller passes only
@@ -940,7 +932,7 @@ def rollback_reuse(readings: Sequence[tuple[str, UserState]]) -> list[Diagnostic
 
 
 def admin_diagnostics(target: str, credential: Resolved) -> list[Diagnostic]:
-    """What a run says about where a target's admin credential came from (#477).
+    """What a run says about where a target's admin credential came from.
 
     Empty for every source but the low-assurance one, which is the whole design
     of a warning somebody is meant to keep reading. `external`, `vault` and
@@ -978,7 +970,7 @@ def admin_diagnostics(target: str, credential: Resolved) -> list[Diagnostic]:
 
 
 def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
-    """Say that part of the survey could not be looked at (#150).
+    """Say that part of the survey could not be looked at.
 
     A **warning and not a refusal**, which is P2's third answer to a missing
     capability and the reason `list` needed one: refusing would make `lock
@@ -1011,7 +1003,7 @@ def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
 
 
 def no_reset_journal() -> list[Diagnostic]:
-    """Say why `account list`'s ``RESET_AT`` column is empty (UC-2 §3.4, #490).
+    """Say why `account list`'s ``RESET_AT`` column is empty (UC-2 §3.4).
 
     One entry for the run rather than one per account, because the cause is the
     *configuration* and is identical on every row -- the same reasoning
@@ -1038,7 +1030,7 @@ def no_reset_journal() -> list[Diagnostic]:
 
 
 def no_reset_record() -> Diagnostic:
-    """Say that this reset is going unrecorded, before it happens (#511).
+    """Say that this reset is going unrecorded, before it happens.
 
     §3.4's first absence, raised at **plan time** rather than with the result:
     an operator who did not mean to run without a journal should find out while
@@ -1064,7 +1056,7 @@ def no_reset_record() -> Diagnostic:
 
 
 def notification_unsent(account: str, target: str, reason: str) -> Diagnostic:
-    """The password is waiting and the channel did not say so (#442).
+    """The password is waiting and the channel did not say so.
 
     The reason last, and verbatim, for :func:`reset_record_unwritten`'s reason: a
     refused POST and an unreachable host send somebody to different places, and
@@ -1074,12 +1066,11 @@ def notification_unsent(account: str, target: str, reason: str) -> Diagnostic:
     incoming-webhook URL is a credential (C9), so repeating it in a warning would
     put one wherever warnings go -- which on this verb includes a run document.
 
-    **The target is named because one reset can notify more than once** (Copilot's
-    finding on #520). A personal account is reset on one account and possibly
-    several targets, so a notification is attempted per target; the first build
-    carried only the account, and two failures out of three targets produced two
-    identical warnings that no operator could act on. This is the same defect
-    #519's review found in the hand-over block, one object over.
+    **The target is named because one reset can notify more than once.** A personal
+    account is reset on one account and possibly several targets, so a
+    notification is attempted per target. A warning that carried only the account
+    would repeat itself when two of three targets fail, and no operator could act
+    on it.
 
     The remedy is in the message rather than in a ``hint``, because
     :class:`~sopuli.output.document.Diagnostic` has no hint field: a diagnostic is
@@ -1098,7 +1089,7 @@ def notification_unsent(account: str, target: str, reason: str) -> Diagnostic:
 
 
 def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagnostic:
-    """One document this run may not promote, and the pairs that would let it (#406).
+    """One document this run may not promote, and the pairs that would let it.
 
     ``pairs`` is (account, target), and every one is named rather than counted:
     what the reader does next is widen the run until it covers them, and "3
@@ -1117,7 +1108,7 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
 
 
 def reset_record_unwritten(path: str, reason: str) -> Diagnostic:
-    """The reset happened and the journal did not hear about it (#511).
+    """The reset happened and the journal did not hear about it.
 
     §3.4's second absence. **A warning on a successful run** -- the password has
     changed and the person still needs it, so failing here would report a false
@@ -1155,7 +1146,7 @@ def lock_diagnostics(manager: LockManager) -> list[Diagnostic]:
 
 
 def _unguarded(one: Unguarded) -> Diagnostic:
-    """A lock path created without ``cas_required``, because the store said no (#390).
+    """A lock path created without ``cas_required``, because the store said no.
 
     One per path rather than one per store, which is the opposite of
     :func:`_advisory` and for the opposite reason: advisory locking is a property
@@ -1222,7 +1213,7 @@ def _taken_over(key: LockKey, broke: LockRecord) -> Diagnostic:
 
 
 def lock_broken(key: LockKey, broke: LockRecord, *, expired: bool) -> list[Diagnostic]:
-    """Somebody's lock was taken by a person who asked for it (#149).
+    """Somebody's lock was taken by a person who asked for it.
 
     The same code as :func:`_taken_over` and a different sentence, which is the
     arrangement §3 already describes: the code is the contract and the wording
@@ -1266,26 +1257,20 @@ def install_diagnostics(
 ) -> list[Diagnostic]:
     """What a command says about a configured component this machine cannot serve.
 
-    **The only definition of that fact in the tool** (#238). `doctor` reports it
-    as an error and exits 9 (E6); `config validate` reports the same finding as a
+    **The only definition of that fact in the tool.** `doctor` reports it as an
+    error and exits 9 (E6); `config validate` reports the same finding as a
     warning and exits 0 (E4). Those are the two commands' own judgements of what
     it is worth, and it is deliberate that they differ -- but *what happened* is
-    one thing, and until #238 it was computed twice.
+    one thing, and one function computes it.
 
-    The pair that computed it the other way, ``backend_diagnostics`` and
-    ``driver_diagnostics``, are gone. They asked only whether the *client* was
-    installed, which left `config validate` silent about `file` and `keyring` --
-    unusable in this build for every user, unconditionally -- and silent about
-    `oci` on any machine that happened to have the SDK. Three of the four backend
-    types in ``01-configuration.md`` §3a have no module, so a config declaring
-    all four reported one warning, and which one depended on the machine rather
-    than on the file.
+    A check that asked only whether the *client* was installed would leave
+    `config validate` silent about a backend this build has no module for, and
+    which backends it reported would depend on the machine rather than on the
+    file.
 
     ``level`` is the caller's, and it is the *only* thing the caller decides.
-    Giving the former ``backend_diagnostics`` a level was tried before #238 and was
-    worse, because there were still two functions answering "is this component
-    missing" from two definitions; with one function there is nothing left to
-    disagree about. It is a :data:`~sopuli.output.document.DiagnosticLevel` and
+    With one function answering "is this component missing" there is nothing
+    left to disagree about. It is a :data:`~sopuli.output.document.DiagnosticLevel` and
     not a ``str``, so a typo here is a type error rather than a document that
     fails the schema at the end of a run; there is deliberately no runtime check.
 
@@ -1293,11 +1278,10 @@ def install_diagnostics(
     to mean the same thing in `doctor`'s ``install`` section and in the
     ``diagnostics`` array of the same document, and it did not when the two were
     worked out separately: the section asks whether this build has a module *and*
-    whether the client is there, and the older pair asked only about the client.
-    On a machine with the `oci` SDK installed and no `oci` backend written, that
-    disagreement produced an exit 9 with no diagnostic at all -- and with the SDK
-    absent it produced one that contradicted the section and pointed at a `pip`
-    line that fixes nothing.
+    whether the client is there, and a check of the client alone would disagree.
+    On a machine with the `oci` SDK installed and no `oci` backend written, it
+    would give an exit 9 with no diagnostic at all -- and with the SDK absent it
+    would contradict the section and point at a `pip` line that fixes nothing.
 
     **The install line comes from the component**, so it appears only where one
     exists. That is structural rather than remembered: a
@@ -1369,7 +1353,7 @@ def _cannot_serve(name: str, kind: str, install_command: str | None) -> str:
 
 
 def wallet_diagnostics(report: WalletReport) -> list[Diagnostic]:
-    """What a run should say about the wallet it will authenticate with (#215).
+    """What a run should say about the wallet it will authenticate with.
 
     **Warnings, never a verdict.** `01-configuration.md` §3a makes the config
     rules around ``external`` load-time errors; this is a runtime report and must
@@ -1454,12 +1438,12 @@ def _why_unusable(report: WalletReport) -> str:
 
 
 def vault_diagnostics(reports: Sequence[VaultReport]) -> list[Diagnostic]:
-    """What a run should say about the stores it surveyed (#216, P4).
+    """What a run should say about the stores it surveyed (P4).
 
     **Only what the exit code cannot say.** An *unreachable* store deliberately
     gets no diagnostic: it fails the run at exit 1, so anything watching the exit
     code already knows, and the ``vaults[]`` entry names which store and carries
-    the error -- exactly the arrangement ``targets[]`` has had since #212, where
+    the error -- exactly the arrangement ``targets[]`` has, where
     an unreachable database is an entry and never a diagnostic. Adding one here
     would report a single condition twice and make the two able to disagree.
 

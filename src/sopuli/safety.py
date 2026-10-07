@@ -1,4 +1,4 @@
-"""What the safety settings refuse, and the exit code a refusal carries (#149).
+"""What the safety settings refuse, and the exit code a refusal carries.
 
 Invariant 10 says safety settings only ratchet toward safe, and
 :mod:`sopuli.settings.registry` is what makes that true of *resolution*: no layer
@@ -44,13 +44,13 @@ from sopuli.settings.sources import estate_contributions
 #: The setting that refuses every mutation, wherever it was written.
 READONLY = "safety.readonly"
 
-#: The ceiling on how many targets one run may reach (P5, #247).
+#: The ceiling on how many targets one run may reach (P5).
 MAX_TARGETS = "safety.max_targets"
 
-#: The environments a mutation may not enter without an explicit yes (P5, #292).
+#: The environments a mutation may not enter without an explicit yes (P5).
 CONFIRM_ENVIRONMENTS = "safety.confirm_environments"
 
-#: Which UC-2 delivery methods an estate permits (H6, #453, #498). Ratchets by
+#: Which UC-2 delivery methods an estate permits (H6). Ratchets by
 #: intersection, so a layer may only narrow the set.
 ALLOWED_METHODS = "safety.delivery.allowed_methods"
 
@@ -85,14 +85,13 @@ class ReadonlyTarget:
 
 
 def for_estate(resolved: Mapping[str, Resolved], config: Config) -> dict[str, Resolved]:
-    """``resolved``, re-merged with the ``safety:`` blocks of the estate (#424).
+    """``resolved``, re-merged with the ``safety:`` blocks of the estate.
 
     Layer 4 of P3's table, asked at the only moment it can be answered. The
     invocation resolves at the boundary, before any selector has run, so a block
-    on a target or a group cannot join it there -- which is what
-    :mod:`sopuli.settings.registry` used to describe as a merge happening
-    somewhere else, and what nothing built. ``readonly`` on a target parsed,
-    validated, appeared in ``config show`` and refused nothing.
+    on a target or a group cannot join it there. Without this re-merge,
+    ``readonly`` on a target would parse, validate and appear in ``config show``
+    and refuse nothing.
 
     ``config`` is the **already-selected** estate.
     :func:`~sopuli.settings.sources.estate_contributions` decides which of its
@@ -168,7 +167,7 @@ def _readonly_at(expanded: ExpandedTarget, config: Config) -> str | None:
 
     The template's block is consulted **before** the flattened one, because a
     patch that tried to relax it lost the ratchet and the line that holds is the
-    template's (#424, found in review). Reading only the flattened value would
+    template's. Reading only the flattened value would
     drop the target out of the message entirely while the refusal still fired --
     the right refusal with a worse message, which is the failure that is hardest
     to notice.
@@ -209,8 +208,8 @@ def refuse_if_readonly(
     you ask. For a lock that verb is ``sopuli lock status``, which answers the
     same question and takes no lock doing it.
 
-    **``estate`` is the selected config, and giving it changes only the message**
-    (#424). Every verb asks this twice: once on the invocation, before a selector
+    **``estate`` is the selected config, and giving it changes only the message**.
+    Every verb asks this twice: once on the invocation, before a selector
     has been validated, and again on the estate the selection produced, against a
     ``resolved`` that :func:`for_estate` has re-merged. The second call is where a
     target's or a group's block can refuse at all, and the message it wants is a
@@ -220,7 +219,7 @@ def refuse_if_readonly(
     write, rather than exit 2 for a typo in it.
 
     **Refusing the whole run is the decision, not skipping the readonly targets**
-    (#424, option 3). Skipping would make ``readonly`` mean two different things
+    (decision #424). Skipping would make ``readonly`` mean two different things
     depending on where it was written -- a refusal under ``defaults``, a filter on
     a target -- and it does not generalise: there is no per-target reading of
     ``max_targets`` that skips its way under a ceiling, and a ``safety:`` block is
@@ -269,8 +268,8 @@ def _marked_hint(marked: tuple[ReadonlyTarget, ...], *, escapable: bool) -> str:
 
     ``escapable`` is whether any of the plan survives a narrowing. Where it does,
     a selector is the answer and the message says which ones exist -- narrowing is
-    the mechanism the tool already has for "operate on less than this", and #424
-    chose a refusal over a partial run precisely so that the operator makes that
+    the mechanism the tool already has for "operate on less than this", and the
+    refusal (decision #424) is there so that the operator makes that
     call rather than the tool making it silently. Where it does not, saying
     "narrow the run" would be advice that cannot work, so the message says so and
     names the verbs that read instead.
@@ -293,15 +292,12 @@ def refuse_if_over_limit(
 ) -> None:
     """Stop a run that reaches more targets than any layer allowed.
 
-    P5's "prevents a wildcard from hitting 200 PDBs by accident", finally asked of
-    something. The setting has been parsed since the config model was written and
-    ratcheted since the resolver was, and until now nothing read the answer.
+    This is the check behind P5's "prevents a wildcard from hitting 200 PDBs by
+    accident".
 
-    **The bullet used to say `--limit`/`--max-targets`** and this docstring quoted
-    it. #392 struck the flag from P5: ``Setting.layers`` does not include
-    ``Layer.CLI`` for this setting, so the flag would be refused by the resolver
-    rather than merely missing. The quotation is trimmed to the half that is still
-    true.
+    **There is no `--limit` or `--max-targets` flag.** ``Setting.layers`` does not
+    include ``Layer.CLI`` for this setting, so the resolver would refuse the flag
+    (decision #392).
 
     **Counts targets, not units.** :class:`~sopuli.plan.BlastRadius` says why: six
     accounts in one PDB is one target's worth of reach, and refusing it under
@@ -315,15 +311,14 @@ def refuse_if_over_limit(
     would put that default somewhere a reviewer reading the registry would not find
     it.
 
-    P5 did say "default 1", about *confirmation* rather than about this ceiling.
-    #247 excluded that reading from its scope and wrote the tension down here,
-    where it sat as an open question until **#294 decided the trigger away**: a
-    threshold that prompted on every multi-target mutation would fire on estates
-    that configured nothing, and a ceiling is not a confirmation threshold in the
-    first place. So this function is the only consumer `max_targets` has and the
-    only one it is going to get -- which is worth knowing before reading the
-    absent built-in as an oversight. Confirmation is `confirm_environments` and
-    nothing else (:func:`confirmation_demanded`).
+    P5's struck-through "default 1" is about *confirmation*, not about this ceiling,
+    and **C17 declined that trigger**: a threshold that prompted on every
+    multi-target mutation would fire on estates that configured nothing, and a
+    ceiling is not a confirmation threshold in the first place. So this function is
+    the only consumer `max_targets` has and the only one it is going to get -- which
+    is worth knowing before reading the absent built-in as an oversight.
+    Confirmation is `confirm_environments` and nothing else
+    (:func:`confirmation_demanded`).
 
     **Refuses a `--dry-run` too**, for :func:`refuse_if_readonly`'s reason and one
     more of its own: the plan is what the operator is being shown, and showing a
@@ -378,11 +373,10 @@ def confirmation_demanded(
 
     P5 says every mutating command supports ``--confirm`` and that confirmation
     is required in some circumstances; this is **all** of the circumstances. The
-    setting had been parsed, ratcheted as a union and read by nothing since the
-    config model was written (#292), and this is its consumer.
+    setting ratchets as a union, and this function is what reads it.
 
-    **There is no second trigger to come.** P5 asked for two more -- a built-in
-    `prod` and a blast radius over ``max_targets`` -- and #294 declined both: the
+    **There is no other trigger.** P5 asked for two more -- a built-in
+    `prod` and a blast radius over ``max_targets`` -- and C17 declined both: the
     first is an unremovable floor under ``01-configuration.md`` §9's union
     ratchet, and the second would prompt on every multi-target mutation for an
     estate that wrote no safety block. So a ``None`` from here means *this run
@@ -421,12 +415,11 @@ def confirmation_demanded(
 
 
 def refuse_disallowed_method(resolved: Mapping[str, Resolved], method: str) -> None:
-    """Stop a run whose delivery method no layer permits (H6, #453, #498).
+    """Stop a run whose delivery method no layer permits (H6).
 
-    The consumer #498 said would arrive with the first delivery method, arriving
-    with it (#441). Until now the set was resolved, ratcheted, reported by
-    `config show --explain` and read by nothing, which is the shape this
-    codebase has been bitten by four times and marks with ``inert_reason``.
+    This is the consumer of the resolved set. A setting that is resolved,
+    ratcheted and reported by `config show --explain` but read by nothing is
+    marked with ``inert_reason``.
 
     **Unset is no constraint**, which is the intersection's first rule: an estate
     that wrote nothing has not thereby forbidden everything. The resolver returns
