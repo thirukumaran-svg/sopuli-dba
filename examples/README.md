@@ -84,22 +84,36 @@ its `audit` profile selected shows the ratchet saying so out loud.
 `--output text` is on that command line because the `audit` profile sets
 `output: json`, and without the flag you get the same information as a JSON
 document. A flag on the command line beats a profile, which is precedence
-working:
+working. The output starts with the vaults, targets and other sections that
+`config show` prints; these are its last two:
 
 ```
 $ sopuli --config safety-hardened.yaml --profile audit config show --explain --output text
+...
+safety
+KEY                                       VALUE                         NOTE
+defaults.safety.confirm_environments      prod, uat
+defaults.safety.delivery.allowed_methods  vault_wrapped, one_time_link
+defaults.safety.max_targets               4                             defeated by the ratchet
+profiles.audit.safety.max_targets         2
+profiles.audit.safety.readonly            true
 
 settings
-  db.connect_timeout_s        = 30          [built-in default]
-  db.query_timeout_s          = 0           [built-in default]
-  output                      = text        [cli --output (verb)]
-  profile                     = audit       [cli --profile (group)]
-  safety.confirm_environments = prod, uat   [defaults.safety.confirm_environments]
-  safety.dry_run              = false       [built-in default]
-  safety.max_targets          = 2           [profiles.audit.safety.max_targets]
-                                defaults.safety.max_targets asked for 4; safety.max_targets stays 2 (profiles.audit.safety.max_targets) -- safety settings only ratchet toward safe
-  safety.readonly             = true        [profiles.audit.safety.readonly]
-  vault                       = vault-prod  [defaults.vault]
+  db.connect_timeout_s            = 30                                      [built-in default]
+  db.query_timeout_s              = 0                                       [built-in default]
+  output                          = text                                    [cli --output (verb)]
+  profile                         = audit                                   [cli --profile (group)]
+  safety.confirm_environments     = prod, uat                               [defaults.safety.confirm_environments]
+  safety.delivery.allowed_methods = one_time_link, vault_wrapped            [defaults.safety.delivery.allowed_methods]
+  safety.dry_run                  = false                                   [built-in default]
+  safety.max_targets              = 2                                       [profiles.audit.safety.max_targets]
+                                    defaults.safety.max_targets asked for 4; safety.max_targets stays 2 (profiles.audit.safety.max_targets) -- safety settings only ratchet toward safe
+  safety.readonly                 = true                                    [profiles.audit.safety.readonly]
+  vault                           = vault-prod                              [defaults.vault]
+  vaults.vault-prod.addr          = https://vault.example.com:8200          [vaults.vault-prod.addr]
+  vaults.vault-prod.kv_version    = 2                                       [vaults.vault-prod.kv_version]
+  vaults.vault-prod.mount         = kv                                      [vaults.vault-prod.mount]
+  vaults.vault-prod.tls.ca_file   = /etc/ssl/certs/example-internal-ca.pem  [vaults.vault-prod.tls.ca_file]
 ```
 
 ## More

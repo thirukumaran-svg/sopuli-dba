@@ -1546,8 +1546,7 @@ always confirms and takes `--force` on top.
 These are decisions:
 
 - **It matches the environments the *run* reaches**, not the ones the file
-  declares. `plan.blast_radius.environments` is the list, which is what that
-  field was added for. A run narrowed to dev by a selector is not asked about
+  declares. `plan.blast_radius.environments` is the list. A run narrowed to dev by a selector is not asked about
   prod merely because prod exists elsewhere in the estate — a gate that asked
   every time is one that gets switched off within a week.
 - **`--confirm` satisfies it.** P5 says every mutating command supports
@@ -1706,8 +1705,11 @@ appdb-qa-beta       db-test.example.com:1521/betaqa.pdb.example.com   qa   pdb  
 appdb-qa-delta      192.0.2.75:1521/deltaqa.legacy.example.com        qa   pdb    override
 appdb-qa-epsilon    db-test.example.com:1521/epsilonqa2.pdb.example…  qa   pdb    override
 …
-8 targets (6 generated, 2 overridden)
+8 targets (8 generated, 2 overridden)
 ```
+
+An overridden target is still a generated one, so `overridden` counts some of
+the `generated` targets again.
 
 No VAULT column, unlike the estate table in `config show --resolved`: which
 store masters a target is a fact about the binding, and this view is about the

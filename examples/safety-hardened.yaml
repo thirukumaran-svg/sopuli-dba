@@ -1,6 +1,6 @@
-# The same estate as single-application.yaml, with the safety settings turned
-# on. Read this one for the `safety:` and `profiles:` blocks; everything else
-# is here so the file works.
+# The application of single-application.yaml, on a production and a UAT
+# database, with the safety settings turned on. Read this one for the `safety:`
+# and `profiles:` blocks; everything else is here so the file works.
 #
 # The rule that makes these settings worth writing: **safety settings only ever
 # ratchet toward safe.** For an ordinary setting, the most specific layer wins.
@@ -85,8 +85,9 @@ defaults:
     # estate that has decided nobody does that says so here rather than
     # trusting every file that inherits from this one.
     #
-    # Nothing delivers yet: no method is implemented in this build, so the set
-    # is resolved, reported by `config show --explain` and read by no verb.
+    # `account reset-password` reads this set, and refuses a method that is not
+    # in it. This build implements `manual` and `vault_wrapped`, so of the two
+    # named here only `vault_wrapped` can deliver.
     delivery:
       allowed_methods: [vault_wrapped, one_time_link]
 

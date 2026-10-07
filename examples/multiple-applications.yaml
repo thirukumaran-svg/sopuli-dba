@@ -28,8 +28,7 @@ defaults:
 
 targets:
   # Two tenants in dev, each its own pluggable database. `labels:` are
-  # free-form key-value pairs you invent; `groups:` and `overrides:` below
-  # select on them.
+  # free-form key-value pairs you invent; `groups:` below selects on them.
   - name: dev-alpha
     type: oracle
     environment: dev
