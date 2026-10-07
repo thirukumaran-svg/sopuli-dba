@@ -12,10 +12,9 @@ this in order to satisfy it. The Oracle driver is written against ``oracledb``
 and checked against this by mypy, which keeps the interface a description of
 what the commands need rather than a place to put shared code.
 
-**Four things changed shape between P1's sketch and this file**, and each is a
-refinement rather than a disagreement -- the same way P2's ``write`` grew a
-compare-and-set when the lock made it real (#83). ``00-principles.md`` P1 carries
-them too, because the sketch there is the specification and this is the code.
+**This file refines P1's sketch in the ways below.** Each is a refinement, not
+a disagreement. ``00-principles.md`` P1 records them too, because the sketch
+there is the specification and this is the code.
 
 *The session carries the operations.* P1 threads a session through every call,
 which is C. Two things push the other way: capabilities are cached **per
@@ -36,25 +35,19 @@ the second call answers anyway.
 
 *``opts`` is* :class:`AccountAttributes`, *and it is an argument of its own.*
 The sketch's ``set_password(..., opts)`` is where UC-1 §5's opt-in attributes
-were to go, and they arrived beside it rather than inside it (#300): §5 requires
-each attribute to be *reported as a separate change*, and a password set that
-also unlocked would be one ``ChangeResult`` describing two mutations. What the
-sketch's warning was really about is the shape, and that is kept whole -- one
-typed field per attribute, never a bag, because an untyped one would accept a
-misspelled ``container_clase: ALL`` and silently do nothing, which is the failure
+would go. They are a separate call, :meth:`Session.apply_attributes`, because
+§5 requires each attribute to be *reported as a separate change*: a password set
+that also unlocked would be one ``ChangeResult`` describing two mutations. The
+sketch's warning was about the shape, and that is kept: one typed field per
+attribute, never a bag. An untyped bag would accept a misspelled
+``container_clase: ALL`` and silently do nothing, which is the failure
 ``01-configuration.md`` §10 exists to prevent.
 
-``apply_attributes`` **arrived with the caller that needed it** (#300, the first
-of #267's four attributes), which is the seam this file described until then and
-the same one P2 drew around ``health``: a method on a
-:class:`~typing.Protocol` is a demand on every implementation that satisfies it,
-so one that nothing calls would oblige the Oracle driver to write a body for a
-caller that does not exist. **UC-1 §5's attribute list is now two and is closed**:
-unlock (#300) and profile assignment (#301) are built, while ``PASSWORD_EXPIRE``
-handling (#302) and tablespaces (#303) turned out to belong to other use cases --
-the first is not an operation this one has, and the second is provisioning's,
-since assigning a tablespace moves no existing segment. A third field on
-:class:`AccountAttributes` would be a decision rather than an implementation
+**UC-1 §5's attribute list is closed**: unlock and profile assignment.
+``PASSWORD_EXPIRE`` handling and tablespaces belong to other use cases
+(decisions #302 and #303). The first is not an operation this use case has. The
+second is provisioning's, since assigning a tablespace moves no existing segment.
+A new field on :class:`AccountAttributes` is a decision, not an implementation
 detail.
 
 :meth:`Session.verify_password` takes a ``method``. ``login`` logs in. ``hash``
@@ -63,7 +56,7 @@ it, with no login attempt. ``both`` does the comparison and then logs in. The
 releases on which the verifier reproduces are the ``06_verifier_reproduce.sql``
 rows of ``docs/measurements.md``. Only
 the ``12C`` verifier is compared: an account without one fails at plan time
-(invariant 4) rather than falling back to a weaker verifier (#433).
+(invariant 4) rather than falling back to a weaker verifier.
 :data:`OFFLINE_VERIFY` gates ``hash`` and ``both``, UC-1 §7's ``LCOUNT`` guard,
 and the ``PTIME`` fallback for :attr:`UserState.password_changed_at`, because all
 of them read ``SYS.USER$``.
@@ -92,27 +85,24 @@ from sopuli.secrets import Secret
 #: The session holds ``ALTER USER`` **granted commonly**, which is what altering
 #: a ``C##`` user with ``CONTAINER=ALL`` requires.
 #:
-#: A privilege, not a place. Where the session is standing is :attr:`Scope.type`,
-#: and keeping the two apart is #195: the pair used to share one probe on the
-#: reasoning that a common user is a thing which exists only in a CDB, and the
-#: first real measurement showed the shared question was not answering either of
-#: them. Oracle distinguishes the two failures itself -- ``ORA-01031`` for a
-#: session that lacks the common grant, ``ORA-65040`` for one that holds it and
-#: is in a PDB.
+#: A privilege, not a place. Where the session is standing is :attr:`Scope.type`.
+#: The two are separate questions (decision #195): one probe cannot answer both.
+#: Oracle distinguishes the two failures itself -- ``ORA-01031`` for a session
+#: that lacks the common grant, ``ORA-65040`` for one that holds it and is in a
+#: PDB.
 COMMON_USERS = "common_users"
 
 #: Two passwords valid during a grace window. Oracle: 19.12+ / 21c+.
 PASSWORD_ROLLOVER = "password_rollover"
 
 #: A password can be verified against a stored hash without a login attempt.
-#: Oracle: needs the optional ``SELECT ON SYS.USER$`` grant, which #86 decided is
-#: **not** part of the default install. It gates ``--method hash`` and ``both``,
+#: Oracle: needs the optional ``SELECT ON SYS.USER$`` grant, which is **not**
+#: part of the default install (decision P2). It gates ``--method hash`` and ``both``,
 #: UC-1 §7's ``LCOUNT`` guard, and the ``PTIME`` fallback.
 OFFLINE_VERIFY = "offline_verify"
 
-#: The tool can read password profile parameters. Note *read*: altering a
-#: profile is Q4 (#88), open, and the documented leaning is that the tool reports
-#: the DDL rather than issuing it.
+#: The tool can read password profile parameters. Note *read*: the tool never
+#: alters a profile (Q4). It reports the DDL for an operator to run.
 PROFILE_MANAGEMENT = "profile_management"
 
 #: The server may reject a generated password -- Oracle's ``PASSWORD_REUSE_*``
@@ -127,9 +117,9 @@ ACCOUNT_LOCK_STATE = "account_lock_state"
 
 #: Which roles exist can be read, which is what tells a misspelled ``role:``
 #: predicate from one that matches nobody (UC-2 §2). Oracle: ``SELECT ON
-#: SYS.DBA_ROLES``, in §2's grant set since #531. An estate installed before
-#: that reports it absent, and `account list` refuses a role predicate there at
-#: plan time rather than calling a real role misspelled.
+#: SYS.DBA_ROLES``, in §2's grant set. A service account without that grant
+#: reports it absent, and `account list` refuses a role predicate there at plan
+#: time rather than calling a real role misspelled.
 ROLE_LOOKUP = "role_lookup"
 
 #: Every capability P1 names. ``tests/driver/test_protocol.py`` checks this
@@ -171,9 +161,9 @@ VERIFY_BOTH = "both"
 VERIFY_NONE = "none"
 
 #: The run document's ``verification.method``. ``login`` is what `check` defaults
-#: to, unconditionally (Q1, #86). The Oracle driver honours ``hash`` by comparing
-#: the stored 12C verifier, and ``both`` by comparing first and logging in only if
-#: that passed (#437). A driver that cannot honour a method refuses it rather than
+#: to, unconditionally (Q1). The Oracle driver honours ``hash`` by comparing the
+#: stored 12C verifier, and ``both`` by comparing first and logging in only if
+#: that passed. A driver that cannot honour a method refuses it rather than
 #: doing another.
 VERIFY_METHODS = (VERIFY_LOGIN, VERIFY_HASH, VERIFY_BOTH, VERIFY_NONE)
 
@@ -190,7 +180,7 @@ VERIFY_RESULTS = (PASS, FAIL, SKIPPED, UNAVAILABLE)
 
 # -------------------------------------------------------------- attributes ---
 
-#: Unlock an account that is locked (UC-1 §5, #300).
+#: Unlock an account that is locked (UC-1 §5).
 #:
 #: **The run document's own ``action_kind`` word**, and deliberately not a second
 #: vocabulary translated into it at the output layer. The verification results
@@ -199,18 +189,17 @@ VERIFY_RESULTS = (PASS, FAIL, SKIPPED, UNAVAILABLE)
 #: teach a renderer about it. `03-json-output.md` §9 has the enum.
 ACCOUNT_UNLOCK = "account_unlock"
 
-#: Assign the account to the profile the policy names (UC-1 §5, #301).
+#: Assign the account to the profile the policy names (UC-1 §5).
 #:
-#: **The generic kind, and deliberately so.** ``account_unlock`` earned one of its
-#: own because unlocking is a distinct *operation* a reader looks for; assigning a
-#: profile is literally *an attribute was set*, which is what this enum value has
-#: meant since the schema was written and what it was reserved for. The detail
-#: names the attribute and both profiles, so two attributes sharing this kind stay
-#: as readable as §5 asks -- and the alternative was spending a minor schema bump
-#: per attribute on a contract consumers branch on, three more still to come.
+#: **The generic kind, and deliberately so.** ``account_unlock`` has a kind of
+#: its own because unlocking is a distinct *operation* a reader looks for.
+#: Assigning a profile is exactly *an attribute was set*, which is what this enum
+#: value means. The detail names the attribute and both profiles, so attributes
+#: that share this kind stay as readable as §5 asks. A kind per attribute would
+#: cost a schema bump each time, on a contract consumers branch on.
 ATTRIBUTE_SET = "attribute_set"
 
-#: Suspend an account: ``ALTER USER … ACCOUNT LOCK`` (UC-2, #463).
+#: Suspend an account: ``ALTER USER … ACCOUNT LOCK`` (UC-2).
 #:
 #: **Not one of** :data:`ATTRIBUTE_KINDS`, and the absence is deliberate. Those
 #: are the attributes a *policy* declares and `creds apply` enforces on its way
@@ -225,17 +214,14 @@ ACCOUNT_LOCK = "account_lock"
 
 #: Set an account's password: ``ALTER USER … IDENTIFIED BY`` (UC-2 §4.1).
 #:
-#: **Already in the schema's enum**, which is why a personal reset needs no bump
-#: to report what it did: UC-1's `creds apply` has emitted this word since the
-#: contract was written. Named here now because a *driver* reports it for the
-#: first time, and :data:`ACCOUNT_UNLOCK` above sets the rule -- what a driver
-#: calls a step is what the document calls it, rather than a second vocabulary
-#: translated at the output layer.
+#: The same word UC-1's `creds apply` emits, so a personal reset and an
+#: application rotation report a password change alike. :data:`ACCOUNT_UNLOCK`
+#: above sets the rule: what a driver calls a step is what the document calls it,
+#: not a second vocabulary translated at the output layer.
 #:
-#: `output/apply_view.py` and `output/finish_rollover_view.py` still spell this
-#: and :data:`ROLLOVER_FINISH` as literals, from before there was anywhere to put
-#: them. Pointing those two at these constants is worth doing and is not this
-#: change; what matters here is that the driver does not invent a third spelling.
+#: `output/apply_view.py` and `output/finish_rollover_view.py` spell this and
+#: :data:`ROLLOVER_FINISH` as literals. A driver uses these constants and never a
+#: spelling of its own.
 PASSWORD_SET = "password_set"
 
 #: End an open password rollover window: ``ALTER USER … EXPIRE PASSWORD ROLLOVER
@@ -243,25 +229,23 @@ PASSWORD_SET = "password_set"
 ROLLOVER_FINISH = "rollover_finish"
 
 #: Expire an account's password without setting one: the bare
-#: ``ALTER USER … PASSWORD EXPIRE`` (UC-2 §2, #525).
+#: ``ALTER USER … PASSWORD EXPIRE`` (UC-2 §2).
 #:
-#: Its own kind rather than :data:`PASSWORD_SET`, because no password is set:
-#: the seen reset's ``IDENTIFIED BY … PASSWORD EXPIRE`` sets one and reports as
-#: that, and a reader who met ``password_set`` on a verb that draws nothing would
-#: be told something false. Like :data:`ACCOUNT_LOCK` before its verb shipped, it
-#: is not in the run schema's ``action_kind`` enum until something emits it.
+#: Its own kind rather than :data:`PASSWORD_SET`, because no password is set.
+#: The seen reset's ``IDENTIFIED BY … PASSWORD EXPIRE`` sets one and reports as
+#: that. A reader who met ``password_set`` on a verb that draws nothing would be
+#: told something false.
 PASSWORD_EXPIRE = "password_expire"
 
 #: What an account verb reports as, and the tuple exists for the reason
 #: :data:`ATTRIBUTE_KINDS` does -- so a verb cannot report a kind without a
 #: renderer noticing.
 #:
-#: **Three of the four arrived with the reset** (#441), which issues up to three
-#: statements as one operation (UC-2 §4.1) and reports each as its own row. That
-#: is `apply_attributes`' rule read for a verb: a row per statement the operation
-#: *considered*, so an account that was not locked says so rather than being
-#: absent from the answer. The fifth arrived with `expire-password` (#525), which
-#: reports the same way over two statements.
+#: A verb that issues several statements as one operation reports each as its
+#: own row: the reset issues up to three (UC-2 §4.1), and `expire-password` two.
+#: That is `apply_attributes`' rule read for a verb: a row per statement the
+#: operation *considered*, so an account that was not locked says so rather than
+#: being absent from the answer.
 ACCOUNT_ACTIONS = (ACCOUNT_LOCK, ACCOUNT_UNLOCK, PASSWORD_SET, ROLLOVER_FINISH, PASSWORD_EXPIRE)
 
 #: The kinds an :class:`AttributeChange` reports as, in the order
@@ -288,15 +272,15 @@ class DriverError(Exception):
     neither a configuration problem nor a usage one.
 
     ``code`` carries the **vendor** code where there is one -- ``ORA-01017`` --
-    because CLAUDE.md's rule is that an ORA- code is never swallowed. Mapping
-    the families that deserve their own category and hint is #172; what this
-    class provides is somewhere for the answer to live.
+    because CLAUDE.md's rule is that an ORA- code is never swallowed. A driver
+    maps the code families that deserve their own category and hint; this class
+    is where the answer lives.
     """
 
     category = "database"
     exit_code = ExitCode.FAILURE
 
-    #: Whether the *password* was refused, and another should be drawn (#312).
+    #: Whether the *password* was refused, and another should be drawn.
     #:
     #: On the class, and ``False``, for the same reason ``category`` and
     #: ``exit_code`` are: the boundary reports what an error says about itself
@@ -359,7 +343,7 @@ class AuthenticationError(DriverError):
     Not to be confused with a *verification* login failing: that is drift, exit
     3, and it is a :class:`VerifyResult` rather than an exception. One
     ``ORA-01017`` means two entirely different things depending on whose
-    credential it was, which is why #172 classifies rather than guesses.
+    credential it was, which is why the driver classifies rather than guesses.
     """
 
     category = "authentication"
@@ -373,7 +357,7 @@ class AuthenticationError(DriverError):
 class Credential:
     """What a driver needs in order to connect, once P2's bootstrap has run.
 
-    Resolving one is #175's job -- ``external`` / ``vault`` / ``prompt`` /
+    The bootstrap resolves one from ``external`` / ``vault`` / ``prompt`` /
     ``env``, in P2's order of preference. What arrives here is the outcome, and
     it is deliberately narrow: a username, a secret, or neither.
 
@@ -394,19 +378,18 @@ class Credential:
 class PrivilegeAudit:
     """What a service account is granted, on both sides, and what was not checked.
 
-    A driver's answer to "is this account fit to run the tool" (#213, #225), and
-    that is **two independent questions** rather than one: what it holds and
-    should not (``over_granted``), and what it needs and may not have
-    (``held``/``missing``). An account can be in both states at once, which is
-    what a half-finished debugging session leaves behind, so neither answer
-    implies anything about the other.
+    A driver's answer to "is this account fit to run the tool", and that is
+    **two independent questions** rather than one: what it holds and should not
+    (``over_granted``), and what it needs and may not have (``held``/``missing``).
+    An account can be in both states at once, which is what a half-finished
+    debugging session leaves behind, so neither answer implies anything about the
+    other.
 
     A third thing is carried and is not a finding: **what was not looked at**.
     ``unaudited`` and ``unreadable`` are the difference between "I looked and
     found nothing" and "I could not look", and a report that merged them would
     have its most reassuring output be its least trustworthy. ``remedies`` is the
-    part of that a site can do something about, which since #341 is not always
-    empty.
+    part of that a site can do something about.
 
     Here rather than in a driver package for the reason :class:`Scope` is here:
     the output layer renders it, and one that imported a vendor module would make
@@ -421,7 +404,7 @@ class PrivilegeAudit:
 
     #: §3 entries this account holds. What ``scope.over_granted`` carries.
     over_granted: tuple[str, ...] = ()
-    #: §2 grants this account has. The positive side (#225): a half-installed
+    #: §2 grants this account has. The positive side: a half-installed
     #: account is visible *here* rather than as six unrelated failures three
     #: commands later.
     held: tuple[str, ...] = ()
@@ -432,7 +415,7 @@ class PrivilegeAudit:
     missing: tuple[str, ...] = ()
     #: Every role held, traversed. Reported whole rather than only where it
     #: matched, so a reader can see *how* an over-grant arrived -- a site role
-    #: two levels up is the case #178 measured and the one nobody guesses.
+    #: two levels up is a real case, and the one nobody guesses.
     roles: tuple[str, ...] = ()
     #: Direct system privileges granted commonly (``USER_SYS_PRIVS.COMMON``),
     #: which for a ``C##`` account is the difference between a grant that reaches
@@ -445,17 +428,17 @@ class PrivilegeAudit:
     #: Views that raised. Empty is the ordinary case; non-empty means the audit
     #: is partial and the report has to say so rather than read as clean.
     #:
-    #: **A grant the product documents as optional does not belong here** (#341):
-    #: an estate that declined it is installed as documented, and a report that
+    #: **A grant the product documents as optional does not belong here**: an
+    #: estate that declined it is installed as documented, and a report that
     #: called every correct install partial would teach a reader to skip the
     #: line. Those rows go to ``unaudited`` and bring a ``remedies`` entry.
     unreadable: tuple[str, ...] = ()
     #: What a site could do to shrink ``unaudited``, in the product's own words.
     #:
     #: Empty where nothing would help, which is the ordinary meaning of a row
-    #: being unauditable and was the only meaning until #341. The strings are the
-    #: driver's because a ``GRANT`` statement is a fact about one product, and
-    #: this class is deliberately free of any -- the same seam
+    #: being unauditable. The strings are the driver's because a ``GRANT``
+    #: statement is a fact about one product, and this class is deliberately free
+    #: of any -- the same seam
     #: :data:`~sopuli.diagnostics.GUARDRAIL_REMEDIES` sits on. Rendered as a
     #: caveat rather than emitted in the run document, so no consumer parses it.
     #:
@@ -486,7 +469,7 @@ class PrivilegeAudit:
             lines.append("not checked, and not visible from here: " + ", ".join(self.unaudited))
         # Last, and separate lines rather than a clause on the one above: the
         # caveat is what an auditor quotes and the remedy is what an operator
-        # acts on, and only some of the rows above have one (#341).
+        # acts on, and only some of the rows above have one.
         lines.extend(self.remedies)
         return tuple(lines)
 
@@ -494,13 +477,10 @@ class PrivilegeAudit:
     def complete(self) -> bool:
         """Whether every row of §3's list actually got looked at.
 
-        Never true on Oracle today, and it is a property rather than a constant
+        Never true on Oracle, and it is a property rather than a constant
         because that is a fact about §2's grant set rather than about this code,
-        and the grant set can change. It changed once already: #296 made
-        ``V$PWFILE_USERS`` an optional grant and #341 made the audit read it, so
-        two of the three rows this used to fail on are now answered wherever a
-        site has taken it. The row left is an object privilege with no view to
-        read, which is a design question rather than a grant.
+        and the grant set can change. On Oracle one row is an object privilege
+        with no view to read, which is a design question rather than a grant.
         """
         return not self.unaudited and not self.unreadable
 
@@ -516,8 +496,9 @@ class Scope:
 
     ``type`` and ``container`` are the two a target may *assert*
     (``01-configuration.md`` §3a). The driver reports what is true; comparing
-    the two, and erroring with both values named, is #177's -- and it is the
-    check that catches a ``dsn:`` edit which silently repointed a target at a
+    the two, and erroring with both values named, is
+    :func:`sopuli.driver.oracle.capabilities.assert_scope`'s job. That check
+    catches a ``dsn:`` edit which silently repointed a target at a
     different container.
 
     ``read_write`` is the one worth reading before the DDL. On a physical
@@ -539,7 +520,7 @@ class Scope:
     capabilities: frozenset[str] = frozenset()
     #: How the tool is privileged here -- ``direct``, ``self`` or ``package``.
     #: Only ``direct`` is real (ADR-001); the others are the run schema's, kept
-    #: so `doctor` (#182) has somewhere to put what it finds.
+    #: so `doctor` has somewhere to put what it finds.
     privilege_model: str | None = None
     #: Privileges the service account holds and the tool does not need. A
     #: warning, never fatal: over-granting is what happens when somebody is
@@ -557,7 +538,7 @@ class UserState:
     """One account as the database describes it (UC-1 §3's ``DbState``).
 
     Three separate things read this: UC-1 §5's pre-flight, the client-side
-    guardrails (#173), and `creds status`. It is product-neutral on purpose --
+    guardrails, and `creds status`. It is product-neutral on purpose --
     P1 says Oracle's shape must not leak into the interface -- so the fields are
     named for what they *mean* and the Oracle driver maps its dictionary onto
     them:
@@ -573,7 +554,7 @@ class UserState:
     ``failed_login_limit``            the profile's ``FAILED_LOGIN_ATTEMPTS``
     ``password_changed_at``           ``DBA_USERS.PASSWORD_CHANGE_DATE``, or
                                       ``SYS.USER$.PTIME`` where that column
-                                      does not exist (#386)
+                                      does not exist
     ================================  ==========================================
 
     **``name`` is the spelling the database gave back**, and it is the only
@@ -583,19 +564,17 @@ class UserState:
     Three fields are ``None``-when-unknown rather than defaulted, and the
     distinction is load-bearing in each case:
 
-    * ``password_changed_at`` -- its source depends on the release. The
-      column is absent from ``DBA_USERS`` on **18c and 11.2** alike, and
-      present on 21c and 26ai (measured 2026-09-08, #386) and on 19c
-      (19.24.0.0.0, measured 2026-09-17); below it the value is
-      ``SYS.USER$.PTIME``, behind the optional grant, and ``None`` without
-      it. 12.2.0.1.0 takes that path too (#572); 12.1 is unmeasured
-      (unverified: pw-changed-source).
-      Nothing gates on it (Q9 made `--max-age-days` read the vault's
+    * ``password_changed_at`` -- its source depends on the release (decision
+      #386). Where ``DBA_USERS`` has no ``PASSWORD_CHANGE_DATE`` column the
+      value is ``SYS.USER$.PTIME``, behind the optional grant, and ``None``
+      without it. Which releases have the column is in ``docs/measurements.md``;
+      12.1 is unmeasured (unverified: pw-changed-source).
+      Nothing gates on it (Q9: `--max-age-days` reads the vault's
       ``rotated_at`` and only that), so reporting nothing costs nothing and
-      guessing would be all cost -- but *saying* nothing did cost something,
-      which is :attr:`password_changed_unknown`.
+      guessing would be all cost. Saying *why* there is nothing is
+      :attr:`password_changed_unknown`.
     * ``failed_logins`` -- ``None`` where ``SELECT ON SYS.USER$`` was not
-      granted, which is the default (#86). The ``LCOUNT`` guard is then
+      granted, which is the default (decision P2). The ``LCOUNT`` guard is then
       unavailable and `check` must say so plainly rather than run a weaker
       version of it silently.
     * ``vendor_maintained`` -- ``None`` on 11.2, where the column does not
@@ -608,48 +587,47 @@ class UserState:
     locked: bool = False
     #: The password has **stopped working**. Deliberately not true of an account
     #: in its grace period, which is :attr:`in_grace` -- Oracle spells that
-    #: ``EXPIRED(GRACE)``, the token ``EXPIRED`` is inside it, and reading the two
-    #: as one made `check` report a working account as expired and skip the login
-    #: that would have proved it (#309).
+    #: ``EXPIRED(GRACE)``, and the token ``EXPIRED`` is inside it. Reading the two
+    #: as one would make `check` report a working account as expired and skip the
+    #: login that would prove it.
     expired: bool = False
     #: The password still works and is on notice: past its ``PASSWORD_LIFE_TIME``
     #: and inside the window ``PASSWORD_GRACE_TIME`` grants. Mutually exclusive
     #: with :attr:`expired` -- one is a credential that has stopped working and
-    #: the other is one that has not, and the whole of #309 is that they are not
-    #: the same fact.
+    #: the other is one that has not.
     in_grace: bool = False
     profile: str | None = None
     #: The profile's **effective** password limits, each as the database spells
     #: the value -- a number, ``UNLIMITED``, or a vendor word. Never ``DEFAULT``:
     #: Oracle reports that string for a resource the profile does not set, and
     #: resolving it against the ``DEFAULT`` profile happens in the driver so a
-    #: caller cannot mistake the word for a threshold (#178).
+    #: caller cannot mistake the word for a threshold.
     #:
     #: Separate fields rather than one bag, on ``01-configuration.md`` §10's
     #: argument: a mapping keyed by vendor resource names would accept a
     #: misspelled key and answer ``None`` to the caller that needed it.
     failed_login_limit: str | None = None
-    #: ``PASSWORD_ROLLOVER_TIME``, which #181 reads at plan time to decide
-    #: whether a rollover strategy can run here at all.
+    #: ``PASSWORD_ROLLOVER_TIME``, which :meth:`Session.require_rollover` reads
+    #: at plan time to decide whether a rollover strategy can run here at all.
     rollover_time: str | None = None
     password_reuse_max: str | None = None
     password_reuse_time: str | None = None
     password_versions: tuple[str, ...] = ()
     password_changed_at: datetime | None = None
     #: Why :attr:`password_changed_at` is ``None``, in the driver's words, and
-    #: ``None`` whenever it is not (#386). A sentence rather than an enum because
-    #: the useful part is product-specific -- *which* view is missing and *which*
+    #: ``None`` whenever it is not. A sentence rather than an enum because the
+    #: useful part is product-specific -- *which* view is missing and *which*
     #: grant supplies the value -- and this object is not allowed to know that.
     #:
-    #: It exists because the absence was reported identically whatever caused it:
-    #: ``-`` in `creds status`, and a ``password_age_days`` simply left out of the
-    #: run document, whether the release has no such column or something could
-    #: not be read. Only one of those is worth investigating.
+    #: Without it the absence would look the same whatever caused it: ``-`` in
+    #: `creds status`, and no ``password_age_days`` in the run document, whether
+    #: the release has no such column or something could not be read. Only one
+    #: of those is worth investigating.
     password_changed_unknown: str | None = None
     #: When the password stops working, from ``DBA_USERS.EXPIRY_DATE``. During a
     #: grace period this is the **end of the grace window**, which is what makes
-    #: it the deadline worth reporting: "in sync, and expiring on Friday" is the
-    #: sentence #309 exists to produce, and *when* is most of it.
+    #: it the deadline worth reporting: in "in sync, and expiring on Friday",
+    #: *when* is most of the sentence.
     #:
     #: ``None`` where the profile expires nothing, which is the ordinary state of
     #: an account on a profile with ``PASSWORD_LIFE_TIME UNLIMITED``. Never
@@ -661,7 +639,7 @@ class UserState:
     rollover_ends_at: datetime | None = None
     #: Whether the account's **profile** grants a rollover window at all, which
     #: is a different question from :attr:`rollover_active` -- that is whether one
-    #: is open *now*. Read by :mod:`sopuli.strategy` (#262) to decide which regime
+    #: is open *now*. Read by :mod:`sopuli.strategy` to decide which regime
     #: a change will run under, and computed here rather than there because
     #: ``rollover_time`` is a string in whatever the database spells and parsing
     #: it is vendor work. ``None`` where nothing was read -- which
@@ -713,7 +691,7 @@ class VerifyResult:
     lockout_margin_hit: bool = False
     detail: str | None = None
     #: What the server said on a login that **succeeded**, in its own words and
-    #: carrying its vendor code (#322).
+    #: carrying its vendor code.
     #:
     #: Separate from :attr:`detail` rather than folded into it, and the separation
     #: is the point: ``detail`` explains the ``result`` -- why this is a pass, a
@@ -733,9 +711,9 @@ class AccountAttributes:
     P1's ``opts``, typed. **One field per attribute and never a mapping**, which
     is ``01-configuration.md`` §10's rule and the reason this type exists at all:
     a bag would accept a misspelled key, do nothing, and report that it had done
-    nothing wrong. **Two fields, and UC-1 §5's list is closed** -- its other two
-    names went to other use cases (#302, #303) rather than leaving fields here for
-    them, so a third is a decision rather than an implementation detail.
+    nothing wrong. **UC-1 §5's list is closed**, and its other names belong to
+    other use cases (decisions #302 and #303), so a new field here is a decision
+    rather than an implementation detail.
 
     **Every attribute is opt-in and defaults to off.** UC-1 §5's rule, and the
     reason it is not merely a default: a tool that unlocked an account because it
@@ -747,8 +725,8 @@ class AccountAttributes:
     #: Unlock a locked account before the password is set. Declared by
     #: ``policies.<name>.account.unlock_if_locked``.
     unlock: bool = False
-    #: The profile the account is to sit on, or ``None`` where none was declared
-    #: (#301). ``policies.<name>.account.profile``.
+    #: The profile the account is to sit on, or ``None`` where none was declared.
+    #: ``policies.<name>.account.profile``.
     #:
     #: **A name out of a file, so it is not the spelling that reaches a
     #: statement.** Which profiles exist is a property of each target, and
@@ -775,7 +753,7 @@ class AttributeChange:
     A :class:`ChangeResult` with the attribute's name on it, rather than the one
     result P1's sketch returned for the whole call. UC-1 §5 asks for each
     attribute to be *reported as a separate change so the diff stays readable*,
-    and a single result for four attributes could not say which of them moved.
+    and a single result for several attributes could not say which of them moved.
 
     ``changed`` is the same question it is everywhere else -- *did this run do
     it* -- so an account that was already unlocked comes back ``False`` with a
@@ -793,7 +771,7 @@ class AttributeChange:
 
 @dataclass(frozen=True)
 class AccountChange:
-    """What one **account verb** did to one account (UC-2, #463).
+    """What one **account verb** did to one account (UC-2).
 
     Distinct from :class:`AttributeChange`, which reports enforcing an attribute
     a *policy* declared on `creds apply`'s way past. An account verb is something
@@ -821,7 +799,7 @@ class PartialAccountChangeError(DriverError):
     Raised where an earlier statement committed and a later one did not. DDL
     commits as it goes, so there is no rolling the first back. Without this the
     caller could only see an exception, and would report the account untouched
-    when it was not (Copilot's review of #527).
+    when it was not.
 
     ``completed`` is the :class:`AccountChange` rows for the statements that
     ran, in order. ``cause`` is the failure itself, whose category, exit code,
@@ -877,14 +855,14 @@ class Session(Protocol):
 
         Implementations are bound by invariants 11, 13 and 14: a password
         containing ``"`` is refused rather than escaped, the statement is never
-        wrapped in a PL/SQL block, and the password is never bound. #171 is the
-        statement builder those apply to; this is the call that issues what it
-        built.
+        wrapped in a PL/SQL block, and the password is never bound. The
+        driver's statement builder applies them; this is the call that issues
+        what it built.
         """
         ...
 
     def suspend_account(self, account: str) -> AccountChange:
-        """Lock ``account`` deliberately -- the offboarding state (UC-2, #463).
+        """Lock ``account`` deliberately -- the offboarding state (UC-2).
 
         **Idempotent, and the driver is what makes it so** (invariant 9), as
         :meth:`apply_attributes` is: the implementation reads the state first and
@@ -911,7 +889,7 @@ class Session(Protocol):
     def reset_password(
         self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
     ) -> tuple[AccountChange, ...]:
-        """Hand ``account`` a new password -- UC-2 §4.1's whole operation (#441).
+        """Hand ``account`` a new password -- UC-2 §4.1's whole operation.
 
         Distinct from :meth:`set_password`, which is UC-1's one statement against
         an application account. A personal reset is **up to three** statements
@@ -931,7 +909,7 @@ class Session(Protocol):
         an answer.
 
         **A deliberately locked account is refused, and a timed lock is not**
-        (H4, #455). The first is an offboarding somebody performed, and handing
+        (H4). The first is an offboarding somebody performed, and handing
         that person a working password would undo it silently; the second is what
         a mistyped password produces, and clearing it is the reset's job.
         :meth:`suspend_account` is the verb that sets the first, so the two calls
@@ -956,7 +934,7 @@ class Session(Protocol):
         trusting that they did.
 
         **A failure after a statement committed raises
-        :class:`PartialAccountChangeError`** (#528), carrying the rows that ran.
+        :class:`PartialAccountChangeError`**, carrying the rows that ran.
         Two cases, and the caller treats them differently: an unlock followed by
         a failed set leaves the password unchanged and the account open, and a
         set followed by a failed close leaves the new password live and the old
@@ -966,7 +944,7 @@ class Session(Protocol):
         ...
 
     def expire_password(self, account: str) -> tuple[AccountChange, ...]:
-        """Force ``account`` to change its password at next logon (UC-2 §2, #525).
+        """Force ``account`` to change its password at next logon (UC-2 §2).
 
         Two statements, each conditional on the one state the driver reads first,
         and returned as one :class:`AccountChange` per statement *considered*, in
@@ -977,18 +955,18 @@ class Session(Protocol):
         2. **expire the password** (:data:`PASSWORD_EXPIRE`), only where it is
            not already expired.
 
-        **The window is closed because expiring does not close it** (#525, option
-        b). Measured on 26ai Free 23.26.2.0.0: expiring an account with an open
+        **The window is closed because expiring does not close it** (decision
+        #525). Measured on 26ai Free 23.26.2.0.0: expiring an account with an open
         window leaves ``EXPIRED & IN ROLLOVER``, and the *old* password still
         answers ``ORA-28001`` -- it authenticates, and it is itself a way to set
         the next one. Closing first kills it (``ORA-01017``). It is the reset's
-        default (H4, #455) for the reason given there: the only holder of the old
+        default (H4) for the reason given there: the only holder of the old
         password is the person whose account this is.
 
         **Close first, then expire, and the order is about failure.** Both orders
         reach plain ``EXPIRED`` (measured). If the second statement fails, close
         then expire leaves ``OPEN`` with the old password already dead, while
-        expire then close would leave option (a)'s state by accident.
+        expire then close would leave the old password alive by accident.
 
         **Only an open window is closed, not a profile that grants one.** The
         bare expiry sets no password and so opens no window -- measured: on a
@@ -1025,20 +1003,19 @@ class Session(Protocol):
         refuses where one would be. Both are plan-time refusals that raise rather
         than return, so neither can be called and ignored.
 
-        The reason is measured rather than assumed (#455 and #461, Q7, on 26ai
-        23.26.2.0.0 and 21c 21.3.0.0.0, identically): ``IDENTIFIED BY … PASSWORD
-        EXPIRE`` is *accepted* on a
-        rollover profile, the resulting status is ``EXPIRED & IN ROLLOVER``, and
+        The reason is measured rather than assumed (Q7, on 26ai 23.26.2.0.0 and
+        21c 21.3.0.0.0, identically): ``IDENTIFIED BY … PASSWORD EXPIRE`` is
+        *accepted* on a rollover profile, the resulting status is ``EXPIRED & IN ROLLOVER``, and
         the old password still authenticates -- it answers ``ORA-28001`` rather
         than ``ORA-01017``, so it is not merely alive but is itself a way to set
         the new one. The expiry that is supposed to end the DBA's exposure would
         leave a second live password behind it for the length of the window.
 
         **Refused rather than worked around.** From an ``EXPIRED`` start the same
-        statement leaves no second password (#529), so whether this narrows to
-        accounts whose old password still authenticates is a decision, #541, and
-        not something to loosen here. 19c is unmeasured. The unseen path remains
-        available for the same account, and the message says so.
+        statement leaves no second password. Whether the refusal narrows to
+        accounts whose old password still authenticates is an open decision, and
+        not something to loosen here. TODO(#541). 19c is unmeasured. The unseen
+        path remains available for the same account, and the message says so.
         """
         ...
 
@@ -1071,7 +1048,7 @@ class Session(Protocol):
         ...
 
     def resolve_profile(self, profile: str) -> str | None:
-        """The profile as this database spells it, or ``None`` if it has none (#301).
+        """The profile as this database spells it, or ``None`` if it has none.
 
         ``None`` is the same kind of answer :meth:`describe_user` gives for a
         missing account: a fact about this target, not a failure. Which profiles
@@ -1090,7 +1067,7 @@ class Session(Protocol):
         ...
 
     def resolve_role(self, role: str) -> str | None:
-        """The role as this database spells it, or ``None`` if it has none (#490).
+        """The role as this database spells it, or ``None`` if it has none.
 
         :meth:`resolve_profile`'s argument for the other predicate kind, and it
         exists because UC-2 §2 draws a distinction that an account list cannot:
@@ -1104,7 +1081,7 @@ class Session(Protocol):
     def accounts_matching(
         self, *, profile: str | None = None, role: str | None = None
     ) -> tuple[str, ...]:
-        """Every account a predicate admits, as the dictionary spells them (#490).
+        """Every account a predicate admits, as the dictionary spells them.
 
         The resolution half of H1's predicate. :func:`sopuli.personal.admits`
         answers "does this rule admit that account" for a verb acting on one
@@ -1157,10 +1134,10 @@ class Session(Protocol):
         protects.
 
         ``method`` is one of :data:`VERIFY_METHODS`; ``login`` is the default
-        unconditionally (Q1, #86). ``hash`` compares a stored verifier and makes
+        unconditionally (Q1). ``hash`` compares a stored verifier and makes
         no attempt, so ``lockout_margin`` and ``attempts`` do not apply to it, and
         a driver refuses it -- naming the target -- where it has nothing to
-        compare rather than comparing something weaker (#433, #437). A driver
+        compare rather than comparing something weaker. A driver
         that cannot honour a method raises
         :class:`UnsupportedCapabilityError` rather than quietly doing a
         different one -- the distinction between "verified by hash" and
@@ -1183,9 +1160,7 @@ class Session(Protocol):
         refusal is about it rather than about the account: a database character
         set that cannot hold it means the server hashed a converted copy.
 
-        A missing account says nothing; the run reports it per account. On the
-        protocol as of #437, which is when it acquired a caller -- the rule
-        ``require_rollover`` arrived by (#262).
+        A missing account says nothing; the run reports it per account.
         """
         ...
 
@@ -1194,7 +1169,7 @@ class Session(Protocol):
 
         Two conditions, failing differently, which is why this is one call rather
         than a capability check somebody has to remember to pair with a profile
-        read (#181):
+        read:
 
         * **the release has no such feature** --
           :class:`UnsupportedCapabilityError`, exit 5, naming the capability and
@@ -1202,10 +1177,9 @@ class Session(Protocol):
         * **the account's profile grants no window** -- a
           :class:`DriverError` whose hint carries the exact ``ALTER PROFILE`` an
           operator would run. The tool never issues it: profiles are shared, so
-          changing one affects accounts nobody selected, and Q4 (#88) decided
-          that the tool never alters one.
+          changing one affects accounts nobody selected, and Q4 decided that
+          the tool never alters one.
 
-        On the protocol as of #262, which is when it acquired a caller.
         :mod:`sopuli.strategy` deliberately does not restate either refusal -- the
         second is that product's SQL, and a hint is a thing operators paste into a
         terminal.
@@ -1237,8 +1211,8 @@ class Driver(Protocol):
     """What opens sessions for one product.
 
     Small on purpose. Everything a command does happens through a
-    :class:`Session`, so this is a factory and a place for the registry (#170)
-    to land after it imports a vendor client on first use.
+    :class:`Session`, so this is a factory, and what the registry returns after
+    it imports a vendor client on first use.
     """
 
     def connect(self, target: ExpandedTarget, credential: Credential) -> Session:
@@ -1258,10 +1232,9 @@ def require_capability(
     Called at **plan time**, before anything is written anywhere. The whole
     value of the capability model is that `--strategy rollover` against 18c
     fails while the plan is being printed rather than after two of five targets
-    already have a new password. Measured on 18c XE for the first time on
-    2026-09-08 (#381): exit 5, `error.category` ``capability``,
-    `error.target_capability` ``password_rollover``, and the plan emitted with
-    nothing done.
+    already have a new password. On 18c XE that run exits 5, with
+    `error.category` ``capability``, `error.target_capability`
+    ``password_rollover``, and the plan emitted with nothing done.
 
     ``hint`` is the caller's, because this function cannot write one. What to do
     instead of an absent capability depends entirely on which capability it was,
