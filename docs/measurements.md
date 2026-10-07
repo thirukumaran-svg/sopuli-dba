@@ -113,7 +113,7 @@ not from a script in `sql/oracle/`.
 | `DBA_USERS.PASSWORD_CHANGE_DATE` | `19.24.0.0.0` | 2026-09-17 | #386 | Present. Only its presence was checked |
 | `DBA_USERS.PASSWORD_CHANGE_DATE` | `12.2.0.1.0` | 2026-09-29 | #572 | Absent; the suite's `PTIME` fallback test passes |
 | Grace-period login warning | `23.26.2.0.0` | 2026-09-02 | #322 | `ORA-28098` or `ORA-28011`, on a login that succeeds |
-| Grace-period login warning | `21.3.0.0.0` | 2026-09-26 | #461 | `ORA-28002` |
+| Grace-period login warning | `21.3.0.0.0` | 2026-09-26 | #461 | `ORA-28002`, seen in SQL\*Plus, not through the driver |
 | Grace-period login warning | `19.3.0.0.0` | 2026-09-28 | #479 | `ORA-28002` |
 | Thin mode | `19.32.0.0.0` | 2026-10-01 | #575 | Refused with `DPY-3001`: the shipped `sqlnet.ora` requires NNE |
 | Thin mode | `23.26.3.3.0` | 2026-10-01 | #575 | Connects over TCPS; no NNE is negotiated |

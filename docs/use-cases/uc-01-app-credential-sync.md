@@ -1493,8 +1493,9 @@ worse than the drift the check was looking for. All of these mitigations apply:
 6. **Report `ACCOUNT_STATUS` always**, from `DBA_USERS`, which is in the baseline
    grant set. A login attempt alone gives the same `ORA-01017` for an expired
    password, a locked account and a wrong password. `check` reads the status
-   separately, and reports `LOCKED`, `LOCKED (TIMED)` and `EXPIRED` as their own
-   states instead of folding them into `DRIFT`.
+   separately, and reports `LOCKED` and `EXPIRED` as their own states instead
+   of folding them into `DRIFT`. A `LOCKED(TIMED)` account is reported as
+   `LOCKED`.
 
 ### `--method hash`: verification without a login attempt
 
@@ -1899,7 +1900,7 @@ target, in this section's order (`03-json-output.md` §5).
 **Confirmation, and what it is not.** §8 step 1 is "plan + confirm". So `rotate`
 prints the plan to stderr and asks. `--confirm` answers in advance. An unattended
 run without it is refused with exit 8, instead of being left to abort at end of
-input. `apply` does not ask, for a real reason: it converges an estate on a value
+input. `apply` has no prompt of its own like this one, for a real reason: it converges an estate on a value
 somebody already staged and reviewed. `rotate` invents the value and replaces
 what every application is using, across the whole selection, in one run. The
 estate-wide `safety.confirm_environments` setting is a *different* gate, and
@@ -2072,8 +2073,8 @@ list.
 
 - **Matrix:** Oracle 11.2.0.2.0 non-CDB, 18.4.0.0.0 and 21.3.0.0.0 XE, and 26ai
   Free 23.26.2.0.0 CDB+PDB, plus the maintainer-only 19.3.0.0.0, 12.2.0.1.0 and
-  19.32.0.0.0 (`docs/maintainer-environments.md`), against HashiCorp KV v2, KV
-  v1, OCI Vault and the file backend. `docs/measurements.md` says which releases
+  19.32.0.0.0 (`docs/maintainer-environments.md`), against HashiCorp KV v2 and
+  KV v1. `docs/measurements.md` says which releases
   have rollover. The buildable 19.3.0.0.0 image has none.
 - **Fault injection at every step of §8:** kill the process between apply and
   promote; make the vault unreachable mid-run; close a PDB mid-run; revoke

@@ -54,7 +54,7 @@ The whole arrangement is three parties, and **no party talks to more than two**:
 
 | Party | Talks to | Never talks to |
 |---|---|---|
-| **sopuli-dba** | the vault, and the Oracle database | Kubernetes. It has no client for it, no credential for it, and no code that mentions it |
+| **sopuli-dba** | the vault, and the Oracle database | the Kubernetes API. It has no Kubernetes client. It can log in to the vault with the vault's `kubernetes` auth method, but that login goes to the vault, not to Kubernetes |
 | **ESO** | the vault, and the Kubernetes API | any database. It has no idea a database exists |
 | **your application** | the Kubernetes Secret, and the database | the vault. It never authenticates to the vault at all |
 
