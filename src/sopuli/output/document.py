@@ -1,6 +1,6 @@
 """The run document (``docs/design/03-json-output.md`` §2).
 
-There is no such thing as a placeholder run document. ``sopuli-run-1.16.schema.json``
+There is no such thing as a placeholder run document. The run schema
 sets ``additionalProperties: false`` at the root and requires six top-level
 fields, two of which have required members of their own, so the smallest thing
 that validates is a complete document. Building it properly now is cheaper than

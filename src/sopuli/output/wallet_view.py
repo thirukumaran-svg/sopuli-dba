@@ -40,7 +40,7 @@ from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
 
 
 def build(report: WalletReport) -> dict[str, Any]:
-    """The ``wallet`` section, as ``sopuli-run-1.16.schema.json`` describes it.
+    """The ``wallet`` section, as the run schema describes it.
 
     ``tns_admin`` and ``directory`` are nulled rather than omitted when there is
     nothing to put in them, which is the opposite of what the rest of the output

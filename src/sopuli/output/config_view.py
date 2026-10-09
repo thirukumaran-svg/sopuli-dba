@@ -14,8 +14,8 @@ makes ``--resolved`` safe to run against a production config from a laptop. A
 secret ref here is an address and never a value (invariant 2, P2).
 
 The JSON form is the ``config`` section of the run document. It carries the same
-two views, discriminated by ``resolved``, and is pinned by
-``docs/schemas/sopuli-run-1.16.schema.json``.
+two views, discriminated by ``resolved``, and is pinned by the run schema,
+``docs/schemas/sopuli-run-<SCHEMA_VERSION>.schema.json``.
 """
 
 from __future__ import annotations

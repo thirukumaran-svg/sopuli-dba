@@ -91,8 +91,7 @@ ADMIN_PASSWORD_ENV = "SOPULI_DB_ADMIN_PASSWORD"
 
 ORACLE_KEYS = ("scope", "container")
 
-#: Every scope P1 names, spelled the way `sopuli-run-1.11.schema.json` already
-#: spells them: the run document has typed `scope.type` since it was written, so
+#: Every scope P1 names, spelled the way the run schema spells `scope.type`, so
 #: adopting that vocabulary means the word a file *asserts* and the word the tool
 #: *reports* are the same word, and a mismatch needs no translation to explain.
 #:

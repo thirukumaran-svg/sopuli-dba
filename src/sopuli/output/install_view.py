@@ -44,7 +44,7 @@ from sopuli.output.table import Cell, Column, render_table
 
 
 def build(shape: InstallShape) -> dict[str, Any]:
-    """The ``install`` section, as ``sopuli-run-1.16.schema.json`` describes it."""
+    """The ``install`` section, as the run schema describes it."""
     return {
         "backends": [
             {**_component(component), "vaults": list(component.configured)}
