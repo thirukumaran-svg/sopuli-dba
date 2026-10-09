@@ -11,7 +11,7 @@ nowhere to declare one. So the unit is a setting -- ``safety.dry_run``,
 ``output`` -- with an entry declaring its type, which layers may supply it, and
 how colliding layers merge. Flags, ``SOPULI_*`` variables and config keys all
 bind to setting *names*; the same registry is what ``invocation.options`` and
-``config show --resolved --explain`` (#53) iterate over.
+``config show --resolved --explain`` iterate over.
 
 Three things here are decisions rather than transcription:
 
@@ -24,20 +24,20 @@ refuses any disagreement between the two, in either direction. So the frozenset
 cannot drift from the registry, and neither can be edited alone.
 
 **Two policies, not three.** ``relax-but-bounded`` was considered for ``--force``
-and is not needed, now that P3 has decided what the flag is (#89): it overrides
-the *account* guardrails in ``02-oracle-privileges.md`` §4, never a safety
-setting, so it is not a setting at all and has nothing here to merge. Because
+and is not needed, because decision P3 settles what the flag is: it overrides the
+*account* guardrails in ``02-oracle-privileges.md`` §4, never a safety setting,
+so it is not a setting at all and has nothing here to merge. Because
 ``policy`` is a required declared field, adding a third policy later stays
 additive rather than a migration.
 
-**Ratcheted booleans carry a direction.** "Safest" meant ``any()`` while every
-ratcheted boolean refused *more* when true. ``locking.break_expired`` (#83) is
-the first that refuses *less*, and reading it with the same rule would have made
-the setting unreachable and — worse — made it look like a guardrail while being
-the opposite. So :attr:`Setting.safe_bool` says which value is the safe one, per
-setting, declared rather than inferred from the name.
+**Ratcheted booleans carry a direction.** "Safest" is ``any()`` only for a
+boolean that refuses *more* when true. ``locking.break_expired`` refuses *less*,
+and reading it with the same rule would make the setting unreachable and --
+worse -- make it look like a guardrail while being the opposite. So
+:attr:`Setting.safe_bool` says which value is the safe one, per setting,
+declared rather than inferred from the name.
 
-**And so do ratcheted lists**, one type over and for the same reason (H6, #453).
+**And so do ratcheted lists**, one type over and for the same reason (H6).
 A list merged toward safety meant the union while there was one list setting.
 ``safety.delivery.allowed_methods`` is the second, and it must *intersect* --
 each layer may only narrow which delivery methods an estate may use -- while
@@ -52,7 +52,7 @@ variable; a resolver that silently accepted either would make the precedence
 table a description of intent rather than of behaviour.
 
 **One entry can stand for many objects.** ``vaults.*.addr`` is *one* setting with
-``*`` where a store name goes, not one setting per declared store (C13, #136).
+``*`` where a store name goes, not one setting per declared store (C13).
 Registering per store would mean building this mapping from a config file, and
 the value of :data:`SAFETY_SETTINGS` being a literal is exactly that a reviewer
 can read the ratcheted set without one. Which store a contribution came from is a
@@ -66,10 +66,10 @@ Flags that look like they belong here and do not:
   TTY detection and Windows VT-mode probing, which are not precedence layers.
 * ``--config`` -- P3's five-step first-match *file discovery* is a different
   chain, implemented in :mod:`sopuli.config.discovery`.
-* ``--force`` -- decided in #89, and deliberately absent. It overrides the
-  account guardrails of ``02-oracle-privileges.md`` §4 (checks 2--5) and, since
-  #149, ``lock break``'s refusal of a lock that has not expired. Neither is a
-  setting and neither has a precedence chain: both are asked of one thing at one
+* ``--force`` -- settled by decision P3, and deliberately absent. It overrides
+  the account guardrails of ``02-oracle-privileges.md`` §4 (checks 2--5) and
+  ``lock break``'s refusal of a lock that has not expired. Neither is a setting
+  and neither has a precedence chain: both are asked of one thing at one
   moment -- this account, now; this lock, now. Keeping it out of the registry is
   what makes invariant 10 structural rather than remembered -- a flag that is not
   a setting cannot relax ``safety.readonly`` or ``safety.max_targets``, because
@@ -85,7 +85,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-#: How long to wait for a listener when nothing says otherwise (#176). Thirty
+#: How long to wait for a listener when nothing says otherwise. Thirty
 #: seconds crosses a slow WAN and still lets a scheduled run report a dead host
 #: the same night.
 #:
@@ -94,7 +94,7 @@ from typing import Any
 #: cannot be said of the one below.
 DEFAULT_CONNECT_TIMEOUT_S = 30
 
-#: No bound on a single round trip, unless an operator asks for one (#176).
+#: No bound on a single round trip, unless an operator asks for one.
 #:
 #: A call timeout cancels the round trip; it does not undo what the server did
 #: with it. ``ALTER USER`` is not transactional, so a rotation cut off at the
@@ -161,7 +161,7 @@ class MergePolicy(StrEnum):
 
 
 class ListMerge(StrEnum):
-    """Which direction a ratcheted **list** setting merges (H6, #453).
+    """Which direction a ratcheted **list** setting merges (H6).
 
     The fourth shape of one policy, and the first that the value's type could not
     give. Three are read off the type -- a boolean ratchets toward its safe value,
@@ -242,7 +242,7 @@ class Setting:
     #:
     #: ``True`` for almost everything: ``readonly``, ``dry_run`` and a confirm
     #: flag all refuse *more* when set, so a layer asking for ``true`` may always
-    #: have it. ``locking.break_expired`` (#83) is the first that inverts --
+    #: have it. ``locking.break_expired`` is the first that inverts --
     #: permission to break a lock nobody is watching refuses *less* -- so there
     #: the layer saying ``false`` is the one that must win.
     #:
@@ -251,7 +251,7 @@ class Setting:
     #: renames a setting, and the failure mode is a guardrail that stops holding
     #: while every test still passes.
     safe_bool: bool = True
-    #: For a ratcheted **list**, which direction it merges (H6, #453).
+    #: For a ratcheted **list**, which direction it merges (H6).
     #:
     #: Required there and refused everywhere else, for :attr:`safe_bool`'s reason
     #: read one type over: ``safety.confirm_environments`` and
@@ -263,14 +263,13 @@ class Setting:
     #: against.
     list_merge: ListMerge | None = None
     #: Why this setting is accepted and then ignored, or ``None`` where it is
-    #: wired to something (#358).
+    #: wired to something.
     #:
     #: A key can be worth declaring before anything reads it -- the schema
     #: accepts it, `config show` prints it, and an estate can write it without
-    #: the file being invalid. What that must not be is *accidental*, and four
-    #: times it was: #292, #296, #348 and `lock_diagnostics` in #356 were each a
-    #: complete implementation with the one wire missing, and each was found by
-    #: somebody reading the code rather than by a test.
+    #: the file being invalid. What that must not be is *accidental*: a complete
+    #: implementation with the one wire missing reads as finished, and only
+    #: somebody reading the code would notice.
     #:
     #: So the claim moves out of prose and into the registry, where
     #: `tests/settings/test_settings_are_wired.py` holds it to **both**
@@ -404,18 +403,18 @@ def _vault_setting(
     here, because a ratcheted setting is worth reading beside its reason.
 
     ``env`` is the environment layers §6 gives *this* key, and it is per key
-    rather than blanket (#154): the table names a variable for some of these and
+    rather than blanket: the table names a variable for some of these and
     not for others, and declaring a layer nothing produces would advertise a
     variable that does not exist. :mod:`sopuli.config.vault_env` is the producer,
     and the enforcement in :func:`~sopuli.settings.resolver._checked` is what
     keeps the two in agreement.
 
     ``cli`` is layer 1, and it is per key for the same reason and true of exactly
-    one of them (#422): ``--vault-addr`` is the only flag that hoists a store's
-    setting onto the command line. There is deliberately no ``--vault-mount`` or
-    ``--vault-namespace`` -- a flag per reach key would be six spellings of what
-    ``vaults:`` already says once, and the case for this one is that an address is
-    the thing an operator redirects for a single run.
+    one of them (decision #422): ``--vault-addr`` is the only flag that hoists a
+    store's setting onto the command line. There is deliberately no
+    ``--vault-mount`` or ``--vault-namespace`` -- a flag per reach key would be six
+    spellings of what ``vaults:`` already says once, and the case for this one is
+    that an address is the thing an operator redirects for a single run.
     """
     return _setting(
         f"vaults.*.{key}",
@@ -485,7 +484,7 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 # setting `defaults.vault` writes, which is the row of §6's table
                 # that makes the two spellings one thing.
                 #
-                # No `Layer.PROFILE`, and that is #118's decision rather than an
+                # No `Layer.PROFILE`, and that is C15's decision rather than an
                 # omission: a profile's `vault:` is deliberately outside the
                 # chain that builds bindings, because which profile is active is
                 # a property of a run and bindings are built once at load. What
@@ -512,11 +511,12 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 builtin=False,
             ),
             _setting(
-                # Whether anybody can answer a prompt (#610). Profile-only: it is
-                # a property of where a run is invoked from, like the `db.*`
-                # timeouts. `false` makes every confirmation gate refuse with
-                # exit 8 unless `--confirm` answered it in advance. No built-in:
-                # unset means "ask whether stdin is a terminal".
+                # Whether anybody can answer a prompt (decision #610).
+                # Profile-only: it is a property of where a run is invoked from,
+                # like the `db.*` timeouts. `false` makes every confirmation
+                # gate refuse with exit 8 unless `--confirm` answered it in
+                # advance. No built-in: unset means "ask whether stdin is a
+                # terminal".
                 "confirm",
                 type=bool,
                 layers=(Layer.PROFILE,),
@@ -538,7 +538,7 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 list_merge=ListMerge.UNION,
             ),
             _setting(
-                # Which UC-2 delivery methods an estate may use (H6, #453). The
+                # Which UC-2 delivery methods an estate may use (H6). The
                 # fifth ratcheted setting and the first whose merge shape is
                 # declared rather than read off its type -- see
                 # :class:`ListMerge`, and `01-configuration.md` §9 for the three
@@ -562,7 +562,7 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 policy=MergePolicy.RATCHET,
                 list_merge=ListMerge.INTERSECTION,
             ),
-            # --- one store, several layers (C13, #136) -----------------------
+            # --- one store, several layers (C13) ------------------------------
             #
             # `*` is the store name; see the module note. `type`,
             # `non_production` and `locking` are deliberately absent and always
@@ -574,7 +574,7 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             # whole by the highest layer that wrote one, which needs no merge
             # rule; `sopuli/config/vault_layers.py` says why whole rather than
             # key by key.
-            # The environment layers are §6's table, key by key (#154).
+            # The environment layers are §6's table, key by key.
             # `addr` is the only one with a `SOPULI_*` variable of its own --
             # both the named form and the unnamed one are layer 2 -- while
             # `namespace` and `tls.ca_file` are reachable only through Vault's
@@ -608,7 +608,7 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 policy=MergePolicy.RATCHET,
             ),
             _setting(
-                # How long to wait for a listener (#176). Profile-only, because
+                # How long to wait for a listener. Profile-only, because
                 # §5's table puts it there and because it is a property of
                 # *where a run is invoked from*: the same estate reached from a
                 # CI runner across a WAN and from a DBA's laptop on the same
@@ -621,7 +621,7 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 builtin=DEFAULT_CONNECT_TIMEOUT_S,
             ),
             _setting(
-                # How long to let one round trip run (#176). The built-in is
+                # How long to let one round trip run. The built-in is
                 # "no bound", which is a decision rather than an omission --
                 # `NO_QUERY_TIMEOUT` above says why. An operator may still set
                 # one: that is their call about their database, made once and in
@@ -634,8 +634,8 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                 builtin=NO_QUERY_TIMEOUT,
             ),
             _setting(
-                # May an unattended runner take over a lock past its expiry
-                # (#83)? Config-only -- `defaults.locking` and a profile's -- for
+                # May an unattended runner take over a lock past its expiry?
+                # Config-only -- `defaults.locking` and a profile's -- for
                 # the reason the ratchet exists: a flag that unblocks a stuck run
                 # is the one thing nobody would ever remove afterwards.
                 #

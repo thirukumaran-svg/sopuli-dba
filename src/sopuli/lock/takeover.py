@@ -1,4 +1,4 @@
-"""Taking a lock from its holder on purpose, and fencing them (#149).
+"""Taking a lock from its holder on purpose, and fencing them.
 
 :mod:`sopuli.lock.decide` answers the same question for a run that wants a lock
 for itself, and the two are deliberately not one function. There, a held lock is
@@ -25,10 +25,10 @@ than served with a weaker version of the same command.
 
 **An expired lock and a live one are different acts.** An expired one is almost
 always a process that died, and confirmation is the right gate. A live one is
-somebody working, and it takes ``--force`` as well -- the flag #89 settled as an
-audited override of a guardrail that is not a safety setting. The refusal in
-between is exit 7 with the holder named, which is the same answer, in the same
-words, that a rotation losing the same lock would give.
+somebody working, and it takes ``--force`` as well -- the flag decision P3
+settled as an audited override of a guardrail that is not a safety setting. The
+refusal in between is exit 7 with the holder named, which is the same answer, in
+the same words, that a rotation losing the same lock would give.
 
 **Nothing to break is not a failure.** A path with no record, and one whose
 record is already ``released``, are both "there is no claim here" -- exit 0,
@@ -37,7 +37,7 @@ than being arranged: running ``lock break`` twice reports the second run as
 having changed nothing, because by then it has not.
 
 What this module does **not** do is decide whether the path is one the
-configuration declares. ``lock status`` answers that (#150) and needs the whole
+configuration declares. ``lock status`` answers that and needs the whole
 binding table to; ``lock break`` acts on one key an operator named, and the
 leftover record at a path the file no longer declares is precisely the one they
 need to be able to clear. Invariant 5 is untouched: the write lands under the
@@ -131,7 +131,7 @@ def check_fenceable(key: LockKey, entry: LockableStore) -> None:
 
     Two stores fail it and the message differs, because the remedies do. A store
     marked ``locking: advisory-only`` is the operator having already conceded
-    there is no fence here (#94), and the only thing to say is what that costs. A
+    there is no fence here, and the only thing to say is what that costs. A
     store that simply has no ``cas`` capability has a remedy: KV v1 can be given
     versioning in place.
 
@@ -140,16 +140,11 @@ def check_fenceable(key: LockKey, entry: LockableStore) -> None:
     KV v2 mount marked ``advisory-only`` *would* fence -- the manager keys its
     compare-and-set on :attr:`~sopuli.lock.manager.LockableStore.can_fence`, not
     on this key -- so probing first and returning early would let the break
-    through. Three reasons not to:
+    through. Two reasons not to:
 
     * :meth:`~sopuli.lock.manager.LockManager.__post_init__` refuses
-      ``break_expired`` on this key alone, and its comment names this verb as the
-      thing it exists to constrain. Two guards over one combination that disagree
-      about whether it is allowed is worse than either answer.
-    * #149 settled it in the same words -- "``break`` on an ``advisory-only``
-      store is refused ... ``__post_init__`` refuses the same combination for the
-      same reason" -- and that is in the part of the issue that says not to
-      re-open it.
+      ``break_expired`` on this key alone. Two guards over one combination that
+      disagree about whether it is allowed is worse than either answer.
     * A guard that second-guesses a declaration by probing behaves differently on
       two configurations that read identically, and the operator cannot see which
       they have from the file.

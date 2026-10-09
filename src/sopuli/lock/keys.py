@@ -1,4 +1,4 @@
-"""What a lock is keyed on, and the order several are taken in (#83).
+"""What a lock is keyed on, and the order several are taken in.
 
 P5 said "account+target" until Q2 was answered, and neither half was right.
 Per-target is meaningless: every target in a run receives the same value, so
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from sopuli.config.secret_refs import SecretRef, normalise_path
 
 #: ``normalise_path`` is re-exported deliberately, and is why this list exists.
-#: It moved to :mod:`sopuli.config.secret_refs` with the rule it enforces (#357),
+#: It moved to :mod:`sopuli.config.secret_refs` with the rule it enforces,
 #: and the lock layer is the place that *applies* it -- :func:`lock_key` and
 #: :func:`parse_lock_key` both do -- so a caller building keys still reaches for
 #: it here. Naming it keeps that a decision rather than an implicit re-export
@@ -57,7 +57,7 @@ SEPARATOR = ":"
 
 
 def parse_lock_key(text: str) -> LockKey:
-    """Read back what :meth:`LockKey.__str__` writes (#149).
+    """Read back what :meth:`LockKey.__str__` writes.
 
     ``sopuli lock break`` takes its argument in exactly the spelling exit 7, the
     ``lock.*`` events and ``lock status``'s first column already print, so the
@@ -79,7 +79,7 @@ def parse_lock_key(text: str) -> LockKey:
 
     Raises :class:`ValueError` rather than a ``ConfigError``: nothing is wrong
     with any file, and the caller is a command line boundary that turns this into
-    click's own usage error -- exit 2, no run document (J7, #8).
+    click's own usage error -- exit 2, no run document (J7).
     """
     store, separator, path = text.partition(SEPARATOR)
     normalised = normalise_path(path)
@@ -134,8 +134,8 @@ def acquisition_order(keys: Iterable[LockKey]) -> tuple[LockKey, ...]:
     **Sorted** makes deadlock structurally impossible rather than unlikely. Two
     runs whose selections overlap take the shared locks in the same order, so one
     of them fails to get the first contested lock and gives up -- instead of each
-    holding half of what the other needs. Nothing here ever waits, which is the
-    other half of that argument (#83: there is no ``--lock-wait``).
+    holding half of what the other needs. Nothing here ever waits (UC-1 §8),
+    which is the other half of that argument.
 
     **Deduplicated** because a run that touches one secret from several bindings
     -- the one-secret-many-targets case UC-1 §5 exists to handle -- would

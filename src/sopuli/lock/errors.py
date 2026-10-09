@@ -1,4 +1,4 @@
-"""Why a run stopped over a lock (#83, #149).
+"""Why a run stopped over a lock.
 
 Three failures, and they are not the same event. One happens before anything has
 been touched; the second happens with a rotation half done, which is the whole
@@ -91,7 +91,7 @@ class LockStolenError(LockError):
 class NoFenceError(StoreError):
     """A lock in this store could not be taken from its holder safely. Exit 5.
 
-    Raised at plan time by ``sopuli lock break`` (#149) for a store with no
+    Raised at plan time by ``sopuli lock break`` for a store with no
     compare-and-set -- including one an operator configured
     ``locking: advisory-only``, which is them conceding exactly this. Breaking a
     lock is survivable only because the write bumps the version and the version
@@ -112,10 +112,10 @@ class NoFenceError(StoreError):
     keeps that from being a special case at the boundary.
 
     :meth:`~sopuli.lock.manager.LockManager.preflight` raises it for the same
-    fact on the acquisition path (#346) -- after reading the lock path's
-    metadata, which is how it knows, and before touching the record itself. Both
-    verbs then answer the same way about the same store, which they did not
-    before: ``lock break`` said 5 and ``creds apply`` said 7.
+    fact on the acquisition path -- after reading the lock path's metadata, which
+    is how it knows, and before touching the record itself. So ``lock break`` and
+    a verb that takes locks, such as ``creds apply``, answer the same way about
+    the same store: exit 5.
     """
 
     category = "capability"

@@ -8,7 +8,7 @@ Two layers, deliberately separable:
   one-glance audit surface invariant 10 asks for.
 * **The resolver** -- :mod:`sopuli.settings.resolver` merges the contributions a
   caller collected and reports *where the answer came from*, which is what
-  ``invocation.options`` and ``config show --resolved --explain`` (#53) need and
+  ``invocation.options`` and ``config show --resolved --explain`` need and
   what a bare value cannot provide.
 
 The unit is a setting rather than a command-line option, because half the things

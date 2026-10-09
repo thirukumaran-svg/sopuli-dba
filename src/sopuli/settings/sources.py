@@ -7,12 +7,12 @@ process supplies its own at the boundary -- the same arrangement
 already use, and for the same reason. A test that has to set a real environment
 variable to check a precedence rule is a test that cannot run beside another one.
 
-Only the variables with a consumer are here. ``SOPULI_PROFILE`` arrived with one
-(#153): it is the usual way a CI job or a scheduler selects a profile, and it is
-layer 2, so ``--profile`` still beats it and it still beats ``defaults.profile``.
-``SOPULI_VAULT`` arrived with #154, for the same shape of reason -- it names the
-store a run defaults to, and §6's *other* vault variables need that answer before
-they know which store they are talking about.
+Only the variables with a consumer are here. ``SOPULI_PROFILE`` has one: it is
+the usual way a CI job or a scheduler selects a profile, and it is layer 2, so
+``--profile`` still beats it and it still beats ``defaults.profile``.
+``SOPULI_VAULT`` is here for the same shape of reason -- it names the store a run
+defaults to, and §6's *other* vault variables need that answer before they know
+which store they are talking about.
 
 Three variables in §6 that are *not* settings, and stay where they are:
 
@@ -38,12 +38,12 @@ of layer 4 works the same way in :mod:`sopuli.config.vault_layers`, which resolv
 ``vaults.*`` inside the file rather than through the invocation.
 
 :func:`estate_contributions` is that layer, and it is here rather than somewhere
-of its own so that both halves of one merge are read together (#424). It is asked
+of its own so that both halves of one merge are read together. It is asked
 later -- once a verb has selected its estate -- and the answer goes back through
 the same resolver, which is what keeps the ratchet one mechanism instead of two
-that have to agree. Until #424 nothing asked it at all: the keys parsed,
-validated, appeared in ``config show`` and refused nothing, which is a config that
-reads like protection and is not.
+that have to agree. Without it the keys would parse, validate, appear in
+``config show`` and refuse nothing, which is a config that reads like protection
+and is not.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ from sopuli.settings.resolver import Contribution
 #: are merged inside the file, for the reason :func:`config_contributions` gives
 #: about a profile's ``vaults:`` block, so §6's other vault variables are
 #: collected in :mod:`sopuli.config.vault_env` and reach the same resolver from
-#: there (#154). The third-party variables of layer 3 travel with them.
+#: there. The third-party variables of layer 3 travel with them.
 ENV_SETTINGS = {
     "SOPULI_OUTPUT": "output",
     "SOPULI_DRY_RUN": "safety.dry_run",
@@ -182,7 +182,7 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
 
 def estate_contributions(config: Config) -> dict[str, list[Contribution]]:
     """Layer 4 of the ``safety:`` settings -- the blocks on the targets a run
-    reaches, and on the groups that match them (#424).
+    reaches, and on the groups that match them (decision #424).
 
     ``config`` is the **already-selected** estate: `filter_estate` has run, and
     what is left is what the verb is about to act on. That is what makes this
@@ -227,7 +227,7 @@ def estate_contributions(config: Config) -> dict[str, list[Contribution]]:
 
 
 def _db(db: ProfileDb, *, at: str, layer: Layer) -> list[tuple[str, object, str, Layer]]:
-    """A profile's ``db:`` block, one entry per budget it wrote (#360).
+    """A profile's ``db:`` block, one entry per budget it wrote (decision #360).
 
     ``ProfileDb`` is never ``None`` -- ``Profile`` builds an empty one -- so this
     takes the block rather than an optional, and the ``None`` per *field* is what
@@ -269,17 +269,17 @@ def target_safety(expanded: ExpandedTarget) -> list[tuple[str, object, str, Laye
     """One target's ``safety:`` keys, and the line each was written on.
 
     Public because :mod:`sopuli.output.config_view` needs the identical answer
-    (#426): a view that listed a generated target's keys by a rule of its own
-    would report an ``overrides:`` entry as the source of keys it never wrote,
-    which is the defect this function exists to avoid one layer down.
+    (decision #426): a view that listed a generated target's keys by a rule of
+    its own would report an ``overrides:`` entry as the source of keys it never
+    wrote, which is the defect this function exists to avoid one layer down.
 
-    Usually one block. **Two, where an ``overrides:`` entry patched it** (#424,
-    found in review): `_patch_target` merges a patch into the template key by
-    key, so a patch's ``readonly: false`` replaces a template's ``true`` and the
-    safer of the two is gone before anything can ratchet them. A run narrowed to
-    the patched target would then have nothing left to be safest *of*, and the
-    override would simply win -- which invariant 10 forbids and which
-    `_patch_target`'s own docstring has always said cannot happen.
+    Usually one block. **Two, where an ``overrides:`` entry patched it**:
+    `_patch_target` merges a patch into the template key by key, so a patch's
+    ``readonly: false`` replaces a template's ``true`` and the safer of the two is
+    gone before anything can ratchet them. A run narrowed to the patched target
+    would then have nothing left to be safest *of*, and the override would simply
+    win -- which invariant 10 forbids and which `_patch_target`'s own docstring
+    says cannot happen.
 
     So both reach the resolver. The template's block goes first, and the patched
     one contributes **only the keys whose value it changed**: a key the patch did
@@ -312,9 +312,9 @@ def safety_block(safety: Safety, *, at: str, layer: Layer) -> list[tuple[str, ob
     """The same four keys, given the path of the **block** rather than of what
     contains it.
 
-    Split out for the one caller that cannot compute the first from the second
-    (#424): a generated target's block may have been written in an ``overrides:``
-    entry rather than in the template, and
+    Split out for the one caller that cannot compute the first from the second:
+    a generated target's block may have been written in an
+    ``overrides:`` entry rather than in the template, and
     :func:`~sopuli.config.expansion.declared_at` is the function that knows which.
     Reporting an override against the template would point the reader at the one
     place the value is spelled the way they expected.

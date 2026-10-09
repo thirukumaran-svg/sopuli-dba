@@ -2,7 +2,7 @@
 
 One resolver, because there are three consumers and they must not disagree: the
 merge rule itself, ``invocation.options`` in the run document
-(``03-json-output.md``), and ``config show --resolved --explain`` (#53). A value
+(``03-json-output.md``), and ``config show --resolved --explain``. A value
 that arrives without provenance can serve the first and neither of the others,
 so provenance is part of the result rather than something reconstructed later.
 
@@ -26,7 +26,7 @@ toward its safe value, ``int`` to the minimum, and a list to the union. §9 of
 ``01-configuration.md`` names exactly those three -- "lowest ``max_targets``,
 union of ``confirm_environments``, ``readonly: true`` if any layer sets it".
 
-**The fourth is declared**, because the type could not give it (H6, #453).
+**The fourth is declared**, because the type could not give it (H6).
 ``safety.delivery.allowed_methods`` is a list that must *intersect*: each layer
 may only narrow which delivery methods an estate may use, and no
 higher-authority layer can restore one a lower layer removed.
@@ -44,10 +44,9 @@ guard to ignore; and **there is no ``forbidden_methods``**, now or later.
 
 The boolean shape reads its direction from
 :attr:`~sopuli.settings.registry.Setting.safe_bool` rather than assuming ``true``
-is safe. It held for every ratcheted boolean until ``locking.break_expired``
-(#83), which grants permission rather than withholding it -- and a ratchet that
-merged it with ``any`` would have advertised a guardrail while doing the
-opposite of one.
+is safe. ``true`` is not safe for ``locking.break_expired``, which grants
+permission rather than withholding it -- and a ratchet that merged it with
+``any`` would advertise a guardrail while doing the opposite of one.
 
 **Ties resolve downward.** Where several layers supply the effective value -- two
 of them saying ``readonly: true``, or three contributing to a union -- the
@@ -91,7 +90,7 @@ class Contribution:
 
     Keeping it a location is also what puts it inside ``03-json-output.md`` §4's
     redaction rule for free: there is nowhere here for a value, so no code path
-    can put a credential in one. No setting is secret-valued today -- #145 settled
+    can put a credential in one. No setting is secret-valued today -- C16 settled
     that the command line names a token's *location* (``--vault-token-file``) and
     never carries one -- and this holds whether or not that stays true.
     """
@@ -309,7 +308,7 @@ def _safest(candidates: Sequence[Contribution], definition: Setting) -> Any:
 
     A boolean consults the setting's declared polarity. Where ``true`` is the
     safe value this is ``any`` -- one layer asking for ``readonly`` is enough.
-    Where ``false`` is (``locking.break_expired``, #83) it is ``all``, which is
+    Where ``false`` is (``locking.break_expired``) it is ``all``, which is
     the same sentence read the other way round: one layer withholding permission
     is enough.
     """

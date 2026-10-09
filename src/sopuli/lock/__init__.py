@@ -1,6 +1,6 @@
 """The advisory lock: what it is keyed on, what it says, and when it may be taken.
 
-P5 requires one; Q2 (#83) decided it lives in the vault, keyed on the secret path
+P5 requires one; Q2 decided it lives in the vault, keyed on the secret path
 being mutated, compare-and-set guarded, with the store's version as a fencing
 token re-checked before every mutation.
 
@@ -12,7 +12,7 @@ This package is the part of that with no store behind it:
   and expiry with a clock-skew margin
 * :mod:`sopuli.lock.decide` -- acquire, take over, or refuse
 * :mod:`sopuli.lock.takeover` -- ending somebody else's claim on purpose, which
-  is a different question from wanting the lock for yourself (#149)
+  is a different question from wanting the lock for yourself
 * :mod:`sopuli.lock.manager` -- the one part that talks to a store: acquire
   every lock before the first mutation, re-read the fence before every mutation
   after it, renew at target boundaries, release in a ``finally``

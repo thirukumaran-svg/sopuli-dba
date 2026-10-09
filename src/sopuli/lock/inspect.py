@@ -1,4 +1,4 @@
-"""Reading lock records the tool did not write (#105).
+"""Reading lock records the tool did not write.
 
 Everything else in this package is about a lock a run *holds*:
 :mod:`sopuli.lock.manager` acquires, renews, fences and releases, and the whole
@@ -9,7 +9,7 @@ on the manager.
 
 Three things follow from asking it as an outsider.
 
-**It takes no lock**, which #83 settled for ``check``, ``status`` and every
+**It takes no lock**, as UC-1 §8 states for ``check``, ``status`` and every
 ``--dry-run``: an hourly survey that locked would block the rotations it is meant
 to report on. Nothing here writes.
 
@@ -20,9 +20,9 @@ and "shares a lock" cannot give two different answers here either. But a record
 left at a path the config no longer declares -- an application renamed, or
 removed -- is exactly the one nobody can see and therefore nobody can clear, so
 :func:`discover` lists the store's lock prefix and reports what is there under a
-key nothing binds (#150).
+key nothing binds.
 
-**A prefix can be declared without its keys being enumerable** (#514). UC-2's
+**A prefix can be declared without its keys being enumerable**. UC-2's
 reset locks are keyed on the reset record's path, which no binding produces, and
 an account declared by a *predicate* (H1) cannot be named at all without asking
 the database -- which this command never does. So the reset region is surveyed
@@ -61,11 +61,11 @@ from sopuli.lock.record import CLOCK_SKEW, LockRecord
 from sopuli.store.protocol import CAS, LIST, SecretStore, Stored
 
 #: :attr:`LockState.declared_by` for a path an `applications:` or `accounts:`
-#: binding names -- the answer for every row before #514.
+#: binding names.
 BINDING = "binding"
 
 #: :attr:`LockState.declared_by` for a path under the declared `reset_records:`
-#: prefix (#514). A string rather than a second boolean because there is no
+#: prefix. A string rather than a second boolean because there is no
 #: reason to think this is the last region a configuration will claim by prefix:
 #: UC-4 hands accounts over through the same delivery abstraction (UC-2 §6.7),
 #: and a third boolean would have to be read together with the first two to mean
@@ -75,7 +75,7 @@ RESET_RECORDS = "reset_records"
 
 @dataclass(frozen=True)
 class ResetRegion:
-    """The prefix `reset_records:` claims, as a membership test (#514).
+    """The prefix `reset_records:` claims, as a membership test.
 
     A store and a prefix, which is all `reset_records:` declares -- one
     destination for the estate, with each record's own path derived from the
@@ -113,8 +113,8 @@ def reset_region(config: Config) -> ResetRegion | None:
     normalised again here, so that this predicate holds against a
     :class:`~sopuli.config.model.ResetRecords` built any other way. The
     alternative is a region whose prefix no key matches, which reports every
-    reset lock as somebody else's leftover: a worse answer than #514's rather
-    than a better one, and one nothing in the output would flag.
+    reset lock as somebody else's leftover, and nothing in the output would
+    flag it.
     """
     records = config.reset_records
     if records is None:
@@ -136,7 +136,7 @@ class LockState:
     ``version`` is the store's version of the record and is deliberately not
     called a fence. A fence is a claim -- *this version is mine* -- and nothing
     here holds one. It is carried because it is what a takeover has to
-    compare-and-set against (#149), and because a version that jumps between two
+    compare-and-set against, and because a version that jumps between two
     surveys is a lock somebody else has been renewing.
 
     It is ``None`` on a store with no compare-and-set, where the number exists
@@ -156,7 +156,7 @@ class LockState:
     #: entry binds a document here, and the key was enumerated from the file
     #: before any store was opened.
     #:
-    #: :data:`RESET_RECORDS` is #514's third answer. UC-2's reset locks live
+    #: :data:`RESET_RECORDS` is the third answer. UC-2's reset locks live
     #: under the `reset_records:` prefix, and the file declares the *prefix*
     #: without being able to name the keys under it -- a predicate-declared
     #: personal account (H1) has no name until a database is asked. So the path
@@ -176,13 +176,13 @@ class LockState:
 
     @property
     def declared(self) -> bool:
-        """Whether this configuration accounts for the path at all (#150).
+        """Whether this configuration accounts for the path at all.
 
         Derived rather than stored, and kept rather than replaced by
         :attr:`declared_by`: a consumer filtering *its own* locks out of a survey
-        wants one boolean, and #514 widened what the boolean is true of without
-        changing what it is for. Removing it would be a major bump under
-        invariant 12 to save a consumer nothing.
+        wants one boolean, and it means the same whichever region declared the
+        path. Removing it would be a major bump under invariant 12 to save a
+        consumer nothing.
         """
         return self.declared_by is not None
 
@@ -236,10 +236,10 @@ def declared_locks(config: Config) -> tuple[LockKey, ...]:
 
 
 def resolvable_locks(config: Config) -> tuple[LockKey, ...]:
-    """The keys this configuration declares *and* can name a store for (#349).
+    """The keys this configuration declares *and* can name a store for.
 
     For membership, and only for membership: deciding whether a record found in
-    a store is one the configuration declares (``declared: false``, #150). A
+    a store is one the configuration declares (``declared: false``). A
     binding whose store is unknown cannot match any discovered path -- there is
     no key to compare -- so leaving it out changes no answer, and refusing over
     it answers a question nobody asked.
@@ -271,7 +271,7 @@ def resolvable_locks(config: Config) -> tuple[LockKey, ...]:
 
 @dataclass(frozen=True)
 class Discovery:
-    """What listing the stores turned up, and where it could not look (#150).
+    """What listing the stores turned up, and where it could not look.
 
     Two fields because a partial answer has to admit to being one. ``keys`` is
     what was found; ``unlistable`` names the stores that have no ``list``
@@ -346,9 +346,9 @@ def survey(
 
     ``declared`` is the set to judge :attr:`LockState.declared_by` against, and
     ``None`` means every key here is declared -- the answer for a caller that did
-    not go looking, which is every caller before #150.
+    not list the stores.
 
-    ``region`` is consulted only for a key that set does *not* hold (#514), so a
+    ``region`` is consulted only for a key that set does *not* hold, so a
     binding whose document happens to sit under the reset prefix is reported as
     the binding it is. An enumerated declaration is the more specific one, and
     it is the one an operator can act on by name.

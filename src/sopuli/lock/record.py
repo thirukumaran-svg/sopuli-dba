@@ -1,4 +1,4 @@
-"""The document a lock is, and the transitions it goes through (#83).
+"""The document a lock is, and the transitions it goes through.
 
 One record per secret path, written under a ``locks/`` prefix on the same mount
 as the secret, so the secret's own version history stays clean for ``previous``
@@ -243,7 +243,7 @@ class LockRecord:
         store rather than in the payload -- a stolen lock usually shows up as a
         version mismatch first, but a run that lost its lock and had it taken by
         another run of the *same* correlation id could not happen, while a
-        version that was reused could. Both are checked (#96).
+        version that was reused could. Both are checked.
         """
         return self.correlation_id == correlation_id
 
@@ -275,7 +275,7 @@ class LockRecord:
         it does.
 
         "Nothing is at this path" is a different answer and does not come from
-        here -- the store says so by having no version at all (#96).
+        here -- the store says so by having no version at all.
 
         Missing timestamps fall back inwards: ``acquired_at`` to ``now``,
         ``expires_at`` to ``acquired_at``. So a record with no readable expiry is

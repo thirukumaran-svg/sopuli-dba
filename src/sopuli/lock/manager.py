@@ -1,5 +1,5 @@
 """Holding the locks a run needs, and the fence that makes holding them mean
-something (#83, #96).
+something.
 
 Everything difficult about this is in :mod:`sopuli.lock.decide`, which is a
 function of its arguments. What is here is the part that talks to a store: take
@@ -60,7 +60,7 @@ from sopuli.store.protocol import (
 
 #: Where a lock record lives, relative to the mount the secret is on. Under a
 #: prefix rather than beside the secret so the secret's own version history stays
-#: clean for `previous` and rollback (#83) -- `check --include-previous` reads
+#: clean for `previous` and rollback -- `check --include-previous` reads
 #: that history, and interleaving lock writes into it would make "one generation
 #: back" mean something different.
 LOCK_PREFIX = "locks"
@@ -79,7 +79,7 @@ def lock_path(key: LockKey) -> str:
 class LockableStore:
     """A store, and whether it is allowed to hold a lock it cannot guard.
 
-    ``locking`` is the config value from ``vaults.<name>.locking`` (#94), carried
+    ``locking`` is the config value from ``vaults.<name>.locking``, carried
     here rather than re-read so the manager cannot disagree with what
     ``config show`` displayed.
     """
@@ -95,7 +95,7 @@ class LockableStore:
 
 @dataclass(frozen=True)
 class Unguarded:
-    """A lock path this run could not make refuse an un-CAS'd write (#390).
+    """A lock path this run could not make refuse an un-CAS'd write.
 
     Carried rather than raised, because the run is no worse off than it was
     before the tool tried: the record it writes still passes a compare-and-set,
@@ -148,10 +148,10 @@ class LockManager:
     skew: timedelta = CLOCK_SKEW
     now: Callable[[], datetime] = utc_now
     held: list[HeldLock] = field(default_factory=list)
-    #: Paths whose metadata this run could not set (#390). Read by the
+    #: Paths whose metadata this run could not set. Read by the
     #: command layer after :meth:`preflight`, never by the lock itself.
     unguarded: list[Unguarded] = field(default_factory=list)
-    #: Told about each lock as it is taken and as it is let go (#535), so a
+    #: Told about each lock as it is taken and as it is let go, so a
     #: streamed run can say so at the moment it happens rather than
     #: reconstructing it afterwards. Called with ``"lock.acquired"`` or
     #: ``"lock.released"`` and the lock. **Only a release that worked is
@@ -165,10 +165,10 @@ class LockManager:
         if self.break_expired and any(
             one.locking == LOCK_ADVISORY_ONLY for one in self.stores.values()
         ):
-            # The config layer refuses this combination when the file is read
-            # (#94). Refusing it here too is not redundant: a manager built any
-            # other way -- a future `lock break`, a test -- must not be able to
-            # take over a lock with no fence to stop the run it took it from.
+            # The config layer refuses this combination when the file is read.
+            # Refusing it here too is not redundant: a manager built any other
+            # way -- a test, a new caller -- must not be able to take over a
+            # lock with no fence to stop the run it took it from.
             raise ValueError(
                 "break_expired cannot be used with a store whose locking is "
                 f"{LOCK_ADVISORY_ONLY!r}: there is no fence to make the takeover safe"
@@ -194,7 +194,7 @@ class LockManager:
         Two checks, and deliberately not a third:
 
         * a store with no ``cas`` capability must have been configured
-          ``locking: advisory-only`` (#94), so that the weakening is written down
+          ``locking: advisory-only``, so that the weakening is written down
           somewhere a reviewer sees rather than discovered at rotation time;
         * a lock path whose metadata says ``cas_required: false`` is refused,
           because that is the setting stopping *another* writer -- an operator
@@ -202,13 +202,12 @@ class LockManager:
           always passes one itself; this is about everybody else.
 
         A path with **no metadata at all** is the ordinary state before the first
-        lock, and until #390 that was the end of it: the acquisition went through
-        unguarded, created the path with ``cas_required`` unset, and every later
-        run was then refused by the check above until somebody set it by hand.
-        The guard read a guarantee it could have arranged. Now it arranges it --
-        :meth:`~sopuli.store.protocol.SecretStore.require_cas` -- and the refusal
-        above is left for the case it is actually about: a path somebody else
-        configured without one.
+        lock. Left alone, the first acquisition would create the path with
+        ``cas_required`` unset, and the check above would refuse every later run
+        until somebody set it by hand. So the guarantee is arranged here, with
+        :meth:`~sopuli.store.protocol.SecretStore.require_cas`, and the refusal
+        above is left for the case it is about: a path somebody else configured
+        without one.
 
         **Where the store will not let it, the run goes ahead and says so**
         (:data:`~sopuli.diagnostics.LOCK_PATH_UNGUARDED`). Setting metadata is a
@@ -218,22 +217,21 @@ class LockManager:
         protection from *other* writers, which is what it was before the tool
         asked -- so the honest report is a warning, and it names the remedy.
 
-        The third check #83 named, ``max_versions: 10``, is deliberately **not**
-        enforced. Pruning old versions does not reset the version counter, so
-        fencing survives any value of it -- refusing a working vault over a
-        housekeeping preference would be a guardrail that only costs.
+        A third check, ``max_versions: 10``, is deliberately **not** enforced.
+        Pruning old versions does not reset the version counter, so fencing
+        survives any value of it -- refusing a working vault over a housekeeping
+        preference would be a guardrail that only costs.
 
         **Both refuse with** :class:`~sopuli.lock.errors.NoFenceError` **-- exit
-        5, not 7** (#346). Neither is a held lock. Both are invariant 4's shape:
+        5, not 7**. Neither is a held lock. Both are invariant 4's shape:
         a plan-time fact about what this store and path can guarantee, decided
         before any lock record is read or written -- the second check does read
         the path's *metadata*, which is how it knows -- and true again on the
-        next run and the one after that. Exit 7 said "another process holds the lock", so an
-        unattended runner meeting a KV v1 mount retried for ever on a condition
-        that can never clear -- while ``sopuli lock break`` against the same
-        store already answered 5 for the identical fact, through
-        :func:`sopuli.lock.takeover.check_fenceable`. Two commands, one fact, two
-        answers.
+        next run and the one after that. Exit 7 means "another process holds the
+        lock", so an unattended runner meeting a KV v1 mount would retry for ever
+        on a condition that can never clear. ``sopuli lock break`` answers 5 for
+        the same fact, through :func:`sopuli.lock.takeover.check_fenceable`, so
+        both commands give one answer.
 
         The second check is the arguable one, and it is 5 rather than 9 on
         purpose. ``cas_required: false`` is not *this tool's* configuration being
@@ -271,7 +269,7 @@ class LockManager:
                 )
 
     def _require_cas(self, entry: LockableStore, key: LockKey) -> None:
-        """Arrange the guarantee on a path that has never been locked (#390).
+        """Arrange the guarantee on a path that has never been locked.
 
         Called only where :meth:`preflight` found no metadata, which on a store
         that can fence means the path is new: this run is about to create it, and
@@ -311,15 +309,13 @@ class LockManager:
         that touched nothing, rather than one holding two locks nobody can
         account for. That is usually
         :class:`~sopuli.lock.errors.LockDeniedError`, a race lost; it is also
-        every way a store can fail, and #345 is what it cost to unwind on only
-        the first of those.
+        every way a store can fail, and each of them unwinds the same way.
 
         ``keys`` is materialised first because it is walked **twice** -- once by
         :meth:`preflight` and once here -- and the parameter is typed
-        :class:`~collections.abc.Iterable`, which a generator satisfies. Passing
-        one used to acquire nothing at all: pre-flight drained it, the loop found
-        it empty, and the run went on to write with no lock held and no error.
-        Found by the first caller that passed a generator expression (#254).
+        :class:`~collections.abc.Iterable`, which a generator satisfies. A
+        generator would otherwise be drained by pre-flight, and the loop would
+        find it empty and take no lock.
         """
         wanted = tuple(keys)
         self.preflight(wanted)
@@ -327,14 +323,13 @@ class LockManager:
             try:
                 self.held.append(self._take(key))
             except BaseException:
-                # **Anything**, not just a refusal (#345). A refusal is the
-                # expected way to lose a lock, and it was the only one this
-                # unwound for -- so a store that timed out, sealed, failed over
-                # to a standby, or refused a token that expired between the
-                # first key and the second left every lock already taken sitting
-                # in the vault as `held` for the full TTL. `holding()` cannot
-                # help: it calls this *before* its `try`, so its `finally` never
-                # runs when acquisition is what failed.
+                # **Anything**, not just a refusal. A refusal is the expected
+                # way to lose a lock, but a store that times out, seals, fails
+                # over to a standby, or refuses a token that expired between the
+                # first key and the second would otherwise leave every lock
+                # already taken sitting in the vault as `held` for the full TTL.
+                # `holding()` cannot help: it calls this *before* its `try`, so
+                # its `finally` never runs when acquisition is what failed.
                 #
                 # `BaseException` rather than `Exception`, deliberately. A
                 # `KeyboardInterrupt` between two acquisitions is exactly the
@@ -395,7 +390,7 @@ class LockManager:
         returns ``None`` rather than it, which keeps the caller from comparing a
         guarantee the store cannot give.
 
-        **``acquiring`` decides which failure a lost CAS is** (#346), and the two
+        **``acquiring`` decides which failure a lost CAS is**, and the two
         are not the same event. Acquiring, it is a race: two runs went for a lock
         neither held, one of them lost, and nothing has been touched -- exit 7.
         Renewing or releasing, this run *held* the lock and the write says it
@@ -404,11 +399,10 @@ class LockManager:
         applied -- exit 4 with the results kept when something had been, exit 7
         when nothing had.
 
-        Before #346 every conflict was the first of those, so a takeover landing
-        between :meth:`check` and the renewal write told a scheduler "exit 7,
-        nothing happened" at the exact moment a database had just been
-        re-passworded, and did it in a message that said the run was
-        *acquiring* a lock it had held since the first target.
+        Reporting every conflict as the first of those would tell a scheduler
+        "exit 7, nothing happened" when a takeover landed between :meth:`check`
+        and the renewal write, at a moment a database may just have been
+        re-passworded.
         """
         try:
             version = entry.store.write(
@@ -503,7 +497,7 @@ class LockManager:
         becomes the new fence.
 
         The check is not the whole guard, which is why the write says
-        ``acquiring=False`` (#346). A takeover can land between the check and the
+        ``acquiring=False``. A takeover can land between the check and the
         write, or on lock *n* after lock *1* has already been rewritten, and what
         that is is a takeover -- not the lost race the acquisition path reports.
         """
@@ -578,7 +572,7 @@ class LockManager:
 def describe_holder(record: LockRecord) -> str:
     """The holder, as a message says it. Never a value -- see the record's shape.
 
-    Public because ``lock break`` refuses in the same words (#149), and it is the
+    Public because ``lock break`` refuses in the same words, and it is the
     same question being answered to the same person: *is that me, a colleague, or
     something that died*. Two spellings of one sentence would make the two
     refusals read as two different findings.
@@ -599,9 +593,9 @@ def _race_hint(cas: int) -> str:
     A ``cas: 0`` write fails on a path that has *any* history, so losing one
     means either another run got there first -- the ordinary case -- or somebody
     deleted the lock record, which leaves the metadata behind and the path
-    permanently untakeable by a first acquisition. The tool never deletes (#83),
-    so the second is always somebody else's doing, and it is worth naming
-    because re-running will not fix it.
+    permanently untakeable by a first acquisition. The tool never deletes, so the
+    second is always somebody else's doing, and it is worth naming because
+    re-running will not fix it.
     """
     if cas != FRESH:
         return "re-run: whichever run won holds it now, and this one changed nothing"
