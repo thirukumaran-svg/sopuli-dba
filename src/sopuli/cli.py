@@ -7017,7 +7017,7 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
 
 
 def _rolling_back(sources: Sequence[tuple[Binding, Source | None]]) -> frozenset[tuple[str, str]]:
-    """The (target, account) pairs this run would apply from ``previous`` (#580).
+    """The (target, account) pairs this run would apply from ``previous``.
 
     The pre-flight is not told the stage otherwise, and a rollback is the one
     case whose reuse history it has a reason to read.
@@ -7050,13 +7050,12 @@ def _preflight(
     rollbacks: Collection[tuple[str, str]] = (),
     reuse: list[tuple[str, UserState]] | None = None,
 ) -> list[Finding]:
-    """UC-1 §8 step 3: ask the estate before anything is written (#262, #283).
+    """UC-1 §8 step 3: ask the estate before anything is written.
 
     One connection per target, and it does both jobs on the one connection: the
-    strategy refusal #262 added, and -- under ``--preflight`` -- the rest of §8's
-    list. The two arrived separately and are one pass, because they want the same
-    thing at the same moment and a second pass would double a cost that is
-    already the interesting part of this function.
+    strategy refusal, and -- under ``--preflight`` -- the rest of §8's list. The two
+    are one pass because they want the same thing at the same moment, and a second
+    pass would double a cost that is already the interesting part of this function.
 
     **It costs nothing unless it was asked for.** With no ``--strategy`` and no
     ``--preflight`` there is nothing to survey and this returns immediately: the
@@ -7076,12 +7075,11 @@ def _preflight(
     named a regime this estate cannot honour has one thing to fix before anything
     else is worth reporting.
 
-    **An unreachable target is a finding only under ``--preflight``.** Without
-    it, the run reports one per account with the vendor code and carries on, and
-    turning that into a plan-time refusal here would make an unreachable database
-    look like a strategy problem -- which is the rule #262 wrote and this keeps.
-    With the flag, being unable to reach a target is exactly what was asked
-    about.
+    **An unreachable target is a finding only under ``--preflight``.** Without it,
+    the run reports one per account with the vendor code and carries on, and turning
+    that into a plan-time refusal here would make an unreachable database look like
+    a strategy problem. With the flag, being unable to reach a target is exactly
+    what was asked about.
 
     **The caller decides which accounts are surveyed**, and the two callers
     decide differently for a reason worth stating. `apply` passes the accounts
@@ -7092,12 +7090,12 @@ def _preflight(
     either, so filtering on what the vault already holds would skip the whole
     estate on exactly the run whose pre-flight matters most.
 
-    **A rollback on a reuse-restricted profile is reported, not found** (#580).
+    **A rollback on a reuse-restricted profile is reported, not found.**
     ``rollbacks`` names the (target, account) pairs the caller would apply from
     ``previous``, and each one whose profile restricts reuse is appended to
     ``reuse`` -- read off the ``describe_user`` this survey already makes, so it
-    costs no extra round trip. It goes out rather than into the findings because
-    it is ``SOPULI-W028``, a warning with a code of its own, and #568 chose to
+    costs no extra round trip. It goes out rather than into the findings because it
+    is ``SOPULI-W028``, a warning with a code of its own, and decision #568 is to
     report it rather than refuse: a finding would be the second spelling of one
     warning, and a blocking one would be the refusal that was not chosen.
     """
@@ -7236,16 +7234,16 @@ def _preflight_target(
             missing_accounts.append(binding.account)
             continue
 
-        # §5's profile assignment, asked before anything is written (#301). Only
-        # where the policy declares one and the account is not already on it: the
-        # question is whether this run's *move* can land, and an account already
+        # §5's profile assignment, asked before anything is written (decision #301).
+        # Only where the policy declares one and the account is not already on it:
+        # the question is whether this run's *move* can land, and an account already
         # there is not moving.
         moving = strategies.moves_profile(state, apply_states.attributes_for(config, binding))
 
-        # #580. Only where the account stays on the profile read here: a move
-        # lands before the password does, so these limits are not the ones the
-        # statement meets, and the destination's are not read. The run's own
-        # W028, taken from the account as re-read after the move, still covers it.
+        # The reuse read, only where the account stays on the profile read here: a
+        # move lands before the password does, so these limits are not the ones the
+        # statement meets, and the destination's are not read. The run's own W028,
+        # taken from the account as re-read after the move, still covers it.
         if (
             reuse is not None
             and moving is None
@@ -7319,12 +7317,12 @@ def _preflight_diagnostics(findings: Sequence[Finding]) -> list[Diagnostic]:
     pre-flight actually established.
 
     ``level`` carries the distinction -- ``error`` for a finding that refused the
-    run, ``warning`` for one that could not establish anything. No diagnostic
-    *code* is allocated: #216's rule is that a code exists for what the exit code
-    cannot tell you, and on a refusal the run-level `error.category` already says
-    which kind of problem stopped it -- ``connectivity``, ``authorization`` or
-    ``database``, which is the branch a consumer needs. A code would be a fourth
-    spelling of `check`.
+    run, ``warning`` for one that could not establish anything. No diagnostic *code*
+    is allocated: `03-json-output.md` §3's rule is that a code exists for what the
+    exit code cannot tell you, and on a refusal the run-level `error.category`
+    already says which kind of problem stopped it -- ``connectivity``,
+    ``authorization`` or ``database``, which is the branch a consumer needs. A code
+    would be a fourth spelling of `check`.
     """
     return [
         Diagnostic(
@@ -7348,12 +7346,13 @@ def _refuse_preflight(
     one of these. Not exit 5 either -- that is invariant 4's capability code, and
     the capability refusal never reaches here because it raises.
 
-    ``notes`` carries the run-level notices the ordinary return paths render, so
-    a refusal does not silently drop them (found in review on #391). A stale
-    ``--repair`` document under ``--preflight`` was serialised into
-    ``diagnostics[]`` and printed nowhere, which is exactly the invisibility
-    #309's rule exists to prevent -- and a refusal is a worse place to lose a
-    warning than a success, because it is where somebody is already reading.
+    ``notes`` carries the run-level notices the ordinary return paths render, so a
+    refusal does not silently drop them. Otherwise a stale ``--repair`` document
+    under ``--preflight`` would be serialised into ``diagnostics[]`` and printed
+    nowhere. `03-json-output.md` §3 says `SOPULI-W020` is printed as well as
+    serialised, because the person who typed the flag is who it is for -- and a
+    refusal is a worse place to lose a warning than a success, because it is where
+    somebody is already reading.
     """
     first = preflight.refusal(findings)
     if first is None:  # pragma: no cover - the caller asks before calling
@@ -7373,11 +7372,10 @@ def _check_strategy(
 ) -> None:
     """Every account in one target, against one requested regime.
 
-    Rollover goes through the driver's own ``require_rollover``, which owns both
-    of its refusals and carries the exact ``ALTER PROFILE`` for the second
-    (#181). The other two are :mod:`sopuli.strategy`'s, because they are about
-    the regime the operator asked for rather than about anything the driver
-    knows.
+    Rollover goes through the driver's own ``require_rollover``, which owns both of
+    its refusals and carries the exact ``ALTER PROFILE`` for the second. The other
+    two are :mod:`sopuli.strategy`'s, because they are about the regime the operator
+    asked for rather than about anything the driver knows.
 
     An account the database does not have is skipped, for **every** regime:
     ``ACCOUNT_MISSING`` is a state the run reports per account, and refusing the
@@ -7389,21 +7387,21 @@ def _check_strategy(
     on anyway.
 
     That means the rollover branch reads the account twice, once here and once
-    inside ``require_rollover``. Deliberate: the driver owns that refusal
-    (#181) and reads what it needs for it, and one extra query on a pre-flight
-    that only runs under an explicit ``--strategy`` is a cheaper thing to spend
-    than a second copy of the refusal.
+    inside ``require_rollover``. Deliberate: the driver owns that refusal and reads
+    what it needs for it, and one extra query on a pre-flight that only runs under
+    an explicit ``--strategy`` is a cheaper thing to spend than a second copy of the
+    refusal.
     """
     for binding in bindings:
         user = session.describe_user(binding.account)
         if user is None:
             continue
 
-        # #301, and it comes first because it says the question below cannot be
-        # answered rather than answering it. A profile decides whether a rollover
-        # window opens, so judging a named regime against the profile an account
-        # is about to *leave* would clear `--strategy staged` on one profile and
-        # then run it under another that opens a window.
+        # The profile-assignment check (decision #301) comes first because it says
+        # the question below cannot be answered rather than answering it. A profile
+        # decides whether a rollover window opens, so judging a named regime against
+        # the profile an account is about to *leave* would clear `--strategy staged`
+        # on one profile and then run it under another that opens a window.
         moving = strategies.moving_profile(
             strategy,
             user,
@@ -7446,14 +7444,14 @@ def _redraw_estate(
     requested: str | None,
     diagnostics: list[Diagnostic],
 ) -> tuple[list[_Applied], LockStolenError | None]:
-    """Draw again for the accounts whose password the server itself refused (#312).
+    """Draw again for the accounts whose password the server itself refused.
 
-    UC-1 §6.4, deciding #268. ``ORA-28003`` and ``ORA-28007`` say the *value* was
+    UC-1 §6.4 (decision #268). ``ORA-28003`` and ``ORA-28007`` say the *value* was
     unacceptable, and neither can be known before the statement is issued -- a
-    verify function is arbitrary PL/SQL that cannot be consulted (invariants 13
-    and 14), and a reuse history is hashed. So this is the only place the answer
-    can be found, and telling an operator to re-run `creds generate` and hope was
-    the loop §6.4 was written about.
+    verify function is arbitrary PL/SQL that cannot be consulted (invariants 13 and
+    14), and a reuse history is hashed. So this is the only place the answer can be
+    found. Telling an operator to re-run `creds generate` and hope is the loop §6.4
+    rules out.
 
     **The unit is an account, not a document and not the estate.** Passwords are
     drawn per account even where accounts share a document (§4), so a refusal
@@ -7525,10 +7523,10 @@ def _wants_redraw(
 ) -> tuple[list[_Applied], list[Diagnostic]]:
     """The records to draw again for, and the diagnostics for those refused.
 
-    The decision is :func:`sopuli.apply.may_redraw`, which owns it and knows
-    nothing about Oracle. What this adds is the facts it needs and only the run
-    has: the ``origin`` #311 staged beside the value, read out of the document
-    this run holds the lock on, and how many draws this account has had.
+    The decision is :func:`sopuli.apply.may_redraw`, which owns it and knows nothing
+    about Oracle. What this adds is the facts it needs and only the run has: the
+    ``origin`` staged beside the value, read out of the document this run holds the
+    lock on, and how many draws this account has had.
 
     **One record per account, not per target.** An account refused on three
     targets is one redraw and three re-applications; treating it as three would
@@ -7564,9 +7562,9 @@ def _wants_redraw(
         reason = decision.reason if not decision.allowed else _no_policy_for(config, record.binding)
         if record.source is not None and record.source.stage == PREVIOUS:
             # Ahead of whatever `may_redraw` said, which asks about `pending`'s
-            # origin and so answered a rollback with "no record of where that
-            # password came from" -- true of the key and false of the value,
-            # which is `previous` and whose provenance is not in doubt (#568).
+            # origin and so would answer a rollback with "no record of where that
+            # password came from" -- true of the key and false of the value, which
+            # is `previous` and whose provenance is not in doubt (decision #568).
             reason = (
                 "a rollback has only the value `previous` holds, "
                 "and drawing another would not be one"
@@ -7606,10 +7604,10 @@ def _no_policy_for(config: Config, binding: Binding) -> str | None:
 def _origin_of(binding: Binding, stored: Any) -> Any:
     """What the document says about where this account's ``pending`` came from.
 
-    ``None`` for every way of not knowing -- no document, no ref, no key -- which
-    is the answer :func:`sopuli.apply.may_redraw` treats as "do not redraw". A
-    document staged before #311 and a document nobody has staged into are the
-    same fact here, and both self-heal on the next `creds generate`.
+    ``None`` for every way of not knowing -- no document, no ref, no key -- which is
+    the answer :func:`sopuli.apply.may_redraw` treats as "do not redraw". A document
+    staged without an ``origin`` and a document nobody has staged into are the same
+    fact here, and both self-heal on the next `creds generate`.
     """
     if binding.secret is None or stored is None:
         return None
@@ -7679,10 +7677,10 @@ def _restage(
 ) -> _Restaged:
     """Draw a password for each refused account and stage it, one write per document.
 
-    :class:`sopuli.generate.DocumentWrite` builds the patch, which is what puts
-    the ``origin`` beside the value without this function having to know that it
-    must: a drawn candidate is ``generated``, and #311's rule that the two go in
-    one write stays one implementation rather than two that can drift.
+    :class:`sopuli.generate.DocumentWrite` builds the patch, which is what puts the
+    ``origin`` beside the value without this function having to know that it must: a
+    drawn candidate is ``generated``, and the rule that the two go in one write
+    stays one implementation rather than two that can drift.
 
     ``documents`` is **updated in place** with what came back. A promotion writes
     against the version read at the start of the run and staging has moved it, so
@@ -7699,7 +7697,7 @@ def _restage(
         )
         # Sent as each password is drawn, before the write that stages it, so a
         # write that fails still leaves the draw on the stream -- and never the
-        # value, which this event's closed payload has no room for (#535).
+        # value, which this event's closed payload has no room for.
         for record in records:
             emitter.event(
                 run.document,
@@ -7716,8 +7714,8 @@ def _restage(
             cas=0 if stored is None else stored.version,
         )
         documents[key] = stores[key.store].read(key.path)
-        # The one write that staged them all, once it has landed (#535). A write
-        # that raised ends the run, and `run.finished` carries why.
+        # The one write that staged them all, once it has landed. A write that
+        # raised ends the run, and `run.finished` carries why.
         emitter.event(
             run.document,
             "vault.write",
@@ -7742,10 +7740,10 @@ def _restage(
 def _redraws_by_document(wanted: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     """Accounts to redraw, grouped into the write that will stage them.
 
-    Two accounts of one application refused on the same run share a document, and
-    #254's rule is that one document is one write however many accounts land in
-    it -- three writes would be three versions, two of which describe a state
-    nobody intended.
+    Accounts of one application refused on the same run share a document, and UC-1
+    §3's rule is that one document is one write however many accounts land in it --
+    one write per account would be one version per account, all but the last
+    describing a state nobody intended.
     """
     grouped: dict[LockKey, list[_Applied]] = {}
     for record in wanted:
@@ -7794,10 +7792,10 @@ def _promote_documents(
     document, so the gate is *every pair belonging to the accounts in this
     document*.
 
-    **Every pair the config declares, not every pair this run visited** (#406).
-    ``left_out`` is the pairs the promotion needs and a selector excluded
-    (:func:`_left_out`); a document with any is not promoted however well the
-    run's own pairs went, because a run cannot confirm a target it never asked.
+    **Every pair the config declares, not every pair this run visited**
+    (decision #406). ``left_out`` is the pairs the promotion needs and a selector
+    excluded (:func:`_left_out`); a document with any is not promoted however well
+    the run's own pairs went, because a run cannot confirm a target it never asked.
 
     A document nobody staged into is not promoted and is not a failure -- a run
     that read `current` is a repair, and the vault already holds what it should.
@@ -7860,13 +7858,13 @@ def _left_out(
     documents: Mapping[LockKey, Any],
     estate: Config,
 ) -> dict[LockKey, list[Binding]]:
-    """The pairs a promotion needs and this run was narrowed past, per document (#406).
+    """The pairs a promotion needs and this run was narrowed past, per document.
 
     Invariant 7 says every target confirms before the vault promotes, and UC-1 §5
     says *every target for every account in that document*. A run narrowed by a
-    selector visits fewer pairs than that, and until #406 the gate counted only
-    the pairs it had visited: `--target appdb-alpha` promoted an account whose
-    other target still held the old password, with nothing having failed.
+    selector visits fewer pairs than that, and a gate that counted only the pairs it
+    had visited would let `--target appdb-alpha` promote an account whose other
+    target still held the old password, with nothing having failed (decision #406).
 
     Two kinds of pair are needed, and both are read from the config and the
     document without a login:
@@ -7885,17 +7883,16 @@ def _left_out(
 
     ``scope`` is every binding the run selected, including the ones that owe
     nothing, so an account applied from `current` or skipped by a guardrail is in
-    the run rather than left out of it (#286 keeps deciding what a skip means).
+    the run rather than left out of it.
 
-    **"The same credential" is the same place in the same document**: the lock
-    key, then the field and the decoded pointer -- not the whole ref, whose raw
-    spelling can differ between two targets that address one value (found in
-    review on #578).
+    **"The same credential" is the same place in the same document**: the lock key,
+    then the field and the decoded pointer -- not the whole ref, whose raw spelling
+    can differ between two targets that address one value.
 
-    **An excluded binding with no store is counted, not skipped**, where its path
-    is one being promoted. Its store may resolve only when it is selected, so
-    "no store here" is not evidence that it lives somewhere else, and the gate
-    fails closed on it rather than promoting past it (also #578).
+    **An excluded binding with no store is counted, not skipped**, where its path is
+    one being promoted. Its store may resolve only when it is selected, so "no store
+    here" is not evidence that it lives somewhere else, and the gate fails closed on
+    it rather than promoting past it.
     """
     visited = {(binding.account, binding.target) for binding in scope}
     credentials: dict[LockKey, set[tuple[str | None, tuple[str, ...]]]] = {}
@@ -7937,13 +7934,12 @@ def _credential_at(ref: SecretRef) -> tuple[str | None, tuple[str, ...]]:
 def _declared_estate(config: Config) -> Config:
     """Every binding the file declares, with the stores that resolve without asking.
 
-    For the promotion gate only (#406), which needs the pairs a selector left out.
-    **It never refuses** (found in review on #578): `binding_stores.complete`
-    rejects a `SOPULI_VAULT` that names an undeclared store, which is right for a
-    run that needs the default and wrong for one that is refused over a binding
-    it excluded. Where completing would refuse, the bindings are returned as
-    loaded, and the ones left without a store are counted by :func:`_left_out`
-    rather than dropped.
+    For the promotion gate only (decision #406), which needs the pairs a selector
+    left out. **It never refuses**: `binding_stores.complete` rejects a
+    `SOPULI_VAULT` that names an undeclared store, which is right for a run that
+    needs the default and wrong for one that is refused over a binding it excluded.
+    Where completing would refuse, the bindings are returned as loaded, and the ones
+    left without a store are counted by :func:`_left_out` rather than dropped.
     """
     try:
         return binding_stores.complete(config, env=os.environ)
@@ -7968,7 +7964,7 @@ def _withheld(left_out: Mapping[LockKey, Sequence[Binding]]) -> list[Diagnostic]
 
 
 def _promotion_event(key: LockKey, promotion: _Promotion, run: Invocation) -> None:
-    """``vault.promote`` for one document whose compare-and-set was attempted (#535).
+    """``vault.promote`` for one document whose compare-and-set was attempted.
 
     Invariant 7's moment, so it is sent for the write and only the write: a
     document held back because a target did not confirm has no event, and its
@@ -7990,9 +7986,9 @@ def _promotion_event(key: LockKey, promotion: _Promotion, run: Invocation) -> No
 def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     """Results grouped by the document their account's credential lives in.
 
-    **A guardrail-skipped account is dropped entirely** (#286), from the gate and
-    from the promotion alike, which is the same principle the exit code applies:
-    it left the run's scope rather than failing inside it.
+    **A guardrail-skipped account is dropped entirely**, from the gate and from the
+    promotion alike, which is the same principle the exit code applies: it left the
+    run's scope rather than failing inside it.
 
     Both halves matter and they pull in opposite directions, which is why this is
     stated rather than left to fall out. Promoting a skipped account would move
@@ -8092,7 +8088,7 @@ def _rotated_by() -> str:
 
 
 def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
-    """§4's checks that could not be run, as this run's warnings (#296).
+    """§4's checks that could not be run, as this run's warnings.
 
     A run-level diagnostic rather than a ``results[].warnings`` entry, and the
     reason is what the reader is being told: the fact that could not be read is a
@@ -8406,12 +8402,12 @@ def _finish_one(
     plan a preview shows is which windows are open and how much is left on them,
     and a login would be a real cost paid for a run that changes nothing.
 
-    **The fence is re-read immediately before the statement**, where a caller
-    holds a lock at all (UC-1 §8, #282, found in review on #284). Closing a window
-    is a mutation, and it is the one whose direction cannot be undone: a window
-    nobody closed elapses on its own, and one closed by a run that had already
-    lost the estate cannot be reopened. Narrowed to this account's own document,
-    which is §8's per-document rule and the same check :func:`_apply_one` makes.
+    **The fence is re-read immediately before the statement**, where a caller holds
+    a lock at all (UC-1 §8). Closing a window is a mutation, and it is the one whose
+    direction cannot be undone: a window nobody closed elapses on its own, and one
+    closed by a run that had already lost the estate cannot be reopened. Narrowed to
+    this account's own document, which is §8's per-document rule and the same check
+    :func:`_apply_one` makes.
 
     **A lock error is never a per-account finding**, for the reason it is not one
     in :func:`_apply_one`: the catch-all below would turn "somebody else owns this
@@ -8575,13 +8571,13 @@ def creds_rotate(
     discovering on target nine that target ten was never going to work leaves
     nine databases holding a password no application has been told about.
 
-    **`--max-age-days` reads the vault and never the database** (Q9, issue #87).
-    `rotated_at` lives on the secret path, one value however many targets share
-    it, so there is nothing to aggregate across the PDBs of a CDB and no "oldest,
-    newest or any" rule to invent. An account the vault has no stamp for is
-    **not** selected: a freshly adopted estate has no stamps anywhere in it, and
-    treating unknown as infinitely old would make this tool's first scheduled act
-    against that estate a rotation of every credential it has.
+    **`--max-age-days` reads the vault and never the database** (Q9). `rotated_at`
+    lives on the secret path, one value however many targets share it, so there is
+    nothing to aggregate across the PDBs of a CDB and no "oldest, newest or any"
+    rule to invent. An account the vault has no stamp for is **not** selected: a
+    freshly adopted estate has no stamps anywhere in it, and treating unknown as
+    infinitely old would make this tool's first scheduled act against that estate a
+    rotation of every credential it has.
 
     **The order is generate, apply, verify, promote, and it is a safety design**
     (invariant 7). Nothing is promoted until every target has confirmed, so the
@@ -8646,7 +8642,7 @@ def creds_rotate(
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     refuse_if_nobody_to_ask(_targets_of(config, bindings), run.prompt, action="rotating a password")
     document.plan = plan.as_json()
-    # No-ops outside `--output jsonl` (#535).
+    # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
 
@@ -8680,10 +8676,10 @@ def creds_rotate(
     # blast radius somebody is authorising -- and `--max-age-days` can only
     # narrow that afterwards, which is the safe direction to be surprised in.
     #
-    # `safety.confirm_environments` is deliberately *not* also asked here (#292).
-    # This gate is unconditional, so the setting could only ever make it weaker,
-    # and a second prompt on the runs the setting covers would ask the same
-    # question twice for the same answer.
+    # `safety.confirm_environments` is deliberately *not* also asked here. This gate
+    # is unconditional, so the setting could only ever make it weaker, and a second
+    # prompt on the runs the setting covers would ask the same question twice for
+    # the same answer.
     _confirm_rotation(plan, confirmed=confirm, run=run)
 
     manager = LockManager(
@@ -8729,11 +8725,10 @@ def creds_rotate(
     # **After** `holding` has exited, on every path including the refusals
     # `_rotate_estate` returns from inside the lock. `release()` runs in that
     # `finally`, and it is what flips `HeldLock.released` -- so a section built
-    # while the lock was still held reported `released: false` for locks this run
-    # gave back a moment later. Measured on the `--max-age-days` no-op: the
-    # document said `false` and the store record said `released` (#348, found in
-    # review). One call, one place, and the ordering is now structural rather
-    # than a property of where each early return happens to sit.
+    # while the lock was still held would report `released: false` for locks this
+    # run gives back a moment later, and the document would disagree with the store
+    # record. One call, one place, and the ordering is structural rather than a
+    # property of where each early return happens to sit.
     _record_locks(document, manager)
     if refusal is None:
         document.results = sequence.staged_json + [
@@ -8776,11 +8771,11 @@ def creds_rotate(
         )
 
     document.finish(code, summarise_apply(states, changed=changed))
-    # #264's remedy, on the runs it is a remedy for. Withheld after a takeover
-    # for the reason `render_apply` documents, and withheld after a read-back
-    # disagreement for a different one: re-running `apply` there would converge
-    # a database estate that is already converged, and the thing to go and look
-    # at is the vault.
+    # The repair invocation (decision #264), on the runs it is a remedy for.
+    # Withheld after a takeover for the reason `render_apply` documents, and
+    # withheld after a read-back disagreement for a different one: re-running
+    # `apply` there would converge a database estate that is already converged, and
+    # the thing to go and look at is the vault.
     repair = (
         repair_invocation(
             selectors=selectors,
@@ -8814,7 +8809,7 @@ def _refuse_narrow_rotation(
     documents: Mapping[LockKey, Any],
     run: Invocation,
 ) -> None:
-    """Refuse a rotation that could not promote what it is about to stage (#406).
+    """Refuse a rotation that could not promote what it is about to stage (decision #406).
 
     `creds apply` narrowed past a pair still changes the databases it was pointed
     at and withholds the promotion, because that is how a rollout is staged. A
@@ -8824,10 +8819,10 @@ def _refuse_narrow_rotation(
     and the way to rotate part of an estate at a time stays `creds generate`
     followed by `creds apply` per target.
 
-    **The visited set is what is due, not what was selected** (found in review on
-    #578). `--max-age-days` drops an account from the rotation without dropping
-    it from the selection, so a sibling with a `pending` of its own that is not
-    due is exactly as unvisited as one a selector excluded.
+    **The visited set is what is due, not what was selected.** `--max-age-days`
+    drops an account from the rotation without dropping it from the selection, so a
+    sibling with a `pending` of its own that is not due is exactly as unvisited as
+    one a selector excluded.
     """
     left_out = _left_out(
         rotating, [(binding, True) for binding in rotating], documents, _declared_estate(run.config)
@@ -8872,7 +8867,7 @@ class _Rotation:
     #: for, which is not the same fact as zero.
     closed: int | None = None
     stolen: LockStolenError | None = None
-    #: The pre-flight's caveats as notes (#606), for the end of the run.
+    #: The pre-flight's caveats as notes (decision #606), for the end of the run.
     caveats: list[str] = field(default_factory=list)
 
 
@@ -8926,7 +8921,8 @@ def _rotate_estate(
         return _refuse_preflight(
             findings, document, header=_rotation_header(plan, into.selections, max_age_days)
         )
-    # #606, and `apply`'s rule: printed at the end with the run's other notes.
+    # Decision #606, and `apply`'s rule: printed at the end with the run's other
+    # notes.
     into.caveats = caveat_notes(findings)
 
     # Step 4 -- `creds generate`'s write, behind the fence it uses.
@@ -9116,14 +9112,11 @@ def _unconfirmed(accounts: Sequence[str]) -> Diagnostic:
 def _reach(radius: Any) -> str:
     """How much of the estate a run reaches, as a phrase an operator can read.
 
-    This is what the confirmation prompt interpolates. It used to interpolate the
-    :class:`~sopuli.plan.BlastRadius` itself, which is a frozen dataclass, so the
-    question read `draw a new password for BlastRadius(targets=1, accounts=1,
+    This is what the confirmation prompt interpolates. It must not interpolate the
+    :class:`~sopuli.plan.BlastRadius` itself, which is a frozen dataclass: the
+    question would read `draw a new password for BlastRadius(targets=1, accounts=1,
     environments=('dev',)) account(s) and promote it?` -- a repr in the last
-    sentence an operator sees before a whole estate's passwords change, with the
-    word `account(s)` after an object that already said `accounts=1`. Found by
-    running the verb rather than by a test, on 21c for #380, and not
-    version-specific: every rotation has always asked it this way.
+    sentence an operator sees before a whole estate's passwords change.
 
     Targets **and** accounts, because the two differ exactly where sharing
     happens and that difference is what the person answering needs: `1 account on
@@ -9173,10 +9166,10 @@ def _confirm_rotation(plan: Any, *, confirmed: bool, run: Invocation) -> None:
             ),
         )
     question = f"draw a new password for {_reach(plan.blast_radius)} and promote it?"
-    # Sent only where somebody is actually asked (#535): a stream that stops
-    # here is a run waiting on a person, and a consumer watching it should be
-    # able to tell that from a run that hung. `--confirm` answered in advance,
-    # so nothing is waiting and nothing is sent.
+    # Sent only where somebody is actually asked: a stream that stops here is a run
+    # waiting on a person, and a consumer watching it should be able to tell that
+    # from a run that hung. `--confirm` answered in advance, so nothing is waiting
+    # and nothing is sent.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
     click.echo(render_plan(plan, noun="rotation"), err=True)
     click.confirm(question, abort=True, err=True)
@@ -9224,7 +9217,8 @@ def _preview_rotation(
         return _refuse_preflight(findings, document, header=header)
 
     document.finish(ExitCode.SUCCESS, Summary(total=len(rotating)))
-    # #606: a survey that passed with a check missing says so in the text too.
+    # Decision #606: a survey that passed with a check missing says so in the text
+    # too.
     return "\n".join(
         [f"{header}\n\nnothing was rotated (--dry-run)", *render_notices(caveat_notes(findings))]
     )
@@ -9283,11 +9277,11 @@ def creds_status(
     `creds check` at least tries a password, and this reads two dictionary views
     and a vault document. Safe to run anywhere, at any hour, against production.
 
-    **AGE is the vault's, and it is the one that counts.** `--max-age-days`
-    filters on the `rotated_at` stamp the vault holds (Q9, issue #87), never on
-    the database's own `PASSWORD_CHANGE_DATE` -- one value per secret path
-    however many targets share it, so there is nothing to aggregate and no
-    "oldest, newest or any" rule to invent for an account spanning a CDB's PDBs.
+    **AGE is the vault's, and it is the one that counts.** `--max-age-days` filters
+    on the `rotated_at` stamp the vault holds (Q9), never on the database's own
+    `PASSWORD_CHANGE_DATE` -- one value per secret path however many targets share
+    it, so there is nothing to aggregate and no "oldest, newest or any" rule to
+    invent for an account spanning a CDB's PDBs.
 
     The database's date is displayed beside it and never acted on. The pair is
     the point: the same database history answers differently depending on which
