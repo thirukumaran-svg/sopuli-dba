@@ -1,6 +1,6 @@
-"""Issuing the ``ALTER USER`` against a real Oracle (#179). Tier 1.
+"""Issuing the ``ALTER USER`` against a real Oracle. Tier 1.
 
-The statement's *shape* is tier 0 (#171) and so are invariants 13 and 14. What
+The statement's *shape* is tier 0 and so are invariants 13 and 14. What
 only a server can answer is whether it is accepted — and, more usefully, what
 happens when it is not. Both refusal paths were measured on 26ai Free
 23.26.2.0.0 before this was written:
@@ -8,15 +8,15 @@ happens when it is not. Both refusal paths were measured on 26ai Free
     a weak password against `ora12c_strong_verify_function`  ->  ORA-28003
     the account's current password, with PASSWORD_REUSE_MAX  ->  ORA-28007
 
-#172 already maps both to `policy`, so what this file pins is that they arrive
+The error mapper maps both to `policy`, so what this file pins is that they arrive
 as those and not as a generic failure — because UC-1 §4's bounded regeneration
 is the only correct response to either, and a run that mistook one for a
 connection problem would stop instead of drawing another password.
 
 The verify-function case is asserted **on the error, never on `DBA_PROFILES`**:
 in a PDB the `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` while the
-function is in fact enforcing (#178 measured that), so the dictionary is the one
-witness that cannot be trusted here.
+function is in fact enforcing (measured on 26ai Free 23.26.2.0.0), so the
+dictionary is the one witness that cannot be trusted here.
 """
 
 from __future__ import annotations
@@ -110,8 +110,8 @@ def strict_account(session: Any) -> Iterator[Any]:
 
     Skipped where `ora12c_strong_verify_function` does not exist, on the server's
     own answer rather than on a version: `ORA-07443: function
-    ORA12C_STRONG_VERIFY_FUNCTION not found`, measured on 11g XE 11.2.0.2.0
-    (#382), where the 11g equivalent is `verify_function_11G` and enforces
+    ORA12C_STRONG_VERIFY_FUNCTION not found`, measured on 11g XE 11.2.0.2.0,
+    where the 11g equivalent is `verify_function_11G` and enforces
     different rules. `test/oracle-init/01_test_profiles.sql` already skips
     `SOPULI_STRONG` there for the same reason and says so rather than aborting.
 
@@ -195,7 +195,7 @@ def test_a_password_the_verify_function_refuses_arrives_as_policy(strict_account
 
     Asserted on the error rather than on `DBA_PROFILES`, because in a PDB the
     `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` while the function is
-    enforcing (#178).
+    enforcing.
     """
     with pytest.raises(DriverError) as raised:
         strict_account.set_password(ACCOUNT, Secret(WEAK))
@@ -205,9 +205,9 @@ def test_a_password_the_verify_function_refuses_arrives_as_policy(strict_account
 
 
 def test_reusing_the_current_password_arrives_as_policy(strict_account: Any) -> None:
-    """`ORA-28007`. The same value must never be sent again — #172's rule is that
-    an unmapped code is terminal and never regenerates, and this one regenerates
-    with a *different* value or not at all."""
+    """`ORA-28007`. The same value must never be sent again — the error mapper's
+    rule is that an unmapped code is terminal and never regenerates, and this
+    one regenerates with a *different* value or not at all."""
     with pytest.raises(DriverError) as raised:
         strict_account.set_password(ACCOUNT, Secret(COMPLIANT))
 
@@ -219,21 +219,18 @@ def test_the_byte_limit_is_this_database_s_own(session: Any) -> None:
     """Resolved from the target rather than hard-coded, which is the test's name.
 
     **The character set is asserted against what the database says, not against
-    a constant.** It was `AL32UTF8` on 26ai, 21c, 18c and 11g (2026-09-08), and
-    this asserted that literally until 12.2.0.1.0's registry image (#572) turned
-    out to be `WE8DEC` in both the root and the PDB -- a character set
-    :data:`CODECS` does not map, so the tool measures in ASCII there, which is
-    `limits.py`'s deliberate fallback rather than a fault. The constant was a
-    fact about the images, not about the tool; what this test is named for is
-    that the limit comes from the target.
+    a constant.** It is `AL32UTF8` on 23.26.2.0.0, 21.3.0.0.0, 18.4.0.0.0 and
+    11.2.0.2.0, but 12.2.0.1.0's registry image is `WE8DEC` in both the root and
+    the PDB -- a character set :data:`CODECS` does not map, so the tool measures
+    in ASCII there, which is `limits.py`'s deliberate fallback rather than a
+    fault. A constant would be a fact about the images, not about the tool; what
+    this test is named for is that the limit comes from the target.
 
     **`max_bytes` is asserted against the tool's own rule**, not against what the
     server enforces -- this test sends no over-long password, so it cannot show
-    the two agree. Since #595 the rule is 30 bytes below 23 and 128 from it. Until
-    then it was keyed to 12.2 -- where Oracle raised
-    *identifiers*, not passwords -- so 21c and 18c refused a 31st byte while the
-    tool believed they accepted 128 (#383). What this test is named for is still
-    the narrow thing: the limit came from *this session's* reported version.
+    the two agree. The rule is 30 bytes below 23 and 128 from it. What this test
+    is named for is the narrow thing: the limit comes from *this session's*
+    reported version.
     """
     limit = session.byte_limit()
     with session.connection.cursor() as cursor:
@@ -300,11 +297,10 @@ def test_a_read_only_target_is_refused_before_any_statement(session_module: Any)
     """P1 wants a standby refused **up front**, not as a failed `ALTER USER` half
     way through a run.
 
-    #177 deliberately kept `require_read_write` out of `assert_scope`, so that
+    `assert_scope` deliberately leaves out `require_read_write`, so that
     `creds check` keeps working against a physical standby — which makes calling
     it the mutating caller's job, and this is the mutating caller. Left to a
-    command that does not exist yet it would have been a refusal that cannot
-    fire.
+    command that does not exist yet it would be a refusal that cannot fire.
 
     Driven against a fake connection because a standby is not something the
     tier-1 lane can stand up, and the assertion that matters is that **nothing
@@ -334,9 +330,9 @@ def test_a_read_only_target_is_refused_before_any_statement(session_module: Any)
 def test_finishing_a_rollover_on_a_read_only_target_is_refused_before_any_statement(
     session_module: Any,
 ) -> None:
-    """#521: `finish_rollover` was the one mutating method without the guard, so
-    a standby reached `ALTER USER ... EXPIRE PASSWORD ROLLOVER PERIOD` and failed
-    there. Refused before the state is even read, as `set_password` is."""
+    """Without the guard, a standby would reach `ALTER USER ... EXPIRE PASSWORD
+    ROLLOVER PERIOD` and fail there, so `finish_rollover` refuses before the
+    state is even read, as `set_password` does."""
     from sopuli.driver.oracle.capabilities import ReadOnlyTargetError
     from sopuli.driver.protocol import Scope
 

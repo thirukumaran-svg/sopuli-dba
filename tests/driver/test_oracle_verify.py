@@ -1,4 +1,4 @@
-"""Verifying a password against a real Oracle (#180). Tier 1.
+"""Verifying a password against a real Oracle. Tier 1.
 
 The arithmetic is tier 0 (`test_verification.py`). What only a server can answer
 is whether the codes mean what this code believes, and whether the guard actually
@@ -130,10 +130,10 @@ def guarded_account(session: Any) -> Iterator[Any]:
 
 
 def test_the_session_is_now_a_driver_session(session: Any) -> None:
-    """#177 through #180, arrived. The protocol is structural, so this became
-    true by acquiring the last method rather than by declaring anything — and it
-    is worth asserting, because a signature drifting out of shape would otherwise
-    be invisible until a command was written against the protocol."""
+    """The protocol is structural, so a session is a driver session by having
+    every method rather than by declaring anything — and it is worth asserting,
+    because a signature drifting out of shape would otherwise be invisible until
+    a command was written against the protocol."""
     assert isinstance(session, Session)
 
 
@@ -191,9 +191,9 @@ def test_a_missing_account_is_unavailable(session: Any) -> None:
 
 # --------------------------------------------------------- method="hash" ---
 #
-# #437: compare with the stored 12C verifier instead of logging in. Every test
-# here asserts on the *account* as well as on the result, because the claim being
-# tested is that nothing happened to it.
+# Compare with the stored 12C verifier instead of logging in (UC-1 §7).
+# Every test here asserts on the *account* as well as on the result, because the
+# claim being tested is that nothing happened to it.
 #
 # Whether the account *has* a 12C verifier is read from the account, never from
 # the release (invariant 3): 11g's accounts are `10G 11G`, and a 12.1+ server can
@@ -275,7 +275,7 @@ def test_hash_on_a_missing_account_is_unavailable(session: Any) -> None:
 @pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_hash_tells_the_two_passwords_of_a_rollover_window_apart(session: Any) -> None:
     """Both authenticate during a window, so a login cannot say which the vault
-    holds. `T:` is the previous password and `t:` the current (#432)."""
+    holds. `T:` is the previous password and `t:` the current."""
     _drop(session)
     _run(
         session,
@@ -299,8 +299,8 @@ def test_hash_tells_the_two_passwords_of_a_rollover_window_apart(session: Any) -
 @pytest.mark.requires_capability(OFFLINE_VERIFY)
 def test_hash_refuses_an_account_with_no_12c_verifier(account: Any) -> None:
     """11g, or any account whose PASSWORD_VERSIONS lacks 12C: nothing to compare,
-    and `S:` or 10G are never a fallback because both are weaker than a login
-    (#433). A refusal naming the target, which is invariant 4's shape."""
+    and `S:` or 10G are never a fallback because both are weaker than a login.
+    A refusal naming the target, which is invariant 4's shape."""
     state = account.describe_user(ACCOUNT)
     assert state is not None
     if "12C" in state.password_versions:
@@ -381,8 +381,8 @@ def test_hash_without_the_sys_user_grant_is_refused_naming_the_target(
 def test_on_autonomous_database_the_refusal_does_not_advise_a_grant(
     session_module: Any,
 ) -> None:
-    """#437, decided 2026-10-02: on ADB no account can read `SYS.USER$`, `ADMIN`
-    included (#478), so "grant it" is advice nobody there can follow.
+    """UC-1 §7: on ADB no account can read `SYS.USER$`, `ADMIN`
+    included, so "grant it" is advice nobody there can follow.
     `CLOUD_SERVICE` read `OLTP` on ADB serverless 23.26.3.3.0, and it is what tells
     the two apart: the capability probe gets `ORA-00942` from both."""
     offline = _offline_session(session_module, frozenset(), cloud_service="OLTP")
@@ -400,7 +400,7 @@ def test_on_autonomous_database_the_refusal_does_not_advise_a_grant(
 def test_hash_of_a_password_the_character_set_cannot_hold_is_refused(
     session_module: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#572's WE8DEC case at the session: a refusal naming the target and the
+    """The WE8DEC case at the session: a refusal naming the target and the
     set, rather than a `fail` that would report drift on a password that logs in.
     No live database in the stack has a non-Unicode set but 12.2's, which is
     maintainer-only, so the dictionary reads are stubbed."""
@@ -444,7 +444,7 @@ def test_both_compares_and_then_logs_in(guarded_account: Any) -> None:
 def test_both_does_not_spend_a_login_the_comparison_already_answered(
     guarded_account: Any,
 ) -> None:
-    """#437, decided 2026-10-02: a mismatch is `fail` from the comparison alone.
+    """UC-1 §7: a mismatch is `fail` from the comparison alone.
     Five of them against `FAILED_LOGIN_ATTEMPTS 3` leave the counter at zero,
     which a login half would not."""
     _needs_12c(guarded_account)

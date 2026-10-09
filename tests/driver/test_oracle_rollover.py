@@ -1,4 +1,4 @@
-"""Rollover against a real Oracle (#181). Tier 1.
+"""Rollover against a real Oracle. Tier 1.
 
 The arithmetic is tier 0 (`test_rollover.py`). What only a server can answer is
 the property the whole strategy rests on — **both passwords authenticate during
@@ -207,7 +207,7 @@ def test_a_profile_without_a_window_is_refused_with_the_ddl_to_fix_it(
     `ALTER PROFILE` an operator would run, and the tool does not run it.
 
     Profiles are shared: changing one affects accounts nobody selected, and §3
-    keeps `ALTER PROFILE` off the service account deliberately (Q4/#88).
+    keeps `ALTER PROFILE` off the service account deliberately (Q4).
     """
     with pytest.raises(DriverError) as raised:
         plain_account.require_rollover(ACCOUNT)
@@ -230,12 +230,11 @@ def test_a_release_without_rollover_refuses_at_plan_time(plain_account: Any) -> 
     """18c and 11g. Exit 5, naming the capability and the target (invariant 4),
     and **at plan time** — not as an execution error two targets into a run.
 
-    **This ran for the first time on 2026-09-08** (#381). It was written against
-    26ai, where `password_rollover` is always present, so the marker skipped it
-    on the only server the suite had ever met — a test asserting the negative
-    case with no negative case to assert it against. That is the shape
-    `04-testing.md` §3 warns about, and running 18c is what turned it from a
-    declaration into a measurement.
+    **Only a release without rollover can run this.** On 26ai Free 23.26.2.0.0
+    `password_rollover` is always present, so the marker skips it there. A test of
+    the negative case that meets only servers with the capability skips on every
+    one of them, which is the shape `04-testing.md` §3 warns about; running 18c
+    turns it from a declaration into a measurement.
 
     The hint is asserted because this half has no local remedy: unlike the
     profile refusal below it, no `ALTER PROFILE` reaches it and the release is

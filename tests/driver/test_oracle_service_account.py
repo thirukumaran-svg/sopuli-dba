@@ -1,7 +1,7 @@
-"""The account the tool is actually meant to run as (#226). Tier 1.
+"""The account the tool is actually meant to run as. Tier 1.
 
 Every other tier-1 test in this suite connects as `system`, which holds most of
-`02-oracle-privileges.md` §3's must-not-grant list. That is convenient — #224's
+`02-oracle-privileges.md` §3's must-not-grant list. That is convenient — the
 over-grant test gets a genuinely over-granted account for free — and it means
 **nothing has ever exercised the account §2 describes.**
 
@@ -11,21 +11,21 @@ Three things only this account can establish, and all three are load-bearing:
   judgement against a hand-written set, which proves the classifier and nothing
   about what a real §2 install reports. A check that cries wolf on a healthy
   install is a check people learn to run with their eyes shut.
-* **`DBA_SYS_PRIVS` is still unreadable under §2's grants.** #178 measured that on
-  26ai and the whole audit is built on it: it is *why* the audit is
-  self-inspection rather than a dictionary query. Nothing re-checked it, and a
-  release that widened it would silently invalidate the reasoning — with a
-  failure mode of a tool that reports nothing and looks healthy.
+* **`DBA_SYS_PRIVS` is still unreadable under §2's grants.** That was measured
+  on 26ai Free 23.26.2.0.0 and the whole audit is built on it: it is *why* the
+  audit is self-inspection rather than a dictionary query. A release that
+  widened it would silently invalidate the reasoning — with a failure mode of a
+  tool that reports nothing and looks healthy.
 * **`DBA_ROLE_PRIVS` is still readable**, which is the control. Without it, a
   release that removed dictionary access from this account *entirely* would look
   exactly like the pass above. §8's P7 row makes the same argument for keeping
   its `ORA-00990` assertion after the question was answered.
 
-A fourth arrived with #341, and it needs a *second* account: §2's optional
+A fourth needs a *second* account: §2's optional
 `V$PWFILE_USERS` grant, taken. What the pair proves is that the audit's answer
 about `SYSDBA` and `SYSOPER` follows the estate rather than a constant — one
 account reports them unchecked and the other reports them, and a suite that only
-ever built the first would pass on the bug #341 is about.
+ever built the first would pass with the answer hard-coded.
 
 The grants come from `sopuli/driver/oracle/privileges.py` rather than from a list
 written here, so this account is by construction the one the tool asks for; that
@@ -104,10 +104,9 @@ def _container(connection: Any) -> str:
 
     `SYS_CONTEXT('USERENV','CON_NAME')` **raises** on a non-CDB rather than
     answering NULL -- `ORA-02003: invalid USERENV parameter`, measured on 11g XE
-    11.2.0.2.0 (#382). The driver already knows this and enumerates the code as
-    `capabilities.NO_CONTAINERS`; this helper predates that and did not, so on
-    11g it took the whole fixture down and errored fifteen tests that have
-    nothing to do with containers.
+    11.2.0.2.0. The driver enumerates the code as `capabilities.NO_CONTAINERS`,
+    and this helper reads it the same way, so on 11g it does not take the whole
+    fixture down for tests that have nothing to do with containers.
 
     A string rather than `None`, because the only caller compares it to
     `CDB$ROOT` and a `None` would make that comparison quietly false rather than
@@ -140,7 +139,8 @@ def _grants() -> tuple[str, ...]:
     return (
         *(f"grant {privilege} to {ACCOUNT}" for privilege in REQUIRED_PRIVILEGES),
         *(f"grant {grant.replace('ON ', 'ON SYS.')} to {ACCOUNT}" for grant in REQUIRED_READS),
-        # §2 grants these too (#531), though no pre-flight requires them.
+        # §2 grants these too (decision #531), though no pre-flight requires
+        # them.
         *(f"grant {grant.replace('ON ', 'ON SYS.')} to {ACCOUNT}" for grant in PREDICATE_READS),
     )
 
@@ -249,9 +249,9 @@ def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
 
 @pytest.fixture
 def password_file_reader(admin: Any, live_oracle: Environment) -> Iterator[Any]:
-    """The same account with §2's optional `V$PWFILE_USERS` grant taken (#341).
+    """The same account with §2's optional `V$PWFILE_USERS` grant taken.
 
-    The estate #341 is about, and it is a *second* account rather than a flag on
+    The estate that opted in, and it is a *second* account rather than a flag on
     the first because what the two prove is the pair: the same code has to report
     two of §3's rows as unaudited on one and audited on the other, and a test
     that only ever saw one of them would pass on a constant.
@@ -271,7 +271,8 @@ def _audit(session: Any) -> Any:
         return audit(cursor, scope_type=session.scope().type)
 
 
-#: What an estate installed before #531 holds: §2's set without ``DBA_ROLES``.
+#: What an estate installed before decision #531 holds: §2's set without
+#: ``DBA_ROLES``.
 #: Revoked rather than never granted so :func:`_grants` stays the one list.
 WITHOUT_ROLE_LOOKUP = f"revoke SELECT ON SYS.DBA_ROLES from {ACCOUNT}"
 
@@ -287,8 +288,8 @@ def installed_before_531(admin: Any, live_oracle: Environment) -> Iterator[Any]:
 
 
 def test_a_correct_install_is_short_of_nothing(service_account: Any) -> None:
-    """The assertion #213 asked for and could not make: `missing` is empty for an
-    account granted exactly what §2 documents, measured rather than reasoned.
+    """`missing` is empty for an account granted exactly what §2 documents,
+    measured rather than reasoned.
 
     This is where a wrong view name or a `V$` that should have been `V_$` shows
     up. Tier 0 cannot catch either, because it is handed the answer.
@@ -325,7 +326,7 @@ def test_the_audit_is_readable_and_says_so(service_account: Any) -> None:
 def test_dba_sys_privs_is_still_unreadable_under_the_documented_grants(
     service_account: Any,
 ) -> None:
-    """#178's measurement, as a regression test on somebody else's product.
+    """The measurement, as a regression test on somebody else's product.
 
     The whole audit rests on this: if `DBA_SYS_PRIVS` were readable, the obvious
     implementation would work and the self-inspection design would be
@@ -365,7 +366,7 @@ def test_the_self_inspection_views_need_no_grant(service_account: Any) -> None:
     )
 
 
-# --------------------------------------------- the check that cannot look (#296) ---
+# ---------------------------------------------------- the check that cannot look ---
 
 
 def test_the_password_file_is_not_readable_under_the_documented_grants(
@@ -373,7 +374,7 @@ def test_the_password_file_is_not_readable_under_the_documented_grants(
 ) -> None:
     """§4 check 3's input, refused to the account §2 describes.
 
-    Measured, and it is the measurement the whole of #296 turns on:
+    Measured, and it is the measurement the whole check turns on:
     `ORA-00942: table or view "SYS"."V_$PWFILE_USERS" does not exist`, from an
     account holding exactly the documented set. That code is in
     :data:`~sopuli.driver.oracle.capabilities.ABSENT_CODES`, so the driver reads
@@ -382,8 +383,8 @@ def test_the_password_file_is_not_readable_under_the_documented_grants(
 
     Asserted here rather than only in tier 0 because tier 0 is handed the
     exception. What only a server can say is that the correct install really is
-    the one that cannot answer, which is why #296 made the check a caveat instead
-    of a refusal.
+    the one that cannot answer, which is why the check is a caveat instead of
+    a refusal.
     """
     with pytest.raises(Exception, match="ORA-00942") as raised:
         _run(service_account, "select count(*) from v$pwfile_users")
@@ -404,11 +405,10 @@ def test_an_account_is_still_described_with_the_password_file_unreadable(
     The account described here is the service account itself, which is the only
     one this fixture is sure exists.
 
-    **Returning at all is the control**, and the first draft of this test got
-    that wrong: it asserted `state.roles` was non-empty, on the assumption that
-    an account reachable through `DBA_ROLE_PRIVS` must hold something. §2 grants
-    privileges directly and no roles, so this account holds none and the
-    assertion failed against a database that was behaving exactly as documented.
+    **Returning at all is the control**, not a non-empty `state.roles`. An
+    account reachable through `DBA_ROLE_PRIVS` need not hold anything: §2 grants
+    privileges directly and no roles, so this account holds none, and asserting
+    otherwise would fail against a database behaving exactly as documented.
     What proves the roles view was read is that `describe_user` did not raise --
     an empty set and an unreadable view are precisely the two things
     `RolesUnreadableError` exists to keep apart.
@@ -419,19 +419,19 @@ def test_an_account_is_still_described_with_the_password_file_unreadable(
     assert state.password_file_member is None
     assert state.roles == frozenset(), "§2 grants privileges directly and no roles"
     # The control -- `DBA_USERS` was read -- on a field every release supplies.
-    # `vendor_maintained` was the control until #382: `ORACLE_MAINTAINED` does not
-    # exist on 11.2, so it is `None` there for a reason that has nothing to do
-    # with whether the view was readable, and a control that cannot tell those
-    # two apart is not one. `name` comes from the same row and the same query.
+    # `vendor_maintained` is not the control: `ORACLE_MAINTAINED` does not exist
+    # on 11.2, so it is `None` there for a reason that has nothing to do with
+    # whether the view was readable, and a control that cannot tell those two
+    # apart is not one. `name` comes from the same row and the same query.
     assert state.name == ACCOUNT.upper(), "the control: DBA_USERS was read"
 
 
 def test_the_audit_reports_the_password_file_rows_as_unaudited(service_account: Any) -> None:
-    """The default estate, and the half of #341 that did not change.
+    """The default estate, where nobody can look.
 
-    Nobody could look, so §3's two password-file rows are named as unchecked --
-    and the remedy names the grant, because since #296 the reason is "you may
-    enable this" rather than "this cannot be known".
+    Nobody can look, so §3's two password-file rows are named as unchecked --
+    and the remedy names the grant, because the reason is "you may enable this"
+    rather than "this cannot be known".
     """
     found = _audit(service_account)
 
@@ -441,14 +441,14 @@ def test_the_audit_reports_the_password_file_rows_as_unaudited(service_account: 
     assert any("V_$PWFILE_USERS" in line.upper() for line in found.remedies)
 
 
-# --------------------------------------------- the estate that opted in (#341) ---
+# ---------------------------------------------------- the estate that opted in ---
 
 
 def test_the_optional_grant_makes_the_password_file_rows_auditable(
     password_file_reader: Any,
 ) -> None:
-    """The other half, and the defect #341 reports: the audit used to say *I
-    could not look* here from a constant, on a session that could.
+    """The other half: the audit must not say *I could not look* here from a
+    constant, on a session that could.
 
     The account holds neither privilege, so this is the answer that has to stay
     quiet -- and the assertion that matters is not `over_granted == ()`, which
@@ -494,7 +494,7 @@ def test_a_granted_sysdba_is_found_and_sysoper_is_not(
 def test_taking_the_optional_grant_is_not_itself_an_over_grant(
     password_file_reader: Any,
 ) -> None:
-    """The thing that would have been a defect in #296 rather than a follow-up.
+    """The optional grant must not be reported as over-granted.
 
     `over_granted` reads system privileges and roles; this is an object
     privilege, so a site that takes the grant §2 recommends must not then be told
@@ -508,9 +508,9 @@ def test_taking_the_optional_grant_is_not_itself_an_over_grant(
 
 
 def test_a_correct_install_can_tell_a_role_from_a_misspelling(service_account: Any) -> None:
-    """#531. Every other role test runs as `system`, which reads `DBA_ROLES`
-    whatever §2 says -- which is how a correctly installed service account came to
-    refuse every `role:` predicate as a misspelling without a test noticing.
+    """Every other role test runs as `system`, which reads `DBA_ROLES` whatever
+    §2 says -- so without this test a correctly installed service account could
+    refuse every `role:` predicate as a misspelling unnoticed (decision #531).
 
     `CONNECT` is Oracle's own and exists on every release, so the control needs
     no fixture of its own."""
@@ -520,9 +520,9 @@ def test_a_correct_install_can_tell_a_role_from_a_misspelling(service_account: A
 
 
 def test_an_install_without_the_grant_is_refused_naming_it(installed_before_531: Any) -> None:
-    """The gate: an estate installed before #531 is told what to grant, at plan
-    time and with the capability named (invariant 4), rather than told that a
-    role it can see in SQL*Plus does not exist."""
+    """The gate: an estate installed before decision #531 is told what to grant,
+    at plan time and with the capability named (invariant 4), rather than told
+    that a role it can see in SQL*Plus does not exist."""
     assert not installed_before_531.scope().supports(ROLE_LOOKUP)
 
     with pytest.raises(UnsupportedCapabilityError) as raised:

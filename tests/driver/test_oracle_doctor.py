@@ -1,4 +1,4 @@
-"""`sopuli doctor` against a real Oracle (#182). Tier 1.
+"""`sopuli doctor` against a real Oracle. Tier 1.
 
 The view is tier 0 (`test_doctor_view.py`) and the connection is tier 1 in the
 driver's own tests. What is left — and what nothing else covers — is the *wiring*
@@ -45,12 +45,11 @@ def _config(path: Path, dsn: str, *, asserted: str = "") -> Path:
 
     **No ``vaults:`` block**, and that is load-bearing rather than tidiness.
     These tests are about the wiring between a config file and a *target*: they
-    bind no account and resolve no secret, so the store the entry used to declare
-    was never reached by anything. Since #216 `doctor` surveys every declared
-    store and fails on one it cannot reach, so an entry pointing at a fictional
-    `example.com` address would make every test in this file assert exit 0
-    against a run that is correctly reporting a broken estate. The fixture now
-    describes the estate it actually has.
+    bind no account and resolve no secret, so a declared store would be
+    reached by nothing. `doctor` surveys every declared store and fails on one it
+    cannot reach, so an entry pointing at a fictional `example.com` address would
+    make every test in this file assert exit 0 against a run that is correctly
+    reporting a broken estate. The fixture describes the estate it actually has.
 
     The same 0600 rule as `conftest.write_config`, applied here rather than by
     using that fixture, because it writes one fixed filename and
@@ -158,7 +157,7 @@ def test_a_matching_assertion_is_reported_as_matching(
     # `container:` is omitted where the driver found none, rather than fed back as
     # the string `None`. A non-CDB has no container, so a round trip that wrote
     # `container: None` was declaring a container called "None" and asserting
-    # itself into a mismatch -- measured on 11g (#382).
+    # itself into a mismatch -- measured on 11g XE 11.2.0.2.0.
     keys = f"scope: {found['type']}"
     if found["container"] is not None:
         keys = f"{keys}, container: {found['container']}"
@@ -224,9 +223,9 @@ def test_the_report_is_readable_without_json(
     has an Oracle client for, then what each target turned out to be.
 
     The order is the assertion rather than the first line alone. `install`
-    arrived above `client` in #214 and only the first line moved, so a test
-    pinning one heading passed the whole report through unchecked -- and the
-    section that fails the run is the one a reader must not have to scroll for.
+    comes above `client`, and a test pinning one heading would pass the rest of
+    the report through unchecked -- and the section that fails the run is the
+    one a reader must not have to scroll for.
     """
     config = _config(tmp_path / "doctor.yaml", live_oracle.dsn)
 
@@ -258,7 +257,7 @@ def test_check_privileges_finds_an_over_granted_account(
     is Oracle's business and varies by release. Pinning it would make this a test
     of the container image.
 
-    :data:`PASSWORD_FILE_PRIVILEGES` is in the permitted set since #341, and for
+    :data:`PASSWORD_FILE_PRIVILEGES` is in the permitted set, and for
     the same reason: `system` holds `SELECT ANY DICTIONARY`, so it can read
     `V$PWFILE_USERS` and those two rows are now answered rather than declined.
     Whether it is *in* the password file is again the image's business.
@@ -278,7 +277,7 @@ def test_check_privileges_finds_an_over_granted_account(
 def test_a_dictionary_reader_audits_the_password_file_rows(
     runner: CliRunner, live_oracle: Environment, tmp_path: Path
 ) -> None:
-    """#341, end to end through the command. `system` can read
+    """End to end through the command. `system` can read
     `V$PWFILE_USERS`, so the two rows §3 lists there are answered — and what
     `unaudited` carries is the one row no grant reaches.
 
@@ -298,7 +297,7 @@ def test_a_dictionary_reader_audits_the_password_file_rows(
 def test_an_over_granted_account_warns_and_does_not_fail(
     runner: CliRunner, live_oracle: Environment, tmp_path: Path
 ) -> None:
-    """**P5, decided in #213: warn.**
+    """**Decision P5: warn.**
 
     The whole of the decision, asserted where it can regress. Failing would block
     somebody mid-incident over a condition they did not create and cannot fix
@@ -332,7 +331,7 @@ def test_the_audit_costs_nothing_when_it_is_not_asked_for(
 def test_the_positive_side_reports_the_grants_the_tool_needs(
     runner: CliRunner, live_oracle: Environment, tmp_path: Path
 ) -> None:
-    """#225's half. These tests connect as `system`, which holds everything §2
+    """The positive half. These tests connect as `system`, which holds everything §2
     grants and a great deal more, so the useful assertion is that the required
     set comes back **held and not missing** — the wiring, against a real
     dictionary, with the real `ORA-` codes deciding each probe."""

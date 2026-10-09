@@ -1,4 +1,4 @@
-"""Reading an account's state against a real Oracle (#178). Tier 1.
+"""Reading an account's state against a real Oracle. Tier 1.
 
 The mapping is tier 0 (`test_accounts.py`). What only a server can answer is
 whether the *shapes* are what this code believes: that `ACCOUNT_STATUS` really
@@ -121,7 +121,7 @@ def account(session: Any) -> Iterator[Any]:
     **`PASSWORD_ROLLOVER_TIME` is only in the profile where the server has it.**
     Below 19.12 the resource does not exist and `CREATE PROFILE` is `ORA-02376:
     invalid or redundant resource`, which failed this fixture and errored eleven
-    tests on 18c -- nine of which have nothing to do with rollover (#381). The
+    tests on 18c -- nine of which have nothing to do with rollover. The
     two that do declare `password_rollover` and skip with a reason, which is
     §3's rule; the profile follows the same capability rather than a version, so
     what is asked for is what the target said it supports.
@@ -145,7 +145,7 @@ def account(session: Any) -> Iterator[Any]:
 
 def _drop(session: Any) -> None:
     # `SYSDBA` needs no separate revoke here, which was measured rather than
-    # assumed (#296): dropping an account that holds it takes its row out of
+    # assumed: dropping an account that holds it takes its row out of
     # `V$PWFILE_USERS` too. A suppressed `revoke` beside these would fail with
     # `ORA-01031` on this connection anyway, and would read as cleanup that is
     # not happening.
@@ -156,7 +156,7 @@ def _drop(session: Any) -> None:
 
 
 def test_an_account_is_described_from_the_baseline_grant_set(account: Any) -> None:
-    """#86: `check` needs no site-specific grant, so everything here is on the
+    """`check` needs no site-specific grant, so everything here is on the
     documented set — and in particular not `SYS.USER$`."""
     state = account.describe_user(ACCOUNT)
 
@@ -170,7 +170,7 @@ def test_an_account_is_described_from_the_baseline_grant_set(account: Any) -> No
     # `ORACLE_MAINTAINED` arrived in 12.1, so 11.2 answers neither -- and that
     # `None` is load-bearing rather than a gap: guardrail check 5's literal deny
     # list is consulted only where check 2 could not answer, and reading a
-    # missing column as "not vendor-maintained" would switch it off (#382).
+    # missing column as "not vendor-maintained" would switch it off.
     assert state.vendor_maintained is not True, "a site-created account either way"
     assert "CONNECT" in state.roles
 
@@ -209,10 +209,10 @@ def test_a_rotation_opens_a_rollover_window_the_status_reports(account: Any) -> 
     assert after.rollover_active is True, f"status was {after.status!r}"
     assert "IN ROLLOVER" in after.status
 
-    # #181 reversed #178's placeholder here. The dictionary still does not say
-    # when the window closes -- that was measured, not assumed -- so the value is
-    # derived from the change date and the profile's rollover time, and it must
-    # land after the rotation that opened the window.
+    # The dictionary does not say when the window closes -- that was measured,
+    # not assumed -- so the value is derived from the change date and the
+    # profile's rollover time, and it must land after the rotation that opened
+    # the window.
     assert after.rollover_ends_at is not None
     assert after.password_changed_at is not None
     assert after.rollover_ends_at > after.password_changed_at
@@ -248,7 +248,7 @@ def test_the_status_stays_compound_when_two_things_are_true(account: Any) -> Non
 
 
 def test_password_change_date_tracks_a_rotation(account: Any) -> None:
-    """Password age is read from the vault's ``rotated_at`` (#87), not from this
+    """Password age is read from the vault's ``rotated_at`` (Q9), not from this
     column. What this pins is that the column means something on a release that
     has it.
 
@@ -259,17 +259,17 @@ def test_password_change_date_tracks_a_rotation(account: Any) -> None:
 
     **Skipped where the release has no column to read**, on the account's own
     answer rather than on a version. `DBA_USERS.PASSWORD_CHANGE_DATE` arrived in
-    19c: 26ai and 21c have it, 18c and 11.2 do not (measured 2026-09-08, #381 --
-    and note that `ORACLE_MAINTAINED` does *not* travel with it, which is the bug
-    `_user_row`'s three shapes now exist for). The account was created moments
-    ago by the fixture, so a release that has the column has already filled it;
-    `None` here can only mean the column is absent, which makes this a reading
-    and not a version test.
+    19c: 23.26.2.0.0 and 21.3.0.0.0 have it, 18.4.0.0.0 and 11.2.0.2.0 do not
+    (`docs/measurements.md` has the full list). Note that `ORACLE_MAINTAINED`
+    does *not* travel with it, which is what `_user_row`'s three shapes exist
+    for. The account was created moments ago by the fixture, so a release that
+    has the column has already filled it; `None` here can only mean the column
+    is absent, which makes this a reading and not a version test.
 
-    There is deliberately no capability for it, and #386 decided there will not
-    be: the query is its own probe. Where the column is absent the driver reads
-    ``SYS.USER$.PTIME`` instead, if the grant exists, which the tests after this
-    one pin.
+    There is deliberately no capability for it, and decision #386 says there will
+    not be: the query is its own probe. Where the column is absent the driver
+    reads ``SYS.USER$.PTIME`` instead, if the grant exists, which the tests after
+    this one pin.
     """
     before = account.describe_user(ACCOUNT)
     assert before is not None
@@ -285,7 +285,7 @@ def test_password_change_date_tracks_a_rotation(account: Any) -> None:
     assert after.password_changed_at > before.password_changed_at
 
 
-# ------------------------------------------------ the PTIME fallback (#386) ---
+# --------------------------------------- the PTIME fallback (decision #386) ---
 
 
 def _has_change_date_column(session: Any) -> bool:
@@ -301,8 +301,8 @@ def _has_change_date_column(session: Any) -> bool:
 
 @pytest.mark.requires_capability(OFFLINE_VERIFY)
 def test_ptime_is_the_same_clock_as_password_change_date(account: Any) -> None:
-    """**The measurement #386 rests on, pinned** -- and the guard against the
-    fallback becoming #383's second opinion.
+    """**The measurement decision #386 rests on, pinned** -- and the guard against
+    the fallback becoming a second opinion.
 
     Only meaningful where both sources exist, so it skips on 18c and 11.2 on the
     server's own answer. On every release that has both it asserts equality to
@@ -329,7 +329,7 @@ def test_ptime_is_the_same_clock_as_password_change_date(account: Any) -> None:
 
 @pytest.mark.requires_capability(OFFLINE_VERIFY)
 def test_without_the_column_the_fallback_tracks_a_rotation(account: Any) -> None:
-    """#386's acceptance: 18c reports what 21c reports natively.
+    """Decision #386: 18c reports what 21c reports natively.
 
     The same strict ``>`` and the same sleep as the test above it, for the same
     reason. Skipped where the column exists, because there the fallback is never
@@ -353,7 +353,7 @@ def test_without_the_column_the_fallback_tracks_a_rotation(account: Any) -> None
 
 
 def test_without_the_column_or_the_grant_the_date_is_absent_and_says_why(account: Any) -> None:
-    """#386's other acceptance test: the fallback stays ``None`` without the grant.
+    """Decision #386: the fallback stays ``None`` without the grant.
 
     The suite's own account holds the grant (the init script makes it), so the
     absence is taken the way the session takes it: ``user_dollar`` is what the
@@ -424,9 +424,9 @@ def test_oracle_refuses_to_build_a_role_cycle_at_all(account: Any) -> None:
 
 @pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_the_effective_rollover_time_is_carried(account: Any) -> None:
-    """#181 reads this at plan time. One query already resolved it, so reading it
-    again from a second, uncoordinated one would be a second chance to disagree
-    about the same profile."""
+    """The rollover profile check reads this at plan time. One query already
+    resolved it, so reading it again from a second, uncoordinated one would be a
+    second chance to disagree about the same profile."""
     state = account.describe_user(ACCOUNT)
 
     assert state is not None
@@ -434,11 +434,10 @@ def test_the_effective_rollover_time_is_carried(account: Any) -> None:
     assert state.password_reuse_max == "UNLIMITED", "unset, so resolved from DEFAULT"
 
 
-# ------------------------------------------------------- the password file (#296) ---
+# -------------------------------------------------------------- the password file ---
 #
-# Guardrail 3's input, read for the first time. Everything below was measured on
-# 26ai Free 23.26.2.0.0 on 2026-09-05; the tier-0 fixtures in `test_accounts.py`
-# carry the same literals.
+# Guardrail 3's input. Everything below was measured on 26ai Free 23.26.2.0.0;
+# the tier-0 fixtures in `test_accounts.py` carry the same literals.
 
 
 def test_an_ordinary_account_is_not_in_the_password_file(account: Any) -> None:
@@ -446,8 +445,7 @@ def test_an_ordinary_account_is_not_in_the_password_file(account: Any) -> None:
 
     This connection can read `V$PWFILE_USERS` -- `system` holds
     `SELECT_CATALOG_ROLE` -- so the answer is an answer, which is what makes it
-    the control for the two cases below. Before #296 nothing populated the field
-    at all and every account read `None`.
+    the control for the two cases below.
     """
     state = account.describe_user(ACCOUNT)
 
@@ -463,15 +461,14 @@ def password_file_account(session: Any) -> Iterator[Any]:
     `PASSWORD_ROLLOVER_TIME` for the tests about rollover reporting. Granting
     `SYSDBA` to an account whose profile sets that limit is refused on 21c with
     `ORA-28227: Gradual password rollover is not supported for administrative
-    users`, and allowed on 26ai -- measured on both, 2026-09-08 (#380). The
-    coupling was invisible while 26ai was the only server this ran against.
+    users`, and allowed on 26ai -- measured on 21.3.0.0.0 and 23.26.2.0.0.
 
-    The dependency was incidental in the first place: what this test needs is an
-    account an operator would have made, and rollover has nothing to do with the
-    password file. So it gets its own rather than a version guard, and the
-    difference is recorded in `docs/design/02-oracle-privileges.md` §2's
-    `V$PWFILE_USERS` subsection -- where it is a fact about the password file and
-    about profiles, rather than about this fixture.
+    The dependency is incidental: what this test needs is an account an operator
+    would have made, and rollover has nothing to do with the password file. So
+    it gets its own rather than a version guard, and the difference is recorded
+    in `docs/design/02-oracle-privileges.md` §2's `V$PWFILE_USERS` subsection --
+    where it is a fact about the password file and about profiles, rather than
+    about this fixture.
 
     The `alter user ... profile` route reaches the same state on 21c and is not
     used here for the same reason: it would preserve a coupling this test never
@@ -511,8 +508,8 @@ def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
     wrong twice over: a *local* account in a PDB does land in `V$PWFILE_USERS`
     (with its own `CON_ID`, and visible from `CDB$ROOT` as well), and it does so
     while reading `ORACLE_MAINTAINED = 'N'` and holding no roles. So this is a
-    site-created application account that every other §4 check passes, and until
-    #296 the tool would have rotated it.
+    site-created application account that every other §4 check passes, and without
+    guardrail 3 the tool would rotate it.
 
     `SYSDBA` is granted and revoked inside one test, over a `SYS AS SYSDBA`
     connection because `system` is refused it (`ORA-01031`, measured). No
@@ -628,7 +625,8 @@ def _touch(session: Any) -> None:
 
 
 def test_a_password_in_its_grace_period_is_not_read_as_expired(grace_account: Any) -> None:
-    """#309, against the database rather than against a string a test wrote.
+    """`EXPIRED(GRACE)`, read from the database rather than from a string a test
+    wrote.
 
     `EXPIRED(GRACE)` carries the token `EXPIRED`, and reading the two as one
     made `check` report a working account as expired and skip the login that
@@ -657,7 +655,7 @@ def test_the_grace_window_has_an_end_the_dictionary_reports(grace_account: Any) 
 def test_the_password_still_authenticates_during_the_grace_period(grace_account: Any) -> None:
     """The fact the whole decision rests on, and the one a status column cannot
     prove on its own. If this ever came back `fail`, reporting `IN_SYNC` for an
-    account in grace would be wrong and #309 would need reopening."""
+    account in grace would be wrong, and so would the grace reading."""
     result = grace_account.verify_password(GRACE_ACCOUNT.upper(), Secret(GRACE_PASSWORD))
 
     assert result.result == PASS
@@ -692,12 +690,11 @@ def test_setting_a_password_clears_the_grace_period(grace_account: Any) -> None:
 
 
 def test_a_grace_period_login_carries_the_servers_own_warning(grace_account: Any) -> None:
-    """#322, against the thing that could not be reasoned about.
+    """The grace-period warning, against the thing that could not be reasoned about.
 
     A grace-period login **succeeds**, so nothing is raised and the diagnostic
-    arrives on the connection instead. It was discarded on every path until #322,
-    which is CLAUDE.md's *never swallow an ORA- code* broken in the one place no
-    exception makes it obvious.
+    arrives on the connection instead. Discarding it would break CLAUDE.md's *never
+    swallow an ORA- code* in the one place no exception makes it obvious.
 
     The code is asserted only as *present*, never matched: the same condition is
     `ORA-28098` where the profile limits `PASSWORD_GRACE_TIME` and `ORA-28011`
@@ -727,7 +724,7 @@ def test_an_ordinary_login_carries_no_warning(account: Any) -> None:
 # Tier 0: string parsing, no server. The compound forms below are the ones the
 # module docstring measured on 26ai; what is asserted here is which of them mean
 # *somebody locked this account* -- the question `account suspend` and H4's
-# refusal both turn on (#463).
+# refusal both turn on.
 
 
 @pytest.mark.parametrize(
@@ -761,14 +758,14 @@ def test_a_deliberate_lock_is_recognised_in_every_compound_form(status: str) -> 
 )
 def test_a_timed_lock_is_not_a_deliberate_one(status: str) -> None:
     """`LOCKED(TIMED)` contains `LOCKED`, so a substring test gets every one of
-    the first three wrong -- which is #309's `EXPIRED(GRACE)` bug in the other
+    the first three wrong -- which is the `EXPIRED(GRACE)` bug in the other
     field. A failed-login lock is not an offboarding."""
     assert not deliberately_locked(status)
 
 
 # ------------------------------------- resolving a predicate the other way ---
 #
-# `account list` (#490) asks the mirror of the two questions above: not *what
+# `account list` asks the mirror of the two questions above: not *what
 # does this account carry* but *who carries this*. Both queries are measured
 # here rather than reasoned about, because the transitive one has to agree with
 # `ROLES_QUERY` above or the listing verb under-reports what a reset would

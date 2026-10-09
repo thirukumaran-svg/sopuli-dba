@@ -1,8 +1,8 @@
-"""Expiring an account's password against a real Oracle (#525). Tier 1.
+"""Expiring an account's password against a real Oracle. Tier 1.
 
 The statement's shape is tier 0 (`test_oracle_statements.py`). What only a server
 can answer is what `sql/oracle/08_expire_password_probe.sql` measured on 26ai
-Free 23.26.2.0.0 on 2026-09-25, twice, and each of these tests pins one row of it:
+Free 23.26.2.0.0, twice, and each of these tests pins one row of it:
 
 * a second bare ``PASSWORD EXPIRE`` is accepted **silently**, so ``changed:
   false`` has to come from the driver reading the state first (invariant 9);
@@ -10,8 +10,8 @@ Free 23.26.2.0.0 on 2026-09-25, twice, and each of these tests pins one row of i
   and expiring it is a real change;
 * a lock survives it, so the verb neither needs nor does anything about one;
 * an open rollover window survives it too, and the old password still
-  authenticates -- which is why the driver closes the window first (#525,
-  option b), and what the last test proves it did.
+  authenticates -- which is why the driver closes the window first
+  (decision #525), and what the last test proves it did.
 
 Login results are read from the server's own code. ``ORA-28001`` means the
 password authenticated and is merely expired; ``ORA-01017`` means it is dead.
@@ -199,7 +199,7 @@ def test_a_lock_is_left_alone(account: Any) -> None:
 
 
 def test_a_timed_lock_is_left_alone(clean: Any, live_oracle: Environment) -> None:
-    """The other lock: `LOCKED(TIMED)` becomes `EXPIRED & LOCKED(TIMED)` (#525 E5).
+    """The other lock: `LOCKED(TIMED)` becomes `EXPIRED & LOCKED(TIMED)`.
 
     Reached the way an estate reaches it, by failed logins, so the test pins the
     status Oracle actually produces rather than one the fixture asserted into
@@ -219,7 +219,7 @@ def test_a_timed_lock_is_left_alone(clean: Any, live_oracle: Environment) -> Non
 
 
 def test_an_open_window_is_closed_first(clean: Any, live_oracle: Environment) -> None:
-    """#525 option (b): the old password must not survive the expiry.
+    """Decision #525: the old password must not survive the expiry.
 
     Without the close, 26ai leaves `EXPIRED & IN ROLLOVER` and the old password
     answers ORA-28001 -- it still authenticates, and can set the next one.

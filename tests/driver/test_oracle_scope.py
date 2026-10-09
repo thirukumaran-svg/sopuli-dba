@@ -1,8 +1,8 @@
-"""Probing a real database (#177). Tier 1.
+"""Probing a real database. Tier 1.
 
 What to ask and how to read an answer is tier 0 (`test_capabilities.py`). What
-is left is the half only a server can answer, and #195 is the argument for
-writing it down: every probe in this module was *syntactically* fine, passed
+is left is the half only a server can answer, and decision #195 is the argument
+for writing it down: every probe in this module was *syntactically* fine, passed
 every tier-0 test, and asked Oracle a question it does not have. Nothing but a
 database catches that.
 
@@ -67,7 +67,7 @@ def _session(session_module: Any, dsn: str, oracle: TargetOracle | None = None) 
 def test_every_probe_is_a_question_oracle_can_answer(
     live_oracle: Environment, session_module: Any
 ) -> None:
-    """#195, as the test that would have caught it.
+    """The test that catches what decision #195 records.
 
     Each probe is run for its own sake. The answer is not asserted — a capability
     may legitimately be absent here, and pinning which ones would make this a
@@ -90,12 +90,13 @@ def test_every_probe_is_a_question_oracle_can_answer(
 def test_the_application_container_questions_are_ones_oracle_can_answer(
     live_oracle: Environment, session_module: Any
 ) -> None:
-    """The test above, for the two statements that are not in ``PROBES`` (#204).
+    """The test above, for the two statements that are not in ``PROBES``.
 
     They sit outside that dict because they are not capabilities -- they refine a
-    *scope* -- so the guard that exists for #195 does not reach them, and they are
-    the same kind of statement it was written for: syntactically fine, passing
-    every tier-0 test, and possibly asking Oracle a question it does not have.
+    *scope* -- so the guard that exists for decision #195 does not reach them, and
+    they are the same kind of statement it was written for: syntactically fine,
+    passing every tier-0 test, and possibly asking Oracle a question it does not
+    have.
     ``sys_context('userenv','cdb')`` is exactly that, and it shipped.
 
     An ordinary PDB answers ``NO`` to both, and that is enough. What is asserted
@@ -116,7 +117,7 @@ def test_the_application_container_questions_are_ones_oracle_can_answer(
         session.connection.cursor() as cursor,
     ):
         # The one release where `ORA-02003` is not a typo, told apart from a typo
-        # by a *correctly spelled* attribute of the same family (#382).
+        # by a *correctly spelled* attribute of the same family.
         # `CON_NAME` exists on every release from 12.1; where it raises too, this
         # database has no containers at all and the two below cannot exist by
         # definition. Where it answers and they do not, the statement is wrong --
@@ -193,7 +194,7 @@ def test_the_scope_is_probed_once_and_cached(live_oracle: Environment, session_m
 def test_a_wrong_container_is_caught_against_a_real_database(
     live_oracle: Environment, session_module: Any
 ) -> None:
-    """#177's assertion check, on the estate mistake it exists for.
+    """The scope assertion, on the estate mistake it exists for.
 
     A `dsn:` edit that repointed a target at a different container leaves a file
     that loads perfectly and connects perfectly, and nothing but the connection
@@ -211,9 +212,9 @@ def test_a_wrong_container_is_caught_against_a_real_database(
         found = session.scope().container
         if found is None:
             # A non-CDB has no container to name, and the refusal still fires on
-            # the declaration alone -- measured on 11g, where the message reads
-            # `found scope='non_cdb' container=None` (#382). The assertion below
-            # is about the *found* name appearing next to the declared one, which
+            # the declaration alone -- measured on 11g XE 11.2.0.2.0, where the
+            # message reads `found scope='non_cdb' container=None`. The assertion below is
+            # about the *found* name appearing next to the declared one, which
             # needs there to be a found one.
             return
         assert found in message, "and so does the one the connection actually found"

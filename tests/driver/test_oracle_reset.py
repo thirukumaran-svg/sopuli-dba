@@ -1,4 +1,4 @@
-"""Resetting a personal account's password against a real Oracle (#441). Tier 1.
+"""Resetting a personal account's password against a real Oracle. Tier 1.
 
 The statement text is tier 0 (`test_oracle_statements.py`) and so is the
 component-wise status parse (`test_oracle_accounts.py`). What only a server can
@@ -10,17 +10,17 @@ and the four facts this file exists for are all ones the design turned on:
   -- through Oracle's change-at-logon flow rather than by being refused, which is
   the difference between an expired password and a wrong one (§5, `ORA-28001`);
 * `LOCKED(TIMED)` is cleared on the way past and a deliberate `LOCKED` is
-  refused, which is H4 (#455) and the one place this verb and `account suspend`
+  refused, which is H4 and the one place this verb and `account suspend`
   have to agree about what a status means;
 * the **rollover window is closed by default**, so the old password stops
   working -- and kept where the caller asks, where it does not. §4.3 decided the
   default the opposite way to UC-1 and this is where that claim meets a database.
 
 The fifth is a refusal rather than a behaviour: an expiring reset of an account
-on a rollover profile is refused before any DDL, because #455's Q7 measured that
-`PASSWORD EXPIRE` does *not* end the window -- the old password answers
-`ORA-28001` rather than `ORA-01017`, so it still authenticates and is itself a
-way to set the new one.
+on a rollover profile is refused before any DDL, because
+`sql/oracle/07_lock_and_rollover_probe.sql` measured that `PASSWORD EXPIRE` does
+*not* end the window -- the old password answers `ORA-28001` rather than
+`ORA-01017`, so it still authenticates and is itself a way to set the new one.
 """
 
 from __future__ import annotations
@@ -124,13 +124,12 @@ def account(session: Any) -> Iterator[Any]:
 def rollover_account(session: Any) -> Iterator[Any]:
     """An account whose profile grants a one-hour window.
 
-    **No try/except around the setup** (Copilot's review of #504). The first
-    draft skipped on any exception, which reads as tolerance for 18c and 11g --
-    where the init script's guarded `CREATE PROFILE` does not run -- and is
-    really tolerance for anything at all: a missing grant, a typo in the DDL, a
-    database that went away. Every one of those would have reported green while
-    running none of these cases, which is the failure `04-testing.md` §1 calls
-    worse than a red suite.
+    **No try/except around the setup.** Skipping on any exception would read as
+    tolerance for 18c and 11g -- where the init script's guarded `CREATE PROFILE`
+    does not run -- and is really tolerance for anything at all: a missing
+    grant, a typo in the DDL, a database that went away. Every one of those would
+    report green while running none of these cases, which is the failure
+    `04-testing.md` §1 calls worse than a red suite.
 
     The release is declared instead, by `@pytest.mark.requires_capability` on
     each test below. That is the mechanism the suite already has for exactly this
@@ -232,7 +231,7 @@ def test_a_seen_reset_expires_the_account(account: Any, live_oracle: Environment
 
 
 def test_a_timed_lock_is_cleared_on_the_way_past(account: Any, live_oracle: Environment) -> None:
-    """H4 (#455): a reset unlocks `LOCKED(TIMED)` by default.
+    """H4: a reset unlocks `LOCKED(TIMED)` by default.
 
     The account is locked the way an estate reaches it -- by getting the password
     wrong -- and the reset is the whole fix: `IDENTIFIED BY` alone leaves the lock
@@ -327,8 +326,8 @@ def test_keeping_the_window_leaves_the_old_password_working(
 def test_an_expiring_reset_is_refused_on_a_rollover_profile(
     rollover_account: Any, live_oracle: Environment
 ) -> None:
-    """#455's Q7, as a refusal. Expiring does **not** end the window, so the seen
-    path would leave a second live password behind it.
+    """The rollover probe's finding, as a refusal. Expiring does **not** end the
+    window, so the seen path would leave a second live password behind it.
 
     Both entry points refuse, and both are asserted: the plan-time call a verb
     makes before drawing a password, and the reset itself, which asks again
@@ -356,16 +355,16 @@ def test_the_plan_time_call_says_nothing_where_no_window_is_granted(account: Any
 def test_a_window_open_under_a_profile_since_set_to_zero_is_still_closed(
     session: Any, live_oracle: Environment
 ) -> None:
-    """The condition the grant alone would miss (Copilot's review of #504).
+    """The condition the grant alone would miss.
 
     Its own profile rather than the shared fixture's, because the setup mutates
     one: a test that altered `sopuli_rollover` would change what every other
     rollover test sees.
 
-    **Measured twice on 26ai before this was written**, because the reasoning and
-    the behaviour disagree. Setting `PASSWORD_ROLLOVER_TIME` to zero leaves the
+    **Measured twice on 26ai Free 23.26.2.0.0**, because the reasoning and the
+    behaviour disagree. Setting `PASSWORD_ROLLOVER_TIME` to zero leaves the
     status reading `OPEN & IN ROLLOVER` while the old password is *already* dead
-    -- so the review's stated consequence does not hold on this release, and what
+    -- so the old password does not survive the change on this release, and what
     is actually wrong is that the status lies. Closing it makes the status true,
     and on a release where the old password does outlive the profile change it
     does the safety-critical thing as well.
@@ -398,17 +397,17 @@ def test_a_window_open_under_a_profile_since_set_to_zero_is_still_closed(
 def test_an_inadmissible_password_is_refused_before_the_account_is_unlocked(
     account: Any, live_oracle: Environment
 ) -> None:
-    """The ordering bug Copilot's review of #504 found, as a regression test.
+    """The unlock must not go out before the password is known to be admissible.
 
-    Invariant 11 refuses a password containing `"` rather than escaping it, and
-    that refusal used to be discovered while building statement 2 -- *after*
-    statement 1 had already unlocked the account. A reset that raised would have
-    left a timed-locked account open on behalf of an operation that never
+    Invariant 11 refuses a password containing `"` rather than escaping it. If
+    that refusal were discovered while building statement 2, it would come
+    *after* statement 1 had already unlocked the account. A reset that raised
+    would leave a timed-locked account open on behalf of an operation that never
     happened, which is a state change from a failed run.
 
-    The account being still locked afterwards is the whole assertion, and it
-    fails against the code this replaces: a list literal evaluates left to right,
-    so the unlock went out and the build raised after it.
+    The account being still locked afterwards is the whole assertion. It fails
+    if the statements are built as a list literal, which evaluates left to right:
+    the unlock goes out and the build raises after it.
 
     `PasswordNotAdmissibleError` rather than a bare `Exception`, so the test
     cannot pass on some unrelated failure that also left the account locked --
@@ -427,7 +426,7 @@ def test_an_inadmissible_password_is_refused_before_the_account_is_unlocked(
     assert _logon(live_oracle, OLD) == "ORA-28000"
 
 
-# ----------------------------------------------- a failure half way (#528) ---
+# ------------------------------------------------------ a failure half way ---
 
 
 def _fail_statement(session: Any, monkeypatch: pytest.MonkeyPatch, number: int) -> None:
@@ -456,10 +455,10 @@ def _fail_statement(session: Any, monkeypatch: pytest.MonkeyPatch, number: int) 
 def test_an_unlock_that_committed_before_the_set_failed_is_reported(
     account: Any, live_oracle: Environment, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The unlock is not taken back, so the failure carries it (#528).
+    """The unlock is not taken back, so the failure carries it.
 
-    Before this the method only raised, and the command reported a `LOCKED(TIMED)`
-    account as untouched while it was in fact open.
+    A method that only raised would let the command report a `LOCKED(TIMED)`
+    account as untouched while it is in fact open.
     """
     _create(account, profile=LOCKOUT_PROFILE)
     for _ in range(3):
@@ -495,8 +494,8 @@ def test_a_set_that_committed_before_the_close_failed_is_reported(
     """The serious case: the new password is live and so is the old one.
 
     Both logons are asserted because both are the point -- the error has to say
-    the password was set, since the caller hands it over on the strength of that
-    (#528), and the old one still working is why the row cannot read as success.
+    the password was set, since the caller hands it over on the strength of that,
+    and the old one still working is why the row cannot read as success.
     """
     _fail_statement(rollover_account, monkeypatch, 2)
 

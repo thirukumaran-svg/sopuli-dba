@@ -1,10 +1,10 @@
-"""Suspending an account against a real Oracle (#463). Tier 1.
+"""Suspending an account against a real Oracle. Tier 1.
 
 The statement's shape is tier 0 (`test_oracle_statements.py`) and the
 component-wise status parse is too (`test_oracle_accounts.py`). What only a
 server can answer is the pair this file exists for, both measured on 26ai Free
-23.26.2.0.0 on 2026-09-17, and both measured **twice** because one run is not a
-measurement (#326):
+23.26.2.0.0, and both measured **twice** because one run is not a
+measurement:
 
 * ``ACCOUNT LOCK`` against an already-``LOCKED`` account is accepted silently and
   leaves the status alone — so the driver reads the state first rather than
@@ -21,8 +21,7 @@ The measurement that made the second case worth a test: the naive check is
 ``status == "LOCKED"``, which is wrong in both directions. ``LOCKED(TIMED)``
 *contains* ``LOCKED``, and the status compounds — ``EXPIRED & LOCKED`` is a real
 value — so a substring test calls a timed lock deliberate and an equality test
-calls a compound one open. That is #309's ``EXPIRED(GRACE)`` bug, caught before
-it cost anything.
+calls a compound one open. That is the ``EXPIRED(GRACE)`` bug in the other field.
 """
 
 from __future__ import annotations
@@ -155,7 +154,7 @@ def test_a_timed_lock_is_not_already_suspended(account: Any, live_oracle: Enviro
     """The measurement this file exists for: `LOCKED(TIMED)` -> `LOCKED` is a change.
 
     A failed-login lock expires on its own; this one does not, and a personal
-    reset refuses a deliberate `LOCKED` (H4, #455) while it clears a timed one.
+    reset refuses a deliberate `LOCKED` (H4) while it clears a timed one.
     Reporting `changed: False` here would claim an offboarding that never
     happened.
     """

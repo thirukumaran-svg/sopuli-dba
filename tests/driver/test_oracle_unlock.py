@@ -1,4 +1,4 @@
-"""Unlocking an account against a real Oracle (#300). Tier 1.
+"""Unlocking an account against a real Oracle. Tier 1.
 
 The statement's shape is tier 0 (`test_oracle_statements.py`); the decision about
 when it is issued at all is tier 0 too (`test_apply.py`). What only a server can
@@ -9,13 +9,13 @@ answer is the pair this file exists for:
   state first rather than issuing and reporting a change (invariant 9, and the
   same measurement `finish_rollover` rests on).
 
-  **It is not inert, though, and this docstring used to say it was.** Measured on
-  26ai 23.26.2.0.0 for #455 (``sql/oracle/07_lock_and_rollover_probe.sql``, Q1):
-  the statement resets ``SYS.USER$.LCOUNT`` — 2 before, 0 after — on an account
-  that was never locked. ``ALTER USER … IDENTIFIED BY`` does not (Q2), so the two
-  differ on exactly the counter UC-1 §7's ``--lockout-margin`` reads. Reading the
-  state first is therefore load-bearing rather than merely tidy: a driver that
-  issued it unconditionally would silently zero that counter on every run;
+  **It is not inert, though.** Measured on 26ai 23.26.2.0.0
+  (``sql/oracle/07_lock_and_rollover_probe.sql``, Q1): the statement resets
+  ``SYS.USER$.LCOUNT`` — 2 before, 0 after — on an account that was never
+  locked. ``ALTER USER … IDENTIFIED BY`` does not (Q2), so the two differ on
+  exactly the counter UC-1 §7's ``--lockout-margin`` reads. Reading the state
+  first is therefore load-bearing rather than merely tidy: a driver that issued
+  it unconditionally would silently zero that counter on every run;
 * ``LOCKED(TIMED)`` — the state a failed-login limit produces, and the one an
   application account is actually found in — is cleared by the same statement as
   a deliberate ``ACCOUNT LOCK``. Oracle has one statement for both, and a tool

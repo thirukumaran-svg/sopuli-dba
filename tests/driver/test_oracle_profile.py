@@ -1,4 +1,4 @@
-"""Assigning a profile against a real Oracle (#301). Tier 1.
+"""Assigning a profile against a real Oracle. Tier 1.
 
 The decision is tier 0 — `test_strategy.py` for whether a run would move an
 account, `test_oracle_statements.py` for the statement. What only a server
@@ -14,16 +14,16 @@ answers is the pair this file exists for:
   cosmetic change and why `--strategy` refuses to be named across one.
 
 Measured on 26ai Free 23.26.2.0.0 and 21c XE 21.3.0.0.0, and run on 18c XE
-18.4.0.0.0 (#381).
+18.4.0.0.0.
 
 **The destination profile is `SOPULI_REUSE`, not `SOPULI_ROLLOVER`**, for
 everything except the one test that is about rollover limits. Both come from
 `test/oracle-init/01_test_profiles.sql`, so the suite is not asserting against a
 profile it invented in the same breath -- but that script cannot create
 `SOPULI_ROLLOVER` below 19.12 and says so rather than aborting, so on 18c and
-11g it is simply absent. Six tests here used it as "some other profile that
-exists" and failed on 18c with `resolve_profile` answering `None` (#381). What
-they need is a second profile; only `test_the_move_carries_the_new_profiles_limits`
+11g it is simply absent. A test that used it as "some other profile that
+exists" would fail on 18c with `resolve_profile` answering `None`. What the tests
+need is a second profile; only `test_the_move_carries_the_new_profiles_limits`
 needs that profile to grant a rollover window, and it declares the capability.
 """
 
@@ -179,7 +179,7 @@ def test_the_move_carries_the_new_profiles_limits(account: Any) -> None:
     """The reason assigning a profile is not cosmetic: a profile decides whether
     `ALTER USER … IDENTIFIED BY` opens a rollover window, so the regime a rotation
     would run under changes with it. This is the fact `--strategy` refuses to be
-    named across (#301).
+    named across.
 
     The only test here that may name `ROLLOVER_PROFILE`, and the reason it
     declares the capability rather than the profile: below 19.12 there is no
