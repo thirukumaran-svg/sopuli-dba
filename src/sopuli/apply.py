@@ -1,4 +1,4 @@
-"""What `creds apply` decides, before and after it touches a database (#259).
+"""What `creds apply` decides, before and after it touches a database.
 
 UC-1 §5 in one sentence: *take what the vault holds and make the database match
 it*. Invariant 6 makes the direction one-way, so nothing here ever reads a
@@ -26,10 +26,10 @@ the run would end holding a database whose password is in no vault stage. That
 is the state invariant 7's ordering exists to prevent, and it is cheaper not to
 enter it than to report it.
 
-Since #300 there is one way past that, and it is not an exception to it: where
-the policy declares §5's ``unlock_if_locked``, the run *removes* the reason the
-change could not be confirmed and then asks the same question again. What may
-never happen is the change going ahead with the lock still there --
+There is one way past that, and it is not an exception to it: where the policy
+declares §5's ``unlock_if_locked``, the run *removes* the reason the change
+could not be confirmed and then asks the same question again. What may never
+happen is the change going ahead with the lock still there --
 :func:`settled_before_acting` is asked twice for that reason, and its default is
 still to settle.
 
@@ -57,10 +57,10 @@ accounts *in that document* confirmed -- so a run touching two documents may
 promote one and not the other.
 
 **Every pair the configuration declares, not only the ones this run visited**
-(#406). The pairs a selector excluded are found by ``cli._left_out`` from the
-config and the document, and a document with any is held back rather than
-promoted on the strength of a subset; :func:`summarise_document` is then only
-asked about a run that covered everything the promotion needs.
+(decision #406). The pairs a selector excluded are found by ``cli._left_out``
+from the config and the document, and a document with any is held back rather
+than promoted on the strength of a subset; :func:`summarise_document` is then
+only asked about a run that covered everything the promotion needs.
 """
 
 from __future__ import annotations
@@ -120,7 +120,7 @@ PENDING_APPLY = "PENDING_APPLY"
 #: which was meant.
 #:
 #: An account a client-side guardrail would not let this run touch
-#: (``02-oracle-privileges.md`` §4, #286). The schema's own word, and
+#: (``02-oracle-privileges.md`` §4). The schema's own word, and
 #: `creds finish-rollover` already uses it for the neighbouring idea: something
 #: the tool declined to do here, as opposed to something it tried and could not.
 #:
@@ -133,7 +133,7 @@ PENDING_APPLY = "PENDING_APPLY"
 SKIPPED = "SKIPPED"
 
 #: The same guardrail refusal, on an account the operator **named**
-#: (``02-oracle-privileges.md`` §4, #297). ``ERROR``'s spelling because it is
+#: (``02-oracle-privileges.md`` §4). ``ERROR``'s spelling because it is
 #: `check`'s word for "this did not happen and you need to know", and because
 #: §4's whole argument for splitting the two cases is that one of them must not
 #: report success:
@@ -215,7 +215,7 @@ class Source:
     pending_staged: bool = False
     #: The document version the value was read at, where the caller knows it.
     #: Not read by anything in this module; it is what ``password.applied``
-    #: names as the version it applied (#535), and ``None`` for a caller that
+    #: names as the version it applied, and ``None`` for a caller that
     #: built a source without a stored document behind it.
     version: int | None = None
 
@@ -284,7 +284,7 @@ def source_for(document: Any, ref: SecretRef, *, stage: str | None = None) -> So
 
 
 def attributes_for(config: Config, binding: Binding) -> AccountAttributes:
-    """The non-password attributes declared for this account (UC-1 §5, #300).
+    """The non-password attributes declared for this account (UC-1 §5).
 
     The same chain :func:`sopuli.generate.policy_for` reads -- the binding's own
     ``policy:``, then ``defaults.policy`` -- and **lenient where that one
@@ -358,7 +358,7 @@ def settled_before_acting(
       See the module docstring: the change would succeed and could never be
       confirmed, which is the one state the ordering in UC-1 §3 exists to keep a
       run out of. ``unlock`` is §5's opt-in attribute having been declared for
-      this account (#300), and it is the *permission* rather than the act: the
+      this account, and it is the *permission* rather than the act: the
       caller unlocks and asks again, so this function is what decides both
       whether the estate may be acted on and whether the unlock got it there. The
       default is off, because an account that was locked and is still locked when
@@ -514,7 +514,7 @@ def after_change(user: UserState, verification: VerifyResult) -> Outcome:
 
 # -------------------------------------------------------------- the redraw ---
 
-#: How many passwords one account may be given in a single run (#312, #268).
+#: How many passwords one account may be given in a single run (decision #268).
 #:
 #: Three, and the number is a judgement about what a refusal *means* rather than
 #: about cost. A server that has refused three independent draws from the same
@@ -532,11 +532,11 @@ DRAW_LIMIT = 3
 class Redraw:
     """Whether a refused password may be drawn again, and why not when it may not.
 
-    A value rather than a bool, because every refusal here has to be *reported*.
-    UC-1 §6.4's whole complaint about the old behaviour was a run that said
-    "``ORA-28003``" and left the operator to work out what the tool had decided
-    not to do about it -- and three of the four answers below are the tool
-    declining to act, which is exactly the thing that has to be visible.
+    A value rather than a bool, because every refusal here has to be *reported*. A
+    run that said only "``ORA-28003``" would leave the operator to work out what the
+    tool had decided not to do about it (UC-1 §6.4) -- and three of the four answers
+    below are the tool declining to act, which is exactly the thing that has to be
+    visible.
     """
 
     allowed: bool
@@ -545,7 +545,7 @@ class Redraw:
 
 
 def may_redraw(error: Any, origin: Any, *, drawn: int, limit: int = DRAW_LIMIT) -> Redraw:
-    """Whether this account's password may be drawn again (#312, deciding #268).
+    """Whether this account's password may be drawn again (decision #268).
 
     Pure, and deliberately knows nothing about Oracle. ``error`` is asked one
     vendor-neutral question -- :attr:`~sopuli.driver.protocol.DriverError.regenerate`,
@@ -563,8 +563,8 @@ def may_redraw(error: Any, origin: Any, *, drawn: int, limit: int = DRAW_LIMIT) 
     a rule of its own: of the two ways to be wrong about an unknown code, looping
     is the one that locks accounts.
 
-    **The tool did not draw this password.** ``origin`` is what #311 staged
-    beside the value. Only :data:`~sopuli.payload.GENERATED` may be replaced:
+    **The tool did not draw this password.** ``origin`` is what `creds generate`
+    stages beside the value. Only :data:`~sopuli.payload.GENERATED` may be replaced:
     ``supplied`` means an external system dictated it, and absent means a document
     written before the key existed, which is the same case without the evidence.
     Redrawing either would make the tool disagree with whoever owns the value,
@@ -589,7 +589,7 @@ def _unredrawable(origin: Any) -> str:
 
     Three cases and not two, because the operator's next move differs. *Supplied*
     sends them to whoever dictated the value; *absent* sends them to a document
-    staged before #311 existed, which the next `creds generate` heals on its own;
+    staged with no ``origin``, which the next `creds generate` heals on its own;
     and a value this tool does not recognise sends them to the document itself,
     which something other than `generate` has written to.
 
@@ -660,13 +660,13 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
         if entry.replaces is not None:
             patches.append(layout.patch(PREVIOUS, entry.replaces))
         patches.append(layout.patch(PENDING, REMOVE))
-        # `origin` describes what `pending` held, so it is cleared with it (#311).
-        # Leaving it behind would leave a document asserting the provenance of a
-        # stage that no longer has a value, and the next reader of it would be
-        # #312 deciding whether it may redraw. "Cleared" is RFC 7396's clearing
-        # and not a root delete: promoting the last staged account empties the
-        # container rather than removing the key, exactly as `pending` above has
-        # always done. `tests/test_payload.py` pins that and says why it stays.
+        # `origin` describes what `pending` held, so it is cleared with it. Leaving
+        # it behind would leave a document asserting the provenance of a stage that
+        # no longer has a value, and the next reader of it would be `may_redraw`
+        # deciding whether it may redraw. "Cleared" is RFC 7396's clearing and not a
+        # root delete: promoting the last staged account empties the container
+        # rather than removing the key, exactly as `pending` above does.
+        # `tests/test_payload.py` pins that and says why it stays.
         patches.append(layout.patch(ORIGIN, REMOVE))
         patches.append(layout.patch("rotated_at", stamp))
         patches.append(layout.patch("rotated_by", by))
@@ -719,7 +719,7 @@ def exit_code_for(states: Sequence[str], *, promoted: bool, promotable: bool) ->
     must not exit 0 just because every target confirmed.
 
     **:data:`SKIPPED` is not counted at all**, in either the numerator or the
-    denominator (#286). A guardrail-refused account is not a target that failed;
+    denominator. A guardrail-refused account is not a target that failed;
     it is one this run was never going to act on, and §4's rule is explicitly that
     the run does the rest of its job. Counting it as unconfirmed would exit 4 --
     "some of it worked, run `apply --repair`" -- on a run where everything the
@@ -769,7 +769,7 @@ def _nothing_to_apply(requested: str | None) -> str:
     """Why there is nothing to apply, in words that name the operator's next step.
 
     Three different situations wear the same shape, and only one of them is
-    "run generate". A rollback with no `previous` is bounded by design (Q3, #84)
+    "run generate". A rollback with no `previous` is bounded by design (Q3)
     and there is nothing to run; an explicit `pending` that is not there means
     the staging step has not happened.
     """

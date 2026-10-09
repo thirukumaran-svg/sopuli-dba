@@ -1,18 +1,19 @@
-"""What `creds generate` writes, and how it is grouped into writes (#254).
+"""What `creds generate` writes, and how it is grouped into writes.
 
 Stage a new password per the policy into the vault's ``pending`` slot. The first
 credential mutation, and it changes nothing in a database -- which is what lets it
-take the advisory lock at all: the lock lives in the vault (Q2, #83), so a
+take the advisory lock at all: the lock lives in the vault (Q2), so a
 database-side one could not have protected the write below.
 
-**It does now connect, and that argument is untouched** (#317). UC-1 §4 step 2
+**It connects to read, and that does not change the argument.** UC-1 §4 step 2
 reads one constraint per selected target -- how long a password may be, in that
-database's own character set -- because a policy written by somebody who never saw
-the estate can otherwise stage a `pending` no target can hold. The lock's case was
-never "this command opens no session"; it was that there is no *change* here for a
-database-side lock to protect, and reading does not make one. The connecting is
-:func:`sopuli.cli._constraints_for`; the merge is :mod:`sopuli.constraints`; what
-arrives here is a :class:`~sopuli.passwords.ByteLimit` or ``None``.
+database's own character set -- because a policy written by somebody who never
+saw the estate can otherwise stage a `pending` no target can hold. The lock's
+case was never "this command opens no session"; it was that there is no *change*
+here for a database-side lock to protect, and reading does not make one. The
+connecting is :func:`sopuli.cli._constraints_for`; the merge is
+:mod:`sopuli.constraints`; what arrives here is a
+:class:`~sopuli.passwords.ByteLimit` or ``None``.
 
 Pure, like :mod:`sopuli.check`. Drawing is :mod:`sopuli.passwords` and writing is
 :mod:`sopuli.store.credentials`; what lives here is the arithmetic between them --
@@ -20,24 +21,23 @@ which policy applies to which account, and which accounts share a write.
 
 Three things here are decisions rather than transcription:
 
-**One document is one write, however many accounts land in it.** Q7 (#85) made
-one secret per application the documented default, so generating for three
-accounts of one application is *one* CAS write carrying three fields -- not
-three writes producing three versions, two of which describe states that were
-never intended. :func:`sopuli.payload.merge` exists for exactly this and says so:
-"two accounts staged in one run both live under ``pending``, and a shallow update
-would file the second and lose the first."
+**One document is one write, however many accounts land in it.** Q7 made one
+secret per application the documented default, so generating for three accounts
+of one application is *one* CAS write carrying three fields -- not three writes
+producing three versions, two of which describe states that were never intended.
+:func:`sopuli.payload.merge` exists for exactly this and says so: "two accounts
+staged in one run both live under ``pending``, and a shallow update would file
+the second and lose the first."
 
-**A second run replaces ``pending`` and reports ``changed: true``** (#254). That
-is UC-1 §4 as written, and it is **outside invariant 9 rather than an oversight**:
-the invariant governs *convergent* commands, and drawing a fresh secret has no
-fixed point to converge on. `apply` converges the database on the vault and
-`check` mutates nothing; those are the commands the invariant is about.
+**A second run replaces ``pending`` and reports ``changed: true``**
+(decision #254). That is UC-1 §4 as written, and it is **outside invariant 9
+rather than an oversight**: the invariant governs *convergent* commands, and
+drawing a fresh secret has no fixed point to converge on. `apply` converges the
+database on the vault and `check` mutates nothing; those are the commands the
+invariant is about.
 
-It read *an explicit exemption* until #454, which put UC-2's reset on the same
-footing for the same reason and restated the invariant as a scope rule rather
-than a list. Nothing here changes; what changed is that this is no longer a
-special case of one. CLAUDE.md carries the rule.
+UC-2's reset is outside the invariant for the same reason. The invariant is a
+scope rule (H7), not a list of exemptions, and CLAUDE.md carries it.
 
 **Each account is drawn separately, even when they share a document.** Sharing a
 document is a storage layout, not a shared credential -- `acme_web_user` and
@@ -63,10 +63,9 @@ from sopuli.payload import GENERATED, ORIGIN, PENDING, SUPPLIED, merge
 from sopuli.secrets import Secret
 from sopuli.store.credentials import staged_patch
 
-#: What ``--promote`` reports (#257): the vault holds this password and no
-#: database has been asked. A new value rather than a reused one, and #257's
-#: blocker 2 is the argument -- each of the four candidates asserts something
-#: untrue, and ``PENDING_APPLY`` in particular would send `check` and `apply`
+#: What ``--promote`` reports (decision #257): the vault holds this password and
+#: no database has been asked. A new value rather than a reused one: ``SKIPPED``
+#: would not be true, and ``PENDING_APPLY`` would send `check` and `apply`
 #: looking for a ``pending`` that does not exist.
 #:
 #: **Not the same claim as ``PENDING_APPLY`` with the stage swapped.** That state
@@ -74,13 +73,12 @@ from sopuli.store.credentials import staged_patch
 #: to run is `apply`, which will find the databases behind the vault and converge
 #: them.
 #:
-#: **Here rather than in the view** (#395). Every other member of the schema's
-#: ``state`` enum is declared in the domain module of the verb that reports it --
-#: ``IN_SYNC`` in `check`, ``PENDING_APPLY`` in `apply` -- and this one sat in
-#: ``output/generate_view.py`` alone. That was invisible until the palette needed
-#: to map every state in one place and could not import a view without a cycle:
-#: the output layer imports the domain, so a state living in the output layer is
-#: a state nothing else can name.
+#: **Here rather than in the view.** Every other member of the schema's
+#: ``state`` enum is declared in the domain module of the verb that reports it
+#: -- ``IN_SYNC`` in `check`, ``PENDING_APPLY`` in `apply`. The palette
+#: (decision #395) maps every state in one place and cannot import a view
+#: without a cycle: the output layer imports the domain, so a state living in
+#: the output layer is a state nothing else can name.
 VAULT_ONLY = "VAULT_ONLY"
 
 __all__ = [
@@ -142,7 +140,7 @@ class DocumentWrite:
         the interesting one, and it is asserted on what the patch does not
         contain.
 
-        **Two keys per account when staging** (#311): the value, and
+        **Two keys per account when staging**: the value, and
         :data:`~sopuli.payload.ORIGIN` beside it saying whether the tool drew it
         or an operator supplied it. They go in one patch because they describe
         one value -- a write that landed the password and not its origin would
@@ -150,10 +148,10 @@ class DocumentWrite:
         the key exists to remove.
 
         **Only when staging.** ``origin`` is a property of ``pending``, not of the
-        credential, so a write that puts a value straight into ``current`` writes
-        none: there is nothing staged for it to describe, and what applications
-        are already holding is not a thing #312 may redraw. Absent then reads as
-        unknown, which is the same refusal by the same rule.
+        credential, so a write that puts a value straight into ``current`` writes none:
+        there is nothing staged for it to describe, and what applications are already
+        holding is not a thing :func:`sopuli.apply.may_redraw` may redraw. Absent then
+        reads as unknown, which is the same refusal by the same rule.
         """
         patches: list[dict[str, Any]] = []
         for candidate in self.candidates:
@@ -226,10 +224,10 @@ def _refuse_colliding_stages(write: DocumentWrite) -> None:
     cleanly. That is the layout `01-configuration.md`'s worked example and the
     sharing fixtures use.
 
-    **The load-time refusal is #255 and is now in place**, so a file spelled this
-    way no longer reaches here. This guard stays for the case that one cannot
-    cover: it fires only where the store is known, and a binding whose ``vault``
-    C15 (#118) completes later from a profile or ``SOPULI_VAULT`` has no backend
+    **:mod:`sopuli.config.bindings` refuses this spelling at load time**, so a file
+    spelled this way does not reach here. This guard stays for the case that one
+    cannot cover: it fires only where the store is known, and a binding whose
+    ``vault`` C15 completes later from a profile or ``SOPULI_VAULT`` has no backend
     while the file is being read -- so whether the rule applies is not knowable
     there. Those arrive here unchecked.
 
@@ -293,8 +291,8 @@ def _every_violation(
     policy's own rules, and no byte rule to apply, which is the offline and
     unreachable case.
 
-    "Once" is per distinct violation, and a byte violation names its target
-    (#598), so two targets that cannot hold the password report twice -- each
+    "Once" is per distinct violation, and a byte violation names its target,
+    so two targets that cannot hold the password report twice -- each
     with the target it came from -- while a policy rule that every target agrees
     about is still reported once.
     """
@@ -340,13 +338,13 @@ def candidate_for(
     generator would be a different feature wearing this one's name.
 
     ``readings`` is every answered target's limit, paired with the target so a
-    refusal can name it (#598), and the two paths use it differently for a
-    reason :mod:`sopuli.constraints` sets out: a **drawn** password is ASCII by
-    §8, so only the smallest byte count can bind it, while a **supplied** one is
-    whatever an external system dictated and has to satisfy every target it will
-    be applied to. A password storable in one character set and not another is
-    the deterministic failure #317 exists to move earlier, and checking only the
-    smallest limit would let exactly that one through.
+    refusal can name it, and the two paths use it differently for a reason
+    :mod:`sopuli.constraints` sets out: a **drawn** password is ASCII by §8, so only
+    the smallest byte count can bind it, while a **supplied** one is whatever an
+    external system dictated and has to satisfy every target it will be applied to.
+    A password storable in one character set and not another is the deterministic
+    failure that reading the limits moves earlier, and checking only the smallest
+    limit would let exactly that one through.
 
     Checking a supplied password once per limit re-runs the policy half each
     time, which is deliberate: the alternative is a second entry point that

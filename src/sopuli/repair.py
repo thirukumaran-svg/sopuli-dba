@@ -6,7 +6,7 @@ now cuts both ways. A document from an older minor version has to stay readable
 here, so nothing below requires a property the schema marks optional, and
 nothing branches on ``schema_version``.
 
-What the flag is for, and what it is not (UC-1 §``--repair``, #264, #391):
+What the flag is for, and what it is not (UC-1 §``--repair``; decision #264):
 
 **It buys logins, not capability.** ``creds apply`` is already idempotent, so an
 unnarrowed repair converges the estate correctly and expensively -- one login per
@@ -23,11 +23,10 @@ the run it stopped would have been safe.
 
 **A document describing a different estate is refused**, because it is the one
 failure those two properties do not catch. That check reads
-``invocation.config_files``, *not* ``config.sources[]`` as #264 and UC-1 §5
-originally said: the ``config`` section is emitted by ``config show`` and
-``target list`` only, so it is absent from every document this flag can be
-handed. ``config_files`` was declared and never written until #402; a document
-produced before that carries none, and is refused for the reason below rather
+``invocation.config_files``, *not* ``config.sources[]``: the ``config`` section
+is emitted by ``config show`` and ``target list`` only, so it is absent from
+every document this flag can be handed. A document from a build that did not
+write ``config_files`` carries none, and is refused for the reason below rather
 than waved through.
 
 Refusals here are :class:`~sopuli.config.errors.ArgumentError`, so exit 2 and no
@@ -69,14 +68,14 @@ PRODUCERS = ("creds.apply", "creds.check")
 #: step with it deliberately: an operator filtering by hand and this flag must
 #: not disagree about what a partial run left behind.
 #:
-#: **The filter is the row's state, never the document's exit code**, and that
-#: is deliberate rather than an omission (raised in review on #391). Refusing a
-#: producer by exit code would refuse an ``apply`` that exited 1 -- every target
-#: failed, nothing changed anywhere -- which is the document most worth
-#: repairing from. It would also refuse a ``check`` that exited 1 because one
-#: target was unreachable, where retrying is exactly the remedy. Nothing is lost
-#: by accepting them: ``apply`` verifies every pair before it touches it, and
-#: invariant 5 still bounds what it can reach.
+#: **The filter is the row's state, never the document's exit code**, and that is
+#: deliberate rather than an omission (decision #264). Refusing a producer by exit
+#: code would refuse an ``apply`` that exited 1 -- every target failed, nothing
+#: changed anywhere -- which is the document most worth repairing from. It would
+#: also refuse a ``check`` that exited 1 because one target was unreachable, where
+#: retrying is exactly the remedy. Nothing is lost by accepting them: ``apply``
+#: verifies every pair before it touches it, and invariant 5 still bounds what it
+#: can reach.
 #:
 #: ``ROLLOVER_ACTIVE`` is confirmed because the window is open and both passwords
 #: authenticate: the target took the new one, and what remains is
@@ -174,12 +173,12 @@ def _load(path: Path) -> dict[str, Any]:
         or not isinstance(document.get("invocation", {}), dict)
         or not isinstance(document.get("results") or [], list)
     ):
-        # Every shape this module goes on to walk, checked in one place. Found
-        # in review on #391: an `invocation` that was a string reached
-        # `_refuse_foreign` and raised `AttributeError`, and a `config_files`
-        # holding numbers reached `os.path.abspath` and raised `TypeError` --
-        # both exit 1 with a traceback, from a reader whose whole contract is
-        # that a file it cannot use is exit 2 with a message.
+        # Every shape this module goes on to walk, checked in one place. Without it, an
+        # `invocation` that was a string would reach `_refuse_foreign` and raise
+        # `AttributeError`, and a `config_files` holding numbers would reach
+        # `os.path.abspath` and raise `TypeError` -- both exit 1 with a traceback, from
+        # a reader whose whole contract is that a file it cannot use is exit 2 with a
+        # message.
         raise ArgumentError(
             f"{path}: is JSON, but not a run document",
             at=AT_REPAIR,
@@ -200,17 +199,17 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _refuse_foreign(document: dict[str, Any], *, path: Path, sources: Sequence[Path]) -> None:
-    """Refuse a document produced over a different configuration (#264).
+    """Refuse a document produced over a different configuration.
 
     The one failure the narrowing properties do not catch: a repair aimed at the
     wrong estate names pairs that may well exist in this one, and would then act
     on them.
 
-    **A document carrying no ``config_files`` is refused rather than trusted.**
-    Every document written before #402 is in that position. The check is on
-    whether the field is *there*, not on what version wrote it, so nothing here
-    needs to know when the field arrived -- which is invariant 3's habit applied
-    to a document instead of a database.
+    **A document carrying no ``config_files`` is refused rather than trusted.** A
+    document from a build that did not write the field is in that position. The
+    check is on whether the field is *there*, not on what version wrote it, so
+    nothing here needs to know when the field arrived -- which is invariant 3's
+    habit applied to a document instead of a database.
     """
     declared = document.get("invocation", {}).get("config_files")
     if (
@@ -231,9 +230,9 @@ def _refuse_foreign(document: dict[str, Any], *, path: Path, sources: Sequence[P
     theirs = [_absolute(one) for one in declared]
     if _comparable(theirs) != _comparable(mine):
         # Both sides shown normalised. The document's paths are resolved by its
-        # producer (#391), but this run's may be relative as typed, and a hint
-        # that compared a resolved list against a bare `estate.yaml` would ask
-        # the reader to do the normalising in their head.
+        # producer, but this run's may be relative as typed, and a hint that compared a
+        # resolved list against a bare `estate.yaml` would ask the reader to do the
+        # normalising in their head.
         raise ArgumentError(
             f"{path}: was produced over a different configuration",
             at=AT_REPAIR,
@@ -244,12 +243,11 @@ def _refuse_foreign(document: dict[str, Any], *, path: Path, sources: Sequence[P
 def _absolute(path: str) -> str:
     """One path, made absolute and user-expanded, but still readable.
 
-    ``abspath`` resolves against *this* run's working directory, which is right
-    for this run's own sources and meaningless for the document's -- those are
-    resolved by their producer before being written (#391, #402). A relative
-    entry in a document therefore stays relative here and fails the comparison,
-    which is the intended answer: it came from a build that did not record where
-    it was standing.
+    ``abspath`` resolves against *this* run's working directory, which is right for
+    this run's own sources and meaningless for the document's -- those are resolved
+    by their producer before being written. A relative entry in a document therefore
+    stays relative here and fails the comparison, which is the intended answer: it
+    came from a build that did not record where it was standing.
     """
     return os.path.abspath(os.path.expanduser(path))
 
@@ -266,13 +264,12 @@ def _comparable(paths: Any) -> tuple[str, ...]:
     runs may have spelled one path either way; ``abspath`` for *this* run's
     side, which is whatever was typed on the command line.
 
-    **It does not make the comparison sound on its own**, and an earlier version
-    of this leaned on it as though it did (found in review on #391). ``abspath``
-    runs during the repair, so it resolves against the repairing run's working
-    directory -- which tells you nothing about the one the document was written
-    in. Two different files both called ``estate.yaml`` compared equal. The
-    producer resolves before writing, and that is what fixed it; this stays for
-    spelling.
+    **It does not make the comparison sound on its own.** ``abspath`` runs during
+    the repair, so it resolves against the repairing run's working directory --
+    which tells you nothing about the one the document was written in, so two
+    different files both called ``estate.yaml`` would compare equal. The producer
+    resolves before writing, and that is what makes the comparison sound; this is
+    for spelling.
 
     Order is kept rather than sorted: it is the layering order
     (``01-configuration.md`` §5), so two runs over the same files in the

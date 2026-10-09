@@ -21,9 +21,9 @@ is written for the set rather than for that one flag: ``--confirm`` and
 ``--force``, which decision P3 keeps, belong to it too and are declared on the
 verbs that take them. ``--max-targets`` is not in that set, because there is no
 such flag: ``safety.max_targets`` does not declare ``Layer.CLI``, and
-``00-principles.md`` P5 says why it is a setting rather than a flag (decision
-#392). ``--force`` belongs by *position* though not by merge policy: it
-overrides account guardrails rather than ratcheting a safety setting
+``00-principles.md`` P5 says why it is a setting rather than a flag
+(decision #392). ``--force`` belongs by *position* though not by merge policy:
+it overrides account guardrails rather than ratcheting a safety setting
 (``02-oracle-privileges.md`` §4), but group position and verb position express
 the same intent for it as for the others, so there is nothing to merge there
 either. Group position and verb position express identical intent for a safety
@@ -324,7 +324,7 @@ class Invocation:
     @property
     def is_json(self) -> bool:
         """Whether this run's output is a machine-readable contract -- ``json``
-        or ``jsonl`` (#9).
+        or ``jsonl``.
 
         Both, because every caller is asking the contract's question rather than
         the framing's: may a password be printed, may the handover token go to
@@ -404,7 +404,7 @@ def open_document(command: str, invocation: Invocation) -> RunDocument:
 
     Opened as soon as the command line resolves, which is before the config file
     is read: a file that turns out to be unreadable reports itself *in* a run
-    document on exit 9, and there has to be one for it to go in (J7, #8).
+    document on exit 9, and there has to be one for it to go in (J7).
     :func:`refresh_document` then fills in what the file changed.
     """
     return refresh_document(RunDocument.start(command), invocation)
@@ -575,7 +575,7 @@ def check_vault_token(group: GlobalOptions, verb: GlobalOptions) -> None:
 
     **Exit 2, and not a plan-time capability refusal.** P5 puts exit 2 at "argv
     did not resolve to a valid command and options", which is exactly this: the
-    flag is not an option the tool has. J7 (issue #8) then makes exit 2 the one
+    flag is not an option the tool has. J7 then makes exit 2 the one
     code that carries no run document, so this cannot be reported *in* a plan the
     way a missing capability is -- there is no run to describe. What it keeps
     from that mechanism is the part that matters: it fires before anything else a
@@ -625,7 +625,7 @@ def resolve_invocation(
 
     :func:`check_vault_token` is the first thing that happens either way: a
     refused flag means the invocation never resolved, so there is nothing yet to
-    describe (J7, #8).
+    describe (J7).
     """
     check_vault_token(group, verb)
 
@@ -927,7 +927,7 @@ def _pass_invocation(func: F) -> F:
         # holding a half-built document.
         #
         # The config file is read *inside* it, and that is the point: a bad file
-        # is exit 9 with a run document (J7, #8), which needs the document above
+        # is exit 9 with a run document (J7), which needs the document above
         # to be open already and this handler to be watching. Rebinding
         # `invocation` is what the handler then reports against -- the resolved
         # one if the file was read, the command line's own if it was not.

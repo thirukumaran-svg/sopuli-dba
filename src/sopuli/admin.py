@@ -1,10 +1,9 @@
-"""Resolving the admin credential: P2's four sources, at connect time (#175).
+"""Resolving the admin credential: P2's four sources, at connect time.
 
-``admin:`` has been parsed since the config layer was written
-(:mod:`sopuli.config.targets`) and validated against its target
-(:mod:`sopuli.config.references`). This module resolves it when a command
-connects. It is the database half of what :mod:`sopuli.material` did for vault material: turn a
-named source into a :class:`~sopuli.secrets.Secret`.
+``admin:`` is parsed by :mod:`sopuli.config.targets` and validated against its
+target by :mod:`sopuli.config.references`. This module resolves it when a command
+connects. It is the database half of what :mod:`sopuli.material` does for vault
+material: turn a named source into a :class:`~sopuli.secrets.Secret`.
 
 P2's bootstrap list, in its order of preference:
 
@@ -21,10 +20,9 @@ environment are I/O, and ``04-testing.md`` §4 makes the config layer I/O-free a
 an architecture requirement rather than a test convenience. The file names a
 location; this reads it, when something connects.
 
-**Resolution is a function over a ref, never a method on one** -- #137's shape,
-kept for its reason. An :class:`~sopuli.config.model.AdminCredential` that had
-been "resolved" would have to hold the value, and the guarantee ends the moment
-somebody caches one.
+**Resolution is a function over a ref, never a method on one.** An
+:class:`~sopuli.config.model.AdminCredential` that had been "resolved" would
+have to hold the value, and the guarantee ends the moment somebody caches one.
 
 **Every source arrives through a supplier the caller passes in.** ``env`` is a
 mapping, ``prompt`` is a callable, ``vault`` is a callable over a ref. Three
@@ -35,9 +33,9 @@ consequences, and the first two are the reasons:
 * ``prompt=None`` is how "nobody is at a terminal" is expressed, so the refusal
   in :func:`_from_prompt` is reachable in a test without a pty;
 * the ``vault`` branch has no implementation to wait for. Resolving a SecretRef
-  against a stored document is #183's, and this module deliberately does not
-  reimplement it -- Q7's "one rule for both layouts" would be two rules the day
-  it did.
+  against a stored document is :func:`sopuli.store.credentials.resolve`'s, and
+  this module deliberately does not reimplement it -- Q7's "one rule for both
+  layouts" would be two rules the day it did.
 """
 
 from __future__ import annotations
@@ -74,7 +72,7 @@ LOW_ASSURANCE = frozenset({ENV})
 
 #: Reads a §7 ref and returns its value. Supplied by the caller, because the
 #: store it resolves against is authenticated well before this module is reached
-#: and #183 owns what a credential document looks like.
+#: and the store layer owns what a credential document looks like.
 RefReader = Callable[[SecretRef], Secret]
 
 #: Asks for one target's admin password, given the target and the username the
@@ -151,10 +149,10 @@ class Resolved:
     flagged low-assurance wherever it is reported, and a flag that travelled
     inside the driver's input would have to be carried back out again.
 
-    This module classifies and does not decide -- the shape #172 and #173
-    settled on. Nothing here emits a warning or picks an exit code for the
-    *reporting* of a low-assurance source: the command that connects knows
-    whether this run produces a document, and it is the one that says so.
+    This module classifies and does not decide. Nothing here emits a warning or
+    picks an exit code for the *reporting* of a low-assurance source: the command
+    that connects knows whether this run produces a document, and it is the one that
+    says so.
     """
 
     credential: Credential
@@ -190,16 +188,15 @@ def prompt_key(target: ExpandedTarget, username: str | None) -> str:
       resolves the same everywhere and is one credential, while ``username:
       sopuli_{tenant}`` resolves differently per target and is thirty-four.
 
-    **Effective and not as-written**, which is the correction #196's review
-    forced. Taking it from the file alone gets both halves wrong at once. The
-    operator would be asked for one account's password while the connection used
-    another, since the variable overrides ``username:`` -- so the two differ
-    exactly when it is set. And the key would separate targets the variable has
-    just made identical: ``sopuli_{tenant}`` under ``SOPULI_DB_ADMIN_USER`` is
-    one account on thirty-four databases, and would have been asked about
-    thirty-four times. The variable is P3's layer 3 and the file is layer 4;
-    "what the configuration declares" means the resolved value, not the lowest
-    layer that had an opinion.
+    **Effective and not as-written.** Taking it from the file alone would get both
+    halves wrong at once. The operator would be asked for one account's password
+    while the connection used another, since the variable overrides ``username:`` --
+    so the two differ exactly when it is set. And the key would separate targets the
+    variable has just made identical: ``sopuli_{tenant}`` under
+    ``SOPULI_DB_ADMIN_USER`` is one account on thirty-four databases, and would have
+    been asked about thirty-four times. The variable is P3's layer 3 and the file is
+    layer 4; "what the configuration declares" means the resolved value, not the
+    lowest layer that had an opinion.
 
     Deliberately **not** the username alone, which is the tempting key and the
     unsafe one: two PDBs can hold same-named local accounts with different
@@ -237,15 +234,15 @@ class PasswordPrompt:
     invariant 2's guarantee holds for the prompt source the way it holds for the
     other three -- structurally, rather than because each caller remembered.
 
-    **An empty answer is refused here, and not cached** (#601). Oracle has no
-    empty password, so one can never authenticate, and sending it bought a
-    ``DPY-4001`` reported as ``connectivity`` -- which sends the reader to the
-    listener for what was one keystroke at their own terminal -- and, on a
-    password-authenticated admin account, possibly a failed login against its
-    lockout counter. It is refused as an :class:`AdminCredentialError`, which is
-    what an empty ``method: env`` variable and an empty vault path already are:
-    there was nothing to send. Not cached, so a later target sharing the
-    credential asks again rather than inheriting the empty one.
+    **An empty answer is refused here, and not cached.** Oracle has no empty
+    password, so one can never authenticate, and sending it would get a ``DPY-4001``
+    reported as ``connectivity`` -- which sends the reader to the listener for what
+    is one keystroke at their own terminal -- and, on a password-authenticated admin
+    account, possibly a failed login against its lockout counter. It is refused as
+    an :class:`AdminCredentialError`, which is what an empty ``method: env``
+    variable and an empty vault path already are: there was nothing to send. Not
+    cached, so a later target sharing the credential asks again rather than
+    inheriting the empty one.
 
     **Whitespace is an answer**, not an empty one. Oracle can hold a quoted
     password of spaces, and a refusal of one would be this tool deciding what
@@ -292,7 +289,7 @@ class PasswordPrompt:
 def store_name(
     target: ExpandedTarget, ref: SecretRef, *, config: Config, env: Mapping[str, str]
 ) -> str | None:
-    """Which store holds a target's admin credential, or ``None`` (#483).
+    """Which store holds a target's admin credential, or ``None``.
 
     Pure, and here rather than in the CLI for the reason the rest of this module
     is here: *which* store is a question about the file, and *opening* one is

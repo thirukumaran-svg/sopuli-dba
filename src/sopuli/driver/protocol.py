@@ -564,14 +564,13 @@ class UserState:
     Three fields are ``None``-when-unknown rather than defaulted, and the
     distinction is load-bearing in each case:
 
-    * ``password_changed_at`` -- its source depends on the release (decision
-      #386). Where ``DBA_USERS`` has no ``PASSWORD_CHANGE_DATE`` column the
-      value is ``SYS.USER$.PTIME``, behind the optional grant, and ``None``
-      without it. Which releases have the column is in ``docs/measurements.md``;
-      12.1 is unmeasured (unverified: pw-changed-source).
-      Nothing gates on it (Q9: `--max-age-days` reads the vault's
-      ``rotated_at`` and only that), so reporting nothing costs nothing and
-      guessing would be all cost. Saying *why* there is nothing is
+    * ``password_changed_at`` -- its source depends on the release (decision #386).
+      Where ``DBA_USERS`` has no ``PASSWORD_CHANGE_DATE`` column the value is
+      ``SYS.USER$.PTIME``, behind the optional grant, and ``None`` without it. Which
+      releases have the column is in ``docs/measurements.md``; 12.1 is unmeasured
+      (unverified: pw-changed-source). Nothing gates on it (Q9: `--max-age-days`
+      reads the vault's ``rotated_at`` and only that), so reporting nothing costs
+      nothing and guessing would be all cost. Saying *why* there is nothing is
       :attr:`password_changed_unknown`.
     * ``failed_logins`` -- ``None`` where ``SELECT ON SYS.USER$`` was not
       granted, which is the default (decision P2). The ``LCOUNT`` guard is then
@@ -955,13 +954,13 @@ class Session(Protocol):
         2. **expire the password** (:data:`PASSWORD_EXPIRE`), only where it is
            not already expired.
 
-        **The window is closed because expiring does not close it** (decision
-        #525). Measured on 26ai Free 23.26.2.0.0: expiring an account with an open
-        window leaves ``EXPIRED & IN ROLLOVER``, and the *old* password still
-        answers ``ORA-28001`` -- it authenticates, and it is itself a way to set
-        the next one. Closing first kills it (``ORA-01017``). It is the reset's
-        default (H4) for the reason given there: the only holder of the old
-        password is the person whose account this is.
+        **The window is closed because expiring does not close it** (decision #525).
+        Measured on 26ai Free 23.26.2.0.0: expiring an account with an open window
+        leaves ``EXPIRED & IN ROLLOVER``, and the *old* password still answers
+        ``ORA-28001`` -- it authenticates, and it is itself a way to set the next one.
+        Closing first kills it (``ORA-01017``). It is the reset's default (H4) for the
+        reason given there: the only holder of the old password is the person whose
+        account this is.
 
         **Close first, then expire, and the order is about failure.** Both orders
         reach plain ``EXPIRED`` (measured). If the second statement fails, close

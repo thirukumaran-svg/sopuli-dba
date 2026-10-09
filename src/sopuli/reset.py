@@ -1,4 +1,4 @@
-"""Deciding whether one personal account may have its password reset (UC-2, #441).
+"""Deciding whether one personal account may have its password reset (UC-2).
 
 :mod:`sopuli.suspend`'s shape, one verb over. The DDL is the driver's
 (:meth:`~sopuli.driver.protocol.Session.reset_password`) and so is what each of
@@ -9,19 +9,19 @@ Four gates, in this order, and the order is what makes the refusals cheap:
 
 1. **is there anywhere to deliver** -- a reset with nowhere to put the password
    must not touch the database, and this needs no connection to answer;
-2. **is it declared** -- invariant 5, which H1 (#449) made harder than a list
+2. **is it declared** -- invariant 5, which H1 makes harder than a list
    lookup by allowing a predicate;
-3. **is the account in a state a reset may touch** -- H4 (#455): a deliberate
+3. **is the account in a state a reset may touch** -- H4: a deliberate
    ``LOCKED`` is refused and a ``LOCKED(TIMED)`` is not;
 4. **do the guardrails allow it** -- ``02-oracle-privileges.md`` §4's five
    checks, unchanged and shared with every other mutating verb.
 
 **Pure, and it issues nothing.** It takes the :class:`UserState` the caller read
 and returns a decision, so every refusal is tier 0 (``04-testing.md`` §4). That
-matters more here than it did for `account suspend`: three of #439's five guards
-are properties of a *run* -- the output format, whether stdout is a terminal,
-whether ``--confirm`` was typed -- and a guard that could only be tested by
-building a terminal would be a guard tested once, by hand, in 2026.
+matters more here than it did for `account suspend`: three of decision #439's
+five guards are properties of a *run* -- the output format, whether stdout is a
+terminal, whether ``--confirm`` was typed -- and a guard that could only be
+tested by building a terminal would be a guard tested once, by hand.
 :func:`refuse_seen_path` takes those three as arguments for exactly that reason.
 
 **One account, and the plan is the whole blast radius**, as UC-2 §2 requires of
@@ -140,50 +140,45 @@ def refuse_seen_path(
     confirm_given: bool,
     preview: bool = False,
 ) -> None:
-    """#439's guards 2, 3 and 4, asked before a password is drawn.
+    """Decision #439's guards 2, 3 and 4, asked before a password is drawn.
 
     Guard 1 is structural rather than a check -- the one ``reveal()`` lives in
     :mod:`sopuli.output.reset_view` and is reachable only from the seen path --
     and guard 5 is the config layer's, because `force_expire` is a property of
     the file (:func:`sopuli.config.delivery._build_manual`).
 
-    Nothing here is true of an unseen delivery, so all three are skipped for one,
-    and the reason needed correcting when the first one landed (#444). This used
-    to say a `vault_wrapped` reset "prints nobody anything" -- a prediction
-    written before any unseen method existed, and wrong: §6.1 bars the wrapping
-    token from the notify channel and the tool carries no other, so the token
-    *does* print, to be passed on out of band.
+    Nothing here is true of an unseen delivery, so all three are skipped for one. An
+    unseen delivery still prints something: §6.1 bars the wrapping token from the
+    notify channel and the tool carries no other, so the token prints, to be passed
+    on out of band.
 
-    The guards are still skipped, on the narrower ground that survives. Each is
-    about a **password** on a screen: a prompt establishes somebody is watching
-    one, the terminal check keeps one out of a log that outlives its expiry, and
-    the JSON refusal keeps one out of the document. What an unseen delivery emits
-    is a retrieval credential with a TTL of its own, whose single use makes
-    interception detectable -- a different object, argued in
-    `output/delivery_view.py`, which is also why it goes to stderr rather than
-    being refused under `--output json`.
+    The guards are skipped because each is about a **password** on a screen: a
+    prompt establishes somebody is watching one, the terminal check keeps one out of
+    a log that outlives its expiry, and the JSON refusal keeps one out of the
+    document. What an unseen delivery emits is a retrieval credential with a TTL of
+    its own, whose single use makes interception detectable -- a different object,
+    argued in `output/delivery_view.py`, which is also why it goes to stderr rather
+    than being refused under `--output json`.
 
-    **A ``--dry-run`` is skipped for the same reason, and that one was found by
-    running it.** A preview prints a plan and never a password -- UC-2 §2 says so
-    of every mutating verb, and invariant 8 is where it comes from -- so there is
-    no emission for any of these to guard. The first draft refused a preview for
-    want of a terminal, which made the one thing a CI job legitimately wants from
-    this verb impossible: *show me what a reset would do*, answered by a refusal
-    about a screen nobody needed.
+    **A ``--dry-run`` is skipped for the same reason.** A preview prints a plan and
+    never a password -- UC-2 §2 says so of every mutating verb, and invariant 8 is
+    where it comes from -- so there is no emission for any of these to guard.
+    Refusing a preview for want of a terminal would make the one thing a CI job
+    legitimately wants from this verb impossible: *show me what a reset would do*,
+    answered by a refusal about a screen nobody needed.
 
     **Checked before the password exists.** Every one of these is knowable from
     argv and the environment, so finding out after the draw -- or worse, after
     the DDL -- would mean a run that changed a password and then refused to say
     what it was.
 
-    **The two usage errors come before the environment one, and running it is
-    what settled that.** The first draft asked them in #441's listed order --
-    json, terminal, confirm -- and a redirected run with ``--confirm`` was told
-    about the terminal, which left the flag refusal unreachable from anything but
-    a real console. Both orders are defensible and this one is better for the
-    caller it is about: a script passing ``--confirm`` has made a mistake in its
-    *command line*, and telling it about a terminal it was never going to have
-    answers a question it did not ask.
+    **The two usage errors come before the environment one.** In the order json,
+    terminal, confirm, a redirected run with ``--confirm`` would be told about the
+    terminal, which leaves the flag refusal unreachable from anything but a real
+    console. Both orders are defensible and this one is better for the caller it is
+    about: a script passing ``--confirm`` has made a mistake in its *command line*,
+    and telling it about a terminal it was never going to have answers a question it
+    did not ask.
     """
     if delivery.method != MANUAL or preview:
         return
@@ -202,10 +197,10 @@ def refuse_seen_path(
         )
 
     if confirm_given:
-        # The one gate in the tool that cannot be given a yes in advance (P5,
-        # #439). A flag cannot testify to its own premise: `--confirm` would be
-        # asserting that somebody is watching, when establishing that somebody is
-        # watching is the entire purpose of the prompt.
+        # The one gate in the tool that cannot be given a yes in advance (P5;
+        # decision #439). A flag cannot testify to its own premise: `--confirm`
+        # would be asserting that somebody is watching, when establishing that
+        # somebody is watching is the entire purpose of the prompt.
         raise ArgumentError(
             "--confirm cannot answer the prompt `delivery.method: manual` asks",
             hint=(
@@ -249,12 +244,12 @@ def decide(
     may waive. ``state`` is ``None`` where the account does not exist there, which
     is a finding rather than an error (Q8).
 
-    **The deliberate lock is checked before the review and is not waivable.** It
-    is not one of §4's five checks, so ``--force`` has nothing to say about it:
-    that flag overrides *account guardrails*, and this is somebody's offboarding
-    decision (H4, #455). Checking it first also keeps the message specific --
-    reported through check 1 it would read as *not declared*, which is a different
-    thing to go and look at.
+    **The deliberate lock is checked before the review and is not waivable.** It is
+    not one of §4's five checks, so ``--force`` has nothing to say about it: that
+    flag overrides *account guardrails*, and this is somebody's offboarding decision
+    (H4). Checking it first also keeps the message specific -- reported through
+    check 1 it would read as *not declared*, which is a different thing to go and
+    look at.
     """
     if state is None:
         return Decision(

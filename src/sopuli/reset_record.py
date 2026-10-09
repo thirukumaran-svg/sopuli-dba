@@ -1,4 +1,4 @@
-"""What UC-2 writes down about a reset, and where (H2, #450, #468).
+"""What UC-2 writes down about a reset, and where (H2).
 
 A personal account's password is handed to a person, not synced from a master, so
 UC-1's vault payload has no counterpart here. H2 split the three questions that
@@ -59,10 +59,9 @@ class Delivery:
     """How the password reached the person, and where it was put.
 
     ``method`` is a name to write down, deliberately **not** checked against a
-    closed set here. Which methods exist is the `delivery:` block's question
-    (#440), and methods are added one issue at a time; a closed set in this
-    module would be a second place to update each time one is added, and the one
-    more likely to be forgotten.
+    closed set here. Which methods exist is the `delivery:` block's question, and
+    methods are added one at a time; a closed set in this module would be a second
+    place to update each time one is added, and the one more likely to be forgotten.
 
     ``to`` is **optional, and its absence is meaningful** rather than missing
     data. A store path or a cubbyhole reference is a location; the seen path's
@@ -165,7 +164,7 @@ def record_path(records: ResetRecords, *, target: str, account: str) -> str:
     with account ``b/jdoe`` would derive the same path. That is one journal
     describing two accounts, and one lock where there should be two, which is the
     exact failure this pair is keyed on to prevent. ``.`` and ``..`` are refused
-    for #344's reason: under a prefix they walk out of it.
+    for decision #344's reason: under a prefix they walk out of it.
 
     :class:`ValueError` rather than a :class:`~sopuli.config.errors.ConfigError`,
     matching :func:`~sopuli.config.secret_refs.normalise_path`'s own boundary: no
@@ -197,17 +196,17 @@ def _reject_unusable_component(noun: str, value: str) -> None:
 def record_lock_key(records: ResetRecords, *, target: str, account: str) -> LockKey:
     """The advisory lock a reset of this (target, account) is taken under.
 
-    An ordinary :class:`~sopuli.lock.keys.LockKey`, which is the whole claim of
-    UC-2 §3.3: the key is the only new thing, and everything downstream of it --
-    the ``locks/`` prefix, the CAS, the fencing token, `lock break` -- is the
-    machinery #83 already built, unchanged.
+    An ordinary :class:`~sopuli.lock.keys.LockKey`, which is the whole claim of UC-2
+    §3.3: the key is the only new thing, and everything downstream of it -- the
+    ``locks/`` prefix, the CAS, the fencing token, `lock break` -- is the machinery
+    UC-1 already uses (Q2), unchanged.
 
-    **`lock status` was the exception, and #514 made the sentence true again.**
-    That verb enumerates its estate from `bindings`, and no binding produces a
-    record path, so it reported an empty estate while a reset held a lock. It now
-    reaches these keys the only way an offline verb can -- by listing the
-    declared `reset_records:` prefix -- because a predicate-declared account (H1)
-    has no name until a database is asked.
+    **`lock status` reaches them too.** That verb enumerates its estate from
+    `bindings`, and no binding produces a record path, so read that way alone it
+    would report an empty estate while a reset held a lock. It reaches these keys
+    the only way an offline verb can -- by listing the declared `reset_records:`
+    prefix -- because a predicate-declared account (H1) has no name until a database
+    is asked.
 
     Keyed on the *record's* path rather than on the delivery target's, because
     the delivery target does not exist on every path: `manual` writes nothing,
@@ -267,21 +266,20 @@ def assert_no_secret(document: Any, *, secret: Secret, token: Secret | None = No
       mapping. This is what catches the password reaching a key that legitimately
       exists.
 
-    **``token`` closes the hole this docstring used to only describe** (#444 part
-    2). It said the shape "proves nothing about ... a delivery method that stuffs a
-    value into ``delivery.to`` because the provider's reference happened to be
-    one", and then `vault_wrapped` arrived with two candidates for that field: the
-    accessor, which names the hand-over and cannot perform it, and the **token**,
-    which performs it. UC-2 §6.1 makes the second secret-bearing because the rule
-    is about reach rather than value, so a record carrying it would be a
-    long-lived, widely-readable object holding the thing whose TTL exists to keep
-    it short-lived. Passing the token in makes writing one an
+    **``token`` closes a hole the shape alone leaves.** The shape proves nothing
+    about a delivery method that puts a secret into ``delivery.to`` because the
+    provider's reference happens to be one, and `vault_wrapped` has two candidates
+    for that field: the accessor, which names the hand-over and cannot perform it,
+    and the **token**, which performs it. UC-2 §6.1 makes the second secret-bearing
+    because the rule is about reach rather than value, so a record carrying it would
+    be a long-lived, widely-readable object holding the thing whose TTL exists to
+    keep it short-lived. Passing the token in makes writing one an
     :class:`AssertionError` rather than a matter of the caller having picked the
     right field.
 
-    ``None`` where the method produced no token -- the seen path, and #447's path
-    when it lands -- because there is then nothing to compare against and an
-    absent argument says that better than a sentinel.
+    ``None`` where the method produced no token -- the seen path, and the
+    identity-scoped path of TODO(#447) -- because there is then nothing to compare
+    against and an absent argument says that better than a sentinel.
 
     What remains uncovered is a *derived* value written into one of the permitted
     string fields -- a hash of the password in ``delivery.to``. Saying so is better

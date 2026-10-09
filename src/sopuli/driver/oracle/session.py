@@ -447,11 +447,10 @@ class OracleSession:
         operation, and a target whose only shortcoming is about profiles must
         not refuse a role predicate.
 
-        ``DBA_ROLES`` is in ``02-oracle-privileges.md`` §2's grant set (decision
-        #531). Without the grant the read is ``ORA-00942``, which would read as
-        "no such role" and refuse every ``role:`` predicate in `account list` as
-        a misspelling. A service account that lacks it is refused here, at plan
-        time, naming the grant.
+        ``DBA_ROLES`` is in ``02-oracle-privileges.md`` §2's grant set (decision #531).
+        Without the grant the read is ``ORA-00942``, which would read as "no such role"
+        and refuse every ``role:`` predicate in `account list` as a misspelling. A
+        service account that lacks it is refused here, at plan time, naming the grant.
         """
         require_capability(
             self.scope(),

@@ -1,4 +1,4 @@
-"""What `creds check` concludes, given what the vault and the database said (#248).
+"""What `creds check` concludes, given what the vault and the database said.
 
 One question per (account, target): does the vault's `current` password work
 against this database? UC-1 §7's answer is a sync state, and this module is
@@ -152,10 +152,10 @@ def decide(
     # what a login attempt would have seen -- so reporting the symptom instead
     # would send somebody to the vault over an account that is simply locked.
     #
-    # A comparison (`--method hash`, #437) is not refused by a lock, so it can
-    # have run anyway. The state is still the status -- the lock is still the more
-    # urgent fact -- and what the comparison found rides after it, so an operator
-    # can tell whether unlocking would be enough.
+    # A comparison (`--method hash`) is not refused by a lock, so it can have run
+    # anyway. The state is still the status -- the lock is still the more urgent
+    # fact -- and what the comparison found rides after it, so an operator can tell
+    # whether unlocking would be enough.
     if user.locked or user.expired:
         state = LOCKED if user.locked else EXPIRED
         found = None if verification is None else _one_line(verification.detail)
@@ -189,12 +189,11 @@ def _from_attempt(user: UserState, verification: VerifyResult, *, version: int |
             verification,
         )
     if verification.result == PASS:
-        # Whatever the driver had to say rides after our own words, and a pass is
-        # the branch where that matters most: a login with no lockout guard (the
-        # optional `SYS.USER$` grant is absent) still passes, and the only place
-        # that says so is this detail. Dropping it made an unguarded check read
-        # exactly like a guarded one, which security-model §3 says it never does
-        # (#558).
+        # Whatever the driver had to say rides after our own words, and a pass is the
+        # branch where that matters most: a login with no lockout guard (the optional
+        # `SYS.USER$` grant is absent) still passes, and the only place that says so is
+        # this detail. Without it an unguarded check would read exactly like a guarded
+        # one, which security-model §3 says it never does.
         note = _one_line(verification.detail)
         suffix = f"; {note}" if note else ""
         # A rollover window makes a `pass` mean less than it usually does: both
@@ -243,14 +242,14 @@ def _one_line(detail: str | None) -> str | None:
 def password_age_days(changed_at: datetime | None, *, now: datetime | None = None) -> float | None:
     """How long ago the *database's* password was set, or ``None``.
 
-    Reported beside the vault's own age as a drift smell (Q9, #87) and folded
+    Reported beside the vault's own age as a drift smell (Q9) and folded
     into nothing: `--max-age-days` reads the vault's ``rotated_at`` and only
     that, so one age per secret path answers it regardless of how many targets
     share the path.
 
     ``None`` where the database did not say -- which the driver explains in
     :attr:`~sopuli.driver.protocol.UserState.password_changed_unknown`, and the
-    run carries as ``SOPULI-W021`` (#386). Nothing gates on it, so guessing
+    run carries as ``SOPULI-W021`` (decision #386). Nothing gates on it, so guessing
     would be all cost.
 
     **A naive timestamp is read as UTC**, because Oracle's ``PASSWORD_CHANGE_DATE``
@@ -261,7 +260,7 @@ def password_age_days(changed_at: datetime | None, *, now: datetime | None = Non
     a test that built its own aware fixture could not reproduce it.
 
     Reading it as UTC is the proportionate answer rather than the correct one,
-    and Q9 (#87) is why that is enough: this number is displayed beside the
+    and Q9 is why that is enough: this number is displayed beside the
     vault's own age as a *drift smell* and nothing gates on it --
     ``--max-age-days`` reads ``rotated_at`` from the vault and only that. So the
     error is bounded by the server's offset, at most a few tenths of a day on a
@@ -278,11 +277,11 @@ def password_age_days(changed_at: datetime | None, *, now: datetime | None = Non
 def grace_warning(user: UserState | None, *, now: datetime | None = None) -> str | None:
     """What to say beside the state when a password is in its grace period.
 
-    UC-1 §6.4 files the grace period as *informational, surfaced in status*, and
-    #309 decided it rides as a warning rather than as a state of its own. The
-    argument is that ``state`` is one field: an account in grace may be `IN_SYNC`
-    or it may have drifted, and a value that displaced either would hide the
-    answer the reader came for. Alongside, both are sayable.
+    UC-1 §6.4 files the grace period as *informational, surfaced in status*, and it
+    rides as a warning rather than as a state of its own, because ``state`` is one
+    field: an account in grace may be `IN_SYNC` or it may have drifted, and a value
+    that displaced either would hide the answer the reader came for. Alongside, both
+    are sayable.
 
     **Not derived from the login.** The obvious source is `ORA-28002`, which
     ``verification.py`` still names -- and which 26ai does not send: a grace login
