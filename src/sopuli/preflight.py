@@ -1,4 +1,4 @@
-"""What a run establishes before it writes anything (UC-1 §8 step 3, #283).
+"""What a run establishes before it writes anything (UC-1 §8 step 3).
 
 Step 3 exists so that the common failures -- wrong privileges, a closed PDB, an
 unreachable host -- happen *before* anything is written anywhere. Without it a
@@ -43,9 +43,9 @@ from sopuli.driver.protocol import Scope
 REACHABLE = "reachable"
 SCOPE = "scope"
 ACCOUNT = "account"
-#: A profile UC-1 §5's assignment attribute names and this target has not got
-#: (#301). After :data:`ACCOUNT` in the order because it is a fact about an
-#: account that exists: told about both at once, an operator fixes the missing
+#: A profile UC-1 §5's assignment attribute names and this target has not got.
+#: After :data:`ACCOUNT` in the order because it is a fact about an account
+#: that exists: told about both at once, an operator fixes the missing
 #: account first and the profile question may not survive that.
 PROFILE = "profile"
 PRIVILEGES = "privileges"
@@ -95,7 +95,7 @@ def assertion_holds(
     """Whether what the file claims about a target matches what it turned out to be.
 
     ``01-configuration.md`` §3a lets a target assert its ``scope`` and its
-    ``container``; #177 made the driver report what is actually true. This is the
+    ``container``, and the driver reports what is actually true. This is the
     comparison of the two, and it is the check that catches a ``dsn:`` edit that
     silently repointed a target at a different container -- the edit whose whole
     danger is that everything keeps working, against the wrong database.
@@ -163,13 +163,13 @@ def survey(
       step 3 already reports this per account and does not create it (Q8), and
       finding it here is the difference between reporting it and reporting it
       *before* a password was staged for it;
-    * **a profile the policy assigns and this database has not got** (#301).
-      ``missing_profiles`` is (account, profile) pairs, because the answer is per
-      account -- two accounts on one target can sit under different policies --
-      and because a message that named only the profile would leave the reader
-      hunting for which account wanted it. ``config`` rather than ``database``:
-      what is wrong is a name in a file or a profile nobody created, and both are
-      fixed away from the run;
+    * **a profile the policy assigns and this database has not got**
+      (decision #301). ``missing_profiles`` is (account, profile) pairs, because
+      the answer is per account -- two accounts on one target can sit under
+      different policies -- and because a message that named only the profile
+      would leave the reader hunting for which account wanted it. ``config``
+      rather than ``database``: what is wrong is a name in a file or a profile
+      nobody created, and both are fixed away from the run;
     * **a privilege the tool needs and the service account has not got.** The
       one worth the round trip: without it the run fails at the verb that needs
       it, several commands from here, with an error about a dictionary view

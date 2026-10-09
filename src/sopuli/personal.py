@@ -1,4 +1,4 @@
-"""Whether a personal account is declared, and by which rule (H1, #449).
+"""Whether a personal account is declared, and by which rule (H1).
 
 Invariant 5 says the config is the whitelist. For an application account that is
 a list lookup; for a personal account H1 added a second form -- a **predicate**
@@ -81,7 +81,7 @@ def admits(
         return rule.role.casefold() in {held.casefold() for held in roles}
 
     # Unreachable through the config layer, which refuses an entry declaring
-    # none of the three (#467). Answered rather than asserted: a rule that says
+    # none of the three. Answered rather than asserted: a rule that says
     # nothing admits nothing, which is invariant 5's own default.
     return False
 
@@ -125,7 +125,7 @@ def declared_on(
     **Two rules admitting one account is ordinary; two rules naming different
     policies is not**, and the difference is what this refuses. Membership itself
     is not ambiguous -- both rules say the same thing about the same account, and
-    unlike #467's cross-declaration rule they carry the same guarantee. A
+    unlike the duplicate-name rule they carry the same guarantee. A
     ``policy:`` is a different matter: returning the first match would make which
     password policy applies depend on the order somebody happened to write two
     entries in, which is exactly the silent, file-order-dependent answer

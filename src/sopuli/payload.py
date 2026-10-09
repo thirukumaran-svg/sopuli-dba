@@ -1,4 +1,4 @@
-"""Where each of C14's three stages lives inside one secret document (Q7, #85).
+"""Where each of C14's three stages lives inside one secret document (Q7).
 
 Q7 made **one secret per application, a field per account** the documented
 default, and left one secret per account fully supported. This module is the
@@ -34,8 +34,8 @@ store, where the vault write is one of invariant 2's three permitted reveals.
 There is deliberately no ``reveal()`` in this file.
 
 What this module is not is the *write*. It computes locations and merge patches;
-issuing them, and holding the lock while it happens, belongs to the store adapter
-(#104) and the commands above it.
+issuing them, and holding the lock while it happens, belongs to the store
+adapter and the commands above it.
 """
 
 from __future__ import annotations
@@ -55,9 +55,9 @@ CURRENT, PENDING, PREVIOUS = STAGES
 #: rest. ``username`` from §3's original payload has no counterpart here -- in
 #: the shared layout the map key *is* the username, and a second copy of it is a
 #: thing that can disagree with itself.
-#: The one stamp anything reads *back*. `creds status` (#275) ages a credential
-#: by it and `--max-age-days` filters on it (Q9, #87); the other three are
-#: written for an operator and for an audit, and nothing branches on them.
+#: The one stamp anything reads *back*. `creds status` ages a credential by
+#: it and `--max-age-days` filters on it (Q9); the other three are written for
+#: an operator and for an audit, and nothing branches on them.
 #:
 #: Declared before :data:`STAMPS` and used to build it, rather than read out of
 #: it by index: a constant defined as ``STAMPS[0]`` silently changes meaning the
@@ -66,15 +66,16 @@ ROTATED_AT = "rotated_at"
 
 STAMPS = (ROTATED_AT, "rotated_by", "policy", "targets")
 
-#: Where the staged password came from (#311): the tool drew it, or an operator
+#: Where the staged password came from: the tool drew it, or an operator
 #: supplied it on stdin and an external system dictated it.
 #:
 #: **Not a stamp, and deliberately not in** :data:`STAMPS`. The stamps describe
 #: the credential that is *current* and are refreshed at promotion; this
 #: describes what ``pending`` holds and is written and cleared with it. A key
 #: that described ``pending`` on some documents and ``current`` on others would
-#: be a key that can lie, and #312 gates a redraw on it -- the wrong answer there
-#: replaces a value somebody's change ticket dictated.
+#: be a key that can lie, and the redraw in `apply` (decision #268) is gated on
+#: it -- the wrong answer there replaces a value somebody's change ticket
+#: dictated.
 #:
 #: Named ``origin`` rather than ``source`` because `creds apply --source` already
 #: names a *stage*. Two meanings of one word, one flag apart, is a collision
@@ -265,11 +266,9 @@ def merge(*patches: Mapping[str, Any]) -> dict[str, Any]:
 def apply_patch(document: Any, patch: Mapping[str, Any]) -> dict[str, Any]:
     """``document`` with ``patch`` applied to it: RFC 7396, in full.
 
-    **7396 and not 7386**, which this file and its neighbours used to cite. The
-    two are the same specification a month apart -- 7386 (October 2014) was
-    replaced by 7396 (November 2014) to correct its pseudocode and examples -- so
-    nothing about the semantics moved, but the obsolete number is the one a
-    reader would have gone looking up.
+    **7396 and not 7386.** The two are the same specification a month apart -- 7386
+    (October 2014) was replaced by 7396 (November 2014) to correct its pseudocode
+    and examples -- so the semantics are the same, but 7386 is the obsolete number.
 
     The other half of :func:`merge`, and the difference between them is one rule
     that is easy to read past. **Combining two patches and applying a patch to a

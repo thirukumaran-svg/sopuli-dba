@@ -201,10 +201,10 @@ def check(
     longer, and refusing it would block the migration case ``--from-stdin`` exists
     for; too *short* is a violation.
 
-    ``target`` names where ``limit`` was read, and only the byte rules use it
-    (#598). It is not on :class:`ByteLimit` because a limit is a fact about a
-    character set, and ``policy sample --max-bytes`` builds one that came from no
-    target at all. Two targets that refuse the same password therefore report two
+    ``target`` names where ``limit`` was read, and only the byte rules use it.
+    It is not on :class:`ByteLimit` because a limit is a fact about a character
+    set, and ``policy sample --max-bytes`` builds one that came from no target
+    at all. Two targets that refuse the same password therefore report two
     violations rather than one, which is the point: each says where it applies.
     """
     text = candidate.reveal()
@@ -295,7 +295,7 @@ def generate(
 
     ``target`` names the target ``limit`` was read from, so a refusal the limit
     caused can say which one -- in an estate, "the target's limit" could be any
-    of twenty (#598). ``None`` where the limit came from no target.
+    of twenty. ``None`` where the limit came from no target.
 
     Raises :class:`PasswordPolicyError` where a valid policy cannot produce a
     password, and a plain :class:`~sopuli.config.errors.ConfigError` -- its base --
@@ -327,9 +327,10 @@ def _required_length(policy: PasswordPolicy) -> int:
     """``length`` is not defaulted, and that is a decision rather than an omission.
 
     §8 names a default *charset* and no default length, so there is nothing to
-    follow -- and the value decides how much entropy every credential in the estate
-    gets. A tool picking that quietly is the opposite of a reviewed config line.
-    A built-in default belongs to P3's layer 6 if it is ever wanted (#10).
+    follow -- and the value decides how much entropy every credential in the
+    estate gets. A tool picking that quietly is the opposite of a reviewed
+    config line. A built-in default belongs to P3's layer 6 if it is ever
+    wanted.
     """
     if policy.length is None:
         raise PasswordPolicyError(

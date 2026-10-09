@@ -1,28 +1,28 @@
-"""What the estate says a password may be, before one is drawn (#317, UC-1 §4 step 2).
+"""What the estate says a password may be, before one is drawn (UC-1 §4 step 2).
 
 `creds generate` draws against the *policy*. The policy is written by a human who
 may never have seen the databases it will be applied to, so a run can stage a
 password no target can hold -- and nobody finds out until `apply` connects, by
 which time the vault has a `pending` that cannot be applied anywhere.
 
-**This is not #268's problem and must not be described as its answer.** A verify
-function is arbitrary PL/SQL that cannot be consulted (invariants 13 and 14) and
-a reuse history is hashed, so `ORA-28003` and `ORA-28007` cannot be predicted
-before the statement is issued; #312 handles those by redrawing. What is
-predictable is the *deterministic* pair -- a password longer than the target's
-maximum, counted in bytes in the target's own character set, and characters the
-target will not accept. Those hit every account in the selection identically and
-one policy fix ends them, which is exactly why they were the wrong answer to #268
-and are worth fixing on their own.
+**This does not answer the server's refusals, and must not be described as doing
+so.** A verify function is arbitrary PL/SQL that cannot be consulted (invariants
+13 and 14) and a reuse history is hashed, so `ORA-28003` and `ORA-28007` cannot
+be predicted before the statement is issued; `apply` handles those by redrawing
+(decision #268). What is predictable is the *deterministic* pair -- a password
+longer than the target's maximum, counted in bytes in the target's own character
+set, and characters the target will not accept. Those hit every account in the
+selection identically and one policy fix ends them, which is exactly why they
+are the wrong answer to those refusals and are worth fixing on their own.
 
 **There is no single strictest limit, and inventing one loses information.** A
 :class:`~sopuli.passwords.ByteLimit` is a count *and* the character set it is
 counted in, which makes "stricter" a partial order rather than a total one: 128
 bytes of ``WE8MSWIN1252`` holds more characters than 128 of ``AL32UTF8`` and
-holds *fewer distinct* ones, so neither limit contains the other. An earlier
-draft of this module collapsed the two into one comparable number and got both
-halves wrong -- it refused policies that every target could satisfy, and it
-accepted supplied passwords that one target deterministically could not store.
+holds *fewer distinct* ones, so neither limit contains the other. Collapsing the
+two into one comparable number gets both halves wrong -- it refuses policies
+that every target could satisfy, and it accepts supplied passwords that one
+target deterministically cannot store.
 
 So every reading is kept, and the two questions are asked separately:
 
@@ -36,13 +36,13 @@ So every reading is kept, and the two questions are asked separately:
   the smallest count, and it is exactly the "characters the target will not
   accept" half of what §4 step 2 is for.
 
-**What is read and cannot bind anything is still worth reading.** §4 step 2
-also names a verify function, ``PASSWORD_REUSE_*`` and ``PASSWORD_VERSIONS``.
-None of the three can gate a draw, for the reason above -- and the run reports
-them anyway, in :class:`AccountConstraints`, because an operator staging a
-password against a profile that will judge it with arbitrary PL/SQL should not
-have to find that out from `apply`. Reporting is the whole of what they do here:
-nothing branches on them, and #312 remains the answer to a refusal.
+**What is read and cannot bind anything is still worth reading.** §4 step 2 also
+names a verify function, ``PASSWORD_REUSE_*`` and ``PASSWORD_VERSIONS``. None of
+the three can gate a draw, for the reason above -- and the run reports them
+anyway, in :class:`AccountConstraints`, because an operator staging a password
+against a profile that will judge it with arbitrary PL/SQL should not have to
+find that out from `apply`. Reporting is the whole of what they do here: nothing
+branches on them, and the redraw in `apply` remains the answer to a refusal.
 
 **Not reaching a target is not a failure.** §4 says so, and it is the difference
 between this being useful and being a new way for `generate` to fail: staging a
@@ -170,9 +170,10 @@ def reuse_restricted(reuse_max: str | None, reuse_time: str | None) -> bool:
 
     Public because two readings need the same answer: a `generate` report reads
     it off :class:`AccountConstraints`, and a rollback in `apply` off the
-    :class:`~sopuli.driver.protocol.UserState` it already holds (#568). A value
-    that was not read restricts nothing here -- this is a reporting test, and a
-    warning built on a limit nobody read would be inventing its own subject.
+    :class:`~sopuli.driver.protocol.UserState` it already holds (decision #568).
+    A value that was not read restricts nothing here -- this is a reporting
+    test, and a warning built on a limit nobody read would be inventing its own
+    subject.
     """
     return _restricts(reuse_max) or _restricts(reuse_time)
 

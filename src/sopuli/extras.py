@@ -4,7 +4,7 @@ ADR-006 makes every dependency that exists only to reach one vendor an install
 extra, and rules 1 and 2 say what that means at run time: a vendor client is
 imported inside its own module on first use, and a missing one is a diagnosable
 condition rather than a traceback. Two registries implement that now -- stores
-(#134) and drivers (#170) -- and this is what they share.
+and drivers -- and this is what they share.
 
 **What is shared is the mechanism, not the message.** The wording of a refusal
 belongs to the thing being refused: a store is named by ``vaults:`` and a driver

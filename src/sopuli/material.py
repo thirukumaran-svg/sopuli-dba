@@ -1,4 +1,4 @@
-"""Turning a :class:`~sopuli.config.model.MaterialRef` into a value (#137).
+"""Turning a :class:`~sopuli.config.model.MaterialRef` into a value.
 
 The config layer parses ``{ env: NAME }`` and ``{ file: PATH }`` and stops
 there. Nothing has ever read one, which is why every auth method in
@@ -41,8 +41,8 @@ from sopuli.secrets import Secret
 TOKEN_FILE = "~/.vault-token"
 
 #: The flag that occupies the command line's position in that chain, decided in
-#: #145. It takes a **path**, never a token: a token as a command-line value is
-#: visible in ``ps`` and in the Windows process list, which is invariant 1.
+#: ADR-007. It takes a **path**, never a token: a token as a command-line value
+#: is visible in ``ps`` and in the Windows process list, which is invariant 1.
 #: :mod:`sopuli.invocation` declares it and refuses the bare ``--vault-token``
 #: somebody will type instead, because Vault's own CLI accepts ``-token=``.
 TOKEN_FLAG = "--vault-token-file"
@@ -74,8 +74,8 @@ class MaterialError(ConfigError):
     message is the one who fixes it, here, now.
 
     Distinct from the exit 6 an auth method raises when the store rejects a
-    credential (#138). That one means "we found it and it was not accepted";
-    this one means "there was nothing to send".
+    credential. That one means "we found it and it was not accepted"; this one
+    means "there was nothing to send".
 
     No ``error.code``: J3 is open, the error registry's numbers are allocated by
     hand, and another allocated the same way would answer nothing. The
@@ -121,19 +121,19 @@ def resolve_token(
     :data:`TOKEN_FLAG`'s path, then the variables in :data:`TOKEN_VARIABLES`,
     then ``~/.vault-token``.
 
-    ``token_file`` is a **path and not a** :class:`~sopuli.secrets.Secret`, which
-    is #145's decision made structural: there is no parameter anywhere on this
-    chain that a command-line *value* could arrive on, so invariant 1 is not
-    something a future caller has to remember. It is also why resolution happens
-    here rather than at the CLI boundary -- the flag stays a location for as long
-    as every other step in the chain does, and a run that never reaches a store
-    never reads the file.
+    ``token_file`` is a **path and not a** :class:`~sopuli.secrets.Secret`,
+    which is ADR-007's decision made structural: there is no parameter anywhere
+    on this chain that a command-line *value* could arrive on, so invariant 1 is
+    not something a future caller has to remember. It is also why resolution
+    happens here rather than at the CLI boundary -- the flag stays a location
+    for as long as every other step in the chain does, and a run that never
+    reaches a store never reads the file.
 
     **The chain stays inside one method**, and that is the property worth
-    protecting. An earlier draft fell through to AppRole after the last step;
-    falling into a *different* method makes an authentication failure impossible
-    to explain, because the thing that failed is not the thing the file names.
-    So the end of this chain is an error, never a different method.
+    protecting. Falling through to AppRole after the last step, into a *different*
+    method, would make an authentication failure impossible to explain, because the
+    thing that failed is not the thing the file names. So the end of this chain is
+    an error, never a different method.
     """
     if ref is not None:
         return resolve(ref, env=env, where=where)

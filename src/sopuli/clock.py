@@ -7,11 +7,11 @@ format is not an output concern once something other than output writes one, and
 a lock record whose ``expires_at`` were formatted by a second copy of the same
 two lines is a lock record that can disagree with the document describing it.
 
-:func:`measure_skew` joined them for #216, and belongs here for the same reason
-the formatters do: comparing this host's clock against somebody else's is a
-question about time rather than about the store that answered it, and a second
-copy of the arithmetic living inside one backend would be a second reading of
-what "a minute out" means.
+:func:`measure_skew` belongs here for the same reason the formatters do:
+comparing this host's clock against somebody else's is a question about time
+rather than about the store that answered it, and a second copy of the
+arithmetic living inside one backend would be a second reading of what "a minute
+out" means.
 
 Nothing here reads the clock except :func:`utc_now`, and callers that care about
 *when* take a moment as an argument rather than calling it (``04-testing.md`` §4:
@@ -46,8 +46,8 @@ def as_utc(moment: datetime) -> datetime:
     Reading it as UTC is the proportionate answer rather than the correct one,
     and it is proportionate because it is applied **consistently**: the same
     value rendered into a document and subtracted for a countdown has to be the
-    same moment, or one run says two things. Q9 (#87) is why the residual error
-    is acceptable -- nothing gates on these timestamps, they are reported beside
+    same moment, or one run says two things. Q9 is why the residual error is
+    acceptable -- nothing gates on these timestamps, they are reported beside
     the vault's own record of when it rotated.
     """
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)

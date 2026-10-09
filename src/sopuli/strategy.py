@@ -1,13 +1,12 @@
-"""Which rollover regime `creds apply` runs under, and which ones it can (#262).
+"""Which rollover regime `creds apply` runs under, and which ones it can.
 
 UC-1 §6.3 makes gradual password rollover the **default where it exists**, and it
 is what makes zero-downtime rotation real: during the window both the old and the
 new password authenticate, so an application picks the new one up on its own
 schedule and a partial apply causes no outage at all.
 
-`creds apply` (#259) already ran under one of these regimes; what it could not do
-is let an operator name one, or refuse one the estate cannot honour. That is what
-this module decides.
+`creds apply` runs under one of these regimes. This module lets an operator name
+one, and refuses one the estate cannot honour.
 
 Pure and vendor-free. The one thing that needed vendor parsing --
 ``PASSWORD_ROLLOVER_TIME`` is a string in whatever the database spells -- is
@@ -138,7 +137,7 @@ def closes_window(strategy: str, user: UserState) -> bool:
 
 
 def moves_profile(user: UserState, attributes: AccountAttributes) -> str | None:
-    """The profile this run would move ``user`` onto, or ``None`` (#301).
+    """The profile this run would move ``user`` onto, or ``None``.
 
     ``None`` covers the two cases that are not a move and are not the same thing:
     nothing was declared, and the account is already there. Only the first is
@@ -162,7 +161,7 @@ def moves_profile(user: UserState, attributes: AccountAttributes) -> str | None:
 
 
 def moving_profile(strategy: str | None, user: UserState, to: str | None) -> Unhonourable | None:
-    """Why a named regime cannot be judged for an account this run will move (#301).
+    """Why a named regime cannot be judged for an account this run will move.
 
     The interaction that makes profile assignment more than a statement: **a
     profile decides whether a rollover window opens**, so it decides the regime a
@@ -201,13 +200,13 @@ def unhonourable(strategy: str, scope: Scope, user: UserState) -> Unhonourable |
     """Why ``strategy`` cannot run for this account here, or ``None``.
 
     **Rollover is not answered here**, and that is not an omission:
-    :meth:`sopuli.driver.protocol.Session.require_rollover` already owns it
-    (#181), with the two refusals it needs -- the release that has no such
-    feature, and the profile that grants no window -- and the second carries the
-    exact ``ALTER PROFILE`` an operator would run. A second phrasing of those
-    here would be one message with two versions, and the version this module
-    could write would be the worse one: the DDL is that product's SQL, and this
-    module is above the driver.
+    :meth:`sopuli.driver.protocol.Session.require_rollover` already owns it,
+    with the two refusals it needs -- the release that has no such feature, and
+    the profile that grants no window -- and the second carries the exact
+    ``ALTER PROFILE`` an operator would run. A second phrasing of those here
+    would be one message with two versions, and the version this module could
+    write would be the worse one: the DDL is that product's SQL, and this module
+    is above the driver.
 
     What is left is the pair the driver has no reason to know about, because
     both are about a regime the operator asked for rather than about a

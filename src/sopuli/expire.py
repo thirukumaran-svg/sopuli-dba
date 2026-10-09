@@ -1,4 +1,4 @@
-"""Deciding whether one account's password may be expired (UC-2, #525).
+"""Deciding whether one account's password may be expired (UC-2, decision #525).
 
 The DDL is the driver's (:meth:`~sopuli.driver.protocol.Session.expire_password`),
 and so is the question of whether it changes anything. The question left, which

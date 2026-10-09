@@ -1,4 +1,4 @@
-"""Resolving `personal_accounts:` the other way round (UC-2 §2, #490).
+"""Resolving `personal_accounts:` the other way round (UC-2 §2).
 
 :mod:`sopuli.personal` answers *does this rule admit that account* — a yes-or-no
 question about one name, which is what a mutating verb needs. This answers *which
@@ -6,13 +6,11 @@ accounts does this rule admit*, which is what a **listing** verb needs, and the 
 are not the same question reversed: one is a lookup and the other is a query
 against a database.
 
-**This is the thing H1 (#449) owed.** A predicate amends invariant 5's first
-sentence — what counts as *declared* — and the cost H1 accepted and stated is that
-membership is controlled by whoever assigns the profile or grants the role, not by
-whoever reviews the file. The mitigation was always that the tool could *show* you
-the set. Until this, it could not: predicate resolution existed only as a refusal
-inside `account suspend`, so an operator could not read a whitelist they could not
-enumerate.
+**This is what H1 promised.** A predicate amends invariant 5's first sentence —
+what counts as *declared* — and the cost H1 accepted and stated is that
+membership is controlled by whoever assigns the profile or grants the role, not
+by whoever reviews the file. The mitigation is that the tool can *show* you the
+set, because an operator cannot review a whitelist they cannot enumerate.
 
 **It widens nothing.** Invariant 5's second sentence is untouched: a mutating verb
 still requires the account named on the command line and refuses any name the
@@ -118,8 +116,8 @@ class Row:
     #: the field exists: an account the declaration names and the database does
     #: not have is ``ACCOUNT_MISSING``, a **fact about the estate**, while a
     #: target that could not be reached is ``ERROR`` and a fact about this run.
-    #: Inferring the first from the second reported a down target as a missing
-    #: account (Copilot's review of #493).
+    #: Inferring the first from the second would report a down target as a
+    #: missing account.
     unreachable: Any | None = None
 
     @property

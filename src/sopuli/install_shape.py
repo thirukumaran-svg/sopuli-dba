@@ -14,9 +14,9 @@ backend or driver that is missing, so a healthy install produces nothing at all
 answers *what is there*, and a run that said nothing could never be quoted as
 evidence that everything was installed.
 
-The two are the same survey read twice over, never two surveys: since #238 every
-command asking "can this machine serve it" -- `doctor` as an error, `config
-validate` as a warning -- reads :func:`status_of` through that one function.
+The two are the same survey read twice over, never two surveys: every command
+asking "can this machine serve it" -- `doctor` as an error, `config validate` as
+a warning -- reads :func:`status_of` through that one function.
 
 **Every registry entry appears, configured or not.** That is what makes the
 third direction reportable -- installed and *not* configured, which nothing else
@@ -153,10 +153,10 @@ def _component(name: str, entry: Backend | DatabaseDriver, configured: Sequence[
 
     :class:`~sopuli.store.registry.Backend` and
     :class:`~sopuli.driver.registry.DatabaseDriver` are deliberately separate
-    types, with separate error classes and separate sentences (#170), and this is
-    the one place where what they have in common is all that is being asked:
-    where the module is, what installs its client, and what that client is
-    called. Naming those three here is cheaper than a shared base class would be
+    types, with separate error classes and separate sentences, and this is the
+    one place where what they have in common is all that is being asked: where
+    the module is, what installs its client, and what that client is called.
+    Naming those three here is cheaper than a shared base class would be
     everywhere else.
     """
     status = status_of(entry)
@@ -177,11 +177,10 @@ def status_of(entry: Backend | DatabaseDriver) -> str:
     ``oci``, which has an extra and no module yet, would report itself installed
     on a developer machine that has the SDK and still refuse at connect time.
 
-    **Public because it has a second caller** (#238).
-    :mod:`sopuli.diagnostics` asks it to decide whether an install line is honest
-    for a component, and a second implementation of the same three-way reading is
-    exactly what produced the `doctor` defect #237 fixed. One definition, however
-    many questions are asked of it.
+    **Public because it has a second caller.** :mod:`sopuli.diagnostics` asks it
+    to decide whether an install line is honest for a component, and a second
+    implementation of the same three-way reading is a way for two answers to
+    disagree. One definition, however many questions are asked of it.
     """
     if not installed((entry.module,)):
         return NOT_IMPLEMENTED

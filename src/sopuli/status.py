@@ -1,4 +1,4 @@
-"""What `creds status` reports about each account, and what it refuses to (#275).
+"""What `creds status` reports about each account, and what it refuses to.
 
 UC-1 §9's inventory: read-only, **no login attempts**, safe to run anywhere. It
 is the least dangerous verb in the tool — `check` at least tries a password, and
@@ -16,7 +16,7 @@ until you notice the alternative: `IN_SYNC` from a command that never asked is a
 report of agreement nobody measured, and it would be indistinguishable in a
 document from one `check` produced by trying.
 
-**`AGE` is the vault's ``rotated_at`` and nothing else** (Q9, decided in #87).
+**`AGE` is the vault's ``rotated_at`` and nothing else** (Q9).
 The database's own `PASSWORD_CHANGE_DATE` is displayed beside it and never acted
 on. §9's worked example is two rows sharing a `DB_PW_CHANGED` date and differing
 by 82 days of vault age: the same database-side history, two very different
@@ -25,8 +25,8 @@ answers depending on which clock is asked. Only the vault's is acted on, because
 nothing to aggregate, and no "oldest, newest, or any" rule to invent for an
 account spanning a CDB's PDBs.
 
-This is the first thing to read ``rotated_at`` back. `apply` has been writing it
-since #259 and nothing has needed it until now.
+`apply` and `creds generate --promote` write ``rotated_at``, both through
+:func:`sopuli.apply.promotion_patch`, and this module reads it back.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class Row:
     inventory's whole job is to distinguish "this is so" from "nobody could
     say". A `DB_PW_CHANGED` of ``None`` is a database that would not say, not an
     account that has never had its password set -- and ``user`` carries why
-    (#386).
+    (decision #386).
     """
 
     binding: Binding

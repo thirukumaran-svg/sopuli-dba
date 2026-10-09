@@ -1,4 +1,4 @@
-"""What `creds finish-rollover` decides before it closes a window (#263).
+"""What `creds finish-rollover` decides before it closes a window.
 
 UC-1 §6.3 step 4: `ALTER USER … EXPIRE PASSWORD ROLLOVER PERIOD` ends a gradual
 password rollover window early, so the old password stops authenticating before
@@ -12,7 +12,7 @@ four verbs describe one estate and must not give it two names.
 **Closing a window is the destructive half of a rotation**, and it is the only
 step in UC-1 whose whole purpose is to stop something from working. So most of
 this module is the two accounts it refuses to close, and the distinction between
-them is what the decision in #263 turned on.
+them is what decision #263 turned on.
 
 **Under an open window a `pass` proves less than it usually does.** Both
 passwords authenticate, so verifying the vault's `current` cannot tell "the
@@ -87,14 +87,15 @@ def settled_before_closing(
       create (Q8).
     * **No window open.** ``IN_SYNC`` with ``changed: false`` -- invariant 9, and
       the ordinary answer for the scheduled job S2 describes, which mostly finds
-      nothing to do. Measured on 26ai, issuing the statement anyway is accepted
-      silently and changes nothing, so a run that just issued it would report a
-      change every night.
-    * **A database that is not open read-write.** ``ERROR``, exit 1 (#521). A
-      physical standby cannot take the ``ALTER USER``, so it is refused here,
-      before the login a close would otherwise spend and before a preview can
-      promise a close that would fail. An **unknown** open mode is not refused,
-      for :func:`~sopuli.driver.oracle.capabilities.require_read_write`'s reason.
+      nothing to do. Measured on 23.26.2.0.0
+      (`sql/oracle/07_lock_and_rollover_probe.sql`, step 3), issuing the statement
+      anyway is accepted silently and changes nothing, so a run that just issued it
+      would report a change every night.
+    * **A database that is not open read-write.** ``ERROR``, exit 1. A physical
+      standby cannot take the ``ALTER USER``, so it is refused here, before the
+      login a close would otherwise spend and before a preview can promise a
+      close that would fail. An **unknown** open mode is not refused, for
+      :func:`~sopuli.driver.oracle.capabilities.require_read_write`'s reason.
     * **A locked or expired account.** Reported as itself. The window is beside
       the point for an account nothing can authenticate as, and closing it would
       be a mutation nobody asked for on an account already needing attention.
@@ -199,14 +200,14 @@ def remaining(user: UserState, *, now: datetime | None = None) -> str | None:
     """How much of the window is left, as a short phrase, or ``None``.
 
     ``None`` where the end is not known -- ``rollover_ends_at`` is derived and
-    only populated while a window is open (#181), and on a release that reports
-    no ``PASSWORD_ROLLOVER_TIME`` there is nothing to derive it from. Saying
+    only populated while a window is open, and on a release that reports no
+    ``PASSWORD_ROLLOVER_TIME`` there is nothing to derive it from. Saying
     nothing is the right answer there; a zero would read as "it was about to
     close anyway", which is the opposite of not knowing.
 
-    The arithmetic is :func:`sopuli.clock.until`, shared with `creds status`
-    (#275) -- it prints the same figure about the same window, to say what is
-    still open rather than what was closed early.
+    The arithmetic is :func:`sopuli.clock.until`, shared with `creds status` --
+    it prints the same figure about the same window, to say what is still open
+    rather than what was closed early.
     """
     return until(user.rollover_ends_at, now=now)
 

@@ -2,10 +2,10 @@
 
 UC-1 §8. The verb is a sequence over parts that already exist -- `generate`
 stages a password, `apply` converges the database and promotes the document,
-`finish-rollover` closes the window -- and the two properties that make it a verb
-rather than a shell script arrived before it: one lock held across the whole
-sequence and the fence re-read at every boundary (#282), and the pre-flight that
-asks the estate before anything is written (#283).
+`finish-rollover` closes the window -- and the two properties that make it a
+verb rather than a shell script are these: one lock held across the whole
+sequence and the fence re-read at every boundary, and the pre-flight that asks
+the estate before anything is written.
 
 So what is genuinely new is the *decisions between* the steps, and they are here:
 
@@ -68,7 +68,7 @@ def select(
     which is the shape the caller already has -- one document may hold several
     accounts, and each carries its own ``rotated_at`` (UC-1 §3).
 
-    **The age is the vault's and never the database's** (Q9, decided in #87).
+    **The age is the vault's and never the database's** (Q9).
     One ``rotated_at`` per secret path however many targets share it, so there is
     nothing to aggregate and no "oldest, newest, or any" rule to invent for an
     account that spans a CDB's PDBs. The database's own

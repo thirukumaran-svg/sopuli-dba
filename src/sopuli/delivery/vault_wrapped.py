@@ -1,4 +1,4 @@
-"""`delivery.method: vault_wrapped` — a Vault response-wrapping token (#444).
+"""`delivery.method: vault_wrapped` — a Vault response-wrapping token.
 
 UC-2 §6.2 makes this the default, and the reason is availability rather than
 preference: it works against a stock Vault, needing nothing but the mount the
@@ -10,7 +10,7 @@ the one path that shows a DBA a working password.
 a value somebody else fetched first, and **interception is detectable even where
 it is not preventable**. That is the strongest property in the table and it comes
 with the weakest — the token is a *bearer* credential, so whoever holds it can
-unwrap it, whatever their identity. H9 (#496) decided what that is worth: where
+unwrap it, whatever their identity. H9 decided what that is worth: where
 Vault has an audit device, the accessor this module returns finds the wrap (under
 the DBA's identity) and the unwrap (under the same accessor HMAC) in it; no
 device, or a redirected token, is where that stops (UC-2 §1). The reset record
@@ -29,12 +29,11 @@ in the config layer, so a typo is a config error rather than a 400 after a
 password has been drawn. ``expires_at`` on the receipt comes from the *response* —
 the server's own answer about its own clock — rather than from the string.
 
-**It borrows the transport of a store the run already opened** (§3a's auth chain,
-#483's one-client rule). Wrapping is a `sys/` operation rather than a KV one, so
-it is not a :class:`~sopuli.store.protocol.SecretStore` capability: adding one
-would have given every backend a method most cannot serve, for an operation that
-is not about a path. What it needs is an authenticated connection, and the run
-has one.
+**It borrows the transport of a store the run already opened** (§3a's auth
+chain). Wrapping is a `sys/` operation rather than a KV one, so it is not a
+:class:`~sopuli.store.protocol.SecretStore` capability: adding one would have
+given every backend a method most cannot serve, for an operation that is not
+about a path. What it needs is an authenticated connection, and the run has one.
 
 **The two imports that reach `httpx` are inside the functions that use them**,
 which ADR-006 rule 1 requires of every module that is not itself a registered
@@ -179,21 +178,19 @@ def _expiry(info: dict[str, Any]) -> datetime | None:
     were the outcome would tell an operator the handover lasts longer than it
     does.
 
-    **``creation_time`` plus ``ttl``, not *now* plus ``ttl``** (Copilot's review of
-    #518). The first draft added the server's TTL to the *client's* clock while
-    this docstring claimed it was the server's answer, which is wrong by however
-    far the two clocks differ plus the round trip -- small, usually, and not
-    something to be casually wrong about in the one line that tells somebody how
-    long they have.
+    **``creation_time`` plus ``ttl``, not *now* plus ``ttl``.** Adding the
+    server's TTL to the *client's* clock would be wrong by however far the two
+    clocks differ plus the round trip -- small, usually, and not something to be
+    casually wrong about in the one line that tells somebody how long they have.
 
     ``None`` when the answer carries no usable ``ttl``: a receipt that admits to
     not knowing is better than one carrying a number this module made up.
 
-    **A malformed ``creation_time`` falls back to the client clock rather than to
-    ``None``**, which is where this departs from the review's suggested fix. The
-    TTL is the number that matters and it parsed; discarding it would replace a
-    figure that is wrong by milliseconds with no figure at all, and the operator
-    reading the line needs to know roughly when their hand-over stops working.
+    **A malformed ``creation_time`` falls back to the client clock rather than
+    to ``None``**. The TTL is the number that matters and it parsed; discarding
+    it would replace a figure that is wrong by milliseconds with no figure at
+    all, and the operator reading the line needs to know roughly when their
+    hand-over stops working.
     """
     ttl = info.get("ttl")
     if not isinstance(ttl, int) or isinstance(ttl, bool) or ttl <= 0:
@@ -234,13 +231,13 @@ def for_store(store: SecretStore, *, vault: str, ttl: str) -> VaultWrapped:
     """
     transport = getattr(store, "transport", None)
     if transport is None:
-        # **Before the import, and that ordering is the whole of it** (Copilot's
-        # review of #518). A base install has no `httpx`, so importing the
-        # transport to compare against would raise `ModuleNotFoundError` for an
-        # estate whose delivery store is not a HashiCorp one at all -- burying the
-        # capability refusal this function exists to give under an import error
-        # about a client that was never relevant. A store with no transport cannot
-        # be a HashiCorp one, which is answerable without importing anything.
+        # **Before the import, and that ordering is the whole of it.** A base
+        # install has no `httpx`, so importing the transport to compare against
+        # would raise `ModuleNotFoundError` for an estate whose delivery store
+        # is not a HashiCorp one at all -- burying the capability refusal this
+        # function exists to give under an import error about a client that was
+        # never relevant. A store with no transport cannot be a HashiCorp one,
+        # which is answerable without importing anything.
         raise NotWrappableError(vault)
 
     from sopuli.store.hashicorp._transport import Transport

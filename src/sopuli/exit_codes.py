@@ -7,7 +7,7 @@ rather than being re-derived by whichever command needs a value next.
 
 The JSON run document's ``exit_code`` mirrors whatever the process returns, with
 one exception that is the whole point of the split between :attr:`ExitCode.USAGE`
-and :attr:`ExitCode.CONFIG_INVALID` (J7, issue #8):
+and :attr:`ExitCode.CONFIG_INVALID` (J7):
 
     A run document describes a run, and a run begins when the invocation
     resolves. No valid invocation, no document.
@@ -65,8 +65,8 @@ class ExitCode(IntEnum):
     CONFIG_INVALID = 9
     """The configuration is unusable -- missing, unreadable, or invalid.
 
-    Split out of :attr:`USAGE` when J7 was answered (issue #8). Two arguments,
-    and the second is the one that decided it:
+    Split out of :attr:`USAGE` by J7. Two arguments, and the second is the one
+    that decided it:
 
     * It reads better for the operator. Exit 2 means *fix your command line*;
       exit 9 means *fix your config file*. Different people, different moments --

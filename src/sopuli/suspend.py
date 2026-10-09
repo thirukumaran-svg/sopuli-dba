@@ -1,4 +1,4 @@
-"""Deciding whether one account may be suspended (UC-2, #463).
+"""Deciding whether one account may be suspended (UC-2).
 
 The DDL is the driver's (:meth:`~sopuli.driver.protocol.Session.suspend_account`)
 and so is the question of whether it changes anything. What is left, and what is
@@ -7,9 +7,9 @@ this run touch this account at all?
 
 Two gates, in this order, and the order is the point:
 
-1. **is it declared** -- invariant 5, which H1 (#449) made harder than a list
-   lookup by allowing a predicate. :mod:`sopuli.personal` answers it from the
-   state the run has already read;
+1. **is it declared** -- invariant 5, which H1 made harder than a list lookup by
+   allowing a predicate. :mod:`sopuli.personal` answers it from the state the
+   run has already read;
 2. **do the guardrails allow it** -- ``02-oracle-privileges.md`` §4's five checks,
    unchanged and shared with every other mutating verb, because locking
    ``DBSNMP`` ought to refuse exactly as rotating it does.
@@ -72,11 +72,11 @@ def decide(
 ) -> Decision:
     """May this run suspend ``account`` on ``target``?
 
-    ``proceeding_as`` is the ``results[].state`` a permitted row reports, and the
-    one thing `account expire-password` (#525) changes when it asks the same
-    question through :func:`sopuli.expire.decide`. The gates are identical
-    because the question is: whether a run may touch a person's account does not
-    depend on which statement it is about to issue.
+    ``proceeding_as`` is the ``results[].state`` a permitted row reports, and
+    the one thing `account expire-password` (decision #525) changes when it asks
+    the same question through :func:`sopuli.expire.decide`. The gates are
+    identical because the question is: whether a run may touch a person's
+    account does not depend on which statement it is about to issue.
 
     ``state`` is ``None`` where the account does not exist there, which is a
     finding rather than an error: the tool creates nothing (Q8), and an estate

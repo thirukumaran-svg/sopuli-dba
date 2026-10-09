@@ -1,4 +1,4 @@
-"""Handing a password to the person it belongs to (UC-2 §6, #444).
+"""Handing a password to the person it belongs to (UC-2 §6).
 
 **A delivery method takes a value and a recipient**, and it is deliberately not
 a property of resetting a password — UC-2 §6.7 says so, because UC-4's
@@ -42,14 +42,14 @@ __all__ = ["DeliveryBackend", "Handover", "Receipt"]
 class Handover:
     """The half of a :class:`Receipt` that may be written down.
 
-    **A type rather than two arguments, and that is the point of it** (Copilot's
-    review of #519). The run document's `handover` section exists when a delivery
-    put the password somewhere, which is not the same as either of these fields
-    being populated: a wrap that returned a token but no accessor and no usable
-    TTL is a real hand-over with nothing to say about itself, and building the
-    section out of "is either field set" reported it as the *seen* path -- the one
-    case the section's presence is supposed to distinguish. Presence of this
-    object is the signal; its fields are nullable inside it.
+    **A type rather than two arguments, and that is the point of it.** The run
+    document's `handover` section exists when a delivery put the password
+    somewhere, which is not the same as either of these fields being populated:
+    a wrap that returned a token but no accessor and no usable TTL is a real
+    hand-over with nothing to say about itself, and building the section out of
+    "is either field set" would report it as the *seen* path -- the one case the
+    section's presence is supposed to distinguish. Presence of this object is
+    the signal; its fields are nullable inside it.
 
     **It carries no token and has no field for one**, which is what makes the
     output layer unable to receive one by mistake. :attr:`Receipt.token` stays on
@@ -66,9 +66,9 @@ class Receipt:
 
     ``token`` is what the person fetches with, and it is ``None`` for a method
     that hands over nothing to carry — a path the owner reads by their own
-    identity (#447) has no bearer credential, and neither does mail that has
-    already been sent. The field is optional for that reason and no other, the
-    same way :attr:`sopuli.reset_record.Delivery.to` is.
+    identity (TODO(#447)) has no bearer credential, and neither does mail that
+    has already been sent. The field is optional for that reason and no other,
+    the same way :attr:`sopuli.reset_record.Delivery.to` is.
 
     ``accessor`` names the handover without being able to use it. Vault's
     wrapping tokens have one natively; other methods will have their own

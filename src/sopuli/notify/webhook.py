@@ -1,4 +1,4 @@
-"""`notify.method: webhook` — posting "a password is waiting" (#442).
+"""`notify.method: webhook` — posting "a password is waiting".
 
 The low-trust channel, and the only one there is. What it may say was decided at
 load (:mod:`sopuli.config.notify`) and rendered without a socket
@@ -34,10 +34,10 @@ import httpx
 from sopuli.secrets import Secret
 from sopuli.store.protocol import StoreError
 
-#: How long to wait. Short on purpose: a notification is the least important thing
-#: a reset does, and this runs after the database has confirmed -- so a slow chat
-#: service must not hold a run open, and #83's "a hung request is a lock nobody can
-#: take" applies here too, because UC-2 §3.3's lock is still held.
+#: How long to wait. Short on purpose: a notification is the least important
+#: thing a reset does, and this runs after the database has confirmed -- so a
+#: slow chat service must not hold a run open. UC-2 §3.3's lock is still held
+#: while this runs, so a hung request would also be a lock nobody else can take.
 TIMEOUT_S = 10
 
 #: The key an incoming webhook reads. See this module's docstring for why it is not

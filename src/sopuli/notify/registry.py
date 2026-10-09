@@ -1,4 +1,4 @@
-"""Which module serves a `notify.method`, imported on first use (#442).
+"""Which module serves a `notify.method`, imported on first use.
 
 The same arrangement `sopuli/store/registry.py` and `sopuli/driver/registry.py`
 already have, and for ADR-006's reasons rather than for symmetry: a channel that
@@ -7,7 +7,7 @@ diagnosable condition rather than a traceback, and base opens no sockets.
 
 **A third registry, and a fourth extra category** (E7). ADR-006's table named store
 extras, driver extras and `all`; a notify channel is none of those, and folding it
-into an existing one was the alternative considered and rejected in #442 — an
+into an existing one was the alternative considered and rejected: an
 estate on OCI Vault installing `sopuli-dba[hashicorp]` in order to post a chat
 message would make the extra's name stop meaning what it says, which is the whole
 property that ADR makes real.
