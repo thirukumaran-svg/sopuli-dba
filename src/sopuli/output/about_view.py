@@ -1,4 +1,4 @@
-"""What ``sopuli about`` prints (#413).
+"""What ``sopuli about`` prints.
 
 The one view in this package that renders nothing about a run. Every other
 ``*_view`` module turns a result, a config or a survey into text; this turns

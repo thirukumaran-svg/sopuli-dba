@@ -1,4 +1,4 @@
-"""The plan, as a person reads it (#247).
+"""The plan, as a person reads it.
 
 Invariant 8 says every mutating command prints a plan first, and UC-1 §2 widens
 that to every command: "Selection is resolved and printed *before* anything is
@@ -17,11 +17,11 @@ to type, which a bare ``4 units`` is not. The two factors are what a wrong
 selector gets wrong -- a `--select` that missed a label multiplies out to a
 different pair of numbers long before it produces a different total.
 
-**ASCII, including the multiplication sign.** UC-1 §7's worked output writes it as
-``x``. Nothing this codebase *emits* is outside ASCII -- every non-ASCII character
-in `sopuli/output/` is in a docstring -- and P4 requires identical behaviour on
-Windows, where redirected stdout is cp1252 (#12). `x` is not a compromise anybody
-has to notice; a `UnicodeEncodeError` in a plan header would be.
+**ASCII, including the multiplication sign.** UC-1 §7's worked output writes it
+as ``x``. Nothing this codebase *emits* is outside ASCII -- every non-ASCII
+character in `sopuli/output/` is in a docstring -- and P4 requires identical
+behaviour on Windows, where redirected stdout is cp1252. `x` is not a compromise
+anybody has to notice; a `UnicodeEncodeError` in a plan header would be.
 """
 
 from __future__ import annotations
@@ -122,9 +122,9 @@ def _secret(secret: dict[str, object] | None) -> Cell | str:
     """``vault:path`` for a unit's document, or a muted placeholder.
 
     The same spelling `lock status` prints and `lock break` takes, because it
-    addresses the same thing: a unit's document is what a lock is keyed on
-    (Q2, #83), so an operator reading a plan and then a lock refusal should be
-    matching one string rather than translating between two.
+    addresses the same thing: a unit's document is what a lock is keyed on (Q2),
+    so an operator reading a plan and then a lock refusal should be matching one
+    string rather than translating between two.
 
     The field and pointer are left off. They say *where in* the document, and the
     plan's question is which documents this run touches -- the parts are in the

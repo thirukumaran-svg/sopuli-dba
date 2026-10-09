@@ -1,4 +1,4 @@
-"""`creds finish-rollover` as a document and as a table (#263).
+"""`creds finish-rollover` as a document and as a table (decision #263).
 
 Same arrangement as the other credential verbs: the shape here, the decision in
 :mod:`sopuli.finish_rollover`.
@@ -114,9 +114,9 @@ def _verification(result: VerifyResult) -> dict[str, Any]:
     """The login this verb spends, as `check` reports one.
 
     Emitted for every account it was spent on, including the ones that passed
-    and were then closed -- the lockout counters in it are what makes the cost of
-    a nightly job auditable, and #86 made the grant behind them optional, so a
-    null `lcount` is a real answer rather than a gap.
+    and were then closed -- the lockout counters in it are what makes the cost
+    of a nightly job auditable, and decision P2 makes the grant behind them
+    optional, so a null `lcount` is a real answer rather than a gap.
     """
     return {
         "method": result.method,
@@ -230,9 +230,9 @@ def render_finish(
 def _state(state: str) -> Cell | str:
     """The state cell, coloured by :func:`~sopuli.output.palette.role_for_state`.
 
-    It was `check`'s rule copied, which is how a rule becomes four rules. One
-    function decides now (#395), and this command's ``SKIPPED`` rows -- windows
-    that were already closed -- recede instead of reading like the rest.
+    One function decides the role for every verb (decision #395), and this
+    command's ``SKIPPED`` rows -- windows that were already closed -- recede
+    instead of reading like the rest.
     """
     return state_cell(state)
 

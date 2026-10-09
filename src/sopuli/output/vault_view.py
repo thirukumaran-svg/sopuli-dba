@@ -1,18 +1,18 @@
-"""The run document's ``vaults`` section, and what ``doctor`` prints (#216).
+"""The run document's ``vaults`` section, and what ``doctor`` prints.
 
 P4 names vault reachability and clock skew in the same breath as client presence
 and ``TNS_ADMIN``, and the two halves of that sentence belong together for a
 reason that is not obvious: the skew is not a health nicety. `sopuli/lock/` puts
 an expiry on every lease and compares it against *this* machine's clock, with
-:data:`~sopuli.lock.record.CLOCK_SKEW` allowed for the two disagreeing (#83). A
-host that is minutes out takes over locks that are still live, or refuses ones
-long dead, and the failure presents as a locking bug rather than as an NTP
-problem. So the number here is the assumption the lock rests on, measured.
+:data:`~sopuli.lock.record.CLOCK_SKEW` allowed for the two disagreeing. A host
+that is minutes out takes over locks that are still live, or refuses ones long
+dead, and the failure presents as a locking bug rather than as an NTP problem.
+So the number here is the assumption the lock rests on, measured.
 
 **Its own section, because it is neither per-target nor per-account.** The same
-shape #214 found for ``install``: a vault does not appear in ``targets[]`` and
-has no ``account``, so widening either would have meant a field that means
-nothing for most of its rows.
+reasoning as ``install``: a vault does not appear in ``targets[]`` and has no
+``account``, so widening either would have meant a field that means nothing for
+most of its rows.
 
 **Present on every ``doctor`` run, empty array included**, which is ``install``'s
 rule rather than ``wallet``'s. The two differ because the questions do: a wallet
@@ -23,11 +23,11 @@ unwell could never be quoted as evidence that none of them was.
 **Reachability is the first fact and the only one that moves the exit code.** A
 store nobody can reach fails the run at exit 1, the same as an unreachable
 target: the vault is master (invariant 6), so this is a wider outage than one
-dead database rather than a narrower one. A ``degraded`` store does not -- what a
-reader does next is go and look at the vault, not at the network -- and a clock
-outside tolerance does not either, for the reason #213 settled for over-granted
-accounts: it is a real hazard this run did not create and cannot fix, and
-refusing to survey an estate over it would block the person who ran it.
+dead database rather than a narrower one. A ``degraded`` store does not -- what
+a reader does next is go and look at the vault, not at the network -- and a
+clock outside tolerance does not either, for the reason decision P5 gives for
+over-granted accounts: it is a real hazard this run did not create and cannot
+fix, and refusing to survey an estate over it would block the person who ran it.
 """
 
 from __future__ import annotations
@@ -147,8 +147,8 @@ def _status(report: VaultReport) -> Cell | str:
 
     One function decides, for the reason `role_for_state` is one function: this
     word appears in `doctor` and in every `creds` run's ``vaults`` section, and
-    a store that is ``degraded`` in one and plain in the other is the bug #395
-    was filed about, one vocabulary over.
+    a store that is ``degraded`` in one and plain in the other would be the
+    inconsistency decision #395 rules out, one vocabulary over.
     """
     role = role_for_health(report.health.status)
     return Cell(report.health.status, role) if role is not None else report.health.status

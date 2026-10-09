@@ -1,4 +1,4 @@
-"""`creds apply` as a document and as a table (#259).
+"""`creds apply` as a document and as a table.
 
 Same arrangement as :mod:`sopuli.output.check_view` and
 :mod:`sopuli.output.generate_view`: the shape here, the decision in
@@ -13,7 +13,7 @@ consequences of `apply` being the verb that commits:
   diagnosing a partial rotation needs to know which step of it stopped. A single
   entry would make "we did not need to change it" and "we changed it and could
   not confirm it" the same row, and §5 asks for each attribute to be *reported as
-  a separate change so the diff stays readable* (#300).
+  a separate change so the diff stays readable*.
 * a promotion is reported on **every account in the document it promoted**, with
   the version it produced. That version is what a later `check` or a resumed
   rotation is diagnosed from, and one account's row is not the place to hide it.
@@ -79,8 +79,8 @@ def build_result(
     exists to keep apart. `apply` is the convergent verb, so the second run of a
     successful rotation reports ``IN_SYNC`` with ``changed: false``.
 
-    ``attributes`` is what UC-1 §5's opt-in attributes did (#300), one entry each,
-    and the emitted ``changed`` is **the union of it and the DDL**: the argument
+    ``attributes`` is what UC-1 §5's opt-in attributes did, one entry each, and
+    the emitted ``changed`` is **the union of it and the DDL**: the argument
     is about the password and the field is about the run, so an account that was
     unlocked and needed no new password reports ``changed: true`` with no
     ``password_set`` that applied. Keeping the argument narrow is what stops the
@@ -94,14 +94,14 @@ def build_result(
     not by this field.
 
     ``redraws`` is how many *extra* passwords this account was given because the
-    server refused the value itself (§6.4, #312) -- over the one the run arrived
+    server refused the value itself (§6.4) -- over the one the run arrived
     with, so a row that carries it was applied more than once and reports the last
     attempt. **Emitted only when at least one was drawn**, on the same reasoning
     as ``overridden`` below: the field records redraws, not the budget for them,
     and a ``0`` on every ordinary row would make the ones that mattered harder to
     find.
 
-    ``overridden`` is what ``--force`` waived (§4, #286), and it is the reason
+    ``overridden`` is what ``--force`` waived (§4), and it is the reason
     the flag returns a value rather than a boolean: §4 requires the waiver to
     survive the waiving, so a run that rotated `DBSNMP` on purpose says which
     checks it went past and what each observed. **Emitted only when something was
@@ -135,7 +135,7 @@ def build_result(
         # database -- not only the ones with an open window. The absence of a
         # window is the answer to "did the old password stop working just now",
         # and `profile_rollover_time` beside it says whether that was the regime
-        # asked for or the only one available (#262). A `ROLLOVER_ACTIVE` state
+        # asked for or the only one available. A `ROLLOVER_ACTIVE` state
         # with no object beside it would leave a consumer inferring the deadline
         # from a word.
         #
@@ -391,7 +391,7 @@ def repair_invocation(
     source: str | None = None,
     strategy: str | None = None,
 ) -> str:
-    """The command line that repairs a partial run, spelled exactly (#264).
+    """The command line that repairs a partial run, spelled exactly.
 
     Printed by :func:`render_apply` on the runs that exit 4, because that exit
     code's whole purpose is to point at a remedy and "run it again" is not one.
@@ -417,17 +417,15 @@ def repair_invocation(
     No other stage gets it: `--confirm` being on that operation alone is the
     point of having it.
 
-    **Still the plain re-run, now that `--repair FILE` exists** (#391), and the
-    reason is one UC-1 could not have known when it said the flag would replace
-    this line. :meth:`~sopuli.output.emit.Emitter.emit` writes "the JSON
-    document, or the human text, never both" -- so this line is only ever read
-    by somebody in **text** mode, and a text-mode run leaves no document on disk
-    for ``--repair`` to be pointed at. Replacing the line would hand a half-
-    applied estate an invocation that cannot run, which is the trap the
-    paragraph above already refused once.
+    **This line is the plain re-run, although ``--repair FILE`` exists.**
+    :meth:`~sopuli.output.emit.Emitter.emit` writes "the JSON document, or the
+    human text, never both" -- so this line is only ever read by somebody in
+    **text** mode, and a text-mode run leaves no document on disk for
+    ``--repair`` to be pointed at. Replacing the line would hand a half-applied
+    estate an invocation that cannot run.
 
-    The flag is named on a second line instead, conditional on nothing and
-    promising nothing: it says what it needs. A JSON consumer needs no line at
+    The flag is named on a separate line instead, and that line promises
+    nothing: it says what the flag needs. A JSON consumer needs no line at
     all -- it has ``results[]``, and ``03-json-output.md`` §7's recipe is the
     same filter this flag applies.
     """
@@ -481,18 +479,18 @@ def render_apply(
     an estate backwards on purpose.
 
     ``repair`` is the invocation that repairs this run, from
-    :func:`repair_invocation`, and is passed **only on the runs that exit 4**
-    (#264). Deciding that here would mean re-deriving the exit code from the
-    states, and the one place it is decided is `apply.exit_code_for`: a table
+    :func:`repair_invocation`, and is passed **only on the runs that exit 4**.
+    Deciding that here would mean re-deriving the exit code from the states,
+    and the one place it is decided is `apply.exit_code_for`: a table
     that offered a remedy on a run the exit code called successful would be the
     two disagreeing about the same run.
 
-    ``stopped`` is why the run ended early -- today, that its lock was taken over
-    (#282). It **suppresses** ``repair``, and that is not tidiness: #264's line
-    says *run this again*, and running again is the one thing not to do while
-    somebody else holds this estate's lock. Two callers passing both would print
-    contradictory advice, so the renderer settles it rather than trusting each
-    one to.
+    ``stopped`` is why the run ended early -- today, that its lock was taken
+    over. It **suppresses** ``repair``, and that is not tidiness: the repair
+    line says *run this again*, and running again is the one thing not to do
+    while somebody else holds this estate's lock. Two callers passing both would
+    print contradictory advice, so the renderer settles it rather than trusting
+    each one to.
     """
     table = render_table(
         [
@@ -531,10 +529,9 @@ def _address(binding: Binding) -> Cell | str:
 def _state(state: str) -> Cell | str:
     """The state cell, coloured by :func:`~sopuli.output.palette.role_for_state`.
 
-    This function used to name ``ERROR`` and ``ACCOUNT_MISSING`` itself, and
-    `check`'s named ``DRIFT`` -- so the same state was emphasised or not
-    depending on which verb printed the row. #395 made one function decide, and
-    this is now the wrapper the table needs rather than a policy of its own.
+    One function decides the role for every verb (decision #395), so a state is
+    emphasised the same way whichever verb printed the row. This is the wrapper
+    the table needs and holds no policy of its own.
     """
     return state_cell(state)
 
@@ -556,23 +553,22 @@ def _verdict(
     confirmed -- so a line reporting changes with no promotion is exactly the
     state an operator has to notice.
 
-    ``repair`` adds a second line naming the invocation that fixes it (#264).
-    It is printed on both shapes of exit 4 and that is deliberate: targets that
-    did not confirm, and a whole estate that confirmed while its vault was not
-    promoted. The second is UC-1 §8 case 7 -- the estate has the new password and
-    applications are still fetching the old one -- and it is the row on that
+    ``repair`` adds a second line naming the invocation that fixes it. It is
+    printed on both shapes of exit 4 and that is deliberate: targets that did
+    not confirm, and a whole estate that confirmed while its vault was not
+    promoted. The second is UC-1 §8 case 7 -- the estate has the new password
+    and applications are still fetching the old one -- and it is the row on that
     table where knowing what to type next matters most.
 
-    **Text only, and no diagnostic code.** #216's rule is that a code exists for
-    what the exit code cannot tell you; here exit 4 says it exactly, and
-    `results[]` already carries the states a consumer would filter on
-    (`03-json-output.md` §7). A code would be a second spelling of a fact the
-    document has twice.
+    **Text only, and no diagnostic code.** A code exists for what the exit code
+    cannot tell you; here exit 4 says it exactly, and `results[]` already
+    carries the states a consumer would filter on (`03-json-output.md` §7). A
+    code would be a second spelling of a fact the document has twice.
 
-    ``stopped`` is the exception that proves that rule, and it *does* carry one
-    (``SOPULI-W011``): a run fenced out mid-estate exits 4 exactly like a run
-    whose targets failed, and the two want opposite responses. Here it replaces
-    the remedy rather than joining it -- see :func:`render_apply`.
+    ``stopped`` is the exception, and it *does* carry a code (``SOPULI-W011``):
+    a run fenced out mid-estate exits 4 exactly like a run whose targets failed,
+    and the two want opposite responses. Here it replaces the remedy rather than
+    joining it -- see :func:`render_apply`.
     """
     verb = "rolled back" if source == PREVIOUS else "changed"
     parts = [f"{changed} {verb}"] if changed else [f"nothing {verb}"]
@@ -612,12 +608,12 @@ def _with_remedy(
     run rather than after it.
 
     ``flag`` is that third line's own condition, and it is not the same as
-    ``repair``'s (found in review on #391). Exit 4 has two shapes and the plain
-    re-run fixes both, but ``--repair`` only fixes one: on UC-1 §8 case 7 --
-    every target confirmed and the vault not promoted -- there is no unconfirmed
-    row for a repair set to be built from, so the flag would filter the estate
-    to nothing and report ``nothing to apply``. Advertising it there sends the
-    reader to a command that does nothing about the case they are in.
+    ``repair``'s. Exit 4 has two shapes and the plain re-run fixes both, but
+    ``--repair`` only fixes one: on UC-1 §8 case 7 -- every target confirmed and
+    the vault not promoted -- there is no unconfirmed row for a repair set to be
+    built from, so the flag would filter the estate to nothing and report
+    ``nothing to apply``. Advertising it there sends the reader to a command
+    that does nothing about the case they are in.
     """
     if stopped is not None:
         return f"{line}\n{stopped}"

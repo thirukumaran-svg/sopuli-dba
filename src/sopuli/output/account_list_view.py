@@ -1,4 +1,4 @@
-"""`sopuli account list` as a document and as a table (UC-2 §2, #490).
+"""`sopuli account list` as a document and as a table (UC-2 §2).
 
 Same arrangement as the other verbs: the shape here, the resolution in
 :mod:`sopuli.account_list`.
@@ -133,9 +133,8 @@ def summarise(rows: Sequence[Row]) -> Summary:
 
     ``changed`` is zero by construction. ``ok`` counts the accounts that exist,
     ``unchanged`` every row this verb looked at and left alone, and ``failed``
-    the targets it could not answer -- which used to be zero even on a run that
-    exited ``PARTIAL``, so the exit code and the summary disagreed (Copilot's
-    review of #493).
+    the targets it could not answer. Counting them as zero on a run that exits
+    ``PARTIAL`` would make the exit code and the summary disagree.
     """
     return Summary(
         total=len(rows),

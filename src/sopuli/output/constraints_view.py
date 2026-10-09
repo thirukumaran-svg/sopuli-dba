@@ -1,4 +1,4 @@
-"""The ``constraints`` section, and the line an operator reads (#317, UC-1 §4 step 2).
+"""The ``constraints`` section, and the line an operator reads (UC-1 §4 step 2).
 
 What `creds generate` asked the estate before it drew, as a document section and
 as one sentence. Same arrangement as :mod:`sopuli.output.install_view`: the shape
@@ -10,10 +10,10 @@ that cannot be consulted (invariants 13 and 14) and a reuse history is hashed. A
 consumer wanting *what this run could not check* branches on the diagnostic codes
 (`SOPULI-W016`, `SOPULI-W017`); this is the evidence underneath them.
 
-**A section rather than more warnings.** #216's rule for `doctor`: a diagnostic
-is for what the exit code cannot tell you, and everything else belongs in the
-section that names it. A run that answers "what may a password be here" with
-eleven warnings has no place to put the eleven answers.
+**A section rather than more warnings.** ``03-json-output.md`` §3's rule: a
+diagnostic is for what the exit code cannot tell you, and everything else
+belongs in the section that names it. A run that answers "what may a password be
+here" with eleven warnings has no place to put the eleven answers.
 
 **Present whenever the question was asked**, including where nothing answered --
 which is `install`'s rule and right for the same reason: the section is evidence
@@ -21,7 +21,7 @@ that the estate was consulted, and one that appeared only when something was
 wrong could never be quoted as proof that nothing was. ``--offline`` is the
 exception, and the only one: there the question was not asked.
 
-**Deliberately not coloured** (#395), for the reason
+**Deliberately not coloured** (decision #395), for the reason
 :mod:`sopuli.output.wallet_view` gives: this section is one line of prose, and
 `render_constraints` returns a sentence rather than a row. Its caveats print
 themselves as warnings with codes of their own (`SOPULI-W015`, `SOPULI-W016`,
@@ -99,10 +99,9 @@ def _account(target: str, one: AccountConstraints) -> dict[str, Any]:
     """One account's profile constraints, none of which gate anything.
 
     ``verify_function`` is an object with a ``state`` rather than a nullable
-    string, and that is the whole of what #317 asked for here: ``named``,
-    ``none`` and ``unknown`` are three answers, and a missing string would merge
-    the last two into the one reading that misleads -- *nothing will judge this
-    password*.
+    string, because ``named``, ``none`` and ``unknown`` are three answers, and a
+    missing string would merge the last two into the one reading that misleads
+    -- *nothing will judge this password*.
     """
     entry: dict[str, Any] = {"target": target, "account": one.account}
     if one.profile is not None:

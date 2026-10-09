@@ -1,4 +1,4 @@
-"""What a pre-flight found, as a table (UC-1 §8 step 3, #283).
+"""What a pre-flight found, as a table (UC-1 §8 step 3).
 
 The shape here, the decision in :mod:`sopuli.preflight` -- the arrangement
 :mod:`sopuli.output.apply_view` and :mod:`sopuli.output.check_view` have with
@@ -103,14 +103,14 @@ def _verdict(findings: Sequence[Finding]) -> str:
 
 
 def caveat_notes(findings: Sequence[Finding]) -> list[str]:
-    """The checks a passing survey could not make, as run-level notes (#606).
+    """A passing survey's missing checks, as run-level notes (decision #606).
 
     For the run the survey **let through**. A refusal already prints every
     finding in :func:`render_preflight`'s table, caveats included, so a caller
     asks for these only once :func:`sopuli.preflight.refusal` has said no -- and
     without them a pre-flight that passed with a check missing would read in a
-    terminal exactly like one that made every check, which is #309's
-    invisibility on the invocation whose whole question is "would it work".
+    terminal exactly like one that made every check, on the invocation whose
+    whole question is "would it work".
 
     **One note per target, not one per finding.** An estate that will not grant
     the view meets this on every run and on every target, and a profile that

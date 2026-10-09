@@ -1,4 +1,4 @@
-"""`creds generate` as a document and as a table (#254).
+"""`creds generate` as a document and as a table.
 
 The `results[]` entries for a staging run, and the text an operator reads. Same
 arrangement as :mod:`sopuli.output.check_view`: the shape here, the decision in
@@ -49,17 +49,18 @@ __all__ = [
 #: saying the vocabulary was wrong, which this one is not.
 STAGED = "PENDING_APPLY"
 
-#: Re-exported from :mod:`sopuli.generate`, where #395 moved it: every other
-#: state in the schema's enum is declared in a domain module, and the palette
-#: cannot import a view. Kept in this module's namespace because `cli` and the
-#: tests import it from here.
+#: ``VAULT_ONLY`` is declared in :mod:`sopuli.generate` and re-exported here,
+#: imported above: every other state in the schema's enum is declared in a
+#: domain module, and the palette cannot import a view. Kept in this module's
+#: namespace because `cli` and the tests import it from here.
 
 #: A write that did not happen. `results[].error` carries the reason.
 FAILED = "ERROR"
 
 #: The states a write actually happened in. `changed` is true of both, and both
 #: sit outside invariant 9 for the same reason -- a fresh draw has no fixed point
-#: to converge on, whichever stage it lands in (#254, and #454 for the rule).
+#: to converge on, whichever stage it lands in (decision #254, and H7 for the
+#: rule).
 WRITTEN = (STAGED, VAULT_ONLY)
 
 _ACCOUNT = 24
@@ -82,12 +83,11 @@ def build_result(
     """One ``results[]`` entry for a staged account.
 
     ``changed`` is ``True`` on every successful write, including a second run
-    over an account that already had a ``pending`` staged. That is #254's
-    decision, and #454's scope rule is what places it: a fresh draw has no fixed
-    point to converge on, so the verb is outside invariant 9 rather than excused
-    from it, and "nothing changed" would simply be false. The invariant governs
-    the convergent verbs, and `apply` is the one that will report
-    ``changed: false`` on a re-run.
+    over an account that already had a ``pending`` staged. The verb is outside
+    invariant 9 rather than excused from it (decision #254, and the scope rule
+    of H7): a fresh draw has no fixed point to converge on, and "nothing
+    changed" would simply be false. The invariant governs the convergent verbs,
+    and `apply` is the one that will report ``changed: false`` on a re-run.
 
     **A ``--dry-run`` produces no entry at all.** It emits `plan` and stops --
     which is what invariant 8 asks for, and it avoids inventing a state for
@@ -107,9 +107,8 @@ def build_result(
     entry["actions"] = [
         {
             # `vault_write_pending` and `vault_promote`, both from the schema's
-            # `action_kind` enum. The stage was a parameter before `--promote`
-            # existed, in anticipation of it (#257), which is why adding the verb
-            # changed this line not at all.
+            # `action_kind` enum. The stage is a parameter, so one line serves
+            # the staging run and `--promote`.
             "kind": "vault_write_pending" if stage == PENDING else "vault_promote",
             # Either write is an action that happened. Testing `== STAGED` would
             # have reported every promotion as an action that did not apply.
@@ -152,11 +151,12 @@ def _warnings(
       it had been handed to anybody it is now worthless. Safe, per UC-1 §4, and
       not silent;
     * **a replaced ``current``** -- `--promote` wrote over the field applications
-      read (#257). Authorised, since `--overwrite-current` is what let it happen,
-      and reported anyway: what the vault now advertises is a password no
-      database has been given, and the run that did it is the last place anybody
-      will look for that fact. It is a **warning** and not an error for the same
-      reason the flag exists -- the operator asked for exactly this;
+      read (decision #257). Authorised, since `--overwrite-current` is what let
+      it happen, and reported anyway: what the vault now advertises is a
+      password no database has been given, and the run that did it is the last
+      place anybody will look for that fact. It is a **warning** and not an
+      error for the same reason the flag exists -- the operator asked for
+      exactly this;
     * **an accepted policy violation** -- ``--no-policy-check`` let something
       through, and §4 requires the audit event to say *what*. The rule names and
       counts go in; never the characters (:class:`~sopuli.passwords.Violation`).
@@ -220,7 +220,7 @@ def summarise(states: Sequence[str]) -> Summary:
     ``ok`` and ``changed`` are the same number here and that is not redundancy:
     they answer different questions everywhere else, and a verb whose every
     success is a mutation is exactly where they coincide. ``unchanged`` is what
-    did *not* get written, which under #254's decision is only ever failures.
+    did *not* get written, which under decision #254 is only ever failures.
     """
     staged = sum(1 for state in states if state in WRITTEN)
     failed = sum(1 for state in states if state == FAILED)
@@ -257,13 +257,13 @@ def render_write_table(writes: Sequence[DocumentWrite], *, stage: str) -> list[s
 def render_promotion_table(
     writes: Sequence[DocumentWrite], held: Mapping[LockKey, Sequence[str]]
 ) -> list[str]:
-    """What `--promote` is about to write, split by what it would replace (#257).
+    """What `--promote` is about to write, split by what it would replace.
 
     Two columns rather than one, because seeding an account that has no `current`
-    and replacing one that has are different risks and the operator is the one
-    who has to weigh them. A single ACCOUNTS column would make the run look
-    uniform and leave the count of destructive writes to be worked out from a
-    refusal message.
+    and replacing one that has are different risks (decision #257) and the
+    operator is the one who has to weigh them. A single ACCOUNTS column would
+    make the run look uniform and leave the count of destructive writes to be
+    worked out from a refusal message.
 
     One row per document, as :func:`render_write_table` has: the document is the
     unit of the write, the compare-and-set and the lock.
@@ -352,10 +352,9 @@ def _verdict(states: Sequence[str]) -> str:
         # The sentence that matters after a successful stage: the database has
         # not changed, and nothing is using this password yet.
         #
-        # "changed" rather than "touched" since #317. A target may well have been
-        # *read* -- step 2 asks each one how long a password may be -- and a line
-        # claiming nothing was touched would be describing the command as it was
-        # before rather than as it ran. The reassurance a reader wants here is
-        # about writes, and that one is still true.
+        # "changed" rather than "touched". A target may well have been *read*
+        # -- step 2 asks each one how long a password may be -- so a line
+        # claiming nothing was touched would be false. The reassurance a reader
+        # wants here is about writes, and that one is true.
         return f"{line}; no database was changed -- run `sopuli creds apply` to use them"
     return line

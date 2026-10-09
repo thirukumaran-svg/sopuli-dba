@@ -1,4 +1,4 @@
-"""What a rotation did, as text (UC-1 §8, #284).
+"""What a rotation did, as text (UC-1 §8).
 
 `rotate` sequences verbs that already have views, so most of this file is about
 **not** writing a second one. The result table is

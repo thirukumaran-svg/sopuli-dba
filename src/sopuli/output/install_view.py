@@ -1,4 +1,4 @@
-"""The run document's ``install`` section, and what ``doctor`` prints (#214).
+"""The run document's ``install`` section, and what ``doctor`` prints (E6).
 
 ADR-006 E6 asks for three facts and the third is the one nothing else reports:
 which components are installed, which are configured, and **what is installed
@@ -10,8 +10,8 @@ is neither per-target nor per-vault -- it is a property of the machine, and the
 run document had no section shaped like that. Squeezing it into the per-target
 array would have repeated one machine fact once per target, and made a
 twenty-one PDB estate say the same thing twenty-one times. Adding a section is
-the minor rule (``03-json-output.md`` §8), the same one #182 followed when
-``targets[]`` itself was the alternative to widening ``result``.
+the minor rule (``03-json-output.md`` §8), the same one that made ``targets[]``
+a section of its own rather than a widening of ``result``.
 
 **Emitted whole, empty arrays included**, which is the same argument
 ``privileges`` follows: a section that appeared only when something was wrong

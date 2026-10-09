@@ -1,4 +1,4 @@
-"""The run document's ``targets`` section, and what ``doctor`` prints (#182).
+"""The run document's ``targets`` section, and what ``doctor`` prints.
 
 `doctor` is the first consumer of the driver layer, and the only one that
 connects to every target and **mutates nothing**. Everything the `creds` verbs
@@ -149,10 +149,11 @@ def _asserted(target: ExpandedTarget, scope: Scope) -> dict[str, Any] | None:
     if declared.scope is None and declared.container is None:
         return None
 
-    # The comparison itself lives in `sopuli.preflight`, because #283 needs the
-    # same answer as a *decision* and not only as a field to render. Two copies
-    # of it would be two readings of what a `dsn:` edit did, and the one that
-    # refuses a run is not the one anybody would notice going stale.
+    # The comparison itself lives in `sopuli.preflight`, because the pre-flight
+    # (UC-1 §8 step 3) needs the same answer as a *decision* and not only as a
+    # field to render. Two copies of it would be two readings of what a `dsn:`
+    # edit did, and the one that refuses a run is not the one anybody would
+    # notice going stale.
     return {
         "scope": declared.scope,
         "container": declared.container,

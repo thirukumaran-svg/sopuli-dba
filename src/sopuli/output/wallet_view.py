@@ -1,4 +1,4 @@
-"""The run document's ``wallet`` section, and what ``doctor`` prints (#215).
+"""The run document's ``wallet`` section, and what ``doctor`` prints.
 
 P4 names wallet readability in the same breath as client presence and
 ``TNS_ADMIN``, and the gap it closes is between *the variable is set* -- which
@@ -23,13 +23,13 @@ the wallet is supposed to be, and the report loses.
 **Nothing here is a verdict.** The section explains a failure the connection
 attempt is about to produce; it does not pre-empt it, and it moves no exit code.
 
-**Deliberately not coloured** (#395). The palette went through every view that
-had none, and this is one of two that came out plain on purpose rather than by
-omission. It is a key-value block and a list of findings, not a table -- there
-is no column a reader scans, so a colour here decorates prose instead of
-answering "which row". The findings are already sentences that say what is
-wrong, and two of them carry diagnostic codes (`SOPULI-W007`, `SOPULI-W008`)
-for a consumer that wants to branch. Revisit if this ever becomes a table.
+**Deliberately not coloured** (decision #395). This is one of two views that are
+plain on purpose rather than by omission. It is a key-value block and a list of
+findings, not a table -- there is no column a reader scans, so a colour here
+decorates prose instead of answering "which row". The findings are already
+sentences that say what is wrong, and two of them carry diagnostic codes
+(`SOPULI-W007`, `SOPULI-W008`) for a consumer that wants to branch. Revisit if
+this ever becomes a table.
 """
 
 from __future__ import annotations

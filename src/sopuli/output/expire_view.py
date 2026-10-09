@@ -1,4 +1,4 @@
-"""`sopuli account expire-password` as a document and as a table (UC-2, #525).
+"""`sopuli account expire-password` as a document and a table (decision #525).
 
 Same arrangement as `account suspend`: the shape here, the decision in
 :mod:`sopuli.expire`, the statements in the driver.
@@ -58,8 +58,8 @@ def build_result(
     why, as `account suspend`'s rows do.
 
     ``changed`` is whether **either** statement was issued. An account found at
-    `EXPIRED & IN ROLLOVER` is not converged under #525's option (b): its window
-    is closed, the expiry is not reissued, and the row reports ``changed: true``.
+    `EXPIRED & IN ROLLOVER` is not converged under decision #525: its window is
+    closed, the expiry is not reissued, and the row reports ``changed: true``.
     Only an account already expired with no window open reports
     ``changed: false`` -- invariant 9 for this verb.
 

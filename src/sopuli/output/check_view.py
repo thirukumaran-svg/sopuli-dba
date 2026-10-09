@@ -1,4 +1,4 @@
-"""`creds check` as a document and as a table (#248).
+"""`creds check` as a document and as a table.
 
 The `results[]` array and the text UC-1 §7 shows. Same arrangement as
 :mod:`sopuli.output.doctor_view`: the shape lives here, the decision lives in
@@ -7,8 +7,7 @@ the section is optional.
 
 **`results[]` is per (account, target), and `targets[]` is not.** `doctor` reports
 on a target and manages no credential; this reports on a credential in a target.
-The two arrays coexist for that reason and #182 added the second rather than
-widening the first.
+The two arrays coexist for that reason.
 
 **The detail column is the point of the text view.** A state on its own is a word
 an operator has to interpret -- `UNVERIFIABLE` says nothing about whether to act
@@ -62,8 +61,8 @@ def build_result(
     ``warnings`` is ``(code, message)`` pairs rather than bare strings, because a
     warning without a code is one a consumer has to grep for (``03-json-output.md``
     §3). It carries findings that sit *beside* the state rather than replacing it
-    -- the grace period is the first (#309), and the shape is deliberately general
-    because it will not be the last.
+    -- the grace period is one, and the shape is deliberately general so that
+    others fit.
     """
     entry: dict[str, Any] = {
         "account": binding.account,
@@ -153,9 +152,10 @@ def _verification(result: VerifyResult, *, previous_accepted: bool | None = None
 
     ``lcount`` and ``failed_login_attempts_limit`` are emitted as ``null`` rather
     than omitted when the grant is absent, because null here is a real answer:
-    #86 made ``SELECT ON SYS.USER$`` optional, so "the guard was unavailable" is
-    a thing a scheduled check must be able to report. Omitting the keys would
-    make an ungranted estate indistinguishable from one where nothing looked.
+    ``SELECT ON SYS.USER$`` is an optional grant (decision P2), so "the guard
+    was unavailable" is a thing a scheduled check must be able to report.
+    Omitting the keys would make an ungranted estate indistinguishable from one
+    where nothing looked.
     """
     return {
         "method": result.method,
@@ -215,7 +215,7 @@ def render_check(rows: Sequence[tuple[Binding, Outcome]], *, notices: Sequence[s
     them: drift first, because it is the thing that is actually wrong.
 
     ``notices`` are the row-level findings that do not fit in a column -- a grace
-    period and the date it ends (#309). They go **under the verdict** rather than
+    period and the date it ends. They go **under the verdict** rather than
     into ``DETAIL``, because a sentence carrying a timestamp would push the
     column past a terminal and because the verdict is the line somebody reads
     first. Below it, they are what they read next.
@@ -245,14 +245,14 @@ def render_check(rows: Sequence[tuple[Binding, Outcome]], *, notices: Sequence[s
 def _state(state: str) -> Cell | str:
     """The state cell, coloured by :func:`~sopuli.output.palette.role_for_state`.
 
-    This used to paint ``DRIFT`` alone, on the argument that colouring the
-    inconclusive states too would make four of the eight shout at once. That
-    argument is answered rather than overruled (#395): they are **dim**, not
+    ``DRIFT`` takes the ``attention`` role. ``UNVERIFIABLE`` is **dim**, not
     coloured, so a row nothing could be concluded about recedes instead of
-    competing. Nothing shouts that did not shout before, and ``IN_SYNC`` --
-    which is most rows on a healthy estate -- is now visibly not one of them.
+    competing (decision #395). ``ACCOUNT_MISSING``, ``LOCKED`` and ``EXPIRED``
+    count as inconclusive for the exit code but are coloured ``bad``:
+    :func:`~sopuli.output.palette.role_for_state` says why. ``IN_SYNC`` -- most
+    rows on a healthy estate -- takes the ``good`` role.
 
-    The word is on the line either way, so `NO_COLOR` still loses nothing.
+    The word is always on the line, so `NO_COLOR` loses nothing.
     """
     return state_cell(state)
 

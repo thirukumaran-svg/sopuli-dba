@@ -1,4 +1,4 @@
-"""What an unseen delivery tells the operator (UC-2 §6.6, #444).
+"""What an unseen delivery tells the operator (UC-2 §6.6).
 
 **The wrapping token is emitted and the password is not**, and that difference is
 the whole of this module. `reset_view.render_password` shows a DBA a working
@@ -51,22 +51,21 @@ def render_handover(receipt: Receipt, *, account: str, target: str) -> str | Non
     """The token, and what the operator has to do with it.
 
     ``None`` for a receipt with no token: a method that hands over nothing to
-    carry (#447's path, mail that has been sent) leaves the operator nothing to
-    pass on, and printing a heading over an empty value would suggest something
-    had gone missing.
+    carry (mail that has been sent, or the identity-scoped path of TODO(#447))
+    leaves the operator nothing to pass on, and printing a heading over an empty
+    value would suggest something had gone missing.
 
-    **The target is named, and leaving it out was a real defect** (the code review
-    of #518). `account reset-password` with no `--target` reaches every declared
-    target and draws a *separate* password for each, so an operator saw N blocks
-    reading "hand this to alice" with N different tokens and nothing saying which
-    database each belonged to -- and sending the wrong one hands somebody a
-    password that does not work on the host they were told about. The cubbyhole
-    itself already carried `target` for exactly this reason
-    (:mod:`sopuli.delivery.vault_wrapped`), so the person unwrapping was helped and
-    the DBA holding both tokens was not.
+    **The target is named.** `account reset-password` with no `--target` reaches
+    every declared target and draws a *separate* password for each, so without
+    the name an operator would see N blocks reading "hand this to alice" with N
+    different tokens and nothing saying which database each belonged to -- and
+    sending the wrong one hands somebody a password that does not work on the
+    host they were told about. The cubbyhole carries `target` for exactly this
+    reason (:mod:`sopuli.delivery.vault_wrapped`), and naming it here helps the
+    DBA holding both tokens as well as the person unwrapping.
 
-    The seen path needs no such help, which is why the gap was easy to miss: its
-    per-target prompt names the target before each password is shown. An unseen
+    The seen path needs no such help: its per-target prompt names the target
+    before each password is shown. An unseen
     delivery has no prompt by design.
 
     **The instruction is part of the output rather than left to a runbook.** The

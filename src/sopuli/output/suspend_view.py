@@ -1,4 +1,4 @@
-"""`sopuli account suspend` as a document and as a table (UC-2, #463).
+"""`sopuli account suspend` as a document and as a table (UC-2).
 
 Same arrangement as the credential verbs: the shape here, the decision in
 :mod:`sopuli.suspend`.
