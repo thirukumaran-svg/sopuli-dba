@@ -3133,12 +3133,11 @@ def account_list_command(
 ) -> str:
     """Resolve `personal_accounts:` and show what it matched.
 
-    Reads no password and writes nothing. It is the verb H1 (#449) owed: a
-    personal account may be declared by a *predicate* over a database profile or
-    role, and until this there was no way to read a whitelist you cannot
-    enumerate. The declaration is resolved against each selected target, and each
-    account is reported with the rule that admitted it and the state the database
-    is in.
+    Reads no password and writes nothing. H1 needs this verb: a personal account
+    may be declared by a *predicate* over a database profile or role, and this is
+    how to read a whitelist you cannot enumerate. The declaration is resolved
+    against each selected target, and each account is reported with the rule that
+    admitted it and the state the database is in.
 
     Two date columns, not one. DB_PW_CHANGED is the database's own
     password-change date and RESET_AT is what the reset journal recorded, and
@@ -3234,14 +3233,13 @@ def _declared_names(
 ) -> list[str]:
     """Every account the declaration admits here, once each.
 
-    **Deduplicated across rules, case-insensitively, and both halves were found
-    by running it rather than by reasoning about it.** An account may be admitted
+    **Deduplicated across rules, case-insensitively.** An account may be admitted
     by more than one rule -- UC-2 2 calls that ordinary -- and an enumerated rule
     yields the *file's* spelling while a predicate yields the *dictionary's*. So
     ``acme_dev_alice`` enumerated and ``ACME_DEV_ALICE`` carrying the profile are
-    one person, and the first draft of this verb listed them as two rows. A
-    listing that shows one account twice is worse than one that omits it: it
-    misreports the size of the whitelist an operator is reviewing.
+    one person, and must be one row. A listing that shows one account twice is
+    worse than one that omits it: it misreports the size of the whitelist an
+    operator is reviewing.
 
     First occurrence wins, so file order leads and predicates fill in behind it,
     which keeps a reviewer's listing aligned with the file they are reading it
@@ -3359,12 +3357,11 @@ def _describe_row(
 
     **The name reported is the one the database gave back**, where there is one.
     ``02-oracle-privileges.md`` 4's rule about spellings is about statements, and
-    nothing here issues one -- but a listing that showed the file's spelling for
-    an enumerated account and the dictionary's for a predicate account would be
-    showing two vocabularies in one column, which is how the duplicate rows that
-    :func:`_declared_names` now folds got there in the first place. Where the
-    account does not exist, the file's spelling is all there is, and it is what
-    the reader needs to go and look for.
+    nothing here issues one -- but a listing that showed the file's spelling for an
+    enumerated account and the dictionary's for a predicate account would be showing
+    two vocabularies in one column, the same fault as the duplicate rows
+    :func:`_declared_names` folds. Where the account does not exist, the file's
+    spelling is all there is, and it is what the reader needs to go and look for.
     """
     state = session.describe_user(name)
     profile = state.profile if state is not None else None
@@ -3406,11 +3403,10 @@ def _unreachable_row(target: ExpandedTarget, error: Error) -> account_list.Row:
     """A target that could not be answered, reported as a row rather than a failure.
 
     **`ERROR`, never `ACCOUNT_MISSING`**, and the row carries the error object.
-    The first draft left `state` to be inferred from "no `UserState`", which
-    rendered a down or unauthenticated target as *this account does not exist* --
-    a connectivity failure reported as a fact about an estate, with nothing in
-    `results[]` to tell the two apart. `account suspend` already draws that
-    distinction and this now matches it (Copilot's review of #493).
+    Inferring `state` from "no `UserState`" would render a down or unauthenticated
+    target as *this account does not exist* -- a connectivity failure reported as a
+    fact about an estate, with nothing in `results[]` to tell the two apart.
+    `account suspend` draws the same distinction.
     """
     return account_list.Row(
         account=account_list.ABSENT,
@@ -3443,10 +3439,10 @@ def lock_status(
     stops; this is how anybody else finds out the same thing without racing for
     it -- what is held, by whom, since when, and whether the claim has lapsed.
 
-    **It takes no lock itself.** #83 settled that for `check`, `status` and every
-    `--dry-run`, and the reason is not politeness: an hourly survey that locked
-    would block the rotations it exists to report on, and the concurrency gate
-    would start failing for the wrong reason.
+    **It takes no lock itself**, and neither do `check`, `status` or any
+    `--dry-run`. The reason is not politeness: an hourly survey that locked would
+    block the rotations it exists to report on, and the concurrency gate would start
+    failing for the wrong reason.
 
     **It opens a connection.** `config show`, `target list` and `policy sample`
     are offline by design and safe to point at a production config from a
@@ -3461,7 +3457,7 @@ def lock_status(
     accounts sharing one document are one row here exactly as they are one lock
     during a rotation.
 
-    **And then it looks beside it** (#150). Each store's lock prefix is listed,
+    **And then it looks beside it.** Each store's lock prefix is listed,
     and a record at a path this configuration does not declare is reported with
     `declared: false` -- an application renamed or removed, or another config's
     estate sharing the mount. That is the record nobody could otherwise see, and
@@ -3471,22 +3467,22 @@ def lock_status(
     refused, so a survey never becomes a command that works on some backends and
     not others.
 
-    **And it surveys UC-2's reset locks, which no binding declares** (#514).
+    **And it surveys UC-2's reset locks, which no binding declares.**
     `reset_records:` declares a prefix rather than a set of keys -- a personal
     account admitted by a `profile:` or `role:` predicate has no name until a
     database is asked, and this verb asks none -- so the region is listed like
     any other and what is found under it is reported as this estate's, with
     `declared_by: reset_records` rather than as a leftover. The store is opened
     because the block declares it, so a configuration with no `applications:` at
-    all still gets a survey; before this it opened nothing and reported an empty
-    estate while a reset held a lock.
+    all still gets a survey rather than an empty estate while a reset holds a
+    lock.
 
     **A selector does not narrow that region, and the reason is that a path
     segment is not a declaration.** A record path spells its target, so filtering
     by it would mean trusting the spelling -- and a record under this prefix whose
     target segment matches nothing declared is precisely the one worth seeing,
     which a filter built on the segment would hide. So `--select` decides which
-    *bindings* are surveyed, as it always did, and the prefix is surveyed whole.
+    *bindings* are surveyed, and the prefix is surveyed whole.
 
     Always exit 0 when it could look. A held lock is a finding, not a failure --
     exit 7 means *this run could not proceed*, and this run had nothing to
@@ -3506,26 +3502,26 @@ def lock_status(
     # and wrong.
     #
     # `resolvable_locks` for the membership pass and `declared_locks` for the one
-    # this command acts on (#349). The unfiltered pass is used only to decide
-    # whether a discovered record is `declared: false`, and a binding whose store
-    # is unknown can match no discovered path -- so refusing over one made
+    # this command acts on. The unfiltered pass is used only to decide whether a
+    # discovered record is `declared: false`, and a binding whose store is
+    # unknown can match no discovered path -- so refusing over one would make
     # `--select` fail on an account in an application the run was never going to
     # survey.
     #
     # Both estates are completed from a profile's `vault:` and SOPULI_VAULT
-    # first (C15, #672), because a rotation run under them takes its lock in
+    # first (C15), because a rotation run under them takes its lock in
     # that store. The membership pass completes without refusing, as the
     # promotion gate does: a SOPULI_VAULT naming an undeclared store is wrong
     # only for a binding this run surveys, and the narrowed estate refuses that.
     everything = resolvable_locks(_declared_estate(config))
     keys = declared_locks(binding_stores.complete(filter_estate(config, selection), env=os.environ))
     # UC-2's locks are keyed on the reset record's path, which no binding
-    # produces (#514). The prefix is declared and the keys under it are not
-    # enumerable offline -- a predicate-declared personal account has no name
-    # until a database is asked -- so the region is *listed* rather than
-    # expanded, and the store has to be opened for that to happen even when no
-    # binding names it. Before this, a UC-2-only configuration opened no store
-    # at all and reported an empty estate while holding a lock.
+    # produces. The prefix is declared and the keys under it are not enumerable
+    # offline -- a predicate-declared personal account has no name until a
+    # database is asked -- so the region is *listed* rather than expanded, and
+    # the store has to be opened for that to happen even when no binding names
+    # it. Otherwise a UC-2-only configuration would open no store at all and
+    # report an empty estate while a reset holds a lock.
     region = reset_region(config)
     wanted = {key.store for key in keys}
     if region is not None:
@@ -3617,10 +3613,10 @@ def lock_break(
     what makes running this twice safe.
 
     It acts on the one lock named, whether or not this configuration declares a
-    binding for it: the leftover at a path the file no longer names is exactly
-    the record nobody else can clear (#150). The write still lands under the
-    store's lock prefix, in a store `vaults:` declares, and never touches the
-    secret the lock guards.
+    binding for it: the leftover at a path the file no longer names is exactly the
+    record nobody else can clear. The write still lands under the store's lock
+    prefix, in a store `vaults:` declares, and never touches the secret the lock
+    guards.
     """
     document = run.document
 
@@ -3631,14 +3627,13 @@ def lock_break(
         # resolve to a valid request, and nothing about any file is wrong.
         raise click.UsageError(str(exc)) from exc
 
-    # No `estate=`, and that is a decision rather than the one verb that was
-    # missed when layer 4 was wired up (#424, raised in review on #425).
+    # No `estate=`, and that is a decision rather than an oversight (decision #424).
     # `01-configuration.md` §3a records it; the short form is that this verb
-    # addresses a **vault document** by path and takes no selector at all, so
-    # there is no estate for a target's or a group's block to arrive from -- and
-    # gating it here would guard nothing, because every verb that would use this
-    # lock to change that target is already refused by the same block.
-    # `defaults` and a profile still refuse it, as they always did.
+    # addresses a **vault document** by path and takes no selector at all, so there
+    # is no estate for a target's or a group's block to arrive from -- and gating it
+    # here would guard nothing, because every verb that would use this lock to
+    # change that target is already refused by the same block. `defaults` and a
+    # profile still refuse it.
     refuse_if_readonly(run.resolved, action=f"breaking the lock on {key}")
 
     paths = run.sources
@@ -3744,13 +3739,15 @@ def _confirm_environments(
 ) -> None:
     """P5's environment gate: ask before mutating anything in a listed environment.
 
-    ``safety.confirm_environments`` had been parsed, ratcheted as a union across
-    layers, and read by nothing (#292) -- a config that looked like protection and
-    was not, which is worse than the setting not existing. This is the consumer,
-    and since #294 it is the only one: P5's other two triggers -- a built-in
-    `prod`, and a blast radius over `max_targets` -- were **declined** rather than
-    left for later. A target marked `environment: prod` that no layer listed is
-    not prompted for, by design.
+    ``safety.confirm_environments`` is parsed and ratcheted as a union across
+    layers, and this is its consumer. A setting that nothing read would look like
+    protection and not be, which is worse than the setting not existing. It is the
+    only one of the three triggers P5 asked for that exists: a built-in `prod`, and
+    a blast radius over `max_targets`, were **declined** rather than left for later
+    (decision D10). A target marked `environment: prod` that no layer listed is not
+    prompted for, by design. `creds rotate` and `lock break` confirm every time,
+    which is a separate rule, and a profile's `confirm: false` makes this gate
+    refuse rather than ask.
 
     **The flag satisfies the setting**, rather than being a separate gate that
     also has to pass. P5 says every mutating command supports ``--confirm``, and
@@ -3787,7 +3784,7 @@ def _confirm_environments(
     if not _can_prompt():
         refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
     question = f"{action} in `{demand.named}`?"
-    # As `rotate`'s gate does (#535): only where somebody is actually asked.
+    # As `rotate`'s gate does: only where somebody is actually asked.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
     click.echo(render_plan(plan, noun=noun), err=True)
     click.confirm(question, abort=True, err=True)
@@ -3796,10 +3793,10 @@ def _confirm_environments(
 def _with_estate_safety(run: Invocation, config: Config) -> Invocation:
     """``run`` with the ``safety:`` blocks of the estate it selected merged in.
 
-    P3's layer 4 for the safety settings, which until #424 was parsed and read by
-    nothing: a ``readonly: true`` on a target refused no mutation, a
-    ``max_targets`` on one bounded no run, and a ``confirm_environments`` on one
-    asked nobody anything. :func:`~sopuli.safety.for_estate` is the merge and
+    P3's layer 4 for the safety settings (decision #424). Without it, a
+    ``readonly: true`` on a target would refuse no mutation, a ``max_targets`` on
+    one would bound no run, and a ``confirm_environments`` on one would ask
+    nobody anything. :func:`~sopuli.safety.for_estate` is the merge and
     :mod:`sopuli.settings.sources` decides what contributes; this is only where
     the answer is put back so that every gate downstream reads it.
 
@@ -3816,7 +3813,7 @@ def _with_estate_safety(run: Invocation, config: Config) -> Invocation:
 
 
 def _refuse_if_profile_unattended(run: Invocation, *, action: str, hint: str | None = None) -> None:
-    """Refuse a gated run whose profile says nobody can answer (#610).
+    """Refuse a gated run whose profile says nobody can answer (decision #610).
 
     A profile's `confirm: false` declares the run unattended, so a gate that
     would prompt refuses instead, with exit 8 -- `00-principles.md` P5. It is
@@ -3845,11 +3842,11 @@ def _can_prompt() -> bool:
     (`01-configuration.md` §5). A profile's `confirm: false` says the same in
     writing, and :func:`_refuse_if_profile_unattended` asks it first.
 
-    Asks :func:`~sopuli.output.tty.is_a_terminal` rather than `isatty()` directly
-    (#419). The bare call raises `ValueError` on a closed or detached stdin, and
+    Asks :func:`~sopuli.output.tty.is_a_terminal` rather than `isatty()`
+    directly. The bare call raises `ValueError` on a closed or detached stdin, and
     that is exactly the run this question is being asked about: a scheduler or a
-    service manager hands a command no stdin at all. Raising there replaced a
-    clean refusal naming the environment with a traceback from inside the code
+    service manager hands a command no stdin at all. Raising there would replace
+    a clean refusal naming the environment with a traceback from inside the code
     that was trying to find out whether anyone was watching. Both answers refuse
     the unconfirmed run -- the difference is which one the operator can act on.
     """
@@ -3883,13 +3880,12 @@ def _stores_for(
     an estate with forty paths in one vault should authenticate once.
 
     ``cache`` is the run's own client map (:attr:`Invocation.stores`), and it is
-    what makes that sentence true **across** the calls as well as within one
-    (#483, Copilot's review of #488). This function used to be called several
-    times in a run -- for the lock stores, for the binding stores, and now for an
-    admin credential's -- and each call opened its own clients, so a config whose
-    admin ref and application documents live in one vault authenticated to it
-    twice. Passed a cache, a name already opened is reused and only the rest are
-    dialled.
+    what makes that sentence true **across** the calls as well as within one.
+    This function is called several times in a run -- for the lock stores, for
+    the binding stores, and for an admin credential's. Without the cache, a
+    config whose admin ref and application documents live in one vault would
+    authenticate to it twice. Passed a cache, a name already opened is reused
+    and only the rest are dialled.
 
     Every client here is built the same way, from the ``vaults:`` entry and the
     run's token file, so a same-named one is not merely similar but identical in
@@ -3898,8 +3894,8 @@ def _stores_for(
 
     ``token_file`` is ``--vault-token-file``'s path, forwarded as a location: it
     reaches ``method: token`` stores and is read there, on §3a's chain, so this
-    is the first command line able to authenticate a store without a variable or
-    a file in a fixed place (#145).
+    is how a command line authenticates a store without a variable or a file in
+    a fixed place (decision C16).
 
     The names are resolved against `vaults:` with the same `dangling` message
     every other name in the file gets. `references.py` has already checked them,
@@ -3946,10 +3942,10 @@ def config_validate(
     A bad file never reaches here: the boundary reads it, maps it to exit 9 and
     emits the run document. That matters more for this verb than for any other --
     reporting configuration problems is its entire purpose, and a validator that
-    goes silent under ``--output json`` exactly when it has something to say is
-    not a validator. That argument is what settled J7 (issue #8). Which is also
-    why this verb reads as thin as it does: everything it checks has already
-    happened by the time it is called, and what is left is saying so.
+    goes silent under ``--output json`` exactly when it has something to say is not
+    a validator. J7 rests on that argument. It is also why this verb reads as thin
+    as it does: everything it checks has already happened by the time it is called,
+    and what is left is saying so.
     """
     document = run.document
 
@@ -3963,8 +3959,8 @@ def config_validate(
     # making them means asking what is importable and the config layer asks
     # nothing outside the document (`04-testing.md` §4).
     #
-    # The same survey and the same function `doctor` uses, at a different level
-    # (#238). `doctor` additionally *reports* the survey as a section, which is
+    # The same survey and the same function `doctor` uses, at a different
+    # level. `doctor` additionally *reports* the survey as a section, which is
     # E6 and its alone -- this command answers "is my file good", and a table of
     # every registry entry would bury the answer.
     warnings = install_diagnostics(install_survey(config), level="warning")
@@ -4010,11 +4006,11 @@ def main() -> None:
         # "fix your file" from "you typed the command wrong" and from "something
         # broke". The error already knows its own location, hint and code --
         # printing it is all that is left to do. `ArgumentError` comes through
-        # here too, carrying exit 2 (#8).
+        # here too, carrying exit 2 (J7).
         click.echo(f"sopuli: {exc}", err=True)
         raise SystemExit(exc.exit_code) from exc
     except LockDeniedError as exc:
-        # P5's exit 7, and the message carries the holder (#83) -- who is running
+        # P5's exit 7, and the message carries the holder -- who is running
         # what, since a lock a colleague holds and a lock a dead process holds
         # need opposite responses. This arm and `_classify` in
         # `sopuli.invocation` have to agree: the document's `exit_code` is
@@ -4022,9 +4018,9 @@ def main() -> None:
         click.echo(f"sopuli: {exc}", err=True)
         raise SystemExit(ExitCode.LOCK_HELD) from exc
     except StoreError as exc:
-        # A store carries its own exit code and category (#138) -- a login
-        # failure is P5's exit 6, a store that cannot fence a lock is exit 5
-        # (#149) -- and the run document already reports it from `_classify`.
+        # A store carries its own exit code and category -- a login failure is
+        # P5's exit 6, a store that cannot fence a lock is exit 5 -- and the run
+        # document already reports it from `_classify`.
         # Without this arm the process would exit 1 while its own document said
         # otherwise, and `exit_code` is defined as equal to the process's.
         click.echo(f"sopuli: {exc}", err=True)
@@ -4044,7 +4040,7 @@ def main() -> None:
         raise SystemExit(ExitCode.FAILURE) from exc
     except DriverError as exc:
         # A driver carries its own exit code and category, the way a store does
-        # (#138) -- and here it is load-bearing rather than tidy:
+        # -- and here it is load-bearing rather than tidy:
         # `UnsupportedCapabilityError` is exit 5, and invariant 4 makes that a
         # promise. Without this arm the catch-all below would report it as
         # generic failure, and a command refusing a capability at plan time
@@ -4114,13 +4110,13 @@ def creds_check(
     target that could not be reached is exit 1 and never exit 3, or a broken
     check would page the same person as a real one.
 
-    **--method login is the default, unconditionally** (Q1, issue #86).
+    **--method login is the default, unconditionally** (Q1).
     --method hash compares the vault's password with the account's stored 12C
     verifier and logs in as nobody, so it spends nothing against the lockout
     counter. It needs the optional `SELECT ON SYS.USER$` grant, which no
     account can hold on Autonomous Database. --method both compares first and
     logs in only if the comparison passed, so a value already shown wrong is
-    never tried (issue #437).
+    never tried.
 
     **An explicit hash or both is refused before anything is checked** where it
     cannot be honoured: no grant, an account with no 12C verifier, or a
@@ -4146,11 +4142,11 @@ def creds_check(
 
     Help text stays ASCII throughout, which is P4's rule.
     """
-    # --method hash rests on the register entry t-verifier, settled 2026-10-01
-    # for 19c (#581). Markers live in comments like this one rather than in the
-    # docstring, because this docstring IS `creds check --help`, and a
-    # bookkeeping token in front of an operator would be the same mistake as a
-    # debug string in a user-facing message.
+    # --method hash rests on the register entry t-verifier in `docs/README.md`;
+    # `docs/measurements.md` has the releases it was measured on. Markers live in
+    # comments like this one rather than in the docstring, because this docstring IS
+    # `creds check --help`, and a bookkeeping token in front of an operator would be
+    # the same mistake as a debug string in a user-facing message.
     document = run.document
 
     selection = selected(selectors, targets, accounts, groups, applications)
@@ -4159,11 +4155,11 @@ def creds_check(
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
-    # C15's plan-time half (#250), before anything is planned: a profile's
-    # `vault:` and SOPULI_VAULT are not consulted while bindings are built, so
-    # this is the first moment a binding's store can be complete. The refusal
-    # follows immediately because reading a credential is the whole command --
-    # invariant 4 wants it here and not partway through the estate.
+    # C15's plan-time half (decision #250), before anything is planned: a
+    # profile's `vault:` and SOPULI_VAULT are not consulted while bindings are
+    # built, so this is the first moment a binding's store can be complete. The
+    # refusal follows immediately because reading a credential is the whole
+    # command -- invariant 4 wants it here and not partway through the estate.
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="checking credentials")
 
@@ -4171,8 +4167,8 @@ def creds_check(
     plan = plan_builder.build(config, intent=["verify"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="checking credentials")
     document.plan = plan.as_json()
-    # The events are no-ops outside `--output jsonl` (#9), so none of this
-    # branches on the mode.
+    # The events are no-ops outside `--output jsonl`, so none of this branches on
+    # the mode.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
 
@@ -4191,7 +4187,7 @@ def creds_check(
     results: list[dict[str, Any]] = []
     # Collected beside `results` and by the same out-parameter idiom: one is what
     # a consumer reads and the other is what a person does, and both are filled
-    # from one `grace_warning` call so they cannot disagree (#309).
+    # from one `grace_warning` call so they cannot disagree.
     notices: list[str] = []
     for target_name, bindings in _grouped(config.bindings).items():
         emitter.event(document, "target.started", target=target_name)
@@ -4240,7 +4236,7 @@ def _refuse_uncomparable(
 ) -> None:
     """Refuse an explicit ``--method hash`` or ``both`` before anything is checked.
 
-    Invariant 4, and ``rotate --strategy``'s shape (#262): every target is asked
+    Invariant 4, and ``rotate --strategy``'s shape: every target is asked
     up front whether it can compare each account's password, and the first that
     cannot ends the run with exit 5 naming it. A refusal found on the fifth
     target of twenty, after four had already been checked, would be the generic
@@ -4257,8 +4253,7 @@ def _refuse_uncomparable(
     ``--include-previous`` the previous one too. One refusal is about the value
     rather than the account -- a character set that cannot hold it -- and a
     previous value it caught only after the current one had been checked would
-    be an ``ERROR`` row and exit 1, the mid-run failure this exists to prevent
-    (Copilot on #600).
+    be an ``ERROR`` row and exit 1, the mid-run failure this exists to prevent.
     """
     for target_name, bindings in _grouped(config.bindings).items():
         target = by_target[target_name]
@@ -4406,7 +4401,7 @@ def _check_one(
     # function already means by it.
     verification: VerifyResult | None = None
     # Bound before the `try` for the error path's sake: an account read before a
-    # later step failed is still an account that was read (#386).
+    # later step failed is still an account that was read.
     user: UserState | None = None
     try:
         stored = _stored_credential(binding, stores)
@@ -4420,7 +4415,7 @@ def _check_one(
         # refused by the lock and could not tell a right password from a wrong
         # one. A comparison is not refused by anything, so `hash` and `both` still
         # make it, and the account is still reported LOCKED or EXPIRED -- with what
-        # the comparison found beside it (UC-1 §7, Copilot on #600).
+        # the comparison found beside it (UC-1 §7).
         settled = user is not None and method == VERIFY_LOGIN and _settled_by_status(user)
         if user is None or stored is None or settled:
             outcome = check_states.decide(user, None)
@@ -4460,7 +4455,7 @@ def _check_one(
         # What the database said before the failure still stands. A login that
         # raised says nothing about the account's age or its grace period, and
         # dropping them would leave `password_age_days` missing with neither the
-        # value nor W021's reason for its absence (#386, Copilot on #421).
+        # value nor W021's reason for its absence (decision #386).
         out.append(
             build_result(
                 binding,
@@ -4481,15 +4476,15 @@ def _check_one(
 
     # One call, two channels: `results[].warnings[]` for a consumer and a line
     # under the table for a person. Computing it twice is how they would come to
-    # disagree about one window (#309).
+    # disagree about one window.
     grace = check_states.grace_warning(user)
     if grace is not None:
         notices.append(_account_notice(binding, grace))
 
     # What the *server* said on a login that worked, which is a different source
-    # from the status column above and is reported beside it rather than folded
-    # into it (#322). On a grace-period account both fire, and that is the
-    # intended shape: the second is the server's own words for the first.
+    # from the status column above and is reported beside it rather than folded into
+    # it. On a grace-period account both fire, and that is the intended shape: the
+    # second is the server's own words for the first.
     server = None if verification is None else verification.warning
     if server is not None:
         notices.append(_account_notice(binding, server))
@@ -4521,7 +4516,7 @@ def _result_warnings(
     Order is the order they were learned: the account's state is read before the
     login is attempted, and on a run where the lockout guard declined there is no
     server entry at all. ``changed_unknown`` is read with that state, so it sits
-    beside the grace period rather than after the login (#386).
+    beside the grace period rather than after the login.
     """
     found = []
     if grace is not None:
@@ -4536,9 +4531,8 @@ def _result_warnings(
 def _account_notice(binding: Binding, message: str) -> str:
     """A finding about one account, addressed to a person rather than a consumer.
 
-    Not named for any one of them: the grace period was the first (#309) and the
-    server's own login warning is the second (#322), and both want the same line
-    under the same table.
+    Not named for any one of them: the grace period and the server's own login
+    warning both want the same line under the same table.
 
     The document keeps the account and target in fields of their own; a line
     under a table has to carry them itself, because it is read next to other
@@ -4713,12 +4707,10 @@ def creds_generate(
 
     **The database is read and never written.** Step 2 of the use case asks one
     connection per selected target for the one constraint that can be known in
-    advance -- how long a password may be, in that database's own character set
-    -- and the strictest answer governs the draw (issue #317). Nothing is issued,
-    and the argument for taking the advisory lock is untouched: the lock lives in
-    the vault (Q2, issue #83) because this command makes no *change* a
-    database-side lock could have protected, which was never the same claim as
-    making no connection.
+    advance -- how long a password may be, in that database's own character set --
+    and the strictest answer governs the draw. Nothing is issued, so reading the
+    database does not change where the advisory lock lives: in the vault (Q2),
+    where this command's writes go.
 
     A target that cannot be reached is not a failure. The policy's declared
     length governs instead, which is the documented fallback, and the run says
@@ -4742,18 +4734,16 @@ def creds_generate(
     in the same write, and any `pending` is cleared -- a staged password left
     behind is one the next `apply` would prefer to what was just promoted.
 
-    **A second run replaces what was staged, and reports a change.** That is
-    outside the idempotency invariant rather than excused from it, decided in
-    issue #254 and placed by #454's scope rule: the invariant governs commands
-    that converge on a state, and drawing a fresh random secret has no state to
-    converge on. The run warns that it replaced a staged password, because
+    **A second run replaces what was staged, and reports a change.** That is outside
+    the idempotency invariant rather than excused from it: the invariant governs
+    commands that converge on a state, and drawing a fresh random secret has no
+    state to converge on. The run warns that it replaced a staged password, because
     anything already holding the old one is now stale.
 
     **One document is one write.** Where several accounts share a secret -- the
-    documented default since issue #85 -- their passwords go in a single
-    compare-and-set write under a single lock, not one write each. Each account
-    still gets its own password: sharing a document is a storage layout, not a
-    shared credential.
+    documented default -- their passwords go in a single compare-and-set write under
+    a single lock, not one write each. Each account still gets its own password:
+    sharing a document is a storage layout, not a shared credential.
 
     **A compare-and-set conflict is never retried.** This run holds the lock, so
     a conflict means somebody outside this tool wrote to the document, and
@@ -4767,6 +4757,9 @@ def creds_generate(
 
     Help text stays ASCII throughout, which is P4's rule.
     """
+    # Why a second run is outside invariant 9 rather than an exception to it:
+    # decision #254 and H7. They are cited here and not in the docstring, because
+    # the docstring is `creds generate --help`.
     document = run.document
     refuse_if_readonly(
         run.resolved, action="promoting a password" if promote else "staging a password"
@@ -4791,7 +4784,7 @@ def creds_generate(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     document.plan = plan.as_json()
-    # No-ops outside `--output jsonl` (#535).
+    # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="generation")
@@ -4808,7 +4801,7 @@ def creds_generate(
     document.diagnostics.extend(notices)
     if document.constraints is not None:
         # The section whole, once, as soon as it exists -- `plan.resolved`'s
-        # arrangement (#535). Per target would strand the estate-wide fields,
+        # arrangement. Per target would strand the estate-wide fields,
         # `strictest_target` and `character_set`, which belong to no one target
         # and which a consumer would otherwise have to recompute. The notes the
         # reading produced go out ahead of it as `diagnostic` events.
@@ -4855,7 +4848,7 @@ def creds_generate(
     # warning is invisible to somebody reading a terminal -- the emitter prints
     # the command's text, not the document -- and a verify function reported only
     # in JSON is reported to nobody who ran this by hand. The same block `check`
-    # and `config validate` print, for #309's reason: a warning that cannot be
+    # and `config validate` print, for the same reason: a warning that cannot be
     # seen in the default output is not surfaced.
     read = render_constraints(limits)
     lines = [render_plan(plan, noun="generation"), ""]
