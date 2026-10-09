@@ -1,4 +1,4 @@
-"""``sopuli lock break`` — the mutating half of the ``lock`` noun (#149).
+"""``sopuli lock break`` — the mutating half of the ``lock`` noun.
 
 Tier 0 in everything but posture, like ``tests/test_cli_lock_status.py``: in
 process through ``CliRunner``, with the store handed in rather than dialled.
@@ -66,8 +66,8 @@ applications:
 PROD = LockKey(store="vault-prod", path="apps/acme/appdb-beta")
 
 #: A record at a path the configuration does not declare -- the application was
-#: renamed, or removed. `lock status` reports it (#150); this is the verb that
-#: has to be able to clear it, or #150 surfaced something with no remedy.
+#: renamed, or removed. `lock status` reports it; this is the verb that has to
+#: be able to clear it, or the survey would show something with no remedy.
 LEFTOVER = LockKey(store="vault-prod", path="apps/acme/appdb-retired")
 
 Stores = Callable[..., MemoryStore]
@@ -181,9 +181,9 @@ def test_the_write_is_a_released_record_and_never_a_delete(
 def test_the_argument_is_the_string_lock_status_printed(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """#83's last sentence about breaking a lock: the invocation in an exit-7
-    message is a paste rather than a translation. The two commands are driven
-    here from one string for exactly that reason."""
+    """UC-1 §8: the invocation in an exit-7 message is a paste rather than a
+    translation. The two commands are driven here from one string for exactly
+    that reason."""
     with_locks((PROD, held(ago=LAPSED)))
     config = write_config(CONFIG)
 
@@ -198,9 +198,9 @@ def test_the_argument_is_the_string_lock_status_printed(
 def test_a_leftover_at_an_undeclared_path_can_be_cleared(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """#150 made such a record visible on the argument that a lock nobody can see
-    is a lock nobody can clear. This is the remedy, and without it the survey
-    surfaces something with nothing to do about it.
+    """`lock status` shows such a record on the argument that a lock nobody can
+    see is a lock nobody can clear. This is the remedy, and without it the survey
+    would surface something with nothing to do about it.
 
     Invariant 5 is untouched: the write lands under the store's lock prefix, in a
     store `vaults:` declares, and never touches the secret the lock guards."""
@@ -254,9 +254,10 @@ def test_a_live_lock_is_left_untouched_when_it_is_refused(
 def test_force_takes_a_live_lock_and_says_so(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """#89 settled `--force` as an audited override of a guardrail that is not a
-    safety setting. `expired: false` in the entry is the audit: it is the case
-    somebody reading the trail afterwards most needs to see named."""
+    """`--force` is an audited override of a guardrail that is not a safety
+    setting (decision P3), and on `lock break` it takes a lock that has not
+    expired (UC-1 §8). `expired: false` in the entry is the audit: it is
+    the case somebody reading the trail afterwards most needs to see named."""
     with_locks((PROD, held()))
 
     result = run(
@@ -272,9 +273,9 @@ def test_force_takes_a_live_lock_and_says_so(
 def test_force_cannot_relax_readonly(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """The line #89 drew and invariant 10 depends on: `--force` overrides
-    guardrails asked of one lock at one moment, and never a safety setting. It is
-    not a registered setting, so there is no layer for it to arrive on."""
+    """Invariant 10: `--force` overrides guardrails asked of one lock at one
+    moment (UC-1 §8), and never a safety setting. It is not a registered
+    setting, so there is no layer for it to arrive on."""
     with_locks((PROD, held(ago=LAPSED)))
     config = write_config(CONFIG + "defaults:\n  safety:\n    readonly: true\n")
 
@@ -609,7 +610,8 @@ def test_a_profile_that_cannot_answer_refuses_even_at_a_terminal(
     with_locks: Stores,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`confirm: false` refuses before the prompt, and the lock is untouched (#610)."""
+    """`confirm: false` refuses before the prompt, and the lock is untouched
+    (decision #610)."""
     store = with_locks((PROD, held(ago=LAPSED)))
     monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
     config = write_config(CONFIG + "profiles:\n  ci:\n    confirm: false\n")

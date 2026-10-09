@@ -1,10 +1,10 @@
-"""`safety.confirm_environments` asked of every mutating verb (#292).
+"""`safety.confirm_environments` asked of every mutating verb.
 
 The tier-0 half is `tests/test_safety_confirm.py`, which is about what the
-setting *means*. This file is about the thing the issue was actually filed over:
-the setting was decided, resolved and then never consulted, so what matters is
-that **each verb consults it** — and that adding it to one verb has not left the
-others behind, which is the failure #292 exists to prevent.
+setting *means*. This file is about whether it is consulted at all. A setting
+that is resolved and never consulted looks like protection and is not, so what
+matters is that **each verb consults it** — and that adding it to one verb does
+not leave the others behind.
 
 Two properties carry the file:
 
@@ -177,7 +177,7 @@ def _credential() -> Any:
     """The admin credential the CLI would have resolved.
 
     A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
-    The command reads its *provenance* as well as its value now -- #477 reports
+    The command reads its *provenance* as well as its value -- it reports
     where an admin credential came from -- and a stub stops being enough the
     moment anything but `.credential` is read. `external` because these estates
     declare no `admin:` block at all, and it is the one source that carries
@@ -205,9 +205,9 @@ def issued(harness: dict[str, Any]) -> list[tuple[str, str]]:
 def radius(result: Result) -> int:
     """How many targets the run resolved to, from its own plan.
 
-    #294's declined `max_targets` trigger is about the *radius*, so a test for it
-    has to establish the radius rather than infer it from an estate that happened
-    to be written to twice.
+    The declined `max_targets` trigger (decision C17) is about the *radius*, so a
+    test for it has to establish the radius rather than infer it from an estate
+    that happened to be written to twice.
     """
     return int(json.loads(result.output)["plan"]["blast_radius"]["targets"])
 
@@ -239,7 +239,7 @@ def run(runner: CliRunner, argv: list[str], config: Path, *args: str) -> Result:
 def test_an_unattended_run_into_a_listed_environment_is_refused(
     argv: list[str], runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The whole point of #292: a config that looked like protection and was not.
+    """The point of the setting: a listed environment is refused, not waved through.
 
     `CliRunner` has no terminal, which is the scheduler's situation exactly.
     """
@@ -307,11 +307,12 @@ def test_a_dry_run_is_never_gated(
     assert versions(harness) == before
 
 
-# ------------------------------------------ the triggers that were declined (#294) ---
+# ------------------------------------------------- the triggers that were declined ---
 #
-# P5 asked for three confirmation triggers and #294 kept one. The other two are
-# **declined, not deferred**, which is a thing tests can say and prose cannot: if
-# somebody later reads the absent behaviour as a gap and builds it, these fail.
+# P5 asked for three confirmation triggers and decision C17 kept one. The other
+# two are **declined, not deferred**, which is a thing tests can say and prose
+# cannot: if somebody later reads the absent behaviour as a gap and builds it,
+# these fail.
 #
 # Both run unattended -- `CliRunner` has no terminal -- so a gate that fired would
 # refuse (exit 8) rather than block on a prompt. What is asserted is the exit code
@@ -464,14 +465,13 @@ def test_a_run_spanning_both_environments_is_gated_by_the_listed_one(
 def test_force_does_not_satisfy_it(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """P3 (#89): `--force` overrides the account guardrails of §4 and never a
+    """Decision P3: `--force` overrides the account guardrails of §4 and never a
     safety setting. It is not a setting, has no layer to arrive on, and so has
     nothing to relax (invariant 10).
 
-    `creds apply` gained a real `--force` in #286 -- it waives §4's *account*
-    guardrails -- so this asserts the claim directly rather than relying on the
-    parser to reject the flag, which is what it did when there was no such flag
-    to pass. The run is accepted as valid argv and still refused by the
+    `creds apply` has a real `--force` -- it waives §4's *account* guardrails --
+    so this asserts the claim directly rather than relying on the parser to
+    reject the flag. The run is accepted as valid argv and still refused by the
     confirmation gate.
     """
     estate()
@@ -508,7 +508,7 @@ def test_readonly_still_outranks_it(
     assert "safety.readonly" in str(result.exception)
 
 
-# ------------------------------------------------ a profile's `confirm:` (#610) ---
+# ------------------------------------------------------- a profile's `confirm:` ---
 
 #: The guarded estate with a profile that says nobody can answer.
 PROFILED = CONFIG + "profiles:\n  ci:\n    confirm: false\n  desk:\n    confirm: true\n"

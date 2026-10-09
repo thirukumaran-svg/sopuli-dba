@@ -1,18 +1,17 @@
-"""`auth: prompt` reaches a terminal, from the CLI (#476). Tier 0, no pty.
+"""`auth: prompt` reaches a terminal, from the CLI. Tier 0, no pty.
 
-`tests/test_admin.py` already covers what a prompter *does* -- it caches per
-declared credential, it wraps the typed string once, it refuses when absent. All
-of it passed while the CLI supplied no prompter at all, so every target
-declaring `auth: prompt` was refused with "there is nobody here to ask",
-including from a real interactive console. The method was unusable in every
-build up to 0.61.0 and the suite was green.
+`tests/test_admin.py` covers what a prompter *does* -- it caches per declared
+credential, it wraps the typed string once, it refuses when absent. Those tests
+would still pass if the CLI supplied no prompter at all. Every target declaring
+`auth: prompt` would then be refused with "there is nobody here to ask",
+including from a real interactive console.
 
-That is the gap this file is for: **the subject here is the wiring, not the
-prompter.** A unit test with an injected asker cannot see a missing argument at
-the call site, because injecting the asker is precisely what the call site had
-stopped doing. So the tests below run real commands through `click` and assert on
-what reached the far side -- the password the driver was handed, and the number
-of times the operator was asked for it.
+This file covers that gap: **the subject here is the wiring, not the prompter.**
+A unit test with an injected asker cannot see a missing argument at the call
+site, because injecting the asker is precisely what the call site would stop
+doing. So the tests below run real commands through `click` and assert on what
+reached the far side -- the password the driver was handed, and the number of
+times the operator was asked for it.
 
 No pty anywhere, and two substitutions rather than one because `CliRunner`
 installs its own `sys.stdin` for the duration of `invoke`. So `terminal_prompter`
@@ -108,7 +107,7 @@ class Pipe(io.StringIO):
 
 
 class Detached(io.StringIO):
-    """The stream a scheduler leaves behind: asked, it raises (#416)."""
+    """The stream a scheduler leaves behind: asked, it raises."""
 
     def isatty(self) -> bool:
         raise ValueError("I/O operation on closed file")
@@ -128,8 +127,7 @@ def watching(monkeypatch: pytest.MonkeyPatch) -> Callable[[bool], None]:
     subject intact. `terminal_prompter` keeps its own decision -- which asker,
     and whether to build anything at all -- and `_pass_invocation` keeps the
     placement that makes it one per run. What is faked is one boolean about the
-    machine, which is the half a tier-0 test cannot have and the half #416 gave
-    a module and a suite of its own.
+    machine, which is the half a tier-0 test cannot have.
     """
 
     def answer(there: bool) -> None:
@@ -232,7 +230,7 @@ def test_the_typed_password_reaches_the_driver(
     asked: list[str],
     watching: Callable[[bool], None],
 ) -> None:
-    """The one #476 is about: before this, the run never got as far as asking."""
+    """The wiring this file is for: the run gets as far as asking."""
     watching(True)
     seen = estate()
     config = write_config(PROMPT_TARGET)
@@ -308,9 +306,9 @@ def test_an_empty_answer_never_reaches_the_driver(
     monkeypatch: pytest.MonkeyPatch,
     watching: Callable[[bool], None],
 ) -> None:
-    """#601: Enter on its own, or a paste the hidden prompt did not take. Sent,
-    it was `DPY-4001` under `connectivity`; refused, it is a `config` finding on
-    the target and no connection is opened -- `seen` is the driver's side of
+    """Enter on its own, or a paste the hidden prompt did not take. Sent, it
+    would be `DPY-4001` under `connectivity`; refused, it is a `config` finding
+    on the target and no connection is opened -- `seen` is the driver's side of
     "nothing was sent"."""
     watching(True)
     seen = estate()
@@ -356,11 +354,10 @@ def test_the_password_is_not_in_the_document(
 # ------------------------------------- the other two call sites, which differ ---
 #
 # `doctor` resolves through `_open_session`; `creds check` and `creds apply` each
-# resolve for themselves. Three call sites, and the bug was one missing argument
-# at each -- so a test that exercises one of them proves nothing about the other
-# two. Copilot made exactly this point reviewing #482, and it was right: the
-# first draft of this file covered `doctor` alone, and dropping `prompt=` from
-# either of the others would have kept it green.
+# resolve for themselves. Each of the three call sites passes `prompt=` on its
+# own, so a test that exercises one of them proves nothing about the other two. A
+# file that covered `doctor` alone would stay green if `prompt=` were dropped
+# from either of the others.
 
 CHECK_CONFIG = """version: 1
 vaults:
@@ -467,7 +464,7 @@ def test_creds_check_reports_the_target_without_a_terminal(
     asked: list[str],
     watching: Callable[[bool], None],
 ) -> None:
-    """A verb that only reads keeps a per-target finding and exits 1 (#481)."""
+    """Decision #481: a verb that only reads keeps a per-target finding, exit 1."""
     watching(False)
     seen = creds_estate()
     config = write_config(CHECK_CONFIG)

@@ -1,4 +1,4 @@
-"""``sopuli creds status`` end to end, without a database (#275).
+"""``sopuli creds status`` end to end, without a database.
 
 Same arrangement as the other credential-verb CLI files. One assertion runs
 through every case here and is the point of the verb: **the session recorded no
@@ -164,7 +164,7 @@ def _credential() -> Any:
     """The admin credential the CLI would have resolved.
 
     A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
-    The command reads its *provenance* as well as its value now -- #477 reports
+    The command reads its *provenance* as well as its value -- it reports
     where an admin credential came from -- and a stub stops being enough the
     moment anything but `.credential` is read. `external` because these estates
     declare no `admin:` block at all, and it is the one source that carries
@@ -268,7 +268,8 @@ def test_the_age_is_the_vault_s(
     assert "400" not in found
 
 
-#: What the Oracle driver says on 18c without the `SYS.USER$` grant (#386).
+#: What the Oracle driver says on a release without `DBA_USERS.PASSWORD_CHANGE_DATE`
+#: and without the `SYS.USER$` grant (decision #386).
 NO_COLUMN = (
     "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON "
     "SYS.USER$ to the service account to read the same date from SYS.USER$.PTIME"
@@ -281,8 +282,8 @@ def test_an_empty_db_pw_changed_says_why_in_the_document(
     estate: Harness,
     validator: Draft202012Validator,
 ) -> None:
-    """#386: a consumer cannot see a dash. The field stays absent -- it is the
-    honest answer -- and the result says why, under a code."""
+    """Decision #386: a consumer cannot see a dash. The field stays absent -- it
+    is the honest answer -- and the result says why, under a code."""
     estate(
         users={
             "ACME_WEB_USER": account("ACME_WEB_USER", password_changed_unknown=NO_COLUMN),

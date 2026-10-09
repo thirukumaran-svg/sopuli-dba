@@ -35,7 +35,7 @@ def runner() -> CliRunner:
 def show(config_file: Path) -> list[str]:
     """``config show`` against a config file that definitely exists.
 
-    Every command discovers a config now, so a bare ``config show`` in a test
+    Every command discovers a config, so a bare ``config show`` in a test
     would search the working directory and the user's config directory and
     answer differently on the machine of anyone who happens to have one. Naming
     the file is what keeps these tests about the CLI.
@@ -64,16 +64,15 @@ def test_config_show_succeeds_in_text_mode(runner: CliRunner, show: list[str]) -
 def test_human_output_is_ascii(runner: CliRunner, show: list[str], config_file: Path) -> None:
     """The tool's own prose stays ASCII.
 
-    This started as a workaround for the stream encoding bug and outlived it.
-    The streams are UTF-8 now (``sopuli.output.stream``), so this is no longer
-    about what can be written -- it is about decoration being opt-in and
-    deliberate. Box drawing and status glyphs belong to the presentation layer,
-    where the choice to use them is made once and can be turned off; an em dash
-    that arrived in a message because it looked nice is not that choice.
+    The streams are UTF-8 (``sopuli.output.stream``), so this is not about what can
+    be written -- it is about decoration being opt-in and deliberate. Box drawing
+    and status glyphs belong to the presentation layer, where the choice to use them
+    is made once and can be turned off; an em dash that arrived in a message because
+    it looked nice is not that choice.
 
     User-supplied text -- account names, ORA- messages -- is exempt: it passes
-    through as it came, which is exactly what the encoding fix makes safe. The
-    config path is exactly that, and it is now printed: it comes from
+    through as it came, which is exactly what UTF-8 streams make safe. The
+    config path is exactly that, and it is printed: it comes from
     ``tmp_path``, so on a machine whose username is not ASCII this would fail on
     text the rule does not cover. Removing it first is what keeps the assertion
     about the prose around it.
@@ -130,11 +129,11 @@ def test_a_config_error_exits_nine_and_keeps_its_location(
     """P5 gives a bad configuration its own code rather than folding it into 1.
 
     A scheduler branches on that: "fix your file" and "something broke" call for
-    different people -- and since #8, so does "fix your command line", which is
-    what exit 2 now means on its own. Driven through a real command against a
-    real bad file rather than a monkeypatched boundary: what matters is that a
-    file the loader rejects reaches the user as a located message and exit 9,
-    with no traceback anywhere in the path.
+    different people -- and so does "fix your command line", which is what exit 2
+    means on its own. Driven through a real command against a real bad file
+    rather than a monkeypatched boundary: what matters is that a file the loader
+    rejects reaches the user as a located message and exit 9, with no traceback
+    anywhere in the path.
     """
     path = write_config("version: 4\n")
     monkeypatch.setattr(sys, "argv", ["sopuli", "config", "show", "--config", str(path)])
@@ -178,7 +177,7 @@ def test_global_flag_works_after_the_verb(runner: CliRunner, show: list[str]) ->
 
 
 def test_global_flag_works_before_the_noun_too(runner: CliRunner, config_file: Path) -> None:
-    """The other order, which used to be a usage error (#10).
+    """The other order works too.
 
     ``sopuli --output json config show`` and ``sopuli config show --output json``
     are the same person typing the same intent, so they resolve the same way.
@@ -323,8 +322,8 @@ def test_a_non_ascii_config_path_reaches_the_output_intact(
     """The other side of the ASCII rule, made real rather than assumed.
 
     The tool's own prose is ASCII; anything a user supplies passes through as it
-    came, which is what the UTF-8 stream fix (#12) makes safe. A path is the
-    first piece of user-supplied text any command prints, and "Muller" is a
+    came, which is what reconfiguring the streams to UTF-8 makes safe. A path is
+    the first piece of user-supplied text any command prints, and "Muller" is a
     perfectly ordinary Windows username.
     """
     home = tmp_path / "Müller"
@@ -435,7 +434,7 @@ def test_a_named_config_that_does_not_exist_is_a_config_error(
     """Never skipped in favour of the next candidate: a CI job whose path has a
     typo must not quietly run against the system config instead.
 
-    A configuration error rather than a usage one, since #8: `--config` parsed
+    A configuration error rather than a usage one (J7): `--config` parsed
     perfectly and the run began, and it is the path it named that is not there.
     """
     missing = tmp_path / "nope.yaml"
@@ -483,7 +482,7 @@ def test_explain_does_not_require_resolved(
     """Unlike `--select`, which has nothing to filter until the estate exists.
 
     Where a setting came from is the same answer in both views, so refusing it in
-    one of them would be a rule a user meets and cannot explain (#53).
+    one of them would be a rule a user meets and cannot explain.
     """
     for argv in ([*show, "--explain"], [*show, "--explain", "--resolved"]):
         result = runner.invoke(cli, argv)
@@ -578,7 +577,7 @@ def test_config_validate_exits_nine_on_an_unknown_key(
     Driven through ``main`` rather than the runner, because the exit code is the
     contract here and it is the boundary that maps a ConfigError onto it.
 
-    Exit 9 since #8. This verb is the reason the code exists: reporting
+    Exit 9 (J7). This verb is the reason the code exists: reporting
     configuration problems is its entire purpose, so it is the one that must not
     share an exit code with "you typed the command wrong".
     """
@@ -602,10 +601,10 @@ def test_config_validate_reports_warnings_both_ways(
     ``diagnostics`` in the document, which is the only path by which a scheduler
     ever sees one.
 
-    Asserted by *presence* rather than by count, since #170: whether the estate's
-    driver is installed is a property of the machine running the suite, so a
-    count here would mean one thing under `sopuli-dba[all]` and another under a
-    base install. `tests/driver/test_driver_registry.py` pins that warning
+    Asserted by *presence* rather than by count: whether the estate's driver is
+    installed is a property of the machine running the suite, so a count here
+    would mean one thing under `sopuli-dba[all]` and another under a base
+    install. `tests/driver/test_driver_registry.py` pins that warning
     deterministically instead."""
     path = write_config(f"{ESTATE}\nprofiles:\n  dev: {{ output: json }}\n")
     command = ["config", "validate", "--config", str(path)]
@@ -673,7 +672,7 @@ SECRET_LIKE = ("password", "passwd", "secret", "token", "credential", "apikey", 
 #: `-file` names a location" -- would let `--password-file` in silently, and
 #: whether *that* is acceptable is UC-1's decision to make, not this list's.
 SECRET_LIKE_EXCEPTIONS = {
-    #: Takes a path (#145, ADR-007). `test_the_token_flag_takes_a_path` holds it.
+    #: Takes a path (ADR-007). `test_the_token_flag_takes_a_path` holds it.
     "--vault-token-file",
     #: Exists only to be refused. `test_the_bare_token_flag_is_refused` holds it.
     "--vault-token",
@@ -749,7 +748,7 @@ def test_the_token_flag_takes_a_path(runner: CliRunner, show: list[str], tmp_pat
 def test_the_bare_token_flag_is_refused(
     runner: CliRunner, show: list[str], written: list[str]
 ) -> None:
-    """#145: refused rather than absent, and refused rather than ignored.
+    """Refused rather than absent, and refused rather than ignored.
 
     All three spellings, because the one somebody types is whichever Vault's own
     CLI taught them. A plain flag would answer the second with "unexpected extra
@@ -962,7 +961,7 @@ def test_select_without_resolved_is_refused(
     )
 
     # A usage error rather than a config error: both options parsed, they simply
-    # do not form a valid request, and no file is at fault (#8).
+    # do not form a valid request, and no file is at fault (J7).
     assert isinstance(result.exception, click.UsageError)
     assert "nothing to filter without --resolved" in str(result.exception)
     assert result.exception.exit_code == ExitCode.USAGE

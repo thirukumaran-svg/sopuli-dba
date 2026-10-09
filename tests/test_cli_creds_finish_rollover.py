@@ -1,4 +1,4 @@
-"""``sopuli creds finish-rollover`` end to end, without a database (#263).
+"""``sopuli creds finish-rollover`` end to end, without a database.
 
 Same arrangement as ``tests/test_cli_creds_apply.py``: in-process through
 ``CliRunner``, the vault a :class:`~sopuli.store.MemoryStore` and the driver a
@@ -245,7 +245,7 @@ def _credential() -> Any:
     """The admin credential the CLI would have resolved.
 
     A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
-    The command reads its *provenance* as well as its value now -- #477 reports
+    The command reads its *provenance* as well as its value -- it reports
     where an admin credential came from -- and a stub stops being enough the
     moment anything but `.credential` is read. `external` because these estates
     declare no `admin:` block at all, and it is the one source that carries
@@ -367,7 +367,7 @@ def test_nothing_open_is_no_change_and_no_statement(
 def test_a_staged_pending_leaves_the_window_open_and_spends_nothing(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#263's decision. The rotation is unfinished, so `current` is the old
+    """Decision #263: the rotation is unfinished, so `current` is the old
     password -- and under an open window the old password passes, which is why
     this is a vault-side rule and not a login."""
     harness = estate(documents=_unfinished())

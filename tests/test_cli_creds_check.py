@@ -1,4 +1,4 @@
-"""``sopuli creds check`` end to end, without a database (#248).
+"""``sopuli creds check`` end to end, without a database.
 
 Tier 0 in everything but posture, the same arrangement
 ``tests/test_cli_lock_status.py`` uses: in-process through ``CliRunner``, with
@@ -209,7 +209,7 @@ def _credential() -> Any:
     """The admin credential the CLI would have resolved.
 
     A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
-    The command reads its *provenance* as well as its value now -- #477 reports
+    The command reads its *provenance* as well as its value -- it reports
     where an admin credential came from -- and a stub stops being enough the
     moment anything but `.credential` is read. `external` because these estates
     declare no `admin:` block at all, and it is the one source that carries
@@ -262,9 +262,9 @@ def test_an_absent_password_age_says_why(
     estate: Harness,
     validator: Draft202012Validator,
 ) -> None:
-    """#386: `password_age_days` is left out where the database would not say,
-    and the result carries the reason under `SOPULI-W021` beside the hole --
-    a consumer cannot see `creds status`'s dash."""
+    """Decision #386: `password_age_days` is left out where the database would
+    not say, and the result carries the reason under `SOPULI-W021` beside the
+    hole -- a consumer cannot see `creds status`'s dash."""
     reason = "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON SYS.USER$"
     estate(users={"ACME_WEB_USER": user(password_changed_unknown=reason)})
     result = run(runner, write_config(CONFIG), "--output", "json")
@@ -285,10 +285,10 @@ def test_a_login_that_raises_keeps_what_was_already_read(
     estate: Harness,
     validator: Draft202012Validator,
 ) -> None:
-    """Copilot on #421: the account's state is read before the login, so an
-    `ERROR` from the login must not discard it. W021 explains a missing
-    `password_age_days`, and it has to survive on the path where the row is an
-    error too -- as does an age that *was* read."""
+    """The account's state is read before the login, so an `ERROR` from the
+    login must not discard it. W021 explains a missing `password_age_days`, and
+    it has to survive on the path where the row is an error too -- as does an
+    age that *was* read."""
     reason = "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON SYS.USER$"
     # No scripted answer, so `verify_password` raises -- after `describe_user`.
     estate(users={"ACME_WEB_USER": user(password_changed_unknown=reason)}, answers={})
@@ -584,8 +584,8 @@ def test_a_binding_with_no_ref_says_so_rather_than_blaming_a_ref(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
     """Three situations reach one empty read, and they send an operator to three
-    different places. Caught by Copilot on #253: the message named a ref that,
-    for an application declaring none, does not exist."""
+    different places. The message must not name a ref that, for an application
+    declaring none, does not exist."""
     estate()
     config = CONFIG.replace('    secret_template: "apps/acme/{target}#password"\n', "")
     result = run(runner, write_config(config))
@@ -612,13 +612,13 @@ def test_a_low_assurance_admin_source_is_recorded_but_not_printed(
     estate: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#477's split: `diagnostics[]` on every verb, printed by `doctor` alone.
+    """`diagnostics[]` is on every verb and printed by `doctor` alone.
 
-    P2 asks for the `env` source to be flagged in output and this verb records
-    it -- but what is being reported is a property of the config file, the same
-    on every run until somebody edits it. Printed here it would be a line under
-    every check forever, which is a note a reader stops seeing. `doctor` is the
-    verb that reports on the setup and is where it is printed.
+    Principle P2 asks for the `env` source to be flagged in output and this verb
+    records it -- but what is being reported is a property of the config file, the
+    same on every run until somebody edits it. Printed here it would be a line under
+    every check forever, which is a note a reader stops seeing. `doctor` is the verb
+    that reports on the setup and is where it is printed.
     """
     estate()
     monkeypatch.setattr(
@@ -643,10 +643,10 @@ def test_a_low_assurance_admin_source_is_recorded_but_not_printed(
 
 # ------------------------------------------------------------------ jsonl ---
 #
-# `creds check` is the first verb that streams (#9). The emitter's own rules --
-# framing, `seq`, redaction -- are `tests/test_output_jsonl.py`'s; these are about
-# what this verb puts through it, and whether the stream and the document it
-# stands beside describe the same run.
+# `creds check` streams. The emitter's own rules -- framing, `seq`, redaction --
+# are `tests/test_output_jsonl.py`'s; these are about what this verb puts through
+# it, and whether the stream and the document it stands beside describe the same
+# run.
 
 EVENT_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -761,7 +761,7 @@ def test_streamed_payloads_are_the_run_schema_shapes(
     """The event schema checks the envelope and leaves `data` open; 03 §5 says the
     payloads are the run schema's `$defs`. Checked against those here rather than
     by a cross-file `$ref`, which would bind the event schema's version to the
-    run schema's (review of #534)."""
+    run schema's."""
     estate(answers={"ACME_WEB_USER": VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017")})
     lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl"), events)
     defs = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))["$defs"]
@@ -785,7 +785,7 @@ def test_streamed_payloads_are_the_run_schema_shapes(
 def test_login_is_the_default_and_asks_nothing_at_plan_time(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Q1 (#86): `login` unconditionally, and a run that did not ask for a
+    """Q1: `login` unconditionally, and a run that did not ask for a
     comparison opens no pre-flight connection to ask whether it could."""
     harness = estate()
     run(runner, write_config(CONFIG))
@@ -849,9 +849,9 @@ def test_an_unreachable_target_is_left_to_the_run_rather_than_refused(
 def test_under_include_previous_the_previous_value_is_asked_about_too(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Copilot on #600. One refusal is about the value, not the account -- a
-    character set that cannot hold it -- so a previous value the pre-flight never
-    saw would be refused mid-run as an `ERROR` row and exit 1."""
+    """One refusal is about the value, not the account -- a character set that
+    cannot hold it -- so a previous value the pre-flight never saw would be
+    refused mid-run as an `ERROR` row and exit 1."""
     harness = estate(answers={"ACME_WEB_USER": VerifyResult("hash", PASS)})
     for target in ("appdb-alpha", "appdb-beta"):
         harness["store"].write(
@@ -878,10 +878,10 @@ def test_a_comparison_runs_on_an_account_a_login_would_not_try(
     flag: str,
     state: str,
 ) -> None:
-    """UC-1 §7: hash mode works on a locked account, which a login cannot -- and
-    Copilot on #600 found `check` skipping it anyway, because status settled the
-    row before any method was consulted. The status is still the state; what the
-    comparison found rides after it."""
+    """UC-1 §7: hash mode works on a locked account, which a login cannot -- so
+    `check` must not skip it because status settled the row before any method
+    was consulted. The status is still the state; what the comparison found
+    rides after it."""
     found = "matches none of the account's 12C verifiers, with no login attempted"
     harness = estate(
         users={

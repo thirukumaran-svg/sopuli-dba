@@ -1,4 +1,4 @@
-"""`account reset-password` when a statement fails after another committed (#528).
+"""`account reset-password` when a statement fails after another committed.
 
 Tier 0, with a fake session. DDL commits as it goes, so a reset that fails half
 way has already done the first half, and the row has to say so. Two failure
@@ -8,11 +8,11 @@ points, and they are handled differently on purpose:
   nothing is handed over -- on the unseen path the token already made retrieves a
   value that authenticates nothing, which is UC-2 6.4's recoverable failure;
 * **the set commits, then the window close fails.** The password is live, so it
-  *is* handed over, and the record and the notification follow (decided in #528):
+  *is* handed over, and the record and the notification follow (UC-2 §6.4):
   withholding it would leave a password nobody holds.
 
 Both are `ERROR` at exit 4 with ``changed: true``, `_expire_one`'s shape for the
-same error (#527).
+same error.
 """
 
 from __future__ import annotations
@@ -292,7 +292,7 @@ def test_a_set_then_a_failed_close_still_hands_the_token_over(
     monkeypatch: pytest.MonkeyPatch,
     sent: Sent,
 ) -> None:
-    """#528's decision: the password is live, so it goes to the person.
+    """UC-2 §6.4: the password is live, so it goes to the person.
 
     Still exit 4 and still `ERROR`, because the old password may work until the
     window ends and that is not what a reset promised. The token goes to stderr
@@ -343,7 +343,7 @@ def test_a_set_then_a_failed_close_still_shows_the_password_on_the_seen_path(
 
 
 def test_the_failed_statement_is_named_from_the_last_that_committed() -> None:
-    """Not from how many rows there are (Copilot's review of #536).
+    """Not from how many rows there are.
 
     The Oracle driver reports the unlock row even where it issued nothing, so a
     count happens to work against it. The error promises no such prefix, and a
@@ -366,7 +366,7 @@ def test_the_failed_statement_is_named_from_the_last_that_committed() -> None:
 
 # ------------------------------------------------------------------ jsonl ---
 #
-# `account reset-password` streams (#535), unseen paths only: the seen path is
+# `account reset-password` streams, unseen paths only: the seen path is
 # refused under every machine format, so `password.displayed` has no emitter by
 # construction. Per target, as `creds check` streams, because a reset row is
 # final when its target is.
@@ -453,8 +453,9 @@ def test_jsonl_and_json_describe_the_same_reset(
 def test_a_partly_applied_reset_streams_the_set_it_made(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
 ) -> None:
-    """#528's case on the stream: the password is live and was handed over, so
-    both events are there, the row is `ERROR`, and the run is exit 4."""
+    """UC-2 §6.4's second case, on the stream: the password is live and was
+    handed over, so both events are there, the row is `ERROR`, and the run is
+    exit 4."""
     failure = PartialAccountChangeError(DENIED, completed=(UNLOCKED, SET))
     _open(monkeypatch, FakeSession("LOCKED(TIMED)", failure), unseen=True)
 
@@ -503,7 +504,7 @@ def test_a_journalled_reset_streams_its_lock_taken_and_let_go(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
 ) -> None:
     """UC-2 §3.3's lock, keyed on the record path, through the manager's observer
-    -- the only thing that emits `lock.*` (review of #546)."""
+    -- the only thing that emits `lock.*`."""
     journal = MemoryStore()
     monkeypatch.setattr("sopuli.cli._reset_journal", lambda run, config: journal)
     _open(monkeypatch, Succeeding("OPEN", DENIED), unseen=True)
@@ -571,10 +572,9 @@ def test_a_reset_somebody_else_holds_is_streamed_as_denied(
 def test_the_seen_path_previews_under_jsonl_and_hands_nothing_over(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
 ) -> None:
-    """The seen path's `--dry-run` is exempt from guards 2 to 4 (#441's sixth
-    guard): a preview prints a plan and never a password, so it streams -- with
-    no `password.*` event at all, because nothing was set, delivered or shown
-    (review of #546)."""
+    """The seen path's `--dry-run` is exempt from guards 2 to 4 (UC-2 §6.5): a
+    preview prints a plan and never a password, so it streams -- with no
+    `password.*` event at all, because nothing was set, delivered or shown."""
     session = Succeeding("OPEN", DENIED)
     _open(monkeypatch, session, unseen=False)
 

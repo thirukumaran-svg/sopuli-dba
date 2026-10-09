@@ -1,16 +1,15 @@
-"""`--target`, `--account`, `--group` and `--application` (#297).
+"""`--target`, `--account`, `--group` and `--application`.
 
-`01-configuration.md` §2 and §3 have shown these in their command examples since
-they were written, and only `--select` existed. Two consequences, and the second
-is why the issue was filed at all:
+`01-configuration.md` §2 and §3 show these in their command examples. Two things
+depend on them:
 
-* an operator following the documentation got "no such option";
+* an operator following the documentation must not get "no such option";
 * `02-oracle-privileges.md` §4's guardrail rule has two halves, and the half that
-  turns on the operator having **named** an account was unreachable — nothing
-  could express the condition.
+  turns on the operator having **named** an account needs a flag that can express
+  the condition.
 
 This file covers the flags. `tests/config/test_selection.py` covers the filtering
-underneath them, and `tests/test_cli_guardrails.py` the §4 rule they now make
+underneath them, and `tests/test_cli_guardrails.py` the §4 rule they make
 expressible.
 
 The property worth stating: **names are refused when they name nothing, and
@@ -208,7 +207,7 @@ def test_a_selector_cannot_resurrect_what_another_removed(
 
 
 def test_two_groups_are_a_union(runner: CliRunner, write_config: Callable[[str], Path]) -> None:
-    """Repeatable flags union within themselves (found in review on #299).
+    """Repeatable flags union within themselves.
 
     Merging both groups' labels into one match would make `env=prod` and
     `env=dev` a conjunction that matches nothing -- turning "either of these two
@@ -278,7 +277,7 @@ def test_an_application_reaching_no_target_is_still_a_declared_name(
     runner: CliRunner, write_config: Callable[[str], Path]
 ) -> None:
     """Declared names come from `applications:`, not from the bindings they
-    produced (found in review on #299).
+    produced.
 
     `dormant` selects on `env: staging`, which no target carries, so it yields no
     binding at all. Deriving the declared set from bindings would refuse its name
@@ -333,8 +332,8 @@ def test_an_unknown_name_is_refused_before_the_estate_is_narrowed(
 def test_the_document_reports_the_selectors_as_given(
     runner: CliRunner, write_config: Callable[[str], Path]
 ) -> None:
-    """`invocation.selection` has carried slots for all of these since the schema
-    was written, and until now only `select` was ever populated."""
+    """`invocation.selection` has a slot for each of these, and each is
+    populated, not only `select`."""
     body = document(
         runner,
         write_config(CONFIG),

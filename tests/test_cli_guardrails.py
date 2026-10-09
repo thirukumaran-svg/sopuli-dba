@@ -1,14 +1,13 @@
-"""The §4 account guardrails, finally asked of something (#286).
+"""The §4 account guardrails, asked by the commands.
 
-`sopuli/driver/guardrails.py` implemented every one of
-`02-oracle-privileges.md` §4's five checks, documented `--force`, and had a full
-unit suite — and no command imported it. So `creds apply` would issue
-`ALTER USER` against an `ORACLE_MAINTAINED` account, or one holding `DBA`,
-provided the config declared it.
+`sopuli/driver/guardrails.py` implements every one of
+`02-oracle-privileges.md` §4's five checks. A command that did not call it
+would issue `ALTER USER` against an `ORACLE_MAINTAINED` account, or one holding
+`DBA`, provided the config declared it.
 
 The unit suite is `tests/driver/test_guardrails.py`, which is about what
-`review()` decides. This file is about the part that was missing: **the command
-asks, and does the right thing with the answer.** Every case here asserts on the
+`review()` decides. This file is about the command: **the command asks, and
+does the right thing with the answer.** Every case here asserts on the
 statements the fake session recorded, because a guardrail that returns a refusal
 the command then ignores looks identical in the output to one that worked.
 """
@@ -138,9 +137,9 @@ def account(name: str, **fields: Any) -> UserState:
 
     ``password_file_member`` defaults to ``False`` -- *asked and answered* -- so
     that a case about check 2 or check 4 is not also a case about check 3 having
-    no input (#296). The estate that cannot answer is its own fixture below,
-    because that is a separate fact about a run and deserves to be asserted
-    rather than arrive as a side effect of every other test.
+    no input. The estate that cannot answer is its own fixture below, because
+    that is a separate fact about a run and deserves to be asserted rather than
+    arrive as a side effect of every other test.
     """
     return UserState(**{"name": name, "status": "OPEN", "password_file_member": False, **fields})
 
@@ -202,7 +201,7 @@ def _credential() -> Any:
     """The admin credential the CLI would have resolved.
 
     A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
-    The command reads its *provenance* as well as its value now -- #477 reports
+    The command reads its *provenance* as well as its value -- it reports
     where an admin credential came from -- and a stub stops being enough the
     moment anything but `.credential` is read. `external` because these estates
     declare no `admin:` block at all, and it is the one source that carries
@@ -231,13 +230,13 @@ def states(result: Result) -> dict[str, str]:
     return {entry["account"]: entry["state"] for entry in document(result)["results"]}
 
 
-# ------------------------------------------------------ the checks now fire ---
+# ---------------------------------------------------------- the checks fire ---
 
 
 def test_a_vendor_maintained_account_is_not_touched(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """§4 check 2, and the headline of #286: before this, the DDL was issued."""
+    """§4 check 2: no DDL is issued against a vendor-maintained account."""
     harness = estate(
         {
             "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
@@ -417,9 +416,9 @@ def test_the_reason_names_every_check_that_refused(
 def test_force_waives_checks_two_to_five(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#89's case: rotating `DBSNMP` is ordinary DBA work, and a tool with no
-    override does not prevent it — it moves it to SQL*Plus, where nothing records
-    that it happened."""
+    """Decision P3's case: rotating `DBSNMP` is ordinary DBA work, and a tool
+    with no override does not prevent it — it moves it to SQL*Plus, where
+    nothing records that it happened."""
     harness = estate(
         {
             "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
@@ -463,7 +462,7 @@ def test_force_records_what_it_waived(
 def test_force_records_the_waiver_on_an_account_that_needed_no_change(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The no-op path keeps the audit trail (found in review on #298).
+    """The no-op path keeps the audit trail.
 
     A forced account whose password the database already holds reports
     `changed: false` and issues nothing -- but the waiver was still granted and
@@ -527,8 +526,9 @@ def test_a_clean_account_carries_no_overridden_key(
 def test_force_never_waives_check_one(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Invariant 5 and #89: acting on an account absent from the config would
-    make the tool's own audit trail meaningless, so no flag reaches check 1.
+    """Invariant 5 and decision P3: acting on an account absent from the config
+    would make the tool's own audit trail meaningless, so no flag reaches
+    check 1.
 
     The database answers to a name the config does not declare -- which is what
     a renamed account looks like -- and `--force` must not get past it.
@@ -544,13 +544,13 @@ def test_force_never_waives_check_one(
     assert "SOMEONE_ELSE" not in changed(harness)
 
 
-# ----------------------------------------- named vs fell inside (#297) ---
+# ------------------------------------------------ named vs fell inside ---
 
 
 def test_a_named_account_makes_the_run_fail(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """§4's other half, unreachable until `--account` existed (#297).
+    """§4's other half: the operator named the account with `--account`.
 
     "They asked for something the tool will not do, and quietly skipping it would
     report success for work nobody did." So the same refusal that is `SKIPPED`
@@ -655,8 +655,8 @@ def test_force_clears_a_named_account_too(
         }
     )
     # Both accounts are named: they share a document and both have a password
-    # staged, so a run narrowed to one of them would not promote it (#406), and
-    # this test is about the guardrail rather than the gate.
+    # staged, so a run narrowed to one of them would not promote it (see
+    # decision #406), and this test is about the guardrail rather than the gate.
     result = run(
         runner,
         write_config(CONFIG),
@@ -710,7 +710,7 @@ def test_rotate_takes_force_as_well(
     assert "ACME_WEB_USER" in changed(harness)
 
 
-# ------------------------------------------ the check that could not run (#296) ---
+# ------------------------------------------------- the check that could not run ---
 #
 # §4's third answer. `V$PWFILE_USERS` is outside §2's grant set on purpose, so
 # the ordinary estate cannot answer check 3 -- which is why the driver reports
@@ -730,7 +730,7 @@ def diagnostics(result: Result) -> list[dict[str, Any]]:
 def test_an_unreadable_password_file_warns_and_applies_anyway(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The whole shape of #296 in one run.
+    """The whole shape of an unanswerable check 3, in one run.
 
     Refusing would be the wrong fix: the estate that cannot answer check 3 is the
     correctly installed one, so a refusal here means the tool applies nothing
@@ -789,13 +789,13 @@ def test_a_target_that_can_answer_says_nothing(
 def test_a_password_file_member_is_still_refused(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Check 3, firing for the first time.
+    """Check 3, on the account only it catches.
 
     Measured on 26ai 23.26.2.0.0: an account granted `SYSDBA` inside a PDB
     appears in `V$PWFILE_USERS` with its own `CON_ID`, reads
     `ORACLE_MAINTAINED = N`, and holds no roles at all -- so checks 2, 4 and 5
-    all pass it and only this one does not. That is the account the issue says
-    exists in real estates, and until now the tool would have rotated it.
+    all pass it and only this one does not. Such accounts exist in real
+    estates, and without check 3 the tool would rotate one.
     """
     harness = estate(
         {

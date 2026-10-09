@@ -1,4 +1,4 @@
-"""``sopuli about`` -- the one command that is not a run (#413).
+"""``sopuli about`` -- the one command that is not a run.
 
 Tier 0 (``04-testing.md`` §4): ``CliRunner`` in-process, no containers, no I/O.
 Trivially so here, because the command has no I/O to stub -- everything it
@@ -205,7 +205,7 @@ def test_about_refuses_a_global_option_after_the_verb(runner: CliRunner, flag: l
 )
 def test_about_refuses_a_global_option_before_the_verb(runner: CliRunner, flag: list[str]) -> None:
     """The group's parser accepts them, so they have to be refused rather than
-    dropped (#414 review).
+    dropped.
 
     Exiting 0 with human text after being asked for JSON is the silent ignore
     `config show` refuses for a selector it cannot apply, and the failure is the

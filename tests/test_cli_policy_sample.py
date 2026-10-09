@@ -1,4 +1,4 @@
-"""``policy sample`` — the command that shows what a policy produces (#68).
+"""``policy sample`` — the command that shows what a policy produces.
 
 Tier 0: in-process through ``CliRunner``, no containers, no I/O beyond the config
 file the fixture writes.
@@ -232,7 +232,7 @@ def test_reveal_is_refused_with_json_output(
     )
 
     # A usage error, not a config error: nothing is wrong with any file, two
-    # flags simply cannot both be honoured. J7 (#8) puts that on exit 2, with no
+    # flags simply cannot both be honoured. J7 puts that on exit 2, with no
     # run document -- which is the point here, since the document is the thing
     # `--output json` asked for and the sample must not appear in it either way.
     assert isinstance(result.exception, click.UsageError)
@@ -310,7 +310,7 @@ def test_no_name_uses_the_files_default_policy(
     runner: CliRunner, write_config: Callable[[str], Path]
 ) -> None:
     """`defaults.policy` is the chain the file itself describes (§3); the layers
-    above it belong to the precedence resolver (#10)."""
+    above it belong to the precedence resolver (decision #10)."""
     result = sample(runner, write_config(POLICIES), "--count", "1")
 
     assert result.exit_code == ExitCode.SUCCESS
@@ -367,8 +367,9 @@ def test_a_dangling_defaults_policy_points_at_the_file(
 def test_a_policy_with_no_length_is_refused_here(
     runner: CliRunner, write_config: Callable[[str], Path]
 ) -> None:
-    """#58's decision, met at the cheapest possible moment: a command that says so
-    rather than a rotation that does."""
+    """A policy declares its own length, and there is no built-in default (see
+    `_required_length` in `sopuli/passwords.py`). This is the cheapest moment to
+    meet that: a command that says so rather than a rotation that does."""
     path = write_config("version: 1\npolicies:\n  vague:\n    password:\n      charset: alnum\n")
 
     result = runner.invoke(
@@ -377,7 +378,7 @@ def test_a_policy_with_no_length_is_refused_here(
 
     assert isinstance(result.exception, ConfigError)
     assert "declares no password length" in str(result.exception)
-    # The file is what has to change, so exit 9 rather than 2 (#8).
+    # The file is what has to change, so exit 9 rather than 2 (J7).
     assert result.exception.exit_code == ExitCode.CONFIG_INVALID
 
 

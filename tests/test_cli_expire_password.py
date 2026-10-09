@@ -1,12 +1,11 @@
-"""`sopuli account expire-password` from the command line (#525).
+"""`sopuli account expire-password` from the command line.
 
 Tier 0 against a fake session, for the command's own orchestration: that a
 preview reads and issues nothing (invariant 8), that a refusal never reaches
 the driver, and that a failure after the window closed is reported as the
-partial change it is rather than as an untouched account (Copilot's review of
-#527). The driver's behaviour against Oracle is
-`tests/driver/test_oracle_expire.py`; the decision and the view are
-`tests/test_expire.py`.
+partial change it is rather than as an untouched account. The driver's
+behaviour against Oracle is `tests/driver/test_oracle_expire.py`; the decision
+and the view are `tests/test_expire.py`.
 
 Tier 1 once, end to end, because the one thing a fake cannot show is that the
 document a real run produces is the one the schema describes.
@@ -130,8 +129,8 @@ def test_the_account_is_required(runner: CliRunner, write_config: WriteConfig) -
 def test_a_preview_reads_and_issues_nothing(
     runner: CliRunner, write_config: WriteConfig, fake: list[FakeSession]
 ) -> None:
-    """Invariant 8, and the bug `reset-password`'s first build had: a preview
-    that reached the DDL. The read happens, because it is what a preview is for."""
+    """Invariant 8: a preview must not reach the DDL. The read happens, because
+    it is what a preview is for."""
     result = run(
         runner, write_config(OFFLINE), "--account", ACCOUNT, "--dry-run", "--output", "json"
     )
@@ -181,9 +180,9 @@ def test_a_failure_after_the_window_closed_is_reported_as_a_change(
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Copilot's review of #527. The close commits before the expiry fails, so
-    the old password is already dead; a row saying `changed: false` with no
-    applied action would claim the account was untouched."""
+    """The close commits before the expiry fails, so the old password is already
+    dead; a row saying `changed: false` with no applied action would claim the
+    account was untouched."""
     closed = AccountChange(
         ROLLOVER_FINISH,
         changed=True,
@@ -217,7 +216,7 @@ def test_the_closing_line_does_not_claim_a_failed_expiry(
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#537. The row is a change -- its window closed -- and the summary counts
+    """The row is a change -- its window closed -- and the summary counts
     it, but no password was expired, so the text line must not say one was."""
     closed = AccountChange(
         ROLLOVER_FINISH,
@@ -243,7 +242,8 @@ def test_closing_only_the_window_of_an_expired_account_still_reads_as_expired(
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The other side of #537's fix. At `EXPIRED & IN ROLLOVER` no expiry is
+    """The other side of `test_the_closing_line_does_not_claim_a_failed_expiry`.
+    At `EXPIRED & IN ROLLOVER` no expiry is
     issued, only the close, and the run is still what left the account expired
     and nothing else -- so the line keys on the state, not on the action."""
 

@@ -1,19 +1,21 @@
-"""`auth: { method: vault }` reaches a store, from the CLI (#483). Tier 0.
+"""`auth: { method: vault }` reaches a store, from the CLI. Tier 0.
 
-The third instance of one bug. `admin.resolve` takes its sources as suppliers --
-`env` a mapping, `prompt` a callable, `read_ref` a callable over a ref -- and the
-CLI passed **none** of the callables. #476 fixed `prompt`; this is `read_ref`,
-and until it landed `_read_ref`'s "no store was available here" was the only
-reachable branch, with a hint reading *this is a caller that supplied no reader*.
+The wiring check of `tests/test_cli_admin_prompt.py`, for `read_ref`.
+`admin.resolve` takes its sources as suppliers -- `env` a mapping, `prompt` a
+callable, `read_ref` a callable over a ref -- and the CLI has to pass each of
+them. Without `read_ref`, `_read_ref`'s "no store was available here" would be
+the only reachable branch, with a hint reading *this is a caller that supplied
+no reader*.
 
-So `method: vault` failed on every run of every verb, in the source P2 ranks
-highest of the three that need something from this machine: `env` is flagged
-low-assurance (#477) and `prompt` needs a human, which left no working unattended
-source at all.
+So `method: vault` would fail on every run of every verb, in the source
+principle P2 ranks highest of the three that need something from this machine:
+`env` is flagged low-assurance and `prompt` needs a human, which would leave no
+working unattended source at all.
 
-`tests/test_admin.py` covers `resolve` with an injected reader and passed
-throughout. That is the same blind spot #476 had, and this file is the same
-answer: run the real commands and assert on what reached the far side.
+`tests/test_admin.py` covers `resolve` with an injected reader, and those tests
+would pass without the wiring. This file gives the same answer as
+`test_cli_admin_prompt.py`: run the real commands and assert on what reached the
+far side.
 
 Two things are asserted that a unit test cannot see:
 
@@ -190,7 +192,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Callable[..., dict[str, Any]]:
         # `doctor`'s `vaults` section surveys every declared store over the real
         # client, which needs a token this tier has not got -- and an unreachable
         # store is exit 1, which would mask the target result under test. That
-        # section is #216's and has its own tests; nothing here is about it.
+        # section has its own tests; nothing here is about it.
         monkeypatch.setattr("sopuli.cli.vault_survey", lambda *_, **__: ())
         return {"opened": opened, "seen": seen, "store": store}
 
@@ -319,7 +321,7 @@ def test_the_run_layers_never_repoint_an_arrow(write_config: WriteConfig) -> Non
 def test_the_stored_password_reaches_the_driver(
     runner: CliRunner, write_config: WriteConfig, estate: Callable[..., dict[str, Any]]
 ) -> None:
-    """#483's repro: before this, every vault admin source was refused."""
+    """A `method: vault` admin source is read through the store, not refused."""
     harness = estate()
     config = write_config(VAULT_ADMIN)
 
@@ -387,7 +389,7 @@ def test_an_empty_path_says_the_store_answered(
 ) -> None:
     """Distinct from a store that could not be reached, and worded to say so.
 
-    `read_secret` returns `None` for every way of finding nothing (#183) -- no
+    `read_secret` returns `None` for every way of finding nothing -- no
     document, no field, no key. They have one remedy here, which is to go and
     look at the path, so they get one message.
     """
@@ -408,17 +410,18 @@ def test_an_empty_path_says_the_store_answered(
 def test_one_store_serving_both_halves_is_opened_once(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Copilot's correction on #488, as a test rather than as a claim.
+    """One client per store per run holds across the whole run, not only inside
+    the reader.
 
     The ordinary arrangement: the admin credential and the application's
-    documents live in the same vault. A cache private to `_admin_reader` made
-    "one client per store per run" true inside the reader and false across the
-    run -- `creds check` opened `vault-dev` once for the bindings and once more
-    for the admin ref, which is two authentications and two audit entries for
-    one scheduled run.
+    documents live in the same vault. A cache private to `_admin_reader` would
+    make the claim true inside the reader and false across the run.
+    `creds check` would open `vault-dev` once for the bindings and once more for
+    the admin ref, which is two authentications and two audit entries for one
+    scheduled run.
 
     Asserted on `creds check` rather than `doctor` because `doctor` opens no
-    binding stores, so it is the verb where the bug could not appear.
+    binding stores, so a double open cannot show there.
     """
     opened: list[str] = []
     store = MemoryStore()
@@ -455,14 +458,14 @@ def test_one_store_serving_both_halves_is_opened_once(
     assert opened == ["vault-dev"]
 
 
-# ------------------------------------- the survey and the admin ref (#489) ---
+# -------------------------------------------- the survey and the admin ref ---
 
 
 def _surveyed(monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> dict[str, Any]:
     """`connect` substituted in **both** places a `doctor` run opens a store.
 
     The `estate` fixture replaces the survey outright, which is right for every
-    test above and is exactly what hid #489: the double open was between the
+    test above and is exactly what would hide a double open between the
     survey and the admin reader, so a test of it has to let both run and count
     them on one list.
     """
@@ -497,7 +500,7 @@ def _surveyed(monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> dict[st
 def test_the_survey_and_the_admin_ref_share_one_login(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#489: `vault-dev` is surveyed and is where the admin credential lives.
+    """`vault-dev` is surveyed and is where the admin credential lives.
     One authentication for both, not one each -- a vault's audit log showing
     twice the logins a `doctor` schedule accounts for reads as a compromise
     before it reads as a bug."""
