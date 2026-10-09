@@ -13,22 +13,19 @@ distinguishable only by being coloured, so the ``NO_COLOR`` path is lossless by
 construction rather than by care, and ``tests/test_palette.py`` asserts exactly
 that: strip the escapes and the output is the plain output, byte for byte.
 
-**The palette maps onto what the machine view emits.** §1 wrote that rule
-against the result vocabulary (``state``, ``by_state``, ``drift``), because
-results were the only text output anticipated. ``config show`` came first and
-has no states at all, so these roles map onto the fields its ``config`` section
-*does* emit -- ``overridden``, ``environment``, ``non_production``, and absence.
-Same vocabulary, reinforced; not a second one that could disagree with it.
+**The palette maps onto what the machine view emits.** §1 states that rule
+against the result vocabulary (``state``, ``by_state``, ``drift``).
+``config show`` has no states at all, so these roles map onto the fields its
+``config`` section *does* emit -- ``overridden``, ``environment``,
+``non_production``, and absence. Same vocabulary, reinforced; not a second one
+that could disagree with it.
 
-**The result palette arrived in #395**, which is what that deferral was waiting
-for. Four roles -- :attr:`Role.GOOD`, :attr:`Role.ATTENTION`, :attr:`Role.BAD`,
-:attr:`Role.INCONCLUSIVE` -- and :func:`role_for_state` is the one function that
-decides which a state gets. Before it, four views each kept their own subset of
-the state enum and painted it :attr:`Role.NOTABLE`: ``check`` coloured ``DRIFT``
-and ``apply`` did not, ``apply`` coloured ``ERROR`` and ``check`` did not. Same
-state, same run, different emphasis depending on which verb printed it -- which
-is precisely the "yellow meaning three things in three views" this indirection
-exists to prevent. The indirection was here; nobody had used it for states.
+**The result palette** (decision #395) has four roles -- :attr:`Role.GOOD`,
+:attr:`Role.ATTENTION`, :attr:`Role.BAD`, :attr:`Role.INCONCLUSIVE` -- and
+:func:`role_for_state` is the one function that decides which a state gets. A
+view that kept its own subset of the state enum would give one state different
+emphasis depending on which verb printed it -- which is precisely the "yellow
+meaning three things in three views" this indirection exists to prevent.
 
 Styling goes through :func:`paint` rather than ``click.style`` at call sites, so
 the set of things a role can do stays visible in one file -- and so a renderer
@@ -73,7 +70,7 @@ class Role(StrEnum):
     """A section name or a column heading. Structure, not data."""
 
     BANNER = "banner"
-    """The project's own name, drawn large. Neither structure nor data (#413).
+    """The project's own name, drawn large. Neither structure nor data.
 
     The only role here that decorates something a reader never has to interpret,
     which is why it is allowed to reuse cyan without weakening what cyan means in
@@ -161,16 +158,15 @@ _STATE_ROLES: dict[str, Role] = {
     EXPIRED: Role.BAD,
     UNVERIFIABLE: Role.INCONCLUSIVE,
     SKIPPED: Role.INCONCLUSIVE,
-    # `account list`'s ordinary row (#490), and dim for `creds status`'s reason
-    # rather than by analogy: neither verb reports a state that means the
-    # credential is healthy, because neither asks. `DECLARED` says the
-    # declaration matched and nothing about the password -- so it must not
-    # compete with a row that does say something, and `IN_SYNC` stays the only
-    # state a reader can stop reading at.
+    # `account list`'s ordinary row, and dim for `creds status`'s reason rather
+    # than by analogy: neither verb reports a state that means the credential is
+    # healthy, because neither asks. `DECLARED` says the declaration matched and
+    # nothing about the password -- so it must not compete with a row that does
+    # say something, and `IN_SYNC` stays the only state a reader can stop
+    # reading at.
     DECLARED: Role.INCONCLUSIVE,
-    # A reset that happened (#441). **`ATTENTION`, not `GOOD`**, and the first
-    # draft had it the other way round until `test_the_converged_state_is_the_
-    # only_good_one` refused it -- rightly, and the rule it enforces is the
+    # A reset that happened. **`ATTENTION`, not `GOOD`**, and
+    # `test_the_converged_state_is_the_only_good_one` holds it there for this
     # reason: `IN_SYNC` is the one row a reader can stop at, and a second `GOOD`
     # would make the column stop answering *what do I have to look at*.
     #
@@ -184,9 +180,9 @@ _STATE_ROLES: dict[str, Role] = {
 
 
 #: A store's health, which is a second vocabulary and not a second palette
-#: (#395). The same four roles, mapped from ``StoreHealth.status`` -- one place
-#: for the same reason :data:`_STATE_ROLES` is one place, and the reason is
-#: `doctor` and `creds` printing the same word about the same store.
+#: (decision #395). The same four roles, mapped from ``StoreHealth.status`` --
+#: one place for the same reason :data:`_STATE_ROLES` is one place, and the
+#: reason is `doctor` and `creds` printing the same word about the same store.
 #:
 #: :data:`~sopuli.store.protocol.DEGRADED` is :attr:`Role.ATTENTION` rather than
 #: :attr:`Role.BAD` deliberately, and the distinction is the one that module
@@ -206,14 +202,11 @@ def role_for_health(status: str) -> Role | None:
 
 
 def role_for_state(state: str) -> Role | None:
-    """Which role a result state gets. The one place that decides (#395).
+    """Which role a result state gets, decided in one place (decision #395).
 
-    Four views used to keep their own subset of the state enum and paint it
-    :attr:`Role.NOTABLE`, which is how ``DRIFT`` came to be coloured by `check`
-    and not by `apply` while ``ERROR`` was coloured by `apply` and not by
-    `check`. One state, one run, different emphasis depending on which verb
-    printed it. This function is the fix, and a view that hand-rolls a subset
-    again is re-introducing the bug rather than adding a feature.
+    A view that kept its own subset of the state enum would colour a state in
+    one verb and not in another: one state, one run, different emphasis
+    depending on which verb printed it. So no view hand-rolls a subset.
 
     **The grouping is not `check`'s exit-code grouping, and the difference is
     deliberate.** :func:`sopuli.check.is_inconclusive` counts

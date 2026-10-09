@@ -13,16 +13,17 @@ Two rules are enforced structurally here rather than by convention:
   set, and the machine-readable stream cannot acquire escape sequences. When the
   answer is no, :meth:`Emitter.emit_text` strips ANSI rather than trusting
   callers to have avoided it -- for a run's text half and for ``sopuli about``,
-  which is not a run at all (#413).
+  which is not a run at all.
 
-* **Streaming (#9).** ``--output jsonl`` writes one event per line as the run
-  happens, each flushed as it is written -- a line sitting in a pipe buffer until
-  exit is ``json`` with worse syntax. The stream is *closed* by :meth:`Emitter.emit`,
-  the same call that writes the ``json`` document, so every path that finishes a
-  run -- success, failure, abort -- ends the stream with ``run.finished`` without
-  knowing which mode it is in. Only a verb that has events to stream accepts the
-  mode at all (:data:`sopuli.invocation.STREAMING_COMMANDS`); one that silently
-  behaved like ``json`` would be a lie in the contract.
+* **Streaming.** ``--output jsonl`` writes one event per line as the run
+  happens, each flushed as it is written -- a line sitting in a pipe buffer
+  until exit is ``json`` with worse syntax. The stream is *closed* by
+  :meth:`Emitter.emit`, the same call that writes the ``json`` document, so
+  every path that finishes a run -- success, failure, abort -- ends the stream
+  with ``run.finished`` without knowing which mode it is in. Only a verb that
+  has events to stream accepts the mode at all
+  (:data:`sopuli.invocation.STREAMING_COMMANDS`); one that silently behaved like
+  ``json`` would be a lie in the contract.
 """
 
 from __future__ import annotations
@@ -101,10 +102,10 @@ class Emitter:
 
     mode: OutputMode = OutputMode.TEXT
     stream: TextIO | None = None
-    #: Where a spinner animates (#419). Separate from :attr:`stream` because the
-    #: two are not interchangeable: stdout is the contract and stderr is the
-    #: side channel, and a test that redirects one must not silently move the
-    #: other. ``None`` means the process's own, resolved at write time like
+    #: Where a spinner animates. Separate from :attr:`stream` because the two
+    #: are not interchangeable: stdout is the contract and stderr is the side
+    #: channel, and a test that redirects one must not silently move the other.
+    #: ``None`` means the process's own, resolved at write time like
     #: :attr:`stream`.
     err_stream: TextIO | None = None
     color_choice: ColorChoice = ColorChoice.AUTO
@@ -151,7 +152,7 @@ class Emitter:
         return self._color
 
     def spinner(self, message: str) -> Spinner:
-        """A spinner for one slow call, already gated (#419).
+        """A spinner for one slow call, already gated.
 
         The gate lives here for the reason :meth:`use_color` does, and the
         docstring there is the whole argument: a command asks the emitter
@@ -166,7 +167,8 @@ class Emitter:
         frames ahead of the document -- so the machine contract turns the
         animation off rather than relying on which stream it went to. Unlike
         colour, this is not something ``--color always``'s equivalent could
-        override, because no such flag exists and #416's non-goals say why.
+        override, because no such flag exists; :mod:`sopuli.output.spinner` says
+        why.
 
         Returns a working context manager either way: a disabled spinner starts
         no thread and writes nothing, so no call site needs a branch.
@@ -287,12 +289,12 @@ class Emitter:
         """Write human text through the colour gate, with no document behind it.
 
         :meth:`emit` is the whole of a run: a document, or the text that stands
-        in for it. ``sopuli about`` is the one command that is not a run at all
-        (#413) -- it takes no options, reads nothing, resolves no settings and
-        has no ``--output json`` form to be the machine half of. It still must
-        not put escape sequences on a stream that ``NO_COLOR`` has spoken for,
-        and that promise is kept here rather than by a second ``unstyle`` call in
-        a command body.
+        in for it. ``sopuli about`` is the one command that is not a run at
+        all -- it takes no options, reads nothing, resolves no settings and has no
+        ``--output json`` form to be the machine half of. It still must not put
+        escape sequences on a stream that ``NO_COLOR`` has spoken for, and that
+        promise is kept here rather than by a second ``unstyle`` call in a
+        command body.
 
         Splitting this out rather than handing `about` a document is what keeps
         the document honest: every ``RunDocument`` describes something the tool

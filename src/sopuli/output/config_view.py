@@ -66,12 +66,13 @@ def render_text(
     still the configuration, and where a setting came from is a third question
     beside the file and the estate (:mod:`sopuli.output.explain_view`).
 
-    **The stores' own settings join that table when it is asked for** (#428), as
-    ``vaults.<name>.<key>`` rows beneath the run's. They are resolved inside the
-    file rather than at the boundary, so they never arrive in ``settings`` -- but
-    they are settings of the same chain, merged by the same resolver, and P3's own
-    worked example of this view is a vault key. An empty ``settings`` is what says
-    ``--explain`` was not asked for, so there is no second argument for it.
+    **The stores' own settings join that table when it is asked for**
+    (decision #428), as ``vaults.<name>.<key>`` rows beneath the run's. They are
+    resolved inside the file rather than at the boundary, so they never arrive
+    in ``settings`` -- but they are settings of the same chain, merged by the
+    same resolver, and P3's own worked example of this view is a vault key. An
+    empty ``settings`` is what says ``--explain`` was not asked for, so there is
+    no second argument for it.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -215,14 +216,12 @@ def build_section(
     normalisation on the way out would be a second answer to that question --
     one that could drift from the first.
 
-    ``vaults`` is in **both** shapes, and it is the one thing here that neither
-    of them carried (#428). ``declared`` is the address the *file wrote*, and
-    ``--resolved`` dropped stores entirely, so no mode of this command told a
-    JSON consumer which vault a run would actually talk to -- true since the
-    layers were built rather than since ``--vault-addr`` was. Which forces the
-    ordering: you cannot report where ``addr`` came from before reporting what
-    ``addr`` is, so the value is the substantive half and the provenance rides
-    along with it.
+    ``vaults`` is in **both** shapes (decision #428). ``declared`` is the
+    address the *file wrote*, so it cannot say which vault a run would actually
+    talk to. ``vaults`` carries the effective settings of each store and the
+    layer that supplied each one. The value is the substantive half and the
+    provenance rides along with it, because you cannot report where ``addr``
+    came from without reporting what ``addr`` is.
 
     Always present, empty array included, for the reason ``doctor``'s own
     ``vaults[]`` is: every estate that does anything has stores, so ``[]`` is a
@@ -287,12 +286,12 @@ def _declared_sections(config: Config) -> list[tuple[str, list[str]]]:
 
 
 def _reset_record_rows(config: Config) -> list[str]:
-    """UC-2's reset journal (H2, #450, #468). One row, because it is one block.
+    """UC-2's reset journal (H2). One row, because it is one block.
 
-    Here for the reason ``safety`` is (#426): a block the file writes and no
-    command mentions is a block nobody can confirm took. An operator can validate
-    `reset_records:` successfully and still have no way to see *where* the journal
-    was configured, which is the same defect in a different section.
+    Here for the reason ``safety`` is (decision #426): a block the file writes
+    and no command mentions is a block nobody can confirm took. An operator can
+    validate `reset_records:` successfully and still have no way to see *where*
+    the journal was configured, which is the same defect in a different section.
 
     ``STORE`` and ``PREFIX`` rather than one rendered path, because the two come
     from different places when something is wrong -- a store that is not declared
@@ -309,15 +308,15 @@ def _reset_record_rows(config: Config) -> list[str]:
 
 
 def _safety_rows(config: Config) -> list[str]:
-    """Every ``safety:`` key the file writes, by the key that writes it (#426).
+    """Every ``safety:`` key the file writes, by the key that writes it
+    (decision #426).
 
     **The section exists because a block outside ``defaults`` was invisible.**
     ``config show --explain`` reports the *run's* settings, and ``config show``
     applies no selector and builds no plan -- so its ``safety.readonly`` is
     correctly ``false`` even for a file whose target sets it, and §9 defines
-    ``[built-in default]`` as precisely *nothing else spoke*. The row was never
-    the defect; the defect was that nothing else in the command said a block
-    existed. This is what says it.
+    ``[built-in default]`` as precisely *nothing else spoke*. Nothing else in
+    the command says that a block exists. This section says it.
 
     **Every block, not only the object layer.** ``defaults`` and a profile are
     already visible in ``--explain``'s table, and leaving them out here would make
@@ -376,7 +375,7 @@ def _safety_keys(config: Config) -> list[tuple[str, object, str, Layer]]:
     template key by key, so the flattened block holds the template's answer for
     every key the ``overrides:`` entry did not write -- and addressing all of them
     at the override's path reports it as the source of values it never mentions.
-    That function already decides which key belongs to which line (#424, #425),
+    That function already decides which key belongs to which line,
     and a second rule here would be a second answer to one question.
     """
     found: list[tuple[str, object, str, Layer]] = []
@@ -403,15 +402,13 @@ def _keys(block: Safety, *, at: str) -> list[tuple[str, object, str, Layer]]:
 
 
 def _defeated_keys(config: Config) -> frozenset[str]:
-    """Keys a ``safety:`` block writes that no run will ever read (#426).
+    """Keys a ``safety:`` block writes that no run will ever read.
 
     A ratchet has losers wherever two layers disagree, and this section lists
     every layer, so every pairing can produce one: an ``overrides:`` entry asking
     for less than its template, a group asking for less than a target it matches,
-    an active profile asking for less than ``defaults``. The first version
-    resolved only the first of those and left the other two reading as effective
-    values (found in review) -- which is this section's own failure, one layer
-    along.
+    an active profile asking for less than ``defaults``. The section resolves
+    all three, so none of them reads as an effective value.
 
     **Resolved per target, against the layers enforcement uses.**
     :func:`sopuli.safety.for_estate` merges ``defaults`` and the active profile
@@ -421,8 +418,7 @@ def _defeated_keys(config: Config) -> frozenset[str]:
     a row, since the section says what the file contains, but it cannot lose a
     ratchet it never entered.
 
-    **Defeated everywhere, not merely somewhere**, and this is the case the first
-    run of it got wrong in the other direction. A template writes one line and
+    **Defeated everywhere, not merely somewhere.** A template writes one line and
     generates many targets, so a key can lose on the one an override patched and
     hold on every other -- marking it because *one* target lowered it would say a
     line has no effect while it governs the rest of the set. So a row is marked
@@ -514,14 +510,15 @@ def _vault_settings(config: Config) -> dict[str, Resolved]:
     disagree.
 
     **Every source of ``addr`` is distinguishable, the four outside the file
-    included** (#428): ``--vault-addr`` renders ``[cli --vault-addr]``,
+    included** (decision #428): ``--vault-addr`` renders ``[cli --vault-addr]``,
     ``SOPULI_VAULT__VAULT_DEV__ADDR`` and ``SOPULI_VAULT_ADDR`` render
-    ``[env <VARIABLE>]``, ``VAULT_ADDR`` renders ``[env_thirdparty VAULT_ADDR]``,
-    and a profile, the declaration and ``defaults.vaults:`` each render their own
-    key path -- seven in all, across P3's six layers. Before this they were one
-    indistinguishable ``layered: addr`` in the store's ``NOTE`` column, which said
-    *that* a layer wrote the key and never which -- and "why is this run talking to
-    that vault" is the first question when a rotation lands somewhere unexpected.
+    ``[env <VARIABLE>]``, ``VAULT_ADDR`` renders
+    ``[env_thirdparty VAULT_ADDR]``, and a profile, the declaration and
+    ``defaults.vaults:`` each render their own key path -- seven in all, across
+    P3's six layers. The store's ``NOTE`` column says only *that* a layer wrote
+    the key, as ``layered: addr``, and never which. "Why is this run talking to
+    that vault" is the first question when a rotation lands somewhere
+    unexpected.
     """
     return {
         f"vaults.{vault.name}.{key}": answer
@@ -537,10 +534,10 @@ def _vault_json(vault: Vault) -> dict[str, Any]:
     ``value`` / ``source`` / ``source_detail`` triple ``invocation.options``
     carries -- because it is the same question about the same resolver, and a
     second grammar for it would be two shapes a consumer has to learn for one
-    fact. It is **not** put *in* ``invocation.options``, which was the rejected
-    option (b) of #428: that section is what changed the behaviour of the *run*,
-    and ``RESOLVED_SETTINGS`` excludes a store's keys on the documented grounds
-    that they describe a store rather than a run.
+    fact. It is **not** put *in* ``invocation.options``: that section is what
+    changed the behaviour of the *run*, and ``RESOLVED_SETTINGS`` excludes a
+    store's keys on the documented grounds that they describe a store rather
+    than a run.
 
     ``name`` and ``type`` are the store's identity and neither can be layered --
     a store that is HashiCorp from a laptop and OCI from CI is two stores (C13).
@@ -571,24 +568,20 @@ def _vault_note(vault: Vault) -> Cell | str:
     rather than each getting one. ``advisory-only`` is here because a store that
     cannot hold a real lock is exactly what somebody reading this table needs to
     notice, and the run document's ``lock.mode: none`` says the same thing to the
-    other reader (#83).
+    other reader (Q2).
 
     The third is a different kind of remark and shares the column anyway: this
-    table renders **effective** values (C13, #136), so a row can show an address
+    table renders **effective** values (C13), so a row can show an address
     the ``vaults:`` entry never wrote. Without saying so, the view answers "did my
     YAML say what I think it says" with a value from a different part of the file,
     which is the one question this view exists for. Which layer supplied it is
     ``--explain``'s answer and not this column's -- what belongs here is that it
     was not written on the entry.
 
-    **``--explain`` now answers it**, which until #428 it did not: this docstring
-    deferred to a view that had never been built, so three different layers
-    writing ``addr`` produced one ``layered: addr`` here and nothing anywhere
-    else. The deferral was the right split and is unchanged; what
-    changed is that the other half exists. A ``SOURCE`` column here was the
-    alternative and loses to the reason ``explain_view`` lays its table out by
-    hand: a truncated ``SOPULI_VAULT__...`` is useless in exactly the moment it is
-    wanted.
+    A ``SOURCE`` column here is the alternative. It loses to the reason
+    ``explain_view`` lays its table out by hand: a truncated
+    ``SOPULI_VAULT__...`` is useless in exactly the moment it is wanted
+    (decision #428).
     """
     notes = []
     if vault.non_production:
@@ -664,7 +657,7 @@ def _application_rows(config: Config) -> list[str]:
 
 
 def _personal_account_rows(config: Config) -> list[str]:
-    """UC-2's section (H1, #449). One row per rule, not per account.
+    """UC-2's section (H1). One row per rule, not per account.
 
     ``ACCOUNTS`` is a count for an enumerated entry and ``-`` for a predicate,
     and the dash is the honest answer rather than a gap: how many accounts carry
@@ -887,11 +880,11 @@ def _target_json(expanded: ExpandedTarget, *, bound: frozenset[str]) -> dict[str
 
 
 def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:
-    """This target's ``safety:`` block as the run will read it (#426, schema 1.22).
+    """This target's ``safety:`` block as the run will read it (decision #426).
 
     ``None`` where nothing constrains this target, which is most of them. That
     covers a target with no block **and** one written as an empty ``safety: {}``,
-    and collapsing the two is deliberate (found in review): an empty block guards
+    and collapsing the two is deliberate: an empty block guards
     exactly as much as no block, so a consumer branching on the difference would
     be branching on nothing. Presence is not lost -- ``config.declared`` carries
     the file as written, which is where a question about what somebody *typed*
@@ -902,7 +895,7 @@ def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:
     :attr:`~sopuli.config.model.Target.safety` on a generated target can hold an
     override's ``readonly: false`` over a template's ``true`` -- the target layer's
     literal statement, and not what the run does, because the ratchet takes the
-    safest of the two (#425). Reporting the flattened value here would put the
+    safest of the two. Reporting the flattened value here would put the
     relaxed answer in the machine-readable contract while the tool refused the
     run, which is the shape of lie this whole section exists to remove. So the
     same contributions go through the same resolver, and it is correct in both
@@ -914,15 +907,14 @@ def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:
     are in ``config.declared`` as written, and in the text view's ``safety``
     section by the key that writes them.
 
-    **A setting's name is a path, and the JSON nests along it** (schema 1.26,
-    Copilot's review of #500). Every safety setting was one key deep until
-    ``safety.delivery.allowed_methods``, so stripping the ``safety.`` prefix and
-    using the remainder as a key was the same thing as nesting. It stopped being
-    so the moment a setting had a sub-block: the flat form emits a property
-    literally called ``delivery.allowed_methods``, which the run schema's
-    ``additionalProperties: false`` refuses -- a document the tool produces and
-    its own contract rejects (invariant 12). Nesting along every separator is the
-    general form, so the next sub-block needs no change here either.
+    **A setting's name is a path, and the JSON nests along it.** Stripping the
+    ``safety.`` prefix and using the remainder as a key works only for a setting
+    one key deep. ``safety.delivery.allowed_methods`` has a sub-block: the flat
+    form would emit a property literally called ``delivery.allowed_methods``,
+    which the run schema's ``additionalProperties: false`` refuses -- a document
+    the tool produces and its own contract rejects (invariant 12). Nesting along
+    every separator is the general form, so the next sub-block needs no change
+    here either.
     """
     contributions: dict[str, list[Contribution]] = {}
     for name, value, detail, layer in target_safety(expanded):

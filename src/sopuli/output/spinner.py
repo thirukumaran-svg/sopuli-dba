@@ -1,7 +1,6 @@
 """A stderr spinner, for the calls that are silent because they are waiting.
 
-#416 assessed this and #419 wired it to one call site. Four rules hold it, and
-none of them is a style preference.
+Four rules hold it, and none of them is a style preference.
 
 **stderr only, and never under ``--output json``.** stdout carries the run
 document and nothing else may touch it (invariant 12). stderr is not safe by
@@ -14,10 +13,10 @@ rather than relying on which stream it went to. :meth:`~sopuli.output.emit.Emitt
 viewer with no TTY can still render ANSI — there is no reader for whom
 ``\\r``-driven animation in a log file is better than silence. So there is no
 ``--spinner`` flag, no ``SOPULI_SPINNER``, no precedence rule and nothing for
-``tests/test_cli_precedence.py``'s walk to learn. Measured in #416: at the
-sketch's frame rate this is 400 characters a second, or about 12,000 over the
-30-second default vault timeout — which is what a flag forcing it on would put
-in somebody's log.
+``tests/test_cli_precedence.py``'s walk to learn. At :data:`INTERVAL_S`, with a
+message of about 37 characters, this is 400 characters a second, or about 12,000
+over the 30-second default vault timeout — which is what a flag forcing it on
+would put in somebody's log.
 
 **ASCII, and no ANSI at all.** :data:`FRAMES` is four ASCII characters and the
 only control character emitted is a carriage return. That is what makes
@@ -25,10 +24,10 @@ only control character emitted is a carriage return. That is what makes
 strip, so a colour-free run and a colour-full one animate identically.
 
 **Never live across anything else that writes to stderr.** This is the one that
-is easy to get wrong, and #416 measured what it costs: a prompt written while a
-spinner is running reaches the stream and is then overwritten by the next frame,
-leaving the operator looking at a spinner while the process blocks on a
-``readline`` for a question no longer on screen. ``render_plan`` and
+is easy to get wrong, and the cost is concrete: a prompt written
+while a spinner is running reaches the stream and is then overwritten by the
+next frame, leaving the operator looking at a spinner while the process blocks
+on a ``readline`` for a question no longer on screen. ``render_plan`` and
 ``click.confirm(..., err=True)`` are both on stderr deliberately, so a spinner
 must wrap one slow call and stop. That is why this is a context manager used
 explicitly at a call site rather than a decorator on a verb: which operations
@@ -133,9 +132,9 @@ class Spinner:
         """Stop, and do not return until the line is clear.
 
         The join is what orders the clearing *before* whatever the caller prints
-        next. #416 measured the alternative on the path that matters most --
-        an exception leaving the block -- and the ordering holds: the line is
-        blanked, then ``sopuli: ORA-12541: ...`` prints at column zero.
+        next. The ordering holds when an exception leaves the block, which is the
+        path that matters most: the line is blanked, then
+        ``sopuli: ORA-12541: ...`` prints at column zero.
         """
         if self._thread is None:
             return

@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-# Re-exported: these were defined here until a lock record needed the same
-# format (#83), and `sopuli.output.emit` and the tests import them from here.
+# Re-exported: a lock record needs the same format, so these live in
+# `sopuli.clock`, and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
 SCHEMA_VERSION = "1.31"
@@ -139,20 +139,18 @@ class Error:
     it (:attr:`sopuli.config.errors.ConfigError.category`) rather than the
     boundary guessing from the exception type.
 
-    ``code`` arrived with the first error that has one: a configured backend
-    whose client is not installed is ``SOPULI-20001`` (ADR-006, E5). It stays
-    optional and omitted-when-absent, because most failures have no code and a
-    ``null`` would invite a consumer to branch on a field that is empty almost
-    always.
+    ``code`` is set where an error has one: a configured backend whose client is
+    not installed is ``SOPULI-20001`` (ADR-006, E5). It is optional and
+    omitted-when-absent, because most failures have no code and a ``null`` would
+    invite a consumer to branch on a field that is empty almost always.
 
-    ``target_capability`` arrived when the error that has one first reached this
-    object (#287): a driver refusal used to fall into the boundary's catch-all
-    and be reported as ``internal``, so
-    :class:`~sopuli.driver.protocol.UnsupportedCapabilityError` never got here to
-    fill it in. It is set only for ``category: "capability"``, which is the
-    schema's own rule for it, and is what a consumer branches on instead of
-    parsing the capability's name back out of the message. ``retryable`` is still
-    absent for the original reason: nothing yet knows whether it is true.
+    ``target_capability`` is filled in from
+    :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`, which reaches
+    this object rather than the boundary's catch-all. It is set only for
+    ``category: "capability"``, which is the schema's own rule for it, and is
+    what a consumer branches on instead of parsing the capability's name back
+    out of the message. ``retryable`` is absent because nothing yet knows
+    whether it is true.
 
     ``message`` is documented as redacted (``03-json-output.md`` §4). What makes
     that true here is the same thing that makes it true everywhere: a
@@ -186,21 +184,21 @@ class Option:
     **location** and never a value (``03-json-output.md``
     §``invocation.options``). There is no field for a value's origin *and* its
     content, so an entry is safe to emit whatever it describes: the location is
-    named, and a credential has nowhere to sit. §3a's token chain does not appear
-    here at all -- it is its own merge, resolved when a run reaches a store, and
-    ``--vault-token-file`` is not a registered setting (#145).
+    named, and a credential has nowhere to sit. §3a's token chain does not
+    appear here at all -- it is its own merge, resolved when a run reaches a
+    store, and ``--vault-token-file`` is not a registered setting (C16).
 
     Kept deliberately dumb -- no import of the resolver -- so the run document
     stays a description of output rather than a second consumer of the
     precedence rules. The three-line conversion lives at the CLI boundary.
 
-    **Two sections carry this shape** as of #428: ``config.vaults[].settings``
-    reports a store's merged keys the same way, and the schema has one
-    ``$defs/resolved_setting`` both point at. A store's settings are not admitted
-    *into* ``invocation.options`` -- that section is what changed the behaviour of
-    the run, and ``RESOLVED_SETTINGS`` excludes a store's keys on the documented
-    grounds that they describe a store. Sharing the shape is not sharing the
-    section.
+    **Two sections carry this shape** (decision #428):
+    ``config.vaults[].settings`` reports a store's merged keys the same way, and
+    the schema has one ``$defs/resolved_setting`` both point at. A store's
+    settings are not admitted *into* ``invocation.options`` -- that section is
+    what changed the behaviour of the run, and ``RESOLVED_SETTINGS`` excludes a
+    store's keys on the documented grounds that they describe a store. Sharing
+    the shape is not sharing the section.
     """
 
     value: Any
@@ -286,7 +284,7 @@ class RunDocument:
     started_at: datetime
     actor: Actor
     dry_run: bool = False
-    #: ``invocation.profile`` -- the active profile's name, or ``None`` (§5, #153).
+    #: ``invocation.profile`` -- the active profile's name, or ``None`` (§5).
     #:
     #: Reported whether or not the profile changed anything, unlike ``options``:
     #: *which* profile a scheduled run was invoked under is the first thing
@@ -308,24 +306,22 @@ class RunDocument:
     #: cannot otherwise tell a small estate from a filtered one, and "3 rotated"
     #: means different things in each. Absent when the whole estate was in scope.
     #:
-    #: The schema has carried this object since it was written, and until #297
-    #: only ``select`` was ever populated. ``applications``, ``accounts``,
-    #: ``targets`` and ``groups`` now are; ``all`` and ``limit`` are still slots
-    #: for flags that do not exist, and stay omitted rather than sent empty -- an
-    #: empty array would claim the tool considered a selector it has not got.
+    #: ``select``, ``applications``, ``accounts``, ``targets`` and ``groups``
+    #: are populated. ``all`` and ``limit`` are slots for flags that do not
+    #: exist, and stay omitted rather than sent empty -- an empty array would
+    #: claim the tool considered a selector it has not got.
     #:
     #: Built by :meth:`sopuli.config.Selection.as_json`, so what the document
     #: reports and what the run filtered on are the same object rather than two
     #: descriptions of it.
     selection: dict[str, Any] | None = None
-    #: ``invocation.config_files`` -- the files this run read, in layering order
-    #: (#402).
+    #: ``invocation.config_files`` -- the files this run read, in layering
+    #: order.
     #:
-    #: The schema has declared this since it was written and nothing filled it
-    #: in, so every document said which *settings* a file changed
-    #: (``options.source_detail``) and none said which files were read at all.
-    #: Those are different questions: a run whose config supplied no setting
-    #: worth reporting named no file anywhere in its document.
+    #: ``options.source_detail`` says which *settings* a file changed; this says
+    #: which files were read at all. Those are different questions: a run whose
+    #: config supplied no setting worth reporting named no file anywhere in its
+    #: document.
     #:
     #: Paths and not content, deliberately. What a consumer asks of this is
     #: *which estate is this document about*, and two runs over the same paths
@@ -353,9 +349,9 @@ class RunDocument:
     #: sample no value property at all, which is what keeps ``--reveal`` a
     #: text-only affair.
     policy: dict[str, Any] | None = None
-    #: The ``plan`` section: what the run intended, before it did any of it
-    #: (#247). :mod:`sopuli.plan` owns the shape; this only decides that it is
-    #: optional and omitted rather than nulled.
+    #: The ``plan`` section: what the run intended, before it did any of it.
+    #: :mod:`sopuli.plan` owns the shape; this only decides that it is optional
+    #: and omitted rather than nulled.
     #:
     #: **Not dry-run-only.** ``03-json-output.md`` requires a real run to emit the
     #: identical structure it would have emitted under ``--dry-run``, so that a
@@ -363,11 +359,10 @@ class RunDocument:
     #: command plans nothing -- ``config show``, ``doctor``, ``lock status`` --
     #: rather than that a planning command declined to say.
     plan: dict[str, Any] | None = None
-    #: The ``lock`` section, on a run that took locks (#83). Same arrangement as
+    #: The ``lock`` section, on a run that took locks. Same arrangement as
     #: ``config`` and ``policy``: :mod:`sopuli.output.lock_view` owns the shape.
-    #: Absent *means* something here rather than merely omitting something --
-    #: no lock was needed, which is every ``check``, ``status`` and
-    #: ``--dry-run``.
+    #: Absent *means* something here rather than merely omitting something -- no
+    #: lock was needed, which is every ``check``, ``status`` and ``--dry-run``.
     lock: dict[str, Any] | None = None
     #: ``invocation.options`` -- the settings that changed behaviour, each with
     #: the layer it came from. Emitted only when there are any: on a run with no
@@ -376,47 +371,48 @@ class RunDocument:
     #: consumers diff.
     options: dict[str, Option] = field(default_factory=dict)
     #: The ``results`` section: one entry per (account, target) the run acted on
-    #: or concluded something about (#248). :mod:`sopuli.output.check_view` owns
-    #: the shape.
+    #: or concluded something about. :mod:`sopuli.output.check_view` owns the
+    #: shape.
     #:
     #: **Per credential, where ``targets`` is per target.** `doctor` manages no
     #: credential and reports on the database; the `creds` verbs report on a
     #: password in a database, and the ``state`` vocabulary here -- ``IN_SYNC``,
-    #: ``DRIFT``, ``LOCKED`` -- is about that. #182 added ``targets`` rather than
-    #: widening this for exactly that reason, and the two stay apart.
+    #: ``DRIFT``, ``LOCKED`` -- is about that. ``targets`` is a separate section
+    #: rather than a widening of this one for exactly that reason.
     #:
     #: Meant to be read beside ``plan``: same grain, same order, so a diff
     #: between what the run said it would do and what it did is mechanical
     #: (``03-json-output.md``).
     results: list[dict[str, Any]] | None = None
-    #: The ``targets`` section, emitted by ``doctor`` (#182). One entry per
-    #: target, and **not** ``results[]``: that array is per (account, target)
-    #: and its ``state`` vocabulary is about credential sync -- ``IN_SYNC``,
-    #: ``DRIFT``, ``ACCOUNT_MISSING`` -- while ``doctor`` manages no credential
-    #: and reports on the target itself. Added in 1.11 rather than widening
-    #: ``result``, which would have meant making ``account`` optional and
-    #: breaking every consumer that reads it unconditionally.
+    #: The ``targets`` section, emitted by ``doctor``. One entry per target, and
+    #: **not** ``results[]``: that array is per (account, target) and its
+    #: ``state`` vocabulary is about credential sync -- ``IN_SYNC``, ``DRIFT``,
+    #: ``ACCOUNT_MISSING`` -- while ``doctor`` manages no credential and reports
+    #: on the target itself. Widening ``result`` instead would mean making
+    #: ``account`` optional and breaking every consumer that reads it
+    #: unconditionally.
     #:
     #: Same arrangement as ``config`` and ``lock``:
     #: :mod:`sopuli.output.doctor_view` owns the shape, and this only decides
     #: that it is optional and omitted rather than nulled when absent.
     targets: list[dict[str, Any]] | None = None
-    #: The ``install`` section, emitted by ``doctor`` (#214). Which backends and
-    #: drivers this build can serve, which the config asks for, and where the two
-    #: disagree -- **on every run, not only on a mismatch** (ADR-006 E6). Its
-    #: output is audit evidence as often as it is a diagnostic, and a section that
-    #: appeared only when something was wrong could not be quoted as proof that
-    #: nothing was.
+    #: The ``install`` section, emitted by ``doctor``. Which backends and
+    #: drivers this build can serve, which the config asks for, and where the
+    #: two disagree -- **on every run, not only on a mismatch** (ADR-006 E6).
+    #: Its output is audit evidence as often as it is a diagnostic, and a
+    #: section that appeared only when something was wrong could not be quoted
+    #: as proof that nothing was.
     #:
     #: Neither per-target nor per-vault: it is a property of the machine, and no
-    #: existing section is shaped like that -- so 1.13 adds one rather than
-    #: repeating a machine fact once per target. Same arrangement as ``config``,
-    #: ``lock`` and ``targets``: :mod:`sopuli.output.install_view` owns the shape,
-    #: and this only decides that it is optional and omitted rather than nulled.
+    #: existing section is shaped like that -- so it is its own section rather
+    #: than a machine fact repeated once per target. Same arrangement as
+    #: ``config``, ``lock`` and ``targets``: :mod:`sopuli.output.install_view`
+    #: owns the shape, and this only decides that it is optional and omitted
+    #: rather than nulled.
     install: dict[str, Any] | None = None
-    #: The ``wallet`` section, emitted by ``doctor`` (#215). Whether this machine
-    #: has an Oracle wallet the run can authenticate with, for the estates that
-    #: use ``auth: external``.
+    #: The ``wallet`` section, emitted by ``doctor``. Whether this machine has
+    #: an Oracle wallet the run can authenticate with, for the estates that use
+    #: ``auth: external``.
     #:
     #: **Absent when nothing does**, which is the opposite of ``install``'s rule
     #: and right for the opposite reason: install shape is a fact about the
@@ -425,7 +421,7 @@ class RunDocument:
     #: missing wallet in every document that never needed one is noise.
     #: :mod:`sopuli.output.wallet_view` owns the shape.
     wallet: dict[str, Any] | None = None
-    #: The ``vaults`` section, emitted by ``doctor`` (#216). Every store the
+    #: The ``vaults`` section, emitted by ``doctor``. Every store the
     #: configuration declares: whether it answered, whether this run's
     #: credential was accepted, and how far its clock is from this machine's.
     #:
@@ -435,14 +431,14 @@ class RunDocument:
     #: array is a real answer here and absence would not be.
     #:
     #: Its own section because a vault is neither a target nor an account -- the
-    #: same shape #214 found for ``install``.
-    #: :mod:`sopuli.output.vault_view` owns the shape.
+    #: same reasoning as ``install``. :mod:`sopuli.output.vault_view` owns the
+    #: shape.
     vaults: list[dict[str, Any]] | None = None
-    #: The ``constraints`` section, emitted by `creds generate` (#317). What the
-    #: estate said a password may be, before one was drawn: a limit per target,
-    #: and per account the three things §4 step 2 names that no draw can be bound
-    #: by -- a verify function, the reuse resources, and which verifiers the
-    #: account holds.
+    #: The ``constraints`` section, emitted by `creds generate`. What the estate
+    #: said a password may be, before one was drawn: a limit per target, and per
+    #: account the three things §4 step 2 names that no draw can be bound by --
+    #: a verify function, the reuse resources, and which verifiers the account
+    #: holds.
     #:
     #: **Absent means the question was not asked**, which is ``--offline`` and
     #: nothing else. A run that asked and learned nothing emits the section with
@@ -454,7 +450,7 @@ class RunDocument:
     #: Why the run failed as a whole. Absent on success, and absent on exit 2 --
     #: which never produces a document at all (J7, ``03-json-output.md`` §6).
     error: Error | None = None
-    #: The ``jsonl`` stream's bookkeeping (#9). Not part of the contract, and
+    #: The ``jsonl`` stream's bookkeeping. Not part of the contract, and
     #: :meth:`to_dict` never reads it.
     stream: StreamState = field(default_factory=StreamState, repr=False, compare=False)
 

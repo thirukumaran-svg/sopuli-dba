@@ -1,4 +1,4 @@
-"""`creds status` as a document and as a table (#275).
+"""`creds status` as a document and as a table.
 
 UC-1 §9's inventory, which is the one output in this tool designed to be read
 across rather than down: an operator scans a column and finds the row that does
@@ -63,7 +63,7 @@ def build_result(
     and that is the difference between the two verbs rather than an inconsistency:
     everything this command reports it read for itself, so :func:`_warnings` has
     the whole :class:`~sopuli.status.Row` and needs nothing from its caller. The
-    grace period joins the age warning there (#309, UC-1 §6.4).
+    grace period joins the age warning there (UC-1 §6.4).
     """
     entry: dict[str, Any] = {
         "account": row.binding.account,
@@ -97,8 +97,8 @@ def _database_age(user: UserState | None) -> float | None:
     """The database's own age, in the field the schema has for it.
 
     ``None`` where the database did not say, and :func:`_warnings` says why
-    (#386). This verb displays it rather than acting on it, so an absence costs
-    nothing -- except the explanation, which is why there is one.
+    (decision #386). This verb displays it rather than acting on it, so an
+    absence costs nothing -- except the explanation, which is why there is one.
     """
     return None if user is None else password_age_days(user.password_changed_at)
 
@@ -124,16 +124,16 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
     is that the two must not be confused. A consumer reading the vault's age
     reads it here, where the message says which clock it came from.
 
-    The grace period is the second, and it is what UC-1 §6.4 means by *surfaced
-    in `status`* (#309). It comes from :func:`~sopuli.check.grace_warning`, the
+    The grace period is the second, and this is how it reaches a reader of
+    `status` (UC-1 §6.4). It comes from :func:`~sopuli.check.grace_warning`, the
     same function `check` uses, so the two commands cannot describe one window
     differently.
 
-    Built through :class:`~sopuli.output.document.Diagnostic` since #309 added the
-    second entry: two hand-rolled dicts in one array is two chances to disagree
-    about a shape the schema states once. The age warning carries no ``code`` and
-    still does not -- allocating one is J3's question, not this list's -- and
-    ``to_dict`` omits it rather than nulling it, so that entry is unchanged.
+    Built through :class:`~sopuli.output.document.Diagnostic`, because two
+    hand-rolled dicts in one array are two chances to disagree about a shape the
+    schema states once. The age warning carries no ``code``, because allocating
+    one is J3's question, not this list's. ``to_dict`` omits an absent ``code``
+    rather than nulling it.
     """
     found = []
     if row.over_age:
@@ -161,7 +161,7 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
         )
     unknown = None if row.user is None else row.user.password_changed_unknown
     if unknown is not None:
-        # Beside the `password_age_days` it explains, one per result (#386).
+        # Beside the `password_age_days` it explains, one per result.
         found.append(
             Diagnostic(
                 level="warning",
@@ -201,11 +201,9 @@ def summarise(rows: Sequence[Row]) -> Summary:
 def _quiet(row: Row) -> bool:
     """Whether this row is one nobody needs to look at.
 
-    A grace period counts against quiet, and that is not a free choice: before
-    #309 such a row was `expired` and counted as *locked or expired*, which was
-    the wrong words for it but at least visible. Reading the two apart without
-    this would have made a row with a closing window the same as a healthy one,
-    turning a mislabelled finding into no finding at all.
+    A grace period counts against quiet, and that is not a free choice. Without
+    it, a row with a closing window would be quiet, the same as a healthy one,
+    and the finding would not be counted at all.
     """
     return row.outcome.state not in (ACCOUNT_MISSING, PENDING_APPLY, ERROR) and not (
         row.over_age or _unhappy(row.user) or _expiring(row.user)
@@ -221,8 +219,8 @@ def _expiring(user: UserState | None) -> bool:
 
     Its own predicate rather than a third arm of :func:`_unhappy`, because the
     verdict names them separately and they want different words. *Locked or
-    expired* is a credential that has stopped working; this one has not, and
-    conflating them is what #309 was.
+    expired* is a credential that has stopped working; this one has not, so the
+    two are not treated as one.
     """
     return user is not None and user.in_grace
 
@@ -236,10 +234,9 @@ def render_status_table(rows: Sequence[Row]) -> str:
     clock is asked, and only one of them acted on. Putting them apart, or showing
     one, would hide the thing the table was drawn to show.
 
-    The notice block under it is the same one `check` prints, and it is what UC-1
-    §6.4 means by the grace period being *surfaced in status* (#309): before it,
-    an account in its grace period was an ordinary row in every column, and the
-    only place the window appeared was ``--output json``.
+    The notice block under it is the same one `check` prints, and it is how the
+    grace period reaches a reader of `status` (UC-1 §6.4). No column shows the
+    window, so this block is where the text output shows it.
     """
     table = render_table(
         [
@@ -279,7 +276,7 @@ def _notices(rows: Sequence[Row]) -> list[str]:
     reason behind a ``-``.
 
     **The reason is grouped per target and reason**, where the document carries
-    it per result (#386). An 18c target with forty accounts on it has one
+    it per result. An 18c target with forty accounts on it has one
     missing column, and forty identical lines under a table teach the reader to
     skip the notes block -- including the grace period above them.
     """
@@ -305,9 +302,9 @@ def _state(state: str) -> Cell | str:
 
     Worth reading twice for this command, because it is the one whose ordinary
     row is ``UNVERIFIABLE`` -- `status` spends no logins, so most rows say the
-    password was not checked. Under #395 those go **dim**, which is the whole
-    column receding rather than shouting, and it is what makes the two rows this
-    function used to name by hand stand out without being named by hand.
+    password was not checked. Those go **dim** (decision #395), which is the
+    whole column receding rather than shouting. It lets the other rows stand out
+    without this function naming them.
     """
     return state_cell(state)
 
@@ -333,8 +330,8 @@ def _changed_at(user: UserState | None) -> Cell | str:
 
     ``-`` where the database would not say. On a release with no
     ``PASSWORD_CHANGE_DATE`` -- 18c and 11.2 among those measured -- the date is
-    behind the optional ``SYS.USER$`` grant (#386), and the notes under the table say which
-    of the reasons applies -- a dash on its own used to mean all of them.
+    behind the optional ``SYS.USER$`` grant (decision #386). A dash on its own
+    does not say which reason applies, so the notes under the table do.
     """
     if user is None or user.password_changed_at is None:
         return Cell("-", Role.MUTED)

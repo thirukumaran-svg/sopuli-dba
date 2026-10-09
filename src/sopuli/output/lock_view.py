@@ -1,4 +1,4 @@
-"""The run document's ``lock`` section (``03-json-output.md`` §2, #83, #105, #149).
+"""The run document's ``lock`` section (``03-json-output.md`` §2).
 
 What a run says about the locks it took, on exit 7 about the one it did not get,
 for ``lock status`` about locks that are somebody else's entirely, and for
@@ -7,7 +7,7 @@ for ``lock status`` about locks that are somebody else's entirely, and for
 arrangement :mod:`sopuli.output.config_view` and
 :mod:`sopuli.output.policy_view` have with their sections.
 
-Four things here are translation rather than transcription.
+Five things here are translation rather than transcription.
 
 **The section reports a guarantee, not a mechanism.** ``mode`` is ``cas`` or
 ``none``, so a consumer branches on whether the run was actually protected
@@ -27,17 +27,17 @@ neither a lock this run holds nor one it merely read, but one it *ended*, and
 :func:`build_break_section` says what an entry in it has to carry.
 
 **A record the configuration does not declare is marked, not separated.** It
-goes in ``found[]`` with ``declared: false`` (#150) rather than in a third array,
+goes in ``found[]`` with ``declared: false`` rather than in a third array,
 because it is the same kind of thing described the same way -- what differs is
 whose it is, which is one boolean. The *text* view does split them, and that is
 a rendering decision rather than a contract one: a table is read by eye, and "is
 this mine" is the first question somebody asks of a row.
 
-**And "whose" turned out to have three answers, not two** (#514). A UC-2 reset
-lock sits under a prefix the file declares without naming the key, so it is
-neither a binding's nor a leftover. ``declared_by`` carries which, ``declared``
-stays the boolean it was, and the text view grows a third table for the same
-reason it grew a second one.
+**"Whose" has three answers, not two.** A UC-2 reset lock sits under a prefix
+the file declares without naming the key, so it is neither a binding's nor a
+leftover. ``declared_by`` says which of the three it is. ``declared`` stays a
+boolean. The text view has a third table for reset locks, for the same reason
+it has a second one for leftovers.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def held_entry(held: HeldLock) -> dict[str, Any]:
     locked.
 
     Public because it is also the payload of the ``lock.acquired`` and
-    ``lock.released`` events (#535): 03 §5 reuses run-schema shapes rather
+    ``lock.released`` events: 03 §5 reuses run-schema shapes rather
     than restating them, so a streamed lock is this entry as of that moment.
     """
     return {
@@ -99,7 +99,7 @@ def held_entry(held: HeldLock) -> dict[str, Any]:
 
 
 def denied_entry(denied: LockDeniedError) -> dict[str, Any]:
-    """The lock that stopped the run -- here, and as ``lock.denied``'s payload (#535).
+    """The lock that stopped the run -- here, and as ``lock.denied``'s payload.
 
     ``reason`` says how it was lost, and the two ways are not the same event:
     ``held`` read somebody's record, so the holder and the timestamps describe
@@ -144,7 +144,7 @@ def _holder(record: LockRecord) -> dict[str, Any]:
 
 
 def build_status_section(states: Sequence[LockState], *, mode: str) -> dict[str, Any]:
-    """The ``lock`` section for ``lock status`` (#105).
+    """The ``lock`` section for ``lock status``.
 
     Records read from a store go in ``found[]``, **beside** ``held[]`` rather
     than inside it. ``held`` is possessive: it is the locks *this run* took and
@@ -167,7 +167,7 @@ def build_status_section(states: Sequence[LockState], *, mode: str) -> dict[str,
     indistinguishable from a command that did not look.
 
     **A record at a path the config does not declare is an entry like any other**,
-    carrying ``declared: false`` (#150). Not a third array beside ``held`` and
+    carrying ``declared: false``. Not a third array beside ``held`` and
     ``found``: the argument that split those two was that one field would mean
     different things in each, and nothing of the sort happens here -- every field
     means exactly what it means for a declared record, and the one thing that
@@ -188,13 +188,14 @@ def _found(state: LockState, record: LockRecord) -> dict[str, Any]:
     that had to read it as "absent means mine" would be branching on a gap, and
     a gap is what a producer that forgot the field also emits.
 
-    ``declared_by`` says *how* (#514), and exists because the boolean ran out of
-    answers: a UC-2 reset lock is this estate's without any binding naming it,
-    so reporting it as a leftover would be false and reporting it as a binding
-    would claim the file enumerates something it cannot. The two fields are kept
-    side by side rather than one replacing the other -- widening the boolean is
-    a minor bump under invariant 12 and removing it is a major one, to save a
-    consumer that only asks "is this mine" precisely nothing.
+    ``declared_by`` says *how*. It exists because the boolean has only two
+    answers and there are three: a UC-2 reset lock is this estate's without any
+    binding naming it, so reporting it as a leftover would be false and
+    reporting it as a binding would claim the file enumerates something it
+    cannot. The two fields are kept side by side rather than one replacing the
+    other -- widening the boolean is a minor bump under invariant 12 and
+    removing it is a major one, to save a consumer that only asks "is this mine"
+    precisely nothing.
 
     ``state`` is reported as written and ``held`` as
     :attr:`~sopuli.lock.inspect.LockState.is_held` reads it, which is not the
@@ -241,11 +242,11 @@ def render_status(
 
     The first column is ``store:path`` -- one cell rather than two, because that
     spelling is what exit 7 prints, what the ``lock.*`` events carry, and what
-    ``sopuli lock break`` will take (#149). Splitting it into a VAULT column and
+    ``sopuli lock break`` will take. Splitting it into a VAULT column and
     a PATH column would make the operator reassemble by hand the one string they
     are about to paste.
 
-    **Leftovers get a table of their own** (#150), under a heading that says what
+    **Leftovers get a table of their own**, under a heading that says what
     they are. The alternatives were both worse: a seventh column carrying
     ``yes`` / ``no`` costs width on every row to answer a question that is
     usually "yes", and a marker appended to the LOCK cell would corrupt the one
@@ -254,7 +255,7 @@ def render_status(
     scanning the output will actually read it -- and colour alone could not have
     carried it, since ``NO_COLOR`` is honoured.
 
-    **Reset locks get a third** (#514), on the same argument. They are this
+    **Reset locks get a third**, on the same argument. They are this
     estate's, so putting them under the leftovers heading would tell an operator
     that a colleague's reset belongs to somebody else's configuration; and they
     were discovered rather than enumerated, so putting them in the first table
@@ -264,7 +265,7 @@ def render_status(
     ``region`` is whether a `reset_records:` prefix was surveyed at all, and it
     is passed in rather than inferred from the rows: with none found, *looked
     and it is quiet* and *did not look* are the same empty table, and they are
-    the two answers #514 was filed about confusing.
+    different answers.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -321,20 +322,16 @@ def _table(states: Sequence[LockState]) -> list[str]:
     )
 
 
-#: Column caps. **The LOCK column has none, and that is the point of it.** It
-#: used to share `config_view`'s `_REF` width of 52, on the argument that two
-#: views truncating one estate at different points would read as two estates --
-#: which was true and was the smaller of two consistencies. The cell is what
-#: exit 7 prints and what `sopuli lock break` takes, so a truncated one destroys
-#: the single string the operator is about to paste, in exactly the way
-#: :func:`render_status` says splitting it into two columns would.
+#: Column caps. **The LOCK column has none, and that is the point of it.** The
+#: cell is what exit 7 prints and what `sopuli lock break` takes, so a truncated
+#: one destroys the single string the operator is about to paste, in exactly the
+#: way :func:`render_status` says splitting it into two columns would.
 #:
-#: It went unnoticed while the only keys were rotation paths, which are short.
-#: UC-2's are not: a reset lock is `<prefix>/<target>/<account>` (#514), so
+#: Rotation paths are short. A reset lock is `<prefix>/<target>/<account>`, so
 #: `vault-dev:sopuli/personal-resets/appdb-alpha/acme_dev_alice` is 58
-#: characters before an estate picks its own names, and *every* reset row was
-#: cut. Measured, not predicted -- it is what the first run of the fixed survey
-#: printed. No existing sample changes, because none of them was over the cap.
+#: characters before an estate picks its own names. A cap at the width of
+#: `config_view`'s `_REF` (52) would cut a row like that one, and many reset
+#: rows are that long.
 _HOLDER = 28
 _COMMAND = 16
 
@@ -387,14 +384,14 @@ def _summary(states: Sequence[LockState], found: Sequence[LockState], *, region:
     could clear, and the total is what makes the first two a proportion rather
     than a bare count.
 
-    **The proportion counts declared paths only** (#150). A leftover was never in
+    **The proportion counts declared paths only.** A leftover was never in
     the denominator -- it is not a path this configuration would lock -- and
     folding discovered records in would make "3 of 5" move when somebody else's
     estate changed. They are counted afterwards, in their own clause, because
     finding one is a separate thing to have learned.
 
     **A reset lock is not in the denominator either, and for a different
-    reason** (#514). A leftover is excluded because it is not this estate's; a
+    reason.** A leftover is excluded because it is not this estate's; a
     reset lock is excluded although it *is*, because there is no denominator to
     put it in. The paths under the `reset_records:` prefix cannot be counted
     without resolving a predicate against a database (H1), and "1 of 1 held"
@@ -402,10 +399,9 @@ def _summary(states: Sequence[LockState], found: Sequence[LockState], *, region:
     bottom number is its top one. So they are counted the way leftovers are: how
     many were found, and how many of those are held.
 
-    **"No lock paths are declared" now has to say whether the prefix was
-    looked at**, which is ``region``. Before #514 an empty survey had one
-    meaning; now it has two, and the difference between *nothing is held* and
-    *nothing was surveyed* is the whole of the bug this closes.
+    **"No lock paths are declared" has to say whether the prefix was looked
+    at.** That is ``region``. An empty survey has two meanings, *nothing is
+    held* and *nothing was surveyed*, and the summary keeps them apart.
 
     **The proportion is dropped entirely when nothing declares a path**, which
     is the ordinary shape of a UC-2-only estate. ``0 of 0 declared lock paths
@@ -450,7 +446,7 @@ def _summary(states: Sequence[LockState], found: Sequence[LockState], *, region:
 def build_break_section(
     outcome: Outcome, *, mode: str, applied: bool, new_version: int | None = None
 ) -> dict[str, Any]:
-    """The ``lock`` section for ``sopuli lock break`` (#149).
+    """The ``lock`` section for ``sopuli lock break``.
 
     ``broken[]`` rather than an entry in ``held[]`` or ``found[]``, and the
     argument is the one that split those two. ``held`` is possessive and every
