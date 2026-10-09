@@ -94,8 +94,8 @@ def test_the_delivery_block_must_be_a_mapping() -> None:
 def test_a_delivery_key_with_nothing_under_it_is_refused() -> None:
     """`delivery:` and nothing indented under it is `null`, and the published
     schema types the property as an object -- so accepting it would make the tool
-    looser than its own schema, which is the one direction 9b forbids
-    (Copilot's review of #500). Key *presence* decides, as it does for `readonly`.
+    looser than its own schema, which is the one direction 9b forbids.
+    Key *presence* decides, as it does for `readonly`.
     """
     with pytest.raises(ConfigError) as caught:
         build_safety({"delivery": None}, at=AT)

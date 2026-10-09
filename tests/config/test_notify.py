@@ -1,10 +1,9 @@
-"""`delivery.notify:` — the low-trust channel, and what it may not carry (#442).
+"""`delivery.notify:` — the low-trust channel, and what it may not carry.
 
 Tier 0, and that is the point rather than a convenience. UC-2 §6.1's rule is the
-one binding rule of the delivery section, #442 asked for it "enforced, not
-documented", and enforcing it in the config layer is what makes it testable
-without a socket — and what makes it arrive *before* a password has been drawn
-rather than after.
+one binding rule of the delivery section. It is enforced, not documented, and
+enforcing it in the config layer is what makes it testable without a socket —
+and what makes it arrive *before* a password has been drawn rather than after.
 """
 
 from __future__ import annotations
@@ -87,9 +86,8 @@ def test_the_enum_holds_only_what_is_decided() -> None:
     """The opposite call from `DELIVERY_METHODS`, and the difference is real.
     UC-2 §6.2 *defines* six delivery methods, so listing only the ones with
     tickets would be a contract shaped by project bookkeeping. Nothing defines a
-    set of notify channels -- §6.3 shows one and #442 sends `smtp` and `chat` to
-    their own issues -- so inventing two values would publish a contract nobody
-    has decided."""
+    set of notify channels -- §6.3 shows one and defines no other -- so inventing
+    two values would publish a contract nobody has decided."""
     assert NOTIFY_METHODS == ("webhook",)
 
 
@@ -98,9 +96,8 @@ def test_the_enum_holds_only_what_is_decided() -> None:
 
 @pytest.mark.parametrize("name", NAMED_SECRETS)
 def test_a_template_naming_a_secret_is_refused_with_the_reason(name: str) -> None:
-    """The half #442 asked to be "enforced, not documented" -- and refused at
-    *load*, because a refusal at send time arrives after a password has been
-    drawn."""
+    """The half that is "enforced, not documented" -- and refused at *load*,
+    because a refusal at send time arrives after a password has been drawn."""
     error = refused(template=f"your password is {{{name}}}")
 
     assert f"may not reference {{{name}}}" in str(error)
@@ -109,8 +106,8 @@ def test_a_template_naming_a_secret_is_refused_with_the_reason(name: str) -> Non
 
 
 def test_an_unknown_placeholder_is_refused_rather_than_left_empty() -> None:
-    """#442's own words. A message with a hole in it is one somebody has to go and
-    diagnose, and the hole appears in front of the person being notified."""
+    """A message with a hole in it is one somebody has to go and diagnose, and
+    the hole appears in front of the person being notified."""
     error = refused(template="hello {nobody}")
 
     assert "unknown placeholder {nobody}" in str(error)
@@ -188,11 +185,10 @@ def test_no_notify_block_warns_about_nothing() -> None:
 
 # ------------------------------------- what `str.format` reads differently ---
 #
-# All three of these passed the first build's walk and raised inside `render()`,
-# which happens after the password has changed -- the one moment UC-2 §6 has no
-# answer for. Copilot found them on #520. The walk discarded the format spec and
-# the conversion, and called `.strip()` on a name that `str.format` does not
-# strip.
+# A walk that discards the format spec and the conversion, or calls `.strip()`
+# on a name that `str.format` does not strip, lets all three of these through.
+# They then raise inside `render()`, which happens after the password has
+# changed -- the one moment UC-2 §6 has no answer for.
 
 
 def test_a_format_spec_is_refused_at_load() -> None:

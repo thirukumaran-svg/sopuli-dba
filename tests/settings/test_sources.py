@@ -129,7 +129,7 @@ def test_the_refusal_exits_nine_and_says_what_to_write_instead() -> None:
 
 # ------------------------------------------------- the file's own layers ---
 #
-# Layers 3 and 5 (#153). Same shape as the environment's half: a value object in,
+# Layers 3 and 5. Same shape as the environment's half: a value object in,
 # contributions out, no I/O -- so the ratchet across a profile and `defaults:` can
 # be asserted without a file or a command line anywhere near it.
 

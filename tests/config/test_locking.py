@@ -2,7 +2,8 @@
 
 Tier 0, pure: a dict in, a model out, no vault anywhere. What is worth reading
 here is not the parsing -- it is the same shape as every other section -- but the
-three rules #83 decided that only exist as code once these keys do:
+three rules in `01-configuration.md`'s `locking:` section that only exist as code
+once these keys do:
 
 * a store gets a real lock unless somebody wrote down that it cannot;
 * ``break_expired`` is permission rather than a guard, so the ratchet runs the
@@ -171,7 +172,7 @@ def test_the_setting_declares_its_polarity() -> None:
 
 
 def test_breaking_an_expired_lock_is_refused_without_a_fence() -> None:
-    """#83: no compare-and-set, no fence; no fence, no unattended takeover."""
+    """No compare-and-set, no fence; no fence, no unattended takeover."""
     with pytest.raises(ConfigError) as caught:
         build_config(
             document(

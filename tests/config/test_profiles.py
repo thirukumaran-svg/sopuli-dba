@@ -156,11 +156,10 @@ def test_vault_is_a_store_name() -> None:
 
 
 def test_the_vault_block_form_is_refused_and_points_at_vaults() -> None:
-    """§5's case -- token from a laptop, AppRole from CI -- is real, and C13 (#31)
-    decided it is spelt `profiles.ci.vaults.<name>.auth`, not `vault.auth`:
-    `vault:` names the store, `vaults:` describes it. The profile block arrives
-    with the vault layer (#103), so the whitelist still refuses `vaults:` here;
-    what this pins is that the mapping under `vault:` names its replacement."""
+    """§5's case -- token from a laptop, AppRole from CI -- is real, and C13
+    decides it is spelt `profiles.ci.vaults.<name>.auth`, not `vault.auth`:
+    `vault:` names the store, `vaults:` describes it. What this pins is that the
+    mapping under `vault:` names its replacement."""
     with pytest.raises(ConfigError) as caught:
         build_profiles(document(scheduled={"vault": {"auth": {"method": "approle"}}}))
 
@@ -195,7 +194,7 @@ def test_safety_in_a_profile_is_read_like_any_other() -> None:
 
 # ------------------------------------------------------------- activation ---
 #
-# §5's resolution rules 1 and 6 (#153). The chain itself -- `--profile`, then
+# §5's resolution rules 1 and 6. The chain itself -- `--profile`, then
 # `SOPULI_PROFILE`, then `defaults.profile` -- is merged by the one resolver and
 # arrives here as one name; what this layer decides is what that name resolves
 # to, and what happens when it resolves to nothing.

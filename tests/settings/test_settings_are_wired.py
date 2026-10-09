@@ -1,34 +1,32 @@
-"""Every declared setting either reaches a consumer or says why it does not (#358).
+"""Every declared setting either reaches a consumer or says why it does not.
 
-Four times a setting or a field was resolved, ratcheted, validated, rendered by
-`config show`, and then read by nothing:
+A setting or a field can be resolved, ratcheted, validated and rendered by
+`config show`, and still be read by nothing. Four real cases had that shape:
 
-* #292 -- `safety.confirm_environments`, parsed and ratcheted and consulted by
-  no command;
-* #296 -- `UserState.password_file_member`, typed and read by guardrail 3 and
-  populated by nothing;
-* #348 -- `locking.break_expired`, cross-checked in two places and implemented
-  in `decide()`, with no `LockManager` ever built with it;
-* #356 -- `lock_diagnostics`, written and unit-tested and called by nothing.
+* `safety.confirm_environments`, parsed and ratcheted and consulted by no
+  command;
+* `UserState.password_file_member`, typed and read by guardrail 3 and populated
+  by nothing;
+* `locking.break_expired`, cross-checked in two places and implemented in
+  `decide()`, with no `LockManager` built with it (decision #348);
+* `lock_diagnostics`, written and unit-tested and called by nothing.
 
-Each looked like protection and was not. Each was found by somebody reading the
-code, which is why this file exists: the registry knows every setting, so the
-sweep can run on every commit instead of on the next person who happens to look.
+Each looks like protection and is not, and only somebody reading the code would
+find it. The registry knows every setting, so this sweep runs on every commit
+instead of waiting for the next person who happens to look.
 
 **A tripwire, not a proof.** What it checks is that the *name* reaches a module
 that is not the settings machinery -- not that the value changes behaviour. A
 setting read into a variable and then dropped would pass, and so would one
 mentioned in the wrong branch. Catching those needs dataflow analysis; all four
-instances above were the simpler thing, and so is the fifth this found
-(`db.query_timeout_s`).
+cases above are the simpler thing, and so is `db.query_timeout_s`.
 
 **Both directions are checked, and the second is the one that lasts.** A setting
 carrying `inert_reason` must have *no* consumer, so wiring one up fails this
 suite until somebody deletes the reason -- which is the moment to ask whether the
-design documents still say the right thing. `01-configuration.md` §5 claimed
-`db.query_timeout_s` was inert because "nothing calls the driver from a command
-line yet"; by the time anyone looked, `_timeouts()` did exactly that and passed
-the sibling key. Prose was the only thing holding the claim, and it decayed
+design documents still say the right thing. A document can call a setting
+inert after code has started to read it, as `_timeouts()` reads
+`db.query_timeout_s`; prose alone cannot hold that claim, because it decays
 without failing anything.
 """
 
@@ -163,7 +161,7 @@ def consumers(names: set[str]) -> dict[str, list[str]]:
 
 
 def test_every_setting_that_is_not_declared_inert_has_a_consumer() -> None:
-    """#348's sweep. A key nobody reads is a key that lies about what it does."""
+    """A key nobody reads is a key that lies about what it does."""
     wired = consumers(set(SETTINGS))
     orphans = {
         name: definition.inert_reason
@@ -202,7 +200,7 @@ def test_every_setting_declared_inert_really_is() -> None:
 
 
 def test_every_wired_setting_can_actually_be_resolved() -> None:
-    """The hole the sweep above cannot see, found the day it was written (#360).
+    """The hole the sweep above cannot see (decision #360).
 
     A consumer is half a wire. `_timeouts()` read `db.connect_timeout_s` off
     `Invocation.resolved` while the name was absent from `RESOLVED_SETTINGS`, so
@@ -262,7 +260,7 @@ def test_the_sweep_does_not_count_the_registry_as_a_consumer() -> None:
     """The other way it could be vacuous. Every setting is a literal in
     `settings/registry.py` by construction, so a sweep that counted the
     declaration would report the whole registry wired -- which is exactly the
-    answer that let #292, #348 and the rest through."""
+    answer that let those four through."""
     wired = consumers(set(SETTINGS))
 
     assert not [where for found in wired.values() for where in found if "settings/" in where]

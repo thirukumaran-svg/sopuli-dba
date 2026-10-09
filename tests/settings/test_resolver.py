@@ -56,7 +56,7 @@ def test_the_highest_layer_wins_an_override() -> None:
 
 
 def test_the_loser_of_an_override_stays_visible() -> None:
-    """``config show --explain`` (#53) shows the value that did not win.
+    """``config show --explain`` shows the value that did not win.
 
     A setting that was requested and did not take effect is invisible in the
     result and obvious in that view, which is the whole reason the view exists.

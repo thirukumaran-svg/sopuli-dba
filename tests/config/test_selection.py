@@ -243,7 +243,7 @@ def test_a_selector_error_exits_as_a_usage_error() -> None:
     """ "You typed it wrong" is 2, so a scheduler can tell it from a failure.
 
     An `ArgumentError` rather than a plain `ConfigError`, which is what keeps it
-    on 2 now that a bad *file* is 9 (#8). Nothing is wrong with any file here,
+    on 2 now that a bad *file* is 9 (J7). Nothing is wrong with any file here,
     and the location says so: `--select`, not a key path.
     """
     with pytest.raises(ArgumentError) as caught:
@@ -353,7 +353,7 @@ def pairs_of(config: Config) -> set[tuple[str, str]]:
 
 
 def test_a_pair_set_is_not_a_cross_product() -> None:
-    """The reason `Selection` cannot do this (#402, #391).
+    """The reason `Selection` cannot do this.
 
     One account on one target and the other on the other. `--account a --account
     b --target x --target y` selects all four; this selects the two asked for,
@@ -449,7 +449,7 @@ def test_filtering_to_pairs_leaves_the_rest_of_the_config_untouched() -> None:
     assert filtered.applications == config.applications
 
 
-# ------------------------------------------ what "named" means (#297) ---
+# ------------------------------------------------- what "named" means ---
 
 
 class TestNames:
@@ -492,7 +492,7 @@ class TestNames:
         assert not Selection().names("acme_web_user")
 
 
-# --------------------------------------------- unknown names (#297) ---
+# ---------------------------------------------------- unknown names ---
 
 
 class TestRefuseUnknown:

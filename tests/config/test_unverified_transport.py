@@ -1,4 +1,4 @@
-"""`tls.verify: false` says so on every run (#135, ADR-005, §3a).
+"""`tls.verify: false` says so on every run (ADR-005, §3a).
 
 The weakening is written once, in a file somebody may have edited a year ago,
 and it applies to every rotation afterwards. A key visible in the YAML is not

@@ -1,4 +1,4 @@
-"""Partial ``vaults:`` blocks, and the layers they merge into (C13, #136).
+"""Partial ``vaults:`` blocks, and the layers they merge into (C13).
 
 Tier 0, pure: every case is a dict through ``build_config``, because the merge
 happens at load and its result is what every later reader of a store sees.
@@ -84,7 +84,7 @@ def test_a_store_nobody_patched_is_untouched() -> None:
 def test_every_reach_key_can_be_supplied_by_a_layer() -> None:
     """The patchable set is the complement of the three guardrails, not §5's
     four-key list -- which was written before `namespace`, `timeout_s` and `tls`
-    existed (#135)."""
+    existed."""
     vault = merged(
         **under_defaults(
             addr="https://vault.example.com",
@@ -339,7 +339,7 @@ def test_no_guardrail_has_a_setting_to_be_supplied_through() -> None:
 
 # -------------------------------------------------------------- layer 3 ---
 #
-# The profile's own `vaults:` block (#153). Same merge, one layer up -- and the
+# The profile's own `vaults:` block. Same merge, one layer up -- and the
 # direction inverts here, which is the whole reason the word "patch" is only
 # right for a profile: layer 3 is *above* the declaration, so it replaces what
 # layer 4 wrote rather than filling a gap.
@@ -447,10 +447,9 @@ def test_the_defeated_relaxation_is_reported_from_layer_three() -> None:
     assert "profiles.ci.vaults.vault-prod.tls.verify asked for false" in message
     assert "vaults.vault-prod.tls.verify" in message
     # And never the registry's `vaults.*.tls.verify`, which is the name the
-    # resolver has to be *asked* with and not one an operator can edit (#428,
-    # found in review). This warning said it for as long as it has existed; it
-    # became visible when `--explain` started quoting the same sentence under a
-    # row that spells the store out.
+    # resolver has to be *asked* with and not one an operator can edit.
+    # `--explain` quotes this sentence under a row that spells the store out,
+    # so it has to spell it too (decision #428).
     assert "vaults.*" not in message
 
 
@@ -473,9 +472,8 @@ def test_the_three_unpatchable_keys_stay_unpatchable_from_a_profile(key: str, va
 # -------------------------------------------------------------- the provenance ---
 #
 # `patched` names the keys some other layer wrote; `settings` names the layer
-# (#428). For as long as only the first survived, three different layers writing
-# `addr` produced one indistinguishable `layered: addr` -- and the `Resolved` that
-# would have answered it was in hand and dropped on the floor.
+# (decision #428). With only the first, three different layers writing `addr`
+# would produce one indistinguishable `layered: addr`.
 
 
 def sources(vault: Vault) -> dict[str, str]:
@@ -509,7 +507,7 @@ def test_a_key_no_layer_wrote_gets_no_pair() -> None:
 
 
 def test_each_layer_is_distinguishable_on_one_key() -> None:
-    """The acceptance item of #428, in the only place all of them can be built.
+    """Decision #428's acceptance item, in the only place all of them can be built.
 
     One store, `addr` written by each of the seven sources that can write it --
     six layers, the environment spelling two of them -- one at a time. The `NOTE`

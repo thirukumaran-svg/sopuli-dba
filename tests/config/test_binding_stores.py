@@ -1,9 +1,8 @@
-"""C15's plan-time half: completing a binding's store once the run is known (#250).
+"""C15's plan-time half: completing a binding's store once the run is known.
 
-#118 decided the shape and left the mechanism unbuilt: `_vault_for`'s chain runs
-while the file is read, a profile's `vault:` and `SOPULI_VAULT` are properties of
-a *run*, and so a valid file can finish loading with `binding.vault is None`.
-This is the step that answers it.
+`_vault_for`'s chain runs while the file is read, a profile's `vault:` and
+`SOPULI_VAULT` are properties of a *run*, and so a valid file can finish loading
+with `binding.vault is None`. This is the step that answers it.
 
 The property that carries most of these tests is that it **fills gaps and never
 overrides**. An exported `SOPULI_VAULT` redirecting a rotation away from the
@@ -88,7 +87,7 @@ def test_the_environment_supplies_a_store_the_file_left_open() -> None:
 
 def test_a_profile_supplies_one_too() -> None:
     """§5 puts `vault:` on a profile precisely so a run can say where it reads
-    from, and #118 kept it out of the load-time chain."""
+    from, and C15 keeps it out of the load-time chain."""
     config = estate(profile="ci", profiles={"ci": {"vault": "vault-ci"}})
 
     assert store_of(binding_stores.complete(config)) == "vault-ci"
@@ -96,7 +95,7 @@ def test_a_profile_supplies_one_too() -> None:
 
 def test_the_environment_outranks_the_profile() -> None:
     """P3: `SOPULI_VAULT` is layer 2 and a profile is layer 3. Applied by hand
-    here rather than through the settings registry -- #250 decided that -- so
+    here rather than through the settings registry (decision #250), so
     the order is worth a test of its own rather than trusting the resolver."""
     config = estate(profile="ci", profiles={"ci": {"vault": "vault-ci"}})
 

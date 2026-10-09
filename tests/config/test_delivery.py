@@ -1,4 +1,4 @@
-"""The `delivery:` block — UC-2 §6, built in #440.
+"""The `delivery:` block — UC-2 §6.
 
 Tier 0, pure: everything builds from a dict, so there is no filesystem and no I/O.
 Fixtures use the fictional vocabulary the provenance note requires.
@@ -6,11 +6,12 @@ Fixtures use the fictional vocabulary the provenance note requires.
 One accept and one reject per rule, and the rejects assert on the *message*: a rule
 that fires without saying which key is wrong has not finished its job.
 
-**What is deliberately not tested here** is anything *inside* a method's sub-block.
-Which keys `vault_wrapped:` takes is #444's and `one_time_link:`'s is #445's,
-because the answer is a fact about the service behind the method rather than about
-this file. What this layer owes is the part common to all six: the method is one of
-the six, and the selected one brought settings.
+Which keys a method's sub-block takes is a fact about the service behind the
+method, so only built methods have keys to test. `vault_wrapped:`'s have a
+section of their own below; `vault_path:` (TODO(#447)), `one_time_link:`
+(TODO(#445)) and `onepassword_share:` (TODO(#446)) are not read yet. What this
+layer owes every method is the part common to all six: the method is one of the
+six, and the selected one brought settings.
 """
 
 from __future__ import annotations
@@ -69,10 +70,9 @@ def test_manual_is_the_one_seen_method() -> None:
     assert built(method="manual", manual={"force_expire": True}).is_seen
     for method in DELIVERY_METHODS:
         if method != "manual":
-            # Each method's own required keys arrive with its issue, so a sweep
-            # over the enum has to carry them: `vault_wrapped` needs a `ttl`
-            # since #444, and an empty block is a config error rather than an
-            # unseen delivery.
+            # Each method has its own required keys, so a sweep over the enum
+            # has to carry them: `vault_wrapped` needs a `ttl`, and an empty
+            # block is a config error rather than an unseen delivery.
             settings = {"ttl": "15m"} if method == "vault_wrapped" else {}
             assert not built(method=method, **{method: settings}).is_seen
 
@@ -86,10 +86,9 @@ def test_the_enum_is_the_whole_set_including_the_method_with_no_issue() -> None:
 
 
 def test_a_notify_block_is_read_now_that_its_issue_landed() -> None:
-    """This used to assert the block was *accepted and left alone*, which was
-    right until #442 gave it a grammar. `tests/config/test_notify.py` holds what
-    that grammar is; what belongs here is that `delivery:` reaches it, and that it
-    does so whichever method is selected."""
+    """`tests/config/test_notify.py` holds the notify block's grammar; what
+    belongs here is that `delivery:` reaches it, and that it does so whichever
+    method is selected."""
     section = built(
         method="vault_wrapped",
         vault_wrapped={"ttl": "15m"},
@@ -209,10 +208,9 @@ def test_an_unimplemented_method_warns_that_nothing_serves_it() -> None:
 
 
 def test_an_implemented_method_warns_about_nothing() -> None:
-    """`manual` is served as of #441, and the warning had to learn that: it read
+    """`manual` is served, and the warning knows that: it would otherwise read
     *no delivery method is implemented* for every configured method, so an estate
-    with a working seen path was told nothing could hand a password over. Caught
-    by Copilot's review of #505."""
+    with a working seen path would be told nothing could hand a password over."""
     assert unserviceable(built(method="manual", manual={"force_expire": True})) is None
 
 
@@ -249,14 +247,12 @@ def test_a_file_with_no_delivery_carries_none() -> None:
 
 
 # ------------------------------------ the tool is never looser than the schema ---
-#
-# Both of these come from Copilot's review of #499.
 
 
 def test_an_unselected_block_that_is_not_an_object_is_refused() -> None:
     """The published schema types all six method properties as objects, so
-    `vault_wrapped: 15m` beside `method: manual` was refused by the schema and
-    accepted here -- which inverts §9b's claim that the schema is the incomplete
+    `vault_wrapped: 15m` beside `method: manual` is refused by the schema.
+    Accepting it here would invert §9b's claim that the schema is the incomplete
     check and the tool the complete one."""
     with pytest.raises(ConfigError) as raised:
         build_delivery(document(method="manual", manual={}, vault_wrapped="15m"))
@@ -313,7 +309,7 @@ def test_a_file_with_no_delivery_carries_no_such_warning() -> None:
     assert not [w for w in config.warnings if "no delivery method" in w.message]
 
 
-# --------------------------------------------- `vault_wrapped:`'s keys (#444) ---
+# ---------------------------------------------------- `vault_wrapped:`'s keys ---
 
 
 def test_the_ttl_is_required_rather_than_defaulted() -> None:
@@ -329,10 +325,10 @@ def test_the_ttl_is_required_rather_than_defaulted() -> None:
 
 
 def test_num_uses_is_refused_rather_than_ignored() -> None:
-    """#444's own correction to its original plan. A response-wrapping token is
-    single-use by construction, so the key can only describe a guarantee Vault is
-    already making -- and accepting it silently would leave a file whose author
-    believes the tool is enforcing something."""
+    """A response-wrapping token is single-use by construction, so the key can
+    only describe a guarantee Vault is already making -- and accepting it
+    silently would leave a file whose author believes the tool is enforcing
+    something."""
     with pytest.raises(ConfigError) as raised:
         build_delivery(
             document(method="vault_wrapped", vault_wrapped={"ttl": "15m", "num_uses": 1})
@@ -413,7 +409,7 @@ def test_the_block_is_not_read_when_another_method_is_selected() -> None:
 
 
 def test_vault_wrapped_is_served_by_this_build() -> None:
-    """The warning that told an estate nothing could deliver had to learn about
-    `manual` in #441 and about this method in #444 -- and `IMPLEMENTED` is one
-    list so that `config validate` and the verb cannot disagree."""
+    """The warning that tells an estate nothing could deliver knows about
+    `manual` and about this method, and `IMPLEMENTED` is one list so that
+    `config validate` and the verb cannot disagree."""
     assert unserviceable(built(method="vault_wrapped", vault_wrapped={"ttl": "15m"})) is None

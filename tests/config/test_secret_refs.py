@@ -70,7 +70,7 @@ def test_a_stage_can_be_named() -> None:
 
 
 def test_a_stage_is_matched_in_any_case_and_kept_in_one() -> None:
-    """C14 (#40): OCI writes `PENDING`, so that is the spelling somebody copies
+    """C14: OCI writes `PENDING`, so that is the spelling somebody copies
     out of the console -- but one spelling reaches the store, and the backends
     map from it rather than to each other."""
     assert parse_secret_ref("creds#password@stage=PENDING").stage == "pending"
@@ -78,7 +78,7 @@ def test_a_stage_is_matched_in_any_case_and_kept_in_one() -> None:
 
 
 def test_a_qualifier_value_is_checked_rather_than_carried() -> None:
-    """C14 (#40): both stores in scope have a fixed vocabulary of their own, so
+    """C14: both stores in scope have a fixed vocabulary of their own, so
     passing an unknown value through would buy nothing and move a typo to
     rotation time -- which invariant 4 says is the wrong time to find out."""
     with pytest.raises(ConfigError) as version:

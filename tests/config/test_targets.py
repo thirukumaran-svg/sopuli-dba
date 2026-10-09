@@ -206,7 +206,7 @@ def test_an_empty_block_is_refused_even_though_omitting_it_is_fine(block: str) -
 
 
 def test_scope_and_container_do_not_constrain_each_other() -> None:
-    """Decided in #27, and pinned here so the absence stays deliberate.
+    """Pinned here so the absence of a coupling rule stays deliberate.
 
     Both keys are assertions the driver checks on connect, not settings the loader
     applies, so there is nothing here for a coupling rule to protect. `scope: pdb`
@@ -309,7 +309,7 @@ def test_the_vault_source_must_name_one() -> None:
 
     rendered = str(caught.value)
     assert "`vault` cannot be written as a bare value" in rendered
-    # And the hint says what the key it needs actually holds (#70): a SecretRef,
+    # And the hint says what the key it needs actually holds: a SecretRef,
     # not a password and not a field of this block's own invention.
     assert "`secret:` is a SecretRef" in rendered
     assert "in the target's vault by default" in rendered

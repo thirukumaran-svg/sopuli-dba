@@ -1,4 +1,4 @@
-"""Which secrets more than one binding lands on (#110).
+"""Which secrets more than one binding lands on.
 
 Sharing is legal and often intended (§7). What it must never be is invisible, so
 almost every test here is about a config that is *correct* and still has something
@@ -55,7 +55,7 @@ def found(**entry: Any) -> tuple[SharedSecret, ...]:
 
 
 def test_one_document_per_application_is_shared_by_its_accounts() -> None:
-    """Q7's default layout, and the axis #85 added.
+    """Q7's default layout.
 
     Each tenant gets its own document, so nothing is shared across targets --
     but three accounts land in each, and a write to one sits beside the others.
@@ -240,7 +240,7 @@ def test_detection_is_deterministic(template: str) -> None:
 def test_a_document_no_store_is_named_for_still_reports() -> None:
     """A binding can resolve with no store -- no `vault-name:` prefix, no
     application `vault:`, none on the target, no `defaults.vault` -- as long as a
-    profile or `SOPULI_VAULT` could still complete it later (#118 option 3): the
+    profile or `SOPULI_VAULT` could still complete it later (C15): the
     file below leaves it to a profile, which `_vault_for` deliberately does not
     consult at load (bindings are built once, and which profile is active is a
     property of a run).

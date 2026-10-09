@@ -1,6 +1,6 @@
 """The published config schema, and the coupling that keeps it true.
 
-Issue #24's requirement is not "there is a schema" -- it is that the schema is
+The requirement is not "there is a schema" -- it is that the schema is
 *generated from the model*, so that a field cannot land without it moving. Two
 hand-written descriptions of one schema drift, and the one that drifts silently
 is the published one, because nothing runs it.
@@ -164,7 +164,7 @@ def _errors(document: Any) -> list[str]:
 
 
 def test_the_committed_schema_is_what_the_generator_produces() -> None:
-    """The one test issue #24 is actually about.
+    """The one test this module is actually about.
 
     Without it the published file is a snapshot of what the model looked like
     once, and nothing says when that stopped being true.
@@ -225,10 +225,9 @@ def test_every_object_in_the_schema_has_a_row_in_the_table() -> None:
     does not cover the new object, and nobody finds out because every test that
     exists still passes.
 
-    It had happened five times when this was written: ``locking`` (#83),
-    ``vault_tls`` (#135), ``vault_patch`` (#136), ``personal_account`` (#467) and
-    ``reset_records`` (#468). All five are in the table above now, and this is
-    what keeps the sixth from getting in.
+    It has happened five times: ``locking``, ``vault_tls``, ``vault_patch``,
+    ``personal_account`` and ``reset_records``. All five are in the table above,
+    and this is what keeps the sixth from getting in.
     """
     schema = build_schema()
     objects = {

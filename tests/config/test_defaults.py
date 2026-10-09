@@ -56,7 +56,7 @@ def test_an_unknown_defaults_key_is_refused() -> None:
 
 
 def test_the_vault_block_form_is_refused_and_points_at_vaults() -> None:
-    """C13, decided in #31: `vault:` is a store *name* everywhere, and settings of
+    """C13: `vault:` is a store *name* everywhere, and settings of
     a store are reached by naming it under `vaults:`. So `defaults.vault.addr` --
     P3's old example of layer 5 -- is now `defaults.vaults.<name>.addr`, and the
     mapping under `vault:` is refused with the form that replaces it.

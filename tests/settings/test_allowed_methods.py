@@ -1,4 +1,4 @@
-"""`safety.delivery.allowed_methods` -- the fourth ratchet shape (H6, #453, #498).
+"""`safety.delivery.allowed_methods` -- the fourth ratchet shape (H6).
 
 Tier 0 (04-testing.md §4): every layer is a ``Contribution`` built here, and the
 config half is a dict. Nothing opens a file or a socket.

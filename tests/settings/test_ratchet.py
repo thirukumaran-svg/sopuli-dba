@@ -45,7 +45,7 @@ DOMAINS: dict[type, tuple[Any, ...]] = {
     tuple: ((), ("prod",), ("dev", "prod")),
 }
 
-#: The domain for a list that **intersects** rather than unions (H6, #453). Two
+#: The domain for a list that **intersects** rather than unions (H6). Two
 #: single-method layers and the pair, which gives every shape that matters: one
 #: layer narrowing another, two layers agreeing, and two layers with nothing in
 #: common -- which is the refusal and is enumerated rather than excluded.
@@ -86,9 +86,9 @@ def at_least_as_safe(
 
     ``safe_bool`` and ``list_merge`` are the two things taken from the registry,
     because both are *declarations* rather than merge rules: `readonly: true`
-    refuses more and `locking.break_expired: true` refuses less (#83);
+    refuses more and `locking.break_expired: true` refuses less;
     `confirm_environments` unions and `delivery.allowed_methods` intersects
-    (H6, #453). No property of the values themselves says which, in either case.
+    (H6). No property of the values themselves says which, in either case.
     Everything about how layers combine is still written out here -- and the two
     list directions are written out *separately*, so a resolver that merged one
     the other's way fails here rather than agreeing with itself.

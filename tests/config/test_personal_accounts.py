@@ -1,4 +1,4 @@
-"""`personal_accounts:` -- the section H1 (#449) decided and #467 builds.
+"""`personal_accounts:` -- the section H1 decided.
 
 Tier 0, pure: everything builds from a dict, so there is no filesystem and no
 I/O. Fixtures use the fictional vocabulary the provenance note requires --

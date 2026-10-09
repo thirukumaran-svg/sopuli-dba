@@ -1,10 +1,10 @@
-"""Two accounts whose `pending` would land in the same place (#255).
+"""Two accounts whose `pending` would land in the same place.
 
-A config that loads cleanly used to be able to send two accounts' staged
-passwords to the same document key, where the merge kept whichever was written
-last: one account's new password lost, and the other's given to both. It was
-caught at the write boundary by `generate.group`, one lock and one printed plan
-too late; #255 moves it to load, which is where a defect in the *file* belongs.
+Two accounts' staged passwords sent to the same document key would be merged
+keeping whichever was written last: one account's new password lost, and the
+other's given to both. The write boundary, `generate.group`, would catch it one
+lock and one printed plan too late, so it is refused at load, which is where a
+defect in the *file* belongs.
 
 The shape that does it is one character away from the shape that works, which is
 why most of this file is about **not** refusing the correct layouts.
@@ -141,7 +141,7 @@ def test_it_carries_the_config_exit_code() -> None:
 
 
 def test_the_documented_shared_layout_loads() -> None:
-    """Q7's default (#85), and the layout `01-configuration.md` §2 uses. A check
+    """Q7's default, and the layout `01-configuration.md` §2 uses. A check
     that rejected this would reject the shape the tool recommends."""
     assert len(load(template="apps/acme/db#DB_CREDENTIALS/{account}").bindings) == 2
 
@@ -176,7 +176,7 @@ def test_one_account_across_many_targets_is_not_a_collision() -> None:
 
 
 def test_native_staging_is_left_alone() -> None:
-    """`_check_stageable`'s own reason (#111): where a store stages natively the
+    """`_check_stageable`'s own reason: where a store stages natively the
     stages are versions of the secret, so there is no root `pending` key for two
     accounts to contend over. Refusing this would reject a correct OCI config to
     enforce a rule that exists only because HashiCorp KV emulates staging."""

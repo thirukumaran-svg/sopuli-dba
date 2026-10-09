@@ -206,8 +206,8 @@ SECTIONS = (_defaults_with, _group_with, _profile_with, _target_with, _override_
 
 @pytest.mark.parametrize("section", SECTIONS, ids=lambda fn: fn.__name__)
 def test_a_safety_key_with_nothing_under_it_is_refused(section: Any) -> None:
-    """#501: `safety:` with nothing indented under it is `null`, which was read as
-    *no block* -- so a `readonly` somebody thought they had written could vanish
+    """A `safety:` with nothing indented under it is `null`, and reading that as
+    *no block* would let a `readonly` somebody thought they had written vanish
     because the key underneath it was left blank. A half-finished edit looks
     exactly like this, and the published schema refuses it, which §9b says the
     tool may never be looser than."""

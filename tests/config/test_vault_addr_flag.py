@@ -1,4 +1,4 @@
-"""``--vault-addr``, layer 1 of ``vaults.*.addr`` (#422).
+"""``--vault-addr``, layer 1 of ``vaults.*.addr`` (decision #422).
 
 Tier 0, pure: a document and a string in, a merged store out. What the flag does
 once a real command line parses it is ``tests/test_cli_precedence.py``.

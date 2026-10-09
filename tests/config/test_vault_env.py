@@ -1,4 +1,4 @@
-"""§6's vault variables, and where they land in P3's chain (#154).
+"""§6's vault variables, and where they land in P3's chain.
 
 Tier 0, pure: every case is a dict and a mapping through ``build_config``, so no
 test here depends on the shell it ran in. What the variables do once a real
@@ -276,9 +276,8 @@ def test_the_refusal_says_so_when_no_store_is_declared_at_all() -> None:
 
 
 def test_the_unnamed_sopuli_variable_is_refused_with_no_default_store() -> None:
-    """The question #154 had to answer. A variable that silently followed
-    whichever store a binding reached is the `vault_settings:` block C13
-    rejected, spelled differently."""
+    """A variable that silently followed whichever store a binding reached is
+    the `vault_settings:` block C13 rejected, spelled differently."""
     with pytest.raises(ConfigError) as raised:
         build_config(
             {"version": 1, "vaults": {STORE: {"type": "hashicorp"}}},

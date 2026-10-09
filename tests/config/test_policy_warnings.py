@@ -1,4 +1,5 @@
-"""A policy's `rotation:` and `verify:` keys warn that nothing reads them (#610).
+"""A policy's `rotation:` and `verify:` keys warn that nothing reads them
+(decision #610).
 
 They validate, so without a warning a file writing them reads as configuring a
 run. The verbs take these from flags; these tests pin the warning and its hint.

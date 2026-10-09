@@ -312,7 +312,7 @@ def test_a_method_missing_its_material_is_refused_at_load() -> None:
     rendered = str(caught.value)
     assert "vaults.vault-dev.auth.secret_id" in rendered
     assert "`method: approle` needs `secret_id`" in rendered
-    # The hint says what to *write* rather than repeating the key (#70).
+    # The hint says what to *write* rather than repeating the key.
     assert "`secret_id:` is named, not written -- `{ env: NAME }` or `{ file: PATH }`" in rendered
 
 
@@ -331,7 +331,7 @@ def test_several_missing_keys_are_all_named_at_the_first_of_them() -> None:
 
 
 def test_the_hint_distinguishes_material_from_an_identity_field() -> None:
-    """#70: a method can require both kinds, so one sentence about MaterialRefs
+    """A method can require both kinds, so one sentence about MaterialRefs
     would be wrong. `kubernetes` needs a `role`, which is written as it is, and a
     `jwt`, which is named -- and the hint has to say which is which."""
     with pytest.raises(ConfigError) as caught:
@@ -343,9 +343,9 @@ def test_the_hint_distinguishes_material_from_an_identity_field() -> None:
 
 
 def test_the_hint_does_not_merely_repeat_the_message() -> None:
-    """The defect #70 reports. The message names the keys and the path names one of
-    them; a hint that lists them a third time answers nothing, and CLAUDE.md asks a
-    hint to say what to do next."""
+    """The message names the keys and the path names one of them; a hint that
+    lists them a third time answers nothing, and CLAUDE.md asks a hint to say
+    what to do next."""
     with pytest.raises(ConfigError) as caught:
         auth(method="approle")
 
@@ -377,7 +377,7 @@ def test_a_method_that_needs_material_may_not_be_written_as_a_bare_value() -> No
 
     rendered = str(caught.value)
     assert "`approle` cannot be written as a bare value" in rendered
-    # The same explanation as the missing-key error, for the same reason (#70):
+    # The same explanation as the missing-key error, for the same reason:
     # knowing which keys are needed is not knowing what to write in them.
     assert "`role_id:` and `secret_id:` are named, not written" in rendered
     assert "{ env: NAME }" in rendered
@@ -424,12 +424,10 @@ def test_an_unknown_vault_key_is_refused() -> None:
     assert "vaults.vault-dev" in rendered
 
 
-# ------------------------------------------------ transport settings (#135) ---
+# ------------------------------------------------------- transport settings ---
 #
-# ADR-005 put `namespace`, `timeout_s` and `tls:` in §3a when it landed and the
-# config layer never followed, so a file written to the documentation as it
-# stood was refused with "unknown key". These are the keys the HashiCorp
-# adapter (#104) reads: `httpx` has no default timeout, and `tls:` is why
+# ADR-005 puts `namespace`, `timeout_s` and `tls:` in §3a. These are the keys
+# the HashiCorp adapter reads: `httpx` has no default timeout, and `tls:` is why
 # ADR-005 chose a client that takes a real SSLContext rather than a boolean.
 
 
@@ -468,7 +466,7 @@ def test_the_transport_keys_are_all_optional() -> None:
 def test_verify_is_absent_rather_than_true_when_unwritten() -> None:
     """The distinction the ratchet needs: "nobody said" is not "somebody agreed".
 
-    Once a profile or `defaults:` can patch a store (C13, #136), a layer that
+    Once a profile or `defaults:` can patch a store (C13), a layer that
     declined to speak must not read as one that wrote `true` -- otherwise the
     strictest-wins merge cannot tell them apart. `verified` is the effective
     value, and only an explicit `false` turns it off.

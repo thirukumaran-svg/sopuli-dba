@@ -1,4 +1,4 @@
-"""`reset_records:` -- where UC-2 journals a reset (H2, #450, #468).
+"""`reset_records:` -- where UC-2 journals a reset (H2).
 
 Tier 0, pure: everything builds from a dict, so there is no filesystem and no
 I/O. Fixtures use the fictional vocabulary the provenance note requires --
@@ -87,8 +87,8 @@ def test_a_prefix_that_normalises_to_nothing_is_refused() -> None:
 
 @pytest.mark.parametrize("prefix", ["sopuli/../secrets", "../secrets", "sopuli/./resets"])
 def test_a_traversal_segment_is_refused_rather_than_normalised_away(prefix: str) -> None:
-    """#344's rule applied to the one other place a file names a store path. A
-    ``..`` under a prefix walks out of it, and what it walks into here is
+    """Decision #344's rule applied to the one other place a file names a store
+    path. A ``..`` under a prefix walks out of it, and what it walks into here is
     whatever else the estate keeps in that store -- so it is refused with a
     location rather than silently rewritten."""
     with pytest.raises(ConfigError) as raised:

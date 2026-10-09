@@ -1,8 +1,8 @@
-"""`sopuli.config`'s lazy re-exports resolve to exactly what the eager ones did (#363).
+"""`sopuli.config`'s lazy re-exports resolve to exactly what the eager ones did.
 
-The package stopped importing its submodules at module scope so that importing
-`sopuli.config.errors` no longer drags in `bindings` and `sharing` -- which is
-what made `sopuli.payload` unimportable, since those two import it back.
+The package does not import its submodules at module scope, so that importing
+`sopuli.config.errors` does not drag in `bindings` and `sharing`. Those two
+import it back, and dragging them in would make `sopuli.payload` unimportable.
 
 What that trades away is the compiler's help. An eager
 `from sopuli.config.model import Config` is checked by the interpreter on every
