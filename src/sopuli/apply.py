@@ -34,11 +34,12 @@ never happen is the change going ahead with the lock still there --
 still to settle.
 
 **The database is asked before it is changed.** Invariant 9 names `apply` as the
-convergent verb -- the one that must report ``changed: false`` on a re-run -- and
-with `--method hash` unavailable (#86, #90) the only way to know whether a change
-is needed is a login attempt. So each account is verified first, under UC-1 §7's
-lockout mitigations, and a password that already works is left alone. The run
-costs one extra login per account and buys the invariant.
+convergent verb -- the one that must report ``changed: false`` on a re-run -- and it
+learns whether a change is needed by logging in, as `creds check` does by default
+(Q1). Comparing verifiers instead would need the optional `SELECT ON SYS.USER$`
+grant (decision P2). So each account is verified first, under UC-1 §7's lockout
+mitigations, and a password that already works is left alone. The run costs one
+extra login per account and buys the invariant.
 
 **A rollover window makes a `pass` mean less, and it still means "do not act".**
 During one, both passwords authenticate (UC-1 §6.3), so a pre-check `pass`
