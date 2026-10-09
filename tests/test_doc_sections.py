@@ -1,11 +1,11 @@
-"""Every section reference in the docs and the code resolves to a heading (#613).
+"""Every section reference in the docs and the code resolves to a heading.
 
 Tier 0: reads Markdown and Python source, imports nothing of the tool.
 
 Sections get renumbered and text moves between them, and a reference into the
 old place keeps reading as correct. This finds the references a heading no
 longer answers. It cannot tell that a reference which resolves points at the
-wrong text; the audit in #613 fixed three of those by hand.
+wrong text.
 
 **What a reference is.** A `§` followed by a section number, such as `§3a` or
 `§10.9`, and `Pn` for a principle. The document it points into is:

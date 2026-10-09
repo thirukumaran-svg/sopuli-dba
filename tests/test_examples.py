@@ -89,11 +89,10 @@ def test_example_config_validates_without_warnings(name: str, write_config: Writ
 def test_every_example_points_its_editor_at_a_schema_that_exists() -> None:
     """The `# yaml-language-server:` line is a real reference, not a comment.
 
-    **Copilot found this on #520**, three commits after the schema was renamed
-    1.7 -> 1.8: the README was updated and these three files were not, so an editor
-    opening any example resolved a `$schema` that had been deleted. It fails
+    **A schema rename can update the README and miss the examples**, so an editor
+    opening any example resolves a `$schema` that has been deleted. It fails
     silently -- the reader gets no completion and no validation, and nothing says
-    why -- which is why a test now holds it rather than a reviewer noticing.
+    why -- which is why a test holds it rather than a reviewer noticing.
 
     Checked here rather than in `test_schemas.py` because the path is relative to
     the example, so the file it names is only resolvable from where the file sits.

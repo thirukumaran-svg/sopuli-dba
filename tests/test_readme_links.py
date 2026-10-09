@@ -1,4 +1,4 @@
-"""The README's links resolve outside the repository (#545).
+"""The README's links resolve outside the repository.
 
 PyPI renders ``README.md`` as the project page, detached from the repository, so
 a relative link -- ``docs/getting-started.md`` -- is a 404 there. Every link and

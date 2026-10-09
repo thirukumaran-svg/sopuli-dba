@@ -1,22 +1,21 @@
-"""Unverified claims, and the register that says which are still unverified (#411).
+"""Unverified claims, and the register that says which are still unverified.
 
 Tier 0 (``04-testing.md`` §4): reads files, opens no socket, needs no container.
 
-**What went wrong twice.** A measured result lands in one document and the others
-go on asserting the opposite. #408 struck ``--limit`` from ``00-principles.md``
-and left the same flag standing in four other places; #410 recorded that SQL
-trace had been measured and left ``uc-01-app-credential-sync.md`` saying "SQL
-trace remains untested" and ``adr-001-privilege-model.md`` saying "unchecked on
-every version" -- a use case and an ADR, the two kinds of document `CLAUDE.md`
-tells a reader to trust. Copilot caught both. Nothing in the repository did.
+**What goes wrong.** A measured result lands in one document and the others go
+on asserting the opposite. Striking ``--limit`` from ``00-principles.md`` can
+leave the same flag standing in other documents. Recording that SQL trace has
+been measured can leave ``uc-01-app-credential-sync.md`` saying "SQL trace
+remains untested" and ``adr-001-privilege-model.md`` saying "unchecked on every
+version" -- a use case and an ADR, the two kinds of document `CLAUDE.md` tells a
+reader to trust. Without this file, only a reviewer would catch it.
 
 **Why a checker cannot read the prose.** "SQL trace remains untested", "SQL trace
 is unchecked on every version" and the §4 table row answering them share no
 reliable token, and the obvious greps are useless in the other direction:
 ``grep -rn unknown docs/`` is dominated by *unknown config keys*, and
 ``untested`` by *macOS is untested*. A confirming grep can be written once the
-sentences are known -- that is how #410 was verified afterwards -- but not
-before, which is the definition of not being a check.
+sentences are known, but not before, which is the definition of not being a check.
 
 So the claims carry the join key the prose does not have:
 
@@ -25,33 +24,32 @@ So the claims carry the join key the prose does not have:
 and ``docs/README.md`` §*Verify before implementing* is the register that says
 what each slug's status is. When an entry becomes ``verified``, this test fails
 and names every file still carrying its marker. Against the real failure:
-closing out #407 would have failed here naming ``uc-01`` and ``adr-001``.
+marking the SQL trace entry verified while those two documents still carried
+its marker would fail here, naming ``uc-01`` and ``adr-001``.
 
 **A marker never goes in user-visible text.** A click command's docstring *is*
 its ``--help`` output, so a marker placed in one is shown to every operator who
 asks for help -- the same mistake as a debug string in a user-facing message.
 Where the claim lives in help text, the marker goes in a comment beside it
 naming the sentence it belongs to; ``sopuli/cli.py``'s ``creds_check`` is the
-worked example. This was found the hard way while writing this file: the first
-attempt put the marker inside that docstring, broke its indentation, and
-``ruff format`` then reflowed all thirty lines of published help text.
+worked example. A marker inside that docstring breaks its indentation, and
+``ruff format`` then reflows the published help text.
 
 **What this cannot check, and it is worth being plain about it.** The rule below
 requires that an open entry be marked *somewhere*, which is not the same as
 *everywhere*. Whether a given paragraph asserts a given open question is a
-judgement about prose, and no test makes it -- #412's review found seven sites
-this file's own author had missed, after he wrote the convention saying every
-site gets one. So the marker narrows the problem rather than removing it: it
-turns "remember every document" into "remember at the moment you write the
-claim", and it makes the *settling* step mechanical even when the *marking* step
-is not. A site nobody marks is still a site nobody finds.
+judgement about prose, and no test makes it -- a marking pass can miss sites
+although the convention says every site gets one. So the marker
+narrows the problem rather than removing it: it turns "remember every document"
+into "remember at the moment you write the claim", and it makes the *settling*
+step mechanical even when the *marking* step is not. A site nobody marks is
+still a site nobody finds.
 
-**There is no `partial` status**, and that is the other thing #412's review
-changed. `ddl-text-retention` was one partial entry covering versions, AWR and
-SQL trace; the trace surface was settled while the other two were not, so a stale
-marker on a trace claim would have been allowed to sit indefinitely -- the #410
-failure this file exists to catch, uncaught. A question whose surfaces settle
-separately splits into entries that each settle whole.
+**There is no `partial` status.** One partial entry covering versions, AWR and
+SQL trace would stay open after the trace surface was settled while the other
+two were not, so a stale marker on a trace claim would be allowed to sit
+indefinitely -- the failure this file exists to catch, uncaught. A question
+whose surfaces settle separately splits into entries that each settle whole.
 
 **The register is the authority, not GitHub.** #383, #387 and #87 are all closed
 issues whose verification is still outstanding -- the decision was taken, the
@@ -88,9 +86,8 @@ ENTRY = re.compile(r"^- `(unverified|verified)` `([a-z0-9][a-z0-9-]*)`")
 #: a site says "(unverified: slug)" in parentheses.
 MARKER = re.compile(r"\(unverified: ([a-z0-9][a-z0-9-]*)\)")
 
-#: What gets scanned for markers. `src/` is in the list because two of #408's
-#: five stale claims were in docstrings -- `sopuli/invocation.py` and
-#: `sopuli/safety.py`, the latter quoting the very bullet being rewritten.
+#: What gets scanned for markers. `src/` is in the list because a docstring can
+#: carry a stale claim as well as a document can.
 SCANNED = (
     ("docs", "**/*.md"),
     ("src", "**/*.py"),
@@ -101,9 +98,8 @@ SCANNED = (
 
 #: The register's own section is not a site: its bullets assert the unverified
 #: state, because that is what a register is. **Only that section**, not the whole
-#: file -- #412's review pointed out that excluding `docs/README.md` entirely made
-#: the checker blind to the README's own prose, where a typo'd marker would
-#: never have been validated.
+#: file: excluding `docs/README.md` entirely would make the checker blind to the
+#: README's own prose, where a typo'd marker would never be validated.
 #:
 #: §Conventions needs no exclusion: it shows the syntax as `(unverified: <slug>)`,
 #: and `<` is outside the slug character class, so the example cannot be mistaken
@@ -186,8 +182,8 @@ def markers() -> dict[str, list[str]]:
 #: A register bullet that opens with a code span but is not a valid entry. The
 #: strict parse would skip it in silence, so a typo in the status word -- or a
 #: slug with a capital in it -- would remove an entry from the register while
-#: leaving something that still reads like one to a person. #412's review raised
-#: this, and it is the failure mode the whole file is about, one level down.
+#: leaving something that still reads like one to a person. This is the
+#: failure mode the whole file is about, one level down.
 MALFORMED = re.compile(r"^- `(?!(?:unverified|verified)` `[a-z0-9][a-z0-9-]*`)")
 
 
@@ -230,8 +226,8 @@ def test_nothing_is_still_marked_unverified_once_it_is_verified() -> None:
     """**The rule this file exists for.**
 
     Mark an entry `verified` in the register and every document still calling it
-    unverified is named here. That is the check #408 and #410 both needed and
-    neither had.
+    unverified is named here. That is the check that stale `--limit` and SQL trace
+    claims needed.
     """
     verified = {slug for slug, status in register().items() if status == "verified"}
     stale = {slug: where for slug, where in markers().items() if slug in verified}

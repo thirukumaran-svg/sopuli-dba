@@ -1,4 +1,4 @@
-"""Lists in the docs that copy something the code defines are checked against it (#611).
+"""Lists in the docs that copy something the code defines are checked against it.
 
 Tier 0: reads Markdown, the current run schema and click's command tree.
 

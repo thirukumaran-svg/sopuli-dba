@@ -1,17 +1,17 @@
-"""`sql/oracle/00_install.sql` against what the tool says it needs (#226).
+"""`sql/oracle/00_install.sql` against what the tool says it needs.
 
 Tier 0, and it needs no database — which is the point. The script cannot be
 executed from *here*: it is SQL*Plus rather than SQL. `DEFINE`/`&substitution`,
 `COLUMN … NEW_VALUE`, `PROMPT`, `SET SERVEROUTPUT` and `/` terminators are all
 client commands, and `python-oracledb` sends statements to a server that has
 never heard of any of them. Running it properly means a real `sqlplus`: the
-tier-1 container ships one, and automating that is #229.
+tier-1 container ships one, and `tests/driver/test_oracle_install_script.py`
+runs the script there.
 
 Executing the file is a different test, not a better one. That one proves it
 runs; this one proves it grants the right things, in under a second and with no
-container. #231 is the argument for keeping both — running the scripts by hand
-found four bugs this module cannot see, and not one of them was grant drift,
-which is the thing it does see.
+container. Both are worth keeping: executing the scripts finds faults this module
+cannot see, and grant drift, which it does see, is not among them.
 
 What can be checked without running it is the thing most likely to be wrong, and
 the only thing that gets *worse* over time: **whether the grants the script issues
@@ -49,13 +49,13 @@ SCRIPT = Path(__file__).resolve().parents[1] / "sql" / "oracle" / "00_install.sq
 #: Grants the script issues behind a `DEFINE` an operator sets to `Y`, which are
 #: therefore **not** part of §2's default set and must not be required.
 #:
-#: `SYS.USER$` is #86's decision: optional, capability-probed, and its absence is
-#: the ordinary configuration rather than a fault. `SET CONTAINER` is §2's other
-#: optional row, for a site whose tool switches containers on an open session
-#: rather than connecting to each PDB service. `V_$PWFILE_USERS` is #296's: it is
-#: guardrail 3's only input, and #296 decided against widening the default set for
-#: it -- so the ordinary install cannot run that check and says so on every run
-#: rather than passing it silently.
+#: `SYS.USER$` is optional (decision P2): capability-probed, and its absence is the
+#: ordinary configuration rather than a fault. `SET CONTAINER` is another optional
+#: row in §2, for a site whose tool switches containers on an open session rather
+#: than connecting to each PDB service. `V_$PWFILE_USERS` is optional too (§2): it
+#: is guardrail 3's only input (§4 check 3), and the default set stays narrow for it
+#: -- so the ordinary install cannot run that check and says so on every run rather
+#: than passing it silently.
 OPTIONAL = frozenset({"SELECT ON USER$", "SET CONTAINER", "SELECT ON V_$PWFILE_USERS"})
 
 #: `GRANT <what> TO <account>`, wherever it appears -- bare, or inside the
@@ -143,20 +143,19 @@ def test_the_root_only_grant_is_in_the_script_and_not_in_the_default_set() -> No
 
 
 def test_the_predicate_grant_is_in_the_script_and_not_in_the_default_set() -> None:
-    """#531. `DBA_ROLES` is granted by §2 and installed by the script, and it is
-    not a required read: `creds apply` refuses on a missing one, and an estate
-    installed before #531 must keep rotating without a grant only `account list`
-    uses. The `role_lookup` capability gates that verb instead."""
+    """`DBA_ROLES` is granted by §2 and installed by the script, and it is not a
+    required read: an estate installed without the grant must keep rotating, and
+    only `account list` uses it. The `role_lookup` capability gates that verb
+    instead (decision #531)."""
     assert frozenset(PREDICATE_READS) <= granted()
     assert not frozenset(PREDICATE_READS) & required()
 
 
 def test_the_optional_grants_are_optional_on_both_sides() -> None:
-    """`SYS.USER$` is #86's decision -- optional, probed, and its absence ordinary.
+    """`SYS.USER$` is optional (decision P2), probed, and its absence ordinary.
     A script that granted it unconditionally, or a tool that required it, would
-    each quietly reverse that. `V_$PWFILE_USERS` is #296's, and the same holds:
-    requiring it would make guardrail 3 the reason a correct install fails, which
-    is precisely what #296 refused."""
+    each quietly reverse that. `V_$PWFILE_USERS` is optional too: requiring it
+    would make guardrail 3 the reason a correct install fails."""
     assert not OPTIONAL & required()
     for grant in OPTIONAL:
         assert grant in granted(), f"{grant} should still be offered by the script"

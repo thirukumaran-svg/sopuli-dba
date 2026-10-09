@@ -1,11 +1,9 @@
-"""Every `sopuli` command line in `docs/` parses against the real CLI (#409). Tier 0.
+"""Every `sopuli` command line in `docs/` parses against the real CLI. Tier 0.
 
-**What went wrong.** Three worked examples in `01-configuration.md` §9 named
-options the binary has not got -- `--vault-addr`, `--method`, `--no-dry-run` --
-and one of them printed the refusal it was illustrating. `sopuli` rejects an
-unknown option before any precedence or safety check runs, so that output was a
-prediction in the document that specifies the refusal: #309's rule, broken where
-it is executable. #392 fixed the same defect in prose; nothing checked it here.
+**What this catches.** A worked example can name an option the binary has not
+got, and can even print the refusal it is illustrating. `sopuli` rejects an
+unknown option before any precedence or safety check runs, so such output is a
+prediction, not a pasted sample, in the document that specifies the refusal.
 
 **Why this parses command lines instead of grepping for flags.** A grep of
 `docs/` for `--[a-z-]+` finds two dozen tokens the CLI has not got, and almost all
@@ -17,7 +15,7 @@ tell that from a broken example would be suppressed within a week.
 So the unit is a **command line**: a line inside a fenced code block whose first
 word, after an optional `$ ` prompt and any `NAME=value` environment prefix, is
 `sopuli`. Prose is never in one, and a declined flag is discussed rather than
-invoked. Two traps, both hit by the prototype in #409:
+invoked. Two traps:
 
 * **Option values are consumed.** Otherwise `--config sopuli.yaml creds status`
   leaves `sopuli.yaml` looking like a subcommand.
@@ -31,9 +29,9 @@ undeclared option passes when the same block prints click's own rejection for
 it, or the line's comment says "no such option". That is not an escape hatch,
 because it is checked in both directions: a block claiming an option does not
 exist, for an option that does, fails too.
-What there is **not** is a marker that exempts a block unconditionally -- #409
-considered one for "illustrative" examples and re-cast §9 on real flags instead,
-because a documented way to skip a block is the way a real drift gets hidden.
+What there is **not** is a marker that exempts a block unconditionally.
+Illustrative examples use real flags instead, because a documented way to skip a
+block is the way a real drift gets hidden.
 
 **What this does not check**: that an option's *value* is valid, that a command
 path exists (an unknown word stops the walk rather than failing it, because
@@ -90,7 +88,7 @@ class CommandLine:
     #: This command and what is pasted beneath it, up to the next command in the
     #: same block. **Not the whole block**: a fence often holds several commands
     #: (`docs/scenarios/rotate-and-sync.md`), and a rejection printed for one of
-    #: them must not excuse a bad option on another (Copilot on #423).
+    #: them must not excuse a bad option on another.
     output: str
 
     def shows_rejection_of(self, option: str) -> bool:
@@ -233,7 +231,7 @@ def test_every_documented_command_line_names_only_options_its_command_has() -> N
     assert not broken, (
         "documented `sopuli` command lines name options the command does not have:\n  "
         + "\n  ".join(broken)
-        + "\nEvery sample is pasted from a real run (#309); fix the example, not this test."
+        + "\nEvery sample is pasted from a real run; fix the example, not this test."
     )
 
 
@@ -243,7 +241,7 @@ def test_a_rejection_shown_on_purpose_is_of_an_option_that_really_is_missing() -
     as stale as an example using a flag that has been removed.
 
     Both forms the rule accepts are checked here, because a form checked in only
-    one direction is an exemption for the other (Copilot on #423): a pasted
+    one direction is an exemption for the other: a pasted
     rejection must name an option that is still undeclared, and a `# no such
     option` comment must sit on a line that still has one.
     """
@@ -318,7 +316,7 @@ def test_a_pipe_ends_the_arguments() -> None:
 
 
 def test_an_option_value_is_not_mistaken_for_a_subcommand() -> None:
-    """The first of #409's two traps: without consuming values, every
+    """The first trap: without consuming values, every
     `--config FILE` leaves the file name in the verb's position."""
     assert unknown_options(["--config", "sopuli.yaml", "creds", "status", "--output", "json"]) == []
 
@@ -354,8 +352,8 @@ def test_a_rejection_counts_only_where_the_block_shows_it_for_that_option() -> N
 
 
 def test_a_rejection_belongs_to_the_command_it_was_pasted_under() -> None:
-    """Copilot on #423: one fence, two commands, and the rejection printed under
-    the first must not excuse the second."""
+    """One fence, two commands, and the rejection printed under the first must not
+    excuse the second."""
     text = (
         "```\n"
         "$ sopuli about --output json\n"

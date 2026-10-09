@@ -1,12 +1,11 @@
-"""Every module can be the *first* one imported (#357).
+"""Every module can be the *first* one imported.
 
-`python -c "import sopuli.lock"` failed outright, and had since #117:
-`sopuli.lock.keys` imported `SecretRef` from `sopuli.config.secret_refs`, while
-`sopuli.config.sharing` imported `normalise_path` back out of `sopuli.lock.keys`.
-Whichever package was entered first found the other half-built. Ten modules could
-not be imported first, `sopuli.lock` among them.
+`python -c "import sopuli.lock"` must succeed. If `sopuli.lock.keys` imported
+`SecretRef` from `sopuli.config.secret_refs`, while `sopuli.config.sharing`
+imported `normalise_path` back out of `sopuli.lock.keys`, whichever package was
+entered first would find the other half-built.
 
-**Nothing caught it, and no ordinary test could.** `sopuli.cli` imports
+**Nothing else catches it, and no ordinary test could.** `sopuli.cli` imports
 `sopuli.config` long before `sopuli.lock`, and so does `tests/conftest.py`, so
 every run in this repository entered the cycle from the side that happens to
 work. A cycle is only visible on the *first* import, which is why this file
@@ -14,8 +13,7 @@ spends a subprocess: within one interpreter the first import has already
 happened by the time any assertion runs.
 
 Who it costs is anyone outside the tool's own entry point -- a fixture, a script,
-a REPL, a future consumer importing `sopuli.lock` as a library. It was found by
-writing a tier-1 fixture that reached for the lock package first.
+a REPL, a future consumer importing `sopuli.lock` as a library.
 """
 
 from __future__ import annotations
@@ -27,14 +25,11 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
-#: Cycles that are still here, and the issue that tracks each. **Empty** since
-#: #363, which was the last one.
+#: Cycles that are still here, and the issue that tracks each. **Empty**.
 #:
 #: Asserted **exactly** rather than as a floor, which is the half that matters:
 #: fixing one fails this test until its entry is deleted, so the list cannot
-#: quietly describe a repository that has moved on. It did its job once already
-#: -- `sopuli.payload` sat here between #357 and #363, and deleting the entry was
-#: part of closing the second. The same discipline
+#: quietly describe a repository that has moved on. The same discipline
 #: `tests/settings/test_settings_are_wired.py` uses for `inert_reason`.
 KNOWN_CYCLES: dict[str, str] = {}
 
@@ -100,11 +95,10 @@ def test_every_module_can_be_imported_first() -> None:
 
 
 def test_the_lock_package_imports_on_its_own() -> None:
-    """#357 by name, because it is the one somebody will try again.
+    """`sopuli.lock` by name, because it is the import somebody will try again.
 
     Separate from the sweep above so the failure says *which* import broke rather
-    than handing back a dict, and because this is the line from the issue: it is
-    what a fixture, a script or a REPL does.
+    than handing back a dict. It is what a fixture, a script or a REPL does.
     """
     result = subprocess.run(
         [sys.executable, "-c", "import sopuli.lock; print(sopuli.lock.LockKey.__name__)"],

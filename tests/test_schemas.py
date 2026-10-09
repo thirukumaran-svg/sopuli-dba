@@ -2,13 +2,13 @@
 
 Invariant 12: "Samples must validate against ``docs/schemas/*.schema.json`` --
 this runs in CI." ``tests/test_run_document.py`` covers one half of that, the
-document a command actually emits. This file covers the other half, which was
-until now only asserted in prose in ``docs/README.md``:
+document a command actually emits. This file covers the other half, which
+``docs/README.md`` asserts in prose:
 
 * every committed schema is a valid Draft 2020-12 schema, including the
   superseded ``sopuli-event-1.*`` files that no build emits any more -- the
   current one is also validated line by line against what ``--output jsonl``
-  writes, in ``tests/test_output_jsonl.py`` (#9)
+  writes, in ``tests/test_output_jsonl.py``
 * every committed sample validates against the schema it claims to describe
 
 The schemas are found by glob rather than listed. A schema added later is then

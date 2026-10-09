@@ -1,21 +1,16 @@
 """Capability probing for the tier-1 suite (`04-testing.md` §3).
 
-`test/capabilities.py` sketched this and was never run. This is the version that
-runs, and the difference that matters is not the code — it is which list the
-probes are keyed on.
-
-**The harness no longer owns the questions; it imports them** (#177, #195). The
-sketch kept its own list and the first version of this file kept a second copy of
-the driver's, which is one probe with a spare place to disagree. It disagreed:
-`container_scope` and `common_users` shared a question that was invalid on every
-release, and because the harness answered it from its own copy there was nothing
-to compare against. §3's claim only holds while the two ask the same thing:
+**The harness does not own the questions; it imports them.** A second copy of
+the driver's list would be one probe with a spare place to disagree. If the copy
+held a question that was invalid on every release, the harness would answer it
+from its own copy and there would be nothing to compare against. §3's claim only
+holds while the two ask the same thing:
 
     The test suite validates the capability model itself. If a driver claims
     `password_rollover` on 18c XE, the rollover test runs and fails there —
     which is the bug. Version-keyed skips would have hidden it.
 
-So :data:`PROBES`, :data:`STRUCTURAL` and :func:`probe` now belong to
+So :data:`PROBES`, :data:`STRUCTURAL` and :func:`probe` belong to
 :mod:`sopuli.driver.oracle.capabilities`, and are re-exported here because that
 is where the fixtures reach for them. P1's vocabulary is asserted against them in
 `tests/driver/test_capabilities.py`. What remains the harness's own work is which
@@ -34,8 +29,8 @@ from dataclasses import dataclass, field
 from sopuli.driver.oracle.capabilities import PROBES, STRUCTURAL, probe
 from sopuli.driver.protocol import CAPABILITIES
 
-#: Re-exported deliberately. The questions belong to the driver (#177, #195) and
-#: the fixtures reach for them here, so this names the intent rather than leaving
+#: Re-exported deliberately. The questions belong to the driver and the
+#: fixtures reach for them here, so this names the intent rather than leaving
 #: three imports that look unused.
 __all__ = [
     "PROBES",
@@ -72,12 +67,12 @@ class Environment:
 
     @property
     def max_password_bytes(self) -> int:
-        """30 bytes below 23, 128 from 23 (#595).
+        """30 bytes below 23, 128 from 23.
 
         Read off the version rather than probed, because there is no dictionary
         view that states it -- and it is the one number a tier-1 test needs in
-        order to build a statement at all (#171 makes the limit a required
-        argument).
+        order to build a statement at all (the statement builder takes the limit
+        as a required argument).
         """
         return 30 if below(self.version, (23, 0)) else 128
 

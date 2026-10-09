@@ -1,9 +1,9 @@
-"""Help text and hints take their facts from the constants they describe (#612).
+"""Help text and hints take their facts from the constants they describe.
 
-Tier 0. Each fact below used to be written twice, once as a constant and once by
-hand in text an operator reads. A fix reached the constant and not the text, so
-the help said something the build did not do. These tests fail if the text
-stops following the constant.
+Tier 0. Each fact below has a constant that defines it and text that an
+operator reads. A fix that reached the constant and not the text would leave the
+help saying something the build does not do. These tests fail if the text stops
+following the constant.
 """
 
 from __future__ import annotations

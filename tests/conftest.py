@@ -28,7 +28,7 @@ from sopuli.store.registry import BACKENDS
 #
 # In an extracted sdist, a `FileNotFoundError` for a file the sdist leaves out is
 # a skip naming the file, not a failure. `repo_files` says why and where; in a
-# checkout neither hook changes anything (#545).
+# checkout neither hook changes anything.
 
 
 def _absent_repo_file(error: BaseException | None) -> str | None:
@@ -105,13 +105,13 @@ def config_file(write_config: WriteConfig) -> Path:
     return write_config(MINIMAL_CONFIG)
 
 
-#: The environment variables that now reach a store's settings (#154, §6). A
-#: developer running the tier-1 suite has ``VAULT_ADDR`` exported by definition --
-#: `vault_stack` below reads it -- and from #154 onward that variable *is* a
-#: precedence layer, so without this every CLI test that loads a file with a
-#: `defaults.vault` would resolve a different address on their machine than on
-#: CI. Cleared per test rather than at import, because the module constants above
-#: are read once and the tier-1 fixtures carry their own copy.
+#: The environment variables that reach a store's settings
+#: (`01-configuration.md` §6). A developer running the tier-1 suite has
+#: ``VAULT_ADDR`` exported by definition -- `vault_stack` below reads it -- and
+#: that variable *is* a precedence layer, so without this every CLI test that
+#: loads a file with a `defaults.vault` would resolve a different address on their
+#: machine than on CI. Cleared per test rather than at import, because the module
+#: constants above are read once and the tier-1 fixtures carry their own copy.
 VAULT_ENV = ("SOPULI_VAULT", "SOPULI_VAULT_ADDR", "VAULT_ADDR", "VAULT_NAMESPACE", "VAULT_CACERT")
 
 
@@ -193,7 +193,7 @@ class VaultStack:
 
 
 #: Set to ``required`` where a tier-1 environment is supposed to be present --
-#: which is the CI lane and nowhere else (#184).
+#: which is the CI lane and nowhere else.
 #:
 #: A skipped tier-1 test is the correct outcome on a laptop with nothing running
 #: and a **silent hole** in a job that exists to run it. `04-testing.md` §3 draws
@@ -274,10 +274,10 @@ def private_mount(vault_stack: VaultStack, request: pytest.FixtureRequest) -> It
     `kv` and `kv1` are shared by the whole tier-1 suite **and by whatever the
     developer has run by hand against the same container**, which is fine for a
     test that reads back the one path it wrote and fatal for one that surveys a
-    whole prefix: `lock status` deliberately reports every record under `locks/`
-    (#150), so a rotation somebody ran an hour ago is a correct finding and a red
-    test (#272). A test whose subject is a survey needs an estate of its own, and
-    the mount is the only boundary that gives it one -- the prefix is fixed by
+    whole prefix: `lock status` deliberately reports every record under `locks/`,
+    so a rotation somebody ran an hour ago is a correct finding and a red test.
+    A test whose subject is a survey needs an estate of its own, and the mount is
+    the only boundary that gives it one -- the prefix is fixed by
     :data:`~sopuli.lock.manager.LOCK_PREFIX` and cannot be moved out of the way.
 
     Named after the requesting module and **recreated rather than assumed
@@ -414,14 +414,13 @@ def oracle_target() -> Iterator[Environment]:
         # so a harness that quietly used it would be exercising a configuration
         # the tool cannot run in.
         #
-        # **The tool's own initialisation, not a second copy** (#176). This was
-        # a bare `init_oracle_client()` until `session.initialise` existed, and
-        # the difference is not cosmetic: the tool honours §6's
-        # `SOPULI_ORACLE_CLIENT_LIB_DIR` and the bare call does not, so a
-        # contributor whose Instant Client is anywhere the loader does not
-        # already look could point the tool at it and still watch every tier-1
-        # test skip. Two initialisations mean two answers to "where is the
-        # client", and only one of them was the documented one.
+        # **The tool's own initialisation, not a second copy.** A bare
+        # `init_oracle_client()` would differ in a way that is not cosmetic: the
+        # tool honours §6's `SOPULI_ORACLE_CLIENT_LIB_DIR` and the bare call does
+        # not, so a contributor whose Instant Client is anywhere the loader does
+        # not already look could point the tool at it and still watch every
+        # tier-1 test skip. Two initialisations mean two answers to "where is the
+        # client", and only one of them is the documented one.
         from sopuli.driver.oracle import session as oracle_session
 
         oracle_session.initialise(env=os.environ)
@@ -443,12 +442,12 @@ def oracle_target() -> Iterator[Environment]:
 def _server_version(cursor: Any) -> str | None:
     """The server's version, preferring the patched one where it exists.
 
-    ``V$INSTANCE.VERSION_FULL`` arrived in **18c**. This asked for it
-    unconditionally, so on 11g XE the query raised `ORA-00904: "VERSION_FULL":
-    invalid identifier`, the whole `live_oracle` fixture went to its
-    `except Exception` and every tier-1 test on that target reported *environment
-    unavailable* -- which under `SOPULI_TEST_TIER1=required` is 102 errors that
-    say nothing about 11g and everything about one column (#382).
+    ``V$INSTANCE.VERSION_FULL`` arrived in **18c**. Asking for it
+    unconditionally would make the query raise `ORA-00904: "VERSION_FULL":
+    invalid identifier` on 11g XE, the whole `live_oracle` fixture would go to
+    its `except Exception`, and every tier-1 test on that target would report
+    *environment unavailable* -- which under `SOPULI_TEST_TIER1=required` is one
+    error per test that says nothing about 11g and everything about one column.
 
     `VERSION` exists on every release and is what the driver itself reads
     (`capabilities.VERSION`), so the fallback is the tool's own query. It answers
@@ -480,8 +479,8 @@ def _server_version(cursor: Any) -> str | None:
 def _why(exc: BaseException) -> str:
     """A skip reason in the tool's own vocabulary.
 
-    Uses the driver's error mapping (#172) rather than a bare `str(exc)`, so
-    that "Instant Client is missing" reads as itself instead of as `DPI-1047`
+    Uses the driver's error mapping rather than a bare `str(exc)`, so that
+    "Instant Client is missing" reads as itself instead of as `DPI-1047`
     — the failure a contributor hits first, and the one most likely to be
     mistaken for a missing container.
     """
@@ -489,16 +488,15 @@ def _why(exc: BaseException) -> str:
     from sopuli.driver.oracle.errors import CLIENT_LIBRARY, from_error
 
     if isinstance(exc, ClientError):
-        # Already worded for exactly this reader (#176): it names DPI-1047, keeps
-        # the driver's own detail about which library failed, and carries the
+        # Already worded for exactly this reader: it names DPI-1047, keeps the
+        # driver's own detail about which library failed, and carries the
         # per-platform remediation. Running it back through `from_error` would
         # classify our own exception as an unreadable driver failure.
         #
         # `str`, not `.message`: the remediation lives in `hint`, and `__str__`
-        # is what renders the two together. Returning the message alone dropped
-        # exactly the LD_LIBRARY_PATH / PATH / VC++ guidance this branch exists
-        # to preserve -- caught in #176's review, having been claimed in this
-        # very comment.
+        # is what renders the two together. Returning the message alone would
+        # drop exactly the LD_LIBRARY_PATH / PATH / VC++ guidance this branch
+        # exists to preserve.
         return str(exc)
 
     diagnosis = from_error(exc)
@@ -514,7 +512,7 @@ def _why(exc: BaseException) -> str:
 
 @pytest.fixture
 def live_oracle(oracle_target: Environment) -> Environment:
-    """An Oracle that is actually there, or the right kind of skip (#176).
+    """An Oracle that is actually there, or the right kind of skip.
 
     :func:`oracle_target` yields whatever it found, including a reason it found
     nothing, because the summary reports the gap rather than hiding it. The
@@ -538,18 +536,17 @@ def live_oracle(oracle_target: Environment) -> Environment:
 
 @pytest.fixture
 def oracle_client() -> None:
-    """Instant Client, up -- and **no database** (#176).
+    """Instant Client, up -- and **no database**.
 
     A narrower prerequisite than :func:`live_oracle`, for the tests that need
     thick mode and nothing at the other end: the client's version, and anything
     else `doctor` will want to answer before it makes anybody wait on a
-    connection that cannot succeed (#182).
+    connection that cannot succeed.
 
     Separate because the alternative is a test named "without a database" that
-    takes a fixture which connects to one -- true of the first draft, and
-    pointed out in review. It would skip for the wrong reason on a machine with
-    a client and no container, and it could not tell whether it was exercising
-    the offline path at all.
+    takes a fixture which connects to one. It would skip for the wrong reason on a
+    machine with a client and no container, and it could not tell whether it was
+    exercising the offline path at all.
     """
     session = pytest.importorskip("sopuli.driver.oracle.session")
     from sopuli.driver.oracle.client import ClientError

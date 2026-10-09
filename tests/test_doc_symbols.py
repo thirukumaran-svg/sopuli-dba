@@ -1,4 +1,4 @@
-"""Every file path and every docstring cross-reference names something that exists (#613).
+"""Every file path and every docstring cross-reference names something that exists.
 
 Tier 0: reads Markdown and Python source, and imports the package's own modules to
 look names up. Nothing connects.
@@ -20,8 +20,7 @@ reading as correct. Two kinds are checked here:
   an install extra, is skipped rather than failed.
 
 A plain backticked name such as `common_options` is not checked, because nothing
-tells it apart from a configuration key or a column name. #613 fixed the three it
-found by hand.
+tells it apart from a configuration key or a column name.
 """
 
 from __future__ import annotations
@@ -393,7 +392,7 @@ def test_the_role_lookup_tells_a_real_name_from_a_missing_one() -> None:
 
 def test_a_test_module_reference_is_walked_to_its_end() -> None:
     """A member of a class, or of something imported, is checked as well as the
-    name it starts with (#637's review)."""
+    name it starts with."""
     tree = ast.parse(
         "from sopuli.config.errors import ConfigError as Bad\n"
         "class Transport:\n"

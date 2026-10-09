@@ -1,10 +1,10 @@
-"""Every closed decision has a record in `docs/decisions/log.md` (#616).
+"""Every closed decision has a record in `docs/decisions/log.md`.
 
 Tier 0: reads Markdown, imports nothing of the tool.
 
-The reasons for a decision used to live only in its GitHub issue. A bare `#454`
-says nothing in an IDE, a fork or a source distribution, so each decision now
-has a short record in the repository. This module checks that:
+The reasons for a decision do not live only in its GitHub issue. A bare `#454`
+says nothing in an IDE, a fork or a source distribution, so each decision has a
+short record in the repository. This module checks that:
 
 * each record is a `## <ID>` section with the five fields, in order:
   Decided, Question, Decision, Why, Rejected;

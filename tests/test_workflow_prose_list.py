@@ -7,13 +7,13 @@ Tier 0 (04-testing.md §4): reads two files, runs nothing.
 and a required context that was never created leaves every prose-only pull
 request pending forever. It filters in a `changes` job instead, whose skipped
 dependants report `skipped` and satisfy the requirement, with `ci ok` as the one
-check `workflow.md` says to require (#375).
+check `workflow.md` says to require.
 
 The cost of that is the list existing twice, in two syntaxes. This is what makes
 the second copy safe: a pattern added to one and not the other is a failing test
-rather than a lane that quietly stopped skipping. Drift is the failure #375 was
-opened about -- seven patterns arrived in #370 and #373 and neither list heard
-about them, because nothing looked.
+rather than a lane that quietly stopped skipping. Drift is the failure this test
+exists to catch: a pattern added to one list that the other never hears about,
+because nothing looked.
 
 It does **not** check that the list is *correct*. What the suite actually opens
 under `docs/`, `sql/` and `examples/` is a property of running the suite, and
@@ -80,7 +80,7 @@ def test_examples_is_not_ignored() -> None:
     """`examples/` is a tested artefact, not documentation that happens to sit
     in a directory.
 
-    `tests/test_examples.py` (#372) runs `config validate` against every
+    `tests/test_examples.py` runs `config validate` against every
     `examples/*.yaml` precisely so an example cannot drift out of date with the
     config layer. Ignoring the directory would switch that off and leave the
     test passing on whatever was last committed -- green, and measuring nothing.
@@ -98,10 +98,10 @@ def test_examples_is_not_ignored() -> None:
 # --------------------------------------------------------------- the docs lane ---
 #
 # The prose list is allowed to ignore most of `docs/` only because `ci.yml`'s
-# `docs` job runs the tier-0 modules that read it (#458). That makes the job
+# `docs` job runs the tier-0 modules that read it. That makes the job
 # load-bearing rather than convenient: delete it, or let it drift out of step with
 # what `test/paths_ignore_probe.py` deselects, and prose-only pull requests go
-# back to reporting green on a broken register — the #457 failure, restored.
+# back to reporting green on a broken register.
 #
 # Nothing else checks this. The probe measures what the *suite* opens and now
 # deliberately excludes those modules, so it cannot notice that the job which
@@ -173,8 +173,8 @@ def test_the_docs_job_is_gated_on_prose_only() -> None:
 
     The guards above pin *what* the job runs and that `ci ok` waits for it. Invert
     this condition to `'true'`, or delete it, and every one of them stays green
-    while prose-only pull requests skip the readers again -- #458 restored, with a
-    full set of passing tests over it. `needs: changes` is asserted alongside,
+    while prose-only pull requests skip the readers again, with a full set of
+    passing tests over it. `needs: changes` is asserted alongside,
     because the condition reads an output of that job and silently evaluates
     false-y without the dependency.
     """

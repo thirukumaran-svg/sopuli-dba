@@ -1,4 +1,4 @@
-"""Which exits produce a document, and which produce nothing (J7, issue #8).
+"""Which exits produce a document, and which produce nothing (J7).
 
 Tier 0 (04-testing.md §4): in-process, no containers.
 
@@ -129,10 +129,9 @@ def test_two_flags_that_cannot_both_be_honoured_are_usage_errors(
 ) -> None:
     """Both options parsed; together they are not a valid request.
 
-    Reclassified in #8. They used to be `ConfigError`s and would have inherited
-    exit 9, which would have made exit 9 mean "your file is wrong, or possibly
-    your flags" -- and a consumer branching on it to say "fix your YAML"
-    sometimes wrong.
+    They are not `ConfigError`s, which would give them exit 9. That would make
+    exit 9 mean "your file is wrong, or possibly your flags", and a consumer
+    branching on it to say "fix your YAML" would sometimes be wrong.
     """
     selecting = runner.invoke(
         cli, ["config", "show", "--select", "env=qa", "--config", str(config_file)]
@@ -179,7 +178,7 @@ def test_a_malformed_selector_is_a_usage_error(
 def test_the_refused_vault_token_flag_exits_two_and_prints_no_token(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], config_file: Path
 ) -> None:
-    """#145, at the real boundary, in all three halves of the contract.
+    """ADR-007, at the real boundary, in all three halves of the contract.
 
     Exit 2 rather than a plan-time refusal with a document: P5 puts exit 2 at
     "argv did not resolve to a valid command and options", which is what a flag
@@ -252,7 +251,7 @@ def test_an_undeclared_policy_name_exits_nine(
     capsys: pytest.CaptureFixture[str],
     write_config: Callable[[str], Path],
 ) -> None:
-    """The boundary case #8 predicted would blur, pinned on purpose.
+    """The boundary case that could blur, pinned on purpose.
 
     The name came from the command line, so this *looks* like a usage error. It
     is not: argv resolved to a valid command with valid options, and the question
@@ -573,7 +572,7 @@ def test_a_usage_error_emits_nothing_even_when_json_was_asked_for(
 
 
 def test_no_two_exit_codes_share_a_number() -> None:
-    """The whole of #8, generalised past the pair it was about.
+    """J7's split between usage and config errors, generalised to every pair of codes.
 
     ``ExitCode.USAGE`` and ``ExitCode.CONFIG_INVALID`` collapsing back into one
     value would take the consumer rule with them: "empty stdout and exit 2" stops

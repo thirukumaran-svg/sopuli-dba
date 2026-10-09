@@ -43,18 +43,20 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "sopuli"
 PERMITTED = {
     "driver/oracle/client.py": "the driver call -- invariant 2's second exception",
     "output/policy_view.py": "`policy sample --reveal` -- the third; a sample is not a credential",
-    "output/reset_view.py": "UC-2's seen reset -- the fourth, under five structural guards (#439)",
+    "output/reset_view.py": (
+        "UC-2's seen reset -- the fourth, under five structural guards (decision #439)"
+    ),
     "output/delivery_view.py": (
         "the wrapping token -- not a password, but UC-2 6.1's retrieval credential, "
-        "which the rule covers because it is about reach rather than value (#444)"
+        "which the rule covers because it is about reach rather than value (UC-2 §6.6)"
     ),
     "delivery/vault_wrapped.py": (
         "the vault write -- invariant 2's first exception, reached as a wrap rather "
-        "than a KV put (#444)"
+        "than a KV put (UC-2 §6.6)"
     ),
     "passwords.py": "generation's own validation, which never leaves the process",
     "driver/oracle/verifier.py": (
-        "`check --method hash`'s comparison (#437) -- `passwords.py`'s reason: the "
+        "`check --method hash`'s comparison (UC-1 §7) -- `passwords.py`'s reason: the "
         "password is hashed in the process and compared there, and neither it nor the "
         "derived digest is sent anywhere. Invariant 14 is why it is here and not in SQL"
     ),
@@ -62,7 +64,7 @@ PERMITTED = {
     "store/hashicorp/_auth.py": "the vault login, which is the write's other half",
     "store/hashicorp/_transport.py": "the token on the wire, for the same reason",
     "notify/webhook.py": (
-        "a webhook URL on the wire (#442) -- `_transport.py`'s reason, not a sixth "
+        "a webhook URL on the wire -- `_transport.py`'s reason, not a sixth "
         "numbered exception: invariant 2 enumerates the paths a *password* may take, "
         "and material the tool presents to a service it is calling has always been a "
         "separate already-accepted class. A chat URL is a credential (C9), so it is a "

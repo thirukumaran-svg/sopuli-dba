@@ -1,4 +1,4 @@
-"""Whether this suite is running from the sdist, and what that leaves out (#545).
+"""Whether this suite is running from the sdist, and what that leaves out.
 
 The sdist ships ``src/sopuli`` and ``tests`` and none of the repository's data:
 ``docs/schemas``, the design documents, ``examples/``, ``sql/``, the workflows. A
