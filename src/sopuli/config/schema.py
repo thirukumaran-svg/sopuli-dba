@@ -60,86 +60,10 @@ from sopuli.config import (
     vaults,
 )
 
-#: The artefact's own version, which is not the config file's ``version:``. This
-#: one tracks the schema contract the way the run schema's version does -- a new
-#: optional key is a minor bump and does not touch a file that already says
-#: `version: 1`.
-#:
-#: 1.0 became 1.1 with `locking:`: a store's `locking:` and a
-#: `locking:` block under `defaults` and a profile, all optional, so every file
-#: valid under 1.0 is valid under 1.1.
-#:
-#: 1.1 became 1.2 with a vault's transport settings (ADR-005): `namespace`,
-#: `timeout_s` and the `tls:` block. Optional again -- a file that named none of
-#: them means exactly what it did before -- which is what makes it a minor bump
-#: rather than the other kind.
-#:
-#: 1.2 became 1.3 with C13's partial `vaults:` blocks: a `vaults:` key
-#: under `defaults:` and inside a profile, holding entries that patch a store
-#: rather than declare one. Minor for the same reason once more -- and the
-#: interesting half is what the new shape *refuses*, since `type`,
-#: `non_production` and `locking` are absent from it by construction.
-#: 1.3 became 1.4 with UC-2's `personal_accounts:` (H1): a top-level
-#: list of accounts that belong to people, by name or by a predicate over a
-#: profile or a role. Optional like every bump before it, so a file that declares
-#: only applications means exactly what it did. What the shape *refuses* is again
-#: the interesting half -- there is no `secret`, no `secret_template`, and exactly
-#: one of `accounts`, `profile` and `role` may be written, because nothing masters
-#: a personal account's password and two ways of saying which accounts would leave
-#: the whitelist ambiguous.
-#:
-#: 1.4 became 1.5 with UC-2's `reset_records:` (H2): a top-level
-#: block naming the store and prefix a reset is journalled under. Optional like
-#: every bump before it, and here the optionality is the *specified* behaviour
-#: rather than a compatibility courtesy -- a reset with no destination configured
-#: warns and runs, because the seen path may have no store at all (UC-2 §3.4). What
-#: the shape refuses is the interesting half again: there is no key for a password,
-#: a hash or a verifier, and none is coming, because a record that could leak the
-#: thing it records would be worse than no record.
-#:
-#: 1.5 became 1.6 with UC-2's `delivery:` (§6): a top-level block naming how
-#: a personal account's new password reaches its owner, with one sub-block per
-#: method. Optional like every bump before it. **The sub-blocks are open objects
-#: here, deliberately.** The builder leaves a sub-block for an *unselected*
-#: method unjudged (`01-configuration.md` §9b's rule that an unselected block is
-#: how somebody switches between configurations). Any constraint published here
-#: -- `required: ["ttl"]`, a pattern on it, `additionalProperties: false` -- would
-#: refuse a file the tool accepts, which is the one direction §9b forbids: the
-#: schema is the fast incomplete check, and the tool must never be the looser of
-#: the two. An editor offers the method names and checks nothing inside them.
-#: The tool checks the selected method's keys where that method is built, and
-#: `sopuli config validate` warns where the selected method is not built, so a
-#: clean parse does not read as a working delivery.
-#:
-#: Closing a sub-block would need a **conditional** schema -- `if` on `method`,
-#: `then` the constraints -- and the condition is not a one-liner, because
-#: `method` is optional and its absence *selects* `vault_wrapped`. One such shape
-#: would serve all six methods. Until it exists the sub-blocks stay open and the
-#: tool is the stricter of the two, which is the safe asymmetry.
-#:
-#: 1.6 became 1.7 with `safety.delivery.allowed_methods` (H6): a
-#: `delivery:` sub-block of every `safety:` block, holding the set of UC-2
-#: delivery methods that layer permits. Optional like every bump before it, and
-#: absent means *no constraint* rather than the empty set -- which is the one
-#: reading an intersection cannot get wrong twice. The shape refuses an empty
-#: array, because a layer permitting nothing can never be widened by a later one
-#: and no run under it could deliver anything; and there is no `forbidden_methods`
-#: counterpart, now or later, so an editor offering one is offering a key the
-#: tool refuses.
-#: 1.7 became 1.8 when `delivery.notify:` got a grammar: `method`, and a
-#: `webhook:` block with a MaterialRef `url` and a `template`. **Closed, where
-#: `vault_wrapped:` could not be** -- and the difference is the whole of the note
-#: above. A method's sub-block is left unjudged when that method is not selected,
-#: so a constraint on it would refuse a file the tool accepts; `notify:` is read
-#: whichever method is selected, because a notification is a property of the
-#: delivery rather than of a method, so closing it refuses exactly what the
-#: builder refuses.
-#:
-#: What is deliberately **not** expressed is the placeholder rule. A pattern
-#: approximating it would be a second, weaker statement of UC-2 6.1 -- the rule
-#: that the notify channel may not carry the password or anything that retrieves
-#: it -- and two statements of one rule drift. It stays with the builder, where
-#: the refusal can say why.
+#: The schema contract's version, which is not the config file's ``version:``.
+#: `01-configuration.md` §9b says when it changes. What each shape accepts and
+#: refuses, and why, is in the function that builds it: its docstring or its
+#: ``description``.
 SCHEMA_VERSION = "1.8"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
@@ -986,9 +910,11 @@ def _personal_account() -> Schema:
     ``minProperties`` is not the rule here and would be the wrong one: an entry
     must name **exactly one** of ``accounts``, ``profile`` and ``role``, which is
     a relation between three keys rather than a count, so it stays with the
-    builder where the message can say which two were found. What the artefact
-    does carry is the absence of ``secret`` and ``secret_template`` -- an editor
-    offering them here would be offering mastery over a password nothing masters.
+    builder where the message can say which two were found. Two are refused
+    rather than read as a union or an intersection; `01-configuration.md` §1 says
+    why. What the artefact does carry is the absence of
+    ``secret`` and ``secret_template`` -- an editor offering them here would be
+    offering mastery over a password nothing masters.
     """
     return _object(
         keys=personal_accounts.PERSONAL_ACCOUNT_KEYS,
@@ -1035,6 +961,10 @@ def _delivery() -> Schema:
     strongest-sounding option. What *is* enforced, and what an editor cannot show,
     is that the selected method's sub-block exists -- a cross-key rule, so it stays
     with the builder where the message can name the method (§9b).
+
+    Closing a sub-block would need a conditional schema on ``method``.
+    `01-configuration.md` §1 says why that is not simple, and why leaving the
+    sub-blocks open is the safe direction.
     """
     sub_block: Schema = {
         "type": "object",
@@ -1146,6 +1076,10 @@ def _reset_records() -> Schema:
     than an omission: a default would put records somewhere the file does not
     say, in a store the file does name, so an operator could not tell where the
     journal is by reading the configuration.
+
+    The block itself is optional by specification, not for compatibility. A
+    reset with no store configured still runs, for the reason UC-2 §3.1 gives,
+    and warns as UC-2 §3.4 describes.
 
     What the artefact cannot carry is the rule that matters most -- that no key
     here may hold a password in any representation. That is a property of the
