@@ -1,4 +1,4 @@
-"""The lockout guard, and what a login's outcome means (#180). Tier 0.
+"""The lockout guard, and what a login's outcome means. Tier 0.
 
 UC-1 §7's arithmetic is pure, so it is tested here — and it is the arithmetic
 that matters, because release gate 4 is an assertion about a number never
@@ -79,7 +79,7 @@ def test_an_unlimited_profile_has_nothing_to_guard() -> None:
 
 
 def test_an_absent_counter_does_not_block_the_attempt() -> None:
-    """#86 made `SELECT ON SYS.USER$` optional and decided `check` runs without
+    """`SELECT ON SYS.USER$` is optional (decision P2), and `check` runs without
     a site-specific grant. So an unavailable guard is not a refusal — it is a
     thing the caller has to say out loud, which `verify_password` does in
     `detail`."""
@@ -192,8 +192,8 @@ def test_a_verification_outcome_is_an_answer_about_the_password(code: str | None
 def test_a_failure_of_the_run_is_not_a_verification_outcome(code: str) -> None:
     """These say nothing about the password.
 
-    #172 has already classified each into its own category and exit path, and
-    folding them into `unavailable` would let an unreachable target look like an
+    Each has its own category and exit path already, and folding them into
+    `unavailable` would let an unreachable target look like an
     account-level finding — a target nobody can reach reported as a target whose
     password could not be checked.
     """
@@ -225,9 +225,9 @@ def test_a_detail_survives_a_server_that_said_nothing() -> None:
 
 # ------------------------------------------- a warning on a login that worked ---
 #
-# #322. A connection can carry a diagnostic without failing -- a grace-period
-# login is the ordinary case -- and nothing read it, so it was discarded on every
-# path. Measured on 26ai: `ORA-28098` where the profile limits
+# A connection can carry a diagnostic without failing -- a grace-period login is
+# the ordinary case -- and the driver reads it rather than discarding it.
+# Measured on 26ai Free 23.26.2.0.0: `ORA-28098` where the profile limits
 # PASSWORD_GRACE_TIME and `ORA-28011` where it does not, both on connections that
 # succeeded.
 

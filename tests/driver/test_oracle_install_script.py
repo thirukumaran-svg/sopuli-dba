@@ -1,4 +1,4 @@
-"""`sql/oracle/00_install.sql` and `99_uninstall.sql`, executed (#229). Tier 1.
+"""`sql/oracle/00_install.sql` and `99_uninstall.sql`, executed. Tier 1.
 
 `tests/test_install_sql.py` reads these scripts; this runs them. The two are
 complementary and neither replaces the other: parsing catches grant drift in
@@ -7,7 +7,7 @@ cannot see — the mode branches, the `CONTAINER=ALL` clause construction, the
 guards, and whether the file runs end to end at all.
 
 The distinction is not theoretical. Running these scripts by hand once turned up
-four bugs (#231), and **two of them failed silently**: a `PROMPT` line ending in
+four bugs, and **two of them failed silently**: a `PROMPT` line ending in
 `-` ate the statement after it, and `keep_audit=N` left an audit policy behind
 while still exiting 0. Nothing that reads the file could have found either.
 
@@ -84,8 +84,8 @@ ROOT = "/ as sysdba"
 #: The PDB's service name, as seen from inside the container -- so always port
 #: 1521, whatever the host maps it to. Defaults to tier 1's; a lane pointed at
 #: another container names its own (`XEPDB1` on 21c/18c XE, `ORCLPDB1` on the
-#: 19c EE image). Hard-coded to `freepdb1` until #548, which made every PDB-mode
-#: test here fail with `ORA-12514` on any container but tier 1's.
+#: 19c EE image). A hard-coded `freepdb1` would make every PDB-mode test here
+#: fail with `ORA-12514` on any container but tier 1's.
 PDB_SERVICE = os.environ.get("SOPULI_TEST_ORACLE_PDB_SERVICE", "freepdb1")
 PDB = f"sys/{SYS_PASSWORD}@localhost:1521/{PDB_SERVICE} as sysdba"
 
@@ -113,14 +113,14 @@ COMMON_SVC_OTHER = f"C##{SVC_OTHER.upper()}"
 #: seconds -- :func:`_exec`'s ``docker exec ... sqlplus`` and equally
 #: :func:`_docker`'s ``inspect``, ``cp`` and ``exec``.
 #:
-#: **Not a budget, a stall detector** (#326). One `00_install.sql` run takes under
+#: **Not a budget, a stall detector**. One `00_install.sql` run takes under
 #: a second -- the whole of
 #: :func:`test_the_optional_grants_are_off_unless_asked_for` is 1.93s and runs the
 #: script twice -- and the container operations are faster still, so this is
 #: roughly 300x headroom over the slowest thing it governs and nothing that merely
-#: *finishes slowly* can reach it. It fired once, on 2026-09-02, on a
-#: `GRANT CREATE SESSION ... CONTAINER=ALL` that had printed its label and never
-#: returned.
+#: *finishes slowly* can reach it. It covers every call; the known case is a
+#: `GRANT CREATE SESSION ... CONTAINER=ALL` that prints its label and never
+#: returns (TODO(#326)).
 #:
 #: One number for both because it is one question -- *did a docker call stop?* --
 #: and a second constant would be a second thing to keep proportionate to a
@@ -208,7 +208,7 @@ def _exec(
     prompt whose stdin is a terminal would **hang** the suite rather than fail
     it. Stdin at EOF is the difference between a red build and a stuck one.
 
-    **`-i` only where there is something to send** (#326, occurrence 3). A script
+    **`-i` only where there is something to send.** A script
     run from a file ends without an `EXIT` -- the shipped scripts must not
     disconnect a DBA who runs them from an interactive session -- so SQL*Plus
     goes back to reading stdin when the file is done and exits only on EOF. With
@@ -222,13 +222,12 @@ def _exec(
     its own `EXIT`, so none of them waits on EOF. All three stalls were
     file scripts.
 
-    **A timeout asks the database what it was waiting for before it gives up**
-    (#326). The call that hung had printed the label of a
-    `GRANT ... CONTAINER=ALL` and never returned, and nothing survived the kill
-    that could say whether Oracle was blocked or `docker exec` was -- so the
-    second occurrence would have been a second identical report. It is asked here
-    rather than in the test, because every one of this module's eighteen calls
-    goes through this function and the next stall will not be in the same one.
+    **A timeout asks the database what it was waiting for before it gives up.**
+    A killed call leaves nothing behind that says whether Oracle was blocked or
+    `docker exec` was, so without the question each stall would be another
+    identical report. It is asked here rather than in the test, because
+    every one of this module's eighteen calls goes through this function and the
+    next stall will not be in the same one.
     """
     try:
         if script is None:
@@ -251,7 +250,7 @@ def _exec(
 
 
 def _timeout_report(container: str, expired: subprocess.TimeoutExpired) -> str:
-    """Everything the next person needs, in the order they will want it (#326).
+    """Everything the next person needs, in the order they will want it.
 
     The tail of the captured output first, because that is what located the one
     occurrence: `00_install.sql` prints a label before each statement, so the last
@@ -271,7 +270,7 @@ def _timeout_report(container: str, expired: subprocess.TimeoutExpired) -> str:
             f"`docker exec` into {container} did not return within {EXEC_TIMEOUT_S}s.",
             "",
             "This is a stall, not a slow run: one `00_install.sql` takes under a",
-            "second (#326), so do not raise EXEC_TIMEOUT_S to make it pass.",
+            "second, so do not raise EXEC_TIMEOUT_S to make it pass.",
             "",
             f"command: {' '.join(expired.cmd)}",
             "",
@@ -304,9 +303,9 @@ def _blocked_sessions(container: str) -> str:
     Best effort by construction, and **its own failure is an answer** rather than
     something to swallow. Three outcomes and they point at three different fixes:
 
-    * rows -- Oracle was waiting, and on what. The hypothesis in #326 is a
-      dictionary lock behind `CONTAINER=ALL`, and ``BLOCKING_SESSION`` is what
-      confirms or kills it;
+    * rows -- Oracle was waiting, and on what. The hypothesis (TODO(#326):
+      unconfirmed) is a dictionary lock behind `CONTAINER=ALL`, and
+      ``BLOCKING_SESSION`` is what confirms or kills it;
     * no rows -- the session was gone by the time this ran, so the stall was
       probably not the database at all;
     * this call *also* times out -- `docker exec` or the daemon is the problem
@@ -362,7 +361,7 @@ def _blocked_sessions(container: str) -> str:
         return (
             f"v$session could not be read either -- that probe also hung, within "
             f"{DIAGNOSE_TIMEOUT_S}s. Which is itself the finding: `docker exec` or the "
-            f"daemon is what stalled, and the database is a bystander (#326)."
+            f"daemon is what stalled, and the database is a bystander."
         )
     except OSError as error:  # docker gone, container gone
         return f"v$session could not be read: {error}"
@@ -384,7 +383,7 @@ def _blocked_sessions(container: str) -> str:
         return (
             "v$session reports nothing waiting -- no blocked session, and none holding "
             "up another. Either the session was already gone when this ran, or the "
-            "stall was never the database's (#326)."
+            "stall was never the database's."
         )
     return "\n".join(["v$session, non-idle or blocked:", *(f"  {row}" for row in rows)])
 
@@ -465,7 +464,7 @@ def is_cdb(container: str) -> bool:
 
     `SYS_CONTEXT('USERENV','CON_NAME')` **raises** on a non-CDB rather than
     answering NULL: `ORA-02003: invalid USERENV parameter`, measured on 11g XE
-    11.2.0.2.0 (#382). So the question is answered by whether the query runs at
+    11.2.0.2.0. So the question is answered by whether the query runs at
     all, which is the same reading `capabilities.NO_CONTAINERS` makes in the
     driver and `00_install.sql` makes in its own guard.
 
@@ -503,7 +502,7 @@ def has_unified_audit(container: str) -> bool:
     """Whether this release has unified auditing, asked of the server.
 
     `AUDIT_UNIFIED_POLICIES` arrived in 12.1. On 11.2 it is `ORA-00942`, and
-    `01_audit_policy.sql` refuses with `ORA-20020` rather than running (#382).
+    `01_audit_policy.sql` refuses with `ORA-20020` rather than running.
     """
     probe = _exec(
         container,
@@ -523,7 +522,7 @@ def unified_audit_only(has_unified_audit: bool) -> None:
 
     Not a coverage gap: `01_audit_policy.sql` creates audit *policies*, which do
     not exist before 12.1, and what the tool should do about auditing on such a
-    release is an open decision rather than a missing statement (#382). The
+    release is an open decision rather than a missing statement. The
     refusal itself is covered by `test_the_audit_script_refuses_a_release_without_unified_auditing`.
     """
     if not has_unified_audit:
@@ -537,7 +536,7 @@ def install_mode(is_cdb: bool) -> str:
     Several tests below are about something else entirely -- the optional grants,
     re-running the script, the uninstall -- and used `COMMON` only because it is
     the script's default. On a non-CDB that is `ORA-20010` from the mode guard,
-    which is the guard working and the test asking the wrong question (#382).
+    which is the guard working and the test asking the wrong question.
     Both modes run in the only container there is, so only the mode and the
     account name change.
     """
@@ -569,8 +568,7 @@ def clean(container: str, scripts: str, is_cdb: bool) -> Iterator[None]:
 
     Dropped **after** as well as before. A fixture whose recovery is "the next one
     will tidy up" leaves the database dirty at the end of the session, which on a
-    developer's own instance is litter and on a shared one is worse -- the same
-    finding review raised against `test_oracle_service_account.py` (#226).
+    developer's own instance is litter and on a shared one is worse.
     """
     local = PDB if is_cdb else ROOT
     accounts = ((ROOT, COMMON_SVC), (ROOT, COMMON_SVC_OTHER), (local, LOCAL_SVC))
@@ -635,7 +633,7 @@ def test_noncdb_mode_installs_the_same_local_account(
     **`local_connect`, not `PDB`.** This is the one mode test that has to run on
     an actual non-CDB, and it was the one that could not: the hard-coded PDB
     service is `ORA-12514` on 11g, so the test named after the mode was the only
-    one in the module that had never met it (#382).
+    one in the module that had never met it.
     """
     result = sqlplus(container, local_connect, f"{scripts}/00_install.sql", "NONCDB", SVC)
     assert result.returncode == 0, result.stdout[-2000:]
@@ -679,16 +677,15 @@ def test_the_optional_grants_are_off_unless_asked_for(
 ) -> None:
     """`SYS.USER$` and `SET CONTAINER` are opt-in, and both directions matter.
 
-    §2 calls them optional; #86 makes `SYS.USER$`'s absence the ordinary
-    configuration rather than a fault. A default that quietly granted either
+    §2 calls them optional; `SYS.USER$`'s absence is the ordinary configuration
+    rather than a fault (decision P2). A default that quietly granted either
     would hand every install a password-verifier read nobody asked for.
 
     **`SET CONTAINER` is asserted only in `COMMON` mode**, because it is only
     granted there: it moves a session between containers, so it means nothing to
     a local account in one container and nothing at all on 11.2. The script says
-    so now rather than skipping in silence, and that sentence is asserted here --
-    a parameter that was honoured and one that was ignored used to look identical
-    (#382).
+    so rather than skipping in silence, and that sentence is asserted here -- a
+    parameter that was honoured and one that was ignored would look identical.
     """
     first = sqlplus(container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC)
     assert first.returncode == 0, first.stdout[-2000:]
@@ -764,16 +761,16 @@ def _policies(container: str) -> set[str]:
 def test_uninstall_with_keep_audit_n_drops_every_policy(
     container: str, scripts: str, clean: None, cdb_only: None, unified_audit_only: None
 ) -> None:
-    """`keep_audit=N` removes both policies. Regression for #231's third bug.
+    """`keep_audit=N` removes both policies.
 
     `audit_unified_policies` returns one row **per policy per audit option** --
-    six for `SOPULI_POL`. The cursor loop dropped it on the first iteration,
-    raised `ORA-46357` on the second, and the exception aborted the block before
-    `SOPULI_LOGON_POL` was reached.
+    six for `SOPULI_POL`. A loop over those rows would drop the policy on the
+    first iteration, raise `ORA-46357` on the second, and abort the block before
+    `SOPULI_LOGON_POL` is reached.
 
-    Asserting on `returncode` alone would still pass against that bug:
+    Asserting on `returncode` alone would pass against that:
     `WHENEVER SQLERROR CONTINUE` holds the exit code at 0, so the uninstall
-    reported success while leaving both policies behind. The assertion has to be
+    would report success while leaving both policies behind. The assertion has to be
     that they are gone.
     """
     assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
@@ -845,11 +842,11 @@ def test_audit_policy_script_fails_loudly_on_an_account_that_does_not_exist(
 
 # ------------------------------------------------- what a timeout leaves behind ---
 #
-# #326. These need no container and no database: the subject is what the module
-# says when `docker exec` does not return, and the one occurrence there has been
-# left nothing behind that could say whether Oracle was waiting or `docker exec`
-# was. `_blocked_sessions` is the part that asks, and it is stubbed here -- it is
-# exercised for real by the tier-1 tests above simply by never firing.
+# These need no container and no database: the subject is what the module says
+# when `docker exec` does not return. A stall leaves nothing behind that could
+# say whether Oracle was waiting or `docker exec` was. `_blocked_sessions` is
+# the part that asks, and it is stubbed here -- it is exercised for real by the
+# tier-1 tests above simply by never firing.
 
 HUNG_OUTPUT = (
     b"Session altered.\n\n[1] the service account\n"
@@ -910,13 +907,12 @@ class _Recorded:
 
 
 def test_a_file_script_is_run_without_attaching_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The #326 fix, pinned where it can be pinned deterministically.
+    """A file script takes no `-i`, pinned where it can be pinned deterministically.
 
     The shipped scripts end without `EXIT`, so SQL*Plus exits on EOF, and with
-    `-i` that EOF had to be forwarded by `docker exec`. Twice it was not. The
-    tier-1 calls pass with `-i` restored until the stall happens to recur, so this
-    is the test that fails the moment a refactor puts it back (Copilot's review of
-    #538).
+    `-i` that EOF has to be forwarded by `docker exec`, which does not always
+    deliver it. The tier-1 calls pass with `-i` restored until the stall happens
+    to recur, so this is the test that fails the moment a refactor puts it back.
     """
     recorded = _Recorded()
     monkeypatch.setattr(subprocess, "run", recorded)
@@ -969,7 +965,7 @@ def test_undecodable_output_is_not_a_second_failure() -> None:
 def test_a_diagnosis_that_also_hangs_is_itself_the_finding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The distinction that decides the fix (#326): Oracle waiting, or `docker
+    """The distinction that decides the fix: Oracle waiting, or `docker
     exec` not returning. If the probe cannot get in either, it is the second, and
     that is an answer rather than a diagnostic that failed."""
 
@@ -1083,18 +1079,18 @@ def test_the_audit_script_refuses_a_release_without_unified_auditing(
 ) -> None:
     """`01_audit_policy.sql` on 11.2, which has no audit policies to create.
 
-    Until #382 it ran head first into `AUDIT_UNIFIED_POLICIES` and produced four
-    `ORA-00942`s wrapped in `ORA-06550` -- an operator told a view was missing
-    and left to work out which release they were on and why. It did at least exit
-    non-zero, so nothing was silently skipped; the fix is the message, not the
-    exit code.
+    Without the refusal it would run head first into `AUDIT_UNIFIED_POLICIES` and
+    produce four `ORA-00942`s wrapped in `ORA-06550` -- an operator told a view
+    was missing and left to work out which release they were on and why. It exits
+    non-zero either way, so nothing is silently skipped; the refusal is the
+    message, not the exit code.
 
     The refusal names the release it needs and the traditional-auditing statement
     to use instead. It stops there deliberately: emitting `AUDIT ALTER USER`
     would give the tool a second audit story to own, and
     `02-oracle-privileges.md` §5 is written entirely around unified auditing, so
     what it should say about a release without it is a decision rather than a
-    missing statement (#382).
+    missing statement.
     """
     if has_unified_audit:
         pytest.skip("this release has unified auditing: there is nothing to refuse")

@@ -1,6 +1,6 @@
-"""The 12C verifier comparison, against verifiers a real server wrote (#437).
+"""The 12C verifier comparison, against verifiers a real server wrote.
 
-Every ``SPARE4`` below was read from 26ai Free 23.26.2.0.0 on 2026-10-02, off
+Every ``SPARE4`` below was read from 26ai Free 23.26.2.0.0, off
 throwaway accounts with known passwords that were dropped straight after. A
 vector the derivation produced itself would only prove the code agrees with
 itself; these prove it agrees with Oracle. The same derivation reproduced on
@@ -59,7 +59,7 @@ ROLLOVER = (
     "U:BE8467DF40749A3D3DE4C3A950E2CDC68D38B2221CC5B6798768327F9014"
 )
 
-#: 11g's shape: ``S:`` alone, nothing 12C to compare (#433).
+#: 11g's shape: ``S:`` alone, nothing 12C to compare.
 ELEVEN_G = "S:5C300909F36EB8FAA304852C877F9248FF88782986A884533739056CD8C7"
 
 
@@ -96,7 +96,7 @@ def test_only_the_12c_verifiers_are_read() -> None:
 @pytest.mark.parametrize("spare4", [ELEVEN_G, "", None])
 def test_no_12c_verifier_is_its_own_answer_and_not_a_mismatch(spare4: str | None) -> None:
     """Nothing was compared, so nothing can be said to differ. The driver turns
-    this into a refusal naming the target (#433, invariant 4)."""
+    this into a refusal naming the target (invariant 4)."""
     assert compare(Secret("Acme-Vector-0001"), spare4, limit=AL32UTF8) == NO_VERIFIER
 
 
@@ -114,7 +114,7 @@ def test_a_malformed_12c_token_is_refused_rather_than_skipped(token: str) -> Non
 
 
 def test_a_password_the_character_set_cannot_hold_is_refused_not_mismatched() -> None:
-    """#572: on WE8DEC the server stored `Ω` as `¿` and hashed that. Comparing the
+    """On WE8DEC the server stores `Ω` as `¿` and hashes that. Comparing the
     vault's string would report a mismatch for a password that logs in -- false
     drift, which starts rotations. Refused instead, naming the set and no
     character of the password."""

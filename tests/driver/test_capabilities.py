@@ -1,10 +1,10 @@
-"""Probing, and the difference between "no" and "I could not tell" (#177).
+"""Probing, and the difference between "no" and "I could not tell".
 
 Tier 0: what to ask, how to read an answer and what it means are pure, so they
 are tested here rather than only on a machine with containers running — which is
-the machine least likely to notice they were wrong. #195 is the case in point:
-a probe that was invalid on every release looked like a clean negative for a full
-release cycle, on hardware that never ran it.
+the machine least likely to notice they were wrong. Decision #195 is the case in
+point: a probe that was invalid on every release looked like a clean negative
+for a full release cycle, on hardware that never ran it.
 """
 
 from __future__ import annotations
@@ -107,20 +107,19 @@ def test_every_structural_capability_says_why_it_is_not_probed() -> None:
 
 
 def test_no_two_capabilities_share_a_question() -> None:
-    """#195, inverted.
+    """Each capability has its own probe (decision #195).
 
-    `container_scope` and `common_users` used to share one probe, on the
-    reasoning that a common user is a thing which exists only in a CDB — so two
-    separately-worded probes would agree by construction and give a future editor
-    two places to make them disagree. The first real measurement contradicted the
-    reasoning while agreeing with the answer, which is the specific way that
-    argument fails. Two capabilities are two questions.
+    A common user exists only in a CDB, so one probe can look like enough for
+    `container_scope` and `common_users` both. It is not: holding the privilege
+    to manage a common user is a separate question from being in a CDB, and a
+    probe shared between them was measured reporting both absent everywhere.
+    Two capabilities are two questions.
     """
     assert len(set(PROBES.values())) == len(PROBES)
 
 
 def test_the_invalid_userenv_attribute_does_not_come_back() -> None:
-    """The literal probe that caused #195.
+    """The literal probe that decision #195 records.
 
     ``sys_context('userenv','cdb')`` is not a valid attribute — ``ORA-02003``, in
     a PDB and in the CDB root alike, measured on 26ai 23.26.2.0.0. It is an easy
@@ -131,12 +130,13 @@ def test_the_invalid_userenv_attribute_does_not_come_back() -> None:
 
 
 def test_common_users_asks_about_a_privilege_not_a_place() -> None:
-    """What replaced the shared probe.
+    """The probe for `common_users`, and what it asks.
 
     Measured: an account holding ``ALTER USER`` commonly reads 1 and can alter a
     common user from the root; one holding the identical privilege locally reads
     0 and gets ``ORA-01031`` for the same statement. Where the session stands is
-    :attr:`Scope.type`'s answer, and asking that here is what #195 was about.
+    :attr:`Scope.type`'s answer, and asking that here is the mistake that
+    decision #195 records.
     """
     sql = PROBES[COMMON_USERS]
 
@@ -159,7 +159,7 @@ def test_an_enumerated_negative_reads_as_absent(code: str) -> None:
 
 
 def test_an_unenumerated_failure_is_not_an_answer() -> None:
-    """#195's whole finding, as a test.
+    """The finding of decision #195, as a test.
 
     ``ORA-02003`` means the tool asked something Oracle does not have. Reading
     that as *absent* is what let a broken probe report a plausible negative on
@@ -207,11 +207,11 @@ def test_probing_grants_the_structural_capabilities_without_asking() -> None:
 
 @pytest.mark.parametrize("code", ["ORA-00942", "ORA-41900"])
 def test_an_ungranted_sys_user_dollar_reads_as_no_offline_verify(code: str) -> None:
-    """#86 made the grant optional, so its absence is ordinary rather than an
-    error — and the `LCOUNT` guard being unavailable is exactly what `check` has
-    to report plainly.
+    """The grant is optional (decision P2), so its absence is ordinary rather
+    than an error — and the `LCOUNT` guard being unavailable is exactly what
+    `check` has to report plainly.
 
-    Measured on 23ai Free, where `SYSTEM` does not hold it either (#195).
+    Measured on 26ai Free 23.26.2.0.0, where `SYSTEM` does not hold it either.
 
     Parametrised over both codes because the same ungranted table answers
     differently depending on who asks: ``ORA-41900`` to `SYSTEM`, which is
@@ -274,7 +274,7 @@ def test_scope_type_follows_the_container_name(container: str | None, expected: 
 def test_an_application_container_refines_the_pdb_answer(
     application: str | None, expected: str
 ) -> None:
-    """#204: the container name alone cannot tell these apart.
+    """The container name alone cannot tell these apart.
 
     ``ACME_ROOT`` and ``ACME_ALPHA`` are ordinary container names, so the two
     scopes P1 names beyond ``pdb`` are a refinement of that answer and never of
@@ -295,7 +295,7 @@ def test_an_application_answer_cannot_override_the_container_name(container: str
 
 
 def test_an_application_root_is_read_from_userenv() -> None:
-    """Measured on 26ai (#204): ``YES``/``NO`` strings, not a flag."""
+    """Measured on 26ai 23.26.2.0.0: ``YES``/``NO`` strings, not a flag."""
     cursor = _Cursor({APPLICATION_ROOT: "YES"})
 
     assert application_of(cursor) == "root"
@@ -351,7 +351,7 @@ def test_the_second_question_is_not_asked_where_the_attribute_is_absent() -> Non
 def test_a_failure_asking_about_application_containers_is_not_read_as_no() -> None:
     """Anything but ``ORA-02003`` propagates, for :func:`container_of`'s reason:
     reporting "not an application container" because the question could not be
-    asked is how the refusal that #204 exists for would go quiet again."""
+    asked is how the application-container refusal would go quiet again."""
     with pytest.raises(RuntimeError):
         application_of(_Cursor({APPLICATION_ROOT: _ora("ORA-01031")}))
 
@@ -372,7 +372,7 @@ def test_a_root_session_is_not_asked_about_application_containers() -> None:
 
 
 def test_observe_reports_an_application_pdb() -> None:
-    """End to end through the mapping, on the container names #204 built."""
+    """End to end through the mapping, on the application container names."""
     cursor = _Cursor(
         {
             CONTAINER_NAME: "ACME_ALPHA",
@@ -512,7 +512,7 @@ def test_an_unresolved_scope_does_not_satisfy_an_assertion() -> None:
 
     `unknown` is a scope the driver may report and a file may never claim, so
     the two can never match — and treating "we could not tell" as agreement
-    would be #195's mistake in a new place.
+    would be the mistake decision #195 records, in a new place.
     """
     with pytest.raises(ScopeAssertionError) as raised:
         assert_scope(Scope(type=UNKNOWN), _declared(scope="pdb"), target="t")

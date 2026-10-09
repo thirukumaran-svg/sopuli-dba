@@ -1,4 +1,4 @@
-"""§3's must-not-grant list, as a judgement over three result sets (#213).
+"""§3's must-not-grant list, as a judgement over three result sets.
 
 Tier 0. `classify` takes what the three views returned and decides; the queries
 themselves are `audit`'s and are tier 1. `04-testing.md` §4 wants it that way —
@@ -12,8 +12,8 @@ The assertions that matter are the two kinds of *quiet*:
   learn to run with their eyes shut;
 * a view that could not be read reports **something**, because "I looked and
   found nothing" and "I could not look" are the two answers a report must never
-  merge — which is the failure #178 found in `DBA_SYS_PRIVS` and #195 in a
-  capability probe.
+  merge. An unreadable `DBA_SYS_PRIVS` read as *holds nothing* is one way to
+  merge them; the capability probe that decision #195 records is another.
 
 P5 is decided and is not tested here because it is not this module's: `classify`
 returns findings and never an exit code. That `doctor` warns rather than fails on
@@ -46,7 +46,7 @@ INSTALLED = frozenset({"CREATE SESSION", "ALTER USER"})
 
 #: The default estate: §2's optional `V$PWFILE_USERS` grant not taken, so nobody
 #: could look. `None` rather than `()` throughout this module for that reason —
-#: the empty tuple is the *other* answer, and #341 is about not merging them.
+#: the empty tuple is the *other* answer, and the two answers must not be merged.
 UNGRANTED: tuple[str, ...] | None = None
 
 
@@ -109,8 +109,8 @@ def test_each_forbidden_role_is_found(role: str) -> None:
 
 
 def test_a_role_held_through_another_role_is_found() -> None:
-    """#178 measured this: `ACME_APP_ADMIN` granted `DBA`, then granted to the
-    account, reads as `ACME_APP_ADMIN` alone flat and as both traversed. The
+    """Measured on 26ai Free 23.26.2.0.0: `ACME_APP_ADMIN` granted `DBA`, then
+    granted to the account, reads as `ACME_APP_ADMIN` alone flat and as both traversed. The
     traversal is the query's; what this asserts is that the classifier does not
     care how the role arrived."""
     audit = audit_of(roles=frozenset({"ACME_APP_ADMIN", "DBA", "SELECT_CATALOG_ROLE"}))
@@ -120,7 +120,7 @@ def test_a_role_held_through_another_role_is_found() -> None:
 
 def test_the_whole_role_set_is_reported_not_just_the_matches() -> None:
     """So a reader can see *how* an over-grant arrived. A site role two levels up
-    is the case #178 measured and the one nobody guesses from `DBA` alone."""
+    is the case that matters and the one nobody guesses from `DBA` alone."""
     audit = audit_of(roles=frozenset({"ACME_APP_ADMIN", "DBA"}))
 
     assert audit.roles == ("ACME_APP_ADMIN", "DBA")
@@ -158,8 +158,8 @@ def test_a_refused_role_view_takes_the_role_rows_with_it() -> None:
 
 def test_an_audit_is_not_complete_while_an_object_privilege_has_no_view() -> None:
     """A property rather than a constant, because it is a fact about §2's grant
-    set and that can change. It changed: #341 answers two of the three rows this
-    used to fail on. `EXECUTE ON DBMS_LOCK` is the one left, and it is left for a
+    set and that can change. The optional password-file grant answers two of the
+    three rows. `EXECUTE ON DBMS_LOCK` is the one left, and it is left for a
     reason no grant fixes."""
     assert audit_of(password_file=()).complete is False
     assert audit_of(password_file=()).unaudited == ("EXECUTE ON DBMS_LOCK",)
@@ -173,7 +173,7 @@ def test_a_readable_run_still_reports_the_privileges_it_did_see() -> None:
     assert audit.over_granted == ("SELECT ANY DICTIONARY",)
 
 
-# ------------------------------------------------------- the password file (#341) ---
+# -------------------------------------------------------------- the password file ---
 #
 # §3's two remaining rows, which `V$PWFILE_USERS` carries and §2 makes an
 # optional grant. Three answers rather than two, and the whole of this section is
@@ -201,9 +201,10 @@ def test_the_two_rows_are_answered_separately() -> None:
 
 
 def test_asked_and_not_held_is_not_the_same_as_nobody_looked() -> None:
-    """The distinction #341 is. An estate that took the grant and holds neither
-    privilege has been *audited*, and saying otherwise is the merge this module
-    exists to refuse -- arrived at from the side that under-reports."""
+    """The distinction this section is about. An estate that took the grant and
+    holds neither privilege has been *audited*, and saying otherwise is the
+    merge this module exists to refuse -- arrived at from the side that
+    under-reports."""
     asked = audit_of(password_file=())
     unasked = audit_of(password_file=UNGRANTED)
 
@@ -224,10 +225,10 @@ def test_an_ungranted_view_does_not_make_the_audit_partial() -> None:
 
 
 def test_the_unaudited_rows_come_with_something_to_do_about_them() -> None:
-    """Question 3 of #341. The rows read the same as they did before the grant
-    existed; the *reason* does not, and only "you may enable this" has a next
-    action. The `GRANT` is the driver's words because it is a fact about one
-    product -- the audit's own shape names no database."""
+    """The rows read the same whether or not the grant exists; the *reason* does
+    not, and only "you may enable this" has a next action. The `GRANT` is the
+    driver's words because it is a fact about one product -- the audit's own
+    shape names no database."""
     caveats = audit_of(password_file=UNGRANTED).caveats()
 
     assert any("V$PWFILE_USERS" in line for line in caveats)
@@ -325,7 +326,7 @@ def test_the_object_privilege_row_is_named_rather_than_dropped() -> None:
 
 # ---------------------------------------------------------- the positive side ---
 #
-# §2's grants, checked as present or absent (#225). The point is that a
+# §2's grants, checked as present or absent. The point is that a
 # half-installed account is visible *here* rather than as unrelated failures
 # three commands later: a missing `SELECT ON DBA_PROFILES` otherwise surfaces as
 # a limit resolution that could not answer, and nobody connects the two.
@@ -475,9 +476,9 @@ def test_a_release_with_no_common_column_reports_nothing_common() -> None:
     """11.2 has no containers, so no privilege can be common.
 
     `USER_SYS_PRIVS.COMMON` arrived with multitenant in 12.1, and on 11g XE the
-    query is `ORA-00904` -- which took the whole of `doctor --check-privileges`
-    down with it until #382: the target reported `-` for scope, `0` capabilities
-    and a bare ORA- code, while still exiting 0.
+    query is `ORA-00904`. A failure there would take the whole of
+    `doctor --check-privileges` down with it: the target would report `-` for
+    scope, `0` capabilities and a bare ORA- code, while still exiting 0.
 
     An empty set rather than an unknown, because "none are common" is the true
     answer on a database with no containers rather than a degraded one.

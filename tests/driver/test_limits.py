@@ -1,7 +1,7 @@
-"""How long a password may be, and in what character set (#179). Tier 0.
+"""How long a password may be, and in what character set. Tier 0.
 
-#171 made a `ByteLimit` a required argument so that a statement cannot be built
-by somebody who never found out; these are the tests for the finding out.
+A `ByteLimit` is a required argument so that a statement cannot be built by
+somebody who never found out; these are the tests for the finding out.
 """
 
 from __future__ import annotations
@@ -56,12 +56,12 @@ class _Cursor:
     ],
 )
 def test_the_limit_follows_the_probed_version(version: str, expected: int) -> None:
-    """30 below 23, 128 from it (#595).
+    """30 below 23, 128 from it.
 
     The 18c-and-later rows read ``x.0.0.0.0`` because that is what
     ``V$INSTANCE.VERSION`` reports there: the base release, not the RU. 12.2,
     18c, 19c and 21c are all measured to refuse a 31st byte, which is why the
-    floor is no longer 12.2 -- that is where *identifiers* grew, not passwords.
+    floor is not 12.2 -- that is where *identifiers* grew, not passwords.
 
     Not a violation of invariant 3: the rule forbids branching on a version from
     *config*, and no dictionary view states this limit — so the version the
@@ -146,7 +146,7 @@ def test_an_unreadable_character_set_still_produces_a_limit() -> None:
 @pytest.mark.parametrize("version", ["11.2.0.4.0", "19.0.0.0.0", "21.0.0.0.0"])
 def test_the_limit_is_enforced_at_the_measured_boundary(version: str) -> None:
     """19c and 21c included: they refuse a 31st byte exactly as 11.2 does, and
-    the 12.2 floor told them they accepted 128 (#595)."""
+    a floor at 12.2 would tell them they accept 128."""
     limit = resolve(_Cursor({CHARSET_QUERY: ("AL32UTF8",)}), version)
 
     admissible(Secret("a" * LEGACY_MAX_BYTES), limit)

@@ -93,12 +93,11 @@ def test_the_capability_table_was_actually_found() -> None:
     Without this, a reformatted document turns the test below into a comparison
     of two empty sets -- green, and checking nothing.
 
-    A named row rather than a count. The count was ``>= 8`` and had to be edited
-    the first time the vocabulary shrank (#195 removed ``container_scope``),
-    which makes the guard something a reader has to keep in step with the thing
-    it guards -- and a guard that gets adjusted to fit is not guarding. A row
-    that must be in any table worth calling P1's does the same job and needs no
-    maintenance.
+    A named row rather than a count. A count has to be edited whenever the
+    vocabulary shrinks, which makes the guard something a reader has to keep in
+    step with the thing it guards -- and a guard that gets adjusted to fit is not
+    guarding. A row that must be in any table worth calling P1's does the same
+    job and needs no maintenance.
     """
     assert "password_rollover" in _documented_capabilities()
 
@@ -181,8 +180,8 @@ def test_authentication_failure_exits_six() -> None:
 
 
 def test_a_vendor_code_survives_onto_the_error() -> None:
-    """CLAUDE.md: never swallow an ORA- code. #172 does the mapping; this is
-    that there is somewhere for the answer to go."""
+    """CLAUDE.md: never swallow an ORA- code. The driver does the mapping; this
+    is that there is somewhere for the answer to go."""
     error = DriverError("invalid credentials", code="ORA-01017", hint="check the vault")
 
     assert error.code == "ORA-01017"
@@ -205,9 +204,9 @@ def test_the_callers_hint_reaches_the_refusal() -> None:
 
     `require_capability` cannot write one -- what replaces an absent capability
     depends on which capability it was -- so the caller supplies it and this is
-    the wire it travels on. Added for #381, where the 18c refusal was correct,
-    carried the category and the capability, and told an operator nothing about
-    which of `--strategy`'s three values the release could still serve.
+    the wire it travels on. Without it, the refusal on 18c is correct, carries
+    the category and the capability, and tells an operator nothing about which
+    of `--strategy`'s three values the release could still serve.
     """
     without = Scope(type="pdb", capabilities=frozenset())
 
@@ -377,11 +376,11 @@ def test_a_missing_account_is_none_rather_than_an_error() -> None:
 def test_the_no_vendor_client_property_lives_in_the_install_shape_test() -> None:
     """ADR-006 rule 3, pointed at the test that can actually hold it.
 
-    This asserted ``"oracledb" not in sys.modules`` until #174, which was never
-    the claim it appeared to be: it measured whether *anything in the process*
-    had imported the client, so it passed by luck until a tier-1 fixture
-    legitimately imported one, and would have gone on passing if this module
-    grew a vendor import that some earlier test happened to trigger first.
+    Asserting ``"oracledb" not in sys.modules`` here would not be the claim
+    it appears to be: it measures whether *anything in the process* had imported
+    the client, so it would pass by luck until a tier-1 fixture legitimately
+    imported one, and would go on passing if this module grew a vendor import
+    that some earlier test happened to trigger first.
 
     ``tests/store/test_install_shape.py`` is the real form and is strictly
     stronger: a subprocess with every client blocked at the import system, then

@@ -1,4 +1,4 @@
-"""Reading an account's state (#178). Tier 0.
+"""Reading an account's state. Tier 0.
 
 The mapping from Oracle's dictionary onto `UserState` is pure, so it is tested
 here. Every literal in this file — the compound `ACCOUNT_STATUS` strings, the
@@ -39,7 +39,7 @@ from sopuli.driver.protocol import DriverError
 
 CHANGED = datetime(2026, 8, 22, 10, 41, 36)
 
-#: `EXPIRY_DATE`, which both queries select last (#309). Naive, as `oracledb`
+#: `EXPIRY_DATE`, which both queries select last. Naive, as `oracledb`
 #: hands back an Oracle `DATE` -- the point of the fixture is that the driver
 #: meets one, not that a test can build an aware datetime.
 EXPIRES = datetime(2026, 9, 21, 10, 41, 36)
@@ -134,7 +134,7 @@ def test_a_healthy_account_is_neither_locked_nor_expired() -> None:
         ("EXPIRED", False, True, False, False),
         ("EXPIRED & IN ROLLOVER", False, True, False, True),
         ("EXPIRED & LOCKED & IN ROLLOVER", True, True, False, True),
-        # The three grace forms, all measured 2026-09-02 (#309). `expired` is
+        # The three grace forms, all measured on 23.26.2.0.0. `expired` is
         # False in every one of them: the password still authenticates.
         ("EXPIRED(GRACE)", False, False, True, False),
         ("EXPIRED(GRACE) & LOCKED", True, False, True, False),
@@ -148,7 +148,7 @@ def test_the_status_is_read_as_tokens_not_as_a_value(
 
     Every combination above was produced on 26ai -- the first eight by locking,
     expiring and rotating one account in turn, the three grace forms by a profile
-    with a one-minute `PASSWORD_LIFE_TIME` (#309). Comparing the column to a value
+    with a one-minute `PASSWORD_LIFE_TIME`. Comparing the column to a value
     rather than reading tokens out of it would report
     `EXPIRED & LOCKED & IN ROLLOVER` as none of the three.
 
@@ -202,11 +202,10 @@ def test_the_status_is_reported_verbatim_as_well_as_parsed() -> None:
 def test_an_open_rollover_window_reports_a_derived_end_date() -> None:
     """The dictionary says a window is open and never when it closes.
 
-    #178 left this `None` rather than present an inference as a reading. #181
-    reversed it, after searching `DBA_*` and the `V$` views and finding no column
-    that exposes the end: the choice is between Oracle's own documented
-    arithmetic over two values that *were* read and telling an operator nothing
-    about their deadline. It is the one computed field in `UserState`.
+    No column in `DBA_*` or the `V$` views exposes the end, so the choice is between
+    Oracle's own documented arithmetic over two values that *were* read and telling
+    an operator nothing about their deadline. It is the one computed field in
+    `UserState`.
     """
     state = describe(
         _cursor(
@@ -249,10 +248,10 @@ def test_a_missing_account_is_a_state_and_not_an_error() -> None:
 def test_an_unreadable_dba_users_is_a_missing_grant_and_not_a_missing_account(
     code: str,
 ) -> None:
-    """#521. The probes' `read()` turned these into `None`, and `None` here is
-    `ACCOUNT_MISSING` -- so a service account without the grant reported every
-    account in the estate as absent, and the operator went looking for accounts
-    rather than for a grant."""
+    """The probes' `read()` would turn these into `None`, and `None` here is
+    `ACCOUNT_MISSING` -- so a service account without the grant would report every
+    account in the estate as absent, and the operator would go looking for
+    accounts rather than for a grant."""
     cursor = _Cursor({USER_QUERY: _ora(code, 'table or view "SYS"."DBA_USERS" does not exist')})
 
     with pytest.raises(DictionaryUnreadableError) as raised:
@@ -324,8 +323,8 @@ def test_resolving_a_name_the_database_has_not_got_is_none() -> None:
 def test_resolving_a_predicate_without_the_grant_raises(
     resolve: Any, query: str, view: str
 ) -> None:
-    """#531. Read through the probes' rule, an ungranted view was "no such role",
-    and the predicate was refused as a misspelling."""
+    """Read through the probes' rule, an ungranted view would be "no such role",
+    and the predicate would be refused as a misspelling (decision #531)."""
     with pytest.raises(DictionaryUnreadableError) as raised:
         resolve(_Cursor({query: _ora("ORA-00942")}), "acme_dev_team")
 
@@ -345,7 +344,7 @@ def test_a_predicate_naming_nothing_is_none(resolve: Any, query: str) -> None:
 
 
 def test_the_name_is_the_spelling_the_database_gave_back() -> None:
-    """#171 puts this in the statement, never the raw string from config."""
+    """The statement uses this spelling, never the raw string from config."""
     state = describe(_cursor(), "acme_orders_user")
 
     assert state is not None
@@ -374,7 +373,7 @@ def test_the_effective_failed_login_limit_is_reported() -> None:
 
 def test_an_unlimited_limit_is_carried_as_the_word() -> None:
     """`UNLIMITED` is a legitimate effective value and is not a number. The field
-    is a string for that reason, and #180's lockout guard has to read it as one."""
+    is a string for that reason, and the lockout guard has to read it as one."""
     state = describe(_cursor(limits=[("FAILED_LOGIN_ATTEMPTS", "UNLIMITED")]), "acme_orders_user")
 
     assert state is not None
@@ -399,7 +398,7 @@ def test_a_release_without_password_change_date_falls_back(  # noqa: D401
     Invariant 3 in the small: the query is its own probe, so no capability and no
     version test is needed to find out.
 
-    **This is 18c's shape, not 11.2's**, and the distinction is the point (#381).
+    **This is 18c's shape, not 11.2's**, and the distinction is the point.
     18c refuses `PASSWORD_CHANGE_DATE` and answers `ORACLE_MAINTAINED` perfectly
     well, so narrowing to the legacy query here would give up a guardrail input
     the release can supply. The next test is 11.2, which has neither.
@@ -440,9 +439,7 @@ def test_a_missing_oracle_maintained_column_is_none_and_not_false() -> None:
     vendor-maintained" would switch off the fallback that exists for 11.2.
 
     11.2 refuses both columns, so both queries above it are `ORA-00904` and the
-    legacy shape answers with `NULL` in each position. Until #381 this was the
-    *only* row that produced `None` here on purpose, and 18c produced it by
-    accident on the same path.
+    legacy shape answers with `NULL` in each position.
     """
     cursor = _Cursor(
         {
@@ -478,7 +475,7 @@ def test_a_password_change_date_is_carried_where_the_release_has_one() -> None:
     assert state.password_changed_unknown is None
 
 
-# ------------------------------------------------ the PTIME fallback (#386) ---
+# --------------------------------------- the PTIME fallback (decision #386) ---
 
 #: What `SYS.USER$.PTIME` answers, deliberately a different moment from
 #: :data:`CHANGED` so a test can tell which source a value came from.
@@ -507,7 +504,7 @@ def _no_change_date(**answers: Any) -> _Cursor:
 
 
 def test_a_release_without_the_column_reads_ptime_where_the_grant_exists() -> None:
-    """#386, option 2: 18c and 11.2 report what 19c+ report, when they can."""
+    """Decision #386: 18c and 11.2 report what 19c+ report, when they can."""
     cursor = _no_change_date(**{PTIME_QUERY: (PTIME,)})
 
     state = describe(cursor, "acme_orders_user", user_dollar=True)
@@ -538,7 +535,7 @@ def test_the_legacy_shape_falls_back_too() -> None:
 
 def test_ptime_is_never_read_where_the_column_exists() -> None:
     """**One source per release**, which is what keeps a second source from
-    becoming a second opinion (#383's lesson). Asserted with the grant declared,
+    becoming a second opinion (decision #386). Asserted with the grant declared,
     because that is the case where reading both would be possible."""
     cursor = _cursor(changed=CHANGED)
     cursor.answers[PTIME_QUERY] = (PTIME,)
@@ -582,7 +579,7 @@ def test_an_unreadable_sys_user_dollar_says_so_rather_than_naming_the_grant() ->
 def test_a_ptime_read_that_is_not_an_enumerated_negative_raises() -> None:
     """`capabilities.read`'s rule, one level down: only the codes that mean *no*
     become `None`. Anything else is a question that should not have been asked,
-    and a plausible "unknown" in its place is #195's failure."""
+    and a plausible "unknown" in its place is the failure decision #195 records."""
     cursor = _no_change_date(**{PTIME_QUERY: _ora("ORA-00600", "internal error")})
 
     with pytest.raises(Exception, match="ORA-00600"):
@@ -617,7 +614,7 @@ def test_the_roles_query_traverses_roles_held_through_other_roles() -> None:
 
 def test_the_effective_limits_are_all_carried_rather_than_only_the_lockout_one() -> None:
     """One query resolves every password resource, so discarding the rest would
-    force #181 and UC-1 §4's bounded regeneration into a second, uncoordinated
+    force the rollover profile check and UC-1 §4's bounded regeneration into a second, uncoordinated
     read of the same profile."""
     state = describe(
         _cursor(
@@ -661,7 +658,7 @@ def test_unreadable_roles_are_refused_rather_than_reported_as_none_held() -> Non
     not read it. An empty set means *this account holds no admin role* and reads
     as a pass, so a missing grant would have turned guardrail 4 into a silent
     success — the same shape as a capability probe that could not be answered
-    reporting absent (#195).
+    reporting absent (decision #195).
     """
     cursor = _cursor()
     cursor.answers[ROLES_QUERY] = _ora("ORA-00942", 'table or view "SYS"."DBA_ROLE_PRIVS"')
@@ -670,13 +667,14 @@ def test_unreadable_roles_are_refused_rather_than_reported_as_none_held() -> Non
         describe(cursor, "acme_orders_user")
 
     assert "DBA_ROLE_PRIVS" in (raised.value.hint or "")
-    assert raised.value.code == "ORA-00942", "the server's code is carried (#521)"
+    assert raised.value.code == "ORA-00942", "the server's code is carried"
     assert "DBA_ROLE_PRIVS" in raised.value.message, "and so is its message"
 
 
 def test_a_role_read_failing_for_another_reason_does_not_prescribe_a_grant() -> None:
-    """#521. The grant hint was attached to every failure, so a dropped
-    connection told the operator to `GRANT SELECT ON SYS.DBA_ROLE_PRIVS`."""
+    """The grant hint goes only with the codes that mean a missing grant. On
+    every failure, it would tell the operator of a dropped connection to
+    `GRANT SELECT ON SYS.DBA_ROLE_PRIVS`."""
     cursor = _cursor()
     cursor.answers[ROLES_QUERY] = _ora("ORA-03113", "end-of-file on communication channel")
 
@@ -689,8 +687,8 @@ def test_a_role_read_failing_for_another_reason_does_not_prescribe_a_grant() -> 
 
 
 def test_roles_are_read_on_every_describe_rather_than_on_request() -> None:
-    """#178 raised a lazy read, since roles are consulted only before a mutation
-    and `creds status` reads this object for every account in an estate. Refused:
+    """A lazy read is refused, although roles are consulted only before a
+    mutation and `creds status` reads this object for every account in an estate:
     a caller that forgot would get an empty `roles` that reads exactly like an
     account holding none, and a safety check must not depend on a caller
     remembering to enable its input."""
@@ -711,9 +709,9 @@ def test_the_account_name_is_bound_and_never_interpolated() -> None:
 
 # ------------------------------------------------------------- password file ---
 #
-# Guardrail 3's input (#296), and the one dictionary read here that a correctly
+# Guardrail 3's input, and the one dictionary read here that a correctly
 # installed service account is expected to be refused. Every literal below was
-# measured on 26ai Free 23.26.2.0.0 on 2026-09-05 -- see
+# measured on 26ai Free 23.26.2.0.0 -- see
 # `tests/driver/test_oracle_accounts.py` for the tier-1 run that produced them.
 
 
@@ -726,7 +724,7 @@ def test_an_account_outside_the_password_file_is_reported_as_outside_it() -> Non
 
 
 def test_an_ungranted_view_is_none_and_never_false() -> None:
-    """The whole of #296, in one assertion.
+    """Guardrail 3's input, in one assertion.
 
     `V$PWFILE_USERS` is outside `02-oracle-privileges.md` §2's grant set on
     purpose, so a correctly installed service account gets `ORA-00942` from it --
@@ -785,10 +783,10 @@ def test_the_password_file_name_is_bound_unchanged() -> None:
     assert "acme" not in PWFILE_QUERY.lower()
 
 
-# ------------------------------------------------- password constraints (#317) ---
+# -------------------------------------------------------- password constraints ---
 #
 # UC-1 §4 step 2's reporting half. Every literal below was read off 26ai Free
-# 23.26.2.0.0 on 2026-09-04, including the two that look like mistakes: a profile
+# 23.26.2.0.0, including the two that look like mistakes: a profile
 # naming no verify function reports the **string** `NULL`, and a common profile
 # read from inside a PDB reports the string `FROM ROOT`.
 
@@ -819,7 +817,7 @@ def test_the_string_null_is_a_profile_naming_none_and_not_a_function_called_null
 
 
 def test_from_root_is_a_not_knowing_and_never_an_absence() -> None:
-    """The distinction #317 asks for, and the direction that cannot mislead.
+    """The distinction to keep, and the direction that cannot mislead.
 
     A common profile read from inside a PDB answers this. Reporting it as `none`
     would tell an operator that nothing will judge their password when something

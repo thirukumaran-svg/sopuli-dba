@@ -1,4 +1,4 @@
-"""What connecting needs, checked without connecting (#176). Tier 0.
+"""What connecting needs, checked without connecting. Tier 0.
 
 `sopuli/driver/oracle/client.py` imports no vendor client, which is what lets
 this run on the tier-0 matrix where `oracledb` is not installed at all. That is
@@ -180,10 +180,10 @@ def test_linux_names_ld_library_path() -> None:
 
 
 def test_the_drivers_own_diagnosis_survives_into_the_message() -> None:
-    """#184 is the worked example, from this project's own CI: the client was
-    installed, on the path, and still gave DPI-1047 -- because Ubuntu 24.04
-    renamed `libaio.so.1`. A message that replaced that detail with a tidier
-    sentence of ours would have cost another round trip."""
+    """A worked example from this project's own CI: the client was installed, on
+    the path, and still gave DPI-1047 -- because Ubuntu 24.04 renamed
+    `libaio.so.1`. A message that replaced that detail with a tidier sentence of
+    ours would cost another round trip."""
     detail = f"{NO_CLIENT}: libclntsh.so: cannot open shared object file"
 
     error = missing_client(detail, platform="linux")

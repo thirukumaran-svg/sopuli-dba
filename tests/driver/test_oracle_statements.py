@@ -95,7 +95,7 @@ def test_the_statement_is_the_ddl_and_nothing_else() -> None:
 
 
 def test_the_seen_form_appends_password_expire() -> None:
-    """UC-2 §4.1's seen statement (#441). A suffix on this statement, where
+    """UC-2 §4.1's seen statement. A suffix on this statement, where
     closing a rollover window is a separate one -- the clause is part of how the
     password is set, and Oracle spells the other operation separately."""
     assert build(expire=True).reveal() == (
@@ -140,11 +140,11 @@ def test_the_password_is_never_a_bind() -> None:
     parameter for one -- so the assertion that there is nowhere to put it is
     worth more than the assertion that this call did not.
 
-    ``expire`` joined the set with UC-2's seen path (#441) and is pinned here
-    like the rest. It is a **flag rather than a value**: it selects a fixed
-    clause and interpolates nothing, so it adds no place for a bind. The
-    assertion is exact rather than a subset check precisely so that distinction
-    has to be made again by whoever adds the next parameter.
+    ``expire`` belongs to UC-2's seen path and is pinned here like the rest. It
+    is a **flag rather than a value**: it selects a fixed clause and
+    interpolates nothing, so it adds no place for a bind. The assertion is exact
+    rather than a subset check precisely so that distinction has to be made
+    again by whoever adds the next parameter.
     """
     assert not BINDS.search(structure(build().reveal()))
     assert not BINDS.search(structure(build(expire=True).reveal()))
@@ -233,7 +233,8 @@ def test_a_common_user_outside_the_root_is_refused() -> None:
 
 
 def test_an_application_root_is_refused_whatever_the_account_looks_like() -> None:
-    """#204, measured: there is no safe branch to take in an application root.
+    """Measured on 23.26.2.0.0 (`sql/oracle/03_app_container_probe.sql`): there
+    is no safe branch to take in an application root.
 
     Every account there is application-common -- a local one is ``ORA-65049`` --
     and a statement with no container clause is already container-wide, confirmed
@@ -252,7 +253,7 @@ def test_an_application_root_is_refused_whatever_the_account_looks_like() -> Non
 
 
 def test_an_application_pdb_takes_the_ordinary_path() -> None:
-    """The half of #204's refusal that the measurement removed.
+    """The application-root refusal does not extend to an application PDB.
 
     A local account in an application PDB is entirely ordinary -- ``common=NO``,
     a plain ``ALTER USER`` accepted. Refusing the scope would have blocked a
@@ -263,11 +264,11 @@ def test_an_application_pdb_takes_the_ordinary_path() -> None:
 
 
 def test_a_common_name_in_an_application_pdb_is_still_refused() -> None:
-    """Right answer, and now for two reasons.
+    """Right answer, for two reasons.
 
     The common-user branch refuses it because ``CONTAINER=ALL`` is a claim to be
-    in the root. #204 added the second: such an account cannot exist in an
-    application container at all, so a config declaring one is wrong about the
+    in the root. The second: such an account cannot exist in an application
+    container at all, so a config declaring one is wrong about the
     estate rather than about the scope.
     """
     with pytest.raises(ContainerScopeError) as refused:
@@ -282,7 +283,7 @@ def test_an_unresolved_scope_gets_the_conservative_reading_of_each_half() -> Non
     For a common one it is a refusal, and the asymmetry is the point:
     ``CONTAINER=ALL`` is a claim to be in the root, and an unresolved scope is
     exactly not knowing that. Whether such a scope may be acted on at all is the
-    connection's question (#177), one layer earlier than this.
+    connection's question, one layer earlier than this.
     """
     assert container_clause(ACCOUNT, Scope()) == ""
 
@@ -416,7 +417,7 @@ def test_an_identifier_is_quoted_and_printable() -> None:
 
 
 def test_the_lock_is_the_ddl_and_nothing_else() -> None:
-    """UC-2's offboarding verb (#463), and the write half of `unlock_account`."""
+    """UC-2's offboarding verb, and the write half of `unlock_account`."""
     assert lock_account(ACCOUNT, scope=PDB).reveal() == 'ALTER USER "ACME_WEB_USER" ACCOUNT LOCK'
 
 
@@ -449,7 +450,7 @@ def test_the_lock_takes_the_same_container_clause_as_the_password() -> None:
 
 
 def test_the_expiry_is_the_bare_ddl_and_nothing_else() -> None:
-    """`account expire-password` (#525): no `IDENTIFIED BY`, so no password at all."""
+    """`account expire-password` (decision #525): no `IDENTIFIED BY`, so no password at all."""
     assert (
         expire_password(ACCOUNT, scope=PDB).reveal() == 'ALTER USER "ACME_WEB_USER" PASSWORD EXPIRE'
     )
@@ -484,7 +485,7 @@ def test_the_expiry_takes_the_container_clause_last() -> None:
 
 
 def test_the_unlock_is_the_ddl_and_nothing_else() -> None:
-    """UC-1 §5's first attribute (#300). One statement, both kinds of lock."""
+    """UC-1 §5's first attribute. One statement, both kinds of lock."""
     assert (
         unlock_account(ACCOUNT, scope=PDB).reveal() == 'ALTER USER "ACME_WEB_USER" ACCOUNT UNLOCK'
     )
@@ -526,7 +527,7 @@ PROFILE = Identifier("ACME_APP_PROF")
 
 
 def test_the_profile_assignment_is_the_ddl_and_nothing_else() -> None:
-    """UC-1 §5's second attribute (#301)."""
+    """UC-1 §5's second attribute (decision #301)."""
     statement = alter_user_profile(ACCOUNT, PROFILE, scope=PDB)
 
     assert statement.reveal() == 'ALTER USER "ACME_WEB_USER" PROFILE "ACME_APP_PROF"'
@@ -555,7 +556,7 @@ def test_the_profile_assignment_takes_the_container_clause() -> None:
 
 
 def test_the_assignment_alters_the_user_and_never_the_profile() -> None:
-    """Q4 (#88) in the one line that can be asserted: the statement's object is
+    """Q4 in the one line that can be asserted: the statement's object is
     the account, not the shared profile. `ALTER PROFILE` would reach accounts
     nobody selected, and there is no function in this module that builds one."""
     sql = alter_user_profile(ACCOUNT, PROFILE, scope=PDB).reveal()

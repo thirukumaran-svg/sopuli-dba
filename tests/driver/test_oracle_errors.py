@@ -2,7 +2,7 @@
 
 Tier 0: a code and a message are two strings, so none of this needs a database.
 What the tier-1 work adds later is the assurance that a real server really does
-send these codes in these situations (#179, #180) -- not what they mean, which is
+send these codes in these situations -- not what they mean, which is
 decided here.
 """
 
@@ -207,7 +207,7 @@ def test_a_container_misuse_is_a_config_problem_on_exit_nine() -> None:
 
 
 def test_an_application_common_account_says_where_to_rotate_it_instead() -> None:
-    """``ORA-65066`` became reachable when #204 stopped refusing ``app_pdb``.
+    """``ORA-65066`` is reachable because ``app_pdb`` is not refused up front.
 
     An application-common account in an application PDB is refused by Oracle
     itself, measured both ways: this code with no container clause and
@@ -256,7 +256,7 @@ def test_the_client_library_is_a_local_problem_the_reader_can_fix() -> None:
 
 
 def test_the_thin_mode_hint_gives_the_reasons_and_does_not_blame_oci() -> None:
-    """D3 has three reasons and the hint names all three (#574).
+    """D3 has three reasons and the hint names all three.
 
     What it must not say is that OCI-hosted databases require Native Network
     Encryption: an Autonomous Database uses TLS, and the operator most likely to
@@ -320,9 +320,10 @@ def test_a_mapped_error_carries_the_rows_own_category_and_exit() -> None:
 
 
 def test_a_mapped_error_carries_regenerate_where_the_row_sets_it() -> None:
-    """#312's seam. `sopuli.apply` is vendor-neutral and must not import this
-    module to learn that Oracle refused a password, so the answer this row
-    already computes travels on the exception `DriverError` declares it on."""
+    """The seam for `creds apply`'s redraw. `sopuli.apply` is vendor-neutral and
+    must not import this module to learn that Oracle refused a password, so the
+    answer this row already computes travels on the exception `DriverError`
+    declares it on."""
     assert classify("ORA-28003", "…").as_error().regenerate is True
     assert classify("ORA-28007", "…").as_error().regenerate is True
 

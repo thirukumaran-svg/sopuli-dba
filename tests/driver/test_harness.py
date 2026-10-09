@@ -5,10 +5,9 @@ database — and they are the parts that would otherwise only be exercised on a
 machine with containers running, which is the machine least likely to notice they
 were wrong.
 
-**What to ask is no longer here.** The probe set and the reading of an answer
-belong to the driver and are tested beside it in `test_capabilities.py`; the
-harness imports them rather than keeping a copy, which is #195's finding turned
-into an arrangement where the two cannot disagree again.
+**What to ask is not here.** The probe set and the reading of an answer belong
+to the driver and are tested beside it in `test_capabilities.py`; the harness
+imports them rather than keeping a copy, so the two cannot disagree.
 """
 
 from __future__ import annotations
@@ -90,9 +89,9 @@ def test_no_environment_at_all_is_an_environment_skip() -> None:
     ],
 )
 def test_the_byte_limit_follows_the_version(version: str, expected: int) -> None:
-    """30 below 23, 128 from 23 (#595). No dictionary view states it, and #171
-    makes it a required argument -- so a tier-1 test cannot build a statement
-    without knowing it."""
+    """30 below 23, 128 from 23. No dictionary view states it, and the statement
+    builder takes it as a required argument -- so a tier-1 test cannot build a
+    statement without knowing it."""
     assert environment(version=version).max_password_bytes == expected
 
 

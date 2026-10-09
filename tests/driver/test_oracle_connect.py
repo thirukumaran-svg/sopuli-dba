@@ -1,11 +1,11 @@
-"""Connecting, against a real Oracle (#176). Tier 1.
+"""Connecting, against a real Oracle. Tier 1.
 
 The first tests in this project that open a socket to a database. Everything
 about *what* to send is tier 0 (`test_oracle_client.py`); what is left is the
 half only a real server can answer:
 
 * thick mode actually initialises against the installed Instant Client;
-* the credential #175 resolved actually authenticates;
+* the resolved credential actually authenticates;
 * `DBMS_SESSION.SET_IDENTIFIER` actually lands where §5 says it does. That one
   is the reason this file exists rather than a mock: the whole value of the call
   is that a *third party* — the audit trail — can see it, and nothing but the
@@ -37,8 +37,8 @@ PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 #: Oracle counts failed logins per account and locks at the profile's
 #: `FAILED_LOGIN_ATTEMPTS`, so a test that authenticates badly as `system` walks
 #: the shared account toward a lockout every time it runs — and the tenth run
-#: takes the tier-1 environment down for everything else. #176's review caught
-#: it, and it is the same hazard `04-testing.md` §5 makes a release gate of:
+#: takes the tier-1 environment down for everything else. It is the same hazard
+#: `04-testing.md` §5 makes a release gate of:
 #: *a tool that locks production accounts while checking them is worse than no
 #: tool*, which applies to the suite before it applies to the tool.
 #:
@@ -131,7 +131,7 @@ def test_the_correlation_id_is_on_the_session(
 def test_a_wrong_password_is_an_authentication_failure_and_not_a_traceback(
     live_oracle: Environment, session_module: Any
 ) -> None:
-    """ORA-01017, mapped by #172 rather than swallowed: the code survives, the
+    """ORA-01017, mapped rather than swallowed: the code survives, the
     server's own wording survives, and the exit code is 6 — the same one the
     vault side uses, so a scheduler need not know which half of the run could
     not authenticate.
@@ -154,13 +154,12 @@ def test_a_wrong_password_is_an_authentication_failure_and_not_a_traceback(
 def test_the_client_version_is_available_without_a_database(
     oracle_client: None, session_module: Any
 ) -> None:
-    """What this issue owes #182 (P4): a 23.x client reaches 19c and later, so
-    `doctor` can say a target is out of reach *before* anybody waits on a
-    connection that cannot succeed.
+    """A 23.x client reaches 19c and later (P4), so `doctor` can say a target is
+    out of reach *before* anybody waits on a connection that cannot succeed.
 
-    Takes `oracle_client`, which initialises thick mode and nothing else. The
-    first draft took `live_oracle` — which connects — so a test named "without a
-    database" needed one, and could not have told you whether the offline path
+    Takes `oracle_client`, which initialises thick mode and nothing else. Taking
+    `live_oracle` — which connects — would mean a test named "without a
+    database" needed one, and could not tell you whether the offline path
     worked at all.
     """
     version = session_module.client_version()
@@ -265,9 +264,9 @@ def test_a_session_that_cannot_be_labelled_is_closed(
         driving.connect(target("localhost:1521/NOWHERE"), credential())
 
     assert connection.closed, "a session that cannot be labelled must not be handed back"
-    # A `DriverError` rather than the vendor exception: #172 maps it, keeping the
-    # ORA- code and the server's wording, so a caller sees the same shape here as
-    # for every other database failure.
+    # A `DriverError` rather than the vendor exception: the driver maps it, keeping
+    # the ORA- code and the server's wording, so a caller sees the same shape here
+    # as for every other database failure.
     assert raised.value.code == "ORA-00942"
 
 

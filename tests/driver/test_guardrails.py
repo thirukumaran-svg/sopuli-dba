@@ -126,7 +126,7 @@ def test_the_deny_list_is_not_consulted_where_the_flag_says_no() -> None:
 
 
 def test_force_clears_the_overridable_checks() -> None:
-    """#89's case: rotating `DBSNMP` is ordinary DBA work, and it is
+    """Decision P3's case: rotating `DBSNMP` is ordinary DBA work, and it is
     `ORACLE_MAINTAINED`. A tool with no override does not prevent that rotation
     -- it moves it to SQL*Plus, where nothing records it."""
     reviewed = review(account("dbsnmp", vendor_maintained=True), declared=DECLARED_SET, force=True)
@@ -136,7 +136,7 @@ def test_force_clears_the_overridable_checks() -> None:
 
 
 def test_force_never_reaches_the_whitelist() -> None:
-    """The half of #89 that is invariant 5: two deliberate acts, not one.
+    """The half of decision P3 that is invariant 5: two deliberate acts, not one.
 
     `--force` alone will not rotate an account the file does not name, which is
     what keeps "unusual account, deliberately managed" distinguishable from
@@ -177,13 +177,13 @@ def test_nothing_is_overridden_when_force_was_not_asked_for() -> None:
 
 @pytest.mark.parametrize("check", [VENDOR_MAINTAINED, PASSWORD_FILE, PRIVILEGED_ROLE, DENY_LIST])
 def test_every_check_but_the_first_is_overridable(check: str) -> None:
-    """#89 delimited the flag to checks 2-5. Asserted per check rather than in
+    """The flag covers checks 2-5 only. Asserted per check rather than in
     prose, so a sixth guardrail has to choose a side deliberately."""
     assert Refusal(check, "ACME_WEB_USER", "…").overridable
     assert not Refusal(DECLARED, "ACME_WEB_USER", "…").overridable
 
 
-# ---------------------------------------------- the third answer (#296, §4.3) ---
+# -------------------------------------------------- the third answer (§4.3) ---
 #
 # Refused, permitted, or *could not establish*. Check 3 is the only one that can
 # produce the third today, and it produces it on essentially every estate:
@@ -191,14 +191,12 @@ def test_every_check_but_the_first_is_overridable(check: str) -> None:
 
 
 def test_an_unreadable_password_file_is_a_caveat_and_never_a_pass() -> None:
-    """The bug #296 reported, from the other end.
+    """Guardrail 3's input is `None` when the view cannot be read.
 
-    `password_file_member` was `None` for every account on every path, and
-    `if state.password_file_member:` read that as *not a member*. So check 3 had
-    never fired and could not. The fix is not that it now refuses -- it must not,
-    or a correctly installed estate could apply nothing -- but that the
-    not-knowing is reported instead of being indistinguishable from a clean
-    account.
+    `if state.password_file_member:` would read `None` as *not a member*, and
+    check 3 would never fire. Check 3 does not refuse on `None` -- it must not,
+    or a correctly installed estate could apply nothing -- but the not-knowing is
+    reported instead of being indistinguishable from a clean account.
     """
     reviewed = review(account(password_file_member=None), declared=DECLARED_SET)
 

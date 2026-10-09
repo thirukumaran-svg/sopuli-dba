@@ -72,7 +72,7 @@ PRESENT = DatabaseDriver(
 )
 
 #: The module is here and the client is not: `pip` fixes it, and the message says
-#: so. What every one of these warnings looked like before #238.
+#: so.
 CLIENT_MISSING = DatabaseDriver(
     module="sopuli.driver.oracle.session", extra="oracle", provides=frozenset({"no_such_client"})
 )
@@ -88,7 +88,7 @@ NO_MODULE = DatabaseDriver(
 def warnings(driver: DatabaseDriver, targets: int = 1) -> list[Diagnostic]:
     """What `config validate` says about ``targets`` targets served by ``driver``.
 
-    Through the survey and :func:`install_diagnostics`, which since #238 is the
+    Through the survey and :func:`install_diagnostics`, which is the
     only thing that answers "can this machine serve it" -- `doctor` reads the
     same function at ``level="error"``. The registries are injected for the
     reason :func:`~sopuli.install_shape.survey` takes them at all: the states
@@ -234,7 +234,7 @@ def test_one_target_is_named_rather_than_counted() -> None:
 
 
 def test_an_unwritten_driver_is_not_sent_to_pip() -> None:
-    """The store side's #238 defect, on the driver side before it can happen.
+    """A driver with no module is not sent to `pip`.
 
     Unreachable from the real table -- ``DRIVERS`` has one entry and its module
     exists -- and asserted anyway, because the day somebody adds ``postgresql``
@@ -250,13 +250,12 @@ def test_an_unwritten_driver_is_not_sent_to_pip() -> None:
 
 
 def test_the_warning_is_a_warning_here_and_an_error_in_doctor() -> None:
-    """One fact, two judgements of what it is worth (#238).
+    """One fact, two judgements of what it is worth.
 
     `config validate` says the file is fine and this machine is not; `doctor`
     says it cannot reach the estate and exits 9. Both read the same survey
     through the same function, so the sentence cannot drift between them --
-    which is the whole point of deleting the pair that used to compute it
-    separately.
+    which is why one function computes it rather than one per command.
     """
     config = Config(version=1, expanded_targets=(generated("pdb-0"),))
     shape = survey(config, backends={}, drivers={"oracle": NO_MODULE})
@@ -296,12 +295,12 @@ STUB_CLIENT = """import os, pathlib
 pathlib.Path(os.environ["SOPULI_IMPORT_MARKER"]).write_text("imported", encoding="utf-8")
 """
 
-#: Run in a subprocess because the claim is about a *process* (#506). Asserting
-#: ``"oracledb" not in sys.modules`` inside this session asserted it about a
+#: Run in a subprocess because the claim is about a *process*. Asserting
+#: ``"oracledb" not in sys.modules`` inside this session would assert it about a
 #: session that has already imported whatever the tests before it imported --
-#: and `pytest-randomly` decides what those were. The suite was green because
+#: and `pytest-randomly` decides what those were. The suite would pass while
 #: ``test_driver_registry`` sorts before ``test_oracle_*``, and any seed that
-#: moved one Oracle module earlier reddened it: the driver fixtures
+#: moved one Oracle module earlier would redden it: the driver fixtures
 #: ``importorskip`` ``sopuli.driver.oracle.session``, which imports `oracledb` at
 #: module scope on purpose (rule 1). One subprocess, and the guard is true rather
 #: than order-dependent.
@@ -372,7 +371,7 @@ def test_the_probe_is_looking_at_a_client_it_could_have_imported(tmp_path: Path)
 
 
 def test_asking_never_reaches_the_import_machinery(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The same rule as a property of the call, asserted in-session (#506).
+    """The same rule as a property of the call, asserted in-session.
 
     Weaker than the subprocess -- it says *this function* does not import, not
     that nothing did -- and it is here because it is the one that fails
