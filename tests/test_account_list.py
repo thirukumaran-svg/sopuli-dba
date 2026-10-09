@@ -266,9 +266,9 @@ def test_the_summary_counts_what_exists_and_changes_nothing() -> None:
 
 # ------------------------------------- a target that could not be answered ---
 #
-# Both of these exist because Copilot's review of #493 found the first draft
-# reporting a down target as `ACCOUNT_MISSING` -- a connectivity failure stated
-# as a fact about an estate, with nothing in `results[]` to tell them apart.
+# Both of these pin that a down target is not reported as `ACCOUNT_MISSING`,
+# which would state a connectivity failure as a fact about an estate, with
+# nothing in `results[]` to tell the two apart.
 
 
 def unreachable() -> Row:
@@ -323,9 +323,9 @@ def test_a_failed_target_is_not_counted_as_a_declared_account() -> None:
 
 
 def test_the_reset_at_column_is_read_from_the_journal() -> None:
-    """The second half of Copilot's review of #493: `reset_at` was on the model
-    and in the schema and nothing ever populated it, so a documented column was
-    permanently `-` even where a journal existed and held a record."""
+    """`reset_at` is on the model and in the schema, so something must populate
+    it. Otherwise a documented column would be permanently `-`, even where a
+    journal existed and held a record."""
     from sopuli.cli import _reset_at
     from sopuli.store import MemoryStore
 

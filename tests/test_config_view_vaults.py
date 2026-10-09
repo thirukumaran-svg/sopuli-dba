@@ -1,12 +1,12 @@
-"""A store's settings in `--explain` and in `config.vaults[]` (#428).
+"""A store's settings in `--explain` and in `config.vaults[]` (decision #428).
 
-`config show` reported **which** key a layer wrote and never **which layer**.
-Three different layers redirecting `addr` produced one indistinguishable
-`layered: addr` in the `NOTE` column, a profile's block and `defaults.vaults:`
-produced the same line, and the JSON said less again: `--explain` emitted
-`config.declared`, which is the address the *file* wrote, and `--resolved`
-dropped stores entirely. So no mode of the command answered "which vault will
-this run talk to", let alone "why".
+`config show` reports **which layer** wrote a key, not only which key. Without
+that, three different layers redirecting `addr` would produce one
+indistinguishable `layered: addr` in the `NOTE` column, and a profile's block
+and `defaults.vaults:` would produce the same line. The JSON has to say more
+again: the effective settings of each store, not only the address the *file*
+wrote, and in `--resolved` as well as `--explain`. Otherwise no mode of the
+command would answer "which vault will this run talk to", let alone "why".
 
 Tier 0: a document in, rendered lines and a JSON dict out.
 
@@ -240,10 +240,11 @@ def test_auth_gets_no_row() -> None:
 
 
 def test_the_effective_settings_reach_json_in_both_shapes() -> None:
-    """The half of #428 that was not a provenance question at all: `--explain`
-    emitted `config.declared`, the address the *file* wrote, and `--resolved`
-    emitted targets and bindings with no store among them. A consumer could not
-    ask which vault a run would use, under any layer."""
+    """The half that is not a provenance question at all: `config.vaults[]`
+    carries the effective settings beside `config.declared` (the address the
+    *file* wrote), and `--resolved` carries the stores as well as targets and
+    bindings. Otherwise a
+    consumer could not ask which vault a run would use, under any layer."""
     for resolved in (False, True):
         [store] = json_vaults(built(vault_addr="https://standby.example.com"), resolved=resolved)
 
@@ -301,7 +302,7 @@ def test_the_ratcheted_key_reports_the_value_that_held() -> None:
     """Not the one the highest layer asked for. A contract carrying
     `verify: false` for a connection the tool then verifies would be the lie this
     section was added to remove -- the same argument `config.targets[].safety`
-    makes about a flattened `readonly` (#426)."""
+    makes about a flattened `readonly` (decision #426)."""
     [store] = json_vaults(
         built(
             {"tls": {"verify": True}},

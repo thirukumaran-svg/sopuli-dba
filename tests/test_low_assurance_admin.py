@@ -1,17 +1,16 @@
-"""The `env` admin source is flagged where it is reported (#477). Tier 0.
+"""The `env` admin source is flagged where it is reported. Tier 0.
 
-`Resolved.low_assurance` has been computed since #175 and read by nothing, so P2's
-"supported, and flagged low-assurance in output" — which §3a repeats twice — was
-true of the property and false of every run. `grep -rn "low_assurance"` over the
-CLI and the output layer returned nothing.
+P2 says the `env` source is "supported, and flagged low-assurance in output",
+and §3a repeats it twice. Computing `Resolved.low_assurance` is not enough,
+because the property is true of the source and the claim has to be true of every
+run.
 
-Two levels, because the bug lived between them:
+Two levels, because the claim can fail between them:
 
 * `admin_diagnostics` decides *what a flagged source looks like in a document*,
   and is asked here without a command-line runner;
-* the commands have to actually ask it. That is the half that was missing, and a
-  unit test of the property cannot see it — which is exactly why the property
-  being well covered did not help.
+* the commands have to actually ask it. A unit test of the property cannot see
+  that half, so covering the property well does not help.
 
 The estates below use a fake driver: what is under test is what the run *says*
 about a credential, which does not require a database to have accepted one.
@@ -94,7 +93,7 @@ def test_the_environment_source_is_flagged() -> None:
 
 
 def test_the_message_names_the_variable_and_not_the_method() -> None:
-    """`Resolved.source` is the half an operator acts on (#477).
+    """`Resolved.source` is the half an operator acts on.
 
     "the env method" sends nobody anywhere. The variable's name is what they
     grep their CI definitions for.
@@ -116,12 +115,11 @@ def test_the_flag_follows_assurance_rather_than_the_method_name(
 ) -> None:
     """The set is the contract, so a second such source needs no new call site.
 
-    **A synthetic second member, because today there is only one.** With
+    **A synthetic second member, because there is only one.** With
     `LOW_ASSURANCE == {ENV}` every assertion about `env` is also an assertion
     about the string "env", so an implementation asking `method == ENV` passes
-    the whole of the rest of this file. The first version of this test asserted
-    the set's contents and then looped over it, which proved nothing at all and
-    said in its own docstring that it did -- Copilot caught that reviewing #484.
+    the whole of the rest of this file. Asserting the set's contents and then
+    looping over it would prove nothing at all.
 
     Putting an imaginary method in the set and asserting it is *reported* is the
     only form that fails for the coupling being wrong, because no implementation
@@ -203,7 +201,7 @@ def _diagnostics(result: Result) -> list[dict[str, Any]]:
 def test_doctor_reports_it_in_the_document(
     runner: CliRunner, write_config: WriteConfig, estate: Callable[[], None]
 ) -> None:
-    """#477's repro: the target connected and the document said nothing."""
+    """The target connected, and the document must still flag the source."""
     estate()
     config = write_config(ENV_TARGET)
 
@@ -221,7 +219,7 @@ def test_doctor_reports_it_in_the_document(
 def test_doctor_prints_it_too(
     runner: CliRunner, write_config: WriteConfig, estate: Callable[[], None]
 ) -> None:
-    """P2 asks for it *in output*, and text is the default output (#309's rule).
+    """P2 asks for it *in output*, and text is the default output.
 
     A warning that exists only under `--output json` is reported to nobody who
     ran the command by hand, which is most of the people this one is for.

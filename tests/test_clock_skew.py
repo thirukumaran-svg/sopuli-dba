@@ -1,4 +1,4 @@
-"""How far a remote clock is from this one, and when that is worth saying (#216).
+"""How far a remote clock is from this one, and when that is worth saying.
 
 Tier 0, and pure: :func:`~sopuli.clock.measure_skew` takes both moments and the
 round trip as arguments, so every case below is arithmetic rather than a machine
@@ -45,9 +45,9 @@ def test_a_server_behind_this_host_reads_negative_and_still_trips() -> None:
     """Both directions are hazards, and only one of them is intuitive.
 
     A vault behind this host makes locks look older than they are, so this run
-    takes over leases that are still live -- the failure #83's expiry design
-    exists to prevent. Judging `abs(delta)` rather than the raw difference is
-    what covers it.
+    takes over leases that are still live -- the failure the lock's expiry rule
+    (UC-1 §8) exists to prevent. Judging `abs(delta)` rather than the raw
+    difference is what covers it.
     """
     skew = measure_skew(
         server=NOW - timedelta(minutes=5), local=NOW, round_trip=INSTANT, tolerance=CLOCK_SKEW

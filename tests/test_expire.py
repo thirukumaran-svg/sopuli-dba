@@ -1,4 +1,4 @@
-"""Deciding whether a password may be expired, and how the run reports it (#525).
+"""Deciding whether a password may be expired, and how the run reports it.
 
 Tier 0, pure. The gates are :mod:`sopuli.suspend`'s and are tested there in full
 (`tests/test_suspend.py`); what is pinned here is that `expire-password` asks

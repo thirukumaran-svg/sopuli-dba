@@ -1,4 +1,4 @@
-"""`vault_wrapped` delivery, without a Vault (#444). Tier 0.
+"""`vault_wrapped` delivery, without a Vault. Tier 0.
 
 What is here is the reading of Vault's answer and the refusals around it — all of
 which are decisions this module makes about a response, and none of which need a
@@ -159,10 +159,10 @@ def test_expiry_comes_from_the_answer_rather_than_from_the_configured_ttl() -> N
 
 
 def test_expiry_is_the_server_s_creation_time_plus_the_server_s_ttl() -> None:
-    """Both numbers from the answer, which is what the docstring claimed and the
-    first draft did not do (Copilot's review of #518): it added the server's TTL to
-    the *client's* clock, wrong by the clock difference plus the round trip. Pinned
-    to an exact value, because "about right" is what the bug looked like."""
+    """Both numbers come from the answer. Adding the server's TTL to the
+    *client's* clock would be wrong by the clock difference plus the round trip.
+    Pinned to an exact value, because "about right" is what that bug would look
+    like."""
     receipt = deliver(WRAPPED)
 
     assert receipt.expires_at == datetime(2026, 9, 22, 10, 21, 50, 837130, tzinfo=UTC)

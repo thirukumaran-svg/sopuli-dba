@@ -1,8 +1,7 @@
-"""The ``targets`` section and what `doctor` prints (#182). Tier 0.
+"""The ``targets`` section and what `doctor` prints. Tier 0.
 
-The shape is the contract here: `doctor` is the first command to emit
-``targets[]``, which arrived in schema 1.11 rather than being squeezed into
-``results[]``.
+The shape is the contract here: `doctor` emits ``targets[]`` as a section of
+its own rather than squeezing it into ``results[]``.
 """
 
 from __future__ import annotations
@@ -313,7 +312,7 @@ def test_a_missing_grant_reaches_the_text_report() -> None:
     assert "the tool needs it" in output
 
 
-# ------------------------------------------------------------- colour (#395) ---
+# ---------------------------------------------------- colour (decision #395) ---
 
 
 def test_an_unreachable_target_is_the_only_coloured_reachability() -> None:

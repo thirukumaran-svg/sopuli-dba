@@ -1,4 +1,4 @@
-"""The ``constraints`` section, as a shape (#317). Tier 0.
+"""The ``constraints`` section, as a shape. Tier 0.
 
 What `creds generate` puts in the document after asking the estate what a
 password may be. Pure: :mod:`sopuli.output.constraints_view` turns a

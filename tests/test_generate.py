@@ -1,10 +1,10 @@
-"""What `creds generate` decides before it writes (#254).
+"""What `creds generate` decides before it writes.
 
 Pure: which policy governs an account, what its candidate is, and which accounts
 share a write. The write itself is `tests/test_cli_creds_generate.py`.
 
 The property that carries most of this file is that **a document is the unit of
-the write**. Q7 (#85) made one secret per application the default, so the shared
+the write**. Q7 makes one secret per application the default, so the shared
 case is the ordinary one, and getting it wrong means either three versions where
 one was intended or three accounts sharing one password.
 """
@@ -217,7 +217,7 @@ def test_one_patch_carries_every_account_and_nothing_else() -> None:
     """The merge has to preserve what `staged_patch` guarantees per account:
     every sibling absent rather than rewritten with what was last read.
 
-    Two root keys since #311, not one: the staged value and the `origin`
+    There are two root keys, not one: the staged value and the `origin`
     describing it. Both are keyed by account under the same mirror rule, and the
     assertion that matters is unchanged -- nothing here names an account this run
     did not come for.
@@ -235,7 +235,7 @@ def test_one_patch_carries_every_account_and_nothing_else() -> None:
 
 
 def test_a_drawn_password_is_staged_as_generated() -> None:
-    """#311's default case, and the one #312 is allowed to redraw."""
+    """The default case, and the one `apply` is allowed to redraw."""
     writes = generate.group(candidates(estate()))
 
     assert writes[0].patch(stage=PENDING)[ORIGIN] == {"acme_web_user": GENERATED}
@@ -243,7 +243,7 @@ def test_a_drawn_password_is_staged_as_generated() -> None:
 
 def test_a_supplied_password_is_staged_as_supplied() -> None:
     """`--from-stdin`, and the reason the key exists at all. An external system
-    dictated this value, so #312 redrawing it would make the tool disagree with
+    dictated this value, so `apply` redrawing it would make the tool disagree with
     whoever owns it -- and `Candidate.supplied` dies at the process boundary, so
     the document is the only place a later `apply` can learn this."""
     config = estate()
@@ -296,7 +296,7 @@ def test_each_account_carries_its_own_origin_in_a_shared_document() -> None:
 def test_nothing_written_straight_to_current_carries_an_origin() -> None:
     """`origin` describes what `pending` holds. A value going into `current` has
     nothing staged for it to describe, and what applications are already holding
-    is not a thing #312 may redraw -- so the key is absent, and absent already
+    is not a thing `apply` may redraw -- so the key is absent, and absent already
     reads as *not safe to redraw*."""
     writes = generate.group(candidates(estate()))
 
@@ -347,19 +347,17 @@ def test_two_accounts_staging_into_one_place_are_refused() -> None:
     """`path#{account}` gives each account a root *field* and no pointer, so
     `stage_layout` puts the stage at the document root -- correct for the
     one-account layout UC-1 §3 describes, and a silent overwrite the moment a
-    second account shares the document.
+    second account shares the document. The merge would keep whichever came
+    last, which would give one account's password to both and lose the other's.
 
-    Found by writing the first real staging run: the merge kept whichever came
-    last, which would have given one account's password to both and lost the
-    other's. **#255 moved the refusal to load time**, so a file spelled this way
-    no longer reaches here -- `tests/config/test_stage_collisions.py` is where
-    that is tested now.
+    The load-time check refuses a file spelled this way, so it does not reach
+    here -- `tests/config/test_stage_collisions.py` tests that.
 
-    This guard stays, and is exercised on bindings built directly, because the
-    load-time check can only fire where the store is known: a binding whose
-    `vault` C15 (#118) completes later from a profile or `SOPULI_VAULT` has no
-    backend at load, so whether the rule applies is not knowable from the file.
-    Those arrive here unchecked.
+    This guard is exercised on bindings built directly, because the load-time
+    check can only fire where the store is known: a binding whose `vault` (C15)
+    is completed later from a profile or `SOPULI_VAULT` has no backend at load,
+    so whether the rule applies is not knowable from the file. Those arrive here
+    unchecked.
     """
     config = estate()
     name, policy = generate.policy_for(config, config.bindings[0])
@@ -389,7 +387,7 @@ def test_one_account_per_document_at_the_root_is_still_fine() -> None:
     }
 
 
-# ------------------------------------------------------- estate limits (#317) ---
+# -------------------------------------------------------------- estate limits ---
 #
 # `limits` is every answered target's, and the two paths use it differently: a
 # drawn password is ASCII by §8 so only the count can bind it, while a supplied
@@ -413,7 +411,7 @@ def test_a_supplied_password_must_satisfy_every_target_not_the_smallest() -> Non
     ``WE8MSWIN1252`` at all. Both targets declare 128 bytes, so no comparison of
     counts distinguishes them, and validating against either one alone accepts a
     password the other deterministically cannot store -- which is the "characters
-    the target will not accept" half of what #317 is for.
+    the target will not accept" half of what the estate limits are for.
     """
     with pytest.raises(ConfigError):
         generate.candidate_for(
@@ -479,7 +477,7 @@ def test_a_drawn_password_is_bound_by_the_count_and_not_the_encoding() -> None:
 
 
 def test_a_drawn_password_is_refused_where_no_target_can_hold_it() -> None:
-    """The refusal #317 moves from `apply` to here, at the pure layer."""
+    """The refusal belongs here, at the pure layer, and not in `apply`."""
     policy = PasswordPolicy(length=40, charset="alnum", first_char="alpha")
 
     with pytest.raises(PasswordPolicyError):
@@ -495,7 +493,7 @@ def test_a_drawn_password_is_refused_where_no_target_can_hold_it() -> None:
 
 
 def test_a_drawn_refusal_names_the_target_whose_limit_governed() -> None:
-    """Invariant 4 asks for the capability *and the target* (#598). In an estate
+    """Invariant 4 asks for the capability *and the target*. In an estate
     "the target's limit" could be any of them, so the message names the one the
     draw was bound by -- and its hint points there too."""
     policy = PasswordPolicy(length=40, charset="alnum", first_char="alpha")

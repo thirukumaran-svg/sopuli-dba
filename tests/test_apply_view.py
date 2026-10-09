@@ -1,4 +1,4 @@
-"""`creds apply`'s document and table shape (#259).
+"""`creds apply`'s document and table shape.
 
 The decision is `tests/test_apply.py`. This is what a consumer sees: which
 counters a run carries, which of UC-1 §5's steps end up in ``actions[]``, and the
@@ -121,7 +121,7 @@ def test_an_account_nothing_ran_against_reports_no_action() -> None:
 def test_an_attribute_is_a_change_of_its_own_and_comes_first() -> None:
     """UC-1 §5: *reported as a separate change so the diff stays readable*. First
     in the list because that is when it happened -- an unlock is what makes the
-    pre-flight login worth attempting (#300)."""
+    pre-flight login worth attempting."""
     entry = apply_view.build_result(
         binding(),
         outcome(),
@@ -322,7 +322,7 @@ def test_the_table_is_ascii() -> None:
 
 
 def test_the_repair_invocation_echoes_what_narrowed_the_run() -> None:
-    """#264: exit 4 points at a remedy, and an unnarrowed one walks the estate the
+    """Exit 4 points at a remedy, and an unnarrowed one walks the estate the
     partial run already walked -- a login per account per target, against the
     counter UC-1 §7 exists to protect."""
     line = apply_view.repair_invocation(selectors=("env=prod", "tenant=alpha"))
@@ -388,7 +388,7 @@ def test_the_verdict_names_the_repair_where_the_vault_was_not_promoted() -> None
 
 def test_the_remedy_also_names_the_flag_and_what_it_needs() -> None:
     """`--repair` is the cheaper route and this line is the only place a
-    text-mode operator meets it (#391).
+    text-mode operator meets it.
 
     It is a second line rather than a replacement, because the emitter writes
     the JSON document or the text and never both -- so whoever reads this ran
@@ -415,7 +415,7 @@ def test_a_run_with_no_remedy_names_no_flag_either() -> None:
 
 def test_the_flag_is_not_offered_where_it_would_do_nothing() -> None:
     """Exit 4's other shape: every target confirmed, the vault not promoted
-    (UC-1 §8 case 7). Found in review on #391.
+    (UC-1 §8 case 7).
 
     The plain re-run fixes it; `--repair` cannot, because there is no
     unconfirmed row for a repair set to be built from -- the flag would filter
@@ -438,9 +438,9 @@ def test_a_run_that_did_not_exit_four_offers_no_remedy() -> None:
 
 
 def test_a_stopped_run_says_why_instead_of_offering_a_remedy() -> None:
-    """#282: a run fenced out mid-estate exits 4 exactly like one whose targets
-    failed, and #264's line -- *run this again* -- is the advice to withhold from
-    it. The renderer settles that rather than trusting each caller to."""
+    """A run fenced out mid-estate exits 4 exactly like one whose targets
+    failed, and the repair line -- *run this again* -- is the advice to withhold
+    from it. The renderer settles that rather than trusting each caller to."""
     rows = [(binding(), outcome(), True)]
 
     rendered = apply_view.render_apply(

@@ -1,4 +1,4 @@
-"""The ``install`` section: what this machine can serve (ADR-006 E6, #214). Tier 0.
+"""The ``install`` section: what this machine can serve (ADR-006 E6). Tier 0.
 
 Everything here is `find_spec` and dataclasses -- no container, no client, no
 socket -- which is the property the section itself reports on and would be

@@ -1,7 +1,8 @@
-"""Rendering a notification, with no socket anywhere near it (#442). Tier 0.
+"""Rendering a notification, with no socket anywhere near it. Tier 0.
 
-The message is composed here and sent in #442's second part, and keeping the two
-apart is what lets UC-2 §6.1's rule be proved without a network.
+The message is composed here and sent by the webhook notifier
+(`tests/test_notify_webhook.py`), and keeping the two apart is what lets
+UC-2 §6.1's rule be proved without a network.
 """
 
 from __future__ import annotations
@@ -52,10 +53,10 @@ def test_the_expiry_renders_the_way_the_run_document_does() -> None:
 
 
 def test_a_method_with_no_expiry_renders_empty_rather_than_none() -> None:
-    """`manual` has no clock to expire and neither will #447's path. "expires at
-    None" is worse than a sentence whose estate chose to mention an expiry that
-    does not exist -- and the estate can see which it gets, because it wrote the
-    template."""
+    """`manual` has no clock to expire and neither would an identity-scoped path
+    (TODO(#447)). "expires at None" is worse than a sentence whose estate chose
+    to mention an expiry that does not exist -- and the estate can see which it
+    gets, because it wrote the template."""
     message = render(
         notify("before {expires_at}"),  # type: ignore[arg-type]
         Facts(account="a", target="t"),
@@ -112,7 +113,7 @@ def test_a_renderer_cannot_be_handed_a_secret_at_all() -> None:
 def test_the_placeholder_set_cannot_drift_from_the_type() -> None:
     """**Derived, not asserted.** `PLACEHOLDERS` is built from `Facts`'s fields, so
     a fourth placeholder is a fourth field and there is no pair to keep in step --
-    the same move #519's `Handover` made, letting the type carry the guarantee.
+    the same move the `Handover` type makes, letting the type carry the guarantee.
     This test is what says the derivation is the mechanism rather than a
     coincidence."""
     assert tuple(Facts.__dataclass_fields__) == PLACEHOLDERS

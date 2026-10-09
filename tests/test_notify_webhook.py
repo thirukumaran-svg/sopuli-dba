@@ -1,10 +1,10 @@
-"""Posting a notification, with the HTTP call mocked (#442). Tier 0.
+"""Posting a notification, with the HTTP call mocked. Tier 0.
 
-#442's acceptance asks for exactly this: "unit-tested with no network (the HTTP call
-is mocked), including the refusal of a template that references the secret", and the
-base install still shown to open no sockets. The template refusal is
-`tests/config/test_notify.py`'s, because it happens at load; the install shape is
-`tests/store/test_install_shape.py`'s, which now derives its exemptions from
+The channel is unit-tested with no network (the HTTP call is mocked), and the
+base install is shown to open no sockets. The template refusal, which
+rejects a template that references the secret, is `tests/config/test_notify.py`'s,
+because it happens at load. The install shape is
+`tests/store/test_install_shape.py`'s, which derives its exemptions from
 `NOTIFIERS` as well.
 
 What is left here is what a channel does with an answer, and the answers worth
@@ -31,7 +31,7 @@ from sopuli.store import StoreError
 
 #: A chat webhook's URL *is* its credential -- the path segments are the token --
 #: which is C9's reason for the config key being a MaterialRef and this being a
-#: `Secret`. Synthetic, for the reason #518's review gave about the wrapping token.
+#: `Secret`. Synthetic, so the repository holds no real credential.
 URL = Secret("https://chat.example.com/hooks/T00000/B00000/EXAMPLEEXAMPLEEXAMPLE")
 MESSAGE = "acme_dev_alice on free-pdb has a new password waiting"
 
@@ -59,9 +59,9 @@ def posted(monkeypatch: pytest.MonkeyPatch) -> Posted:
 
 
 def test_the_message_is_posted_to_the_url_with_a_deadline(posted: Posted) -> None:
-    """A deadline on every request, which is ADR-005's reason for `httpx` and #83's
-    for caring: UC-2 §3.3's advisory lock is still held while this runs, and a hung
-    request is a lock nobody else can take."""
+    """A deadline on every request, which is ADR-005's reason for `httpx` and the
+    reason it matters here: UC-2 §3.3's advisory lock is still held while this
+    runs, and a hung request is a lock nobody else can take."""
     webhook.send(URL, MESSAGE)
 
     url, body, timeout = posted.calls[0]
@@ -191,15 +191,13 @@ def test_the_registered_channel_declares_the_client_it_needs() -> None:
 
 
 def test_the_warning_names_the_account_and_the_target() -> None:
-    """**Copilot's fourth finding on #520.** A personal account is reset on one
-    account and possibly several targets, and a notification is attempted per
-    target -- so two failures out of three produced two identical warnings and an
-    operator could not tell which host's person had not been told.
+    """A personal account is reset on one account and possibly several targets,
+    and a notification is attempted per target -- so two failures out of three
+    would produce two identical warnings, and an operator could not tell which
+    host's person had not been told.
 
-    The same defect #519's review found in the hand-over block, one object over,
-    and the reason it recurred is worth naming: the first version's docstring
-    argued that "what an operator needs in order to act is *who* was not told",
-    which is true and incomplete.
+    "What an operator needs in order to act is *who* was not told" is true and
+    incomplete: the warning has to name the target as well.
     """
     from sopuli.diagnostics import NOTIFICATION_UNSENT, notification_unsent
 

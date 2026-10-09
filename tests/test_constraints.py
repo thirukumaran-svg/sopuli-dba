@@ -1,10 +1,10 @@
-"""Collecting what the estate said, and the two questions asked of it (#317). Tier 0.
+"""Collecting what the estate said, and the two questions asked of it. Tier 0.
 
 Pure arithmetic over readings the caller gathered, so none of this needs a
 database -- which is the point of the split: `cli._constraints_for` opens the
 connections and this decides what they meant.
 
-The file leans on one comparison that a first draft got wrong in both directions,
+The file leans on one comparison that is easy to get wrong in both directions,
 so most of what is asserted here is that the two questions stay separate: a
 password this tool *draws* is bound by a byte count alone, and one somebody
 *supplies* has to satisfy every target's character set as well.
@@ -143,7 +143,7 @@ def test_the_default_constraints_claim_nothing() -> None:
     assert Constraints().partial is False
 
 
-# ------------------------------------------- what cannot bind anything (#317) ---
+# -------------------------------------------------- what cannot bind anything ---
 #
 # UC-1 §4 step 2's other three names. None of them can gate a draw -- a verify
 # function is arbitrary PL/SQL that cannot be consulted (invariants 13 and 14)
@@ -188,7 +188,7 @@ def test_a_named_verify_function_is_reported_with_the_ora_code_it_would_raise() 
 
 
 def test_a_not_knowing_is_reported_as_one() -> None:
-    """The half of #317 that is easy to get wrong in the direction that misleads:
+    """The half that is easy to get wrong in the direction that misleads:
     silence here reads as *no verify function*, which reads as a guarantee."""
     found = constraint_diagnostics(survey([("alpha", MODERN)], accounts=[("alpha", UNREADABLE)]))
 

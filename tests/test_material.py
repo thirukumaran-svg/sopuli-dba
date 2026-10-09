@@ -1,4 +1,4 @@
-"""Resolving auth material (#137). Tier 0, and no ambient environment.
+"""Resolving auth material. Tier 0, and no ambient environment.
 
 Every test passes its own mapping, so these run beside each other and beside
 everything else -- the arrangement `discover` and `resolve_color` already use.
@@ -282,11 +282,11 @@ def test_the_flag_outranks_the_environment(tmp_path: Path) -> None:
     assert secret.reveal() == "s.from-flag"
 
 
-# ------------------------------------------------ --vault-token-file (#145) ---
+# --------------------------------------------- --vault-token-file (ADR-007) ---
 
 
 def test_the_flag_names_a_path_and_never_a_token() -> None:
-    """#145's decision, as the only shape the signature admits.
+    """ADR-007's decision, as the only shape the signature admits.
 
     ``resolve_token`` takes a *path*; there is no parameter anywhere on this
     chain that a command-line **value** could arrive on, which is what makes

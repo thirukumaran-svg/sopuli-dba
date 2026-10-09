@@ -1,4 +1,4 @@
-"""What an unseen delivery prints (#444). Tier 0.
+"""What an unseen delivery prints. Tier 0.
 
 The module under test holds a ``reveal()``, which is why it is worth its own file:
 `tests/test_reveal_sites.py` permits the site and this is what says the emission is
@@ -74,9 +74,9 @@ def test_the_instruction_not_to_check_it_is_part_of_the_output() -> None:
 
 
 def test_a_receipt_with_nothing_to_carry_renders_nothing() -> None:
-    """#447's identity-scoped path hands over no bearer credential, and neither
-    does mail that has been sent. A heading over an empty value would suggest
-    something had gone missing."""
+    """An identity-scoped path (`vault_path`, TODO(#447)) hands over no bearer
+    credential, and neither does mail that has been sent. A heading over an
+    empty value would suggest something had gone missing."""
     empty = Receipt(method="vault_path")
 
     assert render_handover(empty, account="acme_dev_alice", target="free-pdb") is None
@@ -93,7 +93,7 @@ def test_the_password_has_no_way_into_this_view() -> None:
     assert set(Receipt.__dataclass_fields__) == {"method", "token", "accessor", "expires_at"}
 
 
-# ----------------------------------------- what the document says instead (#444) ---
+# ------------------------------------------------ what the document says instead ---
 
 
 def test_the_result_carries_the_accessor_and_the_expiry() -> None:
@@ -145,12 +145,12 @@ def test_a_hand_over_with_no_accessor_still_reports_the_expiry() -> None:
 
 
 def test_a_handover_that_knows_nothing_about_itself_is_still_reported() -> None:
-    """Copilot's review of #519, and the bug was real: a wrap that returned a token
-    but no accessor and no usable TTL is a delivery that happened, and keying the
-    section on "is either field set" reported it as the **seen** path -- which is
-    the one thing the section's presence exists to tell apart.
+    """A wrap that returned a token but no accessor and no usable TTL is a
+    delivery that happened. Keying the section on "is either field set" would
+    report it as the **seen** path -- which is the one thing the section's
+    presence exists to tell apart.
 
-    Presence now comes from the `Handover` existing at all, which is a fact about
+    Presence comes from the `Handover` existing at all, which is a fact about
     whether a delivery put the password somewhere rather than about how much the
     store was willing to say."""
     entry = build_result(

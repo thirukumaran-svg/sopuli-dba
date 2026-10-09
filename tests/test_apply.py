@@ -1,4 +1,4 @@
-"""The decision table behind `creds apply` (#259).
+"""The decision table behind `creds apply`.
 
 UC-1 §5 is a sequence, and the interesting half of it is where the sequence
 *stops*: an account nothing should be issued against, a password the database
@@ -96,8 +96,8 @@ def estate(policies: dict[str, Any] | None = None, **defaults: Any) -> Config:
 
 def test_an_estate_declaring_no_policy_declares_no_attributes() -> None:
     """Lenient where `generate.policy_for` refuses: a policy is needed to *draw* a
-    password and not to *apply* one, so an estate that has never declared one goes
-    on applying passwords exactly as it did (#300)."""
+    password and not to *apply* one, so an estate that has never declared one
+    still applies passwords, with no attributes."""
     config = estate()
 
     attributes = apply.attributes_for(config, config.bindings[0])
@@ -128,7 +128,7 @@ def test_a_policy_that_says_nothing_about_unlocking_does_not_unlock() -> None:
 
 
 def test_the_profile_attribute_is_read_off_the_policy() -> None:
-    """§5's second attribute (#301). A name out of the file, not a spelling: which
+    """§5's second attribute. A name out of the file, not a spelling: which
     profiles exist is a property of each target, so the driver resolves it."""
     config = estate(
         {"app-standard": {"account": {"profile": "acme_app_prof"}}}, policy="app-standard"
@@ -382,7 +382,7 @@ def test_a_locked_account_is_not_changed() -> None:
 
 
 def test_a_locked_account_is_told_how_to_have_the_tool_unlock_it() -> None:
-    """The refusal names the opt-in that removes it (#300), because an operator
+    """The refusal names the opt-in that removes it, because an operator
     reading it is one config key away from the run they wanted."""
     outcome = apply.settled_before_acting(user(status="LOCKED", locked=True), source())
 
@@ -392,7 +392,7 @@ def test_a_locked_account_is_told_how_to_have_the_tool_unlock_it() -> None:
 
 def test_a_locked_account_is_not_settled_where_the_policy_may_unlock_it() -> None:
     """`unlock` is the *permission*, not the act: the caller unlocks and asks
-    again, so this call has to let the run reach the attribute pass (#300)."""
+    again, so this call has to let the run reach the attribute pass."""
     locked = user(status="LOCKED", locked=True)
 
     assert apply.settled_before_acting(locked, source(), unlock=True) is None
@@ -572,7 +572,7 @@ class Broke:
 
 
 def test_a_refused_password_this_run_drew_may_be_drawn_again() -> None:
-    """#268's decision, in one line: the only case that redraws."""
+    """Decision #268, in one line: the only case that redraws."""
     assert apply.may_redraw(Refused(), GENERATED, drawn=1).allowed is True
 
 
@@ -595,8 +595,8 @@ def test_an_error_that_answers_nothing_does_not_redraw() -> None:
 
 
 def test_a_supplied_password_is_never_redrawn() -> None:
-    """#311's whole reason for existing. An external system dictated this value,
-    so replacing it makes the tool disagree with whoever owns it."""
+    """An external system dictated this value, so replacing it would make the
+    tool disagree with whoever owns it."""
     decision = apply.may_redraw(Refused(), SUPPLIED, drawn=0)
 
     assert decision.allowed is False
@@ -605,8 +605,8 @@ def test_a_supplied_password_is_never_redrawn() -> None:
 
 
 def test_an_unknown_origin_is_not_redrawn_either() -> None:
-    """A document staged before #311 existed, which is the supplied case without
-    the evidence. It self-heals on the next `generate`; guessing wrong here
+    """A document staged with no `origin` is the supplied case without the
+    evidence. It self-heals on the next `generate`; guessing wrong here
     overwrites a password somebody's change ticket dictated."""
     decision = apply.may_redraw(Refused(), None, drawn=0)
 
@@ -618,8 +618,8 @@ def test_an_unknown_origin_is_not_redrawn_either() -> None:
 def test_an_origin_this_tool_did_not_write_is_its_own_answer() -> None:
     """Three cases, not two, because the operator's next move differs: a supplied
     value sends them to whoever dictated it, an absent one to a document staged
-    before #311 that the next `generate` heals, and an unrecognised one to the
-    document itself, which something other than `generate` has written to.
+    without an `origin` that the next `generate` heals, and an unrecognised one
+    to the document itself, which something other than `generate` has written to.
 
     The value is described and never quoted -- it is a document field, and the
     obvious way to say "that is not one of mine" is to show what it was instead.
@@ -698,9 +698,10 @@ def test_the_promotion_is_one_patch_doing_five_things() -> None:
 
 
 def test_the_origin_is_cleared_with_the_pending_it_described() -> None:
-    """#311's key is a property of `pending`, not of the credential. Left behind,
-    it would assert the provenance of a stage with no value in it -- and the next
-    reader is #312 deciding whether it may redraw."""
+    """The `origin` key is a property of `pending`, not of the credential. Left
+    behind, it would assert the provenance of a stage with no value in it -- and
+    the next reader is `apply.may_redraw`, which decides whether `apply` may
+    redraw."""
     entry = apply.Promotable(binding(), Secret("new"), None, "app-standard", ("t",))
 
     patch = apply.promotion_patch([entry], at=NOW, by="svc@host")
@@ -813,7 +814,7 @@ def test_an_empty_run_is_success() -> None:
     assert apply.exit_code_for([], promoted=True, promotable=False) == ExitCode.SUCCESS
 
 
-# ------------------------------------------------- guardrail skips (#286) ---
+# -------------------------------------------------------- guardrail skips ---
 
 
 def test_a_skipped_account_does_not_make_a_clean_run_partial() -> None:

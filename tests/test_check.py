@@ -1,4 +1,4 @@
-"""The decision table behind `creds check` (#248).
+"""The decision table behind `creds check`.
 
 UC-1 §7 is mostly about what *not* to do -- do not retry, do not attempt a login
 near the lockout limit, do not fold a locked account into drift -- and this is
@@ -52,9 +52,9 @@ UNGUARDED = "the lockout guard is unavailable: SELECT ON SYS.USER$ is not grante
 
 
 def test_a_pass_without_the_lockout_guard_says_so() -> None:
-    """#558: the driver notes a missing `SYS.USER$` grant in the detail, and a
-    pass used to replace it with its own words -- so an unguarded check read
-    exactly like a guarded one."""
+    """The driver notes a missing `SYS.USER$` grant in the detail, and a pass
+    keeps that note rather than replacing it with its own words. Otherwise an
+    unguarded check would read exactly like a guarded one."""
     outcome = check.decide(user(), attempt(PASS, detail=UNGUARDED), version=7)
 
     assert outcome.state == check.IN_SYNC
@@ -274,12 +274,12 @@ def test_a_multi_line_driver_message_is_trimmed_to_one_line() -> None:
 
 # ------------------------------------------------------------ the grace period ---
 #
-# #309. `EXPIRED(GRACE)` carries the token `EXPIRED`, so an account whose password
-# still works came back `expired=True`, `check` reported `EXPIRED`, and the login
-# that would have proved otherwise was never attempted. The decision inside that
-# issue was whether the grace period gets a `state` of its own: it does not, it
-# rides as a warning, because `state` is one field and an account in grace may be
-# `IN_SYNC` or may have drifted.
+# `EXPIRED(GRACE)` carries the token `EXPIRED`, but an account in grace still
+# has a working password. If `check` read it as `expired=True`, it would report
+# `EXPIRED` and never attempt the login that would prove otherwise. The grace
+# period does not get a `state` of its own. It rides as a warning, because
+# `state` is one field and an account in grace may be `IN_SYNC` or may have
+# drifted.
 
 
 def in_grace(**fields: object) -> UserState:
@@ -287,9 +287,9 @@ def in_grace(**fields: object) -> UserState:
 
 
 def test_a_password_in_its_grace_period_is_verified_like_any_other() -> None:
-    """The bug, at the level it was reported. Before #309 this was `EXPIRED` and
-    no login happened -- which made a scheduled check blind to drift for exactly
-    the window before a forced expiry."""
+    """A grace-period account is verified by login. Reporting it as `EXPIRED`
+    with no login would make a scheduled check blind to drift for exactly the
+    window before a forced expiry."""
     outcome = check.decide(in_grace(), attempt(PASS), version=7)
 
     assert outcome.state == check.IN_SYNC

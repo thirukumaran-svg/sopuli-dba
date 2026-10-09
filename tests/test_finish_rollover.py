@@ -1,9 +1,9 @@
-"""The decision table behind `creds finish-rollover` (#263).
+"""The decision table behind `creds finish-rollover` (decision #263).
 
 Closing a rollover window is the one step in UC-1 whose purpose is to stop
 something working, so almost every test here is about an account the command
 leaves alone. Pure, so the two refusals can be written down side by side -- and
-they need to be, because the difference between them is the whole of #263's
+they need to be, because the difference between them is the whole of the
 decision:
 
 * a **staged `pending`** is refused for free, and it is the case a login would
@@ -82,7 +82,7 @@ def test_a_missing_account_is_reported_and_not_created() -> None:
 
 
 def test_a_read_only_database_is_refused_before_the_login() -> None:
-    """#521. A standby cannot take the `ALTER USER`, so the refusal comes here --
+    """A standby cannot take the `ALTER USER`, so the refusal comes here --
     ahead of the login a close would spend, and ahead of a preview promising a
     close that could only fail."""
     standby = Scope(
@@ -140,7 +140,7 @@ def test_an_expired_account_keeps_its_window() -> None:
 
 
 def test_a_staged_pending_is_refused_without_spending_a_login() -> None:
-    """#263's decision, and the case a verification would have got wrong: the
+    """Decision #263, and the case a verification would get wrong: the
     rotation is unfinished, so `current` is the *old* password -- and under an
     open window the old password passes."""
     outcome = windows.settled_before_closing(user(), source(PENDING), ABLE)
@@ -288,7 +288,7 @@ def test_a_naive_timestamp_is_read_as_utc() -> None:
 def test_the_countdown_is_shared_with_status() -> None:
     """`clock.until` is the arithmetic, and both verbs print the same figure
     about the same window -- this one to say what it closed early, `creds status`
-    (#275) to say what is still open. Two implementations would drift."""
+    to say what is still open. Two implementations would drift."""
     account = user(rollover_ends_at=NOW + timedelta(minutes=41))
 
     assert windows.remaining(account, now=NOW) == until(account.rollover_ends_at, now=NOW)

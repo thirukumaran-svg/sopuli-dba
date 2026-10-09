@@ -2,9 +2,9 @@
 
 Invariant 12: the schema is the test fixture, not documentation written
 afterwards. Every section built here goes through
-``sopuli-run-1.8.schema.json`` -- which is stricter than it looks, because #98's
-review tightened it: every field of a `held` entry is required, and a `denied`
-whose reason is `held` must describe the holder.
+``sopuli-run-1.8.schema.json`` -- which is stricter than it looks: every field
+of a `held` entry is required, and a `denied` whose reason is `held` must
+describe the holder.
 """
 
 from __future__ import annotations
@@ -266,8 +266,9 @@ def test_an_ordinary_run_warns_about_nothing() -> None:
 
 
 def test_an_advisory_store_warns_on_every_run() -> None:
-    """#83: the weakening reaches each run's audit trail rather than only the
-    config file, which is the only place it would otherwise be visible."""
+    """The advisory-only weakening (Q2) reaches each run's audit trail rather
+    than only the config file, which is the only place it would otherwise be
+    visible."""
     store = MemoryStore(capabilities=frozenset())
     run = manager(store, locking=LOCK_ADVISORY_ONLY)
     run.acquire([KEY])
@@ -290,7 +291,7 @@ def test_an_advisory_store_warns_once_rather_than_once_per_lock() -> None:
 
 
 def test_a_path_the_store_would_not_guard_warns_with_its_own_code() -> None:
-    """#390. The run succeeded, its lock was written under a compare-and-set, and
+    """The run succeeded, its lock was written under a compare-and-set, and
     its fence held -- so nothing in the result is wrong and the exit code cannot
     say this. What is missing is the store refusing an un-CAS'd write from
     anybody else, on a path that will still be unguarded on the next run."""
@@ -374,7 +375,7 @@ def test_a_diagnostic_reaches_the_document_with_its_code(
 
 # ------------------------------------------------------------------ found ---
 #
-# `lock status` (#105): records read at paths this run does not hold. A separate
+# `lock status`: records read at paths this run does not hold. A separate
 # array from `held`, and these are the tests that say why -- the two describe
 # different relationships to a lock, and one shape for both would make `released`
 # mean two things depending on `command`.
@@ -409,10 +410,10 @@ def test_a_survey_reports_the_holder_the_way_a_denial_does(
                 "path": "apps/acme/db",
                 "held": True,
                 # `survey` was given no declared set, which means "every key here
-                # is declared" -- the answer for a caller that did not go looking
-                # (#150). `lock status` passes one; this test is about the holder.
-                # `declared_by` defaults the same way and for the same reason
-                # (#514): a caller that never asked describes what it found
+                # is declared" -- the answer for a caller that did not go looking.
+                # `lock status` passes one; this test is about the holder.
+                # `declared_by` defaults the same way and for the same reason:
+                # a caller that never asked describes what it found
                 # correctly rather than marking the whole survey undeclared.
                 "declared": True,
                 "declared_by": "binding",

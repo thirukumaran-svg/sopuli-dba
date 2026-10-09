@@ -1,4 +1,4 @@
-"""Resolving the admin credential (#175). Tier 0, and no ambient environment.
+"""Resolving the admin credential. Tier 0, and no ambient environment.
 
 Every test passes its own mapping and its own suppliers, the arrangement
 `test_material.py` already uses: nothing here reads `os.environ`, opens a store,
@@ -298,10 +298,11 @@ def test_one_target_set_is_asked_once() -> None:
 
 
 def test_an_empty_answer_is_refused_before_anything_is_sent() -> None:
-    """#601: Oracle has no empty password, so one can never authenticate. Sent,
-    it came back as `DPY-4001` under `connectivity` -- the wrong place to look
-    for one keystroke at the operator's own terminal. Refused here instead, as
-    an empty `method: env` variable is: `config`, exit 9, naming the target."""
+    """Oracle has no empty password, so one can never authenticate. Sent, it
+    would come back as `DPY-4001` under `connectivity` -- the wrong place to
+    look for one keystroke at the operator's own terminal. The prompt refuses it
+    instead, the same way an empty `method: env` variable is refused: `config`,
+    exit 9, naming the target."""
     prompt = PasswordPrompt(ask=lambda _: "")
 
     with pytest.raises(AdminCredentialError) as caught:
@@ -400,10 +401,10 @@ def test_the_dsn_is_not_in_the_key() -> None:
 
 
 def test_the_prompt_asks_about_the_account_the_connection_will_use() -> None:
-    """#196's review. §6's variable overrides `username:`, so a prompt built
-    from the file alone asks for one account's password and then connects as
-    another -- a question whose answer is wrong through no fault of the person
-    answering it, and one that surfaces as ORA-01017 much later."""
+    """§6's variable overrides `username:`, so a prompt built from the file
+    alone would ask for one account's password and then connect as another --
+    a question whose answer is wrong through no fault of the person answering
+    it, and one that surfaces as ORA-01017 much later."""
     ask = Recorder()
     resolved = resolve(
         target(admin=admin("prompt", username="C##SOPULI_SVC")),

@@ -1,4 +1,4 @@
-"""`creds check`'s `results[]` against the published schema, and its table (#248).
+"""`creds check`'s `results[]` against the published schema, and its table.
 
 Invariant 12: the schema is the test fixture. `result` is strict about the shapes
 below it -- `verification` and `secret_ref` both carry
@@ -120,8 +120,7 @@ def test_a_declined_login_records_that_it_did_not_happen() -> None:
 
     A decline carries a `VerifyResult` too -- saying it declined -- so reading
     "the object exists" as "we tried" collapses exactly the distinction
-    mitigation 1 exists to make visible. Caught by Copilot on #253, where the
-    code said `True` while the comment beside it said the opposite.
+    mitigation 1 exists to make visible.
     """
     declined = VerifyResult(
         method=VERIFY_LOGIN, result=SKIPPED, lockout_margin_hit=True, detail="within margin"
@@ -152,8 +151,8 @@ def test_an_errored_run_counts_as_failed_not_unverifiable() -> None:
 
 
 def test_a_missing_lcount_is_null_rather_than_absent() -> None:
-    """#86 made `SELECT ON SYS.USER$` optional, so "the guard was unavailable" is
-    a thing a scheduled check must be able to report. Omitting the key would make
+    """`SELECT ON SYS.USER$` is optional, so "the guard was unavailable" is a
+    thing a scheduled check must be able to report. Omitting the key would make
     an ungranted estate look like one where nothing looked."""
     failed = VerifyResult(method=VERIFY_LOGIN, result=FAIL, failed_logins=None)
     entry = build_result(binding(), check.Outcome(check.DRIFT, "rejected", failed))
@@ -216,7 +215,7 @@ def test_a_clean_run_says_so_in_one_line() -> None:
 
 
 def test_the_rendered_table_is_ascii() -> None:
-    """P4: redirected stdout on Windows is cp1252 (#12)."""
+    """P4: redirected stdout on Windows is cp1252."""
     render_check([(binding(), check.Outcome(check.DRIFT, "vault v7 rejected"))]).encode("ascii")
 
 
@@ -226,7 +225,7 @@ def test_the_rendered_table_is_ascii() -> None:
 def test_a_grace_period_rides_beside_the_state_and_validates(
     validator: Draft202012Validator,
 ) -> None:
-    """#309's shape, end to end through the serialiser.
+    """The grace-period warning, end to end through the serialiser.
 
     The state is the answer about the password and the warning is the caveat on
     it, which is the arrangement a `state` of its own could not have produced:

@@ -115,7 +115,7 @@ def test_a_non_production_store_is_marked(config: Config) -> None:
 
 
 def test_a_store_that_cannot_lock_is_marked_too(config: Config) -> None:
-    """A store excused from locking is the other thing this column is for (#83).
+    """A store excused from locking is the other thing this column is for (Q2).
 
     Both notes share the column because both say the same kind of thing: this
     store is less than the default assumption. The two also co-occur -- the file
@@ -530,7 +530,7 @@ def test_the_target_list_shows_warnings_in_full(match: Pairs) -> None:
 
 # --------------------------------------------------------- shared secrets ---
 
-#: The §2 layout: one document per tenant, several accounts in each (#110).
+#: The §2 layout: one document per tenant, several accounts in each.
 SHARING: dict[str, Any] = {
     **DOCUMENT,
     "applications": [
@@ -611,8 +611,8 @@ def test_a_shared_document_with_no_store_named_still_validates(
     """A binding can resolve with no store, and `secret_document.vault` is
     nullable for exactly that case -- unlike `secret_ref`, which describes a ref
     after resolution and requires one (C14). A profile still names a store here
-    (#118 option 3), which is what keeps this file from being the narrow case
-    #118 refuses at load: `vaults:` declares nothing for a profile or
+    (C15), which is what keeps this file from being the narrow case
+    C15 refuses at load: `vaults:` declares nothing for a profile or
     `SOPULI_VAULT` to point at."""
     document = {
         "version": 1,

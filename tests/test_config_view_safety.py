@@ -1,10 +1,11 @@
-"""`config show`'s `safety` section, and `config.targets[].safety` (#426).
+"""`config show`'s `safety` section, and `config.targets[].safety` (decision #426).
 
-A `safety:` block outside `defaults` was enforced as of #424 and **reported by
-nothing**: `config show --explain` said `safety.readonly = false
-[built-in default]` for a file whose target set it, and §9 defines that phrase as
-precisely *nothing else spoke*. The row was right about the run and silent about
-the file, and silence in that direction reads as an answer.
+A `safety:` block outside `defaults` is enforced, so `config show` has to
+report it. `config show --explain` says `safety.readonly = false [built-in
+default]` for a file whose target set it, and that row is right: `config show`
+applies no selector, and §9 defines the phrase as *nothing else spoke*. But the
+row is silent about the file, and silence in that direction reads as an answer,
+so a separate `safety` section names each block.
 
 Tier 0: a document in, rendered lines and a JSON dict out.
 
@@ -310,13 +311,12 @@ def test_a_targets_block_reaches_the_document() -> None:
 
 def test_a_nested_setting_reaches_the_document_as_a_sub_block() -> None:
     """`safety.delivery.allowed_methods` is the first safety setting whose name
-    has two parts, and the view builds a property per part (#498, schema 1.26).
+    has two parts, and the view builds a property per part.
 
-    The flat form emitted a property literally called `delivery.allowed_methods`,
+    A flat form would emit a property literally called `delivery.allowed_methods`,
     which `config.targets[].safety` refuses under `additionalProperties: false` --
-    so a target writing the key made `config show --resolved --output json`
-    produce a document this tool's own contract rejects. Copilot's review of #500
-    found it; nothing here had ever put a nested setting on a target.
+    so a target writing the key would make `config show --resolved --output json`
+    produce a document this tool's own contract rejects.
     """
     config = one_target({"delivery": {"allowed_methods": ["vault_wrapped", "manual"]}})
 
