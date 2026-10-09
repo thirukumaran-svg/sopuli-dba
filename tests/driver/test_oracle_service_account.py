@@ -271,15 +271,15 @@ def _audit(session: Any) -> Any:
         return audit(cursor, scope_type=session.scope().type)
 
 
-#: What an estate installed before decision #531 holds: §2's set without
-#: ``DBA_ROLES``.
-#: Revoked rather than never granted so :func:`_grants` stays the one list.
+#: An estate whose grants lack ``SELECT ON SYS.DBA_ROLES``, so it has no
+#: `role_lookup` capability (decision #531). Revoked rather than never granted so
+#: :func:`_grants` stays the one list.
 WITHOUT_ROLE_LOOKUP = f"revoke SELECT ON SYS.DBA_ROLES from {ACCOUNT}"
 
 
 @pytest.fixture
-def installed_before_531(admin: Any, live_oracle: Environment) -> Iterator[Any]:
-    """§2's account as it was before `DBA_ROLES` joined the grant set."""
+def installed_without_role_lookup(admin: Any, live_oracle: Environment) -> Iterator[Any]:
+    """§2's account without the `DBA_ROLES` grant."""
     with _installed(admin, live_oracle, WITHOUT_ROLE_LOOKUP) as opened:
         yield opened
 
@@ -519,24 +519,26 @@ def test_a_correct_install_can_tell_a_role_from_a_misspelling(service_account: A
     assert service_account.resolve_role("acme_no_such_role_at_all") is None
 
 
-def test_an_install_without_the_grant_is_refused_naming_it(installed_before_531: Any) -> None:
-    """The gate: an estate installed before decision #531 is told what to grant,
+def test_an_install_without_the_grant_is_refused_naming_it(
+    installed_without_role_lookup: Any,
+) -> None:
+    """The gate: an estate without the `DBA_ROLES` grant is told what to grant,
     at plan time and with the capability named (invariant 4), rather than told
     that a role it can see in SQL*Plus does not exist."""
-    assert not installed_before_531.scope().supports(ROLE_LOOKUP)
+    assert not installed_without_role_lookup.scope().supports(ROLE_LOOKUP)
 
     with pytest.raises(UnsupportedCapabilityError) as raised:
-        installed_before_531.resolve_role("connect")
+        installed_without_role_lookup.resolve_role("connect")
 
     assert raised.value.capability == ROLE_LOOKUP
     assert "GRANT SELECT ON SYS.DBA_ROLES" in (raised.value.hint or "")
 
 
 def test_an_install_without_the_grant_still_describes_accounts(
-    installed_before_531: Any,
+    installed_without_role_lookup: Any,
 ) -> None:
     """The reason the grant is a capability and not a required read: UC-1 reads
     nothing from `DBA_ROLES`, so an older install keeps working for everything
     but a role predicate -- and its privilege audit is short of nothing."""
-    assert installed_before_531.describe_user(ACCOUNT) is not None
-    assert _audit(installed_before_531).missing == ()
+    assert installed_without_role_lookup.describe_user(ACCOUNT) is not None
+    assert _audit(installed_without_role_lookup).missing == ()

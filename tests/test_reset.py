@@ -341,7 +341,7 @@ def test_the_refusal_names_where_the_set_was_written() -> None:
     assert "--force does not reach a safety setting" in (caught.value.hint or "")
 
 
-def test_the_setting_is_no_longer_declared_inert() -> None:
+def test_the_setting_is_not_declared_inert() -> None:
     """`inert_reason` claims *nothing reads this*, and
     `tests/settings/test_settings_are_wired.py` fails in both directions -- so
     the marking must be absent while the reset verb reads the setting.

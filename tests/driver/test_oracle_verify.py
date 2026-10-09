@@ -129,7 +129,7 @@ def guarded_account(session: Any) -> Iterator[Any]:
 # ------------------------------------------------------------- the outcomes ---
 
 
-def test_the_session_is_now_a_driver_session(session: Any) -> None:
+def test_the_session_is_a_driver_session(session: Any) -> None:
     """The protocol is structural, so a session is a driver session by having
     every method rather than by declaring anything — and it is worth asserting,
     because a signature drifting out of shape would otherwise be invisible until

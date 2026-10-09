@@ -77,7 +77,7 @@ def test_manual_is_the_one_seen_method() -> None:
             assert not built(method=method, **{method: settings}).is_seen
 
 
-def test_the_enum_is_the_whole_set_including_the_method_with_no_issue() -> None:
+def test_the_enum_includes_a_method_with_no_tracking_issue() -> None:
     """`smtp_encrypted` has no issue of its own and is in the enum anyway. An enum
     listing only what somebody had written a ticket for would be a contract shaped
     by project bookkeeping (UC-2 §6.2)."""
@@ -85,13 +85,22 @@ def test_the_enum_is_the_whole_set_including_the_method_with_no_issue() -> None:
     assert len(DELIVERY_METHODS) == 6
 
 
-def test_a_notify_block_is_read_now_that_its_issue_landed() -> None:
+@pytest.mark.parametrize(
+    "method",
+    [
+        {"method": "manual", "manual": {"force_expire": True}},
+        {"method": "vault_wrapped", "vault_wrapped": {"ttl": "15m"}},
+    ],
+    ids=["manual", "vault_wrapped"],
+)
+def test_a_notify_block_is_read_whichever_built_method_is_selected(
+    method: dict[str, Any],
+) -> None:
     """`tests/config/test_notify.py` holds the notify block's grammar; what
-    belongs here is that `delivery:` reaches it, and that it does so whichever
-    method is selected."""
+    belongs here is that `delivery:` reaches it, and that it does so for each
+    method this build serves, the seen one and the unseen one."""
     section = built(
-        method="vault_wrapped",
-        vault_wrapped={"ttl": "15m"},
+        **method,
         notify={
             "method": "webhook",
             "webhook": {
