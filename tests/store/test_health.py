@@ -1,4 +1,4 @@
-"""What a Vault's `sys/health` answer means, without a Vault (#216).
+"""What a Vault's `sys/health` answer means, without a Vault.
 
 Tier 0. Every case here is a reading the adapter makes of a body it has already
 received, so none of it needs a container -- and the readings are exactly where a

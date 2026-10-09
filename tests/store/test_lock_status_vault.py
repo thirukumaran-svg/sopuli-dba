@@ -1,4 +1,4 @@
-"""``lock status`` against a real Vault (#105).
+"""``lock status`` against a real Vault.
 
 Tier 1. `tests/test_cli_lock_status.py` covers the command with the store handed
 in, which is where the wiring belongs; the one thing a fake cannot tell us is
@@ -16,11 +16,11 @@ the tool's own manager would be a record the tool already understood by
 construction.
 
 Everything here runs on the `private_mount` fixture rather than on the shared
-`kv` mount, because `lock status` surveys the **whole** `locks/` prefix (#150).
+`kv` mount, because `lock status` surveys the **whole** `locks/` prefix.
 On the shared mount its estate is every record anything else has left there, so
-one `sopuli creds apply` run by hand against the local stack turned three of
-these red -- the assertions were right and the fixture was the whole container
-(#272). `foreign_lock` writes such a record on the shared mount for every test
+one `sopuli creds apply` run by hand against the local stack would leave a
+record there and break assertions that are right about an estate of their own.
+`foreign_lock` writes such a record on the shared mount for every test
 that has to survive one, so the isolation cannot quietly rot back.
 """
 
@@ -108,8 +108,8 @@ def their_lock(vault_stack: Any, private_mount: str) -> Iterator[None]:
     """Somebody else's held record, written straight to the API.
 
     Cleaned up with a metadata delete, which wipes the version counter as well as
-    the data -- something the tool itself never does (#83) and exactly what a
-    test needs between runs. The mount is now torn down after each test as well,
+    the data -- something the tool itself never does (UC-1 §8) and exactly what a
+    test needs between runs. The mount is torn down after each test as well,
     which makes this redundant; it stays because it states what the test expects
     to find rather than leaving that to be inferred from the mount's lifetime.
     """
@@ -123,11 +123,11 @@ def their_lock(vault_stack: Any, private_mount: str) -> Iterator[None]:
 def foreign_lock(vault_stack: Any) -> Iterator[None]:
     """A record on the **shared** mount, which no assertion here may see.
 
-    The regression guard for #272: every assertion below was correct on the shared
-    mount right up until something else wrote to it, and nothing in the file said
-    the estate had to be the test's own. With this in place, a change that puts
-    these tests back on `kv` fails at once rather than the next time somebody
-    exercises the tool by hand.
+    The regression guard for the mount's isolation: every assertion below holds
+    on the shared mount until something else writes to it, and nothing else in
+    the file says the estate has to be the test's own. With this in place, a
+    change that puts these tests back on `kv` fails at once rather than the next
+    time somebody exercises the tool by hand.
     """
     mount = vault_stack.kv2_mount
     vault_stack.client.post(f"/v1/{mount}/data/{FOREIGN_LOCK_PATH}", json={"data": RECORD})
@@ -176,7 +176,7 @@ def test_a_config_entry_reaches_a_real_vault_and_reads_somebody_elses_lock(
 def test_the_version_reported_is_the_store_s_own(
     config_path: Path, vault_stack: Any, private_mount: str
 ) -> None:
-    """It is what a takeover will have to compare-and-set against (#149), so a
+    """It is what a takeover will have to compare-and-set against, so a
     number that does not match the store's is worse than no number at all."""
     vault_stack.client.post(
         f"/v1/{private_mount}/data/{LOCK_PATH}", json={"data": RECORD, "options": {"cas": 1}}
@@ -237,7 +237,7 @@ def test_no_token_anywhere_is_reported_as_an_incomplete_machine(
 
 @pytest.mark.usefixtures("their_lock", "token_in_env")
 def test_the_survey_writes_nothing(config_path: Path, vault_stack: Any, private_mount: str) -> None:
-    """#83: `check`, `status` and every `--dry-run` take no lock. Asserted
+    """`check`, `status` and every `--dry-run` take no lock (UC-1 §8). Asserted
     against the store's version counter, because a write is what a lock is --
     and against a *real* store, where an accidental write would persist."""
     before = vault_stack.client.get(f"/v1/{private_mount}/metadata/{LOCK_PATH}").json()

@@ -1,4 +1,4 @@
-"""KV v1: a store with no compare-and-set, against the real mount (#104, #94).
+"""KV v1: a store with no compare-and-set, against the real mount.
 
 `test/compose.yaml` mounts `kv1` beside `kv` precisely so this is testable — P2's
 degradation path needs a backend that genuinely lacks the capability, and this is
@@ -55,8 +55,8 @@ def test_a_v1_mount_has_no_compare_and_set(store: SecretStore) -> None:
 
 
 def test_a_v1_mount_has_no_versioning(store: SecretStore) -> None:
-    """The other half of §5's degradation row, and the one `@version=` needs
-    (#183). Named as its own capability rather than inferred from the absent
+    """The other half of §5's degradation row, and the one `@version=` needs.
+    Named as its own capability rather than inferred from the absent
     `cas`, because a caller asking to read version 7 and a caller asking to write
     against version 7 are refused for different reasons and need different
     messages."""
@@ -120,10 +120,9 @@ def test_the_fallback_writes_the_document_this_store_can_write(store: SecretStor
 
 
 def test_a_v1_mount_can_still_be_listed(store: SecretStore) -> None:
-    """Capabilities are per capability, not a tier (#150).
+    """Capabilities are per capability, not a tier.
 
-    This used to assert an empty set, which read as "v1 is the degraded one" and
-    was wrong about a capability v1 has: a v1 mount enumerates perfectly well.
+    A v1 mount enumerates perfectly well.
     Reporting no `list` because the *interesting* capability is missing would
     deny `lock status` a leftover record it could have found.
     """
@@ -132,7 +131,7 @@ def test_a_v1_mount_can_still_be_listed(store: SecretStore) -> None:
 
 def test_an_unguarded_write_works(store: SecretStore) -> None:
     """What `locking: advisory-only` accepts knowingly: the record is written,
-    with nothing guarding it (#83, #94)."""
+    with nothing guarding it."""
     store.write(PATH, {"holder": "one"}, cas=None)
 
     stored = store.read(PATH)

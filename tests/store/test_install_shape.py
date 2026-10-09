@@ -83,9 +83,9 @@ imported = []
 for found in pkgutil.walk_packages(sopuli.__path__, "sopuli."):
     # Rule 1 puts the client import *inside* the backend module, so a backend is
     # the one place importing a client is correct. Everything else must not.
-    # Drivers are backends for this purpose (#170): `sopuli.driver.oracle` is
+    # Drivers are backends for this purpose: `sopuli.driver.oracle` is
     # where `oracledb` may be imported, and nowhere above it. Notify channels are
-    # too (#442, E7): `sopuli.notify.webhook` is where `httpx` may be imported for
+    # too (E7): `sopuli.notify.webhook` is where `httpx` may be imported for
     # a notification. Listed from the registries rather than by hand, so a second
     # driver or channel inherits the exemption instead of failing this on the day
     # it is added.
@@ -169,7 +169,7 @@ def test_no_backend_module_is_loaded_by_an_offline_command(tmp_path: Path) -> No
     assert result["loaded_backends"] == []
 
 
-# ------------------------------------------------------------- colour (#395) ---
+# ------------------------------------------------- colour (decision #395) ---
 
 
 def test_an_unimplemented_backend_nobody_configured_is_dimmed() -> None:

@@ -1,7 +1,7 @@
-"""One test body, two stores (#104).
+"""One test body, two stores.
 
 `MemoryStore` is the reference reading of `sopuli/store/protocol.py`'s semantics
-(#96) and the KV v2 adapter is the first real backend, so the useful question is
+and the KV v2 adapter is the first real backend, so the useful question is
 not "does each work" but **"do they agree"**. Every test below runs against
 both: the fake in tier 0, and Vault in tier 1 where a container is available.
 
@@ -9,7 +9,8 @@ Any place they disagree is either a bug in the adapter or a fake that was lying,
 and both are worth finding. The fake is the one nobody would suspect, and it is
 the one every lock test in the suite rests on.
 
-Three of these are the properties #83's design actually depends on:
+Three of these are the properties the lock's design actually depends on
+(Q2, UC-1 §8):
 
 * **``cas: 0`` succeeds only on a path with no history**, and a *deleted* path
   still has history. That is what makes "release by writing a record, never by
@@ -17,7 +18,7 @@ Three of these are the properties #83's design actually depends on:
 * **a lost compare-and-set is a ``CasConflictError``**, and never anything else.
 * **the version comes back from the write**, so there is something to fence with.
 
-Listing (#150) joined them, and it is the one where the fake is most likely to
+Listing joins them, and it is the one where the fake is most likely to
 be the liar: a dictionary makes "every path under this prefix" trivial, while a
 KV mount answers one level at a time, marks subtrees with a trailing separator,
 and lists paths whose data has been deleted. Every one of those is somewhere an
@@ -97,7 +98,7 @@ class _VaultAdmin:
 
     `vault kv metadata delete` for the wipe -- data *and* the version counter,
     which is the only way to make a path new again and is deliberately not
-    something the tool itself ever does (#83).
+    something the tool itself ever does (UC-1 §8).
     """
 
     def __init__(self, client: Any, mount: str) -> None:
@@ -217,7 +218,7 @@ def test_a_store_that_keeps_versions_says_so(harness: Harness) -> None:
 
 
 def test_an_older_version_is_readable_by_number(harness: Harness) -> None:
-    """What ``@version=N`` is (#183), and the reason the fake had to grow a
+    """What ``@version=N`` is, and the reason the fake keeps a
     history: a store that kept only the newest document would answer every
     pinned read with `None` and let an adapter that did the same pass."""
     harness.store.write(harness.path, {"password": "first"}, cas=0)
@@ -375,7 +376,7 @@ def test_a_deleted_path_reads_as_nothing_but_keeps_its_history(harness: Harness)
     it does for a path that never existed -- but the version counter stands, so
     `cas: 0` fails and will keep failing forever. A lock released by deleting
     would leave a path no first acquisition could ever take again, which is why
-    #83 releases by writing a `released` record instead.
+    the tool releases by writing a `released` record instead (UC-1 §8).
     """
     harness.store.write(harness.path, {"holder": "one"}, cas=0)
     harness.admin.soft_delete(harness.path)
@@ -423,11 +424,11 @@ def test_an_unguarded_write_is_refused_where_cas_is_required(harness: Harness) -
 
 
 def test_a_store_can_require_a_compare_and_set_for_itself(harness: Harness) -> None:
-    """The write half of the metadata pair (#390).
+    """The write half of the metadata pair.
 
-    Until then only an *operator* could set this -- `Admin.require_cas` above is
-    exactly the `vault kv metadata put` a human runs -- so the lock could read
-    the guarantee and never arrange one. Now the store does it, and both stores
+    The store can set this itself, where otherwise only an *operator* could --
+    `Admin.require_cas` above is exactly the `vault kv metadata put` a human
+    runs -- so the lock can arrange the guarantee as well as read it. Both stores
     have to agree about what it leaves behind.
     """
     harness.store.require_cas(harness.path)
@@ -439,7 +440,7 @@ def test_a_store_can_require_a_compare_and_set_for_itself(harness: Harness) -> N
 
 
 def test_requiring_a_compare_and_set_does_not_create_a_version(harness: Harness) -> None:
-    """The property the lock's first acquisition rests on (#390).
+    """The property the lock's first acquisition rests on.
 
     Metadata outlives data in KV v2 and, in the other direction, arrives without
     it: configuring a path leaves the version counter at zero, so the ``cas: 0``
@@ -460,7 +461,7 @@ def test_requiring_a_compare_and_set_does_not_create_a_version(harness: Harness)
 
 
 def test_a_store_that_required_it_then_refuses_an_unguarded_write(harness: Harness) -> None:
-    """End to end, and the whole point of #390: the guarantee the store arranged
+    """End to end, and the whole point of the pair: the guarantee the store arranged
     for itself is the same one an operator's `vault kv metadata put` arranges.
 
     The test above this one asserts the setting is reported; this asserts it
@@ -477,7 +478,7 @@ def test_a_store_that_required_it_then_refuses_an_unguarded_write(harness: Harne
     assert not isinstance(caught.value, CasConflictError)
 
 
-# ------------------------------------------------------------- listing (#150) ---
+# -------------------------------------------------------------------- listing ---
 
 
 def test_a_prefix_with_nothing_under_it_lists_as_empty(harness: Harness) -> None:
@@ -579,7 +580,7 @@ def test_a_read_does_not_hand_back_the_stores_own_state(harness: Harness) -> Non
 
 # ----------------------------------------------------------------- health ---
 #
-# The last of P2's sketch to arrive (#216), and the one where the fake is least
+# The last of principle P2's sketch, and the one where the fake is least
 # able to stand in for the real thing: `MemoryStore` has no network and nothing
 # that can be down, so `ok` is a constant for it rather than a finding. What is
 # worth asserting jointly is the *shape* of the answer -- that both report the

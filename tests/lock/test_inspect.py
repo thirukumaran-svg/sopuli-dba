@@ -1,4 +1,4 @@
-"""Reading lock records nobody in this process wrote (#105).
+"""Reading lock records nobody in this process wrote.
 
 Tier 0: the config comes from a dict and the store is
 :class:`~sopuli.store.MemoryStore`, so nothing here opens a socket. That is not
@@ -11,7 +11,7 @@ manager locks on, or `lock status` reports on paths a rotation would not touch;
 and every readable record has to produce a state, because the alternative is a
 lock the tool can neither describe nor break.
 
-A third arrived with #150's discovery half: a record found by *listing* has to
+A third comes from the discovery half: a record found by *listing* has to
 end up under the key the config would have produced for it, or a path the file
 declares perfectly well gets reported as somebody's leftover.
 """
@@ -221,7 +221,7 @@ def test_a_live_record_is_held_and_not_expired() -> None:
 
 def test_a_lapsed_record_is_held_and_expired() -> None:
     """Still held: expiry says the holder is probably gone, not that the path is
-    free. Taking it is a deliberate act (#149), and until somebody performs one
+    free. Taking it is a deliberate act, and until somebody performs one
     the record stands."""
     state = surveyed(record(now=NOW - DEFAULT_TTL - timedelta(minutes=2)))
 
@@ -305,7 +305,7 @@ def test_a_store_with_no_compare_and_set_reports_no_version() -> None:
     assert states[0].version is None
 
 
-# --------------------------------------------------------- discovery (#150) ---
+# ---------------------------------------------------------------- discovery ---
 
 
 DECLARED = LockKey(store="vault-dev", path="apps/acme/alpha")
@@ -397,7 +397,7 @@ def test_a_mixed_survey_reports_what_it_found_and_what_it_could_not_reach() -> N
 
 
 def test_discovery_never_writes() -> None:
-    """`lock status` takes no lock (#83), and listing must not become the one
+    """`lock status` takes no lock (UC-1 §8), and listing must not become the one
     place that touches a store. Asserted against the version counter, which is
     what a write would move."""
     store = stocked(DECLARED)
@@ -450,9 +450,9 @@ def test_discovery_recognises_a_record_written_under_a_doubled_separator() -> No
 
 
 def test_a_survey_told_nothing_calls_every_row_declared() -> None:
-    """The answer for a caller that did not go looking, which is every caller
-    before #150 -- and the reason the default is `True` rather than `False`: a
-    survey with no discovery must not mark its own estate as leftovers."""
+    """The answer for a caller that did not go looking -- and the reason the
+    default is `True` rather than `False`: a survey with no discovery must not
+    mark its own estate as leftovers."""
     store = stocked(DECLARED)
 
     assert survey([DECLARED], stores={"vault-dev": store}, now=NOW)[0].declared

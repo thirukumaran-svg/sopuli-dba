@@ -1,4 +1,4 @@
-"""The walk that turns KV's one-level listing into a recursive one (#150).
+"""The walk that turns KV's one-level listing into a recursive one.
 
 Tier 0: the walk takes a fetch function, so every level here is a dictionary and
 nothing opens a socket. The adapters' own endpoints are covered against a real

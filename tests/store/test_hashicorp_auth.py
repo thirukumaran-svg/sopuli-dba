@@ -1,4 +1,4 @@
-"""Getting a token, per §3a (#138).
+"""Getting a token, per §3a.
 
 Two halves. The dispatch — which endpoint, which body, which mount, and what
 happens for a method this build does not perform — is decided before any packet
@@ -514,11 +514,10 @@ def test_a_login_against_a_mount_that_does_not_exist_is_a_403(vault_stack: Any) 
 def test_connect_reaches_a_store_from_a_config_entry(
     vault_stack: Any, approle: dict[str, str]
 ) -> None:
-    """**The whole chain, in one call.** The entry describes the transport
-    (#135), the registry finds the module (#134), the resolver turns `auth:`
-    into a credential (#137), the method turns that into a token (#138), and the
-    adapter reads with it (#104). Until this test, no two of those had ever run
-    together."""
+    """**The whole chain, in one call.** The entry describes the transport,
+    the registry finds the module, the resolver turns `auth:` into a credential,
+    the method turns that into a token, and the adapter reads with it. This test
+    runs them together."""
     from sopuli.store.hashicorp import connect
 
     auth = VaultAuth(
@@ -541,6 +540,6 @@ def test_connect_reaches_a_store_from_a_config_entry(
     # so `supports()` is what proves the store is live without needing a policy.
     # Asserted by containment rather than by equality: what this test is about is
     # that `connect` handed back a live KV v2 store, and pinning the exact set
-    # makes it fail every time the interface grows a capability somewhere else
-    # -- which is what it did when `versioning` arrived with #183.
+    # makes it fail every time the interface grows a capability somewhere else,
+    # such as `versioning`.
     assert {CAS, LIST} <= store.supports()

@@ -1,4 +1,4 @@
-"""The transport and the error mapping, without a Vault (#104, ADR-005).
+"""The transport and the error mapping, without a Vault (ADR-005).
 
 Tier 0: every case here is a decision the adapter makes *before* or *after* the
 network, so none of it needs a container. What it covers is the half that is
@@ -68,7 +68,7 @@ def test_a_lost_race_is_a_conflict() -> None:
 
 def test_a_missing_cas_where_one_is_required_is_not_a_conflict() -> None:
     """The trap ADR-005 names: this message opens with the same words as the
-    conflict's, and #83 asserts `cas_required: true` on the lock mount, so it is
+    conflict's, and the lock paths set `cas_required: true`, so it is
     reachable by design. Reported as a race, a run would announce that somebody
     beat it to the path when nobody was there."""
     body = {"errors": ["check-and-set parameter required for this call"]}
@@ -195,7 +195,7 @@ def test_verify_false_is_the_whole_of_verify_false() -> None:
 
 def test_an_unwritten_verify_still_verifies() -> None:
     """`verify` stays None when unwritten so the ratchet can tell "nobody said"
-    from "somebody agreed" (#135); the effective reading is unchanged."""
+    from "somebody agreed"; the effective reading is unchanged."""
     assert build_ssl_context(VaultTls(server_name="vault.example.com")) is True
 
 
@@ -224,13 +224,10 @@ def test_a_ca_file_that_does_not_exist_is_a_store_error(tmp_path: Path) -> None:
 
     Better found here than at the first handshake -- a store that silently fell
     back to the system trust store would verify against a CA the config never
-    named, which is the opposite of what writing `ca_file` asks for. But #135
-    settled that this path is *valid config*, so reaching the store is the first
+    named, which is the opposite of what writing `ca_file` asks for. But this
+    path is *valid config*, so reaching the store is the first
     moment anybody can find out, and a stack trace is not how to say that a
     filename is wrong.
-
-    This asserted the raw `FileNotFoundError` until Copilot pointed out that the
-    missing-`addr` case two lines away is wrapped and this one was not.
     """
     missing = tmp_path / "not-there.pem"
 

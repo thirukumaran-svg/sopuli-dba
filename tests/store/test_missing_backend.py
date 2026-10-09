@@ -1,4 +1,4 @@
-"""What a configured-but-uninstalled backend does, end to end (#130, #134).
+"""What a configured-but-uninstalled backend does, end to end.
 
 Two answers, and the whole of ADR-006's E4/E5 is that they are different:
 
@@ -9,10 +9,10 @@ Two answers, and the whole of ADR-006's E4/E5 is that they are different:
 * anything that resolves the store to a client **fails**, with ``SOPULI-20001``,
   ``error.category: "config"`` and exit 9.
 
-**E4 reads "uninstalled" as "this machine cannot serve it"** since #238, so both
+**E4 reads "uninstalled" as "this machine cannot serve it"**, so both
 of its halves warn: a client `pip` can supply, and a backend nobody has written.
 They are one code and one finding, differing in the remedy the message names.
-The narrow reading -- the client alone -- left the validator saying ``0
+Reading it narrowly, as the client alone, would leave the validator saying ``0
 warnings`` about a file whose every store was unusable, which is the one thing a
 validator must not do.
 
@@ -163,12 +163,12 @@ def test_one_warning_per_store_not_per_backend_type(
 def test_an_unwritten_backend_is_not_sent_to_pip(
     unwritten: None, write_config: WriteConfig
 ) -> None:
-    """#238's unambiguous half: `pip` cannot supply a backend nobody has written.
+    """The unambiguous half: `pip` cannot supply a backend nobody has written.
 
-    The install line ran, succeeded, and left the store exactly as unusable --
-    and moved the config from "warns wrongly" into "installed, and silent about a
-    store that still cannot work", so following the advice made the validator
-    quieter rather than the machine better.
+    An install line would run, succeed, and leave the store exactly as unusable --
+    and would move the config from "warns wrongly" into "installed, and silent
+    about a store that still cannot work", so following the advice would make
+    the validator quieter rather than the machine better.
 
     The warning's level and code are the same either way; what is fixed here is
     what it says. `file` and `keyring` -- which have no client to look for at all
@@ -188,12 +188,12 @@ def test_an_unwritten_backend_is_not_sent_to_pip(
 def test_the_unwritten_wording_is_the_one_doctor_uses(
     unwritten: None, write_config: WriteConfig
 ) -> None:
-    """One definition of "this machine cannot serve it", not two (#237, #238).
+    """One definition of "this machine cannot serve it", not two.
 
     `config validate` warns and `doctor` errors -- the level is each command's own
     call and is meant to differ -- but the half of the sentence that states the
-    fact is the same fact, and the two disagreeing about it is what produced the
-    defect #237 fixed one layer up.
+    fact is the same fact, and the two disagreeing about it would be a
+    defect.
     """
     shape = survey(
         Config(version=1, vaults=(Vault(name="vault-prod", type="hashicorp", mount="secret"),))
@@ -209,13 +209,12 @@ def test_the_unwritten_wording_is_the_one_doctor_uses(
 def test_a_backend_with_no_module_warns_though_pip_cannot_help(
     write_config: WriteConfig,
 ) -> None:
-    """The case that was wrong for every user, and that no amount of installing
-    fixed (#238).
+    """The case that no amount of installing fixes.
 
-    `file` and `keyring` have no extra -- ADR-006's named gap -- so the narrow
-    reading found nothing to look for and said nothing, on every machine,
-    unconditionally. A file declaring only those validated as ``0 warnings`` and
-    could not work anywhere.
+    `file` and `keyring` have no extra -- ADR-006's named gap -- so a narrow
+    reading would find nothing to look for and say nothing, on every machine,
+    unconditionally. A file declaring only those would validate as ``0 warnings``
+    and could not work anywhere.
 
     Warning about it is not actionable by `pip`, and that is not the same as not
     actionable: the action is *do not deploy this yet*, and it is the fact its
@@ -238,12 +237,12 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
 
 
 def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfig) -> None:
-    """The report `config validate` owes its reader, and did not give (#238).
+    """The report `config validate` owes its reader.
 
     Three of the four types in ``01-configuration.md`` §3a have no module, so a
     config declaring all four is a config whose stores are three-quarters
-    unusable. It reported **one** warning before this -- and which one depended
-    on whether the machine happened to have the OCI SDK, which is a fact about
+    unusable. A narrow reading would report **one** warning -- and which one would
+    depend on whether the machine happened to have the OCI SDK, which is a fact about
     the laptop and not about the file.
 
     Asserted as a set rather than a list: the order is the survey's, sorted by

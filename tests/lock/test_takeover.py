@@ -1,4 +1,4 @@
-"""Taking a lock from its holder, as a function of what was read (#149).
+"""Taking a lock from its holder, as a function of what was read.
 
 Tier 0 in the strongest sense: every refusal, every no-op and the one write are
 decided from a :class:`~sopuli.lock.inspect.LockState` and two booleans, so the
@@ -102,9 +102,9 @@ class Unfenced:
 
     def health(self) -> StoreHealth:  # pragma: no cover - not asked
         # `check_fenceable` never asks, and the method is here because a
-        # `Protocol` demands it of every implementation -- which is the cost P2
-        # weighs when it says a method nothing calls obliges every store to
-        # write a body for a caller that does not exist (#216).
+        # `Protocol` demands it of every implementation -- which is the cost
+        # principle P2 weighs when it says a method nothing calls obliges every
+        # store to write a body for a caller that does not exist.
         return StoreHealth(status=OK)
 
 
@@ -157,7 +157,7 @@ def test_a_store_that_cannot_fence_is_refused_before_anything_is_read() -> None:
 
 
 def test_advisory_only_is_refused_in_its_own_words() -> None:
-    """The operator already conceded there is no fence here (#94), so the remedy
+    """The operator already conceded there is no fence here, so the remedy
     is not "turn on versioning" -- it is that this is what that setting costs."""
     with pytest.raises(NoFenceError) as caught:
         check_fenceable(KEY, LockableStore(store=Unfenced(), locking=LOCK_ADVISORY_ONLY))
@@ -171,10 +171,10 @@ def test_advisory_only_is_refused_even_where_the_store_could_fence() -> None:
 
     It is the case that reads as an exception and is not one.
     `LockManager.__post_init__` refuses `break_expired` on this key alone, and
-    its comment names this verb as the thing it exists to constrain; #149 settled
-    the pair in the same words. A guard that probed the store instead would
-    behave differently on two configurations that read identically, and the
-    operator cannot see which they have from the file.
+    its comment names this verb as the thing it exists to constrain. A guard that
+    probed the store instead would behave differently on two configurations that
+    read identically, and the operator cannot see which they have from the
+    file.
     """
     fenceable = MemoryStore()
     assert CAS in fenceable.supports()
@@ -236,8 +236,10 @@ def test_a_live_lock_is_refused_and_names_its_holder() -> None:
 
 
 def test_force_takes_a_live_lock() -> None:
-    """#89 settled `--force` as an audited override of a guardrail that is not a
-    safety setting, and a live holder is exactly that kind of guardrail."""
+    """`--force` is an audited override of a guardrail that is not a safety
+    setting (decision P3), and a live holder is exactly that kind of guardrail:
+    `lock break` takes a lock that has not expired only with `--force`
+    (UC-1 §8)."""
     outcome = plan_break(
         state_of(store_with(record().to_dict()), now=NOW + timedelta(minutes=1)), force=True
     )

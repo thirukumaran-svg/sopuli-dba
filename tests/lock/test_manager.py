@@ -1,6 +1,6 @@
 """Holding locks, and the fence that makes holding them mean something.
 
-Tier 0, and that is the interesting part: every scenario #83 worried about is
+Tier 0, and that is the interesting part: every scenario Q2 raises is
 here without a container. Two runs contend by sharing one
 :class:`~sopuli.store.MemoryStore`; a stalled run is a manager whose clock did
 not move; a stolen lock is a version that did.
@@ -183,7 +183,7 @@ def test_a_deleted_lock_record_is_refused_with_the_reason_it_cannot_be_taken() -
     A deleted path reads as empty, so acquisition tries `cas: 0` -- and fails,
     because the version history stands. Re-running will never fix it, so the hint
     says what happened rather than only "somebody beat you to it". The tool never
-    deletes (#83), which is what makes this always somebody else's doing.
+    deletes (UC-1 §8), which is what makes this always somebody else's doing.
     """
     store = MemoryStore()
     run = manager(store)
@@ -226,16 +226,17 @@ def test_a_partial_acquisition_gives_back_what_it_took() -> None:
 
 
 def test_a_store_that_fails_mid_acquisition_gives_back_what_it_took() -> None:
-    """#345: the unwind covers every way acquisition can stop, not just a refusal.
+    """The unwind covers every way acquisition can stop, not just a refusal.
 
-    This unwound on `LockDeniedError` alone, which is the *expected* way to lose
-    a lock and not the only one. `_take` reads and writes a store, and the
+    `LockDeniedError` is the *expected* way to lose a lock and not the only one.
+    `_take` reads and writes a store, and the
     HashiCorp adapter raises `StoreError` on a timeout, `StoreAuthError` on a
     token that expired between the first key and the second, and
     `StoreUnavailableError` on a sealed vault or a standby failover. None of
-    those is a refusal, so every lock already taken stayed `held` in the vault
-    for the full TTL -- and `holding()` could not clean up after it, because
-    `acquire` runs before its `try`.
+    those is a refusal, and `acquire` unwinds them as well. Without that, every
+    lock already taken would stay `held` in the vault for the full TTL -- and
+    `holding()` could not clean up after it, because `acquire` runs before its
+    `try`.
     """
 
     class Flaky(MemoryStore):
@@ -364,9 +365,9 @@ def test_a_record_rewritten_by_someone_else_is_caught_by_the_correlation_id() ->
     theirs = LockRecord.acquired(
         correlation_id="01JTHEIRS", command="creds rotate", holder=HOLDER, now=NOW
     )
-    # Under a CAS, as a real taker's write is: since #390 the acquisition sets
+    # Under a CAS, as a real taker's write is: the acquisition sets
     # `cas_required` on the path, so an unguarded write is refused by the store
-    # itself -- which is the point of that change and not an obstacle to this
+    # itself -- which is the point of that setting and not an obstacle to this
     # test. What is being exercised here is the fence *matching* and the record
     # having changed anyway, so the next line puts the fence back where the
     # takeover left it.
@@ -380,7 +381,7 @@ def test_a_record_rewritten_by_someone_else_is_caught_by_the_correlation_id() ->
 
 
 def test_a_check_can_be_narrowed_to_the_lock_about_to_be_written_under() -> None:
-    """#282: before one `ALTER USER`, what has to still be ours is that account's
+    """Before one `ALTER USER`, what has to still be ours is that account's
     own document lock. Checking all of them would be a store read per held lock
     before every statement, to establish facts nothing was about to act on."""
     store = MemoryStore()
@@ -470,13 +471,14 @@ def test_renewing_a_stolen_lock_fails_rather_than_taking_it_back() -> None:
 
 
 def test_a_takeover_between_the_check_and_the_renewal_write_is_a_takeover() -> None:
-    """#346. `renew` checks and then writes, and the gap is real.
+    """`renew` checks and then writes, and the gap is real.
 
     The check is not the whole guard: a takeover can land between it and the
     write, or on lock two after lock one has already been rewritten. `_write`
-    translated **every** lost compare-and-set into `LockDeniedError` -- exit 7,
-    "nothing has been touched" -- in a message saying the run was *acquiring* a
-    lock it had held since the first target. Neither half is true of a renewal.
+    must not translate **every** lost compare-and-set into `LockDeniedError` --
+    exit 7, "nothing has been touched" -- in a message saying the run was
+    *acquiring* a lock it had held since the first target. Neither half is true
+    of a renewal.
     """
     store = Contested()
     clock = Clock()
@@ -588,7 +590,7 @@ def test_releasing_twice_writes_once() -> None:
 
 # ---------------------------------------------------------------- observer ---
 #
-# What a streamed run says about its locks (#535). Told by the manager rather
+# What a streamed run says about its locks. Told by the manager rather
 # than worked out by the command, because only the manager sees the order.
 
 
@@ -676,8 +678,8 @@ class ReadsBeforeWrites(MemoryStore):
     The window that makes ``advisory-only`` unsafe: ``acquire`` reads the path
     and then writes it, so two runs both end up holding one lock exactly when
     both reads land before either write. Across two real processes that happens
-    when the machine feels like it -- #197 is a tier-1 test that asserted it
-    directly, which is a coin flip, and eventually lost the toss.
+    when the machine feels like it, so a tier-1 test cannot assert it
+    directly: that would be a coin flip.
 
     A barrier makes it happen every time. It is **not** a race: no outcome here
     depends on which thread the scheduler favours, only on an ordering that is
@@ -791,11 +793,11 @@ def test_two_advisory_runs_can_hold_one_lock_at_once() -> None:
 
     Both runs look at an empty path, both are entitled to take it, and nothing
     stops the second write. That is the concession an operator makes with
-    ``locking: advisory-only`` (#94) and it is the reason the mode is reported
+    ``locking: advisory-only``, and it is the reason the mode is reported
     -- a run claiming ``cas`` here would be claiming a guarantee it does not
     have.
 
-    **Tier 0 because only tier 0 can force it** (#197). The window is between a
+    **Tier 0 because only tier 0 can force it.** The window is between a
     racer's read and its write, and no handshake reaches inside ``acquire`` to
     hold it open; two processes released at one instant land in it *sometimes*.
     In one process the store itself can hold the door, which is what this tier
@@ -828,7 +830,7 @@ def test_the_same_window_produces_one_winner_where_there_is_a_fence() -> None:
     fence closes it, which is exactly what `advisory-only` gives up.
 
     Which run loses is the scheduler's business and is not asserted. That
-    *exactly one* does is the property, and it is the one #197 is about: an
+    *exactly one* does is the property: an
     outcome worth asserting is one the ordering cannot change.
     """
     store = ReadsBeforeWrites()
@@ -841,7 +843,7 @@ def test_the_same_window_produces_one_winner_where_there_is_a_fence() -> None:
 
 
 def test_breaking_expired_locks_is_refused_where_there_is_no_fence() -> None:
-    """#94 refuses this combination in the config; a manager built any other way
+    """The config refuses this combination; a manager built any other way
     must not be able to reach it either."""
     with pytest.raises(ValueError, match="no fence"):
         advisory(MemoryStore(capabilities=frozenset()), break_expired=True)
@@ -874,15 +876,15 @@ def test_a_lock_path_that_does_not_require_a_compare_and_set_is_refused() -> Non
 
 
 def test_a_pre_flight_refusal_is_a_capability_refusal_and_not_a_held_lock() -> None:
-    """#346. Both pre-flight checks used to raise `LockDeniedError`, which the
+    """Neither pre-flight check may raise `LockDeniedError`, which the
     boundary maps to exit 7 -- "another process holds the lock".
 
     Neither is a held lock, and the difference is what a scheduler does next. A
     KV v1 mount nobody marked `locking: advisory-only` is a fact about the store
-    that is true again on the next run and the one after that, so exit 7 had an
-    unattended runner retrying for ever on a condition that can never clear.
-    Exit 5 says the tool cannot do this here, which is invariant 4's answer and
-    the one `sopuli lock break` already gave for the identical fact.
+    that is true again on the next run and the one after that, so exit 7 would
+    have an unattended runner retrying for ever on a condition that can never
+    clear. Exit 5 says the tool cannot do this here, which is invariant 4's
+    answer and the one `sopuli lock break` already gave for the identical fact.
     """
     no_cas = MemoryStore(capabilities=frozenset())
     no_promise = MemoryStore()
@@ -908,11 +910,11 @@ def test_a_path_with_no_metadata_at_all_is_fine() -> None:
     assert record_at(store)["state"] == "held"
 
 
-# ------------------------------------- arranging the guarantee (#390) ---
+# -------------------------------------------- arranging the guarantee ---
 
 
 def test_a_first_acquisition_makes_the_path_require_a_compare_and_set() -> None:
-    """#390. The path is new, so this run's acquisition is what creates it -- and
+    """The path is new, so this run's acquisition is what creates it -- and
     the metadata it is created with is what every later run is judged against."""
     store = MemoryStore()
 
@@ -924,12 +926,13 @@ def test_a_first_acquisition_makes_the_path_require_a_compare_and_set() -> None:
 
 
 def test_the_second_run_on_a_path_this_tool_created_is_not_refused() -> None:
-    """The bug in one test (#390).
+    """The bug this guards against, in one test.
 
-    A first acquisition used to create the path with `cas_required` unset,
-    because there was no metadata to read and nothing arranged any. The check
-    above then refused every run after it, so the tool locked a new path once
-    and never again until somebody ran `vault kv metadata put` by hand.
+    A first acquisition that created the path with `cas_required` unset,
+    because there was no metadata to read and nothing arranged any, would be
+    refused by the check above on every run after it, so the tool would lock a
+    new path once and never again until somebody ran `vault kv metadata put` by
+    hand.
     """
     store = MemoryStore()
     first = manager(store)
@@ -969,7 +972,7 @@ def test_a_store_that_cannot_fence_is_never_asked_to_require_one() -> None:
 
 
 def test_a_store_that_will_not_set_the_metadata_is_a_warning_and_not_a_refusal() -> None:
-    """Degrade, do not stop (#390).
+    """Degrade, do not stop.
 
     Setting metadata is a separate Vault capability from writing the record, so
     a token that has locked correctly for a year can refuse this one call. The
@@ -1010,7 +1013,7 @@ def test_a_store_failing_the_metadata_write_for_any_other_reason_stops_the_run()
 
 
 def test_max_versions_is_not_enforced() -> None:
-    """#83 names `max_versions: 10`, and it is deliberately not a refusal.
+    """UC-1 §8 recommends `max_versions: 10`, and it is deliberately not a refusal.
 
     Pruning old versions does not reset the version counter, so fencing survives
     any value of it -- refusing a working vault over a housekeeping preference

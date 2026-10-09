@@ -1,4 +1,4 @@
-"""What a lock is keyed on, and the order a run takes several in (#83).
+"""What a lock is keyed on, and the order a run takes several in.
 
 Two of these tests are about a failure that has no symptom until it matters. A
 key that is too narrow -- per account, per target, or per spelling of a path --
@@ -128,11 +128,11 @@ def test_a_key_prints_as_store_and_path() -> None:
 
 # ------------------------------------------------ paths that address nothing ---
 #
-# #344. `normalise_path` dropped only empty segments, so `.` and `..` survived
-# into a lock key. `lock_path()` prefixes `locks/`, and a `..` walks straight
-# back out of it: measured against a real Vault, `lock break 'kv:../secrets/acme/db'`
-# read the *credential* document as a lock record and CAS-wrote a `released`
-# record onto it, with nothing written under `locks/` at all.
+# `normalise_path` refuses `.` and `..` segments (decision #344). `lock_path()`
+# prefixes `locks/`, and a `..` would walk straight back out of it. Without the
+# refusal, `lock break 'kv:../secrets/acme/db'` would read the *credential*
+# document as a lock record and CAS-write a `released` record onto it, with
+# nothing written under `locks/` at all (measured against a real Vault).
 
 
 @pytest.mark.parametrize(
@@ -158,9 +158,9 @@ def test_a_relative_segment_is_refused_rather_than_dropped(path: str) -> None:
 
 
 def test_the_empty_segment_rule_is_untouched() -> None:
-    """The half that was always right: normalising *merges* two spellings of one
-    document, which over-locks at worst. #344 is that `..` does not merge, it
-    redirects."""
+    """The half that needs no refusal: normalising *merges* two spellings of one
+    document, which over-locks at worst. A `..` does not merge, it redirects
+    (decision #344)."""
     assert normalise_path("apps//acme/db") == "apps/acme/db"
     assert normalise_path("/apps/acme/db/") == "apps/acme/db"
     assert normalise_path("apps/acme/db") == "apps/acme/db"

@@ -1,4 +1,4 @@
-"""A real Vault's compare-and-set conflict, pinned as a regression (#103, #104).
+"""A real Vault's compare-and-set conflict, pinned as a regression.
 
 :class:`~sopuli.store.protocol.CasConflictError` has to be raised for a lost
 compare-and-set and *only* for that (``sopuli/store/memory.py`` is the
@@ -62,13 +62,12 @@ _ALLOW_REMOTE_ENV = "SOPULI_TEST_ALLOW_REMOTE_VAULT"
 #: tool's own name -- scratch space, but still an example in the codebase.
 PATH = "apps/acme/probe/cas-conflict"
 
-#: The fact under test, imported from the mapping that depends on it (#104).
+#: The fact under test, imported from the mapping that depends on it.
 #:
-#: It was duplicated here while there was no `sopuli.store.hashicorp` to share
-#: it with, and this file said so. Now that there is, importing it is the whole
-#: point: this test asserts that **the string the adapter matches on** is still
-#: what a real Vault sends, which a private copy could not do -- the copy would
-#: keep passing while the adapter matched on something else.
+#: Importing it is the whole point: this test asserts that **the string the
+#: adapter matches on** is still what a real Vault sends, which a private copy
+#: could not do -- the copy would keep passing while the adapter matched on
+#: something else.
 
 
 def _call(method: str, path: str, *, json_body: dict[str, Any] | None = None) -> tuple[int, Any]:
@@ -164,7 +163,7 @@ def path(_vault_reachable: None) -> Iterator[str]:
 
     Full metadata delete -- wipes data *and* the version counter -- which is
     fine here because this path is the test's own scratch space, never a
-    lock (#83 is the reason release writes a record instead of using this).
+    lock (UC-1 §8 says why release writes a record instead of using this).
     """
     _call("DELETE", f"{MOUNT}/metadata/{PATH}")
     yield PATH

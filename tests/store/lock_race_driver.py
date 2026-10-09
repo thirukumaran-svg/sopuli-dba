@@ -1,4 +1,4 @@
-"""One run, taking one lock against a real Vault, as a separate process (#106).
+"""One run, taking one lock against a real Vault, as a separate process.
 
 Not collected as a test -- no ``test_`` prefix -- because it *is* the run under
 test. ``tests/store/test_lock_concurrency.py`` starts two of these and reads

@@ -56,10 +56,9 @@ def test_a_path_that_requires_a_compare_and_set_refuses_a_write_without_one() ->
     a lock record without one. A fake that accepted the write would let an
     implementation pass here and be rejected by the real thing.
 
-    A `StoreError` and **not** a `CasConflictError`: nothing raced. This asserted
-    the conflict until `tests/store/test_store_conformance.py` ran the same body
-    against a real Vault (#104) and the two disagreed -- the fake was the one
-    that was wrong, which is the divergence that suite exists to find.
+    A `StoreError` and **not** a `CasConflictError`: nothing raced.
+    `tests/store/test_store_conformance.py` runs the same body against a real
+    Vault, so a disagreement between the fake and the real store shows up there.
     """
     store = MemoryStore()
     store.configure("locks/a", PathMetadata(cas_required=True))
@@ -124,7 +123,7 @@ def test_a_store_can_be_built_without_compare_and_set() -> None:
     assert CAS not in store.supports()
 
 
-# ------------------------------------------------------------- listing (#150) ---
+# -------------------------------------------------------------------- listing ---
 #
 # What the conformance suite cannot ask, because it asks both stores the same
 # question and these are about states only the fake can be put into.

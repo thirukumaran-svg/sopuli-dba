@@ -1,4 +1,4 @@
-"""Opening every configured store, and never raising while doing it (#216).
+"""Opening every configured store, and never raising while doing it.
 
 The survey's own contract, apart from the section built out of it. Three ways
 one store can go and all three are findings:
@@ -50,7 +50,7 @@ def test_an_unreachable_store_is_a_report_and_not_a_raise(
 ) -> None:
     """`doctor` surveys an estate: one dead store must not end the run.
 
-    The same rule `targets[]` has followed since #212, and the reason `health`
+    The rule `targets[]` follows, and the reason `health`
     returns `unreachable` instead of raising it.
     """
     monkeypatch.setenv("VAULT_TOKEN", "unused-because-nothing-answers")
@@ -236,7 +236,7 @@ def test_an_exception_carrying_no_message_does_not_break_the_survey(
     assert report.health.detail == "RuntimeError"
 
 
-# ------------------------------------------------- the run's client map (#489) ---
+# -------------------------------------------------------- the run's client map ---
 
 
 def _counting(monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> list[str]:

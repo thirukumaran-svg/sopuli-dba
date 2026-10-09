@@ -1,4 +1,4 @@
-"""``lock break`` against a real Vault, and the fence it leaves behind (#149).
+"""``lock break`` against a real Vault, and the fence it leaves behind.
 
 Tier 1. `tests/test_cli_lock_break.py` covers the command with the store handed
 in, which is where the refusals and the document belong. Two things here need a
@@ -103,7 +103,7 @@ def their_lock(vault_stack: Any) -> Iterator[None]:
     """Somebody else's expired record, written straight to the API.
 
     Cleaned up with a metadata delete, which wipes the version counter as well as
-    the data -- something the tool itself never does (#83) and exactly what a
+    the data -- something the tool itself never does (UC-1 §8) and exactly what a
     test needs between runs.
     """
     mount = vault_stack.kv2_mount

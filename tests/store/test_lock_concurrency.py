@@ -1,7 +1,7 @@
-"""Release gate: the lock holds under contention (#106, #83).
+"""Release gate: the lock holds under contention.
 
-`04-testing.md` §5 and UC-1 §11 both list the concurrency case, and #83 added
-the fencing one. Both are covered in tier 0 already — two managers over one
+`04-testing.md` §5 and UC-1 §11 both list the concurrency case and the fencing
+one. Both are covered in tier 0 already — two managers over one
 dictionary with an injected clock (`tests/lock/test_manager.py`) — and that is
 not the same claim. Tier 0 forces the race by driving the store in a chosen
 order, so it proves the *manager* reacts correctly to a lost compare-and-set. It
@@ -13,10 +13,10 @@ This does, with two real processes against a real Vault
 
 **Why it is a release gate.** A tool that lets two runs rotate one credential at
 once is worse than a tool with no locking at all, because the second at least
-does not claim otherwise. Everything else in the vault layer was built assuming
-these two properties; until now they had only ever been observed against a fake.
+does not claim otherwise. Everything else in the vault layer assumes these
+two properties.
 
-The split above cuts both ways, and #197 is the case that showed it. A claim
+The split above cuts both ways. A claim
 about an *interleaving* -- two runs both reading before either writes -- cannot
 be made here, for the same reason tier 0 cannot make the claim about two runs
 starting at once: the window is inside `acquire`, no handshake reaches into it,
@@ -45,7 +45,7 @@ from sopuli.lock import Holder, LockRecord
 DRIVER = Path(__file__).with_name("lock_race_driver.py")
 
 #: The **secret** path, in CLAUDE.md's fixture vocabulary. The record lands at
-#: `locks/apps/acme/alpha`: locks live under a prefix of their own (#83), which
+#: `locks/apps/acme/alpha`: locks live under a prefix of their own, which
 #: the manager adds, so writing it here too would nest one inside the other.
 SECRET_PATH = "apps/acme/alpha"
 
@@ -214,16 +214,15 @@ def lock_path(vault_stack: Any) -> Iterator[str]:
     Two things, and the second is the more interesting.
 
     A full metadata delete, which wipes the version counter as well as the data.
-    That is deliberately something the *tool* never does (#83: release writes a
+    That is deliberately something the *tool* never does (UC-1 §8: release writes a
     `released` record, because a delete would leave a path no first acquisition
     could ever take again) and exactly what a test needs between runs.
 
-    Then `cas_required: true` on the path, because **pre-flight refuses without
-    it** -- a lock on a path that accepts unguarded writes is one another writer
-    can replace, so the manager will not claim to hold it. Discovered by running
-    this test: the first version had no such step and every run was refused at
-    exit 7 before any race began, which is the guarantee working exactly as #83
-    describes and is an operator's one-time setup step in production too.
+    Then `cas_required: true` on the path, because **pre-flight checks it** -- a
+    lock on a path that accepts unguarded writes is one another writer can
+    replace, so the manager will not claim to hold it. On a path with no metadata
+    at all, pre-flight sets it itself (UC-1 §8); setting it here keeps the race
+    from depending on that step, so each test measures only the lock.
     """
     mount = vault_stack.kv2_mount
     vault_stack.client.delete(f"/v1/{mount}/metadata/{LOCK_PATH}")
@@ -334,7 +333,7 @@ def _steal(stack: Any, path: str, *, attempts: int = 40) -> bool:
 
 
 def test_a_deleted_lock_path_can_never_be_acquired_again(vault_stack: Any, lock_path: str) -> None:
-    """The fact behind "release writes a record, never deletes one" (#83).
+    """The fact behind "release writes a record, never deletes one" (UC-1 §8).
 
     Vault keeps a soft-deleted path's version counter, so `cas: 0` fails there
     forever. A lock released by deleting would leave a path no first acquisition
@@ -368,7 +367,7 @@ def test_advisory_only_claims_no_fence_and_never_loses_a_race(vault_stack: Any) 
     """What a mount with no compare-and-set can be *asked*, on a real Vault.
 
     `locking: advisory-only` is the operator conceding that a lock here
-    guarantees nothing (#94), and the concession has a shape that is observable
+    guarantees nothing, and the concession has a shape that is observable
     every time rather than only when the timing cooperates:
 
     * nobody is handed a fence -- a version somebody could compare would be a
@@ -382,14 +381,13 @@ def test_advisory_only_claims_no_fence_and_never_loses_a_race(vault_stack: Any) 
       the property that separates this mount from the `kv2` one above, and it is
       the half only a real store can be asked.
 
-    **What is deliberately not asserted is the outcome pair** (#197). This test
-    demanded `["acquired", "acquired"]` until it lost the toss on a loaded
-    runner, and the demand was never sound: `acquire` reads the path before it
+    **What is deliberately not asserted is the outcome pair.** Demanding
+    `["acquired", "acquired"]` is not sound: `acquire` reads the path before it
     writes, on `advisory-only` exactly as on `required`, so a racer whose read
     lands after the other's write is *correctly* denied. Both pairs are legal
     here and which one appears is a fact about process scheduling, not about the
-    store. The claim that fell out --- two runs *can* hold one advisory lock at
-    once --- moved to `tests/lock/test_manager.py`, where the window between the
+    store. The claim that two runs *can* hold one advisory lock at once is
+    tested in `tests/lock/test_manager.py`, where the window between the
     read and the write can be forced open instead of waited for.
     """
     secret_path = "apps/acme/beta"

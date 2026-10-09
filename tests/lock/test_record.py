@@ -51,7 +51,7 @@ def test_a_new_record_is_held_and_expires_after_the_ttl() -> None:
 
 
 def test_the_default_ttl_is_fifteen_minutes() -> None:
-    """Pinned as a number because #83 decided it as one.
+    """Pinned as a number because UC-1 §8 states it as one.
 
     Not a config key: a TTL somebody can raise is one that gets raised the first
     time a run is slow, and renewal at each target boundary is the answer to a

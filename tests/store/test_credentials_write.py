@@ -1,4 +1,4 @@
-"""Writing a credential into a stored document (#183, write side).
+"""Writing a credential into a stored document (write side).
 
 Tier 0. `tests/test_payload.py` already asserts that a *patch* omits every
 sibling account; what is asserted here is that the store agrees — that a patch
