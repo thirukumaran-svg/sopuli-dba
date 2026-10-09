@@ -1,4 +1,4 @@
-"""``sopuli creds apply`` end to end, without a database (#259).
+"""``sopuli creds apply`` end to end, without a database.
 
 Same arrangement as ``tests/test_cli_creds_check.py``: in-process through
 ``CliRunner``, with the vault a :class:`~sopuli.store.MemoryStore` and the driver
@@ -141,7 +141,7 @@ ASSERTING_CONFIG = CONFIG.replace(
     "    labels: { env: prod, tenant: beta }\n    oracle: { scope: pdb, container: BETA }",
 )
 
-#: The same estate, opted in to UC-1 §5's account unlock (#300). Opt-in is the
+#: The same estate, opted in to UC-1 §5's account unlock. Opt-in is the
 #: whole rule, so the config that declares it has to be a separate one: `CONFIG`
 #: above declares no policy at all, which is the case that must go on refusing to
 #: touch a locked account.
@@ -157,8 +157,8 @@ defaults:
 )
 
 #: Two accounts in one document, both opted in to the unlock. The pairing is what
-#: makes #347's second exposure visible: the fence is checked once per account, so
-#: an account after the first in the same target is one the run reaches with a
+#: puts a second account behind the fence: the fence is checked once per account,
+#: so an account after the first in the same target is one the run reaches with a
 #: lock it may no longer hold.
 SHARED_UNLOCKING_CONFIG = (
     SHARED_CONFIG
@@ -171,7 +171,7 @@ defaults:
 """
 )
 
-#: The same estate, with a profile that narrows both database budgets (#360).
+#: The same estate, with a profile that narrows both database budgets.
 #: Profile-only by declaration -- there is no flag and no environment variable --
 #: so a test about these keys is a test about the file.
 TIMEOUTS_CONFIG = (
@@ -184,9 +184,10 @@ TIMEOUTS_CONFIG = (
 """
 )
 
-#: The same estate, with #83's standing permission for an unattended runner.
-#: Config-only by design -- there is no flag and no environment variable -- so a
-#: test about it is a test about the file.
+#: The same estate, with the standing permission for an unattended runner
+#: (`locking.break_expired`, `01-configuration.md`). Config-only by design --
+#: there is no flag and no environment variable -- so a test about it is a test
+#: about the file.
 BREAK_EXPIRED_CONFIG = (
     CONFIG
     + """defaults:
@@ -206,8 +207,9 @@ BREAK_EXPIRED_PROFILE_CONFIG = (
 """
 )
 
-#: The same estate again, opted in to §5's profile assignment (#301). The profile
-#: is one `FakeSession` knows about; `MISSING_PROFILE_CONFIG` names one no database has.
+#: The same estate again, opted in to §5's profile assignment (decision #301). The
+#: profile is one `FakeSession` knows about; `MISSING_PROFILE_CONFIG` names one no
+#: database has.
 ASSIGNING_CONFIG = (
     CONFIG
     + """policies:
@@ -226,9 +228,9 @@ STAGED = "Vertical-Anchor-Marble-4"
 
 
 #: One account over two targets sharing **one** document, with a policy to draw
-#: from. That combination is what makes #312 visible: a refusal on the second
-#: target has to restage the account and re-apply the first as well, or the
-#: promotion advertises a password half the estate does not hold.
+#: from. That combination matters: a refusal on the second target has to
+#: restage the account and re-apply the first as well, or the promotion
+#: advertises a password half the estate does not hold.
 REDRAW_CONFIG = """\
 version: 1
 vaults:
@@ -261,7 +263,7 @@ applications:
 """
 
 #: `REDRAW_CONFIG` with a label per target, so a `--select` can narrow inside the
-#: one document both targets share (#406).
+#: one document both targets share.
 LABELLED_SHARED_CONFIG = REDRAW_CONFIG.replace(
     "    dsn: db-prod.example.com:1521/alpha.pdb.example.com\n",
     "    dsn: db-prod.example.com:1521/alpha.pdb.example.com\n    labels: { tenant: alpha }\n",
@@ -270,12 +272,12 @@ LABELLED_SHARED_CONFIG = REDRAW_CONFIG.replace(
     "    dsn: db-prod.example.com:1521/beta.pdb.example.com\n    labels: { tenant: beta }\n",
 )
 
-#: The document `REDRAW_CONFIG` writes, staged the way #311's `generate` leaves it.
+#: The document `REDRAW_CONFIG` writes, staged the way `generate` leaves it.
 REDRAW_DOCUMENT = "apps/acme/db"
 
 
 def staged(origin: str | None = "generated") -> dict[str, dict[str, Any]]:
-    """One shared document, optionally carrying #311's provenance key."""
+    """One shared document, optionally carrying the provenance key."""
     body: dict[str, Any] = {
         "DB_CREDENTIALS": {"acme_web_user": LIVE},
         "pending": {"acme_web_user": STAGED},
@@ -287,8 +289,8 @@ def staged(origin: str | None = "generated") -> dict[str, dict[str, Any]]:
 
 #: What the driver raises when the server refuses the *value* -- built through
 #: the real classification rather than as a bare exception, because
-#: `DriverError.regenerate` is what decides whether a redraw happens at all
-#: (#312). A `RuntimeError` carrying the same text answers `False` and would make
+#: `DriverError.regenerate` is what decides whether a redraw happens at all.
+#: A `RuntimeError` carrying the same text answers `False` and would make
 #: every assertion below pass by never reaching the code under test.
 def refusal(code: str = "ORA-28003") -> Exception:
     return classify(code, f"{code}: ORA-20001: password must contain a punctuation").as_error()
@@ -459,7 +461,7 @@ class FakeSession:
 
     def require_rollover(self, account: str) -> None:
         # The real driver raises for a missing account before it looks at
-        # anything else (#181), so this one does too -- otherwise the pre-flight
+        # anything else, so this one does too -- otherwise the pre-flight
         # could skip a case the estate would meet.
         if account.upper() not in self.users:
             raise RuntimeError(f'account "{account}" does not exist on this target')
@@ -487,7 +489,7 @@ class FakeSession:
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         # Recorded before the refusal, unlike `changed` below, which only sees the
         # calls that succeeded. A bounded redraw has to be asserted on the
-        # statements the server was *asked* for (#312): an unbounded loop issues
+        # statements the server was *asked* for: an unbounded loop issues
         # them for ever and appends nothing to a list of successes.
         self.attempted.append((account.upper(), secret.reveal()))
         if self.set_error is not None and next(self.refusals, False):
@@ -519,7 +521,7 @@ def user(name: str = "ACME_WEB_USER", **fields: Any) -> UserState:
 
     ``password_file_member`` defaults to ``False`` -- *asked and answered* -- so
     that a case about something else is not also a case about guardrail 3 having
-    no input (#296). The estate that cannot answer it belongs in
+    no input. The estate that cannot answer it belongs in
     `test_cli_guardrails.py`, where it is the subject rather than a side effect.
     """
     return UserState(**{"name": name, "status": "OPEN", "password_file_member": False, **fields})
@@ -571,7 +573,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         harness: dict[str, Any] = {"store": store, "sessions": sessions}
         # One budget for the whole run: `refusals=2` is a server that rejects the
         # next two passwords whichever session presents them, which is what a
-        # redraw meets once it reconnects (#312).
+        # redraw meets once it reconnects.
         budget = None if refusals is None else iter([True] * refusals)
 
         def fake_connect(
@@ -582,9 +584,9 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         class FakeDriver:
             def __init__(self, **kwargs: Any) -> None:
                 # Recorded so a test can assert what the *command* handed the
-                # driver, which is where #360's missing wire was. The session
-                # fake below cannot see it: `timeouts` is settled at
-                # construction and never reaches a statement.
+                # driver (decision #360). The session fake below cannot see it:
+                # `timeouts` is settled at construction and never reaches a
+                # statement.
                 harness.setdefault("driver_kwargs", []).append(kwargs)
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
@@ -634,8 +636,8 @@ def _credential() -> Any:
     """The admin credential the CLI would have resolved.
 
     A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
-    The command reads its *provenance* as well as its value now -- #477 reports
-    where an admin credential came from -- and a stub stops being enough the
+    The command reads its *provenance* as well as its value, because it reports
+    where an admin credential came from, and a stub stops being enough the
     moment anything but `.credential` is read. `external` because these estates
     declare no `admin:` block at all, and it is the one source that carries
     neither a username nor a secret.
@@ -826,9 +828,8 @@ def test_a_locked_account_is_not_changed(
 def test_a_locked_account_is_left_locked_where_nothing_declared_otherwise(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Opt-in, never inferred (#300). An estate that has not asked for the unlock
-    gets the refusal it had before, and the message names the key that changes
-    it."""
+    """Opt-in, never inferred. An estate that has not asked for the unlock
+    gets the refusal, and the message names the key that changes it."""
     harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
 
@@ -842,10 +843,10 @@ def test_a_locked_account_is_left_locked_where_nothing_declared_otherwise(
 def test_a_locked_account_is_unlocked_and_then_rotated(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The case the tool could not serve at all (#267): `apply` refuses to change
-    a locked account's password, so a locked application account had to be
-    unlocked by hand. With §5's attribute declared, the run removes the reason and
-    goes on to do the work."""
+    """`apply` refuses to change a locked account's password, so without §5's
+    attribute an operator has to unlock a locked application account by hand.
+    With the attribute declared, the run removes the reason and goes on to do
+    the work."""
     harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
     result = run(runner, write_config(UNLOCKING_CONFIG), "--select", "tenant=alpha")
 
@@ -933,8 +934,8 @@ def test_the_dry_run_unlocks_nothing(
 def test_an_account_is_moved_to_the_profile_the_policy_names(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """§5's second attribute (#301): `ALTER USER … PROFILE …`, and then the
-    rotation, in one run."""
+    """§5's second attribute (decision #301): `ALTER USER … PROFILE …`, and
+    then the rotation, in one run."""
     harness = estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
     result = run(runner, write_config(ASSIGNING_CONFIG), "--select", "tenant=alpha")
 
@@ -966,8 +967,8 @@ def test_the_move_is_reported_as_its_own_action_naming_both_profiles(
     estate: Harness,
     validator: Draft202012Validator,
 ) -> None:
-    """`attribute_set` is the schema's own kind for this and was unused until now,
-    so the detail is what says which attribute moved and where from."""
+    """`attribute_set` is the schema's own kind for this, so the detail is what
+    says which attribute moved and where from."""
     estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
     result = run(
         runner, write_config(ASSIGNING_CONFIG), "--select", "tenant=alpha", "--output", "json"
@@ -984,8 +985,9 @@ def test_the_move_is_reported_as_its_own_action_naming_both_profiles(
 def test_a_profile_this_database_has_not_got_is_refused_before_anything_is_written(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """UC-1 §8 step 3 (#301): the survey asks, and the run refuses rather than
-    discovering it on target nine with eight accounts already moved."""
+    """UC-1 §8 step 3 (decision #301): the survey asks, and the run refuses
+    rather than discovering it on target nine with eight accounts already
+    moved."""
     harness = estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
     result = run(runner, write_config(MISSING_PROFILE_CONFIG), "--preflight")
 
@@ -1039,7 +1041,7 @@ def test_a_target_that_cannot_read_profiles_at_all_refuses_the_run(
 def test_naming_a_regime_over_a_profile_move_is_refused(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The interaction #301 designs against: a profile decides whether a rollover
+    """The interaction to guard against: a profile decides whether a rollover
     window opens, so a regime judged against the profile an account is *leaving*
     could be cleared and then run under one that opens a window."""
     harness = estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
@@ -1147,10 +1149,9 @@ def test_one_failed_target_stops_the_promotion_for_that_document(
 def test_a_partial_run_names_the_invocation_that_repairs_it(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#264, and the half of exit 4 that was missing: the code exists to point at
-    a remedy, and the remedy has to be narrowed the way this run was narrowed --
-    otherwise the repair spends a login on every target the partial run already
-    spent one on."""
+    """The `repair with:` line points at a remedy, and the remedy has to be narrowed
+    the way this run was narrowed -- otherwise the repair spends a login on every
+    target the partial run already spent one on."""
     estate(
         per_target={
             "appdb-alpha": {"ACME_WEB_USER": drifted()},
@@ -1238,7 +1239,7 @@ def fresh() -> dict[str, Any]:
 
 
 def steal(path: str, *, at: str) -> Callable[[dict[str, Any], str], None]:
-    """Somebody else takes this document's lock, once, mid-run (#282).
+    """Somebody else takes this document's lock, once, mid-run.
 
     A real record at the real path written under a different `correlation_id`, so
     the run's next fence check fails on the version and would fail on the id too.
@@ -1262,7 +1263,7 @@ def steal(path: str, *, at: str) -> Callable[[dict[str, Any], str], None]:
             now=utc_now(),
         )
         # With the version the record is at, which is what a real taker passes:
-        # the path requires a compare-and-set since #390, so an unguarded write
+        # the path requires a compare-and-set, so an unguarded write
         # is refused by the store rather than by anything under test here.
         key = LockKey(store="vault-prod", path=path)
         held = harness["store"].read(lock_path(key))
@@ -1294,8 +1295,8 @@ def test_a_takeover_after_a_change_stops_the_run_and_promotes_nothing(
 def test_a_stopped_run_says_so_instead_of_offering_the_repair(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#264's line says *run this again*, which is the one thing not to do while
-    somebody else holds this estate's lock."""
+    """The `repair with:` line says *run this again*, which is the one thing not
+    to do while somebody else holds this estate's lock."""
     estate(on_call=steal("apps/acme/appdb-beta", at="set_password"))
 
     result = run(runner, write_config(CONFIG))
@@ -1341,14 +1342,13 @@ def test_a_takeover_before_any_change_is_exit_seven(
 def test_the_attribute_pass_is_behind_the_fence(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#347. `apply_attributes` issues `ALTER USER ... ACCOUNT UNLOCK`, which is a
-    database change like any other and was being made before any fence check.
+    """`apply_attributes` issues `ALTER USER ... ACCOUNT UNLOCK`, which is a
+    database change like any other and needs a fence check before it.
 
     The takeover lands on this run's *first* `describe_user`, so the lock is
-    somebody else's before the attribute pass is reached. Before #347 the only
-    check in `_apply_one` ran after it, and this run unlocked an account on a
-    lock it no longer held -- a smaller blast radius than a password and the same
-    rule broken.
+    somebody else's before the attribute pass is reached. A check that ran only
+    after the attribute pass would unlock an account on a lock the run no longer
+    holds -- a smaller blast radius than a password and the same rule broken.
     """
     harness = estate(
         users={"ACME_WEB_USER": user(status="LOCKED", locked=True)},
@@ -1365,13 +1365,12 @@ def test_the_attribute_pass_is_behind_the_fence(
 def test_a_takeover_stops_the_next_account_before_its_attribute_pass(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The second half of #347's exposure: every account after the first *within*
-    a target.
+    """The fence also covers every account after the first *within* a target.
 
     `renew()` fences each target boundary, so a two-target estate is covered at
     the seam between them. Two accounts in one target have no seam -- the run
-    goes straight from one to the next -- and the attribute pass was the first
-    thing each of them did. The takeover here lands on the first account's
+    goes straight from one to the next -- and the attribute pass is the first
+    thing each of them does. The takeover here lands on the first account's
     `set_password`, so the first account's work stands and the second must not
     even be unlocked.
     """
@@ -1401,10 +1400,10 @@ def test_a_takeover_stops_the_next_account_before_its_attribute_pass(
 def test_closing_the_rollover_window_is_behind_the_fence(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#347's second mutation. `creds finish-rollover` fences this same call and
-    `creds apply` did not, which is one operation encoding two rules about
-    whether the fence applies to it -- and only one of them can be the intended
-    one.
+    """Closing the rollover window is a database change, so it needs a fence
+    check. `creds finish-rollover` fences this same call, and `creds apply` must
+    follow the same rule, because one operation cannot have two rules about
+    whether the fence applies to it.
 
     The window stays open, which is the safe direction: an operator can close it
     deliberately, and a window closed by a run that had lost its lock is an old
@@ -1425,21 +1424,20 @@ def test_closing_the_rollover_window_is_behind_the_fence(
 def test_a_takeover_during_the_renewal_keeps_what_the_run_applied(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#346. The renewal's compare-and-set loses, and that is a *takeover*.
+    """The renewal's compare-and-set loses, and that is a *takeover*.
 
     `renew()` checks the fence and then writes, and a takeover can land in
-    between -- or on lock two after lock one has already been rewritten. Every
-    conflict used to become `LockDeniedError`, whose message said the run was
-    "acquiring" a lock it had held since the first target, and which
-    `_apply_estate` does not catch: it escaped to `creds apply`'s own handler,
-    which set `document.lock` and re-raised, and the boundary mapped it to exit
-    7. `document.results` was never set and the accumulated `applied` list went
+    between -- or on lock two after lock one has already been rewritten. The
+    conflict has to be reported as a takeover and not as `LockDeniedError`,
+    whose message says the run is "acquiring" a lock it has held since the
+    first target. `_apply_estate` does not catch `LockDeniedError`, so it would
+    reach the boundary as exit 7, and the accumulated `applied` list would go
     with the exception.
 
-    So a scheduler was told **exit 7 -- nothing happened** at the exact moment
-    the first target had already been re-passworded. Exit 4 with the results
-    kept is what the split in `sopuli/lock/errors.py` describes, and what the
-    command layer already does for every other takeover.
+    A scheduler would then read **exit 7 -- nothing happened** at the exact
+    moment the first target had already been re-passworded. Exit 4 with the
+    results kept is what the split in `sopuli/lock/errors.py` describes, and
+    what the command layer does for every other takeover.
     """
     harness = estate()
     store = harness["store"]
@@ -1477,7 +1475,7 @@ def test_a_takeover_during_the_renewal_keeps_what_the_run_applied(
 def plant_lock(store: Any, key: LockKey, body: dict[str, Any]) -> None:
     """Somebody else's lock record, planted the way a real run would leave it.
 
-    The `require_cas` is not decoration: since #390 an acquisition arranges that
+    The `require_cas` is not decoration: an acquisition arranges that
     guarantee on a path it creates, so a rival run's record comes with it. A
     record planted without it describes a path *nobody's* sopuli created, which
     pre-flight refuses on sight -- a different test from the one each caller
@@ -1490,7 +1488,7 @@ def plant_lock(store: Any, key: LockKey, body: dict[str, Any]) -> None:
 def test_an_expired_lock_stops_a_run_that_was_not_given_permission(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The default, and the behaviour #348 must not change by accident.
+    """The default, which wiring `break_expired` (decision #348) must not change.
 
     An expired record is still somebody's claim until a person or a standing
     permission says otherwise: the holder may be alive and slow rather than
@@ -1514,12 +1512,12 @@ def test_an_expired_lock_stops_a_run_that_was_not_given_permission(
 def test_break_expired_in_defaults_lets_an_unattended_run_take_the_lock(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#348. The key was resolved, ratcheted, cross-checked twice, and
-    implemented in `decide()` -- and no `LockManager` was ever built with it.
+    """Decision #348: the resolved key reaches every `LockManager`.
 
-    So an operator set it, hit exit 7, was told by `_hint_for` to set the key
-    they had already set, and had nothing in the output to tell them it was not
-    consulted. This is that wire, asserted where it shows: the run proceeds.
+    Without that wire an operator who set the key would hit exit 7, be told by
+    `_hint_for` to set the key they had already set, and have nothing in the
+    output to tell them it was not consulted. This asserts the wire where it
+    shows: the run proceeds.
     """
     harness = estate()
     plant_lock(harness["store"], ALPHA_LOCK, lapsed())
@@ -1533,15 +1531,14 @@ def test_break_expired_in_defaults_lets_an_unattended_run_take_the_lock(
 def test_a_takeover_says_so_in_the_output(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, validator: Any
 ) -> None:
-    """A guardrail that fires silently is half a guardrail, and this one did.
+    """A guardrail that fires silently is half a guardrail.
 
-    `lock_diagnostics` was written and unit-tested and called by nothing -- the
-    same shape as #348 itself -- so a run that broke somebody's lock said so
-    nowhere. `01-configuration.md` §3a says this and `sopuli lock break` "emit
-    the same warning code, because it is the same event", and `_taken_over`'s own
-    docstring says why it has to: the evidence is gone from the path the moment
-    the takeover write lands, so if this run does not report it, nothing ever
-    does.
+    The command has to call `lock_diagnostics`, or a run that broke somebody's
+    lock says so nowhere. `01-configuration.md` §3a says this and
+    `sopuli lock break` "emit the same warning code, because it is the same
+    event", and `_taken_over`'s own docstring says why it has to: the evidence is
+    gone from the path the moment the takeover write lands, so if this run does
+    not report it, nothing ever does.
     """
     harness = estate()
     plant_lock(harness["store"], ALPHA_LOCK, lapsed())
@@ -1561,11 +1558,10 @@ def test_a_takeover_says_so_in_the_output(
 def test_break_expired_in_a_profile_reaches_the_manager_too(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Both layers the registry declares, not just the one the fix was written
-    against. `defaults:` and a profile are the two, and a wire that carried only
-    the first would be #348 again for every estate that puts it where
-    `01-configuration.md` says it belongs -- "the profile is where this belongs:
-    it is a property of running without anybody watching"."""
+    """Both layers the registry declares. `defaults:` and a profile are the two,
+    and a wire that carried only the first would fail every estate that puts the
+    key where `01-configuration.md` says it belongs -- "the profile is where this
+    belongs: it is a property of running without anybody watching"."""
     harness = estate()
     plant_lock(harness["store"], ALPHA_LOCK, lapsed())
 
@@ -1603,18 +1599,17 @@ def test_a_live_lock_is_refused_even_with_break_expired(
 def test_both_database_budgets_reach_the_driver(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#360. `db.query_timeout_s` was resolved, ratcheted and passed to nobody.
+    """Decision #360: both `db.*_timeout_s` keys reach the driver.
 
-    `_timeouts()` read `connect_timeout_s` and built `Timeouts(connect_s=...)`,
-    so a profile writing `query_timeout_s` validated, appeared in `config show`,
-    and changed nothing at all. The driver end had been complete since #176 --
-    `Timeouts.query_s` becomes `Connection.call_timeout`, asserted in
-    `tests/driver/test_oracle_connect.py` -- and the command-side wire was the
-    missing half, which is exactly the half no test looked at.
+    `_timeouts()` builds `Timeouts` from `db.connect_timeout_s` and
+    `db.query_timeout_s`. Without the command-side wire, a profile writing
+    `query_timeout_s` would validate, appear in `config show`, and change
+    nothing at all. The driver end is tested on its own: `Timeouts.query_s`
+    becomes `Connection.call_timeout`, asserted in
+    `tests/driver/test_oracle_connect.py`.
 
     Asserted on what the *command* handed the driver rather than on what the
-    driver did with it, because that is where the gap was: the driver was right
-    all along.
+    driver did with it, because the command-side wire is the part under test.
     """
     harness = estate()
 
@@ -1776,9 +1771,9 @@ def test_an_unreadable_audit_is_a_caveat_and_not_a_refusal(
 def test_an_unreadable_audit_is_printed_in_the_text_as_well(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, mode: tuple[str, ...]
 ) -> None:
-    """#606: a survey that passed with a check missing must not read, in a
-    terminal, like one that made every check -- least of all under `--dry-run`,
-    where nothing runs afterwards to meet the cause."""
+    """Decision #606: a survey that passed with a check missing must not read,
+    in a terminal, like one that made every check -- least of all under
+    `--dry-run`, where nothing runs afterwards to meet the cause."""
     estate(audits={"appdb-alpha": RuntimeError("ORA-00942: table or view does not exist")})
 
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--preflight", *mode)
@@ -1966,7 +1961,7 @@ def test_one_account_failing_holds_back_its_sibling_too(
     assert stored(harness["store"], "apps/acme/db")["pending"]["acme_web_user"] == STAGED
 
 
-# ------------------------------------- a run narrower than its promotion (#406) ---
+# ---------------------------- a run narrower than its promotion (decision #406) ---
 
 
 def _both_staged() -> dict[str, dict[str, Any]]:
@@ -1984,9 +1979,9 @@ def test_a_run_narrowed_to_one_target_changes_it_and_does_not_promote(
     """Invariant 7, against a selector rather than against a failure.
 
     One account on two targets sharing one document. `--target` reaches one of
-    them, and nothing fails -- which is what made this promote before #406, with
-    the other database still holding the old password. Asserted on the stored
-    document, per this file's rule.
+    them, and nothing fails -- which a gate that counted only the pairs this run
+    visited would let promote, with the other database still holding the old
+    password. Asserted on the stored document, per this file's rule.
     """
     harness = estate(documents=staged())
     config = write_config(REDRAW_CONFIG)
@@ -2005,8 +2000,8 @@ def test_a_run_narrowed_to_one_target_changes_it_and_does_not_promote(
 def test_the_withheld_promotion_names_the_wider_run_as_its_remedy(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#264's line echoes the selectors, and here that would be the invocation
-    that withholds the promotion again."""
+    """The `repair with:` line echoes the selectors, and here that would be the
+    invocation that withholds the promotion again."""
     estate(documents=staged())
     config = write_config(LABELLED_SHARED_CONFIG)
 
@@ -2038,7 +2033,7 @@ def test_a_sibling_with_a_staged_password_holds_the_promotion_back(
     estate: Harness,
     validator: Draft202012Validator,
 ) -> None:
-    """Narrowing *within* a shared document, which is the case #406 was opened on.
+    """Narrowing *within* a shared document (decision #406).
 
     The sibling's `pending` may already be on its database -- an earlier partial
     run leaves exactly that -- and promoting past it would strand it there behind
@@ -2157,7 +2152,7 @@ def test_a_rotation_narrower_than_its_promotion_is_refused_before_staging(
 
 
 #: `REDRAW_CONFIG` with beta's store left to a default nobody set, so the binding
-#: the gate is asked about has no store at all (found in review on #578).
+#: the gate is asked about has no store at all.
 STORELESS_BETA_CONFIG = REDRAW_CONFIG.replace(
     "    dsn: db-prod.example.com:1521/beta.pdb.example.com\n    environment: prod\n"
     "    vault: vault-prod\n",
@@ -2201,7 +2196,7 @@ def test_an_unused_default_store_does_not_refuse_a_narrowed_run(
 def test_the_same_credential_spelled_differently_is_still_the_same_credential() -> None:
     """Two targets can address one value with refs that are not equal as
     strings -- an explicit store prefix on one of them. A rollback compares the
-    credential and not the spelling (found in review on #578)."""
+    credential and not the spelling."""
     config = build_config(yaml.safe_load(REDRAW_CONFIG))
     alpha, beta = config.bindings
     assert alpha.secret is not None
@@ -2221,7 +2216,7 @@ def test_a_sibling_that_is_not_due_is_not_visited_by_the_rotation(
 ) -> None:
     """`--max-age-days` drops an account from the rotation without dropping it
     from the selection. A sibling that is not due and has a `pending` of its own
-    is as unvisited as one a selector excluded (found in review on #578)."""
+    is as unvisited as one a selector excluded."""
     recent = to_rfc3339(utc_now() - timedelta(days=1))
     old = to_rfc3339(utc_now() - timedelta(days=60))
     harness = estate(
@@ -2277,9 +2272,7 @@ def test_a_refused_statement_is_reported_per_account(
     """ORA-28003 and friends: the server refused the password, and this estate is
     one where it cannot be replaced.
 
-    **This test used to assert that `apply` never redraws**, which #268 reversed
-    and #312 built. It still asserts a refusal that stands, and now for the reason
-    that survives that decision rather than the one that did not: `CONFIG`
+    `apply` redraws a refused password (decision #268), but not here: `CONFIG`
     declares no policy and its documents carry no `origin`, so there is nothing to
     draw from and no evidence the tool drew what is staged. Both are refusals
     `may_redraw` makes, and either alone is enough.
@@ -2303,11 +2296,10 @@ def test_readonly_refuses_before_anything_connects(
     """Invariant 10's ratchet, and invariant 4's timing.
 
     **`readonly` is set in the file**, which is the only place it can be set.
-    This passed `--readonly` until #292, and there is no such option -- so click
-    refused the argv, the command never ran, and the two assertions below were
-    satisfied by a usage error. It would have passed with `refuse_if_readonly`
-    deleted. Caught while wiring up `confirm_environments`, which is the same
-    defect one layer along: a guard that looks enforced and is not.
+    There is no `--readonly` option. Passing one would make click refuse the
+    argv, so the command would never run and the two assertions below would be
+    satisfied by a usage error. The test would then pass with
+    `refuse_if_readonly` deleted: a guard that looks enforced and is not.
     """
     harness = estate()
     result = run(
@@ -2323,11 +2315,11 @@ def test_readonly_refuses_before_anything_connects(
 def test_readonly_on_a_target_refuses_before_anything_connects(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The same guard, from the layer that was parsed and read by nothing (#424).
+    """The same guard, set on a target (decision #424).
 
-    `appdb-alpha` carried `safety: { readonly: true }` and the run applied a
-    password to it -- the plan printed, the store was read, the database was
-    reached. The refusal has to arrive at *plan* time, which is why the session
+    `appdb-alpha` carries `safety: { readonly: true }`. A run that applied a
+    password to it would print the plan, read the store and reach the database.
+    The refusal has to arrive at *plan* time, which is why the session
     list is asserted: a readonly target discovered while the estate is being
     walked is exactly the generic mid-execution failure invariant 4 forbids.
     """
@@ -2351,9 +2343,10 @@ def test_readonly_on_a_target_refuses_before_anything_connects(
 def test_a_run_narrowed_past_a_readonly_target_proceeds(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#424 refuses the whole run rather than skipping the marked targets, so the
-    narrowing the message offers has to actually work. If it did not, the refusal
-    would be handing the operator advice the tool cannot honour."""
+    """Decision #424 refuses the whole run rather than skipping the marked
+    targets, so the narrowing the message offers has to actually work. If it did
+    not, the refusal would be handing the operator advice the tool cannot
+    honour."""
     estate(documents={"apps/acme/appdb-beta": {"pending": {"acme_web_user": STAGED}}})
     result = run(
         runner,
@@ -2395,8 +2388,7 @@ def test_readonly_on_a_group_refuses_and_names_the_key(
 def test_max_targets_on_a_target_bounds_the_run(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The ceiling was inert at this layer for the same reason `readonly` was, and
-    #424 asked that it be measured rather than assumed."""
+    """The ceiling is enforced on a target as `readonly` is (decision #424)."""
     harness = estate()
     result = run(
         runner,
@@ -2612,11 +2604,11 @@ def test_a_capability_refusal_carries_invariant_4s_own_exit_code(
     """Invariant 4: a distinct exit code, and a message naming the capability and
     the target.
 
-    It was neither until #287. Every `DriverError` fell into the boundary's
-    catch-all and came out as `internal` on exit 1, with the hint folded into a
-    message prefixed by the exception's class name -- so the one refusal in this
-    tool that has its own exit code did not use it, and `target_capability` had
-    never been emitted at all.
+    A `DriverError` must not fall into the boundary's catch-all, where it would
+    come out as `internal` on exit 1, with the hint folded into a message
+    prefixed by the exception's class name. The one refusal in this tool that
+    has its own exit code has to use it, and `target_capability` has to be
+    emitted.
     """
     estate(users={"ACME_WEB_USER": rollover_user()}, capabilities=frozenset({PASSWORD_ROLLOVER}))
 
@@ -2645,7 +2637,7 @@ def test_a_capability_refusal_carries_invariant_4s_own_exit_code(
 def test_a_configuration_refusal_is_a_database_error_and_not_internal(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The other half of #287: a refusal with no capability behind it is still the
+    """The counterpart: a refusal with no capability behind it is still the
     driver's, and `internal` means *this is a bug in sopuli* to whoever reads it.
     """
     estate(
@@ -2673,7 +2665,7 @@ def test_a_configuration_refusal_is_a_database_error_and_not_internal(
 def test_rollover_is_refused_through_the_driver(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """`require_rollover` owns both of its refusals (#181) and carries the exact
+    """`require_rollover` owns both of its refusals and carries the exact
     `ALTER PROFILE` for the profile one. The command routes to it rather than
     restating either."""
     harness = estate(
@@ -2788,7 +2780,8 @@ def test_a_rollback_under_a_profile_that_cannot_answer_is_refused(
     estate: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`confirm: false` refuses the rollback gate even at a terminal (#610)."""
+    """`confirm: false` refuses the rollback gate even at a terminal
+    (decision #610)."""
     monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
     harness = estate(documents=_rolled())
     config = write_config(CONFIG + "profiles:\n  ci:\n    confirm: false\n")
@@ -2803,7 +2796,7 @@ def test_a_rollback_under_a_profile_that_cannot_answer_is_refused(
 def test_a_rollback_with_no_previous_says_so(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Bounded to one generation (Q3, #84), so there is nothing to run and the
+    """Bounded to one generation (Q3), so there is nothing to run and the
     message must not say `creds generate`."""
     harness = estate(
         documents={"apps/acme/appdb-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}}
@@ -2873,7 +2866,7 @@ def test_a_rollback_dry_run_needs_no_confirmation(
     assert harness["sessions"] == []
 
 
-# ------------------------------------------ the rollback and reuse (#568) ---
+# --------------------------------- the rollback and reuse (decision #568) ---
 
 
 def _reusing(**limits: str) -> dict[str, UserState | None]:
@@ -2899,11 +2892,11 @@ def _coded(emitted: Mapping[str, Any], code: str) -> list[dict[str, Any]]:
 def test_a_refused_rollback_on_a_reuse_profile_says_why_and_draws_nothing(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#568, as measured on ADB and on tier 1's `SOPULI_REUSE`. The profile is
-    reported with both values, the row's hint does not tell the operator to draw
-    another, and the redraw's refusal gives the rollback's reason rather than
-    "no record of where that password came from", which described `pending`'s
-    provenance key and not the value that was refused."""
+    """Decision #568. The profile is reported with both values, the row's hint
+    does not tell the operator to draw another, and the redraw's refusal gives
+    the rollback's reason rather than "no record of where that password came
+    from", which describes `pending`'s provenance key and not the value that was
+    refused."""
     harness = estate(documents=_rolled(), users=_reusing(), set_error=refusal("ORA-28007"))
 
     result = _rollback(runner, write_config(CONFIG), "--output", "json")
@@ -2934,8 +2927,8 @@ def test_a_refused_rollback_on_a_reuse_profile_says_why_and_draws_nothing(
 def test_the_reuse_warning_is_printed_as_well_as_serialised(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#309's rule: a warning only in `diagnostics[]` is invisible to the person
-    who ran the rollback by hand, and they are who it is for."""
+    """A warning only in `diagnostics[]` is invisible to the person who ran the
+    rollback by hand, and they are who it is for."""
     estate(documents=_rolled(), users=_reusing(), set_error=refusal("ORA-28007"))
 
     result = _rollback(runner, write_config(CONFIG))
@@ -3010,7 +3003,7 @@ def test_a_rollback_already_in_place_is_not_warned_about(
     assert not _coded(emitted, "SOPULI-W028")
 
 
-# ----------------------------------- the reuse warning, ahead of time (#580) ---
+# ------------------------------------------ the reuse warning, ahead of time ---
 
 
 def test_a_preflight_preview_warns_about_a_reuse_profile_before_anything_runs(
@@ -3096,8 +3089,8 @@ def test_a_preflight_refusal_still_prints_the_reuse_warning(
 ) -> None:
     """A blocking finding beside W028 refuses the run, and the refusal is where
     somebody is already reading -- so the warning is printed there too, not only
-    serialised. `_refuse_preflight` took the notes and dropped them (#580's
-    review, and #391's stale `--repair` note before it)."""
+    serialised. `_refuse_preflight` has to print the notes it is given, the stale
+    `--repair` note included."""
     read_only = Scope(type="pdb", container="ALPHA", read_write=False, open_mode="READ ONLY")
     for extra in (("--dry-run",), ()):
         harness = estate(documents=_rolled(), users=_reusing(), scopes={"appdb-alpha": read_only})
@@ -3175,17 +3168,17 @@ def test_source_pending_does_not_fall_back_to_current(
     assert "creds generate" in result.output
 
 
-# ------------------------------------------------ the redraw (#312, #268) ---
+# --------------------------------------------- the redraw (decision #268) ---
 
 
 def test_a_refused_password_is_replaced_and_the_run_succeeds(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#268's decision, end to end. The server refuses the staged value once;
+    """Decision #268, end to end. The server refuses the staged value once;
     the run draws another, stages it, applies it, and promotes that.
 
-    This is the case UC-1 §6.4 was written for and the one `apply` used to answer
-    with "go and run `creds generate` again, and hope".
+    This is the case UC-1 §6.4 is written for: the run does not stop with "go and
+    run `creds generate` again, and hope".
     """
     harness = estate(documents=staged(), set_error=refusal(), refusals=1)
 
@@ -3250,8 +3243,8 @@ def test_an_ordinary_run_carries_no_redraws_field(
 def test_a_supplied_password_is_reported_and_never_replaced(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#311's whole purpose. An external system dictated this value, so the run
-    reports the refusal and leaves `pending` exactly as it found it."""
+    """An external system dictated this value, so the run reports the refusal
+    and leaves `pending` exactly as it found it."""
     harness = estate(documents=staged(origin="supplied"), set_error=refusal(), refusals=1)
 
     result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
@@ -3268,9 +3261,9 @@ def test_a_supplied_password_is_reported_and_never_replaced(
 def test_a_document_with_no_origin_is_not_redrawn(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Staged before #311 existed, which is the supplied case without the
-    evidence. Guessing wrong here overwrites a dictated password, and the next
-    `creds generate` heals it."""
+    """A document with no `origin` is treated as supplied, because nothing shows
+    the tool drew it. Guessing wrong here overwrites a dictated password, and the
+    next `creds generate` heals it."""
     harness = estate(documents=staged(origin=None), set_error=refusal(), refusals=1)
 
     result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
@@ -3311,9 +3304,8 @@ def test_a_server_that_refuses_everything_stops_at_the_budget(
 def test_each_draw_is_a_different_password(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#172's rule that the same value is never sent again: `ORA-28007` means
-    this exact password is refused, so retrying it is the one thing certain not
-    to work."""
+    """The same value is never sent again: `ORA-28007` means this exact password
+    is refused, so retrying it is the one thing certain not to work."""
     harness = estate(documents=staged(), set_error=refusal())
 
     run(runner, write_config(REDRAW_CONFIG))
@@ -3360,7 +3352,7 @@ def test_an_account_with_no_policy_reports_rather_than_raising(
     assert "no password policy" in declined[0]["message"]
 
 
-# ------------------------------------------------------ --repair (#391) ---
+# ------------------------------------------------------------- --repair ---
 
 
 def _run_document(config: Path, results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -3369,7 +3361,7 @@ def _run_document(config: Path, results: list[dict[str, Any]]) -> dict[str, Any]
     Built rather than captured, because what is under test is the *filter* and a
     captured document would tie these tests to whatever the estate happened to
     report. The one field that has to be real is `invocation.config_files`: the
-    estate check compares it against what this run loaded (#402).
+    estate check compares it against what this run loaded.
     """
     return {
         "schema_version": "1.20",
@@ -3396,10 +3388,10 @@ def test_repair_narrows_to_the_pairs_that_did_not_confirm(
     not on the summary -- a command can report the right count and still have
     dialled the target it was supposed to skip.
 
-    **Exit 4, and that is #406.** The account the repair skipped still has its
-    `pending` staged, so the document is not promoted by a run that never asked
-    its database anything; the narrowing buys the login and the promotion waits
-    for a run wide enough to earn it.
+    **Exit 4, and that is decision #406.** The account the repair skipped still
+    has its `pending` staged, so the document is not promoted by a run that
+    never asked its database anything; the narrowing buys the login and the
+    promotion waits for a run wide enough to earn it.
     """
     harness = estate(
         documents={
@@ -3482,8 +3474,8 @@ def test_a_document_from_another_estate_is_refused_before_any_target(
     """Exit 2 and no document, like every other selector that does not resolve.
 
     Asserted on the sessions as well as the exit code: "before a target is
-    dialled" is the property #264 asked for, and an exit code alone does not
-    show it.
+    dialled" is the property that saves the logins (decision #264), and an exit
+    code alone does not show it.
     """
     harness = estate()
     config = write_config(CONFIG)
@@ -3521,7 +3513,7 @@ def test_a_stale_document_warns_and_proceeds(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
 ) -> None:
     """Not a gate. The run does the work and says how old its instructions were
-    -- printed as well as serialised, on #309's rule."""
+    -- printed as well as serialised."""
     estate(
         documents={
             "apps/acme/db": {
@@ -3599,7 +3591,7 @@ def test_the_blast_radius_counts_the_narrowed_run(
 
 # ------------------------------------------------------------------ jsonl ---
 #
-# `creds apply` is the second verb that streams (#535), and the first that
+# `creds apply` streams under `--output jsonl`, and unlike `creds check` it
 # changes something. The emitter's own rules -- framing, `seq`, redaction -- are
 # `tests/test_output_jsonl.py`'s; these are about what this verb puts through it,
 # and whether the stream and the document it stands beside describe one run.
@@ -3706,9 +3698,9 @@ def test_a_partial_apply_streams_the_database_change_and_no_promotion(
     estate: Harness,
     events: Draft202012Validator,
 ) -> None:
-    """The case #535 was written for: a database changed and its document not
-    promoted is `password.applied` with no `vault.promote` after it -- the same
-    reading a stream cut short by a crash gives."""
+    """A database changed and its document not promoted is `password.applied`
+    with no `vault.promote` after it -- the same reading a stream cut short by a
+    crash gives."""
     partial_estate(estate)
     lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl"), events)
 
@@ -3761,7 +3753,8 @@ def test_streamed_apply_payloads_are_the_run_schema_shapes(
     events: Draft202012Validator,
 ) -> None:
     """03 §5: payloads reuse the run schema's shapes. Checked against its
-    `$defs` here rather than by a cross-file `$ref`, for #534's reason."""
+    `$defs` here rather than by a cross-file `$ref`, which would bind the event
+    schema's version to the run schema's."""
     estate()
     lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl"), events)
     defs = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))["$defs"]
@@ -3863,9 +3856,9 @@ def test_a_failure_after_the_statement_still_reports_the_change(
 ) -> None:
     """The database took the password and the re-read after it failed. The row
     is `ERROR`, and it is also `changed` -- the database was mutated -- so the
-    document counts it and the stream says `password.applied`. Found by review
-    on #542: the row used to say `changed: false`, hiding exactly the
-    applied-but-not-promoted state the stream exists to show."""
+    document counts it and the stream says `password.applied`. A row that said
+    `changed: false` would hide exactly the applied-but-not-promoted state the
+    stream exists to show."""
 
     def fail_after_set(harness: dict[str, Any], event: str) -> None:
         if event == "describe_user" and any(one.changed for one in harness["sessions"]):
@@ -3887,7 +3880,8 @@ def test_a_failure_after_the_statement_still_reports_the_change(
 
 
 def test_the_redraw_codes_are_registered() -> None:
-    """#610: they were emitted outside the registry and its `SOPULI-W` spelling."""
+    """The redraw codes are in the registry, under its `SOPULI-W` spelling
+    (decision #610)."""
     from sopuli.diagnostics import PASSWORD_NOT_REDRAWN, PASSWORD_REDRAWN, WARNINGS
 
     assert (PASSWORD_REDRAWN, PASSWORD_NOT_REDRAWN) == ("SOPULI-W029", "SOPULI-W030")
