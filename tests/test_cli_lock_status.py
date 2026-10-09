@@ -1,4 +1,4 @@
-"""``sopuli lock status`` — the answer to exit 7 (#105).
+"""``sopuli lock status`` — the answer to exit 7.
 
 Tier 0 in everything but posture: in-process through ``CliRunner``, with the
 store handed in rather than dialled. The socket is the one part deliberately not
@@ -76,8 +76,8 @@ applications:
     secret_template: "apps/acme/{target}#password"
 """
 
-#: The same estate plus an application whose store nothing in the file names
-#: (#349). Legal: `_check_has_somewhere_to_resolve_from` leaves it open because a
+#: The same estate plus an application whose store nothing in the file names.
+#: Legal: `_check_has_somewhere_to_resolve_from` leaves it open because a
 #: profile's `vault:` or `SOPULI_VAULT` may complete it once a run picks one, and
 #: `vaults:` declares somewhere for them to point at.
 UNRESOLVED_CONFIG = CONFIG.replace(
@@ -107,7 +107,7 @@ DEV = LockKey(store="vault-dev", path="apps/acme/appdb-alpha")
 PROD = LockKey(store="vault-prod", path="apps/acme/appdb-beta")
 
 #: A record at a path `CONFIG` does not declare -- the application was renamed,
-#: or removed, and nothing points at its lock any more (#150).
+#: or removed, and nothing points at its lock any more.
 LEFTOVER = LockKey(store="vault-dev", path="apps/acme/appdb-retired")
 
 
@@ -177,15 +177,15 @@ def section(result: Result) -> dict[str, Any]:
 def test_a_selector_survives_a_binding_whose_store_is_unknown(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """#349. `--select` failed over a binding it had already excluded.
+    """`--select` does not fail over a binding it has already excluded.
 
-    The command builds two estates, and the unfiltered one -- which decides only
-    what counts as *declared* -- refused when any binding named no store. So an
+    The command builds two estates, and the unfiltered one decides only what
+    counts as *declared*. If it refused when any binding named no store, an
     estate where one application resolves its store from a profile could not run
-    `lock status --app acme` at all: it failed naming an account in a
+    `lock status --app acme` at all: it would fail naming an account in a
     different application, which this run was never going to survey, and the
     narrowed call on the next line could not rescue it because the unfiltered one
-    had already raised.
+    would already have raised.
     """
     with_locks((DEV, held()))
 
@@ -202,7 +202,7 @@ def test_a_binding_with_no_store_is_left_out_of_the_declared_set(
     """Skipping it changes no answer, which is why skipping it is safe.
 
     The unfiltered estate exists to decide whether a *discovered* record is one
-    the configuration declares (#150). A binding whose store is unknown has no
+    the configuration declares. A binding whose store is unknown has no
     key to compare against a discovered path, so it can never be the reason a
     record is or is not declared -- and a record that really is undeclared still
     reports as one.
@@ -227,9 +227,10 @@ def test_a_command_that_acts_on_the_keys_still_refuses(
     """The refusal is right where the answer is acted on, and it stays.
 
     `declared_locks` refuses a binding with no store because a command about to
-    take that lock must not survey a store it had to guess (invariant 4). #349
-    is about the *membership* pass only, so the narrowed estate -- the one this
-    command surveys -- must still refuse when the selector keeps such a binding.
+    take that lock must not survey a store it had to guess (invariant 4). The
+    skip above applies to the *membership* pass only, so the narrowed estate --
+    the one this command surveys -- must still refuse when the selector keeps
+    such a binding.
     """
     result = run(runner, write_config(UNRESOLVED_CONFIG), "--app", "beta")
 
@@ -254,7 +255,7 @@ def test_sopuli_vault_completes_a_binding_with_no_store(
     with_locks: Stores,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#672. A rotation under SOPULI_VAULT locks in that store, so a survey looks there."""
+    """A rotation under SOPULI_VAULT locks in that store, so a survey looks there."""
     monkeypatch.setenv("SOPULI_VAULT", "vault-dev")
     with_locks((GAMMA, held()))
 
@@ -268,7 +269,7 @@ def test_sopuli_vault_completes_a_binding_with_no_store(
 def test_a_profile_vault_completes_a_binding_with_no_store(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """#672. The profile is the other run-time source C15 names."""
+    """The profile is the other run-time source C15 names."""
     with_locks((GAMMA, held()))
     profiled = UNRESOLVED_CONFIG + "profiles:\n  dev:\n    vault: vault-dev\n"
 
@@ -287,12 +288,12 @@ def test_a_completed_binding_counts_as_declared_outside_the_selection(
     with_locks: Stores,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#672. The membership pass completes too, so `beta`'s lock is not a leftover.
+    """The membership pass completes too, so `beta`'s lock is not a leftover.
 
     Selected down to `acme`, `beta` is not surveyed. Listing `vault-dev` finds
     its record, and the run's SOPULI_VAULT says that store is where `beta` locks,
     so the record is this configuration's and the selector keeps it out of the
-    report. Without the completion it was reported as `declared: false`.
+    report. Without the completion it would be reported as `declared: false`.
     """
     monkeypatch.setenv("SOPULI_VAULT", "vault-dev")
     with_locks((DEV, held()), (GAMMA, held()))
@@ -313,7 +314,7 @@ def test_an_undeclared_sopuli_vault_refuses_only_where_it_is_used(
     """A SOPULI_VAULT naming no declared store is wrong only for a binding this run surveys.
 
     `--app acme` surveys nothing that needs it, so the run goes ahead, as the
-    promotion gate does over a binding its selector left out (#578). `--app beta`
+    promotion gate does over a binding its selector left out (UC-1 §5). `--app beta`
     needs it, and refuses naming the variable.
     """
     monkeypatch.setenv("SOPULI_VAULT", "vault-nowhere")
@@ -448,13 +449,13 @@ def test_the_token_file_flag_reaches_the_store(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """#145's wiring, end to end: the flag is a *location* all the way down.
+    """The flag's wiring, end to end: it is a *location* all the way down.
 
-    `lock status` is the first verb that opens a socket, so it is the first one
-    where the command line can supply a token at all. What is asserted is what
-    arrives at the backend -- a path, never a `Secret` -- because that is the
-    property invariant 1 rests on: no signature between the parser and §3a's
-    chain has a slot a credential could sit in.
+    `lock status` opens a socket to the store, so the command line can supply a
+    token here at all. What is asserted is what arrives at the backend -- a path,
+    never a `Secret` -- because that is the property invariant 1 rests on: no
+    signature between the parser and §3a's chain has a slot a credential could sit
+    in.
     """
     seen: list[Path | None] = []
 
@@ -479,9 +480,9 @@ def test_the_token_file_flag_reaches_the_store(
 def test_a_leftover_record_is_reported_and_marked(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """The case #150 exists for. A record nothing points at any more is invisible
-    to a survey of the declared set, and a lock nobody can see is a lock nobody
-    can clear."""
+    """The case that listing the store exists for. A record nothing points at
+    any more is invisible to a survey of the declared set, and a lock nobody can
+    see is a lock nobody can clear."""
     with_locks((LEFTOVER, held()))
     result = run(runner, write_config(CONFIG), "--output", "json")
 
@@ -678,10 +679,10 @@ def test_a_listable_store_produces_no_such_warning(
 def test_it_takes_no_lock_of_its_own(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """#83 settled it for `check`, `status` and every `--dry-run`, and the reason
-    is not politeness: an hourly survey that locked would block the rotations it
-    exists to report on. Asserted against the store rather than the output --
-    a write is what a lock is."""
+    """UC-1 §8 has `check`, `status` and every `--dry-run` take no lock, and the
+    reason is not politeness: an hourly survey that locked would block the
+    rotations it exists to report on. Asserted against the store rather than the
+    output -- a write is what a lock is."""
     stores = with_locks()
     run(runner, write_config(CONFIG), "--output", "json")
 
@@ -690,11 +691,11 @@ def test_it_takes_no_lock_of_its_own(
         assert store.read(lock_path(PROD)) is None
 
 
-# ------------------------------------------------- UC-2's reset locks (#514) ---
+# -------------------------------------------------------- UC-2's reset locks ---
 
 #: A configuration with no `applications:` and no `accounts:` at all -- the
-#: shape UC-2 alone produces, and the one that reported an empty estate while a
-#: reset held a lock. `personal_accounts:` declares one name and one predicate,
+#: shape UC-2 alone produces, for which `lock status` must not report an empty
+#: estate while a reset holds a lock. `personal_accounts:` declares one name and one predicate,
 #: because the predicate is the reason the keys cannot be enumerated offline.
 RESET_CONFIG = """\
 version: 1
@@ -781,13 +782,12 @@ def reset_held(**kwargs: Any) -> dict[str, Any]:
 def test_a_held_reset_lock_is_surveyed_although_no_binding_declares_it(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """#514, and it is the whole bug.
+    """A held reset lock appears in the survey.
 
-    Measured on the tier-1 stack: with the reset lock held, a UC-2-only
-    configuration printed `no lock paths are declared` while `vault kv get`
-    showed a `held` record this tool had written a second earlier. A listing verb
-    answering "nothing" while something is held is the one wrong answer it must
-    not give.
+    With the reset lock held, a UC-2-only configuration must not print
+    `no lock paths are declared` while the vault holds a `held` record this tool
+    wrote. A listing verb answering "nothing" while something is held is the one
+    wrong answer it must not give.
     """
     with_locks((RESET_LOCK, reset_held()))
 
@@ -839,7 +839,7 @@ def test_a_record_outside_the_declared_prefix_is_still_a_leftover(
 ) -> None:
     """The region is a prefix, not the store. A record elsewhere in the same
     mount belongs to whoever put it there, and claiming it because the store is
-    shared would undo exactly what #150 added."""
+    shared would stop leftovers being reported as leftovers."""
     with_locks((RESET_LOCK, reset_held()), (LEFTOVER, held()))
 
     result = run(runner, write_config(RESET_CONFIG), "--output", "json")
@@ -866,9 +866,9 @@ def test_a_record_at_the_prefix_itself_is_not_claimed(
 def test_the_reset_store_is_opened_although_no_binding_names_it(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """Half of the bug was upstream of membership: with no bindings there was no
-    store in the set to open, so `discover()` never contacted the journal's vault
-    and there was nothing to classify."""
+    """Membership is not the only step: with no bindings there would be no store
+    in the set to open, so `discover()` would never contact the journal's vault
+    and there would be nothing to classify."""
     stores = with_locks()
 
     result = run(runner, write_config(RESET_CONFIG), "--output", "json")
@@ -880,9 +880,8 @@ def test_the_reset_store_is_opened_although_no_binding_names_it(
 def test_an_empty_prefix_says_it_was_surveyed(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """*Nothing is held* and *nothing was surveyed* were the same sentence, and
-    telling them apart is what #514 was filed about. A configuration that
-    declares no journal keeps the shorter line."""
+    """*Nothing is held* and *nothing was surveyed* must not be the same
+    sentence. A configuration that declares no journal keeps the shorter line."""
     with_locks()
 
     surveyed = run(runner, write_config(RESET_CONFIG))
@@ -910,9 +909,9 @@ def test_a_reset_lock_is_counted_beside_the_declared_paths_not_among_them(
 def test_a_reset_lock_gets_a_table_of_its_own(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """The heading carries the distinction, as #150's does: a table read by eye
-    answers "whose is this" once, above the rows, rather than in a seventh column
-    that is the same word on almost every line."""
+    """The heading carries the distinction, as the leftover table's does: a table
+    read by eye answers "whose is this" once, above the rows, rather than in a
+    seventh column that is the same word on almost every line."""
     with_locks((RESET_LOCK, reset_held()))
 
     result = run(runner, write_config(RESET_CONFIG))
@@ -941,9 +940,9 @@ def test_the_document_with_a_reset_lock_validates(
     with_locks: Stores,
     validator: Draft202012Validator,
 ) -> None:
-    """Invariant 12: `declared_by` is a new required field, so the schema moved
-    to 1.28 and a sample has to prove it -- including the `null` an entry nothing
-    declares carries."""
+    """Invariant 12: `declared_by` is a required field of the lock entry, and a
+    sample has to prove it -- including the `null` an entry nothing declares
+    carries."""
     with_locks((RESET_LOCK, reset_held()), (LEFTOVER, held()))
 
     result = run(runner, write_config(RESET_CONFIG), "--output", "json")
@@ -954,20 +953,17 @@ def test_the_document_with_a_reset_lock_validates(
 def test_an_unreachable_reset_store_fails_the_survey(
     runner: CliRunner, write_config: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Copilot's review of #517: the failure was verified by hand and by nothing
-    else.
+    """Opening the journal store is what makes the survey honest, so a build that
+    does not open it must not pass.
 
-    Opening the journal store is what makes the survey honest, so a regression to
-    *not* opening it must not pass. Asserted from the store's side rather than on
-    the message: a build that left `reset_records.vault` out of the set it opens
-    would never reach this `connect` at all, and the run would succeed with the
-    same empty estate #514 was filed about.
+    Asserted from the store's side rather than on the message: a build that left
+    `reset_records.vault` out of the set it opens would never reach this `connect`
+    at all, and the run would succeed with an empty estate.
 
-    Exit 1, not a warning, and the same answer a binding's store has always got.
+    Exit 1, not a warning, and the same answer a binding's store gets.
     Answering "what is held" without contacting the store the locks live in is
-    the false negative this whole change exists to remove -- which is the
-    difference from `SOPULI-W005`, where a store that cannot *list* is named and
-    the rest of the estate is still reported.
+    a false negative -- which is the difference from `SOPULI-W005`, where a store
+    that cannot *list* is named and the rest of the estate is still reported.
     """
     asked: list[str] = []
 

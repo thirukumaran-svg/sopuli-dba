@@ -1,16 +1,16 @@
-"""`sopuli account reset-password` from the command line (#441).
+"""`sopuli account reset-password` from the command line.
 
-Tier 0 for the refusals, which need no database: each of #439's guards has an
-exit code, and a guard whose code changed would be a script's behaviour changing
-silently.
+Tier 0 for the refusals, which need no database: each of the guards in
+decision #439 has an exit code, and a guard whose code changed would be a
+script's behaviour changing silently.
 
-Tier 1 for the two things only a database can answer, and the first of them is
-here because **running it found the bug**: a `--dry-run` reset the password. The
-preview parameter was threaded through the verb and never read, so a run that
-promised to change nothing drew a password, issued the DDL and expired the
-account before aborting at the prompt. Invariant 8 is the rule it broke, and no
-test of the code as written could have caught it -- the code did exactly what it
-said, which was nothing about previews.
+Tier 1 for the two things only a database can answer. The first is that a
+`--dry-run` resets nothing: it draws no password, issues no DDL and leaves the
+account open (invariant 8). It has to be tier 1 because the preview flag is
+threaded through the verb, and a flag that is passed along and never read looks
+correct to every tier-0 test; only the account's state shows whether DDL went
+out. The second is that the seen path prints a password that works and expires
+the account.
 """
 
 from __future__ import annotations
@@ -209,12 +209,11 @@ def test_a_dry_run_changes_nothing(
     live_oracle: Environment,
     account: Callable[..., Any],
 ) -> None:
-    """Invariant 8, against a real account -- the regression test for the bug
-    running it found.
+    """Invariant 8, against a real account.
 
     The account status afterwards is the whole assertion. A preview that had
-    issued the DDL would leave it `EXPIRED`, which is exactly what the first
-    draft did, and the output would still have read like a preview.
+    issued the DDL would leave it `EXPIRED`, and the output would still read
+    like a preview.
 
     It runs on the **seen** path deliberately: that is where the guards are, and
     a preview must work without a terminal -- refusing one would make *show me
@@ -266,7 +265,7 @@ def test_the_seen_path_prints_a_working_password_and_expires_the_account(
     account: Callable[..., Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The whole feature, end to end, and the three claims #441 makes about it.
+    """The whole feature, end to end, and the three claims it makes.
 
     **The terminal is faked, and it has to be.** Guard 3 refuses unless stdout is
     a terminal, and a test harness is by definition not one -- so the only way to
@@ -315,7 +314,7 @@ def test_the_seen_path_prints_a_working_password_and_expires_the_account(
         oracledb.connect(user=ACCOUNT, password=password, dsn=live_oracle.dsn)
 
 
-# --------------------------------------------------- the reset record (#511) ---
+# ---------------------------------------------------------- the reset record ---
 
 #: The same estate with a journal declared. The `vaults:` entry and the
 #: `reset_records:` block are the whole difference, which is the point: a record
@@ -373,7 +372,7 @@ reset_records:
 """
     )
     # Under `--dry-run`, which is what makes this a tier-0 test: a preview is
-    # exempt from the seen path's terminal guard (#441) and connects to nothing,
+    # exempt from the seen path's terminal guard and connects to nothing,
     # so what is left to refuse the run is the derivation itself. The refusal
     # firing in a preview is the property worth having anyway -- it is about
     # what the configuration says, not about an emission.
@@ -417,7 +416,7 @@ def test_the_reset_is_journalled(
     private_mount: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The record #468 shaped, written by the verb that has the facts (§3.1).
+    """The verb that has the facts writes the reset record (§3.1).
 
     Read back through the Vault API rather than through the tool, for
     `test_lock_status_vault.py`'s reason: a document this process read with its
@@ -508,7 +507,7 @@ def test_a_record_that_cannot_be_written_warns_on_a_successful_run(
     real = Kv2Store.write
 
     def refuse_the_record(self: Any, path: str, data: Any, *, cas: int | None) -> int:
-        # The **record** path only, never `locks/` (#512). A store that refused
+        # The **record** path only, never `locks/`. A store that refused
         # both would fail the run at acquisition, before the password changed,
         # which is a different case with its own test below. What this stands in
         # for is a Vault policy granting the lock prefix and not the journal one.
@@ -535,11 +534,11 @@ def test_a_journal_that_cannot_be_opened_refuses_before_anything_is_issued(
     private_mount: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Not 3.4's absence, and the difference is *when* (#512).
+    """Not 3.4's absence, and the difference is *when*.
 
-    Since the lock, a declared journal is opened before the first statement,
-    because the lock lives in it. So a store that cannot be reached stops the
-    run where UC-1's lock stores already stop one -- before the DDL, with the
+    A declared journal is opened before the first statement, because the lock
+    lives in it. So a store that cannot be reached stops the run where UC-1's
+    lock stores already stop one -- before the DDL, with the
     person's old password still working and nothing to explain. 3.4's absences
     are all about a store that went away *after* the password changed; there the
     reset stands and `SOPULI-W025` carries it.
@@ -559,7 +558,7 @@ def test_a_journal_that_cannot_be_opened_refuses_before_anything_is_issued(
     assert account() == before == "OPEN", "the reset ran without the lock it was told to take"
 
 
-# ------------------------------------------------------- the lock (#512) ---
+# -------------------------------------------------------------- the lock ---
 
 #: Where the advisory lock for this (target, account) lives: the record's own
 #: path under the `locks/` prefix the manager adds (UC-2 3.3).
@@ -602,7 +601,7 @@ def test_a_reset_of_an_account_somebody_else_is_resetting_is_refused(
     config = write_config(_journalled_config(live_oracle, journal, private_mount))
     # Written the way the tool writes one, not the short way: `cas_required` on
     # the path first, then the record under `cas: 0`. A path created without the
-    # metadata is refused by the manager's own pre-flight (#390) with exit 5,
+    # metadata is refused by the manager's own pre-flight with exit 5,
     # which would make this test pass for the wrong reason -- it would never
     # reach the claim it is about.
     journal.client.post(f"/v1/{private_mount}/metadata/{LOCK_PATH}", json={"cas_required": True})
@@ -634,7 +633,7 @@ def test_the_lock_is_let_go_when_the_reset_is_done(
     private_mount: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Released rather than deleted (#83): a deleted path leaves a version
+    """Released rather than deleted (UC-1 §8): a deleted path leaves a version
     counter no first acquisition could ever take again, so the record stays and
     says `released`. The next reset of this account has to be able to run."""
     monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
@@ -690,7 +689,7 @@ def test_a_fence_lost_between_targets_stops_there_and_exits_four(
     private_mount: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`creds generate`'s split, on this verb (Copilot's review of #515).
+    """`creds generate`'s split, on this verb.
 
     Exit 7 asserts that nothing happened. Once the first target's password has
     been reset, that is a lie -- somebody is holding a password that works -- so
@@ -738,10 +737,10 @@ def test_a_fence_lost_between_targets_stops_there_and_exits_four(
 
 #: `JOURNALLED`'s estate, delivering through a wrapping token instead of a
 #: terminal. Built on that one rather than on `MANUAL` so a journal exists: the
-#: record's `delivery.to` is #444 part 2's, and a config with no `reset_records:`
-#: writes no record to look at. `vault_wrapped:` names no `vault:`, so the store
-#: comes from §3's chain -- `defaults.vault` here, which is the resolution most
-#: estates will get.
+#: record's `delivery.to` is where this method puts its own reference, and a
+#: config with no `reset_records:` writes no record to look at. `vault_wrapped:`
+#: names no `vault:`, so the store comes from §3's chain -- `defaults.vault`
+#: here, which is the resolution most estates will get.
 WRAPPED = JOURNALLED.replace(
     """delivery:
   method: manual
@@ -803,7 +802,7 @@ def test_the_unseen_path_delivers_without_a_terminal_and_without_a_prompt(
     journal: Any,
     private_mount: str,
 ) -> None:
-    """The two guards `manual` lives under, and neither applies here (#444).
+    """The two guards `manual` lives under, and neither applies here.
 
     `CliRunner`'s stdout is a buffer -- exactly like a redirect or a CI log -- and
     that is the state guard 3 refuses on the seen path. An unseen delivery is
@@ -897,7 +896,7 @@ def test_an_expired_token_no_longer_unwraps(
     journal: Any,
     private_mount: str,
 ) -> None:
-    """The other half of #444's acceptance. A one-second TTL rather than a slept
+    """A token past its TTL does not unwrap. A one-second TTL rather than a slept
     fifteen minutes -- and `1s` is a legal value the config layer accepts, which is
     worth knowing: nothing stops an estate configuring a handover nobody can catch.
     """
@@ -920,7 +919,7 @@ def test_the_token_goes_to_stderr_and_never_into_the_json_document(
     journal: Any,
     private_mount: str,
 ) -> None:
-    """The stream split (#444), and the rule the document half of it protects.
+    """The stream split, and the rule the document half of it protects.
 
     `--output json` is *not* refused here, unlike on the seen path: the document
     is what makes a scheduled reset auditable, and taking it away would leave an
@@ -954,7 +953,7 @@ def test_the_password_is_in_no_run_document(
     journal: Any,
     private_mount: str,
 ) -> None:
-    """#444's third acceptance criterion, asserted against the value rather than
+    """No run document holds the password. Asserted against the value rather than
     against the schema: the plaintext is fetched back out of the cubbyhole and
     looked for in everything the run emitted on either stream."""
     config = write_config(_wrapped_config(live_oracle, journal, private_mount))
@@ -1009,12 +1008,12 @@ def test_a_store_that_cannot_wrap_is_refused_before_the_ddl(
     private_mount: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Invariant 4 for a delivery capability, and the first build got it wrong.
+    """Invariant 4 for a delivery capability.
 
     A store that cannot wrap is knowable from the file before any database is
     reached, so it has to be exit 5 naming the store -- not a per-target error row
-    after a password has been drawn, which is what resolving the backend inside
-    the loop produced. Asserted on `ACCOUNT_STATUS`, because the observable claim
+    after a password has been drawn, which resolving the backend inside the loop
+    would produce. Asserted on `ACCOUNT_STATUS`, because the observable claim
     is that nothing was issued.
 
     The refusal itself is `tests/test_delivery_vault_wrapped.py`'s; what this pins
@@ -1026,8 +1025,8 @@ def test_a_store_that_cannot_wrap_is_refused_before_the_ddl(
     def refuse(store: Any, *, vault: str, ttl: str) -> Any:
         raise NotWrappableError(vault)
 
-    # Patched at the definition site rather than on `sopuli.cli`, which no longer
-    # holds the name: the module is imported inside `_delivery_backend` so that an
+    # Patched at the definition site rather than on `sopuli.cli`, which does not
+    # hold the name: the module is imported inside `_delivery_backend` so that an
     # offline command never loads `httpx` (ADR-006 rule 1).
     monkeypatch.setattr("sopuli.delivery.vault_wrapped.for_store", refuse)
 
@@ -1046,9 +1045,9 @@ def test_the_plan_reaches_the_operator_before_the_unseen_path_mutates(
     journal: Any,
     private_mount: str,
 ) -> None:
-    """Invariant 8 on a path with no prompt (Copilot's review of #518).
+    """Invariant 8 on a path with no prompt.
 
-    The seen path echoes the plan early so the prompt cannot come first (#505);
+    The seen path echoes the plan early so the prompt cannot come first;
     here there is no prompt, and the argument is what happens when the run raises
     part way through. The verb returns its whole output as one string, so a failure
     before the return leaves the operator nothing at all -- no plan, no record of
@@ -1089,7 +1088,7 @@ def test_a_preview_does_not_echo_the_plan_twice(
 def test_a_delivery_with_no_store_anywhere_in_the_chain_is_refused(
     runner: CliRunner, write_config: WriteConfig
 ) -> None:
-    """The code review of #518: the refusal existed and nothing exercised it.
+    """A delivery with nowhere to deliver is refused before anything connects.
 
     §3's chain runs out when the method names no `vault:`, the target names none
     and `defaults.vault` is unset. That is knowable from the file, so it is refused
@@ -1120,13 +1119,13 @@ def test_each_target_s_handover_names_its_target(
     journal: Any,
     private_mount: str,
 ) -> None:
-    """The defect the code review of #518 found, from the operator's side.
+    """Each hand-over block names its target, as the operator sees it.
 
     A reset with no `--target` reaches every declared target and draws a *separate*
-    password for each, so the hand-over blocks have to be told apart. They were
-    not: each read "hand this to alice" and carried a different token, and sending
-    the wrong one hands somebody a password that does not work on the host they
-    were told about.
+    password for each, so the hand-over blocks have to be told apart. Blocks that
+    all read "hand this to alice" would carry different tokens, and sending the
+    wrong one hands somebody a password that does not work on the host they were
+    told about.
 
     One target here, because the tier-1 stack has one -- so what this pins is that
     the target reaches the block at all. `tests/test_delivery_view.py` holds the
@@ -1147,7 +1146,7 @@ def test_the_document_names_the_handover_without_being_able_to_perform_it(
     journal: Any,
     private_mount: str,
 ) -> None:
-    """#444 part 2, and the pair of assertions is the whole design.
+    """The pair of assertions is the whole design.
 
     The accessor is there, so a scheduled reset is auditable: somebody can tie this
     run to an entry in the vault's own log. The token is not, and no property could
@@ -1173,7 +1172,7 @@ def test_the_record_carries_the_accessor_as_its_destination(
     journal: Any,
     private_mount: str,
 ) -> None:
-    """UC-2 §3.1's `to`, which had no writer until now.
+    """UC-2 §3.1's `to` holds the accessor.
 
     Read back out of the real journal, and checked against the *document's* own
     accessor so the two agree -- a record naming a different hand-over than the run
@@ -1199,8 +1198,8 @@ def test_the_record_never_carries_the_token(
     journal: Any,
     private_mount: str,
 ) -> None:
-    """The guard `assert_no_secret` gained for this, asserted end to end rather
-    than only against a hand-built document: the journal is readable by anyone who
+    """The `assert_no_secret` guard, asserted end to end rather than only
+    against a hand-built document: the journal is readable by anyone who
     may know *that* a reset happened, which is precisely who must not be able to
     perform one."""
     config = write_config(_wrapped_config(live_oracle, journal, private_mount))
@@ -1214,12 +1213,10 @@ def test_the_record_never_carries_the_token(
     assert token not in json.dumps(stored.json()["data"]["data"])
 
 
-# ------------------------------------------- the notify channel (#442, #520) ---
+# -------------------------------------------------------- the notify channel ---
 #
-# **This section exists because it did not.** #442 shipped a notify channel with
-# no test at this layer at all -- the renderer was tested, the sender was tested
-# against a mock, and nothing drove the verb. Three of the five findings on #520
-# live here, and none of them was reachable from either of the units.
+# These tests drive the verb. The renderer and the sender have their own unit
+# tests, and neither unit can reach the ordering and refusal rules tested here.
 
 NOTIFY_BLOCK = """
   notify:
@@ -1243,7 +1240,7 @@ class Recorder:
 @pytest.fixture
 def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
     """Replaces the *resolved channel's* sender, so the registry and the URL are
-    still exercised -- which is where #520's second finding was."""
+    still exercised -- an uninstalled client fails in the registry."""
     stub = Recorder()
     monkeypatch.setenv("SOPULI_NOTIFY_WEBHOOK", "https://chat.example.com/hooks/T0/B0/EXAMPLE")
     monkeypatch.setattr("sopuli.notify.registry.resolve", lambda method: stub)
@@ -1269,14 +1266,14 @@ def test_declining_the_seen_prompt_tells_nobody_a_password_is_waiting(
     recorder: Recorder,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """**Copilot's first finding on #520, and the one that made the run lie.**
+    """**Declining the prompt sends no notification.**
 
     On the seen path `_hand_over` *is* the delivery: it prompts, and declining
     raises `click.Abort`, leaving the password set on an account nobody has read.
-    The first build notified before that prompt, so answering "no" sent "a new
-    password is waiting" when the only channel that could have carried it had just
-    been refused -- and on `manual` there is no store to fetch it from, so the
-    message was not merely early but false.
+    A notification sent before that prompt would say "a new password is waiting"
+    after the only channel that could have carried it had been refused -- and on
+    `manual` there is no store to fetch it from, so the message would be not
+    merely early but false.
 
     The password still changed. That is not what this asserts and is not a defect:
     §6.4 puts the DDL first and the abort path journals the mutation.
@@ -1304,9 +1301,9 @@ def test_accepting_the_seen_prompt_does_notify(
     recorder: Recorder,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The other half, without which the fix above could be "never notify".
+    """The other half, without which "never notify" would pass the test above.
 
-    Moving the call after `_hand_over` is only correct if the seen path still
+    Notifying after `_hand_over` is only correct if the seen path still
     notifies when the operator looks.
     """
     _seen_terminal(monkeypatch)
@@ -1327,14 +1324,13 @@ def test_a_notify_client_that_is_not_installed_refuses_before_the_password_chang
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """**Copilot's second finding on #520**, and invariant 4 for the third time in
-    this issue's lifetime.
+    """**Invariant 4 for an uninstalled notify client.**
 
-    `_notify` wraps everything in a bare `except` so a dead webhook cannot fail a
-    reset that already worked -- and that swallowed `SOPULI-20003` too, turning
+    `_notify` catches every exception so a dead webhook cannot fail a reset that
+    already worked. Inside it, `SOPULI-20003` would be swallowed too, turning
     ADR-006's E5 contract ("configured-but-uninstalled fails use with exit 9") into
     a warning issued *after* the password had changed. It is knowable before the
-    run connects to anything, so now it is answered there.
+    run connects to anything, so it is answered there.
 
     Tier 0, and that is the assertion: nothing in this test can reach a database,
     because the refusal happens before anything opens one.
@@ -1357,14 +1353,12 @@ def test_a_notify_client_that_is_not_installed_refuses_before_the_password_chang
 def test_a_missing_webhook_url_refuses_before_the_password_changes(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The same finding read one line further, and this part went past what the
-    comment asked for.
+    """An unresolvable webhook URL is refused like an uninstalled client.
 
-    The old docstring argued that an unresolvable URL belongs in `SOPULI-W026`
-    because "a missing variable is as much nobody-was-told as a refused request
-    is". That is true about the outcome and wrong about the timing: a refused
-    request is news, and an unset environment variable is a configuration error
-    that is answerable before a password is drawn.
+    A missing variable leaves nobody told, as a refused request does, so it could
+    be reported as `SOPULI-W026`. The timing differs: a refused request is news,
+    and an unset environment variable is a configuration error that is
+    answerable before a password is drawn.
     """
     _seen_terminal(monkeypatch)
     monkeypatch.delenv("SOPULI_NOTIFY_WEBHOOK", raising=False)
@@ -1381,7 +1375,8 @@ def test_a_missing_webhook_url_refuses_before_the_password_changes(
 def test_a_profile_that_cannot_answer_refuses_a_seen_reset_before_connecting(
     runner: CliRunner, write_config: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A profile's `confirm: false` refuses the seen path at plan time (#610).
+    """A profile's `confirm: false` refuses the seen path at plan time
+    (decision #610).
 
     At a terminal, so the refusal is the profile's and not guard 3's. The target
     is unroutable, so reaching the driver would fail differently: exit 8 with the

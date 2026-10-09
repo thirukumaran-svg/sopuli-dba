@@ -1,6 +1,6 @@
-"""``sopuli creds generate`` end to end (#254).
+"""``sopuli creds generate`` end to end.
 
-The first credential mutation, so the assertions worth having are about what
+This verb mutates credentials, so the assertions worth having are about what
 reaches the store and what does not: one write per document, a lock held around
 it and released after, a compare-and-set that is never retried, and no plaintext
 anywhere but the value at the path.
@@ -202,9 +202,9 @@ def test_current_is_not_touched(
 def test_a_second_run_replaces_pending_and_reports_a_change(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
-    """#254's decision, and invariant 9 not reaching this verb: a fresh draw has
-    no state to converge on, so `changed: false` would be false. Scope rather
-    than an exemption since #454, which put UC-2's reset on the same footing."""
+    """Decision #254, and invariant 9 not reaching this verb: a fresh draw has
+    no state to converge on, so `changed: false` would be false. This is scope
+    rather than an exemption, as for UC-2's reset (decision H7)."""
     config = write_config(CONFIG)
     run(runner, config)
     first = staged(store)
@@ -237,7 +237,7 @@ def test_the_run_takes_the_document_s_lock_and_releases_it(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
     """`generate` can take a lock at all precisely because the lock lives in the
-    vault (Q2, #83) -- this command never opens a database connection."""
+    vault (Q2) -- this command never opens a database connection."""
     body = document(run(runner, write_config(CONFIG), "--output", "json"))
 
     assert body["lock"]["mode"] == "cas"
@@ -258,8 +258,8 @@ def test_two_accounts_in_one_document_take_one_lock(
 def test_a_new_lock_path_is_made_to_require_a_compare_and_set(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
-    """#390. The run creates the path, so the metadata it creates it with is what
-    every later run is judged against -- and used to be refused by."""
+    """The run creates the path, so the metadata it creates it with is what
+    every later run is judged against."""
     run(runner, write_config(CONFIG))
 
     metadata = store.metadata(lock_path(LockKey(store="vault-prod", path=PATH)))
@@ -270,11 +270,12 @@ def test_a_new_lock_path_is_made_to_require_a_compare_and_set(
 def test_a_store_that_will_not_guard_the_path_says_so_where_it_can_be_read(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
-    """The whole point of the degradation (#390): the run succeeds, and the fact
+    """The whole point of the degradation: the run succeeds, and the fact
     that it could not arrange the guarantee reaches somebody.
 
-    In the text, not only in `diagnostics[]` -- #309's rule, and this is a
-    warning whose entire purpose is to send a reader to the vault.
+    In the text, not only in `diagnostics[]`: a warning nobody can see in the
+    default output is not a warning, and this one's entire purpose is to send a
+    reader to the vault.
     """
 
     def refuse(path: str) -> None:
@@ -309,7 +310,7 @@ def test_a_held_lock_stops_the_run_and_writes_nothing(
     from sopuli.lock.record import Holder, LockRecord
 
     key = LockKey(store="vault-prod", path=PATH)
-    # With the metadata a real rival run would have arranged (#390): a lock path
+    # With the metadata a real rival run would have arranged: a lock path
     # created without `cas_required` is refused by pre-flight, which is a
     # different refusal from the held-lock one under test here.
     store.require_cas(lock_path(key))
@@ -487,11 +488,10 @@ def test_no_password_reaches_the_document_or_the_terminal(
 def test_a_crlf_line_ending_is_stripped_whole(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
-    """Caught by Copilot on #256. `--from-stdin` had its own copy of the
-    strip-one-newline rule that handled only `\n`, so a password piped in on
-    Windows kept a trailing `\r` -- and P4 is precisely the rule that says
-    behaviour must be identical there. Now calls
-    `sopuli.material.strip_one_newline` rather than restating it.
+    """`--from-stdin` calls `sopuli.material.strip_one_newline` rather than
+    restating it. A copy of the strip-one-newline rule that handled only `\n`
+    would leave a trailing `\r` on a password piped in on Windows -- and P4 is
+    precisely the rule that says behaviour must be identical there.
     """
     run(runner, write_config(CONFIG), "--from-stdin", stdin="SuppliedPassword2026abcd\r\n")
 
@@ -518,7 +518,7 @@ def test_a_trailing_space_in_a_supplied_password_survives(
 def test_only_the_accounts_that_had_a_pending_are_told_it_was_replaced(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
-    """Caught by Copilot on #256. The write is shared; what it replaced is not.
+    """The write is shared; what it replaced is not.
 
     One account had a staged password and its neighbour did not, and reporting
     the document's answer for both would tell somebody a credential was replaced
@@ -546,7 +546,7 @@ def test_a_takeover_mid_run_stops_before_the_next_document_is_staged(
     monkeypatch: pytest.MonkeyPatch,
     validator: Draft202012Validator,
 ) -> None:
-    """#282, UC-1 §8: the fence is re-read before *every* vault write, including
+    """UC-1 §8: the fence is re-read before *every* vault write, including
     this one.
 
     The window is small here -- acquire, read, write -- but small is not a
@@ -576,7 +576,7 @@ def test_a_takeover_mid_run_stops_before_the_next_document_is_staged(
                     holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
                     now=utc_now(),
                 )
-                # Under the version it is at: since #390 the acquisition sets
+                # Under the version it is at: the acquisition sets
                 # `cas_required`, so an unguarded write is refused by the store.
                 at = store.read(lock_path(beta))
                 plant(lock_path(beta), theirs.to_dict(), cas=None if at is None else at.version)
@@ -598,7 +598,7 @@ def test_a_takeover_mid_run_stops_before_the_next_document_is_staged(
 
 # ------------------------------------------------------- target constraints ---
 #
-# UC-1 §4 step 2 (#317). Every test above reaches this code and takes the
+# UC-1 §4 step 2. Every test above reaches this code and takes the
 # unreachable path, because none of them patches a session and `db.example.com`
 # does not exist -- which is itself the assertion that a target that will not
 # answer costs the run nothing but strictness.
@@ -650,7 +650,7 @@ def _reachable(
 
 
 #: What the estate says about a password once one has been drawn -- the half of
-#: §4 step 2 that reports rather than binds (#317). Keyed by the account name the
+#: §4 step 2 that reports rather than binds. Keyed by the account name the
 #: *config* uses; the value carries the database's own spelling, as the driver
 #: returns it.
 GUARDED = {
@@ -761,7 +761,7 @@ def test_a_limit_the_policy_cannot_satisfy_is_refused_before_anything_is_staged(
     store: MemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The refusal class #317 exists to remove, moved to where it can be fixed.
+    """A policy the target cannot satisfy is refused here, where it can be fixed.
 
     A 24-character policy against a target holding 8 bytes is impossible, and
     without this it is discovered by `apply` -- after the vault has a `pending`
@@ -980,10 +980,9 @@ def test_the_notes_are_visible_to_somebody_reading_a_terminal(
     store: MemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#309's rule: a warning nobody can see in the default output is not
-    surfaced. The emitter prints the command's text and not the document, so a
-    verify function reported only in `diagnostics[]` is reported to nobody who
-    ran this by hand."""
+    """A warning nobody can see in the default output is not a warning. The
+    emitter prints the command's text and not the document, so a verify function
+    reported only in `diagnostics[]` is reported to nobody who ran this by hand."""
     _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)
 
     output = run(runner, write_config(CONFIG)).output
@@ -1004,7 +1003,7 @@ def test_the_unread_estate_is_said_once_and_not_twice(
     assert "note" not in output
 
 
-# ------------------------------------------------------------- --promote (#257) ---
+# -------------------------------------------------------------------- --promote ---
 #
 # UC-1 §4's adoption path, and invariant 7's one exception. The assertions worth
 # having are about what ends up in the document and what a run is not allowed to
@@ -1047,8 +1046,9 @@ def test_promote_reports_vault_only(
     store: MemoryStore,
     validator: Draft202012Validator,
 ) -> None:
-    """#257 blocker 2. The vault holds this password and no database has been
-    asked, which is the one thing none of the other states could say."""
+    """Decision #257 adds `VAULT_ONLY`. The vault holds this password and no
+    database has been asked, which is the one thing none of the other states can
+    say."""
     found = document(run(runner, write_config(CONFIG), "--promote", "--output", "json"))
     validator.validate(found)
     entry = found["results"][0]
@@ -1291,7 +1291,7 @@ def test_a_document_shaped_wrongly_fails_that_document_and_not_the_run(
 
 # ------------------------------------------------------------------ jsonl ---
 #
-# `creds generate` streams (#535). What is its own is `constraints.resolved`:
+# `creds generate` streams. What is its own is `constraints.resolved`:
 # the run document's `constraints` section, sent once as soon as it exists --
 # `plan.resolved`'s arrangement, chosen over one event per target because the
 # section's estate-wide fields belong to no one target.
@@ -1514,7 +1514,7 @@ def test_a_promotion_refused_before_its_write_still_announces_the_draws(
     """A `current` that appeared after the plan was made is refused under the
     lock, before the write. The passwords were drawn all the same, so they are
     announced -- as `_stage` announces before a write that fails -- and no
-    `vault.promote` is sent, because none was attempted (review of #544)."""
+    `vault.promote` is sent, because none was attempted."""
     store.write(PATH, {"DB_CREDENTIALS": {"acme_web_user": "Existing-Current-Value-1"}}, cas=0)
     # The plan-time read sees nothing, which is the race the in-lock re-check
     # exists for: somebody wrote `current` between the plan and the lock.

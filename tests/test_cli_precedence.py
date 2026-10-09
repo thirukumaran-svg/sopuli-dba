@@ -1,4 +1,4 @@
-"""P3's layers as the command line actually meets them (#10).
+"""P3's layers as the command line actually meets them (decision #10).
 
 Tier 0 (04-testing.md §4): ``CliRunner`` in-process, no containers. The
 environment is set with ``monkeypatch.setenv`` where a test is *about* the
@@ -147,7 +147,7 @@ def test_the_token_file_flag_takes_both_positions_and_the_verb_wins() -> None:
     §3a's token chain *is* its merge -- a config-written ``token:``, then this
     flag, then the variables, then ``~/.vault-token`` -- so registering half of
     it in ``sopuli/settings/`` would leave the tool with two resolvers for one
-    question (#145). What it shares with every other inert global option is that
+    question (C16). What it shares with every other inert global option is that
     both click parsers accept it and the more specific position wins.
     """
     group = invocation.GlobalOptions(vault_token_file=Path("group.token"))
@@ -301,7 +301,7 @@ def test_an_unknown_output_format_names_the_variable_it_came_from(
 def test_jsonl_from_the_environment_is_refused_by_a_verb_that_does_not_stream(
     runner: CliRunner, show: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#9: `jsonl` is a real mode now, and still not one `config show` has.
+    """`jsonl` is a real mode, and still not one `config show` has.
 
     The variable is the realistic source: a CI image that sets it for its
     scheduled `creds check` also runs everything else that job does.
@@ -341,7 +341,7 @@ def vault_config(write_config: WriteConfig) -> list[str]:
 def test_a_named_vault_variable_reaches_the_store(
     runner: CliRunner, vault_config: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§6's `__` addressing, end to end (#154). The merge itself is asserted in
+    """§6's `__` addressing, end to end. The merge itself is asserted in
     `tests/config/test_vault_env.py`; what this adds is that a real command reads
     a real environment and gets there."""
     monkeypatch.setenv("SOPULI_VAULT__VAULT_DEV__ADDR", "https://named.example.com")
@@ -390,7 +390,7 @@ def test_a_sopuli_variable_outranks_the_third_party_one(
     assert "https://active.example.com" in result.output
 
 
-# ---------------------------------------------------- `--vault-addr` (#422) ---
+# ----------------------------------------------------------- `--vault-addr` ---
 #
 # Layer 1 of `vaults.*.addr`, and the only flag that hoists a store's setting
 # onto the command line. The merge is asserted in
@@ -490,18 +490,17 @@ def test_a_source_cannot_wire_a_setting_by_producing_it(
 def test_a_profile_block_no_command_consults_still_loads(
     runner: CliRunner, write_config: Any
 ) -> None:
-    """The other direction from the test above, and the one that was missing.
+    """The other direction from the test above.
 
     A key `profiles:` accepts and no command reads must not be emitted by
     `sopuli/settings/sources.py`, because the guard above refuses a contribution
-    for a setting this run does not consult. #176 made the `db:` block emit while
-    nothing read it, and the guard did exactly what it exists to do: a previously
-    valid config died with a raw `ValueError` and exit 1 on every command.
+    for a setting this run does not consult. If such a key were emitted, the
+    guard would do exactly what it exists to do, and a valid config would die
+    with a raw `ValueError` and exit 1 on every command.
 
-    Nothing caught it, because every fixture config in the suite happened to have
-    no such block. So this is not a test of the guard -- that one is above -- but
-    of the far more ordinary thing the guard can break: a key the file is allowed
-    to contain.
+    So this is not a test of the guard -- that one is above -- but of the far
+    more ordinary thing the guard can break: a key the file is allowed to
+    contain.
 
     `log_level` is the key that stands for "accepted and unread": parsed, closed
     against `LOG_LEVELS`, and read by nothing. It is written *beside* the `db:`
@@ -539,7 +538,7 @@ def test_a_setting_left_to_its_built_in_default_is_not_reported(
 
     `safety.dry_run` resolves on every run -- to `false`, from the built-in --
     and reporting that on every clean run would be noise in a document consumers
-    diff. `--explain` (#53) shows those rows; JSON does not. `output` is here
+    diff. `--explain` shows those rows; JSON does not. `output` is here
     because asking for JSON at all is an override.
     """
     result = runner.invoke(cli, [*show, "--output", "json"])
@@ -586,7 +585,7 @@ def commands() -> Iterator[tuple[str, click.Command]]:
             yield path, command
 
 
-#: Commands that are not runs, and so are outside every rule below (#413).
+#: Commands that are not runs, and so are outside every rule below.
 #:
 #: `about` prints compiled-in text: no configuration, no settings, no estate, no
 #: socket, and no `--output json` form for the three checks below to be about.
@@ -674,16 +673,17 @@ def test_every_verb_names_a_command_the_schema_allows(path: str, command: click.
 #: anything filled them -- but it tolerates it for verbs that are *planned*, and
 #: nothing distinguishes one of those from a leftover except a list somebody has
 #: to keep. This is that list, and the test below is why keeping it is cheap:
-#: `creds.promote` sat in the enum from the first draft until #392, for a verb
-#: `uc-01-app-credential-sync.md` §4 had already declined, and no test could see
-#: the difference because no test looked in this direction at all.
+#: it fails on an enum value that belongs to no verb and is not named here, as
+#: `creds.promote` would, for a verb `uc-01-app-credential-sync.md` §4 declines
+#: (decision #392).
 #:
-#: `admin.install` is reserved while #655 decides whether the command exists.
+#: `admin.install` is reserved until the decision on whether the command exists
+#: (TODO(#655)).
 RESERVED_COMMANDS = frozenset({"admin.install"})
 
 
 def test_the_command_enum_names_nothing_that_is_not_coming() -> None:
-    """The other direction of the test above, which is the one #392 found missing.
+    """The other direction of the test above.
 
     A value nothing emits is a branch a consumer can write and never reach. It is
     allowed only while it is a promise -- so every enum value either belongs to a
@@ -701,7 +701,7 @@ def test_nothing_reserved_has_quietly_been_built() -> None:
     """The list above stops being documentation the moment a verb arrives.
 
     Without this, `admin install` could ship and leave a comment claiming it is
-    still planned -- which is the defect in #392 with the sign flipped.
+    still planned.
     """
     built = {".".join(path.split()[1:]) for path, _ in commands()}
 
@@ -718,7 +718,7 @@ def test_every_verb_receives_the_resolved_invocation(path: str, command: click.C
     assert INVOCATION_PARAM in inspect.signature(command.callback).parameters, path
 
 
-# ------------------------------------------------ profile activation (#153) ---
+# ------------------------------------------------------- profile activation ---
 #
 # Layer 3 as a run actually meets it. What a profile *is* is `tests/config/`;
 # what the merge rule *does* is `tests/settings/`. This is the seam: that
@@ -883,9 +883,10 @@ def test_a_profile_cannot_relax_the_safety_block(runner: CliRunner, estate: Path
 
 
 def test_break_expired_ratchets_the_other_way_round(runner: CliRunner, estate: Path) -> None:
-    """The one ratcheted boolean whose safe value is `false` (#83): a profile
-    asking for permission to break an expired lock is the defeated request, which
-    is the opposite polarity to `readonly` one test up."""
+    """The one ratcheted boolean whose safe value is `false`
+    (`locking.break_expired`, 01-configuration.md): a profile asking for
+    permission to break an expired lock is the defeated request, which is the
+    opposite polarity to `readonly` one test up."""
     result = runner.invoke(
         cli,
         ["config", "show", "--config", str(estate), "--profile", "ci", "--output", "json"],
@@ -923,7 +924,7 @@ def test_explain_attributes_a_profile_supplied_value_to_layer_three(
     assert "[profiles.laptop.output]" in result.output
     # The key path rather than "[profile laptop]", which is how P3's sketch drew
     # it: `defaults.safety.readonly` already renders the same way, and naming the
-    # key is what sends somebody to the line they have to edit (#53).
+    # key is what sends somebody to the line they have to edit.
     assert "output" in result.output
 
 
@@ -956,19 +957,18 @@ def test_the_run_document_still_validates_with_a_profile(runner: CliRunner, esta
 def test_jsonl_from_a_profile_is_refused_by_a_verb_that_does_not_stream(
     runner: CliRunner, write_config: WriteConfig
 ) -> None:
-    """#9's refusal has to survive arriving from layer 3.
+    """The refusal of `jsonl` has to survive arriving from layer 3.
 
     A profile is checked only after the file is read, so this is the *second*
     call to `check_output_mode`, inside the exit handler. Exit 2, like the same
     value from `SOPULI_OUTPUT`: what failed is not the file but the run's ability
     to produce what was asked for, and the message still names the key.
 
-    Until #9 this test wrote `jsonl` as a format the build lacked. The profile
-    validator admits only the three modes, so that is now the one value a profile
-    can carry and a verb can still refuse -- and it guards the same regression:
-    the handler asks the invocation whether the run is JSON on the way past, and
-    reading that through `OutputMode` once raised `ValueError`, replacing a clean
-    exit 2 with a traceback about an enum on exit 1.
+    The profile validator admits the three modes, and `jsonl` is the one a verb
+    can still refuse -- so it guards this path: the handler asks the invocation
+    whether the run is JSON on the way past, by reading the mode through
+    `OutputMode`, and a `ValueError` there would replace a clean exit 2 with a
+    traceback on exit 1.
     """
     path = write_config("version: 1\nprofiles:\n  ci:\n    output: jsonl\n")
 

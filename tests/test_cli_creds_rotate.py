@@ -1,4 +1,4 @@
-"""``sopuli creds rotate`` end to end, without a database (#284).
+"""``sopuli creds rotate`` end to end, without a database.
 
 Same arrangement as ``tests/test_cli_creds_apply.py``: in-process through
 ``CliRunner``, the vault a :class:`~sopuli.store.MemoryStore` and the driver a
@@ -265,7 +265,7 @@ class FakeSession:
 def user(name: str = "ACME_WEB_USER", **fields: Any) -> UserState:
     return UserState(
         # `False` rather than the default, for `test_cli_creds_apply.py`'s
-        # reason: a rotation case must not also be a guardrail-3 case (#296).
+        # reason: a rotation case must not also be a guardrail-3 case.
         **{"name": name, "status": "OPEN", "password_file_member": False, **fields}
     )
 
@@ -357,8 +357,8 @@ def _credential() -> Any:
     """The admin credential the CLI would have resolved.
 
     A real :class:`~sopuli.admin.Resolved` rather than a stub with one attribute.
-    The command reads its *provenance* as well as its value now -- #477 reports
-    where an admin credential came from -- and a stub stops being enough the
+    The command reads its *provenance* as well as its value, because it reports
+    where an admin credential came from, and a stub stops being enough the
     moment anything but `.credential` is read. `external` because these estates
     declare no `admin:` block at all, and it is the one source that carries
     neither a username nor a secret.
@@ -565,7 +565,7 @@ def test_dry_run_still_flies_the_preflight(
 def test_a_preflight_caveat_is_printed_in_the_text(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, mode: tuple[str, ...]
 ) -> None:
-    """#606, which applies to `rotate`'s unconditional pre-flight as it does to
+    """Decision #606 applies to `rotate`'s unconditional pre-flight as it does to
     `apply --preflight`."""
     estate(audits={"appdb-alpha": RuntimeError("ORA-00942: table or view does not exist")})
 
@@ -621,13 +621,13 @@ def test_a_refused_confirmation_writes_nothing(
 def test_the_confirmation_names_the_reach_in_words(radius: BlastRadius, expected: str) -> None:
     """The last sentence an operator reads before an estate's passwords change.
 
-    It used to interpolate the `BlastRadius` itself and render as `draw a new
+    Interpolating the `BlastRadius` itself would render as `draw a new
     password for BlastRadius(targets=1, accounts=1, environments=('dev',))
     account(s) and promote it?` -- a dataclass repr in a confirmation prompt,
     with `account(s)` appended to an object that already said `accounts=1`.
-    Nothing caught it because `CliRunner` has no terminal, so the two tests above
-    take the `_can_prompt()` refusal path and the prompt never renders (#380,
-    found by running `creds rotate` rather than by testing it).
+    A run through `CliRunner` cannot see that, because it has no terminal, so
+    the two tests above take the `_can_prompt()` refusal path and the prompt
+    never renders.
 
     So the phrase is asserted here instead, where it needs no terminal. Both
     counts are in it deliberately: `1 account on 11 targets` and `11 accounts on
@@ -807,7 +807,7 @@ def test_a_failed_target_keeps_its_pending_and_promotes_nothing(
 def test_a_partially_reachable_estate_names_the_repair(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#264's line: exit 4 exists to point at a remedy, and `apply` is it.
+    """Exit 4 exists to point at a remedy, and `apply` is it.
 
     Two targets, one of which fails -- which is what makes this *partial* rather
     than a failure. A run where every target failed exits 1 and is offered no
@@ -879,7 +879,7 @@ def test_a_read_back_disagreement_offers_no_repair(
 
 
 def steal(path: str, *, at: str) -> Callable[[dict[str, Any], str], None]:
-    """Somebody else takes this document's lock, once, mid-run (#282).
+    """Somebody else takes this document's lock, once, mid-run.
 
     A real record at the real path under a different ``correlation_id``, so the
     run's next fence check fails on the version and would fail on the id too.
@@ -903,7 +903,7 @@ def steal(path: str, *, at: str) -> Callable[[dict[str, Any], str], None]:
             now=utc_now(),
         )
         # With the version the record is at, which is what a real taker passes:
-        # the path requires a compare-and-set since #390, so an unguarded write
+        # the path requires a compare-and-set, so an unguarded write
         # is refused by the store rather than by anything under test here.
         key = LockKey(store="vault-prod", path=path)
         held = harness["store"].read(lock_path(key))
@@ -999,7 +999,7 @@ def test_without_the_flag_no_window_is_closed(
 def test_a_takeover_stops_the_windows_being_closed(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The fence reaches the tail of the run too (found in review on #284).
+    """The fence reaches the tail of the run too.
 
     Window-closing is the last mutation and the furthest from the acquisition, so
     it is the one most likely to be issued after a lease has gone -- and it is the
@@ -1024,12 +1024,13 @@ def test_a_takeover_stops_the_windows_being_closed(
 def test_a_takeover_while_closing_is_not_a_per_account_finding(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The trap #282 fixed in `_apply_one`, which the closing path had too.
+    """The trap `_apply_one` avoids, which the closing path has to avoid too.
 
-    `_finish_one` catches `Exception` broadly and turns it into a row in the
-    table, so a stolen lock would have become one account's bad luck and the run
-    would have carried on closing the next account's window. The run must end
-    instead -- exit 4, because it had already applied and promoted.
+    `_finish_one` has a catch-all that turns an error into a row in the table, so
+    a stolen lock would become one account's bad luck and the run would carry on
+    closing the next account's window. The lock error is re-raised ahead of the
+    catch-all and the run ends -- exit 4, because it has already applied and
+    promoted.
     """
     estate(
         users={"ACME_WEB_USER": user(rollover_enabled=True)},
@@ -1119,7 +1120,7 @@ def test_an_empty_selection_says_so_rather_than_rotating(
 
 # ------------------------------------------------------------------ jsonl ---
 #
-# `creds rotate` streams (#535). What is specific to it is the vault-side phase
+# `creds rotate` streams. What is specific to it is the vault-side phase
 # in front of the targets: staging is per document, so those events name a
 # path and no target, and they all come before the first `target.started`.
 
@@ -1348,7 +1349,7 @@ def test_a_denied_lock_streams_the_holder_and_nothing_after_it(
     events: Draft202012Validator,
 ) -> None:
     """Somebody else is rotating: `lock.denied` names them, and nothing is read,
-    staged or dialled after it (review of #543)."""
+    staged or dialled after it."""
     harness = estate()
     key = LockKey(store="vault-prod", path="apps/acme/appdb-alpha")
     harness["store"].require_cas(lock_path(key))
@@ -1379,7 +1380,8 @@ def test_a_profile_that_cannot_answer_refuses_even_at_a_terminal(
     estate: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rotate's gate is unconditional, and `confirm: false` refuses it (#610)."""
+    """Rotate's gate is unconditional, and `confirm: false` refuses it
+    (decision #610)."""
     monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
     estate()
     config = write_config(CONFIG + "profiles:\n  ci:\n    confirm: false\n")
