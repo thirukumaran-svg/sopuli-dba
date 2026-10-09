@@ -1,4 +1,4 @@
-"""What a rotation prints (#284).
+"""What a rotation prints.
 
 :mod:`sopuli.output.rotate_view` deliberately owns very little -- the result
 table is `apply`'s, called rather than reimplemented -- so this file is about the

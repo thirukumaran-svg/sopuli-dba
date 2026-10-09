@@ -1,4 +1,4 @@
-"""Wallet readability under ``auth: external`` (#215, P4). Tier 0.
+"""Wallet readability under ``auth: external`` (P4). Tier 0.
 
 Filesystem only -- no Oracle client, no container, no wallet that has to be a
 real wallet. That is the whole point of the check being cheap: it answers *is
@@ -163,10 +163,10 @@ def test_a_wallet_that_is_present_and_unreadable_is_not_usable(
     """Presence is not access, and this is the case the whole report exists for.
 
     A wallet owned by the account a service runs as is ``is_file()`` from every
-    account on the machine and opens from exactly one. The first version of this
-    check asked ``is_file`` and reported ``auto_login: true`` for a wallet it
-    could not read -- health, for precisely the failure it was written to
-    explain. Found by Copilot on #241.
+    account on the machine and opens from exactly one. A check that
+    asked ``is_file`` would report ``auto_login: true`` for a wallet it could
+    not read -- health, for precisely the failure the report exists to
+    explain.
 
     The open is refused rather than the file's permissions changed, so the case
     runs identically on POSIX and on Windows: a real deny needs `chmod` on one and
@@ -285,8 +285,8 @@ def test_an_unreadable_sqlnet_is_treated_as_absent(tmp_path: Path) -> None:
 def test_a_wallet_others_can_read_is_reported_and_does_not_fail(tmp_path: Path) -> None:
     """An auto-login wallet is a credential, so P4's config-file check applies.
 
-    A **warning**, for the reason #213 settled for over-granted accounts: it is
-    somebody else's file, and a `doctor` that refused to run over it would block
+    A **warning**, for the reason decision P5 gives for over-granted accounts: it
+    is somebody else's file, and a `doctor` that refused to run over it would block
     the person who ran it, mid-incident, over a condition they did not create.
     """
     directory = _wallet_dir(tmp_path, AUTO_LOGIN)

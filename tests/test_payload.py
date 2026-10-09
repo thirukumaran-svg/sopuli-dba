@@ -1,4 +1,4 @@
-"""The one rule that covers both of Q7's layouts (#85).
+"""The one rule that covers both of Q7's layouts.
 
 The point of the mirror rule is that the per-account and per-application layouts
 are the *same* arithmetic with a different container, so most of what follows is
@@ -102,9 +102,8 @@ class TestReading:
         RFC 7396 deletes the *key named in the patch*, and a patch built by the
         mirror rule names an account inside a container -- so promoting the last
         staged account empties `pending` and `origin` rather than removing them,
-        and promoting an account whose document predates #311 creates an empty
-        `origin` on the way past. Raised by Copilot on #313 against the `origin`
-        clear, and true of `pending` since the promotion patch was first written.
+        and promoting an account whose document has no `origin` creates an empty
+        `origin` on the way past. The same is true of `pending`.
 
         It stays that way. The alternatives are both worse: pruning empty maps
         locally would make this module's RFC 7396 disagree with the one Vault

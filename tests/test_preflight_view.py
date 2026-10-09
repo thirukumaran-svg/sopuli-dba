@@ -1,4 +1,4 @@
-"""What a pre-flight prints (#283).
+"""What a pre-flight prints.
 
 The decision is `tests/test_preflight.py`. This is the half a consumer of the
 *text* sees, and the property worth asserting is that it cannot disagree with the
@@ -72,7 +72,7 @@ def test_the_account_column_is_filled_only_where_the_check_is_about_one() -> Non
     assert "acme_web_user" in rendered
 
 
-# ------------------------------------------- a survey that passed, #606 ---
+# --------------------------------- a survey that passed (decision #606) ---
 
 
 def test_a_caveat_becomes_one_note_naming_its_target() -> None:
@@ -116,7 +116,7 @@ def test_each_target_gets_its_own_note() -> None:
 
 
 def test_a_multi_line_server_message_stays_inside_its_note() -> None:
-    """26ai appends a URL on a second line of its own message (#322)."""
+    """26ai appends a URL on a second line of its own message."""
     finding = preflight.Finding(
         "appdb-alpha",
         preflight.PRIVILEGES,

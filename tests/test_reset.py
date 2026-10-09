@@ -1,4 +1,4 @@
-"""Deciding a personal password reset, and #439's five guards (#441). Tier 0.
+"""Deciding a personal password reset, and decision #439's five guards. Tier 0.
 
 A value object in, a decision or a refusal out. What the DDL then does is
 `tests/driver/test_oracle_reset.py`'s, and what an operator sees is
@@ -38,10 +38,9 @@ from sopuli.safety import RefusedError
 SEEN = Delivery(method="manual", manual=ManualDelivery(force_expire=True))
 UNSEEN = Delivery(method="vault_wrapped", vault_wrapped=WrappedDelivery(ttl="15m"))
 
-#: A method UC-2 §6.2 defines and this build still cannot serve. Its own constant
-#: since #444, which made `vault_wrapped` implemented: before that, one value
-#: stood in for both "unseen" and "unavailable", and the two tests that used it
-#: were passing for different reasons.
+#: A method UC-2 §6.2 defines and this build still cannot serve. It has its own
+#: constant so that "unseen" and "unavailable" are two different values and no
+#: test passes for the wrong reason.
 UNIMPLEMENTED = Delivery(method="one_time_link")
 
 TARGET = {
@@ -122,7 +121,7 @@ def test_the_implemented_method_comes_back() -> None:
     assert deliverable(SEEN) is SEEN
 
 
-# ------------------------------------------------------- #439's five guards ---
+# ---------------------------------------------------------- the five guards ---
 
 
 def test_guard_2_refuses_the_seen_path_with_json_output() -> None:
@@ -153,8 +152,8 @@ def test_guard_3_has_no_escape_flag_on_the_command() -> None:
     There must be no way to defeat the terminal check from the command line: a
     flag that exists to weaken a guard ends up in scripts, which is the exact
     place this value must never reach. `| clip` not working is the accepted cost
-    (#439, #441). Checked by looking at every option the verb declares, so adding
-    one called `--no-tty-check` fails here rather than in review.
+    (UC-2 §6.5). Checked by looking at every option the verb declares, so
+    adding one called `--no-tty-check` fails here rather than in review.
     """
     from sopuli.cli import account_reset_password
 
@@ -171,8 +170,8 @@ def test_guard_3_has_no_escape_flag_on_the_command() -> None:
 
 
 def test_guard_4_refuses_confirm_given_in_advance() -> None:
-    """The one gate in the tool a yes cannot be given to ahead of time (P5, #439).
-    A flag cannot testify to its own premise."""
+    """The one gate in the tool a yes cannot be given to ahead of time
+    (principle P5, decision #439). A flag cannot testify to its own premise."""
     with pytest.raises(ArgumentError) as caught:
         refuse_seen_path(SEEN, is_json=False, stdout_is_terminal=True, confirm_given=True)
 
@@ -181,8 +180,8 @@ def test_guard_4_refuses_confirm_given_in_advance() -> None:
 
 
 def test_the_usage_errors_are_asked_before_the_environment_one() -> None:
-    """Found by running it: a redirected run with `--confirm` used to be told
-    about the terminal, which left guard 4 unreachable from anything but a real
+    """A redirected run with `--confirm` is told about the usage error and not
+    about the terminal, or guard 4 would be unreachable from anything but a real
     console. A script passing `--confirm` has made a mistake in its command line,
     and that is what it should hear about."""
     with pytest.raises(ArgumentError):
@@ -192,11 +191,9 @@ def test_the_usage_errors_are_asked_before_the_environment_one() -> None:
 def test_no_guard_fires_on_an_unseen_delivery() -> None:
     """None of the three is true of a method that prints no *password*.
 
-    The reason needed narrowing when #444 landed: this used to say "prints nobody
-    anything", which stopped being true the day an unseen method returned a
-    wrapping token. Each guard is about a password on a screen, and a retrieval
-    credential with its own TTL is a different object -- argued in
-    `sopuli/output/delivery_view.py`.
+    Each guard is about a password on a screen. An unseen method returns a
+    wrapping token, and a retrieval credential with its own TTL is a different
+    object -- argued in `sopuli/output/delivery_view.py`.
     """
     refuse_seen_path(UNSEEN, is_json=True, stdout_is_terminal=False, confirm_given=True)
 
@@ -230,7 +227,7 @@ def test_an_undeclared_account_is_refused() -> None:
 
 
 def test_a_deliberately_locked_account_is_refused() -> None:
-    """H4 (#455): `LOCKED` without `(TIMED)` is somebody's offboarding decision,
+    """H4: `LOCKED` without `(TIMED)` is somebody's offboarding decision,
     and handing the account a working password would undo it silently."""
     answer = decision(state(status="LOCKED", locked=True))
 
@@ -258,8 +255,9 @@ def test_a_timed_lock_is_not_refused() -> None:
 
 
 def test_a_compound_status_carrying_a_deliberate_lock_is_still_refused() -> None:
-    """`EXPIRED & LOCKED` is a real value, so equality against the whole string
-    would call a deliberately locked account open -- #309's lesson, applied."""
+    """`EXPIRED & LOCKED` is a real value. Equality against the whole string
+    would call a deliberately locked account open, so the status is read as
+    tokens."""
     answer = decision(state(status="EXPIRED & LOCKED", locked=True, expired=True))
 
     assert answer.proceed is False
@@ -272,7 +270,7 @@ def test_the_seen_path_expires_and_the_unseen_one_does_not() -> None:
     assert decision(delivery=UNSEEN).expire is False
 
 
-# ------------------------------------------- the ratchet #498 left a consumer for ---
+# --------------------------------------------------- the ratchet and its consumer ---
 
 
 def resolved_allowing(*methods: str) -> dict[str, Any]:
@@ -289,9 +287,8 @@ def resolved_allowing(*methods: str) -> dict[str, Any]:
 
 
 def test_a_method_no_layer_permits_is_refused() -> None:
-    """H6's consumer, which #498 said would arrive with the first delivery method
-    and did (#441). Until this the set was resolved, ratcheted, reported by
-    `config show --explain` and read by nothing."""
+    """H6's consumer. `safety.delivery.allowed_methods` is resolved, ratcheted
+    and reported by `config show --explain`, and the reset verb reads it."""
     from sopuli.safety import refuse_disallowed_method
 
     with pytest.raises(RefusedError) as caught:
@@ -329,10 +326,9 @@ def test_the_refusal_names_where_the_set_was_written() -> None:
 
 
 def test_the_setting_is_no_longer_declared_inert() -> None:
-    """The other half of #498's bargain. `inert_reason` claims *nothing reads
-    this*, and `tests/settings/test_settings_are_wired.py` fails in both
-    directions -- so the marking had to go when the consumer arrived, which is
-    the moment somebody checks whether the documents still say the right thing.
+    """`inert_reason` claims *nothing reads this*, and
+    `tests/settings/test_settings_are_wired.py` fails in both directions -- so
+    the marking must be absent while the reset verb reads the setting.
     """
     from sopuli.settings import setting
 

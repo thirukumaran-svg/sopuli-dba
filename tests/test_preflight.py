@@ -1,4 +1,4 @@
-"""What a pre-flight decides, before anything is written (UC-1 §8 step 3, #283).
+"""What a pre-flight decides, before anything is written (UC-1 §8 step 3).
 
 Tier 0: every function under test is of values a caller already holds, so the
 whole decision table is here without a container. The survey that produces those
@@ -113,9 +113,10 @@ def test_missing_privileges_are_one_finding_and_are_authorization() -> None:
 
 
 def test_a_missing_profile_names_the_account_that_wanted_it() -> None:
-    """#301. Per account, because two accounts on one target can sit under
-    different policies -- and a message naming only the profile would leave the
-    reader hunting for which account asked for it."""
+    """A missing profile is a pre-flight finding (decision #301), reported per
+    account: two accounts on one target can sit under different policies, and a
+    message naming only the profile would leave the reader hunting for which
+    account asked for it."""
     (found,) = preflight.survey(
         "appdb-alpha",
         scope=scope(),

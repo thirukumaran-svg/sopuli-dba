@@ -1,4 +1,4 @@
-"""``--output jsonl`` at the emitter: the event stream as a contract (#9).
+"""``--output jsonl`` at the emitter: the event stream as a contract.
 
 What a real verb streams is in ``tests/test_cli_creds_check.py``; this file is
 about the stream itself -- framing, ``seq``, the two events written for the

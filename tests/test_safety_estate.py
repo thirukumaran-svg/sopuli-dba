@@ -1,10 +1,10 @@
-"""A ``safety:`` block on a target, a group or a target set, enforced (#424).
+"""A ``safety:`` block on a target, a group or a target set, enforced.
 
-The block parsed since the config model was written, validated cleanly, appeared
-in ``config show`` and refused nothing: ``readonly: true`` on a target did not
-stop a mutation, ``max_targets`` on one bounded no run, and
-``confirm_environments`` on one asked nobody anything. Invariant 10's guard
-failing in the one direction it must not fail in, with nothing saying so.
+The block is parsed, validated, shown by ``config show`` and enforced:
+``readonly: true`` on a target stops a mutation, ``max_targets`` on one bounds
+the run, and ``confirm_environments`` on one makes the run ask. A block that
+refused nothing would be invariant 10's guard failing in the one direction it
+must not fail in, with nothing saying so.
 
 Tier 0 (``04-testing.md`` §4): a value object in, an answer out. What the
 refusals look like from a command line is ``tests/test_cli_guardrails.py``.
@@ -161,15 +161,14 @@ def test_an_override_is_reported_against_the_override() -> None:
     assert one.detail == "target_sets.appdb.overrides.appdb-dev-beta.safety.readonly"
 
 
-# ---------------------------------- the override that must not relax (#424) ---
+# ----------------------------------------- the override that must not relax ---
 #
 # `_patch_target` merges a patch into the template key by key, so a patch's
-# `readonly: false` replaces a template's `true` -- and until the review on #425
-# the safer of the two was gone before anything could ratchet them. Harmless
-# while nothing enforced a target's block, and an invariant 10 hole the moment
-# something did: a run narrowed to the patched target had nothing left to be
-# safest of. `_patch_target`'s docstring had claimed this could not happen since
-# it was written.
+# `readonly: false` would replace a template's `true`, and the safer of the two
+# would be gone before anything could ratchet them. A run narrowed to the
+# patched target would have nothing left to be safest of, which is an invariant
+# 10 hole. Its caller keeps the template's block on
+# `ExpandedTarget.template_safety`, so both reach the resolver.
 
 
 def relaxing() -> Config:
@@ -301,7 +300,7 @@ def test_confirm_environments_unions_across_the_layers() -> None:
 
 def test_allowed_methods_intersects_across_the_layers() -> None:
     """The other list setting, merged the other way, at the layer only this merge
-    can reach (H6, #453). A target permitting less than ``defaults`` does narrow
+    can reach (H6). A target permitting less than ``defaults`` does narrow
     the estate's set -- and the union that governs the line above would have
     widened it instead."""
     config = estate(
@@ -365,9 +364,9 @@ def test_it_refuses_a_mutation_and_names_the_target() -> None:
 
 
 def test_a_partial_refusal_says_how_much_and_offers_a_narrowing() -> None:
-    """#424 chose a refusal over a partial run, so the message has to hand back
-    the mechanism that *does* narrow -- otherwise the operator is told no and
-    left to work out what to type."""
+    """Decision #424 chose a refusal over a partial run, so the message has to
+    hand back the mechanism that *does* narrow -- otherwise the operator is told
+    no and left to work out what to type."""
     config = estate(safety={"readonly": True}, targets=3)
 
     with pytest.raises(RefusedError) as raised:

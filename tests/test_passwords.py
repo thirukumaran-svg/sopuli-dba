@@ -186,9 +186,9 @@ def test_no_limit_means_no_byte_check() -> None:
 
 
 def test_a_policy_with_no_length_is_refused_rather_than_defaulted() -> None:
-    """The decision #58 asked for. §8 names a default charset and no default
-    length, so there is nothing to follow -- and how much entropy every credential
-    in the estate gets should be a reviewed line in a file."""
+    """§8 names a default charset and no default length, so there is nothing to
+    follow -- and how much entropy every credential in the estate gets should be
+    a reviewed line in a file."""
     with pytest.raises(PasswordPolicyError) as caught:
         generate(policy(charset="alnum_safe"), limit=UTF8)
 
@@ -202,9 +202,9 @@ def test_a_policy_error_is_a_config_error_and_exits_nine() -> None:
     """P5 gives "fix your file" a code of its own, and the CLI boundary already
     prints a `ConfigError` with its hint.
 
-    Exit 9 rather than 2 since #8: a policy the file could not hold is found
-    *after* the invocation resolved, so it is the one that carries a run
-    document. Exit 2 is reserved for argv that never parsed.
+    Exit 9 rather than 2: a policy the file could not hold is found *after* the
+    invocation resolved, so it is the one that carries a run document. Exit 2
+    is reserved for argv that never parsed.
     """
     error = PasswordPolicyError("nope")
 
@@ -265,8 +265,8 @@ def test_a_length_that_cannot_fit_the_targets_bytes_is_refused_at_plan_time() ->
 
 
 def test_a_byte_limit_refusal_names_its_target_where_one_is_given() -> None:
-    """#598: the caller knows which target the limit came from, and the message
-    says so. Without one -- `policy sample --max-bytes` -- it stays generic."""
+    """The caller knows which target the limit came from, and the message says
+    so. Without one -- `policy sample --max-bytes` -- it stays generic."""
     with pytest.raises(PasswordPolicyError) as caught:
         generate(
             policy(length=40),
@@ -378,9 +378,9 @@ def test_a_forbidden_or_control_character_is_reported_twice_over() -> None:
 
 
 def test_a_longer_supplied_password_is_compliant_but_a_shorter_one_is_not() -> None:
-    """The decision #58 asked for: `length` is exact for generation and a minimum
-    for validation. An external system dictating a longer password is not weaker,
-    and refusing it would block the migration case `--from-stdin` exists for."""
+    """`length` is exact for generation and a minimum for validation. An
+    external system dictating a longer password is not weaker, and refusing it
+    would block the migration case `--from-stdin` exists for."""
     declared = policy(length=8, charset="alnum")
 
     assert rules("abcdefghijkl", declared) == set()

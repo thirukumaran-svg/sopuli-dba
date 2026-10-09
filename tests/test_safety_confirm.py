@@ -1,8 +1,7 @@
-"""`safety.confirm_environments`, finally asked of something (#292).
+"""`safety.confirm_environments`, asked of the run's plan.
 
-The setting has been parsed since the config model was written, ratcheted as a
-union since the resolver was, and read by nothing — a config that looked like
-protection and was not, which is worse than the setting not existing. P5: "every
+The resolver ratchets the setting as a union, and `confirmation_demanded` reads
+the answer. A config that looks like protection has to be protection. P5: "every
 mutating command supports `--confirm`/`--yes`; interactive confirmation is
 required by default when … the target is marked `environment: prod`."
 

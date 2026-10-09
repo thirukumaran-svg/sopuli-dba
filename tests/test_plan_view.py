@@ -93,9 +93,9 @@ def test_a_shared_plan_validates(validator: Draft202012Validator) -> None:
 
 
 def test_a_plan_whose_store_is_unresolved_validates(validator: Draft202012Validator) -> None:
-    """The regression Copilot caught: `secret_ref.vault` is a required *string*,
-    so a binding whose store nothing has named yet (C15/#118) emitted
-    `{"vault": null}` and failed validation. It now emits no `secret` at all."""
+    """`secret_ref.vault` is a required *string*, so a binding whose store nothing
+    has named yet (C15) would emit `{"vault": null}` and fail validation. It
+    emits no `secret` at all."""
     config = build_config(
         {
             "version": 1,
@@ -143,7 +143,7 @@ def test_the_header_says_what_the_count_is_of() -> None:
     against what they meant to type; `4 units` is not.
 
     ASCII `x`, per UC-1 §7's own worked output: nothing this codebase emits is
-    outside ASCII, and redirected stdout on Windows is cp1252 (#12).
+    outside ASCII, and redirected stdout on Windows is cp1252.
     """
     plan = build(
         estate(
@@ -183,7 +183,7 @@ def test_one_of_each_reads_in_the_singular() -> None:
 
 def test_the_table_carries_a_row_per_unit_with_its_document() -> None:
     """`vault:path` -- the spelling `lock status` prints and `lock break` takes,
-    because a unit's document is what a lock is keyed on (Q2, #83)."""
+    because a unit's document is what a lock is keyed on (Q2)."""
     plan = build(
         estate(accounts=["acme_web_user"], secret_template="apps/acme/{tenant}#password"),
         intent=["verify"],

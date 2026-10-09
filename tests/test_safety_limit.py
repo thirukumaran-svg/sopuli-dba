@@ -1,8 +1,8 @@
-"""`safety.max_targets`, finally asked of something (#247).
+"""`safety.max_targets`, asked of the run's plan.
 
-The setting has been parsed since the config model was written and ratcheted
-since the resolver was, and until now nothing read the answer. P5: "`--limit` /
-`--max-targets` prevents a wildcard from hitting 200 PDBs by accident."
+The resolver ratchets the setting, and `refuse_if_over_limit` reads the answer.
+P5: "`--limit` / `--max-targets` prevents a wildcard from hitting 200 PDBs by
+accident."
 
 What is worth testing here is not the arithmetic. It is the two places a
 plausible implementation goes wrong: counting the wrong noun, and inventing a

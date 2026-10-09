@@ -180,7 +180,7 @@ def key(*, target: str = "appdb-dev-alpha", account: str = "jdoe") -> Any:
 
 def test_the_lock_is_keyed_on_the_records_own_path() -> None:
     """UC-2 §3.3's whole claim: the key is the only new thing, and the ``locks/``
-    prefix that keeps lock writes off the record is the one #83 already built."""
+    prefix that keeps lock writes off the record is Q2's."""
     assert key().store == "kv"
     assert key().path == "sopuli/personal-resets/appdb-dev-alpha/jdoe"
     assert lock_path(key()) == "locks/sopuli/personal-resets/appdb-dev-alpha/jdoe"
@@ -223,7 +223,7 @@ def test_two_accounts_on_one_target_do_not_collide() -> None:
 
 #: Wrapped, because that is what :func:`assert_no_secret` takes: the comparison
 #: goes through `Secret.__eq__`, so proving a document holds no password needs no
-#: reveal (#511). The documents below carry the *plaintext*, which is the thing
+#: reveal. The documents below carry the *plaintext*, which is the thing
 #: being looked for.
 PLAINTEXT = "Xq7!tvBm2LsdPw9r"
 PASSWORD = Secret(PLAINTEXT)
@@ -279,7 +279,7 @@ def test_a_document_that_is_not_an_object_is_refused() -> None:
         assert_no_secret([record().to_dict()], secret=PASSWORD)
 
 
-# ------------------------------------------- and the token, which fetches it (#444) ---
+# -------------------------------------------------- and the token, which fetches it ---
 
 #: What `vault_wrapped` hands the DBA. Not a password -- and UC-2 §6.1 covers it
 #: anyway, because the rule is about reach rather than value.
@@ -288,14 +288,12 @@ TOKEN = Secret(TOKEN_TEXT)
 
 
 def test_the_hand_over_token_in_delivery_to_is_refused() -> None:
-    """The hole the docstring used to only describe (#444 part 2).
-
-    It said the closed shape "proves nothing about ... a delivery method that
-    stuffs a value into `delivery.to`", and then `vault_wrapped` arrived with two
-    candidates for that field: the accessor, which names the hand-over, and the
-    token, which performs it. A record is long-lived and readable by anyone who may
-    know *that* a reset happened, so a token in one outlives the TTL that is the
-    method's whole guarantee.
+    """The closed shape proves nothing about a delivery method that stuffs a
+    value into `delivery.to`. `vault_wrapped` has two candidates for that field:
+    the accessor, which names the hand-over, and the token, which performs it.
+    A record is long-lived and readable by anyone who may know *that* a reset
+    happened, so a token in one outlives the TTL that is the method's whole
+    guarantee.
     """
     with pytest.raises(AssertionError) as raised:
         assert_no_secret({"delivery": {"to": TOKEN_TEXT}}, secret=PASSWORD, token=TOKEN)
@@ -325,7 +323,7 @@ def test_the_accessor_in_delivery_to_is_what_the_field_is_for() -> None:
 
 
 def test_no_token_given_means_nothing_to_compare_against() -> None:
-    """`None` rather than a sentinel, for the seen path and for #447's when it
-    lands: a method that produced no token has nothing for this to look for, and an
+    """`None` rather than a sentinel, for the seen path and for any method that
+    produces no token: such a method has nothing for this to look for, and an
     absent argument says that better than a value standing in for absence."""
     assert_no_secret({"delivery": {"to": TOKEN_TEXT}}, secret=PASSWORD)

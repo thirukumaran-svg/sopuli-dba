@@ -1,9 +1,10 @@
 """`auth: prompt` with no terminal, refused before a mutating verb connects.
 
-Decision #481: a verb that changes something asks :func:`~sopuli.admin.needs_prompt` over the
-selected targets first, and refuses the run at exit 8 if any of them would ask
-for a password nobody can type. These tests cover the decision itself. The
-wiring into each verb is in `tests/test_cli_admin_prompt.py`.
+Decision #481: a verb that changes something asks
+:func:`~sopuli.admin.needs_prompt` over the selected targets first, and refuses
+the run at exit 8 if any of them would ask for a password nobody can type.
+These tests cover the decision itself. The wiring into each verb is in
+`tests/test_cli_admin_prompt.py`.
 """
 
 from __future__ import annotations

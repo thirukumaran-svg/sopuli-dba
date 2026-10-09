@@ -1,4 +1,4 @@
-"""Which rollover regime applies, and which requests cannot be honoured (#262).
+"""Which rollover regime applies, and which requests cannot be honoured.
 
 UC-1 §6.3 makes rollover the default where it exists. The interesting half is not
 the default -- it is the requests the database will quietly not honour, and the
@@ -144,7 +144,7 @@ def test_direct_where_no_window_opens_needs_nothing() -> None:
 
 
 def test_rollover_is_left_to_the_driver() -> None:
-    """`Session.require_rollover` owns both of its refusals (#181) and carries
+    """`Session.require_rollover` owns both of its refusals and carries
     the exact `ALTER PROFILE` for the second. A second phrasing here would be one
     message with two versions, and this module -- above the driver -- would write
     the worse one, because that hint is Oracle's own SQL."""
@@ -186,8 +186,8 @@ def test_every_strategy_is_answerable_for_every_account(name: str) -> None:
 
 
 def test_a_declared_profile_the_account_is_not_on_is_a_move() -> None:
-    """#301. The profile decides the regime, so whether one is about to change is
-    a question the strategy check has to ask first."""
+    """The profile decides the regime, so whether one is about to change is a
+    question the strategy check has to ask first."""
     moving = strategy.moves_profile(user(), AccountAttributes(profile="acme_app_prof"))
 
     assert moving == "acme_app_prof"
@@ -215,7 +215,7 @@ def test_an_unreported_profile_reads_as_a_move() -> None:
 
 
 def test_a_named_regime_and_a_profile_move_are_refused_together() -> None:
-    """The interaction #301 exists to design against: `unhonourable` answers about
+    """The interaction to guard against: `unhonourable` answers about
     the profile the account holds *now*, so judging a named regime for an account
     this run is about to move would clear `staged` against the profile it is
     leaving and then run it under one that opens a window."""

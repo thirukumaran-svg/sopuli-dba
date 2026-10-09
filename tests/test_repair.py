@@ -1,4 +1,4 @@
-"""Reading a previous run's document back in (`creds apply --repair`, #391).
+"""Reading a previous run's document back in (`creds apply --repair`).
 
 Tier 0: a document is a JSON file and this module is pure logic over one, so
 none of this needs a container. The one thing it does touch is the filesystem,
@@ -122,7 +122,7 @@ def test_a_row_missing_a_name_is_skipped_not_refused(tmp_path: Path) -> None:
 
 
 def test_a_document_from_an_older_minor_version_is_still_readable(tmp_path: Path) -> None:
-    """`03-json-output.md` §8's compatibility rule, now cutting both ways (#391).
+    """`03-json-output.md` §8's compatibility rule, which cuts both ways.
 
     Nothing here may require a property the schema marks optional, so a document
     carrying only the minimum still resolves to a repair set.
@@ -197,9 +197,9 @@ class TestRefusals:
         assert "other.yaml" in str(caught.value)
 
     def test_a_document_naming_no_config_files(self, tmp_path: Path) -> None:
-        """Every document written before #402 is in this position. Refused
-        rather than trusted: the estate check cannot be performed, and the
-        check is on whether the field is there rather than on a version."""
+        """A document with no `invocation.config_files` is in this position.
+        Refused rather than trusted: the estate check cannot be performed, and
+        the check is on whether the field is there rather than on a version."""
         path = written(tmp_path, document(estate=False))
 
         with pytest.raises(ArgumentError) as caught:
@@ -231,15 +231,14 @@ class TestRefusals:
     def test_a_relative_path_in_the_document_is_not_normalised_into_a_match(
         self, tmp_path: Path
     ) -> None:
-        """The estate check's whole job, and it did not do it (found in review
-        on #391).
+        """The estate check's whole job.
 
         `abspath` runs during the *repair*, so it resolves against the repairing
         run's working directory and tells you nothing about the writing run's.
         A document written in one directory with `--config estate.yaml` and
-        repaired in another against a different `estate.yaml` compared equal and
-        was accepted. The producer resolves before writing (#402), so a relative
-        entry can now only be a document from before that -- and must not be
+        repaired in another against a different `estate.yaml` would compare equal
+        and be accepted. The producer resolves paths before writing, so a
+        relative entry can only come from an older document -- and must not be
         rescued by normalising it here.
         """
         path = written(tmp_path, document(config_files=["estate.yaml"]))
@@ -252,8 +251,8 @@ class TestRefusals:
 
 class TestMalformedShapes:
     """A file this reader cannot use is exit 2 with a message, never a
-    traceback (found in review on #391). Each of these reached an internal
-    error before the shape check was one place instead of several."""
+    traceback. The shape check is one place, so none of these reaches an
+    internal error."""
 
     def test_an_invocation_that_is_not_an_object(self, tmp_path: Path) -> None:
         path = written(tmp_path, {"command": "creds.apply", "invocation": "nope"})
@@ -302,7 +301,7 @@ class TestMalformedShapes:
 
 
 class TestExitCodeIsNotAFilter:
-    """Raised in review on #391 as a reason to refuse, and declined.
+    """The exit code of the run that wrote a document is not a reason to refuse it.
 
     Refusing a producer by exit code would refuse the documents most worth
     repairing from. `apply` verifies every pair before touching it and

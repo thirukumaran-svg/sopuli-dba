@@ -1,9 +1,9 @@
-"""The spinner's gate, and the promise that it never reaches a machine (#419).
+"""The spinner's gate, and the promise that it never reaches a machine.
 
 Tier 0 (``04-testing.md`` §4): no containers, no sockets, no real terminal.
 
-**What these tests are really guarding is the test suite itself.** #416 measured
-that ``CliRunner`` replaces ``sys.stderr`` with a stream whose ``isatty()`` is
+**What these tests are really guarding is the test suite itself.**
+``CliRunner`` replaces ``sys.stderr`` with a stream whose ``isatty()`` is
 ``False``, so no spinner thread is ever created anywhere in this repository's
 tests -- nothing to join, nothing to race an assertion, no timing workaround and
 no mocking. That is a property worth asserting rather than a comment worth
@@ -83,7 +83,7 @@ def test_an_object_with_no_isatty_is_not_a_terminal() -> None:
 
 
 def test_the_null_device_is_not_a_terminal() -> None:
-    """#549: Windows answers ``isatty()`` true for ``NUL``, a character device.
+    """Windows answers ``isatty()`` true for ``NUL``, a character device.
 
     A real open of the null device, not a double, because a double is exactly
     what cannot show the bug: it answers whatever it was told to. On POSIX
@@ -96,7 +96,7 @@ def test_the_null_device_is_not_a_terminal() -> None:
 
 @pytest.mark.skipif(sys.platform != "win32", reason="CONOUT$ is a Windows device name")
 def test_on_windows_a_real_console_is_a_terminal() -> None:
-    """The half of #549 that must not regress: a console still counts.
+    """The other half of the null-device rule: a console still counts.
 
     ``CONOUT$`` is the process's own console output buffer, so this is the one
     handle ``GetConsoleMode`` is supposed to succeed on. A process with no
@@ -267,7 +267,7 @@ def test_a_stream_that_breaks_mid_spin_does_not_kill_the_run() -> None:
 
 
 def test_no_spinner_thread_is_ever_created_under_clirunner() -> None:
-    """The property that keeps this suite from going flaky (#416).
+    """The property that keeps this suite from going flaky.
 
     ``CliRunner`` replaces ``sys.stderr`` with a stream whose ``isatty()`` is
     ``False``. The same gate that makes the spinner correct in a log file makes
@@ -292,7 +292,7 @@ def test_no_spinner_thread_is_ever_created_under_clirunner() -> None:
 
 
 def test_the_spinner_takes_no_flag_and_no_variable() -> None:
-    """#416's non-goal, asserted so it cannot drift into being one.
+    """The spinner has no switch, asserted so that one cannot drift in.
 
     A ``--spinner`` flag would need a precedence rule, a settings-registry entry
     and a line in ``tests/test_cli_precedence.py``'s walk. There is no reader for
@@ -315,7 +315,7 @@ def test_the_spinner_takes_no_flag_and_no_variable() -> None:
 
 
 def test_a_spinner_resolves_its_stream_at_write_time() -> None:
-    """Amendment 2 from #416: nothing captured in ``__init__``.
+    """Nothing is captured in ``__init__``.
 
     A stream captured at construction and written from another thread could
     outlive the one the rest of the run is using. ``Emitter`` resolves its own
@@ -330,13 +330,13 @@ def test_a_spinner_resolves_its_stream_at_write_time() -> None:
 
 
 def test_a_detached_stdin_answers_rather_than_raising() -> None:
-    """``cli._can_prompt`` now asks the tolerant probe (#419).
+    """``cli._can_prompt`` asks the tolerant probe.
 
-    This is the one behaviour change in the wiring, and it is on the
-    confirmation path, so it is asserted rather than left to be noticed. A
-    scheduler or a service manager hands a command a stdin that is closed or
-    absent; ``sys.stdin.isatty()`` raised ``ValueError`` on exactly that stream,
-    turning "nobody is watching" into a traceback from inside the check for it.
+    It is on the confirmation path, so it is asserted. A scheduler or a service
+    manager hands a command a stdin that is closed or absent;
+    ``sys.stdin.isatty()`` raises ``ValueError`` on exactly that stream, which
+    would turn "nobody is watching" into a traceback from inside the check for
+    it.
 
     Both answers refuse the unconfirmed run. The difference is that one of them
     names the environment the operator has to change.

@@ -1,4 +1,4 @@
-"""Deciding whether an account may be suspended, and how the run reports it (#463).
+"""Deciding whether an account may be suspended, and how the run reports it.
 
 Tier 0, pure: :func:`sopuli.suspend.decide` takes the ``UserState`` a caller read
 and returns a decision, so every refusal here is testable without a database. The
@@ -211,15 +211,14 @@ def test_a_preview_says_what_would_happen() -> None:
     assert "would suspend jdoe on 1 of 1" in line
 
 
-# ---------------------------------------------- what the review caught (#463) ---
+# ------------------------------------------------------ overridden guardrails ---
 
 
 def test_an_overridden_guardrail_is_a_check_and_a_reason() -> None:
     """The schema requires both halves, and a list of strings fails validation.
 
-    It also loses the half an operator actually reads. `apply` has emitted the
-    pair since #286; this verb emitted bare check names until the review on #480,
-    and no test here had exercised `--force` with `--output json` at all.
+    It also loses the half an operator actually reads. `apply` emits the pair,
+    and this verb emits the same pair for a `--force` run.
     """
     decision = decide(
         state(name="DBSNMP", vendor_maintained=True),
@@ -246,8 +245,8 @@ def test_an_overridden_guardrail_is_a_check_and_a_reason() -> None:
 
 
 def test_a_forced_result_validates_against_the_published_schema() -> None:
-    """The check that would have caught it. `additionalProperties: false` here
-    means a wrong item shape is a document nobody can consume."""
+    """`additionalProperties: false` here means a wrong item shape is a document
+    nobody can consume."""
     schema = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))
     result_schema = schema["$defs"]["result"]
     result_schema["$defs"] = schema["$defs"]

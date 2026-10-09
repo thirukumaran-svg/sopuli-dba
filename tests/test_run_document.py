@@ -77,15 +77,13 @@ def test_a_resolved_view_carrying_a_nested_safety_setting_validates(
     validator: Draft202012Validator, write_config: WriteConfig
 ) -> None:
     """`config show --resolved` with `safety.delivery.allowed_methods` on a target
-    (#498, schema 1.26).
+    (schema 1.26).
 
-    The guard the tests above could not be: every safety setting was one key deep,
-    so nothing had ever put a *nested* one in `config.targets[].safety` -- and the
-    view built its properties by stripping `safety.` off the setting name, which
-    emitted a property literally called `delivery.allowed_methods` and was refused
-    by `additionalProperties: false`. The tool produced a document its own
-    contract rejected, and every test in the suite passed. Copilot's review of
-    #500 found it; this is what would have.
+    Every other safety setting is one key deep, so no test above puts a *nested*
+    one in `config.targets[].safety`. The view must keep the nesting: a property
+    literally called `delivery.allowed_methods` is refused by
+    `additionalProperties: false`, and the tool would produce a document its own
+    contract rejects.
     """
     path = write_config(
         "version: 1\n"
@@ -215,16 +213,16 @@ def test_optional_sections_are_omitted_not_nulled() -> None:
         assert optional not in document
 
 
-# ------------------------------------------- invocation.config_files (#402) ---
+# -------------------------------------------------- invocation.config_files ---
 
 
 def test_a_real_run_names_the_config_file_it_read(config_file: Path) -> None:
-    """The field was in the schema and in the committed example for months and
-    no run wrote it (#402), so this asserts the producer rather than the shape.
+    """The schema and the committed example both carry the field, so this
+    asserts the producer rather than the shape.
 
-    Through the CLI on purpose: the gap was between what the document *could*
-    carry and what the wiring filled in, and a test that built a
-    :class:`RunDocument` by hand would have passed throughout.
+    Through the CLI on purpose: the claim is about what the wiring fills in and
+    not about what the document *could* carry, and a test that built a
+    :class:`RunDocument` by hand would pass whatever the wiring did.
     """
     result = CliRunner().invoke(
         cli, ["target", "list", "--config", str(config_file), "--output", "json"]
@@ -238,11 +236,10 @@ def test_config_files_is_absent_when_no_layer_was_loaded() -> None:
     """Absent and not empty, which is this document's rule everywhere.
 
     Not "a command that needs no config": there is no such verb, since
-    `_pass_invocation` loads one before any command body runs (found in review
-    on #402 -- an earlier version of this named `doctor` and `policy sample`,
-    both of which exit 9 without a file). What absence means is that the run got
-    no further than trying, which is why the empty array would be the wrong
-    shape: it would say the run looked and found nothing.
+    `_pass_invocation` loads one before any command body runs. `doctor` and
+    `policy sample` both exit 9 without a file. What absence means is that the
+    run got no further than trying, which is why the empty array would be the
+    wrong shape: it would say the run looked and found nothing.
     """
     document = RunDocument.start("policy.sample").finish(ExitCode.CONFIG_INVALID).to_dict()
     assert "config_files" not in document["invocation"]
@@ -256,10 +253,10 @@ def test_config_files_keeps_layering_order(tmp_path: Path) -> None:
     use. Two names that sort the other way round, so a producer that sorted
     would fail here rather than pass by luck.
 
-    End to end rather than by assigning ``config_files`` directly (found in
-    review on #402): the claim under test is about the *wiring* reading
-    ``Invocation.sources`` in order, and a test that set the field itself would
-    have exercised only the serialiser and passed through any regression there.
+    End to end rather than by assigning ``config_files`` directly: the
+    claim under test is about the *wiring* reading ``Invocation.sources`` in
+    order, and a test that set the field itself would exercise only the
+    serialiser and pass through any regression there.
     """
     site = tmp_path / "z-site.yaml"
     team = tmp_path / "a-team.yaml"
@@ -279,11 +276,11 @@ def test_config_files_keeps_layering_order(tmp_path: Path) -> None:
 
 def test_config_files_are_resolved_not_stored_as_typed(tmp_path: Path) -> None:
     """A relative `--config` is only meaningful beside the directory that
-    produced it, which no later reader has (found in review on #391).
+    produced it, which no later reader has.
 
     `creds apply --repair` compares this list against its own run's to refuse a
     document from another estate; two different files both called `estate.yaml`
-    compared equal and were accepted. Resolving belongs here rather than there,
+    would compare equal and be accepted. Resolving belongs here rather than there,
     because the reader cannot recover a working directory the writer did not
     record.
     """
@@ -305,12 +302,13 @@ def test_config_files_are_resolved_not_stored_as_typed(tmp_path: Path) -> None:
 
 
 def test_the_committed_example_carries_no_field_the_producer_cannot_write() -> None:
-    """What let `config_files` sit unproduced for months (#402).
+    """The example shows only fields a run can emit.
 
     ``tests/test_schemas.py`` validates the example against the schema, and it
-    passed the whole time -- conformance is not the claim *a run produces this*.
-    The example is hand-written and cited from the design documents, so a key in
-    it that no run can emit is a documented lie about the tool's output.
+    passes whatever a run produces -- conformance is not the claim *a run
+    produces this*. The example is hand-written and cited from the design
+    documents, so a key in it that no run can emit is a documented lie about the
+    tool's output.
 
     Checked as a subset rather than an equality: an example showing a narrower
     run than the maximum is exactly what an example is for.

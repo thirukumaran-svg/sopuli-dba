@@ -1,11 +1,11 @@
-"""`doctor`'s ``vaults`` section, and what it does to the run (#216, P4).
+"""`doctor`'s ``vaults`` section, and what it does to the run (P4).
 
 Tier 0 throughout. The survey opens sockets, but every socket it opens here goes
 to a port nobody is listening on -- which needs no container, refuses in
 microseconds, and is the one case a live Vault could never produce on demand.
 Everything else is a :class:`~sopuli.store.survey.VaultReport` built by hand,
-because the store layer's own reading of a `sys/health` answer is #216's first
-half and is tested against a real Vault there.
+because the store layer's own reading of a `sys/health` answer is tested
+against a real Vault there.
 
 Three claims are load-bearing:
 
@@ -13,11 +13,11 @@ Three claims are load-bearing:
   unreachable target. The vault is master (invariant 6), so a store nobody can
   reach is an estate on which no `creds` verb can do anything;
 * **a degraded one does not, and neither does a skewed clock.** Something
-  answered, and #213's argument applies: `doctor` must not refuse to survey an
-  estate over a condition the person running it did not create;
+  answered, and decision P5's argument applies: `doctor` must not refuse to
+  survey an estate over a condition the person running it did not create;
 * **`summary` still counts targets.** The exit code is deliberately not
-  derivable from it, which `_doctor_exit` has said since #214 and which a dead
-  vault makes true a second way.
+  derivable from it, which `_doctor_exit` encodes and which a dead vault makes
+  true a second way.
 """
 
 from __future__ import annotations
@@ -365,9 +365,9 @@ def test_a_dead_vault_does_not_inflate_the_target_summary(
     """`summary` counts targets, and a vault is not one.
 
     The exit code is deliberately not derivable from the summary -- which
-    `_doctor_exit` has said since #214, and which a dead vault makes true a
-    second way. Inflating `failed` to make the arithmetic work would put a number
-    in the document that no entry in `targets[]` accounts for.
+    `_doctor_exit` encodes, and which a dead vault makes true a second way.
+    Inflating `failed` to make the arithmetic work would put a number in the
+    document that no entry in `targets[]` accounts for.
     """
     monkeypatch.setenv("VAULT_TOKEN", "unused-because-nothing-answers")
 

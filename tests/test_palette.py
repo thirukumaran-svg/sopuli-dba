@@ -109,7 +109,7 @@ def test_the_converged_state_is_the_only_good_one() -> None:
     ],
 )
 def test_the_grouping_is_what_was_decided(state: str, role: Role) -> None:
-    """#395's four buckets, spelled out once.
+    """Decision #395's four buckets, spelled out once.
 
     Deliberately explicit rather than derived from a predicate: this *is* the
     decision, and a test that recomputed it from the same table it is checking
@@ -136,7 +136,7 @@ def test_a_locked_account_is_not_dimmed() -> None:
 
 
 def test_the_converged_state_is_not_green() -> None:
-    """The one place a colour itself is the decision (#395).
+    """The one place a colour itself is the decision, as decision #395 records.
 
     Green `IN_SYNC` against yellow `DRIFT` is the pairing a deuteranopic reader
     cannot separate, on the exact distinction this tool exists to report. Cyan
@@ -194,7 +194,7 @@ def test_painting_nothing_stays_nothing() -> None:
     ],
 )
 def test_every_result_view_defers_to_the_one_decision(module: str) -> None:
-    """The bug #395 actually fixed, asserted at the four call sites.
+    """The bug a shared mapping prevents, asserted at the four call sites.
 
     Each of these kept its own subset of the state enum and painted it
     `NOTABLE`, so `DRIFT` was emphasised by `check` and not by `apply` while
@@ -213,7 +213,7 @@ def test_every_result_view_defers_to_the_one_decision(module: str) -> None:
         assert rendered == expected, f"{module} disagrees about {state}"
 
 
-# ------------------------------------------- the second vocabulary (#395) ---
+# -------------------------------------------------- the second vocabulary ---
 
 
 @pytest.mark.parametrize(

@@ -178,14 +178,14 @@ def test_a_pinned_version_survives_because_it_is_config() -> None:
 
 
 def test_a_ref_whose_store_nothing_named_yet_emits_no_secret() -> None:
-    """C15/#118: §3's chain deliberately leaves out a profile's `vault:` and
+    """C15: §3's chain deliberately leaves out a profile's `vault:` and
     `SOPULI_VAULT`, so a valid file can reach here with `binding.vault is None`.
 
     `secret_ref` requires `vault` as a *string*, so there is no shape for half an
     address -- and `units[].secret` is optional precisely so a unit can say it
-    has none. Emitting `{"vault": null}` failed schema validation.
+    has none. Emitting `{"vault": null}` would fail schema validation.
 
-    Not refused here, and C15 (#118) is what says so: it decided "mostly plan
+    Not refused here, and C15 is what says so: it decided "mostly plan
     time" -- the null is a real temporary state, and the command that actually
     needs a store is what fails, once a run's profile is known and the answer is
     exact. A refusal in the plan builder would fire before that and reject every

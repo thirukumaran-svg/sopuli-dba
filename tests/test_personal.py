@@ -1,4 +1,4 @@
-"""Is this personal account declared, and by which rule (H1, #449, #463).
+"""Is this personal account declared, and by which rule (H1).
 
 Tier 0, pure: the predicate inputs arrive as a profile string and a role set, so
 nothing here needs a database. That is the point of the module's shape, and these
@@ -100,7 +100,7 @@ def test_a_role_predicate_admits_nothing_when_no_roles_were_read() -> None:
 
 
 def test_a_predicate_does_not_fall_back_to_the_account_list() -> None:
-    """A rule is one kind of rule. #467 refuses an entry that is both."""
+    """A rule is one kind of rule. Config validation refuses an entry that is both."""
     assert not admits(PersonalAccountRule(profile="DEV_USERS"), "jdoe")
 
 
@@ -159,7 +159,7 @@ def test_a_file_declaring_no_personal_accounts_declares_none() -> None:
     assert declared_on(resolved, "jdoe", "appdb-dev-alpha") is None
 
 
-# ------------------------------------------------- overlapping rules (#463) ---
+# -------------------------------------------------------- overlapping rules ---
 
 
 def test_two_rules_may_both_admit_one_account() -> None:

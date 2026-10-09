@@ -1,4 +1,4 @@
-"""What :mod:`sopuli.rotate` decides, with nothing plugged in (tier 0, #284).
+"""What :mod:`sopuli.rotate` decides, with nothing plugged in (tier 0).
 
 Three decisions live in that module and each has a case here that would be
 expensive to reach through the command: which accounts ``--max-age-days``
