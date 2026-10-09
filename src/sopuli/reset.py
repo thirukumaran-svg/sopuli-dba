@@ -122,12 +122,13 @@ class DeliveryUnavailableError(RefusedError):
     category = "capability"
 
     def __init__(self, method: str) -> None:
+        names = [f"`{one}`" for one in IMPLEMENTED]
+        served = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
         super().__init__(
             f"`delivery.method: {method}` is configured and is not implemented in this build",
             hint=(
-                "this build serves `manual` (#441) and `vault_wrapped` (#444); the methods "
-                "still to come are #445-#447 and `smtp_encrypted`. `config validate` warns "
-                "about this before a run needs it"
+                f"this build serves {served}; UC-2 §6.2 describes the others. "
+                "`config validate` warns about this before a run needs it"
             ),
         )
 

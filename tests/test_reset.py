@@ -15,10 +15,12 @@ and one checked by hand in 2026.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
 
+from sopuli.config.delivery import IMPLEMENTED
 from sopuli.config.errors import ArgumentError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, Delivery, ManualDelivery, WrappedDelivery
@@ -113,6 +115,20 @@ def test_an_unimplemented_method_is_refused_on_the_capability_code() -> None:
     assert "not implemented in this build" in str(caught.value)
     assert caught.value.exit_code is ExitCode.UNSUPPORTED_CAPABILITY
     assert caught.value.category == "capability"
+
+
+def test_the_refusal_names_what_this_build_serves_from_the_registry() -> None:
+    """The hint lists the methods from `IMPLEMENTED`, so a method that ships
+    appears in it without anybody editing the sentence. It names no issue, which
+    tells an operator nothing about what to configure instead."""
+    with pytest.raises(DeliveryUnavailableError) as caught:
+        deliverable(UNIMPLEMENTED)
+
+    hint = caught.value.hint or ""
+    for method in IMPLEMENTED:
+        assert f"`{method}`" in hint
+    assert not re.search(r"#\d", hint)
+    assert "UC-2 §6.2" in hint
 
 
 def test_the_implemented_method_comes_back() -> None:

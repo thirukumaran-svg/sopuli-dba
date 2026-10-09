@@ -15,6 +15,7 @@ their length on that and on the shapes that are not run documents at all.
 from __future__ import annotations
 
 import json
+import re
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -206,6 +207,10 @@ class TestRefusals:
             read(path, sources=[Path(ESTATE)])
 
         assert "names no usable config files" in str(caught.value)
+        hint = caught.value.hint or ""
+        assert "invocation.config_files" in hint
+        assert "re-run" in hint
+        assert not re.search(r"#\d", hint)
 
     def test_the_same_files_in_a_different_order_are_a_different_estate(
         self, tmp_path: Path

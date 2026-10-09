@@ -385,7 +385,7 @@ class Invocation:
         if self.loaded is None:
             raise RuntimeError(
                 "no configuration has been loaded on this invocation; a verb "
-                "receives one from `_pass_invocation` (#153)"
+                "receives one from `_pass_invocation`"
             )
         return self.loaded
 
