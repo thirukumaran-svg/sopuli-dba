@@ -1,4 +1,4 @@
-"""Every configured store, and whether this run could use it (#216, P4).
+"""Every configured store, and whether this run could use it (P4).
 
 The vault half of what `doctor` does, standing beside
 :mod:`sopuli.driver.oracle.wallet` in the same relation: the subject's own layer
@@ -22,7 +22,7 @@ exactly the rule its ``targets[]`` already follows. The three:
 **The skew is computed here rather than in the view**, and that is where P4's
 sentence turns into a number: the tolerance is
 :data:`~sopuli.lock.record.CLOCK_SKEW`, the allowance the advisory lock already
-makes when it decides whether a lease has expired (#83). Importing it here is
+makes when it decides whether a lease has expired. Importing it here is
 deliberate and the coupling is the point -- a report judged against any other
 figure would be measuring an assumption nothing makes.
 
@@ -101,14 +101,14 @@ def survey(
     importing the same constant and comparing it with itself.
 
     ``cache`` is the run's own client map (:attr:`sopuli.invocation.Invocation.
-    stores`), the one :func:`sopuli.cli._stores_for` reads and fills (#489).
-    Without it `doctor` authenticated twice to a store that is both surveyed here
-    and named by a target's ``method: vault`` admin ref -- two logins in the
-    store's audit log for one run, which reads as somebody else's before it reads
-    as a bug. A client this survey opens goes into it, and one already there is
-    used rather than dialled again. Reuse is safe for ``_stores_for``'s reason:
-    both build the client with the same :func:`~sopuli.store.registry.connect`
-    call from the same ``vaults:`` entry and token file, so a cached one is not
+    stores`), the one :func:`sopuli.cli._stores_for` reads and fills. Without it
+    `doctor` would authenticate twice to a store that is both surveyed here and
+    named by a target's ``method: vault`` admin ref -- two logins in the store's
+    audit log for one run, which reads as somebody else's before it reads as a
+    bug. A client this survey opens goes into it, and one already there is used
+    rather than dialled again. Reuse is safe for ``_stores_for``'s reason: both
+    build the client with the same :func:`~sopuli.store.registry.connect` call
+    from the same ``vaults:`` entry and token file, so a cached one is not
     merely similar but identical in construction.
 
     **Only a store that connected is cached.** One that failed is not, so a later
@@ -119,7 +119,7 @@ def survey(
     pointing back here instead of at its own cause.
 
     The report is unchanged: what goes into the cache is a client, and
-    :class:`VaultReport` stays a description of health (#216).
+    :class:`VaultReport` stays a description of health.
     """
     return tuple(
         _examine(vault, env=env, token_file=token_file, tolerance=tolerance, cache=cache)
@@ -138,21 +138,20 @@ def _examine(
     """One store: open it, ask it, and never raise.
 
     The broad ``except`` is the point rather than a lapse. Opening a store can
-    fail as a missing client (ADR-006), a refused login (#138), an unreadable
-    token file, a TLS failure, or a configuration error caught late -- and
-    `doctor` exists to be run when things are wrong, so it is the one command
-    that must survive its own subject being broken. Each of those keeps its own
-    category and exit code on the exception, which the boundary reads back out;
-    nothing is flattened here.
+    fail as a missing client (ADR-006), a refused login, an unreadable token
+    file, a TLS failure, or a configuration error caught late -- and `doctor`
+    exists to be run when things are wrong, so it is the one command that must
+    survive its own subject being broken. Each of those keeps its own category
+    and exit code on the exception, which the boundary reads back out; nothing
+    is flattened here.
 
-    **The store is not closed**, and that is the existing arrangement rather
-    than an oversight: :func:`sopuli.cli._stores_for` opens one per store for
-    `lock status` and lets the run's exit reclaim them. There is no ``close`` on
-    the interface to call -- adding one would be a demand on every
-    implementation, which is the cost P2 weighs before any method goes on that
-    protocol, and it is not a decision to make as a side effect of a survey. The
-    holding is a connection pool per configured store for the seconds a `doctor`
-    run lasts.
+    **The store is not closed**, on purpose: :func:`sopuli.cli._stores_for`
+    opens one per store for `lock status` and lets the run's exit reclaim them.
+    There is no ``close`` on the interface to call -- adding one would be a
+    demand on every implementation, which is the cost P2 weighs before any
+    method goes on that protocol, and it is not a decision to make as a side
+    effect of a survey. The holding is a connection pool per configured store
+    for the seconds a `doctor` run lasts.
     """
     started = time.monotonic()
     try:

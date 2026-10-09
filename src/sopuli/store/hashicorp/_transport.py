@@ -1,4 +1,4 @@
-"""The HTTP client a HashiCorp store speaks through (#104, ADR-005).
+"""The HTTP client a HashiCorp store speaks through (ADR-005).
 
 `httpx` is imported here and nowhere above: ADR-006 rule 1 puts a vendor client
 inside its backend module so that ``pip install sopuli-dba`` installs neither it
@@ -75,14 +75,14 @@ class Transport:
         """Call ``/v1/<path>``, and never raise for a status.
 
         ``params`` is the query string, which KV v2 needs for exactly one thing:
-        ``?version=N`` on a read (#183). Passed to httpx rather than formatted
+        ``?version=N`` on a read. Passed to httpx rather than formatted
         into ``path``, so the escaping is the client's problem and a value with a
         character that needs it cannot silently change which path is called.
 
         ``headers`` are merged over the client's own for this one call, and exist
         for one thing too: KV v2's merge patch is selected by
         ``Content-Type: application/merge-patch+json`` rather than by the URL, so
-        without it a ``PATCH`` is a request Vault declines to interpret (#183).
+        without it a ``PATCH`` is a request Vault declines to interpret.
         Per-request rather than on the client, because every *other* call is an
         ordinary JSON body and a default that had to be overridden each time is
         the wrong default.
@@ -191,10 +191,10 @@ def build_ssl_context(tls: VaultTls | None) -> ssl.SSLContext | bool:
 
     **A path that does not resolve is a** :class:`StoreError`, **not a
     traceback.** These are the one part of ``tls:`` the config layer deliberately
-    does not check -- #135 settled that a block naming a CA file which does not
-    exist is *valid* config, because declaring a store is config and reaching one
-    is not (§3a). Which makes this the first moment anybody can find out, and a
-    stack trace is not how an operator should be told that a filename is wrong.
+    does not check -- a block naming a CA file which does not exist is *valid*
+    config, because declaring a store is config and reaching one is not (§3a).
+    So this is where an operator finds out, and a stack trace is not how an
+    operator should be told that a filename is wrong.
     """
     if tls is None:
         return True

@@ -1,4 +1,4 @@
-"""Which module serves a ``vaults.*.type``, imported on first use (#130, #134).
+"""Which module serves a ``vaults.*.type``, imported on first use (ADR-006).
 
 [ADR-006](../../docs/decisions/adr-006-optional-dependencies.md) is the
 specification, and this is rules 1 and 2 of it:
@@ -68,11 +68,10 @@ class Backend:
         ``sopuli-dba``, not ``sopuli``. D1 splits the two -- the binary is
         ``sopuli`` and the distribution is ``sopuli-dba`` -- and this string is
         the one place the difference is load-bearing rather than cosmetic,
-        because it is the half the operator pastes into `pip`. The documents
-        quoted the binary here until #134; they now quote the distribution.
+        because it is the half the operator pastes into `pip`.
 
-        Spelled in :mod:`sopuli.extras` since #170, so that the store and the
-        driver cannot disagree about it.
+        Spelled in :mod:`sopuli.extras`, so that the store and the driver cannot
+        disagree about it.
         """
         assert self.extra is not None
         return install_command(self.extra)
@@ -147,10 +146,10 @@ def installed(backend: Backend) -> bool:
     """Whether ``backend``'s client is importable, **without importing it**.
 
     :func:`sopuli.extras.installed` is the mechanism, shared with the driver
-    registry since #170. A backend with no extra is vacuously installed -- there
-    is no client to look for -- which keeps ``config validate`` quiet about
-    ``file`` and ``keyring`` rather than warning that something unnamed is
-    missing, and the roadmap gap surfaces at :func:`resolve` where it belongs.
+    registry. A backend with no extra is vacuously installed -- there is no
+    client to look for -- which keeps ``config validate`` quiet about ``file``
+    and ``keyring`` rather than warning that something unnamed is missing, and
+    the roadmap gap surfaces at :func:`resolve` where it belongs.
     """
     return extras_installed(backend.provides)
 
@@ -177,10 +176,8 @@ def resolve(vault: Vault) -> ModuleType:
     itself is a bug in this project, and reporting it as anything else buys the
     user a wrong instruction and costs us the stack trace.
 
-    Returns the module. **What a backend module must expose is not settled
-    here** -- the store class and its constructor arrive with the first real
-    backend (#104), and inventing the contract before there is an
-    implementation to hold it would be a shape nothing reads.
+    Returns the module. What a backend module must expose is stated in
+    :func:`connect`, not here.
     """
     backend = BACKENDS[vault.type]
     try:
@@ -221,17 +218,16 @@ def connect(vault: Vault, *, env: Mapping[str, str], token_file: Path | None = N
             -> SecretStore
 
     and nothing else is required of it. :mod:`sopuli.store.hashicorp` defines it
-    that way already (#104, #138); this is the one line that says every backend
-    must, rather than each caller learning the shape from whichever module it
-    happened to import.
+    that way; this is the one line that says every backend must, rather than
+    each caller learning the shape from whichever module it happened to import.
 
     ``env`` is passed rather than read, for the reason the rest of the tool
     passes it: half of §3a's auth material lives in the environment, and a
     function that reaches for :data:`os.environ` itself cannot be tested against
     a different one.
 
-    ``token_file`` is ``--vault-token-file``'s path, forwarded since #145
-    answered what the flag takes: a **path**, because a token as a command-line
+    ``token_file`` is ``--vault-token-file``'s path, forwarded because C16
+    decided what the flag takes: a **path**, because a token as a command-line
     value is what invariant 1 forbids. It stays a location all the way down --
     the value is read on §3a's chain in :func:`sopuli.material.resolve_token` --
     so no signature between the CLI and the chain has a slot a credential could

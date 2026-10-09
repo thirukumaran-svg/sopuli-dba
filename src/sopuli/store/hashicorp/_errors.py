@@ -1,4 +1,4 @@
-"""Vault's HTTP answers as this project's exceptions (#104, ADR-005).
+"""Vault's HTTP answers as this project's exceptions (ADR-005).
 
 **One module, and never at a call site.** ADR-005 puts the mapping at the
 transport boundary precisely so that "was this a lost race" is answered in one
@@ -23,9 +23,9 @@ parameter``
 
 Which is why **the match is on the full phrase and not a prefix.** Matching
 ``check-and-set parameter`` would catch all three, turning a malformed request
-and a missing-CAS refusal into "somebody beat me to it" -- and #83 asserts
-``cas_required: true`` on the lock mount, so the second row is reachable by
-design rather than hypothetically.
+and a missing-CAS refusal into "somebody beat me to it" -- and the lock's
+pre-flight sets ``cas_required: true`` on a new lock path where the token allows
+it, so the second row is reachable by design rather than hypothetically.
 
 And why the rule is **fail closed**: anything unrecognised is a
 :class:`~sopuli.store.protocol.StoreError`, never a conflict. Misclassifying a

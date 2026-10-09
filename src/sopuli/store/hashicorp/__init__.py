@@ -1,4 +1,4 @@
-"""The HashiCorp Vault backend -- P2's first real store (#104).
+"""The HashiCorp Vault backend for P2's store interface.
 
 What :data:`sopuli.store.registry.BACKENDS` resolves ``type: hashicorp`` to.
 Importing this module imports `httpx`, which is the whole point of importing it
@@ -36,19 +36,19 @@ DEFAULT_MOUNT = "secret"
 
 
 def connect(vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None) -> SecretStore:
-    """A usable store from a config entry, and the first function that is one.
+    """A usable store from a config entry.
 
-    The whole chain in one line, which is worth naming because until now each
-    piece existed without the next: the entry describes the transport (#135),
-    the registry finds this module (#134), the material resolver turns an
-    ``auth:`` block into a credential (#137), an auth method turns that into a
-    token (#138), and the adapter reads and writes with it (#104).
+    The whole chain in one line: the entry describes the transport, the registry
+    finds this module, the material resolver turns an ``auth:`` block into a
+    credential, an auth method turns that into a token, and the adapter reads and
+    writes with it.
 
     ``env`` is passed in rather than read here, the arrangement the rest of the
     tool already uses -- and it matters more here than elsewhere, because the
     environment is where half of §3a's auth material lives. ``token_file`` is
-    ``--vault-token-file``'s path (#145) and travels the same way, for the same
-    reason: it is a location, and the value behind it is read on §3a's chain.
+    ``--vault-token-file``'s path (C16, ADR-007) and travels the same way, for
+    the same reason: it is a location, and the value behind it is read on §3a's
+    chain.
     """
     return open_store(vault, token=authenticate(vault, env=env, token_file=token_file))
 

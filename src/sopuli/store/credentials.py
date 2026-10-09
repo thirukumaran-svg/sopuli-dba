@@ -1,4 +1,4 @@
-"""Reading a credential out of a stored document (#183, P2, ``01-configuration.md`` §7).
+"""Reading a credential out of a stored document (P2, ``01-configuration.md`` §7).
 
 :mod:`sopuli.config.secret_refs` parses a ref when the file is read and
 :mod:`sopuli.payload` computes where each stage lives inside a document. Neither

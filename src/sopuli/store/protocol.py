@@ -1,8 +1,8 @@
-"""The slice of P2's secret store the advisory lock needs (#83, #96).
+"""The slice of P2's secret store the advisory lock needs (Q2).
 
 P2 sketches the interface as ``read`` / ``write`` / ``list`` / ``supports`` /
 ``health``. The lock needs two things that sketch does not have, and both come
-straight out of the decision on #83:
+straight out of decision Q2:
 
 * **compare-and-set on write, returning the new version.** That version *is* the
   fencing token. A write that only said "ok" would leave the design with nothing
@@ -11,19 +11,17 @@ straight out of the decision on #83:
   accept writes without a CAS, because a guarantee the tool cannot check is a
   guarantee it should not claim.
 
-``list`` joined them in #150, and for a reason of the same kind: ``lock status``
-reads the paths the *config* declares, so a record left behind by an application
-that was renamed or removed is invisible to it -- and a lock nobody can see is a
-lock nobody can clear. Listing is how the tool finds a path its own configuration
-no longer names.
+``list`` is here for a reason of the same kind: ``lock status`` reads the paths
+the *config* declares, so a record left behind by an application that was
+renamed or removed is invisible to it -- and a lock nobody can see is a lock
+nobody can clear. Listing is how the tool finds a path its own configuration no
+longer names.
 
-``health`` completed it in #216, and is the last of P2's sketch to arrive. It
-waited deliberately rather than by oversight: a method on this protocol is a
-demand on every implementation, so declaring one nothing called would have
-obliged each backend to write a body for a caller that did not exist
+``health`` completes P2's sketch. A method on this protocol is a demand on every
+implementation, so it is declared only because something calls it
 (``00-principles.md`` P2). `doctor`'s vault section is that caller, and it asks
-the one question the rest of this interface cannot answer -- not *what is at this
-path* but *is the store there at all, and does its clock agree with ours*.
+the one question the rest of this interface cannot answer -- not *what is at
+this path* but *is the store there at all, and does its clock agree with ours*.
 
 Deliberately a :class:`~typing.Protocol` rather than a base class. A store
 implementation should not have to import this to satisfy it: the HashiCorp
@@ -45,7 +43,7 @@ from sopuli.exit_codes import ExitCode
 CAS = "cas"
 
 #: Reading a *named* version rather than the latest one, spelled as P2's table
-#: spells it (#183).
+#: spells it.
 #:
 #: The capability :meth:`SecretStore.read`'s ``version`` argument needs, and the
 #: reason that argument is not simply always honoured: KV v1 has no versions at
@@ -58,7 +56,7 @@ CAS = "cas"
 VERSIONING = "versioning"
 
 #: Applying an RFC 7396 merge patch server-side, rather than by reading the
-#: document and writing it back (#183).
+#: document and writing it back.
 #:
 #: The capability that makes ``01-configuration.md`` §7's "must not clobber
 #: siblings" a *structural* property instead of a careful one. Under a merge
@@ -72,7 +70,7 @@ VERSIONING = "versioning"
 #: compare-and-set. The difference is blast radius, not atomicity.
 MERGE_PATCH = "merge_patch"
 
-#: Enumerating the paths below a prefix (#150), spelled the same way.
+#: Enumerating the paths below a prefix, spelled the same way.
 #:
 #: Its own capability rather than an assumption, for the reason every entry in
 #: P2's table is one: a store may genuinely not have it. Both HashiCorp mounts
@@ -177,10 +175,10 @@ class MetadataNotPermittedError(StoreError):
     On Vault that is an ordinary policy. Writing a lock record needs
     ``create``/``update`` on ``<mount>/data/<path>``; setting ``cas_required``
     needs ``update`` on ``<mount>/metadata/<path>``, which is a separate rule a
-    policy written for secrets alone will not carry. Measured against a real
-    Vault (#390, 2026-09-09): a token holding ``create, update, read`` on
-    ``kv/data/*`` and ``read, list`` on ``kv/metadata/*`` gets **403** from the
-    metadata write and writes the record itself perfectly well.
+    policy written for secrets alone will not carry. Measured against Vault
+    2.0.4: a token holding ``create, update, read`` on ``kv/data/*`` and
+    ``read, list`` on ``kv/metadata/*`` gets **403** from the metadata write and
+    writes the record itself perfectly well.
 
     **The caller degrades rather than stopping**, which is why this is its own
     exception and not a bare refusal: an estate whose token cannot set the
@@ -211,17 +209,17 @@ class PathMetadata:
     without one. The tool always passes a CAS itself, so this is about everybody
     else.
 
-    ``max_versions`` is carried because #83 names it, and is deliberately not a
-    safety property: pruning old versions does not reset the version counter, so
-    fencing survives any value of it. See
-    :meth:`~sopuli.lock.manager.LockManager.preflight`.
+    ``max_versions`` is carried because it sits beside ``cas_required`` in the
+    same metadata, and is deliberately not a safety property: pruning old
+    versions does not reset the version counter, so fencing survives any value
+    of it. See :meth:`~sopuli.lock.manager.LockManager.preflight`.
     """
 
     cas_required: bool = False
     max_versions: int | None = None
 
 
-#: The store is there, answering, and able to serve this run (#216).
+#: The store is there, answering, and able to serve this run.
 OK = "ok"
 
 #: Something answered and cannot do the whole job right now: sealed, standing
@@ -244,7 +242,7 @@ UNREACHABLE = "unreachable"
 
 @dataclass(frozen=True)
 class StoreHealth:
-    """Whether a store is there, and what its clock says (#216, P2).
+    """Whether a store is there, and what its clock says (P2).
 
     The three-word ``status`` is P2's own sketch -- ``ok | degraded |
     unreachable`` -- and everything else here exists to make one of those three
@@ -387,9 +385,9 @@ class SecretStore(Protocol):
           counter stands, so ``cas: 0`` fails and will keep failing.
 
         That second state is why a lock is released by writing a ``released``
-        record rather than by deleting one (#83): a delete would leave a path no
-        first acquisition could ever take again. A caller that wants to know
-        which state it is in finds out from the write.
+        record rather than by deleting one: a delete would leave a path no first
+        acquisition could ever take again. A caller that wants to know which
+        state it is in finds out from the write.
 
         A path whose *contents* are unreadable is neither: it has a version, and
         the caller decides what to make of the payload.
@@ -444,23 +442,22 @@ class SecretStore(Protocol):
         ...
 
     def require_cas(self, path: str) -> None:
-        """Make ``path`` refuse any write that carries no compare-and-set (#390).
+        """Make ``path`` refuse any write that carries no compare-and-set.
 
         The write half of :meth:`metadata`, and it exists for one caller: the
-        lock's first acquisition of a path. Until #390 the guard read the
-        metadata, found none -- the ordinary state of a path nobody has locked --
-        and let the acquisition through, which then created the path with
-        ``cas_required`` unset and left every later run refused until somebody
-        set it by hand. Reading a guarantee the tool could have arranged was the
-        bug; this arranges it.
+        lock's first acquisition of a path. That path has no metadata -- the
+        ordinary state of a path nobody has locked -- and an acquisition left to
+        create it would leave ``cas_required`` unset, so every later run would
+        be refused until somebody set it by hand. So the lock's pre-flight
+        arranges the guarantee rather than only reading it.
 
-        **Creating metadata does not create a version**, which is what makes this
-        safe to do before a first write. Measured against Vault 2.0.4 (#390,
-        2026-09-09): after setting ``cas_required`` on a path holding nothing,
-        ``current_version`` is 0 and the version list is empty, and the ``cas: 0``
-        write a first acquisition makes still succeeds. Were it otherwise this
-        would lock every new path out of its own first acquisition, exactly as
-        deleting a lock record does (:mod:`sopuli.store.hashicorp.kv2`).
+        **Creating metadata does not create a version**, which is what makes
+        this safe to do before a first write. Measured against Vault 2.0.4:
+        after setting ``cas_required`` on a path holding nothing,
+        ``current_version`` is 0 and the version list is empty, and the
+        ``cas: 0`` write a first acquisition makes still succeeds. Were it otherwise
+        this would lock every new path out of its own first acquisition, exactly
+        as deleting a lock record does (:mod:`sopuli.store.hashicorp.kv2`).
 
         Raises :class:`MetadataNotPermittedError` where the endpoint is there and
         this caller may not use it. A store with no metadata at all -- KV v1,
@@ -472,7 +469,7 @@ class SecretStore(Protocol):
         ...
 
     def list(self, prefix: str) -> tuple[str, ...]:
-        """Every path the store knows about below ``prefix``, sorted (#150).
+        """Every path the store knows about below ``prefix``, sorted.
 
         Five properties, each of which a caller is entitled to rely on and none
         of which is what a backend's own listing endpoint gives you unaided:
@@ -491,12 +488,12 @@ class SecretStore(Protocol):
         a caller walking it would be walking it identically for every backend. No
         entry returned here ends in ``/``.
 
-        **Knowing about a path is not the same as having something to read**, the
-        same seam :meth:`read` already draws. A soft-deleted path and one that
-        exists only because its metadata was configured are both *listed* and both
-        read as ``None``. That is deliberate: for the case #150 exists for -- a
-        leftover lock record -- the useful question is "what is out there", and a
-        caller that wants contents reads and finds out.
+        **Knowing about a path is not the same as having something to read**,
+        the same seam :meth:`read` already draws. A soft-deleted path and one
+        that exists only because its metadata was configured are both *listed*
+        and both read as ``None``. That is deliberate: for the case listing
+        exists for -- a leftover lock record -- the useful question is "what is
+        out there", and a caller that wants contents reads and finds out.
 
         **Sorted**, so two surveys of one estate are the same survey. Store order
         is nobody's contract, and a report whose rows moved between runs is a

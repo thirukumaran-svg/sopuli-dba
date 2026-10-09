@@ -1,4 +1,4 @@
-"""KV v1 -- the same interface with the guarantees removed (#104, P2).
+"""KV v1 -- the same interface with the guarantees removed (P2).
 
 A different backend that happens to share an address, not an older version of
 the one next door. It has no versioning, no compare-and-set and no soft delete,
@@ -9,13 +9,13 @@ because "not atomic" is precisely what it is for.
 So this store reports no ``cas``, and what happens next is the config's
 decision rather than this module's: under the default ``locking: required`` a
 mutating command refuses on it, and under ``advisory-only`` the lock record is
-written unguarded and every run says so (`SOPULI-W001`, #83, #94).
+written unguarded and every run says so (`SOPULI-W001`).
 
-This is the first place "this store has no `cas`" is a fact about a real
-backend rather than a constructor argument -- ``MemoryStore`` can be built
-without the capability, but only here does the absence come from the store.
+Here "this store has no `cas`" is a fact about a real backend rather than a
+constructor argument: ``MemoryStore`` can be built without the capability, but
+only here does the absence come from the store.
 
-It **can** be listed, though (#150), and the pair is worth reading together:
+It **can** be listed, though, and the pair is worth reading together:
 capabilities are per capability, not a tier. A v1 mount having no compare-and-set
 says nothing about whether its paths can be enumerated, and reporting an empty
 set because the interesting one is missing would deny ``lock status`` a leftover
@@ -38,7 +38,7 @@ from sopuli.store.protocol import LIST, PathMetadata, Stored, StoreError, StoreH
 #: **Not a fencing token, and nothing may treat it as one.** The lock never asks
 #: it to be: :meth:`~sopuli.lock.manager.LockManager.acquire` keeps a fence only
 #: when the store can fence, and the comparison at each boundary is skipped when
-#: it cannot (#83). Zero rather than a fabricated counter, because a number that
+#: it cannot. Zero rather than a fabricated counter, because a number that
 #: looked like a version would be exactly the lie that makes a stolen lock
 #: undetectable -- and because ``cas: 0`` already means "there must be nothing
 #: here", which is the one reading that stays honest.
@@ -149,7 +149,7 @@ class Kv1Store:
         return None
 
     def require_cas(self, path: str) -> None:
-        """Always raises. A v1 mount has no metadata to set (#390).
+        """Always raises. A v1 mount has no metadata to set.
 
         The mirror of :meth:`metadata` answering ``None``, and a raise rather
         than a silent no-op for the reason that method gives at greater length:

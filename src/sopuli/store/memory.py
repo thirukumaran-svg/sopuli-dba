@@ -1,11 +1,11 @@
-"""A KV v2 emulation that lives in a dictionary (#96).
+"""A KV v2 emulation that lives in a dictionary.
 
 Here rather than in ``tests/`` for two reasons. It is the **reference reading of
-the semantics** :mod:`sopuli.store.protocol` demands -- when the HashiCorp
-adapter arrives, "does it behave like this one" is the conformance question --
-and the lock's whole design rests on details of those semantics that a looser
-fake would paper over. It is not reachable from a config file: ``vaults.type``
-is a closed set (``01-configuration.md`` §3a) and this is not in it.
+the semantics** :mod:`sopuli.store.protocol` demands -- "does the HashiCorp
+adapter behave like this one" is the conformance question -- and the lock's
+whole design rests on details of those semantics that a looser fake would paper
+over. It is not reachable from a config file: ``vaults.type`` is a closed set
+(``01-configuration.md`` §3a) and this is not in it.
 
 What it gets right on purpose, because the lock depends on each:
 
@@ -16,18 +16,18 @@ What it gets right on purpose, because the lock depends on each:
   never by deleting" load-bearing rather than stylistic, and a fake without it
   would let the wrong implementation pass.
 * **a stale CAS is refused**, which is the primitive itself.
-* **a merge patch deletes a key mapped to ``None``** (#183) rather than storing
-  one, which is RFC 7396 and is how ``pending`` is cleared at promotion. Shared
-  with the read-modify-write fallback through
-  :func:`~sopuli.payload.apply_patch`, so a store with the capability and one
-  without cannot end up with two readings of the same RFC.
+* **a merge patch deletes a key mapped to ``None``** rather than storing one,
+  which is RFC 7396 and is how ``pending`` is cleared at promotion. Shared with
+  the read-modify-write fallback through :func:`~sopuli.payload.apply_patch`, so
+  a store with the capability and one without cannot end up with two readings of
+  the same RFC.
 * **an older version is still readable by number**, and a soft delete removes
-  the latest one only (#183). ``@version=N`` is a read of a generation that is
-  no longer current, so a fake that kept only the newest document would answer
+  the latest one only. ``@version=N`` is a read of a generation that is no
+  longer current, so a fake that kept only the newest document would answer
   every pinned read with ``None`` and let an adapter that did the same pass.
-* **listing knows about paths that have nothing to read** (#150). A soft-deleted
-  path and one that exists only because its metadata was configured are both
-  listed here and both read as ``None``, because that is what a KV v2
+* **listing knows about paths that have nothing to read**. A soft-deleted path
+  and one that exists only because its metadata was configured are both listed
+  here and both read as ``None``, because that is what a KV v2
   ``LIST metadata/`` answers -- metadata outlives the data. A fake that listed
   only readable paths would let an adapter pass with the easier semantics and
   then surprise ``lock status`` against a real Vault.
@@ -62,12 +62,12 @@ from sopuli.store.protocol import (
 class _Path:
     """One path's history: every version ever written, by number.
 
-    Kept in full rather than as a latest-plus-counter, because ``@version=N``
-    (#183) is a read of an *older* generation and a store that had discarded it
-    could only answer by pretending. ``deleted`` covers the latest version alone,
-    which is what a KV v2 soft delete does -- the earlier versions stay readable
-    by number, and that asymmetry is exactly the kind of thing a looser fake
-    would paper over.
+    Kept in full rather than as a latest-plus-counter, because ``@version=N`` is
+    a read of an *older* generation and a store that had discarded it could only
+    answer by pretending. ``deleted`` covers the latest version alone, which is
+    what a KV v2 soft delete does -- the earlier versions stay readable by
+    number, and that asymmetry is exactly the kind of thing a looser fake would
+    paper over.
     """
 
     version: int = 0
@@ -94,11 +94,11 @@ class MemoryStore:
 
     paths: dict[str, _Path] = field(default_factory=dict)
     #: Capabilities this instance claims. Reducible, so the advisory-only path
-    #: can be exercised against a store that genuinely has no ``cas`` rather than
-    #: against one pretending not to -- and, since #150, so that a caller's
-    #: handling of a store that cannot be listed is exercised the same way.
+    #: can be exercised against a store that genuinely has no ``cas`` rather
+    #: than against one pretending not to -- and so that a caller's handling of
+    #: a store that cannot be listed is exercised the same way.
     capabilities: frozenset[str] = frozenset({CAS, LIST, MERGE_PATCH, VERSIONING})
-    #: What this store answers :meth:`health` with, as its own clock (#216).
+    #: What this store answers :meth:`health` with, as its own clock.
     #:
     #: Injectable for the reason :class:`~sopuli.lock.manager.LockManager`'s is:
     #: a skew of zero is what a fake sharing the caller's clock always reports,
@@ -194,14 +194,14 @@ class MemoryStore:
             # by the real thing -- and the lock's pre-flight checks this exact
             # setting, so the emulation has to mean it.
             #
-            # `StoreError` and **not** `CasConflictError`, which is what this
-            # raised until the conformance suite ran it beside the real backend
-            # (#104). Nothing raced: the write was refused because it carried no
-            # version, not because the version moved. ADR-005 names the same
-            # confusion from the other end -- Vault's message for this case opens
-            # with the same words as the conflict's, and reporting it as a lost
-            # race would have a run announce that somebody beat it to the path
-            # when nobody was there at all.
+            # `StoreError` and **not** `CasConflictError`. The real backend
+            # raises `StoreError` here too, and the conformance suite holds the
+            # two to the same answer. Nothing raced: the write was refused because
+            # it carried no version, not because the version moved. ADR-005
+            # names the same confusion from the other end -- Vault's message for
+            # this case opens with the same words as the conflict's, and
+            # reporting it as a lost race would have a run announce that
+            # somebody beat it to the path when nobody was there at all.
             raise StoreError(f"{path!r} requires a compare-and-set and the write did not carry one")
         if cas is not None and cas != entry.version:
             raise CasConflictError(
@@ -218,15 +218,16 @@ class MemoryStore:
         entry.deleted = False
         if entry.metadata is None:
             # A write creates the path's metadata, with nothing set on it.
-            # Measured against Vault 2.0.4 (#390): `vault kv metadata get` on a
-            # path that has only ever been written answers `cas_required: false`,
+            # Measured against Vault 2.0.4: `vault kv metadata get` on a path
+            # that has only ever been written answers `cas_required: false`,
             # where before the write it answers nothing at all.
             #
-            # **The fake did not do this, and that is how #390 stayed invisible
-            # in tier 0.** The lock's pre-flight reads "no metadata" as "new
-            # path, nothing to check", so against this store every run on a path
-            # looked like the first one and the whole bug -- second run refused,
-            # for metadata the first run created -- could not happen here. A fake
+            # **A fake that skipped this would hide a bug in tier 0.** The
+            # lock's pre-flight reads "no metadata" as "new path, nothing to
+            # check", so against such a store every run on a path would look
+            # like the first one. A pre-flight that left a first acquisition to
+            # create the metadata would then pass here, though against Vault its
+            # second run is refused, for metadata the first run created. A fake
             # that is wrong in the direction of *nothing going wrong* is the
             # expensive kind, which is the argument for this module living in
             # `src/` and being held to the conformance suite.
@@ -269,16 +270,16 @@ class MemoryStore:
         return None if entry is None else entry.metadata
 
     def require_cas(self, path: str) -> None:
-        """Set ``cas_required`` on ``path``, creating its metadata if need be (#390).
+        """Set ``cas_required`` on ``path``, creating its metadata if need be.
 
         The property the lock depends on, and the one a looser fake would get
         wrong: **this does not create a version.** A path configured here and
-        never written still has ``version == 0``, so the ``cas: 0`` write a first
-        acquisition makes still succeeds -- which is what makes it safe to
-        arrange the guarantee *before* taking the lock rather than after. Checked
-        against Vault 2.0.4 before it was written here (#390), because a fake
-        that quietly bumped the counter would have let an implementation pass
-        that locks every new path out of its own first acquisition.
+        never written still has ``version == 0``, so the ``cas: 0`` write a
+        first acquisition makes still succeeds -- which is what makes it safe to
+        arrange the guarantee *before* taking the lock rather than after.
+        Vault 2.0.4 behaves the same way. A fake that quietly bumped the counter
+        would let an implementation pass that locks every new path out of its
+        own first acquisition.
 
         Refusal is not modelled: this store has no policy, and the one refusal
         that matters -- :class:`~sopuli.store.protocol.MetadataNotPermittedError` --

@@ -1,4 +1,4 @@
-"""Is this Vault there, can it serve, and what does its clock say (#216).
+"""Is this Vault there, can it serve, and what does its clock say.
 
 One module for both mounts, because ``sys/health`` is a property of the
 **server** and not of a KV mount: two ``vaults:`` entries pointing at one Vault
@@ -7,7 +7,7 @@ be two readings of the same seal state.
 
 Why the clock is here at all, rather than as a general health nicety:
 `sopuli/lock/` compares a lease's ``expires_at`` against *this* machine's clock
-and allows :data:`~sopuli.lock.record.CLOCK_SKEW` for the two disagreeing (#83).
+and allows :data:`~sopuli.lock.record.CLOCK_SKEW` for the two disagreeing.
 A host minutes out will take over locks that are still live or refuse ones long
 dead, and the failure presents as a locking bug rather than as an NTP problem.
 So this measures the assumption rather than observing a curiosity.

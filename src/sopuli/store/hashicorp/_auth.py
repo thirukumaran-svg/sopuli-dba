@@ -1,4 +1,4 @@
-"""Getting a token, per ``01-configuration.md`` §3a (#138).
+"""Getting a token, per ``01-configuration.md`` §3a.
 
 ADR-005's central measured claim is what makes this module small: **with renewal
 removed, §3a's auth surface is about five POSTs.** `token` is not a call at all
@@ -37,8 +37,9 @@ from sopuli.store.protocol import StoreError
 #: Vault itself uses -- so this is the rule rather than four separate facts.
 METHODS = ("token", "approle", "kubernetes", "userpass")
 
-#: In §3a's table for a vault, and deliberately not implemented (#104's split).
-#: See :func:`_refuse` for why deferring it costs less than it looks.
+#: In §3a's table for a vault, and not implemented. It needs a browser launch
+#: and a local callback listener. See :func:`_refuse` for why deferring it costs
+#: less than it looks.
 DEFERRED = ("oidc",)
 
 #: The two statuses that mean the login itself was answered and rejected
@@ -82,7 +83,7 @@ class MethodNotImplementedError(StoreError):
 def authenticate(vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None) -> Secret:
     """A token for ``vault``, by whichever method its ``auth:`` names.
 
-    ``token_file`` is ``--vault-token-file``'s path (#145, ADR-007). A **path**
+    ``token_file`` is ``--vault-token-file``'s path (C16, ADR-007). A **path**
     and not a :class:`~sopuli.secrets.Secret`: a token as a command-line value is
     exactly what invariant 1 forbids, so the flag names where the token lives and
     the value is read on the chain in :func:`~sopuli.material.resolve_token`,

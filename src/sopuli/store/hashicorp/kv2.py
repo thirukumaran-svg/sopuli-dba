@@ -1,4 +1,4 @@
-"""KV v2 -- P2's reference implementation of the store interface (#104).
+"""KV v2 -- P2's reference implementation of the store interface.
 
 The four methods of :mod:`sopuli.store.protocol` against Vault's KV v2 API:
 
@@ -19,7 +19,7 @@ second with a body carrying the version it used to have. Both are ``None``
 here, deliberately, because the difference is not knowable from a read in a way
 a caller could act on: what distinguishes them is that a ``cas: 0`` write
 succeeds against the first and can never succeed against the second. That is
-why #83 releases a lock by writing a ``released`` record instead of deleting
+why a lock is released by writing a ``released`` record instead of deleting
 one -- a delete would leave a path no first acquisition could ever take again.
 
 **The version comes back from the write.** Not from a read afterwards: that
@@ -30,7 +30,7 @@ between the two.
 **and nothing else** (:mod:`._errors`).
 
 **Listing goes to the metadata endpoint, and that is not the same set of paths
-the data endpoint holds** (#150). Metadata outlives data in KV v2, so a
+the data endpoint holds**. Metadata outlives data in KV v2, so a
 soft-deleted path is still listed and still reads as ``None``. The protocol says
 so out loud rather than hiding it: for the case listing exists for -- a leftover
 lock record -- "what is out there" is the question, and a caller that wants
@@ -213,7 +213,7 @@ class Kv2Store:
         )
 
     def require_cas(self, path: str) -> None:
-        """``POST /v1/<mount>/metadata/<path>`` with ``cas_required: true`` (#390).
+        """``POST /v1/<mount>/metadata/<path>`` with ``cas_required: true``.
 
         The same endpoint :meth:`metadata` reads, written rather than read. Only
         ``cas_required`` is sent: a metadata write replaces the fields it names

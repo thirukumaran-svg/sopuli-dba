@@ -1,4 +1,4 @@
-"""Turning KV's one-level listing into the protocol's recursive one (#150).
+"""Turning KV's one-level listing into the protocol's recursive one.
 
 Both mounts answer a ``LIST`` the same shape -- ``{"data": {"keys": [...]}}``,
 one level deep, with a trailing ``/`` marking a key that is a subtree rather than
@@ -41,9 +41,8 @@ def keys_of(response: Response, *, prefix: str) -> tuple[str, ...]:
     Strict, for the reason :meth:`~sopuli.store.hashicorp.kv2.Kv2Store.read` is
     strict about a missing version: a store that answered 200 to a listing and
     could not say what was under the prefix has told the caller nothing, and
-    returning ``()`` would report that as "there is nothing there" -- which is
-    exactly the answer #150 makes load-bearing, since a caller acts on it by
-    concluding that no leftover locks exist.
+    returning ``()`` would report that as "there is nothing there" -- and a
+    caller acts on that answer by concluding that no leftover locks exist.
     """
     body = response.body
     payload = body.get("data") if isinstance(body, dict) else None
