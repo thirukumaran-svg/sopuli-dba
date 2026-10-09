@@ -10,7 +10,7 @@ These things about the structure are deliberate:
 **The configuration is read by the boundary, not by the verbs.** A profile is
 precedence layer 3 and can supply ``output``, so the file has to be read before a
 run picks an emitter -- which is before any verb starts. :mod:`sopuli.invocation`
-does it, and a verb asks ``run`` for the loaded config (#153). A verb that read
+does it, and a verb asks ``run`` for the loaded config. A verb that read
 its own would be one that could disagree with the settings the run resolved.
 
 **Global options are declared in both parser positions, and resolved in one.**
@@ -28,7 +28,7 @@ list. Passwords arrive from stdin, a file, or a vault reference.
 ``tests/test_cli_smoke.py`` walks the command tree and fails if an option name
 ever looks like a credential — with two exceptions it checks rather than trusts:
 ``--vault-token-file`` carries a *path*, and ``--vault-token`` exists only to be
-refused (#145, ADR-007).
+refused (ADR-007).
 
 **Some commands print a password on purpose.** ``policy sample --reveal`` and
 the seen path of ``account reset-password`` are exceptions to invariant 2. The
@@ -36,7 +36,7 @@ guards that keep each one narrow live in :mod:`sopuli.output.policy_view` and
 :mod:`sopuli.output.reset_view`. What lives here is the refusal to combine
 ``--reveal`` with ``--output json``.
 
-**One command is not a run at all** (#413). ``about`` prints compiled-in text:
+**One command is not a run at all.** ``about`` prints compiled-in text:
 no options, no configuration, no settings, no estate, no socket, and no
 ``--output json`` form. So it is the one command in this file without
 :func:`~sopuli.invocation.global_options`, the one that receives no
@@ -308,8 +308,7 @@ if TYPE_CHECKING:  # pragma: no cover -- annotations only
     # ADR-006 rule 1: `sopuli.delivery.vault_wrapped` reaches the HashiCorp
     # transport and therefore `httpx`, so importing it at module scope would put a
     # vendor client in the base install and load a backend for every offline
-    # command. `tests/store/test_install_shape.py` holds that, and it is what
-    # caught this -- the first build imported it here and three of those went red.
+    # command. `tests/store/test_install_shape.py` holds that.
     from sopuli.delivery.vault_wrapped import VaultWrapped
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -318,7 +317,7 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 def help_with(**facts: str) -> Callable[[F], F]:
-    """Fill ``{name}`` placeholders in a verb's docstring from code (#612).
+    """Fill ``{name}`` placeholders in a verb's docstring from code.
 
     click takes a verb's help from its docstring, and a docstring cannot be an
     f-string. Put this directly above the ``def``: the decorators above it copy
@@ -333,7 +332,7 @@ def help_with(**facts: str) -> Callable[[F], F]:
 
 
 def select_option(func: F) -> F:
-    """The selectors, for the commands that act on the estate (#297).
+    """The selectors, for the commands that act on the estate.
 
     Deliberately not in :func:`~sopuli.invocation.global_options`. ``config validate`` answers
     "does this file parse", which no selector narrows, and an option that
@@ -422,7 +421,7 @@ def selected(
 
 
 def describe_selection(selection: Selection) -> str | None:
-    """How a lock record spells what this run was narrowed to (#83).
+    """How a lock record spells what this run was narrowed to.
 
     One line, in the flags the operator typed, because the record is printed at
     exit 7 to somebody deciding whether to wait for the holder or go and find
@@ -540,7 +539,7 @@ def about(options: GlobalOptions | None) -> None:
     everywhere else.
     """
     # Not a run, so not decorated with `global_options` and given no
-    # `Invocation` (#413). It resolves no settings, has nothing to report and no
+    # `Invocation`. It resolves no settings, has nothing to report and no
     # `--output json` form to be the machine half of -- the same footing
     # `--version` and `--help` stand on. `tests/test_cli_precedence.py` names it
     # there rather than exempting it silently.
@@ -615,19 +614,19 @@ def config_show(
     -- and answers it the same way in both views, because provenance does not
     depend on target expansion. That is why it does not require ``--resolved``
     the way ``--select`` does: a selector has nothing to filter until the estate
-    exists, and a setting has a source either way (P3, issue #53).
+    exists, and a setting has a source either way (P3).
 
     Offline in the strongest sense: it opens no socket to a vault or a database,
     so it is safe to run against a production config from a laptop. A secret ref
     is an address and never a value.
 
-    The file is read before this runs, by the boundary (#153), and a bad one never
+    The file is read before this runs, by the boundary, and a bad one never
     reaches here at all: the exit handler in :mod:`sopuli.invocation` catches it,
-    emits the run document and lets it out to exit 9 -- which J7 (issue #8)
-    settled as the code that *does* carry a document, the invocation having
-    resolved before the file turned out to be unusable. That is one place it
-    happens rather than one per verb, and it is why this command asks ``run`` for
-    a configuration instead of loading one.
+    emits the run document and lets it out to exit 9. J7 makes that the code that
+    *does* carry a document, because the invocation resolved before the file
+    turned out to be unusable. That is one place it happens rather than one per
+    verb, and it is why this command asks ``run`` for a configuration instead of
+    loading one.
     """
     document = run.document
 
@@ -643,7 +642,7 @@ def config_show(
         # the configuration: two options that each parsed do not form a valid
         # request. That puts it on exit 2 with no document, which is J7's rule --
         # and keeps exit 9 meaning "your file is wrong" for a consumer that
-        # branches on it (#8).
+        # branches on it.
         raise click.UsageError(
             "a selector has nothing to filter without --resolved\n"
             "       the declared view shows the file; the estate a selector "
@@ -709,7 +708,7 @@ def target_list(
 
     A bad config file never reaches here, for the reason ``config show`` gives:
     the boundary reads it, and its exit handler emits the document on exit 9
-    (J7, issue #8).
+    (J7).
     """
     document = run.document
 
@@ -782,9 +781,10 @@ def doctor(
     target's own reachability a moment later.
 
     Nothing here is a substitute for the guardrails. Reporting what a service
-    account holds is not enforcing it; #173 is the refusal.
+    account holds is not enforcing it; the account guardrails that every mutating
+    verb applies are what refuse.
 
-    **``--check-privileges`` warns and never fails** (P5, decided in #213). An
+    **``--check-privileges`` warns and never fails** (decision P5). An
     over-granted account is somebody else's decision to fix, and a ``doctor``
     that exited non-zero over it would block the person who ran it, mid-incident,
     over a condition they did not create. A **missing** grant is reported the
@@ -837,7 +837,7 @@ def doctor(
     # expanded targets and their bindings, so there is nothing here for it to
     # narrow anyway -- and reporting a store as absent because nobody selected a
     # target that happened to use it would be alarming and wrong.
-    # Into the run's own client map (#489), so a target whose admin credential
+    # Into the run's own client map, so a target whose admin credential
     # lives in a surveyed store reuses this login rather than making a second.
     vaults = vault_survey(
         config.vaults, env=os.environ, token_file=run.vault_token_file, cache=run.stores
@@ -897,7 +897,7 @@ def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0
     *backend* does the same to every store below it.
 
     **An unreachable vault fails the run, at exit 1, the same as an unreachable
-    target** (#216). Not a softer verdict, and if anything it deserves a harder
+    target.** Not a softer verdict, and if anything it deserves a harder
     one: the vault is master and the direction is always vault to database
     (invariant 6), so a store nobody can reach is an estate on which no `creds`
     verb can do anything -- a wider outage than one dead database rather than a
@@ -909,9 +909,10 @@ def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0
     answered in both cases, and the run is not over: a sealed store is somebody
     to page, and a clock outside tolerance is a hazard this run did not create
     and cannot fix. Both are `SOPULI-W010` and `SOPULI-W009` in the diagnostics
-    array, which is #213's answer for over-granted accounts applied to the same
-    shape of question -- a `doctor` that exited non-zero over them would block
-    the person who ran it, mid-incident, over a condition they did not cause.
+    array, which is decision P5's answer for over-granted accounts applied to
+    the same shape of question -- a `doctor` that exited non-zero over them
+    would block the person who ran it, mid-incident, over a condition they did
+    not cause.
 
     **Exit 9 and not 1**, which is E5's number rather than a new one: a missing
     backend is already ``config`` / exit 9 when a command resolves one, and P5's
@@ -953,7 +954,7 @@ def _client_report(config: Config) -> dict[str, Any]:
     try:
         # Through the registry's own entry rather than a second copy of the
         # module path: the whole value of resolving there is that one place
-        # knows which module pulls the client in (#170).
+        # knows which module pulls the client in.
         module = importlib.import_module(DRIVERS["oracle"].module)
         module.initialise(env=os.environ, lib_dir=lib_dir)
         version = module.client_version()
@@ -1031,24 +1032,20 @@ def _timeouts(run: Invocation) -> Timeouts:
 
     Both keys, which is the whole point of the function. Each is a documented
     setting with a precedence chain behind it, and a command that resolved one
-    and then connected on the built-in anyway would be #176's review finding all
-    over again: a key that looks configured and does nothing. `doctor` is also
-    the command most likely to be pointed at something unreachable, which is
-    exactly when `connect_timeout_s` matters.
+    and then connected on the built-in anyway would have a key that looks
+    configured and does nothing. `doctor` is also the command most likely to be
+    pointed at something unreachable, which is exactly when `connect_timeout_s`
+    matters. `db.query_timeout_s` becomes `Timeouts.query_s`, and from there
+    `Connection.call_timeout`.
 
-    `db.query_timeout_s` was the key that did nothing (#360). It reached
-    `Timeouts.query_s` -- which becomes `Connection.call_timeout` -- from
-    nowhere, because this function read its sibling and passed no `query_s` at
-    all, so a profile setting it changed exactly nothing.
-
-    **Wiring it does not change what the tool imposes**, and that distinction is
-    the reason it is safe to wire. The built-in stays `NO_QUERY_TIMEOUT`, for the
+    **Passing it does not change what the tool imposes**, and that is why passing
+    it is safe (decision #360). The built-in stays `NO_QUERY_TIMEOUT`, for the
     reason stated where that constant lives: a call timeout cancels the round
     trip without undoing what the server did with it, `ALTER USER` is not
     transactional, and a rotation cut off at the wrong moment leaves a run that
     cannot say whether the password changed -- the one state invariant 7 has no
-    answer for. What changes is that an operator can now *reach* that state on
-    purpose, which `01-configuration.md` §5 has always said is theirs to choose.
+    answer for. What the key changes is that an operator can *reach* that state
+    on purpose, which `01-configuration.md` §5 says is theirs to choose.
 
     Absent means the built-in, for both, and `Timeouts` already holds those two
     numbers -- so an :class:`Invocation` built without resolution (a test, the
@@ -1070,13 +1067,13 @@ def _elapsed(started: float) -> int:
 def _as_error(error: Exception) -> Error:
     """A failure as the document's ``error`` object, keeping the vendor code."""
     # First line only. A driver error's `message` keeps the server's own wording
-    # (#172), and a client one carries whatever `oracledb` said -- which runs to
+    # and a client one carries whatever `oracledb` said -- which runs to
     # several lines including a documentation link. A survey puts one line per
     # target beside a table, so the rest belongs in the hint where it already is.
     message = getattr(error, "message", None) or str(error)
     # `"".splitlines()` is `[]`, so indexing it raises on an exception carrying no
     # message -- `Exception()`, or a vendor client raising a bare class. Reachable
-    # from every target and, since #216, from every store as well. The class name
+    # from every target and from every store. The class name
     # is the only information left, and it beats an empty string: that reads as
     # the tool having lost the reason rather than there never having been one.
     lines = message.splitlines()
@@ -1202,10 +1199,11 @@ def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPo
 
     `defaults.policy` is read directly, as `bindings.py` already reads it: it is
     the chain the file itself describes (§3), and the `SOPULI_*` and command-line
-    layers above it belong to the precedence resolver (#10) rather than here.
+    layers above it belong to the precedence resolver (decision #10) rather than
+    here.
 
     **Both refusals below stay `ConfigError`, on exit 9, even though the name was
-    typed on the command line.** This is the boundary J7 (#8) predicted would
+    typed on the command line.** This is the boundary J7 predicted would
     blur, and the test is not where the name came from but what is wrong: argv
     resolved to a valid command with valid options, the run began, and the
     configuration turned out not to declare what it asked for. `sopuli policy
@@ -1571,7 +1569,7 @@ def account_expire_password(
     deliver and nothing that could leak -- which is why this is its own verb
     rather than a flag on `reset-password`.
 
-    **An open rollover window is closed first** (#525). Expiring does not close
+    **An open rollover window is closed first.** Expiring does not close
     one: measured, the old password keeps authenticating through the window and
     can be used to set the next one. So the verb issues `EXPIRE PASSWORD
     ROLLOVER PERIOD`, then the expiry. Somebody who knows only the old password
@@ -1635,9 +1633,9 @@ def account_expire_password(
         ],
         # Targets this run changed and left expired, which is what the closing
         # line's "expired" claims -- not `changed`, which also counts a row whose
-        # window close committed and whose expiry then failed (#537, #528's defect
-        # for the reset). That row changed the account and expired nothing, and
-        # the summary's `changed` still counts it.
+        # window close committed and whose expiry then failed. That row changed
+        # the account and expired nothing, and the summary's `changed` still
+        # counts it.
         #
         # **Keyed on the state, not on an applied `password_expire`**, because an
         # account found at `EXPIRED & IN ROLLOVER` has only its window closed: no
@@ -1772,7 +1770,7 @@ def _expire_one(
         except PartialAccountChangeError as error:
             # The window closed and the expiry failed. Still an error, and
             # still exit 4, but the row says what did happen: `changed` is true
-            # and the close is reported as applied (Copilot's review of #527).
+            # and the close is reported as applied.
             reported = _as_error(error)
             done = tuple((one.action, one.changed, one.detail) for one in error.completed)
             return _Expired(
@@ -1899,7 +1897,7 @@ def account_reset_password(
 
     **Running it twice draws a second password.** There is no convergence to be
     had -- a fresh random draw has nothing to compare against -- so this verb sits
-    outside invariant 9 (#454) and says so in what it prints. Whoever holds the
+    outside invariant 9 and says so in what it prints. Whoever holds the
     first password holds one that no longer works.
 
     **The rollover window is closed by default** (UC-2 4.3), so the old password
@@ -1950,7 +1948,7 @@ def account_reset_password(
     run = _with_estate_safety(run, config)
     refuse_if_readonly(run.resolved, action=action, estate=config)
     # After the estate merge, because a target's or a group's `safety:` block is
-    # layer 4 and cannot narrow the set until a selector has run (#424, #498).
+    # layer 4 and cannot narrow the set until a selector has run (decision #424).
     # `--force` is not passed and cannot be: this is a safety setting, and
     # invariant 10 is that no source relaxes one.
     refuse_disallowed_method(run.resolved, delivery.method)
@@ -1964,10 +1962,10 @@ def account_reset_password(
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
     document.plan = plan.as_json()
-    # No-ops outside `--output jsonl` (#535). A seen reset reaches them only as
+    # No-ops outside `--output jsonl`. A seen reset reaches them only as
     # a `--dry-run`: the real one is refused under every machine format above,
     # and a preview is exempt from that refusal because it shows no password
-    # (#441's sixth guard). So `password.displayed` has no emitter by
+    # (UC-2 §6.5). So `password.displayed` has no emitter by
     # construction -- the one run that could stream the seen path displays
     # nothing.
     emitter = run.emitter()
@@ -1978,27 +1976,25 @@ def account_reset_password(
     # be built from is a plan-time refusal (invariant 4) rather than a failure
     # after the password has already changed.
     paths = _record_paths(config, account, reached)
-    # **The delivery backend too, and for the same invariant** (#444). A store
+    # **The delivery backend too, and for the same invariant.** A store
     # that cannot wrap is an unavailable capability, knowable from the file
     # before any database is reached -- so it is exit 5 here, naming the store,
-    # rather than a per-target error row after a password has been drawn. The
-    # first build resolved the backend inside the loop and got exactly that.
+    # rather than a per-target error row after a password has been drawn.
     #
-    # **Skipped under `--dry-run`**, which is #441's exemption read for a
-    # capability rather than for a guard: a preview delivers nothing, so it needs
-    # nothing to deliver with, and opening the store would make `--dry-run`
+    # **Skipped under `--dry-run`**, which is UC-2 §6.5's preview exemption read
+    # for a capability rather than for a guard: a preview delivers nothing, so it
+    # needs nothing to deliver with, and opening the store would make `--dry-run`
     # require vault credentials that the run it previews would use and the
     # preview would not.
     backends = _delivery_backends(run, config, delivery, reached)
 
-    # **The notify channel too, and for the same reason** (Copilot's finding on
-    # #520). The first build resolved it inside `_notify`, which wraps everything
-    # in a bare `except` so that a dead webhook cannot fail a reset that already
-    # succeeded -- and that swallowed `SOPULI-20003` along with it. A configured
-    # channel whose client is not installed then became a warning *after* the
-    # password changed, when it was knowable before the run connected to anything.
-    # That is invariant 4 exactly, and E5's contract: configured-but-uninstalled
-    # fails use with exit 9.
+    # **The notify channel too, and for the same reason.** Not inside `_notify`,
+    # which wraps everything in a bare `except` so that a dead webhook cannot fail
+    # a reset that already succeeded. There it would swallow `SOPULI-20003` too,
+    # and a configured channel whose client is not installed would become a
+    # warning *after* the password changed, when it was knowable before the run
+    # connected to anything. Invariant 4 and E5's contract say
+    # configured-but-uninstalled fails use with exit 9.
     #
     # **Not skipped under `--dry-run`**, which is where this stops mirroring
     # `_delivery_backends` above. That one is skipped because opening a store needs
@@ -2022,25 +2018,24 @@ def account_reset_password(
         notices.append(unrecorded)
 
     if not run.dry_run:
-        # **The plan goes out before the first statement** (invariant 8; Copilot's
-        # reviews of #505 and #518). The verb returns its whole output as a
-        # string, so without this nothing reaches the operator until the run is
-        # over. On stderr, which is where `_confirm_environments` puts the same
-        # thing for the same reason: stdout carries the result.
+        # **The plan goes out before the first statement** (invariant 8). The
+        # verb returns its whole output as a string, so without this nothing
+        # reaches the operator until the run is over. On stderr, which is where
+        # `_confirm_environments` puts the same thing for the same reason: stdout
+        # carries the result.
         #
         # **On the seen path the argument is the prompt**: without this the
         # operator would be asked to expose a password before seeing what the run
-        # was about to do, and by then the DDL has already run (#505).
+        # was about to do, and by then the DDL has already run.
         #
-        # **On an unseen path there is no prompt, and the argument is failure**
-        # (#518). That review read it as invariant 8 being broken outright, which
-        # is arguable -- the plan is still the first thing in the returned output,
-        # and a path with no consent step has no decision to protect. What is not
-        # arguable is the multi-target run that raises on target three: the
-        # returned string is never built, so the operator gets a traceback-shaped
-        # failure with no record of what the run had been about to touch. That is
-        # the same case #505's `click.Abort` handling exists for, reached by a
-        # different route, and echoing here is the same fix.
+        # **On an unseen path there is no prompt, and the argument is failure.**
+        # The plan is still the first thing in the returned output, and a path
+        # with no consent step has no decision to protect. But a multi-target run
+        # that raises on target three never builds the returned string, so the
+        # operator gets a traceback-shaped failure with no record of what the run
+        # had been about to touch. That is the case the `click.Abort` handling
+        # exists for, reached by a different route, and echoing here is the same
+        # fix.
         click.echo(header, err=True)
 
     # UC-2 §3.3's lock, keyed on the record's path -- the one location that
@@ -2126,9 +2121,9 @@ def account_reset_password(
             failed = reset_record_unwritten(one.record_error.path, one.record_error.reason)
             document.diagnostics.append(failed)
             notices.append(failed)
-        # #442's, and appended after the record's so the two read in the order they
-        # happened: the notification goes out first, and the journal is written
-        # last because it holds what happened (§6.4).
+        # The notification's warning, appended after the record's so the two
+        # read in the order they happened: the notification goes out first, and
+        # the journal is written last because it holds what happened (§6.4).
         if one.notify_error is not None:
             unsent = notification_unsent(one.account, one.target, one.notify_error)
             document.diagnostics.append(unsent)
@@ -2142,7 +2137,7 @@ def account_reset_password(
         [(one.account, one.target, one.state, one.status, one.detail) for one in found],
         # Targets whose password was set, which is what the closing line's "reset"
         # claims -- not `changed`, which also counts a row whose unlock committed
-        # and whose set then failed (#528). That row changed the account and reset
+        # and whose set then failed. That row changed the account and reset
         # nothing, and the summary's `changed` still counts it.
         changed=sum(
             1
@@ -2154,19 +2149,18 @@ def account_reset_password(
     )
     shown = "\n\n".join(one.shown for one in found if one.shown is not None)
     if shown and run.is_json:
-        # **The hand-over goes to stderr when stdout is carrying the document**
-        # (#444). It is never *in* the document -- the schema has no property a
+        # **The hand-over goes to stderr when stdout is carrying the document.**
+        # It is never *in* the document -- the schema has no property a
         # token could occupy -- and it still has to reach the operator, because
         # 6.1 bars it from the notify channel and nothing else carries it. The
         # split is the one this verb already makes for the plan and the prompt:
         # stdout carries the result, and in this mode the result is JSON.
         #
         # Unreachable for `manual`, which is refused with `--output json` before a
-        # password is drawn. That refusal stays exactly as narrow as it was; what
-        # changed is that an unseen method can reach this line at all.
+        # password is drawn. Only an unseen method reaches this line.
         click.echo(shown, err=True)
         shown = ""
-    # Printed as well as serialised (#309): a warning nobody can see in the
+    # Printed as well as serialised: a warning nobody can see in the
     # default output is not surfaced, and these say the run kept no record of
     # itself -- which is what a terminal operator needs, and what
     # `diagnostics[]` alone tells only a JSON consumer.
@@ -2175,7 +2169,7 @@ def account_reset_password(
 
 
 def _reset_events(one: _Reset, run: Invocation) -> None:
-    """One target's reset on the stream, as soon as it is done (#535).
+    """One target's reset on the stream, as soon as it is done.
 
     **Per target, as `creds check` streams, and not at the end as `apply` does.**
     A reset row is final when its target is: nothing decided afterwards is
@@ -2187,7 +2181,7 @@ def _reset_events(one: _Reset, run: Invocation) -> None:
     set, with no vault version -- a reset draws its password and stores it
     nowhere a version could name. ``password.delivered`` where the row says it
     was handed over, carrying the method and, on an unseen path, ``handover``:
-    the accessor that names the hand-over and cannot perform it (#444). The
+    the accessor that names the hand-over and cannot perform it. The
     wrapping token itself goes to stderr under every machine format and never
     reaches this stream; the event schema closes the payload so nothing else can.
     """
@@ -2347,7 +2341,7 @@ def _write_reset_record(
     secret: Secret,
     token: Secret | None = None,
 ) -> _RecordFailure | None:
-    """Journal one reset, or say why it could not be (UC-2 §3.1, #511).
+    """Journal one reset, or say why it could not be (UC-2 §3.1).
 
     **Called after the database has confirmed and after delivery** (§6.4). The
     record holds what happened, so writing it earlier would make it hold an
@@ -2373,14 +2367,13 @@ def _write_reset_record(
     has already succeeded.
     """
     try:
-        # **Opening is inside the guard, not beside it** (Copilot's review of
-        # #513). `_stores_for` resolves a credential and builds a client, and
-        # every one of those steps can fail -- an unreachable Vault, a token
-        # that has expired since the run began, a backend whose extra is not
-        # installed. Outside the guard that exception would escape a reset that
-        # had already succeeded and turn it into a failed run, which is exactly
-        # the false negative 3.4 rules out: the password has changed and the
-        # person still needs it.
+        # **Opening is inside the guard, not beside it.** `_stores_for` resolves
+        # a credential and builds a client, and every one of those steps can
+        # fail -- an unreachable Vault, a token that has expired since the run
+        # began, a backend whose extra is not installed. Outside the guard that
+        # exception would escape a reset that had already succeeded and turn it
+        # into a failed run, which is exactly the false negative 3.4 rules out:
+        # the password has changed and the person still needs it.
         journal = _reset_journal(run, config)
     except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
         return _RecordFailure(path=path, reason=_as_error(error).message)
@@ -2401,7 +2394,7 @@ def _write_reset_record(
     )
     document = record.to_dict()
     # Invariant 2 against the serialised document rather than against the
-    # writer's intentions, which is what #468 built it for: the type has no
+    # writer's intentions, which is what it exists for: the type has no
     # field a password could go in, and this is what holds when a later delivery
     # method puts its own reference in `delivery.to`. An `AssertionError` -- a
     # programming error, not a configuration one -- so it is deliberately not
@@ -2409,7 +2402,7 @@ def _write_reset_record(
     reset_record.assert_no_secret(document, secret=secret, token=token)
     try:
         # Unguarded: serialising two concurrent resets is the advisory lock's
-        # job (#512, UC-2 §3.3), and a compare-and-set here would buy nothing it
+        # job (UC-2 §3.3), and a compare-and-set here would buy nothing it
         # will not buy properly -- while failing forever on a path whose latest
         # version was deleted, which reads as `None` and is not version 0.
         journal.write(path, document, cas=None)
@@ -2441,7 +2434,7 @@ def _reset_exit(states: Sequence[str], *, stolen: bool = False, changed: int = 0
     A refusal is not a failure: `SKIPPED` is the guardrails working and
     `ACCOUNT_MISSING` is an ordinary fact about an estate.
 
-    **A lost fence splits the same way `creds generate` splits it** (#512). Exit
+    **A lost fence splits the same way `creds generate` splits it.** Exit
     7 asserts that nothing happened, so it is only right while nothing has: once
     one target's password has been reset and a later target's lock has been
     taken, the run is partial and says so with 4. Somebody holds a password the
@@ -2481,18 +2474,17 @@ class _Reset:
     #: which is where a consumer already looks for what a run could not do.
     record_error: _RecordFailure | None = None
     #: Why this reset's notification could not be sent, where a channel was
-    #: configured and failed (#442). **Never serialised as a result field**, for
+    #: configured and failed. **Never serialised as a result field**, for
     #: `record_error`'s reason: the caller turns it into `SOPULI-W026` in
     #: ``diagnostics[]``, which is where a consumer already looks for what a run
     #: could not do.
     notify_error: str | None = None
     #: **What the operator is shown, and it is secret-bearing on both paths**: the
     #: password block on the seen path, and the wrapping token on an unseen one
-    #: (#444). This comment said "the password block, on the seen path only" until
-    #: the code review of #518, which is worth noting because it is the field's
-    #: one statement about what it holds -- and :class:`_Reset` is a plain frozen
-    #: dataclass, so the generated ``__repr__`` renders this unredacted. Nothing
-    #: does that today; the comment is what tells the next reader not to.
+    #: (UC-2 §6.6). This comment is the field's one statement about what it
+    #: holds, and :class:`_Reset` is a plain frozen dataclass, so the generated
+    #: ``__repr__`` renders this unredacted. Nothing calls it; the comment is what
+    #: tells the next reader not to.
     #:
     #: **Never serialised**: `as_json` cannot reach it, and there is no field in
     #: the schema it could go in. It travels here because the caller prints it
@@ -2501,10 +2493,10 @@ class _Reset:
     #: every guard passed.
     shown: str | None = None
     #: What an auditor can act on about the hand-over, and **nothing that could
-    #: perform it** (#444 part 2). ``None`` where nothing was delivered anywhere --
+    #: perform it.** ``None`` where nothing was delivered anywhere --
     #: the seen path, a refused row -- and *present* where a delivery put the
     #: password somewhere, which is what the run document's section keys on rather
-    #: than on either field being populated (Copilot's review of #519).
+    #: than on either field being populated.
     #:
     #: A :class:`~sopuli.delivery.Handover` rather than the
     #: :class:`~sopuli.delivery.Receipt` it came from, deliberately: the receipt
@@ -2542,11 +2534,11 @@ def _reset_actions(
 
     ``failed`` appends the statement after the last completed one, unapplied and
     carrying the server's message, so a partial row still names all it tried --
-    `_expire_one`'s shape for the same error (#527, #528).
+    `_expire_one`'s shape for the same error.
 
-    **Named from the last completed row, not from how many there are** (Copilot's
-    review of #536). The Oracle driver reports the unlock row even where it issued
-    nothing, so a count would work against it today -- but the error does not
+    **Named from the last completed row, not from how many there are.** The
+    Oracle driver reports the unlock row even where it issued nothing, so a
+    count would work against it today -- but the error does not
     promise a full prefix, and a driver that left the no-op row out would have its
     failed close reported as a second `password_set`.
     """
@@ -2565,7 +2557,7 @@ def _partial_reset(
     status: str | None,
     started: float,
 ) -> _Reset:
-    """The row for a reset that cleared a timed lock and then failed (#528).
+    """The row for a reset that cleared a timed lock and then failed.
 
     `ERROR` at exit 4 like any failure, but ``changed`` is true and the unlock is
     reported as applied: the account is open on behalf of a reset that did not
@@ -2610,7 +2602,7 @@ def _reset_one(
     delivers elsewhere lands.
 
     **The password is drawn after the state is read**, not before: the byte limit
-    the policy is validated against is a property of the target (#383), and a
+    the policy is validated against is a property of the target, and a
     draw that ignored it would fail mid-statement on 21c and older.
 
     Under ``--dry-run`` the read still happens and nothing else does. A preview
@@ -2689,7 +2681,7 @@ def _reset_one(
                 limit=session.byte_limit(),
             )
             # **UC-2 6.4's other order, and this is the branch that makes it
-            # two orders rather than one** (#444). The rule is that the
+            # two orders rather than one.** The rule is that the
             # irreversible step goes last, and what is irreversible differs by
             # path: on the seen path it is the print, so the DDL comes first; on
             # an unseen one it is the DDL, because it kills the old password, so
@@ -2716,7 +2708,7 @@ def _reset_one(
                 partial = None
             except PartialAccountChangeError as error:
                 if not any(one.action == PASSWORD_SET for one in error.completed):
-                    # The unlock committed and the set did not (#528). The
+                    # The unlock committed and the set did not. The
                     # account's password is what it was, so on the unseen path the
                     # token already made retrieves a value that authenticates
                     # nothing -- 6.4's recoverable failure -- and nothing is handed
@@ -2738,17 +2730,16 @@ def _reset_one(
                 error=reported,
             )
 
-        # The row is built **before** the hand-over, and that is not style
-        # (Copilot's review of #505). `_hand_over` prompts, and declining raises
-        # `click.Abort` -- which used to propagate out of the caller's list
-        # comprehension before `document.results` was ever assigned, so a run
-        # that had changed and expired a password reported only "aborted before
-        # completion". The boundary's own docstring names that case as the one a
-        # document exists for: *a confirmation declined halfway through is
-        # exactly when a scheduler wants to know which targets were touched.*
+        # The row is built **before** the hand-over, and that is not style.
+        # `_hand_over` prompts, and declining raises `click.Abort`. Raised before
+        # `document.results` is assigned, it would leave a run that had changed
+        # and expired a password reporting only "aborted before completion". The
+        # boundary's own docstring names that case as the one a document exists
+        # for: *a confirmation declined halfway through is exactly when a
+        # scheduler wants to know which targets were touched.*
         #
         # **A password that is set is handed over, even where closing the window
-        # then failed** (#528, decided there). The new password is live and the
+        # then failed.** The new password is live and the
         # old one still works until the window ends -- the state `--keep-rollover`
         # leaves on purpose, so not a new exposure. Withholding it would be worse
         # on both paths: on the seen one nobody would hold an expired password that
@@ -2821,14 +2812,12 @@ def _reset_one(
             run.document.results = [*(run.document.results or []), journalled(row).as_json()]
             raise
 
-        # **After the hand-over, and before the record** (#442, and the ordering is
-        # Copilot's finding on #520 rather than the one this shipped with). The
-        # first version notified before `_hand_over`, which is wrong on the seen
-        # path for a reason the unseen path does not have: there, `_hand_over` is
-        # the delivery. It prompts, declining aborts, and the password is then
-        # sitting on an account that nobody has read -- so a notification sent
-        # beforehand says a password is waiting when the only channel that could
-        # have carried it was refused.
+        # **After the hand-over, and before the record.** Notifying before
+        # `_hand_over` would be wrong on the seen path for a reason the unseen
+        # path does not have: there, `_hand_over` is the delivery. It prompts,
+        # declining aborts, and the password is then sitting on an account that
+        # nobody has read -- so a notification sent beforehand says a password is
+        # waiting when the only channel that could have carried it was refused.
         #
         # Notifying after covers both paths with one ordering rather than a branch:
         # on the unseen path `_hand_over` only renders a token it was already
@@ -2890,7 +2879,7 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
 
 @dataclass(frozen=True)
 class _NotifyChannel:
-    """A channel proved usable before the run connected to anything (#520).
+    """A channel proved usable before the run connected to anything.
 
     Holds the three things sending needs and none of them can fail once this
     exists: the settings, the imported sender, and the resolved URL. Building it
@@ -2910,18 +2899,17 @@ def _notify_channel(delivery: Delivery) -> _NotifyChannel | None:
     reported.
 
     **Invariant 4, and the reason this is not inside :func:`_notify`.** Two things
-    here can fail for reasons knowable in advance, and both used to fail late:
+    here can fail for reasons knowable in advance, and both must fail early:
 
     - the client may not be installed, which :func:`~sopuli.notify.registry.resolve`
       turns into `SOPULI-20003` at exit 9. `_notify` catches everything so that a
-      dead webhook cannot fail a reset that already worked, and that swallowed this
-      too -- turning ADR-006's E5 contract into a warning issued after the password
-      changed;
+      dead webhook cannot fail a reset that already worked, and inside it this
+      would be swallowed too -- turning ADR-006's E5 contract into a warning
+      issued after the password changed;
     - the URL may not resolve, because the environment variable or the file the
-      `MaterialRef` names is absent. The docstring this replaces argued that a
-      missing variable is "as much nobody-was-told as a refused request is", which
-      is true about the outcome and wrong about the timing: a refused request is
-      news and an unset variable is a configuration error, and the second one is
+      `MaterialRef` names is absent. A missing variable leaves nobody told, as a
+      refused request does, but the timing differs: a refused request is news and
+      an unset variable is a configuration error, and the second one is
       answerable before a password is drawn.
 
     What is left to fail at send time is the send, which is what `SOPULI-W026` is
@@ -2948,15 +2936,15 @@ def _notify(
     target: ExpandedTarget,
     receipt: Receipt | None,
 ) -> str | None:
-    """Say a password is waiting, or why nobody could be told (#442).
+    """Say a password is waiting, or why nobody could be told.
 
     ``None`` both when it worked and when no channel is configured -- an estate
     that configured none has not failed to notify, and a return value that
     distinguished the two would invite a caller to warn about a choice somebody
     made.
 
-    **Never raises**, and by here that claim covers a much smaller surface than it
-    used to: :func:`_notify_channel` has already imported the sender and resolved
+    **Never raises**, and by here that claim covers a small surface:
+    :func:`_notify_channel` has already imported the sender and resolved
     the URL, so what remains is rendering and one POST. Every failure comes back as
     a string the caller turns into `SOPULI-W026`, for UC-2 §3.4's argument one
     object over -- the password has changed and the person can fetch it, so ending
@@ -2992,11 +2980,11 @@ def _delivery_backends(
     backend, and empty under ``--dry-run``: a preview delivers nothing, so it
     needs nothing to deliver with, and opening the store would make a preview
     require credentials the run it previews would use and it would not. That is
-    #441's exemption read for a capability rather than for a guard.
+    UC-2 §6.5's preview exemption read for a capability rather than for a guard.
 
     One per target rather than one per run, because the store is resolved through
     §3's chain and a target may name its own. The run's client cache makes a
-    shared store one connection anyway (#483).
+    shared store one connection anyway.
     """
     if delivery.is_seen or run.dry_run:
         return {}
@@ -3008,13 +2996,13 @@ def _delivery_backend(
 ) -> VaultWrapped:
     """The backend one unseen delivery goes through, opened from the run's cache.
 
-    One client per store per run (#483), so a reset whose journal and whose
+    One client per store per run, so a reset whose journal and whose
     cubbyhole live in the same vault authenticates to it once.
 
     `vault_wrapped` is the only unseen method this build serves, so this returns
     its type rather than the protocol: a ``DeliveryBackend`` return annotation
-    would claim a polymorphism that does not exist yet, and #445-#447 each add a
-    branch here when they land.
+    would claim a polymorphism that does not exist yet. Each further unseen
+    method adds a branch here (TODO(#445), TODO(#446), TODO(#447)).
     """
     # Imported here rather than at module scope, for the reason the store registry
     # imports its backends on first use (ADR-006 rule 1). Nothing above this line
@@ -3027,8 +3015,8 @@ def _delivery_backend(
     if wrapped is None:  # pragma: no cover -- unreachable through a config file
         # Unreachable through a file: `_require_sub_block` and `_build_wrapped`
         # between them guarantee the block is populated whenever the method is
-        # selected. It is a refusal rather than an empty string anyway (the code
-        # review of #518), because `ttl=""` sends an empty `X-Vault-Wrap-TTL` and
+        # selected. It is a refusal rather than an empty string anyway, because
+        # `ttl=""` sends an empty `X-Vault-Wrap-TTL` and
         # surfaces as Vault declining to wrap -- a message about a stripped header
         # rather than about a missing TTL, after a password has been drawn. The
         # module's own rule is that it must not guess.
@@ -3091,11 +3079,9 @@ def _hand_over(
     leaves the account holding a password nobody has seen. That is a lockout the
     next reset fixes, and it is what "aborted" has to mean here.
 
-    **An unseen method returns the hand-over instead** (#444), and the sentence
-    here used to be "``None`` for an unseen method, which prints nobody anything".
-    That was a prediction written before any unseen method existed, and it was
-    wrong: §6.1 bars the wrapping token from the notify channel and the tool
-    carries no other, so the token comes back to the DBA to pass on out of band.
+    **An unseen method returns the hand-over instead.** §6.1 bars the wrapping
+    token from the notify channel and the tool carries no other, so the token
+    comes back to the DBA to pass on out of band.
     The password still goes nowhere near the screen -- the *token* is what prints,
     and `output/delivery_view.py` holds the argument for that being allowed.
 
