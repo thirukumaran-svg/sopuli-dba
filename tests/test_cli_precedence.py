@@ -370,8 +370,8 @@ def test_the_default_store_name_is_reported_with_its_layer(
 def test_a_third_party_variable_reaches_the_default_store(
     runner: CliRunner, vault_config: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P3's first exception: `VAULT_ADDR` is honoured, one layer below
-    `SOPULI_VAULT_ADDR` and still above everything the file can write."""
+    """P3: `VAULT_ADDR` is honoured. It is layer 2, ranked below
+    `SOPULI_VAULT_ADDR`, and still above everything the file can write."""
     monkeypatch.setenv("VAULT_ADDR", "https://third-party.example.com")
     result = runner.invoke(cli, vault_config)
 

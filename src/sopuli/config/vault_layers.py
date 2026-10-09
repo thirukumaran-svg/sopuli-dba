@@ -10,8 +10,8 @@ six layers reach a store:
     4. Target/vault-level setting       vaults.hcv-prod.addr
     5. Top-level defaults in config     defaults.vaults.hcv-prod.addr
 
-with the third-party variables of layer 3 -- ``VAULT_ADDR`` and friends -- ranked
-between 2 and 3, as P3's second exception says. **Layer 1 is one key wide**
+The third-party variables -- ``VAULT_ADDR`` and friends -- are also layer 2, ranked
+below their ``SOPULI_*`` equivalent, as P3 says. **Layer 1 is one key wide**
 (decision #422): ``--vault-addr`` hoists ``vaults.*.addr`` onto the command
 line and nothing else does, so there is no ``--vault-mount`` beside it.
 :func:`sopuli.config.vault_env.vault_cli_contributions` places it, on purpose --
@@ -287,7 +287,7 @@ def _resolve_key(
 
     The declaration contributes at :attr:`~sopuli.settings.registry.Layer.OBJECT`
     -- P3's layer 4, "target/vault-level setting" -- and a ``defaults:`` patch at
-    layer 5. The environment contributes at layer 2 or 3, already addressed to
+    layer 5. The environment contributes at layer 2, already addressed to
     this store by :mod:`sopuli.config.vault_env`. Which is higher is the
     resolver's business and not restated here.
 

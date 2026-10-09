@@ -67,7 +67,7 @@ from sopuli.settings.resolver import Contribution
 #: are merged inside the file, for the reason :func:`config_contributions` gives
 #: about a profile's ``vaults:`` block, so §6's other vault variables are
 #: collected in :mod:`sopuli.config.vault_env` and reach the same resolver from
-#: there. The third-party variables of layer 3 travel with them.
+#: there. The third-party variables, also layer 2, travel with them.
 ENV_SETTINGS = {
     "SOPULI_OUTPUT": "output",
     "SOPULI_DRY_RUN": "safety.dry_run",

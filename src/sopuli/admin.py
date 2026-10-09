@@ -194,7 +194,7 @@ def prompt_key(target: ExpandedTarget, username: str | None) -> str:
     so the two differ exactly when it is set. And the key would separate targets the
     variable has just made identical: ``sopuli_{tenant}`` under
     ``SOPULI_DB_ADMIN_USER`` is one account on thirty-four databases, and would have
-    been asked about thirty-four times. The variable is P3's layer 3 and the file is
+    been asked about thirty-four times. The variable is P3's layer 2 and the file is
     layer 4; "what the configuration declares" means the resolved value, not the
     lowest layer that had an opinion.
 
@@ -519,7 +519,7 @@ def _at(target: ExpandedTarget, *parts: str) -> KeyPath:
 def _username(target: ExpandedTarget, *, env: Mapping[str, str]) -> str | None:
     """Who connects: §6's variable, then the file, then nothing.
 
-    P3's layering applied to one field -- the environment is layer 3 and the
+    P3's layering applied to one field -- the environment is layer 2 and the
     file is layer 4, so a variable set for this execution context wins.
 
     **Not consulted under** ``external``, and that asymmetry is deliberate.

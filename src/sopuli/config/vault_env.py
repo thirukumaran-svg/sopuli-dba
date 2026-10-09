@@ -4,7 +4,7 @@ The environment's half of C13. A store's settings belong to the store rather
 than to the run, so ``vaults.<name>.*`` is merged **inside the file** rather than
 through the invocation -- :mod:`sopuli.config.vault_layers` says why, and
 :func:`sopuli.settings.sources.config_contributions` says the same thing from the
-other end about a profile's block. This module is where layers 2 and 3 join that
+other end about a profile's block. This module is where layers 1 and 2 join that
 merge, which is why it lives beside it rather than in
 :mod:`sopuli.settings.sources` with the rest of §6's table.
 
@@ -17,7 +17,7 @@ Three shapes, and the difference between them is *which store they address*:
 
     SOPULI_VAULT__VAULT_DEV__ADDR    one named store       layer 2
     SOPULI_VAULT_ADDR                the default store     layer 2
-    VAULT_ADDR                       the default store     layer 3
+    VAULT_ADDR                       the default store     layer 2, below SOPULI_*
 
 **The named form is the addressing C13 chose**, written the way §6 writes
 nesting: ``SOPULI_`` plus an upper-snake path, ``__`` between the object and the
@@ -108,7 +108,7 @@ NAMED_KEYS: Mapping[str, str] = MappingProxyType({"ADDR": "addr"})
 #: ``SOPULI_*`` variables that address the default store. Layer 2.
 ACTIVE_VARIABLES: Mapping[str, str] = MappingProxyType({"SOPULI_VAULT_ADDR": "addr"})
 
-#: Vault's own variables, honoured at layer 3 -- below their ``SOPULI_*``
+#: Vault's own variables, honoured at layer 2 -- below their ``SOPULI_*``
 #: equivalent where there is one (P3). ``VAULT_CACERT`` is a path to a
 #: PEM-encoded CA certificate, which is ``tls.ca_file``; ``VAULT_CAPATH`` is
 #: absent because §6's list is, and an unlisted variable is one nobody has asked

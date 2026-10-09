@@ -10,7 +10,8 @@ Three properties carry the module:
 forms name whichever store ``defaults.vault`` -- or ``SOPULI_VAULT`` above it --
 resolves to, and refuse rather than guess when nothing does.
 
-**Rank.** Layer 2 over layer 3 over the file, all through the one resolver.
+**Rank.** Layer 2 over the file, with Vault's own variables ranked below their
+``SOPULI_*`` equivalent inside layer 2, all through the one resolver.
 
 **Ambiguity is refused, never resolved.** Two stores whose names map to one
 variable spelling, a key that addresses nothing, a store the file never declared.
@@ -148,7 +149,7 @@ def test_the_named_variable_beats_a_profile() -> None:
 
 
 def test_a_sopuli_variable_beats_the_third_party_one() -> None:
-    """§9's worked example, and P3's second exception: `SOPULI_VAULT_ADDR` beats
+    """§9's worked example, and P3's rule within layer 2: `SOPULI_VAULT_ADDR` beats
     `VAULT_ADDR`, because a variable named for this tool is the more deliberate
     of the two."""
     env = {"SOPULI_VAULT_ADDR": ACTIVE_ADDR, "VAULT_ADDR": THIRDPARTY_ADDR}
