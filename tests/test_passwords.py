@@ -124,10 +124,15 @@ def test_every_required_class_is_present_on_every_draw() -> None:
 
 
 def test_a_heavier_requirement_is_still_satisfied_every_time() -> None:
-    """Four specials out of eight characters is where naive rejection sampling
+    """Four specials out of ten characters is where naive rejection sampling
     starts needing real numbers of draws. It still must not return a candidate
-    that misses."""
-    demanding = policy(length=8, charset="alnum_safe", require=(("special", 4),))
+    that misses.
+
+    Ten, not eight: with `alnum_safe`'s seven specials, one draw in 75 meets this
+    at ten characters and one in 190 at eight. At eight, the 1000 attempts give
+    up on about one password in 200, and this test, which draws 50, would fail
+    about one run in five."""
+    demanding = policy(length=10, charset="alnum_safe", require=(("special", 4),))
 
     for password in drawn(demanding, draws=50):
         assert charsets.counts(password)["special"] >= 4

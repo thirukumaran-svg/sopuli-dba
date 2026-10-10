@@ -479,7 +479,7 @@ policies:
   app-standard:
     password:
       length: 24
-      charset: alnum_safe        # A-Za-z0-9 plus _ # $ - . + = ~ ^
+      charset: alnum_safe        # A-Za-z0-9 plus _ # - . + = ~
       first_char: alpha
       require: { upper: 1, lower: 1, digit: 1, special: 1 }
     account:
@@ -2446,13 +2446,18 @@ was meant, and whether the shape survives a connect string or a `.env` file.
 | Name | Contents | Notes |
 |---|---|---|
 | `alnum` | `A–Z a–z 0–9` | safest; no quoting anywhere |
-| `alnum_safe` | alnum + `_ # $ - . + = ~ ^` | avoids shell, connection-string and SQL-quoting hazards. **Default.** |
+| `alnum_safe` | alnum + `_ # - . + = ~` | avoids shell, connection-string and SQL-quoting hazards. **Default.** |
 | `printable_ascii` | printable ASCII except space **and except `"`** | requires quoted identifiers; may break connect strings and `.env` files |
 | `custom` | explicit `allow:` string | you take responsibility |
 
 `printable_ascii` names the `"` exclusion rather than leaving it to the rule
 below, because an alphabet containing a character every password is rejected for
 would produce nothing but candidates that are thrown away.
+
+`alnum_safe` has no `$` and no `^`. A POSIX shell expands `$`, unquoted or in
+double quotes, and Docker Compose expands it in a `.env` file, so `aB3$xy_9`
+arrives as `aB3`. Windows `cmd.exe` reads `^` as its escape character, so
+`set PW=aB3^xy_9` sets `aB3xy_9`. Reasons: [#742](../decisions/log.md#742).
 
 A **class** is `upper`, `lower`, `digit`, or `special` — where `special` is
 everything else in the alphabet. That is what makes `require: { special: 1 }`

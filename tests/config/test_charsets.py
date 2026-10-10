@@ -33,13 +33,15 @@ def test_alnum_is_letters_and_digits_only() -> None:
     )
 
 
-def test_alnum_safe_adds_exactly_the_nine_specials_section_8_names() -> None:
+def test_alnum_safe_adds_exactly_the_seven_specials_section_8_names() -> None:
     """The set §8 and §2 both write out. One character more would be a hazard the
-    default charset was chosen to avoid; one fewer would be a silent narrowing."""
+    default charset was chosen to avoid; one fewer would be a silent narrowing.
+    `$` and `^` are left out on purpose: a shell and a Compose `.env` file expand
+    `$`, and `cmd.exe` reads `^` as an escape (#742)."""
     added = set(charsets.ALPHABETS["alnum_safe"]) - set(charsets.ALPHABETS["alnum"])
 
-    assert added == set("_#$-.+=~^")
-    assert len(charsets.SAFE_SPECIALS) == 9
+    assert added == set("_#-.+=~")
+    assert len(charsets.SAFE_SPECIALS) == 7
 
 
 def test_printable_ascii_is_every_printable_except_space_and_the_quote() -> None:

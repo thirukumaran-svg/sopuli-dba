@@ -39,11 +39,11 @@ UPPER = string.ascii_uppercase
 LOWER = string.ascii_lowercase
 DIGIT = string.digits
 
-#: §8's nine additions to ``alnum``: they avoid shell, connection-string and
+#: §8's seven additions to ``alnum``: they avoid shell, connection-string and
 #: SQL-quoting hazards.
-SAFE_SPECIALS = "_#$-.+=~^"
+SAFE_SPECIALS = "_#-.+=~"
 
-#: The same nine as §8 and §2 write them in prose, for an error message.
+#: The same seven as §8 and §2 write them in prose, for an error message.
 SAFE_SPECIALS_SPACED = " ".join(SAFE_SPECIALS)
 
 #: Printable ASCII without space -- ``0x21`` to ``0x7E`` inclusive.

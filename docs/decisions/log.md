@@ -1732,3 +1732,23 @@ the register.
   - Require the grant: measurement found it unnecessary.
   - One code for both: a consumer could not tell "in clear" from "did not
     look" without reading the message.
+
+## #742
+
+- **Decided:** 2026-10-10, #742
+- **Question:** `$` and `^` are specials in `alnum_safe`, the default charset.
+  A POSIX shell expands `$`, unquoted or in double quotes, and Docker Compose
+  expands it in a `.env` file. Windows `cmd.exe` reads `^` as its escape
+  character. Keep them and tell the operator to quote every password, or drop
+  them?
+- **Decision:** Drop both. The specials are `_ # - . + = ~`.
+- **Why:** `01-configuration.md` §8 says `alnum_safe` avoids shell hazards.
+  With `$` that was false in `sh`, where `aB3$xy_9` arrives as `aB3`, and in a
+  `.env` file, which loses the same tail. With `^` it was false in `cmd.exe`,
+  where `set PW=aB3^xy_9` sets `aB3xy_9`. A rule that every password must be
+  quoted is one an operator forgets, and the failure is a password changed
+  with no error. The cost is two symbols, 71 to 69, and a supplied password
+  with `$` or `^` is no longer compliant under `alnum_safe`. A policy that
+  wants either can name it in `charset: custom`.
+- **Rejected:** Keep them and require quoting. Only `alnum` would then be safe
+  unquoted, and the default charset would need a quoting rule for each path.
