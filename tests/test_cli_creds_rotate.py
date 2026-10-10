@@ -46,6 +46,7 @@ from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
     ChangeResult,
     Credential,
+    Encryption,
     PrivilegeAudit,
     Scope,
     UserState,
@@ -169,6 +170,11 @@ class Database:
         return True
 
 
+#: An encrypted connection, the fake's default, so SOPULI-W031/W032 appear only
+#: in the tests about them.
+TLS = Encryption(method="tls", protocol="tcps")
+
+
 class FakeSession:
     """One connection to a :class:`Database`, and a record of what it was asked.
 
@@ -187,6 +193,7 @@ class FakeSession:
         on_call: Callable[[str], None] | None = None,
         audit: PrivilegeAudit | Exception | None = None,
         scope: Scope | None = None,
+        encryption: Encryption = TLS,
     ) -> None:
         self.database = database
         self.set_error = set_error
@@ -194,6 +201,7 @@ class FakeSession:
         self.on_call = on_call
         self.audit = audit
         self.given_scope = scope
+        self.encryption = encryption
         self.attempts: list[tuple[str, str]] = []
         self.changed: list[tuple[str, str]] = []
         self.finished: list[str] = []
@@ -201,8 +209,16 @@ class FakeSession:
 
     def scope(self) -> Scope:
         if self.given_scope is not None:
-            return replace(self.given_scope, capabilities=self.capabilities)
-        return Scope(type="pdb", container="ALPHA", read_write=True, capabilities=self.capabilities)
+            return replace(
+                self.given_scope, capabilities=self.capabilities, encryption=self.encryption
+            )
+        return Scope(
+            type="pdb",
+            container="ALPHA",
+            read_write=True,
+            capabilities=self.capabilities,
+            encryption=self.encryption,
+        )
 
     def privileges(self) -> PrivilegeAudit:
         if isinstance(self.audit, Exception):
@@ -289,6 +305,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         audits: Mapping[str, PrivilegeAudit | Exception] | None = None,
         scopes: Mapping[str, Scope] | None = None,
         store: MemoryStore | None = None,
+        encryption: Encryption = TLS,
     ) -> dict[str, Any]:
         vault = store if store is not None else MemoryStore()
         for path, body in (documents or _two_targets()).items():
@@ -330,6 +347,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     on_call=None if on_call is None else (lambda event: on_call(harness, event)),
                     audit=None if audits is None else audits.get(target.name),
                     scope=None if scopes is None else scopes.get(target.name),
+                    encryption=encryption,
                 )
                 sessions.append(session)
                 return session
@@ -424,6 +442,24 @@ def test_a_rotation_generates_applies_and_promotes(
     issued = changed(harness)
     assert len(issued) == 1
     assert body["DB_CREDENTIALS"]["acme_web_user"] == issued[0][1]
+
+
+def test_a_rotation_over_a_connection_in_clear_warns_once_per_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#697: `rotate` sends a password, so it warns as `apply` does, and still rotates."""
+    clear = Encryption(method="none", protocol="tcp", hint="require NNE or TLS on the server")
+    harness = estate(encryption=clear)
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert len(changed(harness)) == 2
+    found = [
+        one
+        for one in json.loads(result.output).get("diagnostics", [])
+        if one.get("code") == "SOPULI-W031"
+    ]
+    assert sorted(one["target"] for one in found) == ["appdb-alpha", "appdb-beta"]
 
 
 def test_the_old_password_is_kept_as_previous(

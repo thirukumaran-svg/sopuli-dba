@@ -536,9 +536,15 @@ acme_app_user    free-pdb  IN_SYNC          changed and verified by login
 acme_batch_user  free-pdb  ROLLOVER_ACTIVE  changed and verified; a rollover window is open, so the previous password authenticates until it closes
 
 2 changed, 1 promoted to `current`
+
+1 note:
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
-"1 promoted" counts vault documents, and both accounts share one.
+"1 promoted" counts vault documents, and both accounts share one. The note is
+`SOPULI-W031`: the tier-1 container does not require NNE or TLS, so the new
+passwords crossed the network in clear. Every command that sends a password
+prints it, once per target.
 
 Run it again. Nothing changes, because the database already has the vault's
 password:
@@ -603,6 +609,9 @@ acme_app_user    free-pdb  IN_SYNC  changed and verified by login
 acme_batch_user  free-pdb  IN_SYNC  the vault's password is already accepted; nothing to change
 
 1 changed
+
+1 note:
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
 A login that fails counts toward the account's lockout limit. `--method hash`
@@ -640,6 +649,9 @@ acme_batch_user  free-pdb  ROLLOVER_ACTIVE  changed and verified; a rollover win
 2 changed, 1 promoted to `current`
 
 rotation: staged 1 document, promoted 1 document
+
+1 note:
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
 ### 8.7 Roll back
@@ -659,6 +671,9 @@ acme_app_user    free-pdb  IN_SYNC          changed and verified by login
 acme_batch_user  free-pdb  ROLLOVER_ACTIVE  the vault's password is already accepted, and a rollover window is open: the previous password still works too
 
 1 rolled back, 1 promoted to `current`
+
+1 note:
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
 `acme_batch_user` needs no change: its rollover window is still open, so the old
@@ -708,11 +723,15 @@ acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice', 'a
 
 reset acme_dev_alice on 1 of 1 targets
 
+
+1 note:
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
+
 hand this to acme_dev_alice for free-pdb; it unwraps once:
 
     <TOKEN>
 
-It stops working at 2026-10-05T16:12:59.524979Z, and the first unwrap is the
+It stops working at 2026-10-09T21:41:42.871880Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and
 them finding it spent is the only warning either of you gets.
 ```
@@ -779,8 +798,8 @@ delivery:
 
 It asks for confirmation every time, and `--confirm` does not answer the prompt.
 It refuses when stdout is not a terminal, or when the output is JSON. UC-2 §6.5
-lists its guards. This run used a config with no `reset_records:` block, so it
-ends with a note:
+lists its guards. This run used a config with no `reset_records:` block, and
+the tier-1 container does not encrypt connections, so it ends with two notes:
 
 ```
 $ sopuli account reset-password --account acme_dev_alice
@@ -795,13 +814,14 @@ ACCOUNT         TARGET    INTENT        SECRET
 acme_dev_alice  free-pdb  password_set  -
 
 ACCOUNT         TARGET    STATE  WAS   DETAIL
-acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'
+acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice', 'acme_dev_bob'
 
 reset acme_dev_alice on 1 of 1 targets
 
 
-1 note:
+2 notes:
   no `reset_records:` block is declared, so no record of this reset will be written and no advisory lock is taken on the account: the run document and the database are the whole record of it
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 
 password for acme_dev_alice, shown once:
 
@@ -881,6 +901,9 @@ acme_batch_user  free-pdb  ROLLOVER_ACTIVE  changed and verified; a rollover win
 acme_priv_user   free-pdb  SKIPPED          the account holds DBA
 
 2 changed, 1 promoted to `current`, 1 not confirmed
+
+1 note:
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
 Exit 0. The tool skips the account and does the rest of the job. Name the account
@@ -983,7 +1006,7 @@ schemas are in [`schemas/`](schemas/). For example, read the summary with Python
 ```
 $ sopuli --config sopuli.yaml --output json creds check > check.json
 $ python -c "import json; d=json.load(open('check.json')); print(d['schema_version'], d['exit_code'], d['summary'])"
-1.32 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
+1.33 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
 ```
 
 No field holds a password. Every exit code except 2 produces a document.

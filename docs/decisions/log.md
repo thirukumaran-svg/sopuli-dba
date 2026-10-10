@@ -1707,3 +1707,28 @@ the register.
 - **Rejected:**
   - Build logging now: a subsystem with no consumer.
   - Implement the policy keys: a second way in beside the flags.
+
+## #697
+
+- **Decided:** 2026-10-09, #697
+- **Question:** The tool sends `ALTER USER … IDENTIFIED BY` over whatever
+  connection it has, so on an unencrypted one the new password crosses the
+  network in clear. Warn or refuse? Does reading the encryption need a new
+  grant? What should happen when the tool cannot tell?
+- **Decision:**
+  - Warn, never refuse. `SOPULI-W031` where a password was sent over a
+    connection that is not encrypted.
+  - The grant on `V$SESSION_CONNECT_INFO` is optional. `00_install.sql` offers
+    it as parameter 7, off by default.
+  - "Could not tell" warns too, with its own code, `SOPULI-W032`.
+- **Why:** A refusal would need a new safety setting, and invariant 10 says
+  safety settings only ratchet toward safe. A warning needs only a new code and
+  a run schema minor bump. The grant is optional because `PUBLIC` reads the
+  view on every release measured (`sql/oracle/12_connection_encryption_probe.sql`).
+  "Could not tell" has its own code for `SOPULI-W018`'s reason: a check that
+  did not run is not a pass.
+- **Rejected:**
+  - Refuse: needs a new safety setting.
+  - Require the grant: measurement found it unnecessary.
+  - One code for both: a consumer could not tell "in clear" from "did not
+    look" without reading the message.

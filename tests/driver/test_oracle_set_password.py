@@ -184,8 +184,10 @@ def test_the_name_in_the_statement_is_the_database_s_spelling(account: Any) -> N
 def test_a_missing_account_is_refused_before_any_statement(session: Any) -> None:
     _drop(session)
 
-    with pytest.raises(DriverError, match="does not exist"):
+    with pytest.raises(DriverError, match="does not exist") as raised:
         session.set_password("acme_no_such_user", Secret(ROTATED))
+
+    assert raised.value.password_sent is False
 
 
 def test_a_password_the_verify_function_refuses_arrives_as_policy(strict_account: Any) -> None:
@@ -202,6 +204,8 @@ def test_a_password_the_verify_function_refuses_arrives_as_policy(strict_account
 
     assert raised.value.code == "ORA-28003"
     assert raised.value.category == "policy"
+    # Refused by the server, so the statement and its password crossed (#697).
+    assert raised.value.password_sent is True
 
 
 def test_reusing_the_current_password_arrives_as_policy(strict_account: Any) -> None:
@@ -253,8 +257,10 @@ def test_an_over_long_password_is_refused_before_the_wire(account: Any) -> None:
     """The client-side refusal is what produces a message naming the limit; the
     server's own answer to this is `ORA-28003`, which says only that some rule
     was broken."""
-    with pytest.raises(DriverError, match="bytes"):
+    with pytest.raises(DriverError, match="bytes") as raised:
         account.set_password(ACCOUNT, Secret("Aa11-" + "x" * 200))
+
+    assert raised.value.password_sent is False
 
 
 # ------------------------------------------- the client, but no server ------
@@ -325,6 +331,7 @@ def test_a_read_only_target_is_refused_before_any_statement(session_module: Any)
 
     assert "orders-dr" in str(raised.value)
     assert connection.opened.executed == [], "nothing may reach the wire"
+    assert raised.value.password_sent is False
 
 
 def test_finishing_a_rollover_on_a_read_only_target_is_refused_before_any_statement(

@@ -126,6 +126,7 @@ from sopuli.diagnostics import (
     ROTATION_UNCONFIRMED,
     admin_diagnostics,
     constraint_diagnostics,
+    encryption_diagnostics,
     guardrail_diagnostics,
     install_diagnostics,
     lock_broken,
@@ -139,6 +140,7 @@ from sopuli.diagnostics import (
     unlistable_stores,
     vault_diagnostics,
     wallet_diagnostics,
+    worse_encryption,
 )
 from sopuli.driver import guardrails
 from sopuli.driver.oracle.client import (
@@ -164,6 +166,7 @@ from sopuli.driver.protocol import (
     AccountChange,
     AttributeChange,
     DriverError,
+    Encryption,
     PartialAccountChangeError,
     UnsupportedCapabilityError,
     UserState,
@@ -2128,6 +2131,12 @@ def account_reset_password(
             unsent = notification_unsent(one.account, one.target, one.notify_error)
             document.diagnostics.append(unsent)
             notices.append(unsent)
+    # Once per target, for the targets a password was sent to (#697).
+    clear = encryption_diagnostics(
+        [(one.target, one.encryption) for one in found if one.encryption is not None]
+    )
+    document.diagnostics.extend(clear)
+    notices.extend(clear)
     document.finish(
         _reset_exit(states, stolen=stolen is not None, changed=changed),
         summarise_reset(states, changed=changed),
@@ -2479,6 +2488,11 @@ class _Reset:
     #: ``diagnostics[]``, which is where a consumer already looks for what a run
     #: could not do.
     notify_error: str | None = None
+    #: The encryption of the connection the new password was sent over; ``None``
+    #: where no password was sent. **Never serialised as a result field**: the
+    #: caller turns it into SOPULI-W031/W032 in ``diagnostics[]``, once per
+    #: target.
+    encryption: Encryption | None = None
     #: **What the operator is shown, and it is secret-bearing on both paths**: the
     #: password block on the seen path, and the wrapping token on an unseen one
     #: (UC-2 §6.6). This comment is the field's one statement about what it
@@ -2611,6 +2625,7 @@ def _reset_one(
     """
     started = time.monotonic()
     session = None
+    sent: Encryption | None = None
     try:
         try:
             session = _open_session(target, run, config)
@@ -2698,6 +2713,11 @@ def _reset_one(
                 if backend is None
                 else backend.deliver(secret, account=account, target=target.name)
             )
+            # Read before the call, and kept on a failure only where the driver
+            # says the password's statement went out (`_carried`): a statement
+            # the server refuses has still carried the password across the
+            # network, and one the driver refused first has not.
+            sent = session.scope().encryption
             try:
                 changes = session.reset_password(
                     account,
@@ -2713,8 +2733,15 @@ def _reset_one(
                     # token already made retrieves a value that authenticates
                     # nothing -- 6.4's recoverable failure -- and nothing is handed
                     # over. What the row must not do is say nothing changed.
-                    return _partial_reset(
-                        error, account=account, target=target.name, status=status, started=started
+                    return replace(
+                        _partial_reset(
+                            error,
+                            account=account,
+                            target=target.name,
+                            status=status,
+                            started=started,
+                        ),
+                        encryption=sent if _carried(error) else None,
                     )
                 changes, partial = error.completed, error
         except Exception as error:  # noqa: BLE001 -- a per-target finding
@@ -2728,6 +2755,7 @@ def _reset_one(
                 status=status,
                 duration_ms=_elapsed(started),
                 error=reported,
+                encryption=sent if _carried(error) else None,
             )
 
         # The row is built **before** the hand-over, and that is not style.
@@ -2765,6 +2793,7 @@ def _reset_one(
             handover=receipt.reported() if receipt is not None else None,
             overridden=overridden,
             duration_ms=_elapsed(started),
+            encryption=sent,
         )
 
         def journalled(one: _Reset) -> _Reset:
@@ -5840,6 +5869,8 @@ def creds_apply(
     _stream_results(run)
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
+    clear = _encryption_notices(applied)
+    document.diagnostics.extend(clear)
     # A (target, profile) the pre-flight already warned about is not warned about
     # again: the same code twice in one document would read as two problems. The
     # run's own reading still covers every pair the pre-flight did not see -- all of
@@ -5927,6 +5958,7 @@ def creds_apply(
         repair_notes
         + [one.message for one in reuse_notices]
         + [one.message for one in unchecked]
+        + [one.message for one in clear]
         + _lock_notices(manager)
     )
     return "\n".join([f"{_header(plan, sources)}\n\n{table}", *notes])
@@ -5986,6 +6018,10 @@ class _Applied:
     #: end of the run rather than reported here, because the warning is grouped per
     #: profile and one account cannot see the others on it.
     reuse: UserState | None = None
+    #: The encryption of the connection this account's new password was sent
+    #: over; ``None`` where no password was sent. Reported once per target at the
+    #: end of the run (SOPULI-W031/W032).
+    encryption: Encryption | None = None
 
     @property
     def mutated(self) -> bool:
@@ -6557,6 +6593,7 @@ def _apply_one(
     enforced: tuple[AttributeChange, ...] = ()
     issued = False
     reuse: UserState | None = None
+    sent: Encryption | None = None
     try:
         user = session.describe_user(binding.account)
         settled = apply_states.settled_before_acting(
@@ -6663,6 +6700,11 @@ def _apply_one(
             # reuse history, and a warning about a statement nobody sent is noise.
             reuse = user
         manager.check(_lock_key(binding))
+        # Read before the call, and kept on a failure only where the statement
+        # went out (`_carried`): a statement the server refuses has still
+        # carried the password across the network, and one the driver refused
+        # first has not.
+        sent = session.scope().encryption
         session.set_password(user.name, source.value)
         # From here on the database holds the new password whatever else fails, and
         # the row has to say so: an error in the re-read or the verification below
@@ -6731,6 +6773,7 @@ def _apply_one(
             # contract emits, and this is a question the tool asks itself.
             refused=refused,
             reuse=reuse,
+            encryption=sent if issued or _carried(error) else None,
         )
 
     return _Applied(
@@ -6745,6 +6788,7 @@ def _apply_one(
         attributes=enforced,
         duration_ms=_elapsed(started),
         reuse=reuse,
+        encryption=sent,
     )
 
 
@@ -7761,13 +7805,23 @@ def _splice(applied: Sequence[_Applied], again: Sequence[_Applied]) -> list[_App
 
     ``redraws`` accumulates across rounds, because :func:`_apply_estate` builds
     fresh records that have never heard of it. That is what stops the budget
-    resetting every time round the loop.
+    resetting every time round the loop. ``encryption`` accumulates for the same
+    reason: a password the first pass sent in clear crossed the network even
+    where the second pass sent nothing (#697).
     """
     replacements = {(record.binding.account, record.binding.target): record for record in again}
     spliced: list[_Applied] = []
     for record in applied:
         fresh = replacements.pop((record.binding.account, record.binding.target), None)
-        spliced.append(record if fresh is None else replace(fresh, redraws=record.redraws + 1))
+        spliced.append(
+            record
+            if fresh is None
+            else replace(
+                fresh,
+                redraws=record.redraws + 1,
+                encryption=worse_encryption(record.encryption, fresh.encryption),
+            )
+        )
     # Anything left is an account that was not in the original pass, which cannot
     # happen -- a redraw narrows the estate rather than widening it -- and is
     # appended rather than dropped, because losing a row this run applied would
@@ -8105,6 +8159,31 @@ def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
     """
     return guardrail_diagnostics(
         [(record.binding.target, caveat) for record in applied for caveat in record.caveats]
+    )
+
+
+def _carried(error: BaseException) -> bool:
+    """Whether the password's statement had gone out when ``error`` was raised.
+
+    The driver's answer (:attr:`DriverError.password_sent`). Any other exception
+    came from the tool's own side of the wire, so it carried nothing.
+    """
+    return isinstance(error, DriverError) and error.password_sent
+
+
+def _encryption_notices(applied: Sequence[_Applied]) -> list[Diagnostic]:
+    """SOPULI-W031/W032 for the targets this run sent a password to (#697).
+
+    Emitted by `apply` and by `rotate`, from the encryption each record carries
+    when its password was sent. A record that sent nothing carries ``None`` and
+    is not counted.
+    """
+    return encryption_diagnostics(
+        [
+            (record.binding.target, record.encryption)
+            for record in applied
+            if record.encryption is not None
+        ]
     )
 
 
@@ -8743,6 +8822,8 @@ def creds_rotate(
         return refusal
     unchecked = _guardrail_caveats(sequence.applied)
     document.diagnostics.extend(unchecked)
+    clear = _encryption_notices(sequence.applied)
+    document.diagnostics.extend(clear)
     states = [record.outcome.state for record in sequence.applied]
     changed = sum(1 for record in sequence.applied if record.mutated)
 
@@ -8799,7 +8880,10 @@ def creds_rotate(
     # See `apply`'s: a warning that cannot be seen in the default output is not
     # surfaced.
     notes = render_notices(
-        sequence.caveats + [one.message for one in unchecked] + _lock_notices(manager)
+        sequence.caveats
+        + [one.message for one in unchecked]
+        + [one.message for one in clear]
+        + _lock_notices(manager)
     )
     return "\n".join([f"{header}\n\n{table}", *notes])
 

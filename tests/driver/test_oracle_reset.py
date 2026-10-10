@@ -271,6 +271,7 @@ def test_a_deliberate_lock_is_refused_and_nothing_is_issued(
         account.reset_password(ACCOUNT, NEW, expire=False)
 
     assert "does not unlock it" in str(caught.value)
+    assert caught.value.password_sent is False
     assert _status(account) == "LOCKED"
 
     _run(account, f"alter user {ACCOUNT} account unlock")
@@ -419,8 +420,10 @@ def test_an_inadmissible_password_is_refused_before_the_account_is_unlocked(
         assert _logon(live_oracle, "not-the-password") == "ORA-01017"
     assert _status(account) == "LOCKED(TIMED)"
 
-    with pytest.raises(PasswordNotAdmissibleError, match="cannot escape"):
+    with pytest.raises(PasswordNotAdmissibleError, match="cannot escape") as caught:
         account.reset_password(ACCOUNT, Secret('has-a-"-in-it'), expire=False)
+
+    assert caught.value.password_sent is False
 
     assert _status(account) == "LOCKED(TIMED)", "the unlock ran before the password was judged"
     assert _logon(live_oracle, OLD) == "ORA-28000"
@@ -442,12 +445,15 @@ def _fail_statement(session: Any, monkeypatch: pytest.MonkeyPatch, number: int) 
     issued = session._issue
     count = 0
 
-    def issue(statement: Any) -> None:
+    def issue(statement: Any, *, password: bool = False) -> None:
         nonlocal count
         count += 1
         if count == number:
-            raise DriverError("ORA-01031: insufficient privileges", code="ORA-01031")
-        issued(statement)
+            # As the real `_issue` marks it: the server refused the statement.
+            failure = DriverError("ORA-01031: insufficient privileges", code="ORA-01031")
+            failure.password_sent = password
+            raise failure
+        issued(statement, password=password)
 
     monkeypatch.setattr(session, "_issue", issue)
 
@@ -470,6 +476,7 @@ def test_an_unlock_that_committed_before_the_set_failed_is_reported(
 
     assert [change.action for change in caught.value.completed] == [ACCOUNT_UNLOCK]
     assert caught.value.code == "ORA-01031", "the server's own code survives the wrapping"
+    assert caught.value.password_sent is True, "the failing statement was the set (#697)"
     assert _status(account) == "OPEN", "the unlock the error reports did not happen"
     assert _logon(live_oracle, OLD) == "ok", "the password was changed by a failed set"
 
@@ -485,6 +492,7 @@ def test_a_failed_set_on_an_unlocked_account_is_an_ordinary_failure(
         account.reset_password(ACCOUNT, NEW, expire=False)
 
     assert not isinstance(caught.value, PartialAccountChangeError)
+    assert caught.value.password_sent is True, "the failing statement was the set (#697)"
 
 
 @pytest.mark.requires_capability(PASSWORD_ROLLOVER)
@@ -503,6 +511,7 @@ def test_a_set_that_committed_before_the_close_failed_is_reported(
         rollover_account.reset_password(ACCOUNT, NEW, expire=False)
 
     assert [change.action for change in caught.value.completed] == [ACCOUNT_UNLOCK, PASSWORD_SET]
+    assert caught.value.password_sent is True, "the set before the close went out (#697)"
     assert _logon(live_oracle, NEW.reveal()) == "ok"
     assert _logon(live_oracle, OLD) == "ok", "the window closed although its statement failed"
 
@@ -514,3 +523,4 @@ def test_resetting_an_account_that_does_not_exist_is_an_error(session: Any) -> N
         session.reset_password("acme_no_such_user", NEW, expire=False)
 
     assert "does not exist" in str(caught.value)
+    assert caught.value.password_sent is False

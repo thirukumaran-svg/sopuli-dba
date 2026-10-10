@@ -36,7 +36,8 @@ from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.constraints import NAMED, POLICY, UNKNOWN, AccountConstraints, Constraints
 from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
-from sopuli.driver.protocol import UserState
+from sopuli.driver.protocol import ENCRYPTION_NONE, Encryption, UserState
+from sopuli.driver.protocol import UNKNOWN as ENCRYPTION_UNKNOWN_METHOD
 from sopuli.install_shape import INSTALLED, InstallShape
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager, Unguarded
@@ -433,6 +434,17 @@ PASSWORD_REDRAWN = "SOPULI-W029"
 #: The server refused a password and the run was not allowed to draw another.
 PASSWORD_NOT_REDRAWN = "SOPULI-W030"
 
+#: This run sent a password over a connection that is not encrypted (#697).
+#: Not a refusal: the maintainer's decision is to warn. One per target.
+CONNECTION_UNENCRYPTED = "SOPULI-W031"
+
+#: This run sent a password over a connection whose encryption could not be
+#: established (#697). Its own code, apart from :data:`CONNECTION_UNENCRYPTED`,
+#: for :data:`GUARDRAIL_UNCHECKED`'s reason: a check that did not run is not a
+#: pass, and a consumer must be able to tell "in clear" from "did not look"
+#: without parsing a message. One per target.
+CONNECTION_ENCRYPTION_UNKNOWN = "SOPULI-W032"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -663,6 +675,19 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "keeps the password it had; another target of the same account may already "
             "hold the refused value, and the result rows say which."
         ),
+        CONNECTION_UNENCRYPTED: (
+            "The run sent a new password over a connection that is not encrypted, so the "
+            "password crossed the network in clear. One entry per target, naming what to "
+            "do in the product's own words: for Oracle, require NNE or TLS on the server. "
+            "The password was still set; this code warns and never refuses."
+        ),
+        CONNECTION_ENCRYPTION_UNKNOWN: (
+            "The run sent a new password over a connection whose encryption could not be "
+            "established, so the password may have crossed the network in clear. One "
+            "entry per target, with the reason: for Oracle, usually that "
+            "`V$SESSION_CONNECT_INFO` is not readable, and the message names the grant. "
+            "It is not the same finding as `SOPULI-W031`."
+        ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
             "against a target, because the fact it checks could not be read. The run "
@@ -887,6 +912,59 @@ def guardrail_diagnostics(caveats: Sequence[tuple[str, Caveat]]) -> list[Diagnos
                     + (f" -- {remedy}" if remedy else "")
                     + f" ({_accounts(names)})"
                 ),
+            )
+        )
+    return notices
+
+
+def worse_encryption(kept: Encryption | None, found: Encryption | None) -> Encryption | None:
+    """The less safe of two answers about the connections one password went over.
+
+    ``none``, then ``unknown``, then anything encrypted. A password known to have
+    crossed in clear is the finding, whatever another session could not tell.
+    ``None`` means no password was sent, and loses to any answer.
+    """
+    rank = {ENCRYPTION_NONE: 2, ENCRYPTION_UNKNOWN_METHOD: 1}
+    if kept is None:
+        return found
+    if found is None:
+        return kept
+    return found if rank.get(found.method, 0) > rank.get(kept.method, 0) else kept
+
+
+def encryption_diagnostics(sent: Sequence[tuple[str, Encryption]]) -> list[Diagnostic]:
+    """A password sent over an unencrypted or unknown connection, once per target.
+
+    ``sent`` is (target, encryption) pairs for the connections a password was
+    actually sent over. A target the run read and changed nothing on is not
+    passed: a warning about a statement nobody sent is noise (decision #568's
+    reasoning). The driver's ``hint`` says what to do.
+
+    A target can appear with more than one answer, because each pass of
+    `creds apply`'s redraw opens its own connection, which reads its own. The
+    worst answer is kept (:func:`worse_encryption`).
+    """
+    worst: dict[str, Encryption | None] = {}
+    for target, answer in sent:
+        worst[target] = worse_encryption(worst.get(target), answer)
+    notices: list[Diagnostic] = []
+    for target, found in worst.items():
+        if found is None:
+            continue
+        if found.method == ENCRYPTION_NONE:
+            code = CONNECTION_UNENCRYPTED
+            headline = "a password was sent over a connection that is not encrypted"
+        elif found.method == ENCRYPTION_UNKNOWN_METHOD:
+            code = CONNECTION_ENCRYPTION_UNKNOWN
+            headline = "a password was sent over a connection whose encryption is not known"
+        else:
+            continue
+        notices.append(
+            Diagnostic(
+                level="warning",
+                code=code,
+                target=target,
+                message=f"{target}: {headline}" + (f": {found.hint}" if found.hint else ""),
             )
         )
     return notices

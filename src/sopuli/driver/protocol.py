@@ -338,6 +338,18 @@ class DriverError(Exception):
     #: import an Oracle module to find out that Oracle refused a password.
     regenerate = False
 
+    #: Whether the statement carrying the password had been sent when this was
+    #: raised.
+    #:
+    #: ``True`` once the statement was handed to the client library: the server
+    #: refused it, so it crossed the network, or the connection failed during
+    #: the call, where the driver cannot tell whether it did and says it did. A
+    #: refusal the driver makes before building or sending it -- read-only, a
+    #: missing account, a ``"`` in the password -- leaves it ``False``. The
+    #: caller asks this to decide whether SOPULI-W031/W032 applies (#697),
+    #: because only the driver knows which statement failed.
+    password_sent = False
+
     def __init__(self, message: str, *, hint: str | None = None, code: str | None = None) -> None:
         super().__init__(message)
         self.message = message
@@ -855,6 +867,11 @@ class PartialAccountChangeError(DriverError):
         super().__init__(cause.message, hint=cause.hint, code=cause.code)
         self.category = cause.category
         self.exit_code = cause.exit_code
+        # Sent if the failing statement carried it, or if one that completed
+        # did: a window that failed to close comes after the password went out.
+        self.password_sent = cause.password_sent or any(
+            one.action == PASSWORD_SET for one in completed
+        )
         self.cause = cause
         self.completed = completed
 

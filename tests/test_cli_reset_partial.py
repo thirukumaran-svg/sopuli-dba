@@ -32,11 +32,14 @@ from sopuli.clock import utc_now
 from sopuli.delivery import Receipt
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
+    ENCRYPTION_TLS,
     PASSWORD_SET,
     ROLLOVER_FINISH,
     AccountChange,
     DriverError,
+    Encryption,
     PartialAccountChangeError,
+    Scope,
     UserState,
 )
 from sopuli.exit_codes import ExitCode
@@ -120,9 +123,15 @@ class FakeSession:
         self.status = status
         self.fail = fail
         self.reset: list[str] = []
+        #: An encrypted connection by default, so SOPULI-W031/W032 stay out of
+        #: tests about something else.
+        self.encryption = Encryption(method=ENCRYPTION_TLS, protocol="tcps")
 
     def describe_user(self, account: str) -> UserState | None:
         return UserState(name=account.upper(), status=self.status)
+
+    def scope(self) -> Scope:
+        return Scope(encryption=self.encryption)
 
     def require_no_rollover_window(self, account: str) -> None:
         return None
@@ -587,3 +596,61 @@ def test_the_seen_path_previews_under_jsonl_and_hands_nothing_over(
     assert "target.finished" in names
     assert not [name for name in names if name.startswith("password.")]
     assert session.reset == []
+
+
+# ------------------------------------------------- connection encryption ---
+
+CLEAR = Encryption(method="none", protocol="tcp", hint="require NNE or TLS on the server")
+
+
+def test_a_reset_over_a_connection_in_clear_warns(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """#697: the reset still happens, and the run says the password crossed in clear."""
+    session = Succeeding("OPEN", DENIED)
+    session.encryption = CLEAR
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    found = [
+        one
+        for one in json.loads(result.stdout).get("diagnostics", [])
+        if one.get("code") == "SOPULI-W031"
+    ]
+    assert [one["target"] for one in found] == [TARGET]
+
+
+def _refused_by_the_server() -> DriverError:
+    refused = DriverError("ORA-01031: insufficient privileges", code="ORA-01031")
+    refused.password_sent = True
+    return refused
+
+
+def test_a_refused_reset_still_carried_the_password(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The statement was sent and refused, so the password crossed the network anyway."""
+    session = FakeSession("OPEN", _refused_by_the_server())
+    session.encryption = CLEAR
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--output", "json")
+
+    codes = [one.get("code") for one in json.loads(result.stdout).get("diagnostics", [])]
+    assert "SOPULI-W031" in codes
+
+
+def test_a_reset_the_driver_refused_first_does_not_warn(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """A deliberate lock, a missing account: refused before any statement went out."""
+    session = FakeSession("OPEN", DriverError('account "ACME_DEV_ALICE" is locked'))
+    session.encryption = CLEAR
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--output", "json")
+
+    codes = [one.get("code") for one in json.loads(result.stdout).get("diagnostics", [])]
+    assert "SOPULI-W031" not in codes

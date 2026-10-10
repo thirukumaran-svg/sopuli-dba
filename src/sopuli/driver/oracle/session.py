@@ -381,22 +381,13 @@ class OracleSession:
                     ),
                 )
 
-            statement = alter_user_password(
-                Identifier(spelling),
-                secret,
-                scope=self.scope(),
-                limit=self.byte_limit(),
-            )
-
-            try:
-                # `reveal()` here is one of invariant 2's three permitted
-                # reveals. Nothing between this line and the wire may log it,
-                # and `Statement.__str__` is the redacted form precisely so an
-                # accidental interpolation elsewhere cannot leak it.
-                cursor.execute(statement.reveal())
-            except Exception as error:  # noqa: BLE001 -- classified, never swallowed
-                raise from_error(error).as_error() from error
-
+        statement = alter_user_password(
+            Identifier(spelling),
+            secret,
+            scope=self.scope(),
+            limit=self.byte_limit(),
+        )
+        self._issue(statement, password=True)
         return ChangeResult(changed=True, detail="password set")
 
     def apply_attributes(
@@ -721,7 +712,7 @@ class OracleSession:
         at all -- a fresh draw has no fixed point -- and a row claiming
         ``changed: false`` here could only be a guess.
         """
-        self._issue(statement)
+        self._issue(statement, password=True)
         return AccountChange(
             PASSWORD_SET,
             changed=True,
@@ -913,20 +904,28 @@ class OracleSession:
             ),
         )
 
-    def _issue(self, statement: Statement) -> None:
+    def _issue(self, statement: Statement, *, password: bool = False) -> None:
         """Execute one built statement, classifying whatever the server says.
 
-        The ``reveal()`` is invariant 2's permitted one, as in
-        :meth:`set_password`: nothing between this line and the wire may log it,
-        and ``Statement.__str__`` is the redacted form so an accidental
-        interpolation elsewhere cannot leak it. A cursor per statement, because
-        §4.1's three are separate statements rather than one script.
+        The ``reveal()`` is invariant 2's permitted one: nothing between this
+        line and the wire may log it, and ``Statement.__str__`` is the redacted
+        form so an accidental interpolation elsewhere cannot leak it. A cursor
+        per statement, because §4.1's three are separate statements rather than
+        one script.
+
+        ``password`` says the statement carries one. A failure then has
+        :attr:`~sopuli.driver.protocol.DriverError.password_sent` set, whatever
+        raised it: once the statement is handed to the client, a lost
+        connection cannot say whether its bytes left, and a warning that was
+        not needed costs less than one that was missed (#697).
         """
         with self.connection.cursor() as cursor:
             try:
                 cursor.execute(statement.reveal())
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
-                raise from_error(error).as_error() from error
+                failure = from_error(error).as_error()
+                failure.password_sent = password
+                raise failure from error
 
     def _unlock(self, account: str) -> AttributeChange:
         """``ALTER USER … ACCOUNT UNLOCK``, or report that there was no lock.
