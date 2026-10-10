@@ -30,6 +30,7 @@ from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.clock import utc_now
 from sopuli.delivery import Receipt
+from sopuli.diagnostics import encryption_diagnostics, no_reset_record
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     ENCRYPTION_TLS,
@@ -654,3 +655,50 @@ def test_a_reset_the_driver_refused_first_does_not_warn(
 
     codes = [one.get("code") for one in json.loads(result.stdout).get("diagnostics", [])]
     assert "SOPULI-W031" not in codes
+
+
+# ------------------------------------------------ a declined seen-path prompt ---
+#
+# #738. The password is set before the prompt, so declining it leaves every note
+# true. The seen path refuses JSON, so the run document cannot carry them, and the
+# abort has to print them.
+
+SECOND = "tier1-oracle-2"
+
+TWO_TARGETS = MANUAL.replace(
+    "\nvaults:\n",
+    f"""  - name: {SECOND}
+    type: oracle
+    environment: dev
+    dsn: "192.0.2.11:1521/BETA"
+    admin: {{ username: SOPULI_SVC, auth: {{ method: env }} }}
+
+vaults:
+""",
+)
+
+
+def test_a_declined_prompt_prints_the_notes_for_every_target_reset(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first target is shown and the second declined. Both passwords were set
+    over a connection in clear, and neither reset was journalled."""
+    session = Succeeding("OPEN", DENIED)
+    session.encryption = CLEAR
+    _open(monkeypatch, session, unseen=False)
+
+    result = _run(runner, write_config(TWO_TARGETS), input="y\nn\n")
+
+    assert result.exit_code == ExitCode.ABORTED, result.output
+    assert session.reset == [ACCOUNT, ACCOUNT], "the second password was not set"
+    expected = [
+        no_reset_record().message,
+        *(one.message for one in encryption_diagnostics([(TARGET, CLEAR), (SECOND, CLEAR)])),
+    ]
+    for message in expected:
+        assert message.splitlines()[0] in result.stdout, message
+    assert "3 notes:" in result.stdout
+    rows = [line for line in result.stdout.splitlines() if line.startswith(ACCOUNT)]
+    assert [line.split()[1] for line in rows if "RESET" in line] == [TARGET, SECOND]
+    assert "shown once" not in result.output, "a decline printed a password"
+    assert "sopuli: aborted" in result.stderr

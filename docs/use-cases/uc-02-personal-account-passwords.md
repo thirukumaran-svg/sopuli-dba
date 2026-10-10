@@ -502,7 +502,12 @@ declined still journals `seen: true`. That is what gives the absent `delivery.to
 its meaning, and a journal that understated an exposure would be wrong in the
 direction that matters. A run whose prompt was declined is still journalled, for
 the same reason as the run document: the password was set, and the reset that
-most needs explaining is the one where nobody received it.
+most needs explaining is the one where nobody received it. For the same reason,
+the run prints its result table and its notes before it exits 8, for every target
+it reset, the declined one included. The seen path refuses JSON (§6.5), so no run
+document carries them. The declined target is not notified, because nothing was
+handed over, so it has no `SOPULI-W026`. A decline prints no password, not even
+one the operator accepted on an earlier target.
 
 §3.4 lists the warnings: `SOPULI-W024` when no store is configured, and
 `SOPULI-W025` when the write fails after a successful reset. They are separate

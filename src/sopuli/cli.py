@@ -2050,6 +2050,7 @@ def account_reset_password(
     manager = _reset_lock_manager(run, config, selection)
     found: list[_Reset] = []
     stolen: LockStolenError | None = None
+    declined = False
     try:
         keys = _reset_lock_keys(config, account, reached)
         with manager.holding(keys) if manager is not None else nullcontext():
@@ -2065,21 +2066,29 @@ def account_reset_password(
                         stolen = lost
                         break
                 emitter.event(document, "target.started", target=target.name)
-                one = _reset_one(
-                    target,
-                    account,
-                    run,
-                    config,
-                    delivery=delivery,
-                    force=force,
-                    keep_rollover=keep_rollover,
-                    preview=run.dry_run,
-                    record_at=paths.get(target.name),
-                    backend=backends.get(target.name),
-                    channel=channel,
-                )
+                try:
+                    one = _reset_one(
+                        target,
+                        account,
+                        run,
+                        config,
+                        delivery=delivery,
+                        force=force,
+                        keep_rollover=keep_rollover,
+                        preview=run.dry_run,
+                        record_at=paths.get(target.name),
+                        backend=backends.get(target.name),
+                        channel=channel,
+                    )
+                except _Declined as stop:
+                    # The seen path's prompt, declined. The password was set
+                    # before the prompt, so the run reports what it did like a
+                    # finished one and only then aborts (#738).
+                    one, declined = stop.row, True
                 found.append(one)
                 _reset_events(one, run)
+                if declined:
+                    break
     except LockDeniedError as denied:
         # Exit 7, and nothing was issued: acquisition is all-or-nothing and
         # happens before the first connection, so a reset refused here is a
@@ -2090,11 +2099,10 @@ def account_reset_password(
         emitter.event(document, "lock.denied", data=denied_entry(denied))
         raise
     except click.Abort:
-        # The seen path's prompt, declined. `holding()` has already let the lock
+        # Anything else that stops the run. `holding()` has already let the lock
         # go in its `finally`, so this records a lock that is released rather
-        # than one that looks stuck -- and it records it at all for the reason
-        # `_reset_one` records the row: a run abandoned half way is exactly when
-        # somebody needs to know what it held and what it touched.
+        # than one that looks stuck -- and it records it at all because a run
+        # abandoned half way is exactly when somebody needs to know what it held.
         if manager is not None:
             _record_locks(document, manager)
         raise
@@ -2114,29 +2122,9 @@ def account_reset_password(
         fence = Diagnostic(level="error", message=stolen.message, code=LOCK_LOST)
         document.diagnostics.append(fence)
         notices.append(fence)
-    # The second of §3.4's absences, raised here rather than inside `_reset_one`
-    # so that the plan-time one above and this one are appended in the order
-    # they happened. A row only carries a reason when a record was attempted and
-    # failed; a row that wrote one, or never had a journal to write to, carries
-    # none.
-    for one in found:
-        if one.record_error is not None:
-            failed = reset_record_unwritten(one.record_error.path, one.record_error.reason)
-            document.diagnostics.append(failed)
-            notices.append(failed)
-        # The notification's warning, appended after the record's so the two
-        # read in the order they happened: the notification goes out first, and
-        # the journal is written last because it holds what happened (§6.4).
-        if one.notify_error is not None:
-            unsent = notification_unsent(one.account, one.target, one.notify_error)
-            document.diagnostics.append(unsent)
-            notices.append(unsent)
-    # Once per target, for the targets a password was sent to (#697).
-    clear = encryption_diagnostics(
-        [(one.target, one.encryption) for one in found if one.encryption is not None]
-    )
-    document.diagnostics.extend(clear)
-    notices.extend(clear)
+    later = _reset_notices(found)
+    document.diagnostics.extend(later)
+    notices.extend(later)
     document.finish(
         _reset_exit(states, stolen=stolen is not None, changed=changed),
         summarise_reset(states, changed=changed),
@@ -2174,7 +2162,46 @@ def account_reset_password(
     # itself -- which is what a terminal operator needs, and what
     # `diagnostics[]` alone tells only a JSON consumer.
     told = "\n".join(render_notices([one.message for one in notices]))
+    if declined:
+        # **The table and the notes, then the abort (#738).** The passwords set
+        # before the prompt make every row and every note true, and the seen
+        # path refuses JSON (§6.5 guard 2), so no document carries them: this
+        # print is the only way the operator learns them. The boundary then
+        # exits 8.
+        #
+        # Without `shown`, so a decline prints no password. Whether the abort
+        # path may print one the operator accepted on an earlier target is a
+        # decision for the seen path's guards, and it is not made here.
+        click.echo("\n\n".join(part for part in (header, body, told) if part))
+        raise click.Abort
     return "\n\n".join(part for part in (header, body, told, shown) if part)
+
+
+def _reset_notices(found: Sequence[_Reset]) -> list[Diagnostic]:
+    """The notes the rows carry, once the targets are done or a prompt was declined.
+
+    The second of §3.4's absences is raised here rather than inside `_reset_one`,
+    so that the plan-time one and this one are appended in the order they
+    happened. A row carries a reason only when a record was attempted and failed;
+    a row that wrote one, or never had a journal to write to, carries none.
+
+    The notification's warning follows the record's, so the two read in the
+    order they happened: the notification goes out first, and the journal is
+    written last because it holds what happened (§6.4). The encryption warnings
+    come once per target, for the targets a password was sent to (#697).
+    """
+    notes: list[Diagnostic] = []
+    for one in found:
+        if one.record_error is not None:
+            notes.append(reset_record_unwritten(one.record_error.path, one.record_error.reason))
+        if one.notify_error is not None:
+            notes.append(notification_unsent(one.account, one.target, one.notify_error))
+    notes.extend(
+        encryption_diagnostics(
+            [(one.target, one.encryption) for one in found if one.encryption is not None]
+        )
+    )
+    return notes
 
 
 def _reset_events(one: _Reset, run: Invocation) -> None:
@@ -2454,6 +2481,19 @@ def _reset_exit(states: Sequence[str], *, stolen: bool = False, changed: int = 0
         return ExitCode.PARTIAL if changed else ExitCode.LOCK_HELD
     failed = set(states) - {reset.RESET, reset.SKIPPED, reset.ACCOUNT_MISSING}
     return ExitCode.PARTIAL if failed else ExitCode.SUCCESS
+
+
+class _Declined(click.Abort):
+    """The seen path's prompt, declined, with the row of the target it was asked on.
+
+    Still a `click.Abort`, so the boundary exits 8 as before. The row comes out
+    with it because that target's password was set before the prompt, and the
+    caller reports it with the rows before it.
+    """
+
+    def __init__(self, row: _Reset) -> None:
+        super().__init__()
+        self.row = row
 
 
 @dataclass(frozen=True)
@@ -2828,18 +2868,18 @@ def _reset_one(
                 delivery=delivery,
                 receipt=receipt,
             )
-        except click.Abort:
-            # Recorded, then re-raised. The row carries no password -- there is
-            # no field for one -- so what survives is the fact of the mutation
-            # and nothing that would make declining to look pointless.
+        except click.Abort as stop:
+            # Carried out on the abort, so the caller can report it with the rows
+            # before it. The row carries no password -- there is no field for
+            # one -- so what survives is the fact of the mutation and nothing
+            # that would make declining to look pointless.
             #
             # **Journalled too, and that is the point of doing it here.** The
             # password was set; a declined prompt changes what the operator saw
             # and not what the database holds, so a journal that skipped this
             # run would be missing the one reset that most needs explaining --
             # an account whose new password nobody received.
-            run.document.results = [*(run.document.results or []), journalled(row).as_json()]
-            raise
+            raise _Declined(journalled(row)) from stop
 
         # **After the hand-over, and before the record.** Notifying before
         # `_hand_over` would be wrong on the seen path for a reason the unseen
