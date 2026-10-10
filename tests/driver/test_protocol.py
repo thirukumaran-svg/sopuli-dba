@@ -34,6 +34,7 @@ from sopuli.config.targets import ORACLE_SCOPES
 from sopuli.driver import protocol
 from sopuli.driver.protocol import (
     CAPABILITIES,
+    ENCRYPTION_METHODS,
     OFFLINE_VERIFY,
     PASSWORD_ROLLOVER,
     SCOPE_TYPES,
@@ -45,6 +46,7 @@ from sopuli.driver.protocol import (
     Credential,
     Driver,
     DriverError,
+    Encryption,
     Scope,
     Session,
     UnsupportedCapabilityError,
@@ -146,6 +148,13 @@ def test_scope_carries_the_documents_fields() -> None:
         "labels",
         "offline_verify_available",
     }
+
+
+def test_encryption_carries_the_documents_fields() -> None:
+    """`Encryption` is the run document's ``scope.encryption``, field for field."""
+    documented = _defs("scope")["properties"]["encryption"]
+    assert {field.name for field in fields(Encryption)} == set(documented["properties"])
+    assert set(ENCRYPTION_METHODS) == set(documented["properties"]["method"]["enum"])
 
 
 def test_error_categories_are_the_run_documents() -> None:

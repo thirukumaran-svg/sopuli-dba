@@ -41,7 +41,7 @@ other than 19.24 and 19.32. One release update is not every release update.
 <!-- measurements: scripts -->
 | Script | Release | Date | Issue | Result |
 |---|---|---|---|---|
-| `00_install.sql` | `23.26.2.0.0` | 2026-08-26 | — | All three modes, create and already-exists paths, both mode guards. `grant_pwfile` added and run 2026-09-05 (#296) |
+| `00_install.sql` | `23.26.2.0.0` | 2026-08-26 | — | All three modes, create and already-exists paths, both mode guards. `grant_pwfile` added and run 2026-09-05 (#296); `grant_connect_info` 2026-10-09 (#697) |
 | `00_install.sql` | `21.3.0.0.0` | 2026-09-08 | #380 | PDB and `CDB$ROOT`. Ran only after the service account's random password was cut from 31 to 30 bytes |
 | `00_install.sql` | `18.4.0.0.0` | 2026-09-08 | #381 | PDB and `CDB$ROOT` |
 | `00_install.sql` | `11.2.0.2.0` | 2026-09-08 | #382 | `NONCDB` mode, after two fixes for a non-CDB |
@@ -89,6 +89,12 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `09_reset_from_expired_probe.sql` | `19.3.0.0.0` | 2026-09-28 | #479 | No rollover; the script stops at section 0 |
 | `10_awr_snapshot_probe.sql` | `19.32.0.0.0` | 2026-10-01 | #581 | The wrapped literal (C3) reaches `DBA_HIST_SQLTEXT`. C1, C2 and C4 do not |
 | `11_proxy_connect_probe.sql` | `23.26.2.0.0` | 2026-10-01 | #459 | `ALTER USER` alone can grant `CONNECT THROUGH` and connect as the person. With no audit policy, nothing durable records it |
+| `12_connection_encryption_probe.sql` | `23.26.2.0.0` | 2026-10-09 | #697 | Plain, NNE and TLS. `PUBLIC` reads the view; the account sees only its own SID |
+| `12_connection_encryption_probe.sql` | `21.3.0.0.0` | 2026-10-09 | #697 | Plain, NNE and TLS. `PUBLIC` reads the view; it shows the account two SIDs |
+| `12_connection_encryption_probe.sql` | `18.4.0.0.0` | 2026-10-09 | #697 | Plain, NNE and TLS. `PUBLIC` reads the view; it shows the account one or two SIDs |
+| `12_connection_encryption_probe.sql` | `19.3.0.0.0` | 2026-10-09 | #697 | Plain, NNE and TLS. As on 21.3 |
+| `12_connection_encryption_probe.sql` | `12.2.0.1.0` | 2026-10-09 | #697 | Plain, NNE and TLS. As on 21.3 |
+| `12_connection_encryption_probe.sql` | `11.2.0.2.0` | 2026-10-09 | #697 | Plain and NNE. The adapter row reads `Oracle Advanced Security: AES256 encryption service adapter`; the view shows the account three SIDs. TLS did not run: `ORA-29106` on the wallet |
 | `99_uninstall.sql` | `23.26.2.0.0` | 2026-08-26 | — | `COMMON` and PDB installs, both `keep_audit` settings |
 | `99_uninstall.sql` | `21.3.0.0.0` | 2026-09-08 | #380 | Both `keep_audit` settings |
 | `99_uninstall.sql` | `18.4.0.0.0` | 2026-09-08 | #381 | As on 21.3 |

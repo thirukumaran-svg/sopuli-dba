@@ -33,7 +33,14 @@ from __future__ import annotations
 from typing import Any
 
 from sopuli.config.model import ExpandedTarget
-from sopuli.driver.protocol import PrivilegeAudit, Scope
+from sopuli.driver.protocol import (
+    ENCRYPTION_NATIVE,
+    ENCRYPTION_NONE,
+    UNKNOWN,
+    Encryption,
+    PrivilegeAudit,
+    Scope,
+)
 from sopuli.output.document import Error
 from sopuli.output.palette import Role, absent_cell
 from sopuli.output.table import Cell, Column, render_table
@@ -129,6 +136,7 @@ def _scope(scope: Scope, target: ExpandedTarget) -> dict[str, Any]:
         # directly, and stored once on `Scope` because two copies are two things
         # that can disagree.
         "offline_verify_available": scope.supports("offline_verify"),
+        "encryption": _encryption(scope.encryption),
     }
     labels = dict(target.target.labels)
     if target.target_set is not None:
@@ -140,6 +148,50 @@ def _scope(scope: Scope, target: ExpandedTarget) -> dict[str, Any]:
     if scope.over_granted:
         found["over_granted"] = list(scope.over_granted)
     return found
+
+
+def _encryption(found: Encryption) -> dict[str, Any]:
+    """The schema's ``encryption`` object. ``algorithm`` and ``hint`` only where set."""
+    entry: dict[str, Any] = {"method": found.method, "protocol": found.protocol}
+    if found.algorithm is not None:
+        entry["algorithm"] = found.algorithm
+    if found.hint is not None:
+        entry["hint"] = found.hint
+    return entry
+
+
+def _encryption_cell(encryption: dict[str, Any] | None) -> Cell | str:
+    """``none`` is coloured as bad and ``unknown`` as inconclusive; an encrypted
+    connection is not coloured, like ``yes`` in the reachable column."""
+    if not encryption:
+        return absent_cell("")
+    method = str(encryption["method"])
+    if method == ENCRYPTION_NONE:
+        return Cell(method, Role.BAD)
+    if method == UNKNOWN:
+        return Cell(method, Role.INCONCLUSIVE)
+    if method == ENCRYPTION_NATIVE and encryption.get("algorithm"):
+        return f"{method} {encryption['algorithm']}"
+    return method
+
+
+def _encryption_note(target: str, encryption: dict[str, Any] | None) -> str | None:
+    """A line under the table for a connection that is not encrypted, or unknown.
+
+    The driver's ``hint`` says what to do, in the product's own words.
+    """
+    if not encryption:
+        return None
+    if encryption["method"] == ENCRYPTION_NONE:
+        headline = (
+            "the connection is not encrypted, so a password the tool sets crosses it in clear"
+        )
+    elif encryption["method"] == UNKNOWN:
+        headline = "could not tell whether the connection is encrypted"
+    else:
+        return None
+    hint = encryption.get("hint")
+    return f"  {target}: {headline}" + (f": {hint}" if hint else "")
 
 
 def _asserted(target: ExpandedTarget, scope: Scope) -> dict[str, Any] | None:
@@ -197,6 +249,7 @@ def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
         Column("CONTAINER"),
         Column("OPEN MODE"),
         Column("CAPABILITIES"),
+        Column("ENCRYPTION"),
     ]
     rows: list[list[Cell | str]] = []
     for entry in entries:
@@ -209,6 +262,7 @@ def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
                 absent_cell(str(scope.get("container") or "")),
                 absent_cell(str(scope.get("open_mode") or "")),
                 absent_cell(str(len(scope.get("capabilities", []))) if entry["reachable"] else ""),
+                _encryption_cell(scope.get("encryption")),
             ]
         )
     lines.extend(render_table(columns, rows))
@@ -224,6 +278,9 @@ def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
                 f"scope={asserted['scope']!r} container={asserted['container']!r}, "
                 f"found scope={scope.get('type')!r} container={scope.get('container')!r}"
             )
+        note = _encryption_note(entry["target"], (entry.get("scope") or {}).get("encryption"))
+        if note is not None:
+            lines.append(note)
         for warning in entry.get("warnings", ()):
             lines.append(f"  {entry['target']}: {warning}")
         missing = (entry.get("privileges") or {}).get("missing")

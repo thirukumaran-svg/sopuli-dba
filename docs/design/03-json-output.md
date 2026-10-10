@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.31.schema.json`](../schemas/sopuli-run-1.31.schema.json),
+Schemas: [`../schemas/sopuli-run-1.32.schema.json`](../schemas/sopuli-run-1.32.schema.json),
 [`../schemas/sopuli-event-1.7.schema.json`](../schemas/sopuli-event-1.7.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -941,6 +941,7 @@ unconditionally breaks. A new section is a minor one.
       "read_write": true,
       "capabilities": ["account_lock_state", "expire_password", "password_rollover"],
       "offline_verify_available": false,
+      "encryption": { "method": "native", "algorithm": "AES256", "protocol": "tcp" },
       "labels": { "target_set": "appdb", "env": "qa" }
     },
     "asserted": { "scope": "pdb", "container": "ORDERS", "matches": true }
@@ -958,6 +959,16 @@ unreachable target.** A target that could not be reached has no scope, no
 capabilities and no assertion result. An empty `capabilities` array would read as
 a database that supports nothing, which is a different and much more alarming
 claim than "nobody could reach it".
+
+**`scope.encryption` says whether the connection is encrypted**, because the
+tool sends a new password in `ALTER USER` over it. `method` is `tls`, `native`
+(the product's own network encryption; for Oracle, NNE), `none` or `unknown`.
+`unknown` means the driver could not tell, and it is not `none`: a consumer that
+alerts on an unencrypted connection should treat it as a finding of its own.
+`algorithm` is present only for `native`. `hint` is present for `none` and
+`unknown`. It says what to do, or why the driver could not tell, in the
+product's own words.
+`02-oracle-privileges.md` §2 says how the Oracle driver reads the answer.
 
 **`asserted` is absent when the target asserts nothing**, not present with
 `matches: true`. `01-configuration.md` §3a says that an assertion nobody makes is

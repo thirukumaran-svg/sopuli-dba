@@ -350,8 +350,8 @@ target is unreachable:
 ```
 $ sopuli --config sopuli.yaml doctor
 ...
-TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE  CAPABILITIES
-free-pdb  no         -      -          -          -
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE  CAPABILITIES  ENCRYPTION
+free-pdb  no         -      -          -          -             -
   free-pdb: target 'free-pdb' admin credential: the environment variable SOPULI_DB_ADMIN_PASSWORD is not set
 ```
 
@@ -370,15 +370,16 @@ install
 
 vaults
   VAULT      TYPE       STATUS  AUTH  SKEW
-  vault-dev  hashicorp  ok      yes   -991ms
+  vault-dev  hashicorp  ok      yes   -787ms
 
 client
   tns_admin         (unset)
   instant_client    23.26.3.0.0
   reaches           19.1 and later
 
-TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  7
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
+  free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 
 1 note:
   free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
@@ -386,6 +387,9 @@ free-pdb  yes        pdb    FREEPDB1   READ WRITE  7
 
 The note is `SOPULI-W022`. Every verb that connects puts it in the JSON output,
 and only `doctor` prints it. `--output json` lists the capabilities by name.
+
+`ENCRYPTION` is `none` because the tier-1 container does not require NNE or
+TLS. On a connection that uses NNE it reads `native AES256`, and on TLS `tls`.
 
 `doctor --check-privileges` also lists privileges the admin account holds and
 the tool does not need. Against `SYSTEM` that list is long. For a realistic
@@ -433,8 +437,9 @@ client
   instant_client    23.26.3.0.0
   reaches           19.1 and later
 
-TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  7
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
+  free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
 This config declares no vault, so the `vaults` list is empty. There is no
@@ -978,7 +983,7 @@ schemas are in [`schemas/`](schemas/). For example, read the summary with Python
 ```
 $ sopuli --config sopuli.yaml --output json creds check > check.json
 $ python -c "import json; d=json.load(open('check.json')); print(d['schema_version'], d['exit_code'], d['summary'])"
-1.31 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
+1.32 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
 ```
 
 No field holds a password. Every exit code except 2 produces a document.

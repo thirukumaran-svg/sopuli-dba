@@ -14,7 +14,15 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from sopuli.config.model import ExpandedTarget, Target, TargetOracle
-from sopuli.driver.protocol import PrivilegeAudit, Scope
+from sopuli.driver.protocol import (
+    ENCRYPTION_NATIVE,
+    ENCRYPTION_NONE,
+    ENCRYPTION_TLS,
+    UNKNOWN,
+    Encryption,
+    PrivilegeAudit,
+    Scope,
+)
 from sopuli.output.doctor_view import build_target, render
 from sopuli.output.document import SCHEMA_VERSION, Error
 
@@ -329,3 +337,79 @@ def test_an_unreachable_target_is_the_only_coloured_reachability() -> None:
 
     assert _reachable(True) == "yes"
     assert _reachable(False) == Cell("no", Role.BAD)
+
+
+# -------------------------------------------------------------- encryption ---
+
+
+@pytest.mark.parametrize(
+    "found",
+    [
+        Encryption(method=ENCRYPTION_TLS, protocol="tcps"),
+        Encryption(method=ENCRYPTION_NATIVE, algorithm="AES256", protocol="tcp"),
+        Encryption(method=ENCRYPTION_NONE, protocol="tcp", hint="require NNE or TLS"),
+        Encryption(method=UNKNOWN, protocol="tcp", hint="grant the view"),
+        Encryption(method=UNKNOWN, protocol=None, hint="no protocol"),
+    ],
+    ids=["tls", "native", "none", "unknown", "no-protocol"],
+)
+def test_every_encryption_answer_validates_against_the_schema(found: Encryption) -> None:
+    entry = build_target(_target(), connected=True, scope=_found(encryption=found))
+
+    assert _validate(entry) == []
+    assert entry["scope"]["encryption"]["method"] == found.method
+
+
+def test_an_algorithm_and_a_hint_appear_only_where_there_is_one() -> None:
+    tls = build_target(
+        _target(), connected=True, scope=_found(encryption=Encryption(ENCRYPTION_TLS, None, "tcps"))
+    )
+
+    assert tls["scope"]["encryption"] == {"method": "tls", "protocol": "tcps"}
+
+
+def test_an_unencrypted_connection_is_named_with_what_to_do() -> None:
+    """The hint is the driver's, so the view prints product words it does not know."""
+    found = Encryption(method=ENCRYPTION_NONE, protocol="tcp", hint="require NNE or TLS")
+    text = render(
+        [build_target(_target(), connected=True, scope=_found(encryption=found))],
+        client={"instant_client": "23.5.0.0"},
+    )
+
+    assert "ENCRYPTION" in text
+    assert "orders-pdb: the connection is not encrypted" in text
+    assert "require NNE or TLS" in text
+
+
+def test_an_unknown_answer_is_not_reported_as_unencrypted() -> None:
+    found = Encryption(method=UNKNOWN, protocol="tcp", hint="grant the view")
+    text = render(
+        [build_target(_target(), connected=True, scope=_found(encryption=found))],
+        client={"instant_client": "23.5.0.0"},
+    )
+
+    assert "could not tell whether the connection is encrypted: grant the view" in text
+    assert "is not encrypted" not in text
+
+
+def test_an_encrypted_connection_adds_no_note() -> None:
+    found = Encryption(method=ENCRYPTION_NATIVE, algorithm="AES256", protocol="tcp")
+    text = render(
+        [build_target(_target(), connected=True, scope=_found(encryption=found))],
+        client={"instant_client": "23.5.0.0"},
+    )
+
+    assert "native AES256" in text
+    assert "encrypted" not in text
+
+
+def test_none_and_unknown_are_coloured_differently_and_encryption_is_not() -> None:
+    """`unknown` is a finding of its own, so it must not look like `tls`."""
+    from sopuli.output.doctor_view import _encryption_cell
+    from sopuli.output.palette import Role
+    from sopuli.output.table import Cell
+
+    assert _encryption_cell({"method": "none"}) == Cell("none", Role.BAD)
+    assert _encryption_cell({"method": "unknown"}) == Cell("unknown", Role.INCONCLUSIVE)
+    assert _encryption_cell({"method": "tls"}) == "tls"
+    assert _encryption_cell({"method": "native", "algorithm": "AES256"}) == "native AES256"

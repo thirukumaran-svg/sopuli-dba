@@ -675,7 +675,7 @@ def test_an_unknown_mode_is_refused_before_anything_is_created(
 def test_the_optional_grants_are_off_unless_asked_for(
     container: str, scripts: str, clean: None, install_mode: str, install_account: str
 ) -> None:
-    """`SYS.USER$` and `SET CONTAINER` are opt-in, and both directions matter.
+    """The optional grants are opt-in, and both directions matter.
 
     §2 calls them optional; `SYS.USER$`'s absence is the ordinary configuration
     rather than a fault (decision P2). A default that quietly granted either
@@ -692,13 +692,24 @@ def test_the_optional_grants_are_off_unless_asked_for(
     default = grants_of(container, ROOT, install_account)
     assert "SELECT ON USER$" not in default
     assert "SET CONTAINER" not in default
+    assert "SELECT ON V_$SESSION_CONNECT_INFO" not in default
 
     result = sqlplus(
-        container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC, "USERS", "Y", "Y"
+        container,
+        ROOT,
+        f"{scripts}/00_install.sql",
+        install_mode,
+        SVC,
+        "USERS",
+        "Y",
+        "Y",
+        "N",
+        "Y",
     )
     assert result.returncode == 0, result.stdout[-2000:]
     asked = grants_of(container, ROOT, install_account)
     assert "SELECT ON USER$" in asked
+    assert "SELECT ON V_$SESSION_CONNECT_INFO" in asked
     if install_mode == "COMMON":
         assert "SET CONTAINER" in asked
     else:

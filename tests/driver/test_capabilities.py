@@ -18,7 +18,9 @@ from sopuli.driver.oracle.capabilities import (
     ABSENT_CODES,
     APPLICATION_PDB,
     APPLICATION_ROOT,
+    CONNECT_INFO,
     CONTAINER_NAME,
+    NETWORK_PROTOCOL,
     PROBED_OR_STRUCTURAL,
     PROBES,
     STRUCTURAL,
@@ -37,6 +39,7 @@ from sopuli.driver.oracle.capabilities import (
 from sopuli.driver.protocol import (
     CAPABILITIES,
     COMMON_USERS,
+    ENCRYPTION_NATIVE,
     OFFLINE_VERIFY,
     PASSWORD_ROLLOVER,
     UNKNOWN,
@@ -395,6 +398,8 @@ def test_observe_reports_what_it_found() -> None:
             "select db_unique_name, open_mode from v$database": ("FREE", "READ WRITE"),
             "select version from v$instance": "23.0.0.0.0",
             PROBES[COMMON_USERS]: 1,
+            NETWORK_PROTOCOL: "tcp",
+            CONNECT_INFO: "AES256 Encryption service adapter for Linux: Version 23.26.2.0.0",
         }
     )
 
@@ -406,6 +411,8 @@ def test_observe_reports_what_it_found() -> None:
     assert found.db_version == "23.0.0.0.0"
     assert found.read_write is True
     assert found.supports(COMMON_USERS)
+    assert found.encryption.method == ENCRYPTION_NATIVE
+    assert found.encryption.algorithm == "AES256"
 
 
 def test_a_standby_is_reported_read_only() -> None:

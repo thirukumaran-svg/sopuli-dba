@@ -153,6 +153,45 @@ SCOPE_TYPES = ("non_cdb", "cdb_root", "pdb", "app_root", "app_pdb", "unknown")
 UNKNOWN = "unknown"
 
 
+# -------------------------------------------------------------- encryption ---
+
+#: The connection is TLS.
+ENCRYPTION_TLS = "tls"
+
+#: The connection uses the product's own network encryption. For Oracle this is
+#: Native Network Encryption (NNE).
+ENCRYPTION_NATIVE = "native"
+
+#: The connection is not encrypted. A password the tool sends in DDL crosses the
+#: network in clear.
+ENCRYPTION_NONE = "none"
+
+#: The run document's ``scope.encryption.method``. :data:`UNKNOWN` means the
+#: driver could not tell, which is not the same answer as
+#: :data:`ENCRYPTION_NONE`.
+ENCRYPTION_METHODS = (ENCRYPTION_TLS, ENCRYPTION_NATIVE, ENCRYPTION_NONE, UNKNOWN)
+
+
+@dataclass(frozen=True)
+class Encryption:
+    """Whether a connection is encrypted on the wire, and by what.
+
+    ``protocol`` is the transport the session reports, such as ``tcp`` or
+    ``tcps``, or ``None`` where the driver did not read one. ``algorithm`` is set
+    only for :data:`ENCRYPTION_NATIVE`, where the session names it.
+
+    ``hint`` is what an operator can do about an answer of :data:`ENCRYPTION_NONE`
+    or :data:`UNKNOWN`, or why the driver could not tell, in the product's own
+    words, such as the grant that would let it tell. It is ``None`` for an
+    encrypted connection.
+    """
+
+    method: str = UNKNOWN
+    algorithm: str | None = None
+    protocol: str | None = None
+    hint: str | None = None
+
+
 # ------------------------------------------------------------ verification ---
 
 VERIFY_LOGIN = "login"
@@ -527,6 +566,12 @@ class Scope:
     #: debugging a permissions problem at 17:00 on a Friday, and the tool should
     #: notice rather than quietly benefit.
     over_granted: tuple[str, ...] = ()
+    #: Whether this connection is encrypted. The tool sends a new password in
+    #: ``ALTER USER`` over it, so an unencrypted connection carries the password
+    #: in clear.
+    encryption: Encryption = Encryption(
+        hint="the driver did not report whether the connection is encrypted"
+    )
 
     def supports(self, capability: str) -> bool:
         """Whether this connection reported ``capability``."""

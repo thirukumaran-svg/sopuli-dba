@@ -21,9 +21,9 @@ rule.
 statements, not one, and not reluctantly: each answer is attributable to the
 question that produced it, a probe that fails names itself, and the alternative
 is a single ``select`` whose seventh column silently becomes ``null`` on the
-release nobody tested. A session opens once and answers eight short questions
-against ``dual`` and two dictionary views; the cost is not measurable next to
-the connection itself.
+release nobody tested. A session opens once and answers short questions against
+``dual`` and a few dictionary views; the cost is not measurable next to the
+connection itself.
 
 **Nothing here imports ``oracledb``.** The SQL, the reading of an answer and the
 mapping onto a :class:`~sopuli.driver.protocol.Scope` are pure, so they are
@@ -35,6 +35,8 @@ harness and the driver are asking the same questions.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 from sopuli.config.model import TargetOracle
@@ -43,6 +45,9 @@ from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
     CAPABILITIES,
     COMMON_USERS,
+    ENCRYPTION_NATIVE,
+    ENCRYPTION_NONE,
+    ENCRYPTION_TLS,
     EXPIRE_PASSWORD,
     OFFLINE_VERIFY,
     PASSWORD_REUSE_POLICY,
@@ -51,6 +56,7 @@ from sopuli.driver.protocol import (
     ROLE_LOOKUP,
     UNKNOWN,
     DriverError,
+    Encryption,
     Scope,
 )
 from sopuli.exit_codes import ExitCode
@@ -341,6 +347,132 @@ def scope_type(container: str | None, application: str | None = None) -> str:
     return "pdb"
 
 
+# --------------------------------------------------------------- encryption ---
+
+#: The transport of this session. Needs no grant. ``tcps`` is TLS; ``tcp`` is
+#: plain TCP, with or without NNE. Measured on every release in
+#: ``sql/oracle/12_connection_encryption_probe.sql``.
+NETWORK_PROTOCOL = "select sys_context('userenv','network_protocol') from dual"
+
+#: The network services of this session, one banner row each. ``PUBLIC`` holds
+#: ``READ`` (``SELECT`` on 11.2) on the view on every release measured, so no
+#: grant is needed unless a site has revoked it. On every release measured but
+#: 26ai the view showed other sessions too, so the statement filters on this
+#: session's SID.
+CONNECT_INFO = (
+    "select network_service_banner from v$session_connect_info "
+    "where sid = sys_context('userenv','sid')"
+)
+
+#: The banner row that says NNE is in use, with the algorithm before it:
+#: ``AES256 Encryption service adapter for Linux`` on 12.2 and later, and
+#: ``Oracle Advanced Security: AES256 encryption service adapter`` on 11.2, so
+#: case is ignored. Every connection, encrypted or not, also has an
+#: ``Encryption service for Linux`` row, so the match must include ``adapter``.
+NNE_ADAPTER = re.compile(r"(\w+) encryption service adapter", re.IGNORECASE)
+
+#: The transports :func:`classify_encryption` knows how to read. Any other one,
+#: such as ``ipc`` or a bequeath connection, has not been measured, so the
+#: answer there is unknown.
+TCP = "tcp"
+TCPS = "tcps"
+
+#: What to do about each answer that is not an encrypted connection.
+UNENCRYPTED_HINT = (
+    "require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its "
+    "sqlnet.ora, or a TCPS listener endpoint)"
+)
+UNREADABLE_HINT = (
+    "V$SESSION_CONNECT_INFO is not readable; GRANT SELECT ON SYS.V_$SESSION_CONNECT_INFO "
+    "to the service account (PUBLIC holds it unless the site revoked it)"
+)
+NO_ROWS_HINT = (
+    "V$SESSION_CONNECT_INFO returned no row for this session; every connection "
+    "measured has at least one, so the answer is not known"
+)
+
+#: The codes that mean the view cannot be read by this account. Narrower than
+#: :data:`ABSENT_CODES`: ``ORA-00904`` would mean the column is missing, which
+#: no grant fixes, so it is reported with the server's message instead.
+UNREADABLE_CODES = frozenset({"ORA-00942", "ORA-41900", "ORA-01031"})
+
+
+def classify_encryption(
+    protocol: str | None, banners: Callable[[], Sequence[str] | None]
+) -> Encryption:
+    """What a session's transport and banner rows say about its encryption.
+
+    ``banners`` is called only for a TCP session, which is the one case the rows
+    decide, and returns ``None`` when ``V$SESSION_CONNECT_INFO`` could not be
+    read. Pure, so the measured banner text is tested in tier 0.
+    """
+    transport = (protocol or "").lower()
+    if transport == TCPS:
+        return Encryption(method=ENCRYPTION_TLS, protocol=protocol)
+    if transport != TCP:
+        return Encryption(
+            method=UNKNOWN,
+            protocol=protocol,
+            hint=(
+                "encryption is read only on TCP and TCPS connections, "
+                f"not on {protocol or 'one that reports no protocol'}"
+            ),
+        )
+    rows = banners()
+    if rows is None:
+        return Encryption(method=UNKNOWN, protocol=protocol, hint=UNREADABLE_HINT)
+    if not rows:
+        return Encryption(method=UNKNOWN, protocol=protocol, hint=NO_ROWS_HINT)
+    for banner in rows:
+        match = NNE_ADAPTER.search(banner)
+        if match:
+            return Encryption(method=ENCRYPTION_NATIVE, algorithm=match.group(1), protocol=protocol)
+    return Encryption(method=ENCRYPTION_NONE, protocol=protocol, hint=UNENCRYPTED_HINT)
+
+
+def encryption_of(cursor: Cursor) -> Encryption:
+    """Whether this session's connection is encrypted, and by what.
+
+    **A failed read is ``unknown``, never a failed run.** This is asked on every
+    connection, and a rotation must not stop over a fact it only reports. Unlike
+    the capability probes, nothing branches on the answer, so a failure here is
+    mapped to ``unknown`` with the server's code and message in the hint, rather
+    than raised.
+    """
+    protocol: str | None = None
+    reading = "the network protocol"
+    try:
+        cursor.execute(NETWORK_PROTOCOL)
+        row = cursor.fetchone()
+        protocol = str(row[0]) if row and row[0] else None
+        reading = "V$SESSION_CONNECT_INFO"
+        return classify_encryption(protocol, lambda: _banners(cursor))
+    except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
+        diagnosis = from_error(error)
+        return Encryption(
+            method=UNKNOWN,
+            protocol=protocol,
+            hint=f"reading {reading} failed with {diagnosis.code or 'no code'}: "
+            f"{diagnosis.message}",
+        )
+
+
+def _banners(cursor: Cursor) -> list[str] | None:
+    """This session's banner rows, or ``None`` where the account cannot read the view.
+
+    Any failure other than :data:`UNREADABLE_CODES` is raised, for
+    :func:`encryption_of` to report with its code.
+    """
+    try:
+        cursor.execute(CONNECT_INFO)
+        rows = cursor.fetchall()
+    except Exception as error:
+        if from_error(error).code in UNREADABLE_CODES:
+            return None
+        raise
+    return [str(each[0]) for each in rows if each and each[0]]
+
+
 def observe(cursor: Cursor) -> Scope:
     """Everything the driver knows about this connection, in one object.
 
@@ -371,6 +503,7 @@ def observe(cursor: Cursor) -> Scope:
         open_mode=open_mode,
         read_write=None if open_mode is None else open_mode.upper().startswith("READ WRITE"),
         capabilities=probe(cursor),
+        encryption=encryption_of(cursor),
     )
 
 
@@ -515,8 +648,11 @@ PROBED_OR_STRUCTURAL = frozenset(PROBES) | frozenset(STRUCTURAL)
 __all__ = [
     "ABSENT_CODES",
     "CAPABILITIES",
+    "CONNECT_INFO",
     "CONTAINER_NAME",
     "DATABASE_FACTS",
+    "NETWORK_PROTOCOL",
+    "NNE_ADAPTER",
     "NO_CONTAINERS",
     "PROBED_OR_STRUCTURAL",
     "PROBES",
@@ -529,7 +665,9 @@ __all__ = [
     "ReadOnlyTargetError",
     "ScopeAssertionError",
     "assert_scope",
+    "classify_encryption",
     "container_of",
+    "encryption_of",
     "observe",
     "probe",
     "read",

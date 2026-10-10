@@ -55,8 +55,17 @@ SCRIPT = Path(__file__).resolve().parents[1] / "sql" / "oracle" / "00_install.sq
 #: than connecting to each PDB service. `V_$PWFILE_USERS` is optional too (§2): it
 #: is guardrail 3's only input (§4 check 3), and the default set stays narrow for it
 #: -- so the ordinary install cannot run that check and says so on every run rather
-#: than passing it silently.
-OPTIONAL = frozenset({"SELECT ON USER$", "SET CONTAINER", "SELECT ON V_$PWFILE_USERS"})
+#: than passing it silently. `V_$SESSION_CONNECT_INFO` is optional because PUBLIC
+#: already reads it on every release measured; the grant is for a site that
+#: revoked PUBLIC's.
+OPTIONAL = frozenset(
+    {
+        "SELECT ON USER$",
+        "SET CONTAINER",
+        "SELECT ON V_$PWFILE_USERS",
+        "SELECT ON V_$SESSION_CONNECT_INFO",
+    }
+)
 
 #: `GRANT <what> TO <account>`, wherever it appears -- bare, or inside the
 #: `EXECUTE IMMEDIATE` of a PL/SQL block, which is how the script issues the ones

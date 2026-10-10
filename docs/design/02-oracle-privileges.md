@@ -552,6 +552,41 @@ the profile limit itself:
 `tests/driver/test_oracle_accounts.py::test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file`
 is one that does.
 
+### Whether the connection is encrypted, and the optional `V$SESSION_CONNECT_INFO` grant
+
+The tool sends a new password in `ALTER USER ... IDENTIFIED BY "..."`. On an
+unencrypted connection the password crosses the network in clear, so `doctor`
+reports whether each connection is encrypted, and by what. Two reads answer it,
+and neither needs a grant on any release measured
+(`sql/oracle/12_connection_encryption_probe.sql`, [measurements](../measurements.md)):
+
+- `SYS_CONTEXT('USERENV', 'NETWORK_PROTOCOL')` is `tcps` on a TLS connection
+  and `tcp` on a plain one, with or without NNE.
+- `V$SESSION_CONNECT_INFO`, filtered on the session's own SID, has one
+  `NETWORK_SERVICE_BANNER` row per network service. With NNE in use, one row
+  names the algorithm: `AES256 Encryption service adapter for Linux`, or on
+  11.2.0.2.0 `Oracle Advanced Security: AES256 encryption service adapter`. A
+  row `Encryption service for Linux` is there on every connection, encrypted or
+  not, so it says nothing. On every release measured except 26ai the view also
+  shows other sessions, which is why the read filters on the SID.
+
+`PUBLIC` holds `READ` on the view (`SELECT` on 11.2.0.2.0) on every release
+measured. The grant matters only where a site has revoked that:
+
+```sql
+GRANT SELECT ON SYS.V_$SESSION_CONNECT_INFO TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
+```
+
+`00_install.sql` takes it as parameter 7, `grant_connect_info`, off by default.
+Without the view, a plain TCP connection's encryption is `unknown`, never
+`none`: the driver reads `ORA-00942`, `ORA-41900` or `ORA-01031` as "could not
+look", and `doctor` names this grant. Any other failure reading either value is
+`unknown` too, with the server's code and message in the hint. That includes
+`ORA-00904`, which no grant fixes. So is a session that finds no row of its own
+in the view, since every connection measured has at least one. Nothing branches
+on this answer, so it never stops a run, unlike a failed capability probe. A connection over any transport other than TCP or
+TCPS is also `unknown`, because none has been measured.
+
 ---
 
 ## 3. What must not be granted
@@ -967,7 +1002,7 @@ row.
 | OS audit files on the 23 codebase | **The surface is gone, so a clean search there measures nothing.** On 26ai 23.26.2.0.0, `AUDIT_SYS_OPERATIONS = TRUE` is accepted and writes nothing useful: five files, each a session header and one `ACTION` line for the same internal call, and no `CREATE`, `ALTER` or `DROP USER` text. Traditional auditing is desupported from the 23 codebase, and this parameter belongs to it | Read it as an empty column, as the search labels one `INCONCLUSIVE`. There is nothing to protect here on the 23 codebase. That is a different claim from "we looked and found nothing" |
 | **Self-rotation**: `IDENTIFIED BY … REPLACE …` | **Audited, with both passwords masked.** The trail records `ALTER USER sopulitest IDENTIFIED BY * REPLACE *`, attributed to the account itself, not to a service account. The unified policy `ACTIONS ALTER USER` records it, and so does traditional `AUDIT USER` where it exists. The `REPLACE` clause carries the account's current password, masked with the same `*`. Not measured: self-rotation under a password verify function, which receives both passwords | The concern was that this path uses no `ALTER USER` privilege, so privilege auditing could miss it. It does not: **"rotations are audited" holds for self-rotation too**, which UC-1b needs. The tool does not have this path |
 | **`IDENTIFIED BY VALUES`**: the verifier | **Masked.** The trail records `ALTER USER sopulitest IDENTIFIED BY VALUES *`, and under a level-12 trace the DDL is cut short at the same character as the password form. No raw verifier appears in a trace file or an OS audit file. On 19.32.0.0.0 it is masked in the unified trail and absent from both `DBA_AUDIT_TRAIL` and `audit_file_dest`. That traditional half is absent, not clean, and the cause is not known | A restore-from-verifier path, if one is ever added, does not widen the audit exposure. The verifier can still be attacked offline wherever it can be read, which is ADR-001's question. The probe needs `SELECT ON SYS.USER$`; without it, this row is unanswered, not clean. A verifier written as a literal into a PL/SQL block leaks like any other literal (invariant 13) |
-| Network | encrypted when NNE or TLS is in use | The tool does not check or report whether a connection is encrypted (open: #697). Require NNE or TLS on the server |
+| Network | encrypted when NNE or TLS is in use | `doctor` reports whether each connection is encrypted, and by what (§2). The verbs that send a password do not warn about an unencrypted connection (open: #697). Require NNE or TLS on the server |
 | Tool's own output and logs | redacted at the output serialiser | covered by the redaction release gate, UC-1 §11 |
 
 Run `sql/oracle/02_password_leak_probe.sql` in the three positions its header
@@ -1086,6 +1121,7 @@ the design as it is then.
 | `sql/oracle/09_reset_from_expired_probe.sql` | setting a password on an `EXPIRED` account whose profile has a rollover window |
 | `sql/oracle/10_awr_snapshot_probe.sql` | takes an AWR snapshot after `02_password_leak_probe.sql` and searches it (§4) |
 | `sql/oracle/11_proxy_connect_probe.sql` | whether `ALTER USER` alone can grant `CONNECT THROUGH` and connect as another account, and what that leaves in the audit trail |
+| `sql/oracle/12_connection_encryption_probe.sql` | what a session can read about whether its own connection is encrypted, with and without a grant (§2) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 

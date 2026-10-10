@@ -19,7 +19,7 @@
 --         Confirmed on 11g XE 11.2.0.2.0 (2026-09-08, #382) in NONCDB mode,
 --         which had never run anywhere. Two things stopped it there and both
 --         are fixed here: SYS_CONTEXT('USERENV','CON_NAME') RAISES on a
---         non-CDB (ORA-02003) rather than answering NULL, and section 7's
+--         non-CDB (ORA-02003) rather than answering NULL, and section 8's
 --         report selected DBA_SYS_PRIVS.COMMON, a 12.1 column, which failed
 --         the whole install AFTER every grant had been made.
 --         Confirmed on 19c EE 19.3.0.0.0 (2026-09-28, #479), by hand as
@@ -27,13 +27,13 @@
 --         with a non-default name (ACME_SVC, grant_pwfile=Y), create and then
 --         already-exists; and COMMON mode in CDB$ROOT with the C## prefix this
 --         image keeps (grant_set_container=Y), where every system privilege
---         reported COMMON = YES. Section 7's over-grant query was empty in
+--         reported COMMON = YES. Section 8's over-grant query was empty in
 --         each.
 --         Confirmed on 19c EE 19.32.0.0.0 (2026-10-01, #581), an OCI Base
 --         Database Service DB system, by hand as SYSDBA: PDB mode in ORCLPDB1
 --         (SOPULI_SVC, tablespace USERS, grant_pwfile=Y) and COMMON mode in
 --         CDB$ROOT (C##SOPULI_SVC, grant_set_container=Y, every system
---         privilege COMMON = YES); section 7's over-grant query empty in each.
+--         privilege COMMON = YES); section 8's over-grant query empty in each.
 --         It did NOT run there as written: the DB system's DEFAULT profile
 --         enforces ORA12C_STRONG_VERIFY_FUNCTION, and section 1's random
 --         password ('X' string + 'aA1') was ORA-28003 "must contain 2 or more
@@ -57,10 +57,16 @@
 --         one the sixth COLUMN/NEW_VALUE line exists for. The report section
 --         lists SYS.V_$PWFILE_USERS under Y and not under N.
 --
+--         grant_connect_info (position 7) added and run on 26ai Free
+--         23.26.2.0.0 2026-10-09 (#697), through
+--         tests/driver/test_oracle_install_script.py. With the default, the
+--         account is not granted SYS.V_$SESSION_CONNECT_INFO; with position 7
+--         set to Y, it is. Untried on every other release.
+--
 --         Confirmed on an Autonomous Database (serverless, 26ai 23.26.3.3.0,
 --         2026-09-28, #479): PDB mode, run as ADMIN rather than SYSDBA, with
 --         tablespace DATA and every optional grant N. The mode check accepted
---         the generated container name, every grant succeeded, and section 7's
+--         the generated container name, every grant succeeded, and section 8's
 --         over-grant query was empty. grant_user_dollar=Y cannot succeed there:
 --         ADMIN itself gets ORA-00942 on SYS.USER$ (#478). V$PWFILE_USERS
 --         (position 6) untried on ADB.
@@ -68,7 +74,7 @@
 --         SELECT ON SYS.DBA_ROLES added 2026-09-25 (#531) and run on 26ai Free
 --         23.26.2.0.0 in all three modes, through
 --         tests/driver/test_oracle_install_script.py, and by hand in PDB mode;
---         section 7's report lists it. Untried on 21c, 18c and 11g, where the
+--         section 8's report lists it. Untried on 21c, 18c and 11g, where the
 --         view exists and the line is the same shape as its neighbours.
 --
 -- Run as SYS AS SYSDBA or an equivalent DBA.
@@ -107,6 +113,7 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 --   4 grant_user_dollar   Y grants SELECT on SYS.USER$ -- see below
 --   5 grant_set_container Y grants SET CONTAINER -- see below
 --   6 grant_pwfile        Y grants SELECT on SYS.V_$PWFILE_USERS -- see below
+--   7 grant_connect_info  Y grants SELECT on SYS.V_$SESSION_CONNECT_INFO -- see below
 --
 -- An argument wins; anything not passed falls back to the default beside it.
 --
@@ -125,7 +132,9 @@ COLUMN 3 NEW_VALUE 3
 COLUMN 4 NEW_VALUE 4
 COLUMN 5 NEW_VALUE 5
 COLUMN 6 NEW_VALUE 6
-SELECT NULL AS "1", NULL AS "2", NULL AS "3", NULL AS "4", NULL AS "5", NULL AS "6"
+COLUMN 7 NEW_VALUE 7
+SELECT NULL AS "1", NULL AS "2", NULL AS "3", NULL AS "4", NULL AS "5", NULL AS "6",
+       NULL AS "7"
   FROM dual WHERE 1 = 0;
 
 -- Defaults live here, in the NVL. `grant_user_dollar=Y` enables
@@ -138,19 +147,23 @@ SELECT NULL AS "1", NULL AS "2", NULL AS "3", NULL AS "4", NULL AS "5", NULL AS 
 -- service directly. `grant_pwfile=Y` enables the one account guardrail that
 -- cannot run without it (§4 check 3, the password file) and costs nothing but the
 -- list of accounts holding SYSDBA -- without it every run warns SOPULI-W018 that
--- the check did not run.
+-- the check did not run. `grant_connect_info=Y` is only for a database where
+-- PUBLIC's read of V$SESSION_CONNECT_INFO has been revoked: without that view the
+-- tool cannot tell whether a plain TCP connection uses NNE.
 COLUMN p_mode NEW_VALUE mode                NOPRINT
 COLUMN p_name NEW_VALUE svc_name            NOPRINT
 COLUMN p_tbs  NEW_VALUE svc_tablespace      NOPRINT
 COLUMN p_usr  NEW_VALUE grant_user_dollar   NOPRINT
 COLUMN p_ctr  NEW_VALUE grant_set_container NOPRINT
 COLUMN p_pwf  NEW_VALUE grant_pwfile        NOPRINT
+COLUMN p_cin  NEW_VALUE grant_connect_info  NOPRINT
 SELECT NVL('&1', 'COMMON')     AS p_mode,
        NVL('&2', 'SOPULI_SVC') AS p_name,
        NVL('&3', 'USERS')      AS p_tbs,
        NVL('&4', 'N')          AS p_usr,
        NVL('&5', 'N')          AS p_ctr,
-       NVL('&6', 'N')          AS p_pwf
+       NVL('&6', 'N')          AS p_pwf,
+       NVL('&7', 'N')          AS p_cin
   FROM dual;
 SET TERMOUT ON
 
@@ -413,7 +426,32 @@ END;
 /
 
 --------------------------------------------------------------------------------
--- 7. Report: exactly what this account now holds
+-- 7. Optional: V$SESSION_CONNECT_INFO, for reporting whether a connection is
+--    encrypted
+--
+-- The tool reads this view to tell whether a plain TCP connection uses Native
+-- Network Encryption (docs/design/02-oracle-privileges.md §2). PUBLIC holds READ
+-- on it on every release measured (sql/oracle/12_connection_encryption_probe.sql),
+-- so the default install needs nothing. Take this grant only where a site has
+-- revoked PUBLIC's: without the view the tool reports a TCP connection's
+-- encryption as unknown, and says so.
+--------------------------------------------------------------------------------
+PROMPT
+PROMPT [7] optional: V$SESSION_CONNECT_INFO (grant_connect_info=&grant_connect_info)
+BEGIN
+  IF UPPER('&grant_connect_info') = 'Y' THEN
+    EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.V_$SESSION_CONNECT_INFO TO &eff_user&cont_all';
+    DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.V_$SESSION_CONNECT_INFO '
+      || '(for databases where PUBLIC''s read of it was revoked)');
+  ELSE
+    DBMS_OUTPUT.PUT_LINE('V$SESSION_CONNECT_INFO not granted to the account: '
+      || 'PUBLIC holds it unless the site revoked it');
+  END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 8. Report: exactly what this account now holds
 --------------------------------------------------------------------------------
 SET LINESIZE 200
 COLUMN privilege FORMAT A32
@@ -421,7 +459,7 @@ COLUMN owner     FORMAT A10
 COLUMN table_name FORMAT A20
 
 PROMPT
-PROMPT [7] report: exactly what this account now holds
+PROMPT [8] report: exactly what this account now holds
 PROMPT
 -- `DBA_SYS_PRIVS.COMMON` arrived with multitenant in 12.1. On 11.2 naming it is
 -- `ORA-00904`, and under this file's `WHENEVER SQLERROR EXIT SQL.SQLCODE` that
