@@ -27,21 +27,13 @@ calls a compound one open. That is the ``EXPIRED(GRACE)`` bug in the other field
 from __future__ import annotations
 
 import contextlib
-import os
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
 from oracle_harness import Environment
-from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
-from sopuli.driver.protocol import ACCOUNT_LOCK, Credential, DriverError
-from sopuli.secrets import Secret
-
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
-CORRELATION_ID = "5f2d81ac-7b34-4e90-a1c6-90b7d4e25318"
+from sopuli.driver.protocol import ACCOUNT_LOCK, DriverError
 
 ACCOUNT = "acme_suspend_user"
 
@@ -51,32 +43,6 @@ LOCKOUT_PROFILE = "sopuli_lockout"
 
 LIVE = "Su5pend-Pa55-word1"
 WRONG = "not-the-password"
-
-
-@pytest.fixture
-def session_module() -> Any:
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
-@pytest.fixture
-def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=USER, secret=Secret(PASSWORD)),
-    )
-    try:
-        yield opened
-    finally:
-        opened.close()
 
 
 def _run(session: Any, *statements: str) -> None:

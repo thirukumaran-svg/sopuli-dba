@@ -36,15 +36,9 @@ import pytest
 
 from oracle_harness import Environment
 from sopuli.config import charsets
-from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, PasswordPolicy, Target
-from sopuli.driver.protocol import Credential
+from sopuli.config.model import PasswordPolicy
 from sopuli.passwords import generate
 from sopuli.secrets import Secret
-
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
-CORRELATION_ID = "3b8e1f40-6c2d-4e7a-9a15-d0c4b7e2f913"
 
 ACCOUNT = "acme_paths_user"
 
@@ -241,23 +235,8 @@ def sqlplus() -> str:
 
 
 @pytest.fixture
-def account(live_oracle: Environment) -> Iterator[Any]:
-    """An account the driver sets passwords on, with a session open as `USER`."""
-    session_module = pytest.importorskip("sopuli.driver.oracle.session")
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    session = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=USER, secret=Secret(PASSWORD)),
-    )
-
+def account(session: Any) -> Iterator[Any]:
+    """An account the driver sets passwords on. Yields the admin session."""
     with contextlib.suppress(Exception):
         _run(session, f"drop user {ACCOUNT} cascade")
     _run(session, f'create user {ACCOUNT} identified by "Init1aaaaaaa"')
@@ -267,7 +246,6 @@ def account(live_oracle: Environment) -> Iterator[Any]:
     finally:
         with contextlib.suppress(Exception):
             _run(session, f"drop user {ACCOUNT} cascade")
-        session.close()
 
 
 def _run(session: Any, statement: str) -> None:

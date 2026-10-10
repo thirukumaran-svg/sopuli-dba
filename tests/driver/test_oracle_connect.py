@@ -52,18 +52,6 @@ NOBODY = "acme_no_such_user"
 CORRELATION_ID = "9f1c2e7a-4d3b-4a51-9d2c-0b7f8e6a1234"
 
 
-@pytest.fixture
-def session_module() -> Any:
-    """`sopuli.driver.oracle.session`, imported only where there is a client.
-
-    Imported in a fixture rather than at module scope: this module is collected
-    on the tier-0 matrix too, where `oracledb` is not installed, and a top-level
-    import would turn every test here into a collection error instead of a skip
-    with a reason.
-    """
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
 def target(dsn: str, *, name: str = "tier1-oracle") -> ExpandedTarget:
     return ExpandedTarget(
         target=Target(

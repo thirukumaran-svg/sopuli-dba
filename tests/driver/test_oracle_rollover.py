@@ -13,28 +13,19 @@ answered `ORA-01017` and the new one still worked.
 from __future__ import annotations
 
 import contextlib
-import os
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
-from oracle_harness import Environment
-from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
     PASSWORD_ROLLOVER,
-    Credential,
     DriverError,
     UnsupportedCapabilityError,
 )
 from sopuli.secrets import Secret
-
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
-CORRELATION_ID = "8a3f2d61-7c05-4b9e-a2d8-4f1b6e0c9375"
 
 ACCOUNT = "acme_rollover_user"
 ROLLOVER_PROFILE = "sopuli_rollover"
@@ -42,32 +33,6 @@ PLAIN_PROFILE = "sopuli_lockout"
 
 OLD = "Old-Pa55-word1"
 NEW = "New-Pa55-word2"
-
-
-@pytest.fixture
-def session_module() -> Any:
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
-@pytest.fixture
-def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=USER, secret=Secret(PASSWORD)),
-    )
-    try:
-        yield opened
-    finally:
-        opened.close()
 
 
 def _run(session: Any, *statements: str) -> None:

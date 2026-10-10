@@ -22,6 +22,9 @@ import pytest
 
 from oracle_harness import Environment, decide_skip, dsn_host, probe, render_matrix
 from repo_files import FROM_SDIST, reason, repo_relative
+from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
+from sopuli.driver.protocol import Credential
+from sopuli.secrets import Secret
 from sopuli.store.registry import BACKENDS
 
 # ------------------------------------------------- running from the sdist ---
@@ -556,6 +559,50 @@ def oracle_client() -> None:
     except ClientError as error:
         _SKIPS["environment"] += 1
         _missing_environment(f"environment unavailable: {error}")
+
+
+#: The correlation ID on every :func:`session`. Shaped like the real thing, a
+#: UUID, because it goes into `CLIENT_ID`, which is 64 characters wide.
+SESSION_CORRELATION_ID = "6d3a9e1f-2b84-4c57-a0e6-8f1d7b3c5a92"
+
+
+@pytest.fixture
+def session_module() -> Any:
+    """`sopuli.driver.oracle.session`, imported only where there is a client.
+
+    Imported in a fixture rather than at module scope: the tier-1 modules are
+    collected on the tier-0 matrix too, where `oracledb` is not installed, and a
+    top-level import would turn every test in them into a collection error
+    instead of a skip with a reason.
+    """
+    return pytest.importorskip("sopuli.driver.oracle.session")
+
+
+@pytest.fixture
+def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
+    """A driver session on the tier-1 database as :data:`USER`, closed afterwards.
+
+    Opened through the tool's own driver, so a test that sets up accounts with
+    it goes through the same connect path a command does. A test that needs to
+    log in as another account opens that session itself.
+    """
+    driver = session_module.OracleDriver(env=os.environ, correlation_id=SESSION_CORRELATION_ID)
+    opened = driver.connect(
+        ExpandedTarget(
+            target=Target(
+                name="tier1-oracle",
+                type="oracle",
+                dsn=live_oracle.dsn,
+                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
+            ),
+            index=0,
+        ),
+        Credential(username=USER, secret=Secret(PASSWORD)),
+    )
+    try:
+        yield opened
+    finally:
+        opened.close()
 
 
 @pytest.fixture(autouse=True)

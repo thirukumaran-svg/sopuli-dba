@@ -49,12 +49,6 @@ PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 CORRELATION_ID = "3b8e1d05-6c47-4f92-b1ae-7d2c9f0a4e18"
 
 
-@pytest.fixture
-def session_module() -> Any:
-    """`sopuli.driver.oracle.session`, imported only where there is a client."""
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
 def _session(session_module: Any, dsn: str, oracle: TargetOracle | None = None) -> Any:
     driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
     return driver.connect(

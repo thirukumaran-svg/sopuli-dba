@@ -26,30 +26,22 @@ on a rollover profile is refused before any DDL, because
 from __future__ import annotations
 
 import contextlib
-import os
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
 from oracle_harness import Environment
-from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.oracle.statements import PasswordNotAdmissibleError
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
     ROLLOVER_FINISH,
-    Credential,
     DriverError,
     PartialAccountChangeError,
 )
 from sopuli.secrets import Secret
-
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
-CORRELATION_ID = "9c41f0d2-6ab8-4e17-8c53-2f7ab1d0e4c9"
 
 ACCOUNT = "acme_reset_user"
 
@@ -61,32 +53,6 @@ ROLLOVER_PROFILE = "sopuli_rollover"
 #: Distinct enough that a logon proving one of them is unambiguous about which.
 OLD = "Re5et-Old-Pa55word1"
 NEW = Secret("Re5et-New-Pa55word2")
-
-
-@pytest.fixture
-def session_module() -> Any:
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
-@pytest.fixture
-def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=USER, secret=Secret(PASSWORD)),
-    )
-    try:
-        yield opened
-    finally:
-        opened.close()
 
 
 def _run(session: Any, *statements: str) -> None:

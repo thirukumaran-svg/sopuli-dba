@@ -40,9 +40,6 @@ from sopuli.driver.oracle.limits import (
 from sopuli.driver.protocol import Credential, DriverError
 from sopuli.secrets import Secret
 
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
 CORRELATION_ID = "7d41f8b2-3a6e-4c19-95d0-8b2e1f7a6c04"
 
 ACCOUNT = "acme_billing_user"
@@ -53,32 +50,6 @@ STRICT_PROFILE = "acme_strict_prof"
 COMPLIANT = "Str0ng-Pa55-quiXa"
 ROTATED = "N3wer-Pa66-zoRba"
 WEAK = "short"
-
-
-@pytest.fixture
-def session_module() -> Any:
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
-@pytest.fixture
-def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=USER, secret=Secret(PASSWORD)),
-    )
-    try:
-        yield opened
-    finally:
-        opened.close()
 
 
 def _run(session: Any, *statements: str) -> None:

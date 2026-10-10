@@ -25,16 +25,13 @@ import pytest
 
 from oracle_harness import Environment
 from sopuli.check import grace_warning
-from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.guardrails import ADMIN_ROLES
 from sopuli.driver.oracle.accounts import deliberately_locked
-from sopuli.driver.protocol import OFFLINE_VERIFY, PASS, PASSWORD_ROLLOVER, Credential
+from sopuli.driver.protocol import OFFLINE_VERIFY, PASS, PASSWORD_ROLLOVER
 from sopuli.secrets import Secret
 
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
 PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 
-CORRELATION_ID = "5c2a9b71-8e34-4d06-a7f1-2e9b6c0d1a53"
 
 ACCOUNT = "acme_orders_user"
 PROFILE = "acme_orders_prof"
@@ -46,32 +43,6 @@ LOOP_A = "acme_loop_a"
 LOOP_B = "acme_loop_b"
 FIRST = "First-Pass-1x"
 SECOND = "Second-Pass-2x"
-
-
-@pytest.fixture
-def session_module() -> Any:
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
-@pytest.fixture
-def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=USER, secret=Secret(PASSWORD)),
-    )
-    try:
-        yield opened
-    finally:
-        opened.close()
 
 
 def _run(session: Any, *statements: str) -> None:
