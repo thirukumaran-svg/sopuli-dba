@@ -2447,7 +2447,7 @@ was meant, and whether the shape survives a connect string or a `.env` file.
 |---|---|---|
 | `alnum` | `A–Z a–z 0–9` | safest; no quoting anywhere |
 | `alnum_safe` | alnum + `_ # - . + = ~` | avoids shell, connection-string and SQL-quoting hazards. **Default.** |
-| `printable_ascii` | printable ASCII except space **and except `"`** | requires quoted identifiers; may break connect strings and `.env` files |
+| `printable_ascii` | printable ASCII except space **and except `"`** | requires quoted identifiers; breaks a shell, a `.env` file and a connect string on the characters below |
 | `custom` | explicit `allow:` string | you take responsibility |
 
 `printable_ascii` names the `"` exclusion rather than leaving it to the rule
@@ -2458,6 +2458,20 @@ would produce nothing but candidates that are thrown away.
 double quotes, and Docker Compose expands it in a `.env` file, so `aB3$xy_9`
 arrives as `aB3`. Windows `cmd.exe` reads `^` as its escape character, so
 `set PW=aB3^xy_9` sets `aB3xy_9`. Reasons: [#742](../decisions/log.md#742).
+
+**Where a password survives.** `tests/test_password_paths.py` sends passwords
+through the paths an operator uses and checks what arrives. Passwords from
+`alnum` and `alnum_safe` arrive unchanged on every path, with no quoting. The
+`printable_ascii` characters in this table change or refuse the password, in at
+least one position:
+
+| Path | Read by | `printable_ascii` characters that break it |
+|---|---|---|
+| shell | `sh`, an unquoted assignment `PW=…` | ``$ & ' ( ) ; < > \ ` |`` |
+| `.env` file | Docker Compose | `$ '` |
+| connect string | SQL\*Plus, `CONNECT user/…@dsn` | `& ( ) / @` |
+
+The fourth path, a JDBC URL, is not checked (open: #743).
 
 A **class** is `upper`, `lower`, `digit`, or `special` — where `special` is
 everything else in the alphabet. That is what makes `require: { special: 1 }`

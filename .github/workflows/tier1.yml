@@ -157,6 +157,11 @@ jobs:
           curl -fsSLO https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip
           sudo mkdir -p /opt/oracle
           sudo unzip -q instantclient-basiclite-linuxx64.zip -d /opt/oracle
+          # SQL*Plus for tests/test_password_paths.py, which logs in through a
+          # connect string the way an operator does. It unpacks into the same
+          # directory as the client.
+          curl -fsSLO https://download.oracle.com/otn_software/linux/instantclient/instantclient-sqlplus-linuxx64.zip
+          sudo unzip -qo instantclient-sqlplus-linuxx64.zip -d /opt/oracle
           # The directory carries the version, so it is found rather than named:
           # pinning it here would break on the next release for no benefit.
           # Checked rather than assumed, because the failure is otherwise silent
@@ -171,6 +176,7 @@ jobs:
           fi
           client=$(dirname "$libclntsh")
           echo "LD_LIBRARY_PATH=$client" >> "$GITHUB_ENV"
+          echo "$client" >> "$GITHUB_PATH"
           echo "installed Instant Client at $client"
 
       # The compose file rather than `services:`, which is T2's answer applied to
