@@ -39,8 +39,9 @@ UPPER = string.ascii_uppercase
 LOWER = string.ascii_lowercase
 DIGIT = string.digits
 
-#: §8's seven additions to ``alnum``: they avoid shell, connection-string and
-#: SQL-quoting hazards.
+#: §8's seven additions to ``alnum``: they avoid shell, connect-string and
+#: SQL-quoting hazards. A JDBC URL needs the password in double quotes, for
+#: ``-`` and ``.``.
 SAFE_SPECIALS = "_#-.+=~"
 
 #: The same seven as §8 and §2 write them in prose, for an error message.

@@ -23,6 +23,8 @@ fixture in `conftest.py` opens a socket.
 
 from __future__ import annotations
 
+import ipaddress
+import urllib.parse
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
@@ -93,6 +95,31 @@ def below(version: str | None, floor: tuple[int, int]) -> bool:
         return (int(parts[0]), int(parts[1])) < floor
     except (IndexError, ValueError):
         return False
+
+
+def is_loopback(addr: str) -> bool:
+    """Whether the URL ``addr`` names this machine. A DNS name other than
+    `localhost` is never assumed to be local."""
+    hostname = urllib.parse.urlparse(addr).hostname
+    if hostname is None:
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def dsn_is_loopback(dsn: str) -> bool:
+    """The same question as :func:`is_loopback`, asked of an Oracle DSN.
+
+    A DSN is not a URL, so :func:`dsn_host` takes the host out and it is
+    reshaped into one. Delegating, rather than keeping a second idea of
+    "loopback", is what stops this from accepting `127.0.0.1` and missing
+    `127.0.0.2`.
+    """
+    return is_loopback(f"//{dsn_host(dsn)}")
 
 
 def dsn_host(dsn: str) -> str:

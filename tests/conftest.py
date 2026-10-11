@@ -9,10 +9,8 @@ Passing `--config` at an explicit path is what keeps the suite deterministic.
 
 from __future__ import annotations
 
-import ipaddress
 import os
 import sys
-import urllib.parse
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -20,7 +18,14 @@ from typing import Any, NoReturn
 
 import pytest
 
-from oracle_harness import Environment, decide_skip, dsn_host, probe, render_matrix
+from oracle_harness import (
+    Environment,
+    decide_skip,
+    dsn_is_loopback,
+    is_loopback,
+    probe,
+    render_matrix,
+)
 from repo_files import FROM_SDIST, reason, repo_relative
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.protocol import Credential
@@ -214,18 +219,6 @@ def _missing_environment(reason: str) -> NoReturn:
     pytest.skip(reason)
 
 
-def _is_loopback(addr: str) -> bool:
-    hostname = urllib.parse.urlparse(addr).hostname
-    if hostname is None:
-        return False
-    if hostname == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(hostname).is_loopback
-    except ValueError:
-        return False  # a DNS name -- never assumed local
-
-
 @pytest.fixture(scope="session")
 def vault_stack() -> Iterator[VaultStack]:
     """A reachable Vault, or a skip saying which part was missing.
@@ -235,7 +228,7 @@ def vault_stack() -> Iterator[VaultStack]:
     install collecting these files must reach the skip rather than an ImportError.
     """
     opted_in = os.environ.get(ALLOW_REMOTE_VAULT) in ("1", "true", "yes")
-    if not _is_loopback(VAULT_ADDR) and not opted_in:
+    if not is_loopback(VAULT_ADDR) and not opted_in:
         _missing_environment(
             f"VAULT_ADDR={VAULT_ADDR!r} is not loopback, and these tests write to fixed "
             f"scratch paths -- set {ALLOW_REMOTE_VAULT}=1 to opt in deliberately"
@@ -366,18 +359,6 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
-def _dsn_is_loopback(dsn: str) -> bool:
-    """The same question as :func:`_is_loopback`, asked of an Oracle DSN.
-
-    A DSN is not a URL, so the host is pulled out by
-    :func:`~oracle_harness.dsn_host` -- which is in the harness because that
-    parsing is the part with edge cases worth testing -- and then reshaped into
-    one. Delegating rather than growing a second notion of "loopback" is what
-    stops this recognising `127.0.0.1` and missing `127.0.0.2`.
-    """
-    return _is_loopback(f"//{dsn_host(dsn)}")
-
-
 @pytest.fixture(scope="session")
 def oracle_target() -> Iterator[Environment]:
     """A probed Oracle, or an :class:`Environment` saying why there is not one.
@@ -393,7 +374,7 @@ def oracle_target() -> Iterator[Environment]:
     """
     environment = Environment(name=ENVIRONMENT_NAME, dsn=DSN)
 
-    if not _dsn_is_loopback(DSN) and not os.environ.get(ALLOW_REMOTE):
+    if not dsn_is_loopback(DSN) and not os.environ.get(ALLOW_REMOTE):
         environment.unreachable_reason = (
             f"{DSN} is not loopback, and these tests create and drop accounts; "
             f"set {ALLOW_REMOTE}=1 to allow it"

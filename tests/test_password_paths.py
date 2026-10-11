@@ -1,15 +1,17 @@
 """Generated passwords through the paths an operator passes them through (UC-1 §11).
 
 `01-configuration.md` §8 says `alnum` and `alnum_safe` survive a shell, a `.env`
-file and a connect string, and names the `printable_ascii` characters that do
-not. This file checks both claims against the real consumers:
+file and a connect string, and that a JDBC URL needs `alnum_safe` in double
+quotes. It names the `printable_ascii` characters that break each path. This file
+checks those claims against the real consumers:
 
 * **shell:** an unquoted assignment, `PW=<password>`, read back by `sh`;
 * **`.env`:** a `.env` file read by `docker compose`;
 * **connect string:** `CONNECT user/<password>@dsn` in SQL*Plus, after the
-  driver has set the password, so the check is a login.
-
-The JDBC URL is the fourth path UC-1 §11 names. It is not in this file (#743).
+  driver has set the password, so the check is a login;
+* **JDBC URL:** `jdbc:oracle:thin:user/<password>@//host:port/service` in the
+  Oracle JDBC thin driver, also a login. `test/jdbc/JdbcLogin.java` runs in a
+  JDK container, so the machine needs no Java.
 
 **Which passwords.** Every special character of each charset at the start, in
 the middle and at the end of a short password, which is where a consumer reads a
@@ -24,17 +26,24 @@ block, so no test here puts one there.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import http.client
 import json
 import os
+import queue
+import secrets
 import shutil
 import subprocess
+import tempfile
+import threading
+import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
-from oracle_harness import Environment
+from oracle_harness import Environment, dsn_host, dsn_is_loopback
 from sopuli.config import charsets
 from sopuli.config.model import PasswordPolicy
 from sopuli.passwords import generate
@@ -42,12 +51,14 @@ from sopuli.secrets import Secret
 
 ACCOUNT = "acme_paths_user"
 
-#: The charsets §8 says need no quoting on any path here.
+#: The charsets §8 says need no quoting on the shell, `.env` and connect-string
+#: paths. A JDBC URL quotes the password for all but `alnum`.
 SAFE = ("alnum", "alnum_safe")
 
 #: The `printable_ascii` characters each path changes or refuses, in any of the
-#: three positions. `01-configuration.md` §8 names the same sets. Measured with
-#: bash 5.2.37 as `sh`, Docker Compose v5.5.1 and SQL*Plus 23.26.3.0.0 against
+#: three positions. `01-configuration.md` §8 names the same sets. `jdbc` is the
+#: unquoted URL; quoted, it refuses none. Measured with bash 5.2.37 as `sh`,
+#: Docker Compose v5.5.1, SQL*Plus 23.26.3.0.0 and ojdbc11 23.26.3.0.0 against
 #: Oracle 26ai Free 23.26.2.0.0, and in the tier-1 lane on Ubuntu, where `sh`
 #: is dash and SQL*Plus is the latest Linux download. An upstream change that
 #: moves a set fails here, and §8 is then wrong too.
@@ -55,10 +66,11 @@ BREAKS = {
     "shell": set("$&'();<>\\`|"),
     "env": set("$'"),
     "connect": set("&()/@"),
+    "jdbc": set("',-./?@\\`{|}"),
 }
 
 #: How many generated passwords each safe charset sends through each path.
-DRAWS = {"shell": 200, "env": 200, "connect": 10}
+DRAWS = {"shell": 200, "env": 200, "connect": 10, "jdbc": 50}
 
 #: Seconds any one consumer may take. A stalled listener or a prompt SQL*Plus
 #: waits at then fails the test with a reason, instead of hanging the lane.
@@ -155,10 +167,15 @@ def test_printable_ascii_breaks_a_shell_on_the_characters_section_8_names(
 # ------------------------------------------------------------------- .env ---
 
 
-def _compose() -> list[str]:
+def _docker() -> str:
     docker = shutil.which("docker")
     if docker is None:
         pytest.skip("no `docker` on PATH")
+    return docker
+
+
+def _compose() -> list[str]:
+    docker = _docker()
     probe = subprocess.run(
         [docker, "compose", "version"], capture_output=True, check=False, timeout=TIMEOUT
     )
@@ -253,15 +270,22 @@ def _run(session: Any, statement: str) -> None:
         cursor.execute(statement)
 
 
-def _logs_in(sqlplus: str, session: Any, dsn: str, candidate: str) -> bool:
-    """Set the password with the driver, then log in with it in SQL*Plus.
+def _set_password(session: Any, candidate: str) -> None:
+    """Set the password with the driver, before a login with it.
 
-    The connect string goes to SQL*Plus on stdin, not in `argv` (invariant 1).
-    The unlock is there because the `printable_ascii` sweep fails some logins on
+    The unlock is there because the `printable_ascii` sweeps fail some logins on
     purpose, and the DEFAULT profile locks the account after ten.
     """
     _run(session, f"alter user {ACCOUNT} account unlock")
     session.set_password(ACCOUNT, Secret(candidate))
+
+
+def _logs_in(sqlplus: str, session: Any, dsn: str, candidate: str) -> bool:
+    """Set the password, then log in with it in SQL*Plus.
+
+    The connect string goes to SQL*Plus on stdin, not in `argv` (invariant 1).
+    """
+    _set_password(session, candidate)
     script = (
         "whenever sqlerror exit 3\n"
         f"connect {ACCOUNT}/{candidate}@{dsn}\n"
@@ -299,3 +323,275 @@ def test_printable_ascii_breaks_a_connect_string_on_the_characters_section_8_nam
         return _logs_in(sqlplus, account, live_oracle.dsn, candidate)
 
     assert _broken(survives, _swept(_specials("printable_ascii"))) == BREAKS["connect"]
+
+
+# --------------------------------------------------------------- JDBC URL ---
+
+#: The JDK the JDBC login runs in, and the driver jar it loads. Both are pinned,
+#: the jar by its checksum as well, so a new release is a change to these lines.
+JDK_IMAGE = "eclipse-temurin:21.0.8_9-jdk-alpine"
+OJDBC_URL = (
+    "https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/"
+    "23.26.3.0.0/ojdbc11-23.26.3.0.0.jar"
+)
+OJDBC_SHA256 = "764cc3f88454d1be117e155d01ed617467b984c9c68f13090dd6083799d2bb8c"
+
+JDBC_SOURCE = Path(__file__).resolve().parents[1] / "test" / "jdbc" / "JdbcLogin.java"
+
+#: How a container reaches a database that the DSN names on the host's loopback.
+HOST_ALIAS = "host.docker.internal"
+
+#: The answers that mean the password broke the login: the driver refused the
+#: URL (ORA-17067), read part of the password as the address (ORA-12261), or the
+#: server refused the password it was sent (ORA-01017). Any other failure is a
+#: fault in the test environment, not a finding about the password.
+PASSWORD_FAILURES = ("FAILED ORA-17067 ", "FAILED ORA-12261 ", "FAILED ORA-01017 ")
+
+
+@pytest.fixture(scope="session")
+def jdk() -> str:
+    """`docker`, with :data:`JDK_IMAGE` pulled, or a skip."""
+    docker = _docker()
+    present = subprocess.run(
+        [docker, "image", "inspect", JDK_IMAGE], capture_output=True, check=False, timeout=TIMEOUT
+    )
+    if present.returncode != 0:
+        pulled = subprocess.run(
+            [docker, "pull", JDK_IMAGE], capture_output=True, text=True, check=False, timeout=600
+        )
+        if pulled.returncode != 0:
+            pytest.skip(f"cannot pull {JDK_IMAGE}: {pulled.stderr.strip()}")
+    return docker
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.fixture(scope="session")
+def ojdbc(pytestconfig: pytest.Config, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The ojdbc jar from Maven Central, kept in the pytest cache.
+
+    Without the cache plugin, it goes in a temporary directory for this run. A
+    jar whose checksum is not :data:`OJDBC_SHA256` is never used. A cached one
+    is downloaded again. A downloaded one fails the test.
+    """
+    cache = getattr(pytestconfig, "cache", None)
+    directory = tmp_path_factory.mktemp("ojdbc") if cache is None else cache.mkdir("ojdbc")
+    jar = directory / OJDBC_URL.rsplit("/", 1)[-1]
+    if jar.exists() and _sha256(jar) == OJDBC_SHA256:
+        return jar
+    try:
+        with urllib.request.urlopen(OJDBC_URL, timeout=TIMEOUT) as response:
+            jar.write_bytes(response.read())
+    except (OSError, http.client.HTTPException) as error:
+        pytest.skip(f"cannot download {OJDBC_URL}: {error}")
+    digest = _sha256(jar)
+    if digest != OJDBC_SHA256:
+        jar.unlink()
+        pytest.fail(f"{OJDBC_URL} has sha256 {digest}, not {OJDBC_SHA256}")
+    return jar
+
+
+def _jdbc_address(dsn: str) -> str:
+    """The DSN as a JDBC thin address, `//host:port/service`, as a container sees it.
+
+    A loopback host is the machine the container runs on, so it becomes
+    :data:`HOST_ALIAS`.
+    """
+    if "://" in dsn or "/" not in dsn:
+        pytest.skip(f"the JDBC check needs an Easy Connect DSN, host:port/service, not {dsn}")
+    remainder = dsn.lstrip("/")
+    host = dsn_host(dsn)
+    if dsn_is_loopback(dsn):
+        remainder = HOST_ALIAS + remainder[len(host) :]
+    return "//" + remainder
+
+
+class _Jdbc:
+    """`JdbcLogin.java` in a JDK container, one login for each password sent.
+
+    One container for the whole test, because a JVM takes seconds to start. A
+    reader thread hands each answer over, so a login that hangs fails the test
+    after :data:`TIMEOUT` instead of hanging the lane. It fails rather than goes
+    on, because the late answer would then be read as the next password's.
+
+    stderr goes to a file, so a full pipe cannot stop the JVM.
+    """
+
+    def __init__(self, docker: str, jar: Path, address: str) -> None:
+        self._docker = docker
+        self._name = f"sopuli-jdbc-{secrets.token_hex(4)}"
+        # Closed in close(): the file lives as long as the container.
+        self._stderr = tempfile.TemporaryFile(mode="w+", encoding="utf-8")  # noqa: SIM115
+        self._process = subprocess.Popen(
+            [
+                docker,
+                "run",
+                "--rm",
+                "-i",
+                f"--name={self._name}",
+                f"--add-host={HOST_ALIAS}:host-gateway",
+                "--mount",
+                f"type=bind,src={jar.parent},dst=/ojdbc,readonly",
+                "--mount",
+                f"type=bind,src={JDBC_SOURCE.parent},dst=/src,readonly",
+                JDK_IMAGE,
+                "java",
+                "-cp",
+                f"/ojdbc/{jar.name}",
+                f"/src/{JDBC_SOURCE.name}",
+            ],  # fmt: skip
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self._stderr,
+            text=True,
+            encoding="utf-8",
+        )
+        self._lines: queue.Queue[str] = queue.Queue()
+        threading.Thread(target=self._read, daemon=True).start()
+        try:
+            self._send(ACCOUNT)
+            self._send(address)
+        except OSError as error:
+            # `docker run` exited before it read stdin: a bad mount, or no daemon.
+            self._fail(f"JdbcLogin did not start: {error}")
+        ready = self._answer()
+        if ready != "READY":
+            self._fail(f"JdbcLogin did not start: {ready}")
+
+    def _read(self) -> None:
+        assert self._process.stdout is not None
+        for line in self._process.stdout:
+            self._lines.put(line.rstrip("\r\n"))
+        self._lines.put("FAILED JdbcLogin exited")
+
+    def _send(self, line: str) -> None:
+        assert self._process.stdin is not None
+        self._process.stdin.write(line + "\n")
+        self._process.stdin.flush()
+
+    def _answer(self) -> str:
+        try:
+            return self._lines.get(timeout=TIMEOUT)
+        except queue.Empty:
+            self._fail(f"JdbcLogin gave no answer in {TIMEOUT} s")
+
+    def _fail(self, reason: str) -> NoReturn:
+        self._stop()
+        self._stderr.seek(0)
+        errors = self._stderr.read()
+        self.close()
+        raise AssertionError(f"{reason}\n{errors}")
+
+    def login(self, candidate: str) -> str:
+        """`LOGGEDIN`, or `FAILED` and the reason."""
+        self._send(candidate)
+        return self._answer()
+
+    def close(self) -> None:
+        self._stop()
+        self._stderr.close()
+
+    def _stop(self) -> None:
+        if self._process.stdin is not None and not self._process.stdin.closed:
+            self._process.stdin.close()
+        try:
+            self._process.wait(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # `--rm` removes the container only when it exits, and killing the
+            # client does not stop it.
+            subprocess.run(
+                [self._docker, "rm", "-f", self._name],
+                capture_output=True,
+                check=False,
+                timeout=TIMEOUT,
+            )
+            self._process.kill()
+            self._process.wait()
+
+
+@pytest.fixture
+def jdbc(jdk: str, ojdbc: Path, live_oracle: Environment) -> Iterator[_Jdbc]:
+    """The JDBC login. Requested before ``account``, so a machine without Docker
+    skips before the fixture touches the database."""
+    login = _Jdbc(jdk, ojdbc, _jdbc_address(live_oracle.dsn))
+    try:
+        yield login
+    finally:
+        login.close()
+
+
+def _through_jdbc(jdbc: _Jdbc, session: Any, candidate: str, *, quoted: bool) -> str:
+    """Set the password, then log in with it through a JDBC URL.
+
+    ``quoted`` puts the password in double quotes in the URL. Returns
+    :meth:`_Jdbc.login`'s answer.
+    """
+    _set_password(session, candidate)
+    return jdbc.login(f'"{candidate}"' if quoted else candidate)
+
+
+def _logs_in_through_jdbc(jdbc: _Jdbc, session: Any, candidate: str, *, quoted: bool) -> bool:
+    """Whether the login worked. A failure that is not in
+    :data:`PASSWORD_FAILURES` fails the test instead of counting against the
+    password."""
+    answer = _through_jdbc(jdbc, session, candidate, quoted=quoted)
+    if answer == "LOGGEDIN":
+        return True
+    if answer.startswith(PASSWORD_FAILURES):
+        return False
+    pytest.fail(f"the JDBC login failed for a reason other than the password: {answer}")
+
+
+@pytest.mark.parametrize("charset", SAFE)
+def test_a_safe_password_logs_in_through_a_quoted_jdbc_url(
+    charset: str, jdbc: _Jdbc, account: Any
+) -> None:
+    failed = [
+        candidate
+        for candidate in _samples(charset, "jdbc")
+        if not _logs_in_through_jdbc(jdbc, account, candidate, quoted=True)
+    ]
+
+    assert failed == []
+
+
+def test_printable_ascii_logs_in_through_a_quoted_jdbc_url(jdbc: _Jdbc, account: Any) -> None:
+    def survives(candidate: str) -> bool:
+        return _logs_in_through_jdbc(jdbc, account, candidate, quoted=True)
+
+    assert _broken(survives, _swept(_specials("printable_ascii"))) == set()
+
+
+def test_an_alnum_password_logs_in_through_an_unquoted_jdbc_url(jdbc: _Jdbc, account: Any) -> None:
+    failed = [
+        candidate
+        for candidate in _drawn("alnum", DRAWS["jdbc"])
+        if not _logs_in_through_jdbc(jdbc, account, candidate, quoted=False)
+    ]
+
+    assert failed == []
+
+
+def test_an_unquoted_jdbc_url_breaks_on_the_characters_section_8_names(
+    jdbc: _Jdbc, account: Any
+) -> None:
+    """`alnum_safe` is not safe here: its `-` and `.` are in the set."""
+
+    def survives(candidate: str) -> bool:
+        return _logs_in_through_jdbc(jdbc, account, candidate, quoted=False)
+
+    assert _broken(survives, _swept(_specials("printable_ascii"))) == BREAKS["jdbc"]
+    assert set(_specials("alnum_safe")) & BREAKS["jdbc"] == set("-.")
+
+
+def test_an_unquoted_jdbc_url_refuses_alnum_safe_with_ora_17067(jdbc: _Jdbc, account: Any) -> None:
+    """The #743 record says the failure names its cause: the driver refuses the
+    URL, and does not report a wrong password."""
+    answers = {
+        candidate: _through_jdbc(jdbc, account, candidate, quoted=False)
+        for candidate in _swept("-.")
+    }
+
+    assert {c: a for c, a in answers.items() if not a.startswith("FAILED ORA-17067 ")} == {}

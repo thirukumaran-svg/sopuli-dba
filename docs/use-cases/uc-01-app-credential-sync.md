@@ -2080,9 +2080,9 @@ list.
   promote; make the vault unreachable mid-run; close a PDB mid-run; revoke
   `ALTER USER` mid-run (open: #660).
 - **Charset fuzzing:** generated passwords through every path an operator uses.
-  `tests/test_password_paths.py` covers a shell, a `.env` file and a connect
-  string, and logs in through the connect string. The JDBC URL is not covered
-  (open: #743). Never a PL/SQL literal: invariant 13 keeps the password out of
+  `tests/test_password_paths.py` covers a shell, a `.env` file, a connect
+  string and a JDBC URL, and logs in through the connect string and the JDBC
+  URL. Never a PL/SQL literal: invariant 13 keeps the password out of
   every PL/SQL block. The results are in
   [`01-configuration.md` §8](../design/01-configuration.md#8-password-charsets).
 - **Lockout regression test:** run `check` against a deliberately drifted
