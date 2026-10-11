@@ -25,6 +25,7 @@ release it ran on. The suite has no rows in this file.
 |---|---|
 | `23.26.2.0.0` | 26ai Free, the `gvenzl/oracle-free` container, as pulled for the runs below |
 | `23.26.3.3.0` | 26ai, an Autonomous Database (serverless) on OCI |
+| `23.26.3.0.0` | Instant Client for Windows. Not a database: the client for the wallet results below, where the client decides the outcome |
 | `21.3.0.0.0` | 21c XE, the `gvenzl/oracle-xe:21-slim` container |
 | `19.32.0.0.0` | 19c EE, an OCI Base Database Service DB system. A release update |
 | `19.24.0.0.0` | 19c EE High Performance. Checked by hand, once |
@@ -122,5 +123,6 @@ not from a script in `sql/oracle/`.
 | Grace-period login warning | `19.3.0.0.0` | 2026-09-28 | #479 | `ORA-28002` |
 | Thin mode | `19.32.0.0.0` | 2026-10-01 | #575 | Refused with `DPY-3001`: the shipped `sqlnet.ora` requires NNE |
 | Thin mode | `23.26.3.3.0` | 2026-10-01 | #575 | Connects over TCPS; no NNE is negotiated |
+| Wallet failures over mutual TLS | `23.26.3.3.0` | 2026-09-28 | #472 | Missing, misplaced or unreadable: `ORA-28759`. Damaged: `ORA-28768`. Each took 64 s, because the alias sets `retry_count=20`. Instant Client 23.26.3.0.0, on Windows only |
 | The tool end to end | `23.26.3.3.0` | 2026-09-28 | #479 | Install, a rotation, a rollback and a rollover window, with a vault-held password. `docs/maintainer-environments.md` §6 has the setup |
 | The tool end to end | `19.32.0.0.0` | 2026-10-01 | #581 | As the least-privilege service account, including a rollover window. `docs/maintainer-environments.md` §5 has the setup and the run |

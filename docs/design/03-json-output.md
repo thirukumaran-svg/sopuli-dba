@@ -1158,6 +1158,15 @@ alias means asking the Oracle client, and the connection already does that
 better than any inspection: a target that connects has proved its wallet works.
 What is left for this section is the diagnosis when it does not.
 
+**A mutual-TLS target is not in this section.** A target that logs in by
+password over mutual TLS needs a wallet too, but `doctor` cannot tell that from
+the config: the alias names the target, and `protocol=tcps` is inside
+`tnsnames.ora`. So `required_by[]` never lists it, and `readable` says nothing
+about the wallet it uses, which can be in another directory. Its connection
+error reports a wallet problem instead. A wallet that is missing, misplaced or
+unreadable fails with `ORA-28759`, and a damaged one with `ORA-28768`. Both have
+`category: connectivity` and a hint that names where to look (UC-1 §6.4).
+
 ### `vaults`, emitted by `doctor`
 
 Every store the configuration declares: whether it answered, whether this run's

@@ -30,6 +30,7 @@ from sopuli.driver.oracle.errors import (
     UNKNOWN,
     UNREACHABLE,
     VERIFIER_MISMATCH,
+    WALLET,
     Diagnosis,
     MappedError,
     classify,
@@ -94,6 +95,8 @@ def test_the_table_covers_every_row_uc1_names() -> None:
         "ORA-12154",
         "ORA-12541",
         "ORA-28040",
+        "ORA-28759",
+        "ORA-28768",
     }
 
 
@@ -241,6 +244,35 @@ def test_only_a_plainly_transient_failure_is_marked_retryable() -> None:
     assert classify("ORA-12541", "no listener").retryable
     assert not classify("ORA-12154", "could not resolve").retryable
     assert not classify("ORA-01017", SERVER).retryable
+
+
+@pytest.mark.parametrize("code", ["ORA-28759", "ORA-28768"])
+def test_a_wallet_failure_is_connectivity_and_says_where_to_look(code: str) -> None:
+    """#472: neither message names a file, a wallet or TLS, so the hint does.
+
+    Connectivity, not the `database` fallback: the server never saw the
+    connection. Not retryable: the file stays missing until somebody fixes it.
+    """
+    found = classify(code, f"{code}: failure")
+
+    assert found.kind == WALLET
+    assert found.category == "connectivity"
+    assert found.exit_code == ExitCode.FAILURE
+    assert not found.retryable
+    assert found.hint is not None
+    assert "cwallet.sso" in found.hint
+    assert "retry_count" in found.hint
+
+
+def test_the_wallet_open_hint_lists_every_cause_it_cannot_tell_apart() -> None:
+    """A missing wallet, a WALLET_LOCATION that points elsewhere and an
+    unreadable `cwallet.sso` all raise ORA-28759 (measured, #472)."""
+    hint = classify("ORA-28759", "ORA-28759: failure to open file").hint
+
+    assert hint is not None
+    assert "TNS_ADMIN" in hint
+    assert "WALLET_LOCATION" in hint
+    assert "readable" in hint
 
 
 def test_the_client_library_is_a_local_problem_the_reader_can_fix() -> None:

@@ -71,6 +71,7 @@ CONTAINER_MISUSE = "container_misuse"
 UNREACHABLE = "unreachable"
 VERIFIER_MISMATCH = "verifier_mismatch"
 CLIENT_LIBRARY = "client_library"
+WALLET = "wallet"
 UNKNOWN = "unknown"
 
 #: Run-document states a code implies on its own. Spelled here as strings and
@@ -79,6 +80,14 @@ UNKNOWN = "unknown"
 #: document prints have to be the same word.
 LOCKED = "LOCKED"
 EXPIRED = "EXPIRED"
+
+#: The end of both wallet hints. A wallet failure is a local file problem, but a
+#: descriptor with `retry_count` makes Oracle Net retry it first, so it can take
+#: a minute to appear. `docs/measurements.md` has the measured time.
+_WALLET_RETRIES = (
+    "Where the connect descriptor sets retry_count, Oracle Net retries this before "
+    "it reports it, so a slow failure is not a network problem"
+)
 
 #: Oracle's Net/TNS error range. A range rather than a list because the family is
 #: large and only a few members are worth naming: a code in here that nothing has
@@ -198,6 +207,30 @@ RULES: dict[str, _Rule] = {
         "connectivity",
         retryable=True,
         hint="no listener at that address; it may be down rather than wrong",
+    ),
+    # The client's wallet. Measured only over mutual TLS, against an Autonomous
+    # Database (#472): a missing wallet, a WALLET_LOCATION that points elsewhere,
+    # and an unreadable `cwallet.sso` all raise ORA-28759, so its hint lists every
+    # cause rather than naming one. Both hints name the auto-login wallet,
+    # `cwallet.sso`, because an unattended run cannot open any other kind.
+    "ORA-28759": _Rule(
+        WALLET,
+        "connectivity",
+        hint=(
+            "the client could not open its wallet. Check that TNS_ADMIN names the "
+            "directory holding sqlnet.ora, that WALLET_LOCATION in sqlnet.ora names the "
+            "wallet directory, and that cwallet.sso there is readable by the account "
+            f"running sopuli. {_WALLET_RETRIES}"
+        ),
+    ),
+    "ORA-28768": _Rule(
+        WALLET,
+        "connectivity",
+        hint=(
+            "the client's wallet failed its integrity check, so cwallet.sso is damaged "
+            "or is not a wallet. Replace it with a fresh copy of the wallet. "
+            f"{_WALLET_RETRIES}"
+        ),
     ),
     "ORA-28040": _Rule(
         VERIFIER_MISMATCH,
