@@ -404,7 +404,7 @@ recovery, not only that the tool did not crash:
 
 | Injection | Assert |
 |---|---|
-| kill the process between `password_set` and `vault_promote` | `pending` still holds the new value; `check` reports `PENDING_APPLY`; a second `creds apply` completes the promotion |
+| kill the process between `password_set` and `vault_promote` | `pending` still holds the new value; `status` reports `PENDING_APPLY`; a second `creds apply` completes the promotion |
 | vault unreachable mid-run | nothing applied, or applied and not promoted; never promoted silently |
 | close a PDB mid-run (several targets) | partial success, exit 4, other targets untouched; `creds apply --repair` with the run document fixes it |
 | revoke `ALTER USER` mid-run | a clean authorization error, and no half-written state |
@@ -415,9 +415,16 @@ recovery, not only that the tool did not crash:
 
 The mechanics: `docker pause` or `docker stop` for the database, and a TCP proxy
 (the `toxiproxy` service) between the tool and both the database and the vault,
-for latency, truncation and dropped connections. Process kills are easiest to
-drive from the `jsonl` event stream: wait for the `seq` of `password.applied`,
-then send `SIGKILL`.
+for latency, truncation and dropped connections.
+
+Process kills are driven from the `jsonl` event stream: wait for
+`password.applied`, then kill the process. A kill alone is a race, because the
+run goes on to verify and promote while the test reads the event. So an HTTP
+proxy in front of the vault holds the write to the secret's path, and the kill
+comes while the run waits for it. `tests/fault_harness.py` has both parts.
+
+The two kill rows are in `tests/test_fault_kill.py`. They need only the tier-1
+services, so the tier-1 lane runs them. The other rows are open in #660.
 
 ---
 
