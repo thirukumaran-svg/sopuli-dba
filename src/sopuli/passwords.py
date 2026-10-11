@@ -303,9 +303,7 @@ def generate(
     can be (:func:`sopuli.config.charsets.alphabet`). ``except ConfigError`` covers
     both, and both exit 2.
     """
-    length = _required_length(policy)
-    allowed = _usable_alphabet(policy, limit, target)
-    _reject_impossible(policy, allowed, length, limit, target)
+    allowed, length = _drawable(policy, limit, target)
 
     last: tuple[Violation, ...] = ()
     for _ in range(attempts):
@@ -321,6 +319,38 @@ def generate(
             f"candidate failed: {_describe(last)}"
         ),
     )
+
+
+def require_feasible(
+    policy: PasswordPolicy,
+    *,
+    limit: ByteLimit | None,
+    target: str | None = None,
+) -> None:
+    """Refuse a policy that :func:`generate` could never satisfy, and draw nothing.
+
+    These are the refusals :func:`generate` makes before its first draw, through
+    the one function both call, so a caller that asks first gets the same
+    message the draw would give. ``account reset-password --dry-run`` asks this
+    so that its preview names the refusal the real run would hit (#671), without
+    drawing a password that nothing will use.
+    """
+    _drawable(policy, limit, target)
+
+
+def _drawable(
+    policy: PasswordPolicy, limit: ByteLimit | None, target: str | None
+) -> tuple[str, int]:
+    """The alphabet and the length to draw from, or the refusal.
+
+    The one place the pre-draw refusals are made. :func:`generate` and
+    :func:`require_feasible` both call it, so a refusal added here reaches the
+    dry run too.
+    """
+    length = _required_length(policy)
+    allowed = _usable_alphabet(policy, limit, target)
+    _reject_impossible(policy, allowed, length, limit, target)
+    return allowed, length
 
 
 def _required_length(policy: PasswordPolicy) -> int:

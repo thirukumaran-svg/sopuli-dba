@@ -283,7 +283,7 @@ from sopuli.output.vault_view import build as build_vault
 from sopuli.output.vault_view import render as render_vaults
 from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
-from sopuli.passwords import ByteLimit, generate
+from sopuli.passwords import ByteLimit, generate, require_feasible
 from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, stage_layout
 from sopuli.personal import declared_on
 from sopuli.preflight import Finding
@@ -2704,6 +2704,33 @@ def _reset_one(
                 duration_ms=_elapsed(started),
             )
 
+        # **Both of a reset's own refusals are asked before the preview returns**
+        # (#671), so a dry run that says "would be reset" means the real run
+        # gets past them too. Both are reads: UC-2 4.3's rollover refusal, which
+        # the driver asks again inside the reset, and whether the policy can
+        # produce a password inside this target's byte limit, asked without
+        # drawing one. The real run asks them here as well, which is still the
+        # last point before a password is drawn.
+        try:
+            if decision.expire:
+                session.require_no_rollover_window(account)
+            policy = _reset_policy(config, account, target.name, state)
+            limit = session.byte_limit()
+            require_feasible(policy, limit=limit, target=target.name)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            reported = _as_error(error)
+            return _Reset(
+                account=account,
+                target=target.name,
+                state=check_states.ERROR,
+                changed=False,
+                detail=reported.message,
+                status=status,
+                overridden=overridden,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
+
         if preview:
             # **Nothing below this line may run under --dry-run** (invariant 8),
             # and the first draft of this function proved why the rule is written
@@ -2725,16 +2752,7 @@ def _reset_one(
             )
 
         try:
-            if decision.expire:
-                # UC-2 4.3's refusal, asked here as well as inside the driver:
-                # this is the last point before a password is drawn, and drawing
-                # one for a reset that cannot run wastes nothing but says the
-                # refusal arrived later than it had to.
-                session.require_no_rollover_window(account)
-            secret = generate(
-                _reset_policy(config, account, target.name, state),
-                limit=session.byte_limit(),
-            )
+            secret = generate(policy, limit=limit, target=target.name)
             # **UC-2 6.4's other order, and this is the branch that makes it
             # two orders rather than one.** The rule is that the
             # irreversible step goes last, and what is irreversible differs by
@@ -2793,6 +2811,7 @@ def _reset_one(
                 changed=False,
                 detail=reported.message,
                 status=status,
+                overridden=overridden,
                 duration_ms=_elapsed(started),
                 error=reported,
                 encryption=sent if _carried(error) else None,

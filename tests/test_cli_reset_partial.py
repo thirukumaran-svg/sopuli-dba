@@ -47,6 +47,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.lock import Holder, LockDeniedError, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
+from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore
 
@@ -702,3 +703,103 @@ def test_a_declined_prompt_prints_the_notes_for_every_target_reset(
     assert [line.split()[1] for line in rows if "RESET" in line] == [TARGET, SECOND]
     assert "shown once" not in result.output, "a decline printed a password"
     assert "sopuli: aborted" in result.stderr
+
+
+# ------------------------------------------ a preview asks a reset's refusals ---
+#
+# #671. A reset refuses on a target for two reasons of its own: the account's
+# profile grants a rollover window (UC-2 §4.3), or the policy cannot produce a
+# password inside the target's byte limit. Both are reads, so a `--dry-run` asks
+# them, and its row says what the real run's row says.
+
+ROLLOVER = DriverError(
+    f'account "{ACCOUNT.upper()}" is on profile ACME_ROLLOVER, which grants a password '
+    "rollover window, and an expiring reset would leave the old password working"
+)
+
+
+class OnARolloverProfile(Succeeding):
+    """An account whose profile grants a rollover window."""
+
+    def require_no_rollover_window(self, account: str) -> None:
+        raise ROLLOVER
+
+
+class TooNarrow(Succeeding):
+    """A target whose limit is shorter than the policy's 20 characters."""
+
+    def byte_limit(self) -> ByteLimit:  # type: ignore[override]
+        return ByteLimit(max_bytes=16, encoding="ascii")
+
+
+def _comparable(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in row.items() if key != "duration_ms"}
+
+
+def test_a_preview_names_the_seen_paths_rollover_refusal(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    session = OnARolloverProfile("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=False)
+    config = write_config(MANUAL)
+
+    preview = _run(runner, config, "--dry-run")
+    real = _run(runner, config, input="y\n")
+
+    assert preview.exit_code == real.exit_code == ExitCode.PARTIAL, preview.output
+    rows = [
+        [
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith(ACCOUNT) and "ERROR" in line
+        ]
+        for result in (preview, real)
+    ]
+    assert rows[0] == rows[1], "the preview's row is not the real run's"
+    assert len(rows[0]) == 1
+    assert "rollover window" in rows[0][0]
+    assert "would be reset" not in preview.stdout
+    assert "would reset acme_dev_alice on 0 of 1 targets" in preview.stdout
+    assert session.reset == []
+
+
+def test_a_preview_names_the_byte_limit_refusal(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    session = TooNarrow("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=True)
+    config = write_config(WRAPPED)
+
+    preview = _run(runner, config, "--dry-run", "--output", "json")
+    real = _run(runner, config, "--output", "json")
+
+    assert preview.exit_code == real.exit_code == ExitCode.PARTIAL, preview.output
+    row = _row(preview)
+    assert row == _comparable(_row(real)) | {"duration_ms": row["duration_ms"]}
+    assert row["state"] == "ERROR"
+    assert "needs at least 20 bytes" in row["error"]["message"]
+    assert repr(TARGET) in row["error"]["message"], "the refusal names the target"
+    assert session.reset == []
+    assert sent.records == []
+
+
+class HoldingDba(FakeSession):
+    """An account that holds `DBA`, which check 2 refuses and `--force` waives."""
+
+    def describe_user(self, account: str) -> UserState | None:
+        return UserState(name=account.upper(), status=self.status, roles=frozenset({"DBA"}))
+
+
+def test_a_forced_reset_that_fails_keeps_the_override_on_its_row(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The guardrail was waived before the statement failed, so the row says so,
+    as the refusal row before it does."""
+    _open(monkeypatch, HoldingDba("OPEN", DENIED), unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--force", "--confirm", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    row = _row(result)
+    assert row["state"] == "ERROR"
+    assert row["overridden"], "the override was dropped from the failed row"

@@ -758,8 +758,9 @@ person types the password once, from a message, but generation is the same. The
 maximum length is the same question as in UC-1. The tool enforces 30 bytes below
 release 23 and 128 bytes from 23. The draw asks each target for its limit, after
 connecting and before any DDL, so a long policy is refused on that target with an
-`ERROR` row, instead of failing at the statement. A `--dry-run` does not ask
-(open: #671). That is the tool's rule, not a measured maximum for every release
+`ERROR` row, instead of failing at the statement. A `--dry-run` asks too, and
+draws no password: its row is the `ERROR` row the real run would report. That is
+the tool's rule, not a measured maximum for every release
 (unverified: password-byte-limit).
 
 ### 4.3 The rollover window
@@ -836,9 +837,10 @@ grants.
 
 **A seen reset of an account whose profile sets a non-zero rollover time is
 refused on that target**, naming the account and the profile, before a password
-is drawn or any DDL is issued. The row is `ERROR`. A `--dry-run` does not ask
-this question, so a preview shows the account as one that would be reset
-(open: #671). The refusal keys on the profile. Narrowing it to accounts whose
+is drawn or any DDL is issued. The row is `ERROR`. A `--dry-run` asks the same
+question and reports the same row. The real run asks again, because the profile
+can change between the two. Reasons: [#671](../decisions/log.md#671). The
+refusal keys on the profile. Narrowing it to accounts whose
 old password still authenticates is an open decision (open: #541). The unseen
 path is available for the same account.
 
@@ -1356,7 +1358,7 @@ Reasons: [H6](../decisions/log.md#h6).
 | 1 | no secret in `argv` | applies unchanged, including every store credential |
 | 2 | redaction at the serialiser | applies. §3's metadata record is inside it, not an exception to it: it holds no password in any form, not a hash and not a verifier. A **Vault** write is already a permitted plaintext site, so the Vault methods need no widening. The other stores (`one_time_link`, `onepassword_share`, `smtp_encrypted`) are not automatically permitted, and each says how it keeps the invariant when it is built. **The seen path's display is the invariant's fourth exception** (decided in #439), under §6.5's five guards. It is allowed because the exposure is deliberate, witnessed and expired, not because it is harmless; harmlessness is the third exception's argument and does not apply here. The wrapping token an unseen delivery returns is the fifth (§6.6) |
 | 3 | branch on capability, not version | applies: rollover (§4.3) is a capability |
-| 4 | unavailable capability fails at plan time | applies: §4.4's guardrails, and `vault_path`'s store-capability check (§6.6). §4.3's seen-path refusal is asked on each target before any DDL, and a `--dry-run` does not ask it (open: #671). §3.4's absences are deliberately **not** on that list: a reset needs none of them to do what it is for |
+| 4 | unavailable capability fails at plan time | applies: §4.4's guardrails, and `vault_path`'s store-capability check (§6.6). §4.3's seen-path refusal and §4.2's byte limit are asked on each target before any DDL, and a `--dry-run` asks them too ([#671](../decisions/log.md#671)). §3.4's absences are deliberately **not** on that list: a reset needs none of them to do what it is for |
 | 5 | the config is the whitelist | applies, with H1's addition: a personal account is declared in `personal_accounts:` by name or by predicate, and a predicate never widens what a mutating verb may touch. Selectors still cannot extend the declared set (§2) |
 | 6 | vault is master | nothing to govern, because there is no master (§1). H2 makes the database authoritative for **when** a password last changed. That does not break this invariant: invariant 6 governs the value, and a timestamp about the account is not the value (§3.2) |
 | 7 | never promote before confirmation | nothing to govern: there is no promotion (§1) |

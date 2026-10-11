@@ -283,6 +283,31 @@ def test_a_byte_limit_refusal_names_its_target_where_one_is_given() -> None:
     assert "lower `length:` for 'xe21-pdb'" in (caught.value.hint or "")
 
 
+@pytest.mark.parametrize(
+    ("candidate", "limit"),
+    [
+        (policy(length=40), ByteLimit(max_bytes=30, encoding="utf-8")),
+        (policy(length=8, charset="custom", allow="é"), ByteLimit(max_bytes=30, encoding="ascii")),
+        (policy(length=8, charset="custom", allow='"'), None),
+    ],
+)
+def test_require_feasible_refuses_what_generate_refuses_with_the_same_message(
+    candidate: PasswordPolicy, limit: ByteLimit | None
+) -> None:
+    """#671: a `--dry-run` asks this instead of drawing, so its message must be the
+    one the real run's draw would give."""
+    with pytest.raises(PasswordPolicyError) as asked:
+        passwords.require_feasible(candidate, limit=limit, target="xe21-pdb")
+    with pytest.raises(PasswordPolicyError) as drawn:
+        generate(candidate, limit=limit, target="xe21-pdb")
+
+    assert str(asked.value) == str(drawn.value)
+
+
+def test_require_feasible_says_nothing_about_a_policy_that_fits() -> None:
+    passwords.require_feasible(policy(length=20), limit=UTF8)
+
+
 def test_an_alphabet_the_target_cannot_store_is_refused() -> None:
     """A US7ASCII database cannot hold `é` at all, so no candidate drawn from this
     alphabet could ever be set."""

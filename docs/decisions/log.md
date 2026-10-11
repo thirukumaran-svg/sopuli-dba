@@ -1708,6 +1708,27 @@ the register.
   - Build logging now: a subsystem with no consumer.
   - Implement the policy keys: a second way in beside the flags.
 
+## #671
+
+- **Decided:** 2026-10-11, #671
+- **Question:** A real run of `account reset-password` refuses on a target for
+  two reasons of its own: the seen path's rollover refusal (UC-2 §4.3), and a
+  policy that cannot fit the target's byte limit (UC-2 §4.2). A `--dry-run`
+  asked neither, so it showed "would be reset" where the real run reported
+  `ERROR`. Should the preview ask them?
+- **Decision:** Yes. Both are asked before the preview returns, and the preview
+  row is the row the real run would report. The byte limit is checked without
+  drawing a password. The real run asks again before it draws.
+- **Why:** Both are reads, so invariant 8 holds. A preview that says "would be
+  reset" for a reset that fails is the trap UC-1 §5's `--dry-run --preflight`
+  exists to avoid, and invariant 4 wants a refusal named before anything runs.
+  The cost is two reads on a connection the preview already opens. The preview
+  is still a snapshot: an `ALTER PROFILE` between the preview and the run can
+  change the answer, which is why the real run asks again.
+- **Rejected:** Keep the preview a plan of intent and document the gap. The
+  operator would learn about the refusal from the real run, after the plan was
+  approved.
+
 ## #697
 
 - **Decided:** 2026-10-09, #697
