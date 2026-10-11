@@ -1694,6 +1694,20 @@ would be wrong: it would turn "somebody else owns this estate now" into a
 footnote and apply to the next account anyway. `LockError` is raised past the
 per-account handler, and the run ends.
 
+The account the run was working on still gets a row if the run had already
+changed it. Two checks come after a change to the same account:
+
+- the check before `--strategy direct` closes the rollover window. The password
+  is set and the window stays open. The row is `ROLLOVER_ACTIVE` with
+  `changed: true`, and its detail says the run lost its lock before it closed
+  the window.
+- the check before `ALTER USER`, after the attribute pass unlocked the account
+  or changed its profile. The row is `ERROR`, its attribute actions show what
+  was done, and its detail says the password was not set.
+
+Without the row, the change would be in no run document, and neither would its
+`SOPULI-W031` or `SOPULI-W032`.
+
 **Nothing is promoted after a takeover**, including documents whose own locks are
 still held. The fence would catch the write, but that is not the reason. A
 promotion asserts that every target holds this password, and a run stopped part
