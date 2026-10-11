@@ -75,6 +75,9 @@ class FakeSession:
     def describe_user(self, account: str) -> UserState | None:
         return UserState(name=account.upper(), status=self.status)
 
+    def byte_limit(self) -> None:
+        """A `reset-password` preview asks it. `None` is a target with no limit."""
+
     def expire_password(self, account: str) -> tuple[AccountChange, ...]:
         self.expired.append(account)
         if self.fail is not None:
@@ -144,6 +147,54 @@ def test_a_preview_reads_and_issues_nothing(
         {"kind": PASSWORD_EXPIRE, "applied": False, "detail": row["actions"][0]["detail"]}
     ]
     assert "would be expired" in row["actions"][0]["detail"]
+
+
+#: What `reset-password` needs as well: a policy, and an unseen delivery so that
+#: it previews under `--output json`. A preview opens no delivery store.
+RESETTABLE = """
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: https://vault-dev.example.com:8200
+
+policies:
+  standard:
+    password: { length: 24, charset: alnum, first_char: alpha }
+
+delivery:
+  method: vault_wrapped
+  vault_wrapped: { vault: vault-dev, ttl: 15m }
+"""
+
+
+@pytest.mark.parametrize("verb", ["expire-password", "suspend", "reset-password"])
+@pytest.mark.parametrize(("listed", "expected"), [("dev", True), ("prod", False)])
+def test_the_plan_says_whether_the_environment_needs_a_yes(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    fake: list[FakeSession],
+    verb: str,
+    listed: str,
+    expected: bool,
+) -> None:
+    """The `account` verbs ask `safety.confirm_environments`, and a preview
+    reports what the real run would ask (#663)."""
+    guarded = (
+        OFFLINE.replace(
+            "version: 1\n",
+            "version: 1\ndefaults:\n  policy: standard\n"
+            f"  safety:\n    confirm_environments: [{listed}]\n",
+        )
+        + RESETTABLE
+    )
+    result = runner.invoke(
+        cli,
+        ["--config", str(write_config(guarded)), "account", verb, "--account", ACCOUNT]
+        + ["--dry-run", "--output", "json"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert document(result)["plan"]["confirmation_required"] is expected
 
 
 def test_an_undeclared_account_never_reaches_the_driver(

@@ -3109,6 +3109,36 @@ def test_a_rollback_dry_run_needs_no_confirmation(
     assert harness["sessions"] == []
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [((), False), (("--source", "previous"), True)],
+    ids=["apply", "rollback"],
+)
+def test_the_plan_says_whether_the_run_needs_a_yes(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    source: tuple[str, ...],
+    expected: bool,
+) -> None:
+    """A rollback asks every time, and a dry run of one reports that (#663).
+    This estate lists no environment, so a plain `apply` asks nothing."""
+    estate(documents=_rolled())
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        *source,
+        "--dry-run",
+        "--output",
+        "json",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert document(result)["plan"]["confirmation_required"] is expected
+
+
 # --------------------------------- the rollback and reuse (decision #568) ---
 
 

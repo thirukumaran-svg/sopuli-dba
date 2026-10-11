@@ -1708,6 +1708,31 @@ the register.
   - Build logging now: a subsystem with no consumer.
   - Implement the policy keys: a second way in beside the flags.
 
+## #663
+
+- **Decided:** 2026-10-11, #663
+- **Question:** `plan.confirmation_required` was in the run schema, and no
+  command emitted it. It waited for a profile's `confirm:` to reach the
+  resolver, which #610 did. Emit it, remove it from the schema, or leave it
+  unemitted?
+- **Decision:** Emit it, on every plan. It is `true` when a real run of the
+  plan needs an explicit yes before it changes anything, and `false` otherwise.
+  A `--dry-run`, and a run given `--confirm`, report the value of the run that
+  prompts. The seen reset's prompt to show the password is not counted. Run
+  schema 1.34.
+- **Why:** `plan` is the same on a dry run and a real run (J2), so the field
+  cannot depend on `--dry-run` or `--confirm`. Read that way, it answers the
+  question a scheduler asks before the real run: will it need `--confirm`? The
+  seen reset's prompt comes after the password has changed, and no flag can
+  answer it, so it is not a gate on the plan.
+- **Rejected:**
+  - Remove it from the schema. `invocation.options` shows the resolved
+    `confirm`, but not whether a gate applies to this run. Removing a property
+    is a major bump.
+  - Leave it unemitted. The reason it waited for no longer holds.
+  - Report `false` on a dry run, because a dry run never prompts. The dry run's
+    plan would then differ from the real run's.
+
 ## #671
 
 - **Decided:** 2026-10-11, #671

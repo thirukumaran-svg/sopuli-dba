@@ -639,6 +639,31 @@ def test_a_refused_confirmation_writes_nothing(
     assert harness["store"].read("apps/acme/appdb-alpha").version == before
 
 
+@pytest.mark.parametrize("mode", [(), ("--dry-run",)], ids=["run", "dry-run"])
+def test_the_plan_says_a_rotation_needs_a_yes(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, mode: tuple[str, ...]
+) -> None:
+    """`rotate` asks every time, so its plan says so, on the dry run as well
+    (#663). `run` passes `--confirm`, which answers the gate and leaves it in
+    the plan."""
+    estate()
+    result = run(runner, write_config(CONFIG), *mode, "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert document(result)["plan"]["confirmation_required"] is True
+
+
+def test_a_rotation_with_nothing_to_rotate_needs_no_yes(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The run returns before `_confirm_rotation`, so nobody is asked (#663)."""
+    estate()
+    result = run(runner, write_config(CONFIG), "--select", "tenant=omega", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert document(result)["plan"]["confirmation_required"] is False
+
+
 @pytest.mark.parametrize(
     ("radius", "expected"),
     [

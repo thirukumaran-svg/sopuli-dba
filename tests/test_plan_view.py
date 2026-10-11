@@ -74,7 +74,7 @@ def test_a_plan_validates(validator: Draft202012Validator) -> None:
         intent=["verify"],
     )
 
-    assert not list(validator.iter_errors(document_with(plan.as_json())))
+    assert not list(validator.iter_errors(document_with(plan.as_json(confirmation_required=False))))
 
 
 def test_a_shared_plan_validates(validator: Draft202012Validator) -> None:
@@ -87,7 +87,7 @@ def test_a_shared_plan_validates(validator: Draft202012Validator) -> None:
         intent=["generate", "vault_write_pending"],
     )
 
-    section = plan.as_json()
+    section = plan.as_json(confirmation_required=False)
     assert section["shared_secrets"][0]["accounts"] == ["acme_web_user", "acme_api_user"]
     assert not list(validator.iter_errors(document_with(section)))
 
@@ -112,7 +112,7 @@ def test_a_plan_whose_store_is_unresolved_validates(validator: Draft202012Valida
         }
     )
 
-    section = build(config, intent=["verify"]).as_json()
+    section = build(config, intent=["verify"]).as_json(confirmation_required=False)
     assert "secret" not in section["units"][0]
     assert not list(validator.iter_errors(document_with(section)))
 

@@ -1333,7 +1333,7 @@ def account_suspend(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
-    document.plan = plan.as_json()
+    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
     if not reached:
@@ -1611,7 +1611,7 @@ def account_expire_password(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
-    document.plan = plan.as_json()
+    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
     if not reached:
@@ -1964,7 +1964,7 @@ def account_reset_password(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
-    document.plan = plan.as_json()
+    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
     # No-ops outside `--output jsonl`. A seen reset reaches them only as
     # a `--dry-run`: the real one is refused under every machine format above,
     # and a preview is exempt from that refusal because it shows no password
@@ -3894,6 +3894,17 @@ def _confirm_environments(
     click.confirm(question, abort=True, err=True)
 
 
+def _asks_environments(plan: Any, run: Invocation) -> bool:
+    """Whether :func:`_confirm_environments` asks a real run of ``plan``.
+
+    The run document's `plan.confirmation_required` for a verb whose only gate is
+    that one. It asks the same question with the same arguments, and ignores
+    `--dry-run` and `--confirm`, because the field describes the plan and not how
+    the gate was answered.
+    """
+    return confirmation_demanded(run.resolved, plan.blast_radius) is not None
+
+
 def _with_estate_safety(run: Invocation, config: Config) -> Invocation:
     """``run`` with the ``safety:`` blocks of the estate it selected merged in.
 
@@ -4270,7 +4281,7 @@ def creds_check(
     run = _with_estate_safety(run, config)
     plan = plan_builder.build(config, intent=["verify"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="checking credentials")
-    document.plan = plan.as_json()
+    document.plan = plan.as_json(confirmation_required=False)
     # The events are no-ops outside `--output jsonl`, so none of this branches on
     # the mode.
     emitter = run.emitter()
@@ -4887,7 +4898,7 @@ def creds_generate(
         config, intent=["generate", "vault_promote" if promote else "vault_write_pending"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
-    document.plan = plan.as_json()
+    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
     # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
@@ -5772,7 +5783,9 @@ def creds_apply(
     refuse_if_nobody_to_ask(
         _targets_of(config, bindings) if connects else [], run.prompt, action="applying a password"
     )
-    document.plan = plan.as_json()
+    document.plan = plan.as_json(
+        confirmation_required=source_stage == PREVIOUS or _asks_environments(plan, run)
+    )
     # No-ops outside `--output jsonl`, as in `creds check`: nothing here branches on
     # the mode.
     emitter = run.emitter()
@@ -8461,7 +8474,7 @@ def creds_finish_rollover(
     refuse_if_nobody_to_ask(
         _targets_of(config, bindings), run.prompt, action="ending a rollover window"
     )
-    document.plan = plan.as_json()
+    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
     # The one verb here whose purpose is to stop something working, so the gate
     # is if anything more apt: closing a window early is what takes the old
     # password away from whatever has not been given the new one.
@@ -8884,7 +8897,8 @@ def creds_rotate(
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="rotating a password")
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     refuse_if_nobody_to_ask(_targets_of(config, bindings), run.prompt, action="rotating a password")
-    document.plan = plan.as_json()
+    # `_confirm_rotation` asks every real run that has something to rotate.
+    document.plan = plan.as_json(confirmation_required=bool(bindings))
     # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
@@ -9561,7 +9575,7 @@ def creds_status(
     run = _with_estate_safety(run, config)
     plan = plan_builder.build(config, intent=["none"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="taking an inventory")
-    document.plan = plan.as_json()
+    document.plan = plan.as_json(confirmation_required=False)
 
     bindings = list(config.bindings)
     if not bindings:

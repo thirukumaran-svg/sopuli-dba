@@ -152,7 +152,7 @@ class Plan:
     #: one answers "what does *this run* touch that something else reads".
     shared: tuple[SharedSecret, ...] = ()
 
-    def as_json(self) -> dict[str, Any]:
+    def as_json(self, *, confirmation_required: bool) -> dict[str, Any]:
         """The run document's ``plan`` section.
 
         ``shared_secrets`` is omitted when nothing is shared rather than emitted
@@ -160,16 +160,20 @@ class Plan:
         array reads like a finding that came back negative, and this one would
         appear in every clean document consumers diff.
 
-        ``confirmation_required`` is **not** emitted, and its absence is honest
-        rather than an omission. It is optional in the schema, and answering it
-        needs a profile's `confirm:` wired into the resolver -- which
-        `sopuli.cli._can_prompt` already records as its own change. Emitting
-        `false` here would be claiming a run had been through a gate that does
-        not exist yet.
+        ``confirmation_required`` is whether a real run of this plan needs an
+        explicit yes before it changes anything: a prompt, or `--confirm` given in
+        advance. The verb answers it, because the gates are per verb: `creds
+        rotate` asks whenever it has something to rotate, and `creds check` never
+        asks. The plan cannot see
+        them, so the keyword has no default, and no call site can emit a guess. It
+        does not say how the gate was answered: a `--dry-run` and a run given
+        `--confirm` report the same value as the run that prompts, because `plan`
+        is the same on all three.
         """
         section: dict[str, Any] = {
             "units": [unit.as_json() for unit in self.units],
             "blast_radius": self.blast_radius.as_json(),
+            "confirmation_required": confirmation_required,
         }
         if self.shared:
             section["shared_secrets"] = [entry.as_json() for entry in self.shared]

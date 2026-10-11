@@ -312,14 +312,16 @@ def test_nothing_shared_omits_the_key_rather_than_emitting_an_empty_array() -> N
     )
 
     assert plan.shared == ()
-    assert "shared_secrets" not in plan.as_json()
+    assert "shared_secrets" not in plan.as_json(confirmation_required=False)
 
 
-def test_confirmation_required_is_not_emitted_at_all() -> None:
-    """Optional in the schema, and not answerable here: whether a run is asked
-    depends on `--confirm`, the profile's `confirm:` and stdin, none of which the
-    plan sees. Emitting `false` would claim the run passed no gate."""
-    assert "confirmation_required" not in plan_over(accounts=ACCOUNTS).as_json()
+@pytest.mark.parametrize("required", [True, False])
+def test_confirmation_required_is_the_answer_the_verb_gives(required: bool) -> None:
+    """The plan cannot see the gates, which are per verb. So it emits what the
+    verb answered, and the keyword has no default to guess with."""
+    section = plan_over(accounts=ACCOUNTS).as_json(confirmation_required=required)
+
+    assert section["confirmation_required"] is required
 
 
 # ------------------------------------------------------------- determinism ---
@@ -332,4 +334,6 @@ def test_two_builds_over_one_config_are_identical() -> None:
         accounts=ACCOUNTS, secret_template="apps/acme/{tenant}#DB_CREDENTIALS/{account}"
     )
 
-    assert build(config, intent=["verify"]).as_json() == build(config, intent=["verify"]).as_json()
+    assert build(config, intent=["verify"]).as_json(confirmation_required=False) == build(
+        config, intent=["verify"]
+    ).as_json(confirmation_required=False)

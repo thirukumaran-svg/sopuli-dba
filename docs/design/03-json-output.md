@@ -6,8 +6,8 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.33.schema.json`](../schemas/sopuli-run-1.33.schema.json),
-[`../schemas/sopuli-event-1.7.schema.json`](../schemas/sopuli-event-1.7.schema.json)
+Schemas: [`../schemas/sopuli-run-1.34.schema.json`](../schemas/sopuli-run-1.34.schema.json),
+[`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---
@@ -629,9 +629,31 @@ have emitted with `--dry-run`, so comparing "what we said we would do" with
 secret serves many targets (UC-1 §4): rotating one account changes three PDBs.
 That is legal and often intended, but never invisible.
 
-**`confirmation_required` is optional, and the tool does not emit it**
-(open: #663). Emitting `false` would claim that the run met a confirmation gate
-and passed it. Absent says that the run was never asked, which is true.
+**`confirmation_required` says whether a real run of the plan needs an
+explicit yes before it changes anything**: the answer to a prompt, or `--confirm`
+given in advance. It is `true` in these cases:
+
+- `safety.confirm_environments` lists an environment the run reaches, and the
+  verb asks that setting. These verbs ask it: `creds apply`, `creds generate`,
+  `creds finish-rollover`, `account suspend`, `account expire-password` and
+  `account reset-password`.
+- The verb is `creds rotate`, and it has a credential to rotate. It asks every
+  time.
+- The verb is `creds apply --source previous`, the rollback. It asks every time.
+
+In every other case it is `false`. `creds check` and `creds status` change
+nothing, so they always report `false`.
+
+**A `--dry-run` reports the value of the real run**, and so does a run given
+`--confirm`. Neither one prompts, but `plan` is the same on all three runs, and
+the field describes the plan, not how the gate was answered. So a dry run tells
+a scheduler whether the real run will need `--confirm`.
+
+**The seen reset's prompt is not counted.** It asks whether to show the
+password, after the password has changed, and `--confirm` cannot answer it
+(UC-2 §6.5). On that path `--confirm` is refused altogether, so a `true` there
+can be answered only at the prompt. Reasons:
+[#663](../decisions/log.md#663).
 
 **A unit omits `secret` when nothing has named its store yet.** `secret_ref`
 requires `vault` as a string, so there is no shape for half an address, and

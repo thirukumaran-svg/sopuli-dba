@@ -597,3 +597,73 @@ def test_the_profile_answer_is_reported(
     options = json.loads(result.output)["invocation"]["options"]
     assert options["confirm"]["value"] is False
     assert options["confirm"]["source_detail"] == "profiles.ci.confirm"
+
+
+# ------------------------------------------------- plan.confirmation_required ---
+
+
+def required(result: Result) -> bool:
+    """The run document's answer to "does the real run need a yes"."""
+    return bool(json.loads(result.output)["plan"]["confirmation_required"])
+
+
+@pytest.mark.parametrize("argv", VERBS)
+@pytest.mark.parametrize("answer", ["--dry-run", "--confirm"])
+def test_a_gated_plan_says_so_however_the_gate_was_answered(
+    argv: list[str],
+    answer: str,
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+) -> None:
+    """Neither run prompts, and both report the value of the run that would.
+    `plan` is the same on a dry run and a real run (#663)."""
+    estate()
+    result = run(
+        runner, argv, write_config(CONFIG), "--select", "tenant=alpha", answer, "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert required(result) is True
+
+
+@pytest.mark.parametrize("argv", VERBS)
+@pytest.mark.parametrize(
+    ("config", "tenant"), [(CONFIG, "beta"), (UNGUARDED, "alpha")], ids=["unlisted", "unguarded"]
+)
+def test_a_plan_no_gate_covers_says_so(
+    argv: list[str],
+    config: str,
+    tenant: str,
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+) -> None:
+    """`false` is a claim, and it is true here: the real run asks nothing."""
+    estate()
+    result = run(
+        runner, argv, write_config(config), "--select", f"tenant={tenant}", "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert required(result) is False
+
+
+@pytest.mark.parametrize("verb", ["check", "status"])
+def test_a_verb_that_changes_nothing_needs_no_yes(
+    verb: str, runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Into a listed environment, which is the case a reading of the setting
+    alone would get wrong."""
+    estate()
+    result = run(
+        runner,
+        ["creds", verb],
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--output",
+        "json",
+    )
+
+    assert required(result) is False

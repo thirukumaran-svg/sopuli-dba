@@ -61,7 +61,7 @@ class OutputMode(StrEnum):
 #: What every streamed event carries as ``schema_version``. The event schema is
 #: versioned apart from the run document's, so it has a constant of its own; the
 #: published file is ``docs/schemas/sopuli-event-<EVENT_SCHEMA_VERSION>.schema.json``.
-EVENT_SCHEMA_VERSION = "1.7"
+EVENT_SCHEMA_VERSION = "1.8"
 
 
 class RedactingJSONEncoder(json.JSONEncoder):
