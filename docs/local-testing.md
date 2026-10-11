@@ -808,6 +808,13 @@ Plan: 1 account x 1 target = 1 account   [dev]
 ACCOUNT         TARGET    INTENT        SECRET
 acme_dev_alice  free-pdb  password_set  -
 show the new password for acme_dev_alice on free-pdb on this terminal? [y/N]: y
+password for acme_dev_alice, shown once:
+
+    <PASSWORD>
+
+It is expired: the owner must change it at first logon, which is what ends
+your sight of it. It is not stored anywhere and will not be shown again.
+
 Plan: 1 account x 1 target = 1 account   [dev]
 
 ACCOUNT         TARGET    INTENT        SECRET
@@ -822,17 +829,12 @@ reset acme_dev_alice on 1 of 1 targets
 2 notes:
   no `reset_records:` block is declared, so no record of this reset will be written and no advisory lock is taken on the account: the run document and the database are the whole record of it
   free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
-
-password for acme_dev_alice, shown once:
-
-    <PASSWORD>
-
-It is expired: the owner must change it at first logon, which is what ends
-your sight of it. It is not stored anywhere and will not be shown again.
 ```
 
-The prompt comes after the password is set. Answer `n` and the account keeps a
-password nobody has seen; reset it again to fix that.
+The prompt comes after the password is set, and the password prints as soon as
+you answer `y`, before the result. Answer `n` and the account keeps a password
+nobody has seen; reset it again to fix that. On several targets, a password you
+have already seen stays valid when you answer `n` on a later one.
 
 The plan appears twice. The first copy goes to stderr before anything changes,
 so a run that fails part way still shows what it was about to touch. The second

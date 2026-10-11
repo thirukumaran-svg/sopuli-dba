@@ -701,8 +701,84 @@ def test_a_declined_prompt_prints_the_notes_for_every_target_reset(
     assert "3 notes:" in result.stdout
     rows = [line for line in result.stdout.splitlines() if line.startswith(ACCOUNT)]
     assert [line.split()[1] for line in rows if "RESET" in line] == [TARGET, SECOND]
-    assert "shown once" not in result.output, "a decline printed a password"
+    assert result.stdout.count("shown once") == 1, "only the accepted password is shown"
     assert "sopuli: aborted" in result.stderr
+
+
+class Remembering(Succeeding):
+    """A session that keeps each password it set, so a test can look for it."""
+
+    def __init__(self, status: str, fail: Exception) -> None:
+        super().__init__(status, fail)
+        self.passwords: list[str] = []
+
+    def reset_password(self, account: str, secret: Secret, **_: Any) -> tuple[AccountChange, ...]:
+        self.passwords.append(secret.reveal())
+        return super().reset_password(account, secret)
+
+
+def test_a_declined_prompt_keeps_the_password_accepted_before_it(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#741. The first target is accepted and the second declined. The first
+    password is the account's on that target, so it must reach the screen; the
+    second must not."""
+    session = Remembering("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=False)
+
+    result = _run(runner, write_config(TWO_TARGETS), input="y\nn\n")
+
+    assert result.exit_code == ExitCode.ABORTED, result.output
+    first, second = session.passwords
+    assert first in result.stdout, "the accepted password was lost"
+    assert second not in result.output, "the declined password was shown"
+
+
+def test_a_password_is_shown_on_its_own_target_before_the_table(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#741. Each password prints on its own target, before the next target's
+    prompt, so the run's table comes after both."""
+    session = Remembering("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=False)
+
+    result = _run(runner, write_config(TWO_TARGETS), input="y\ny\n")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    first, second = session.passwords
+    # `output` interleaves the prompt on stderr with the password on stdout.
+    prompt = result.output.index(f"on {SECOND} on this terminal?")
+    assert result.output.index(first) < prompt < result.output.index(second)
+    table = result.stdout.index("ACCOUNT ")
+    table = result.stdout.index("STATE", table)
+    assert result.stdout.index(second) < table
+
+
+@pytest.mark.parametrize(("choice", "painted"), [("never", False), ("always", True)])
+def test_the_password_block_follows_the_colour_setting(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    choice: str,
+    painted: bool,
+) -> None:
+    """The heading is painted, and only the emitter strips colour, so a password
+    printed past it would carry escapes under `--color never`. `color=True`
+    stops `CliRunner` from stripping them itself."""
+    _open(monkeypatch, Succeeding("OPEN", DENIED), unseen=False)
+    config = write_config(MANUAL)
+
+    result = runner.invoke(
+        cli,
+        ["--color", choice, "--config", str(config), "account", "reset-password"]
+        + ["--account", ACCOUNT],
+        input="y\n",
+        color=True,
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "shown once" in result.stdout
+    assert ("\x1b[" in result.stdout) is painted
 
 
 # ------------------------------------------ a preview asks a reset's refusals ---

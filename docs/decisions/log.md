@@ -1754,6 +1754,32 @@ the register.
   - One code for both: a consumer could not tell "in clear" from "did not
     look" without reading the message.
 
+## #741
+
+- **Decided:** 2026-10-11, #741
+- **Question:** On the seen path, `account reset-password` asks once per target
+  whether to show the new password, and printed every accepted password at the
+  end of the run. A prompt declined on a later target aborts the run before that
+  print, so a password the operator had accepted was never shown. Its account
+  kept an expired password that nobody held. How should the run hand over an
+  accepted password?
+- **Decision:** Print each password on its own target, as soon as the operator
+  accepts it and its record is written. Wrapping tokens from an unseen method
+  still print at the end of the run.
+- **Why:** This removes the cause rather than handling the abort. Every guard
+  in UC-2 §6.5 has passed for an accepted password, so printing it earlier adds
+  no emission. It prints after the record, so UC-2 §3.1's order holds: the
+  record is written a moment before the password reaches the screen. A token
+  has no prompt, so a decline cannot lose one, and in JSON mode the end-of-run
+  print is what sends it to stderr.
+- **Cost accepted:** In a run that finishes, each password appears before the
+  result table, not after it.
+- **Rejected:**
+  - Print the accepted passwords on the abort path, after the table. This
+    adds a second place that prints a working password.
+  - Keep the behaviour and document that a decline loses the earlier
+    passwords. The recovery is another reset of each such account.
+
 ## #742
 
 - **Decided:** 2026-10-10, #742

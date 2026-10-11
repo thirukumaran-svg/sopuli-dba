@@ -303,10 +303,14 @@ class Emitter:
 
         ``click.unstyle`` is the CLI dependency's own function for it, so it
         adds no display library (ADR-003).
+
+        **Flushed**, because `account reset-password` writes here in the middle
+        of a run, and the next thing on screen is a prompt on stderr. Unflushed,
+        a password could reach the screen after the next target's prompt.
         """
         if not self.use_color():
             text = click.unstyle(text)
-        print(text.rstrip("\n"), file=self._out())
+        print(text.rstrip("\n"), file=self._out(), flush=True)
 
 
 def _finished(document: RunDocument) -> dict[str, Any]:

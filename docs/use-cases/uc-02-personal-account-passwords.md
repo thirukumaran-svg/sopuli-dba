@@ -506,8 +506,8 @@ most needs explaining is the one where nobody received it. For the same reason,
 the run prints its result table and its notes before it exits 8, for every target
 it reset, the declined one included. The seen path refuses JSON (§6.5), so no run
 document carries them. The declined target is not notified, because nothing was
-handed over, so it has no `SOPULI-W026`. A decline prints no password, not even
-one the operator accepted on an earlier target.
+handed over, so it has no `SOPULI-W026`. A decline loses no password the
+operator accepted on an earlier target: §6.5 prints each one on its own target.
 
 §3.4 lists the warnings: `SOPULI-W024` when no store is configured, and
 `SOPULI-W025` when the write fails after a successful reset. They are separate
@@ -1214,6 +1214,15 @@ want of a terminal would make *show me what this would do* impossible from the
 CI job that most wants it. Guard 5 still applies to a preview, because it is a
 property of the file, not of an emission: a `manual` block without
 `force_expire: true` is refused whether or not anything runs.
+
+**Each password prints on its own target**, after its record is written and
+before the next target starts, and not at the end of the run. On a run over
+several targets, the operator may accept the prompt on one target and decline it
+on a later one. The decline aborts the run. A password held back for the end
+would then never be shown, and its account would keep an expired password that
+nobody holds. Printing on the target adds no emission, because every guard has
+passed by then. A finished run therefore shows each password before the result
+table. Reasons: [#741](../decisions/log.md#741).
 
 `tests/test_reveal_sites.py` enforces guard 1. It parses `src/` and fails on a
 `reveal()` call in a module that holds none of invariant 2's sites, and on a
