@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.71.0](https://github.com/villebase/sopuli-dba/compare/v0.70.0...v0.71.0) (2026-10-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** drop $ and ^ from the alnum_safe charset ([#742](https://github.com/villebase/sopuli-dba/issues/742)) (#744)
+
+### Features
+
+* **doctor:** report whether each connection is encrypted ([#697](https://github.com/villebase/sopuli-dba/issues/697)) ([#736](https://github.com/villebase/sopuli-dba/issues/736)) ([fb2957f](https://github.com/villebase/sopuli-dba/commit/fb2957fc558ea54ff23cacdc458879194b8cd4d0))
+* **output:** warn when a password is sent over an unencrypted connection ([#697](https://github.com/villebase/sopuli-dba/issues/697)) ([#737](https://github.com/villebase/sopuli-dba/issues/737)) ([f00afe8](https://github.com/villebase/sopuli-dba/commit/f00afe8d459ae2c7fc5bfe66bdf510d15d7e3058))
+* refuse a mutating verb at plan time when a target would prompt ([#481](https://github.com/villebase/sopuli-dba/issues/481)) ([#706](https://github.com/villebase/sopuli-dba/issues/706)) ([91ba57e](https://github.com/villebase/sopuli-dba/commit/91ba57e60b8872fd07489bb4947165a794831440))
+
+
+### Bug Fixes
+
+* **apply:** keep the row of an account changed before a lost lock ([#739](https://github.com/villebase/sopuli-dba/issues/739)) ([#749](https://github.com/villebase/sopuli-dba/issues/749)) ([bbc505d](https://github.com/villebase/sopuli-dba/commit/bbc505d71cf622a9ae7cfb4f202f95aa2e03cd5c))
+* **config:** drop $ and ^ from the alnum_safe charset ([#742](https://github.com/villebase/sopuli-dba/issues/742)) ([#744](https://github.com/villebase/sopuli-dba/issues/744)) ([974c301](https://github.com/villebase/sopuli-dba/commit/974c30113dc445cc12f38605cec00c9473ae73e0))
+* drop issue numbers from three runtime strings ([#718](https://github.com/villebase/sopuli-dba/issues/718)) ([#730](https://github.com/villebase/sopuli-dba/issues/730)) ([7a9d0ab](https://github.com/villebase/sopuli-dba/commit/7a9d0ab61329c60cffead29cc4dd195b5121c3d0))
+* **lock:** complete binding stores from profile and SOPULI_VAULT in lock status ([#672](https://github.com/villebase/sopuli-dba/issues/672)) ([#676](https://github.com/villebase/sopuli-dba/issues/676)) ([ae5b4ae](https://github.com/villebase/sopuli-dba/commit/ae5b4ae8c61b3aac4fd410d1bbc0c2bbce461181))
+* **reset:** print the notes when a seen-path prompt is declined ([#738](https://github.com/villebase/sopuli-dba/issues/738)) ([#740](https://github.com/villebase/sopuli-dba/issues/740)) ([c16ec68](https://github.com/villebase/sopuli-dba/commit/c16ec6804c6fa9b4c1ecc17ef7f91e576b4634d2))
+
 ## [0.70.0](https://github.com/villebase/sopuli-dba/compare/v0.69.0...v0.70.0) (2026-10-06)
 
 
