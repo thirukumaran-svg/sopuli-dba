@@ -4,8 +4,8 @@ Two rows of §5's table, asserted against UC-1 §8's *Failure at each step*:
 
 * a PDB closes mid-run, on one target of two. The other target takes the new
   password, ``current`` is not promoted, and the run exits 4. Once the PDB is
-  open, ``creds apply`` finishes the job. ``--repair`` with the run's document
-  should too, and is refused (#764);
+  open, ``creds apply`` finishes the job. So does ``--repair`` with the run's
+  document, followed by ``creds apply`` to promote;
 * the admin user loses ``ALTER USER`` mid-run. The run reports the
   authorization error, and nothing is half-written: the database keeps the old
   password and ``current`` is unchanged.
@@ -51,6 +51,7 @@ from fault_harness import (
 )
 from oracle_harness import Environment, service_account_grants
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
+from sopuli.diagnostics import PROMOTION_WITHHELD
 from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.exit_codes import ExitCode
 
@@ -434,31 +435,45 @@ def test_apply_completes_a_rotation_a_closed_pdb_interrupted(closed_mid_run: Clo
     assert _logs_in(closed.pdb, new)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#764: --repair refuses a `creds rotate` document",
-)
-def test_apply_repair_finishes_a_rotation_from_its_document(closed_mid_run: Closed) -> None:
-    """UC-1 §8 row 5's recovery: ``creds apply --repair`` with the run's document.
+def test_apply_repair_then_apply_finishes_a_rotation(closed_mid_run: Closed) -> None:
+    """UC-1 §8 row 5's recovery: ``creds apply --repair`` with the run's document,
+    then ``creds apply``.
 
-    The repair reaches only the target that missed the password, and promotes.
+    The repair reaches only the target that missed the password, and applies it.
+    It withholds the promotion with ``SOPULI-W027``, because ``current`` is shared
+    with the target it left out (UC-1 §5, *A repair of a rotation*). The plain
+    apply then promotes.
     """
     closed = closed_mid_run
     staged, _ = closed.estate.read(SECRET)
     new = staged["pending"][ACCOUNT]
     document = closed.estate.tmp_path / "rotate.json"
     document.write_text(closed.result.stdout, encoding="utf-8")
+    # `--repair` refuses a document produced over another config path. The rotation
+    # ran over a config naming the gate, so the repair runs over that same path,
+    # rewritten to name Vault itself.
+    (rotated,) = json.loads(closed.result.stdout)["invocation"]["config_files"]
+    config = Path(rotated)
+    config.write_text(closed.config.read_text(encoding="utf-8"), encoding="utf-8")
 
     repaired = closed.estate.sopuli(
-        closed.config, "creds", "apply", "--repair", str(document), "--confirm"
+        config, "creds", "apply", "--repair", str(document), "--confirm"
     )
 
-    assert repaired.returncode == ExitCode.SUCCESS, repaired.stderr
+    assert repaired.returncode == ExitCode.PARTIAL, repaired.stderr
     assert set(_rows(repaired)) == {PDB_TARGET}
+    codes = {one.get("code") for one in json.loads(repaired.stdout)["diagnostics"]}
+    assert PROMOTION_WITHHELD in codes
+    assert _logs_in(closed.pdb, new)
+    withheld, _ = closed.estate.read(SECRET)
+    assert withheld["DB_CREDENTIALS"][ACCOUNT] == closed.old
+
+    applied = closed.estate.sopuli(config, "creds", "apply", "--confirm")
+
+    assert applied.returncode == ExitCode.SUCCESS, applied.stderr
     promoted, _ = closed.estate.read(SECRET)
     assert promoted["DB_CREDENTIALS"][ACCOUNT] == new
-    assert _logs_in(closed.pdb, new)
+    assert ACCOUNT not in promoted.get("pending", {})
 
 
 def test_alter_user_revoked_mid_run_is_an_authorization_error(

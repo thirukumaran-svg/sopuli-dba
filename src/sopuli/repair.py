@@ -50,7 +50,7 @@ from typing import Any
 from sopuli.clock import utc_now
 from sopuli.config.errors import ROOT, ArgumentError
 from sopuli.config.selection import AccountTarget
-from sopuli.diagnostics import REPAIR_DOCUMENT_STALE
+from sopuli.diagnostics import LOCK_LOST, REPAIR_DOCUMENT_STALE
 from sopuli.output.document import Diagnostic
 
 #: Where a ``--repair`` refusal points. Renders as the option the operator typed,
@@ -61,7 +61,24 @@ AT_REPAIR = ROOT.key("--repair")
 #: The commands whose documents describe an estate this flag can act on. A
 #: ``creds generate`` document names accounts too, and asked no database
 #: anything -- every row would be unconfirmed, which is not the same claim.
-PRODUCERS = ("creds.apply", "creds.check")
+#:
+#: ``creds rotate`` is here because UC-1 §8 row 5 names this flag as the recovery
+#: from a rotation that some targets missed. Its document holds ``generate``'s
+#: staging rows as well as ``apply``'s, and :data:`STAGING` is how they are told
+#: apart.
+PRODUCERS = ("creds.apply", "creds.check", "creds.rotate")
+
+#: The action that marks a row as a staging write (UC-1 §8 step 4), not a
+#: database's state. ``rotate`` lists one such row per (account, target) before
+#: its apply rows (``03-json-output.md`` §2). The row's state is
+#: ``PENDING_APPLY``, which is not confirmed, so counting it would put every
+#: target in the repair set, including those that took the password. ``apply``
+#: and ``check`` never write this action.
+#:
+#: **Matched on the action, not on the state.** ``apply`` also reports
+#: ``PENDING_APPLY``, for a rollback it refused while a rotation is in flight,
+#: and that row is a pair to repair.
+STAGING = "vault_write_pending"
 
 #: The states that count as confirmed. Everything else in ``results[]`` is a
 #: pair to repair -- ``03-json-output.md`` §7's recipe for the same set, kept in
@@ -98,8 +115,8 @@ class RepairSet:
     #: and the run it produces does nothing and says so.
     pairs: tuple[AccountTarget, ...]
     #: The document's own ``command``, for the message that reports what was
-    #: read -- repairing from a ``check`` and from an ``apply`` are different
-    #: enough that the operator should see which they handed over.
+    #: read -- repairing from a ``check`` and from an ``apply`` or a ``rotate``
+    #: are different enough that the operator should see which they handed over.
     command: str
     #: How old the document is, or ``None`` when it carries no usable timestamp.
     #: Absent rather than zero, so "no age to report" cannot be read as "fresh".
@@ -118,6 +135,8 @@ def read(path: Path, *, sources: Sequence[Path]) -> RepairSet:
     """
     document = _load(path)
     _refuse_foreign(document, path=path, sources=sources)
+    _refuse_fenced(document, path=path)
+    _refuse_unapplied(document, path=path)
     return RepairSet(
         pairs=_unconfirmed(document),
         command=str(document.get("command", "")),
@@ -155,7 +174,7 @@ def _load(path: Path) -> dict[str, Any]:
         raise ArgumentError(
             f"{path}: cannot be read ({problem.strerror or problem})",
             at=AT_REPAIR,
-            hint="pass the path to a `creds apply` or `creds check` run document",
+            hint="pass the path to a `creds apply`, `creds check` or `creds rotate` run document",
         ) from problem
 
     try:
@@ -187,12 +206,12 @@ def _load(path: Path) -> dict[str, Any]:
 
     command = document["command"]
     if command not in PRODUCERS:
-        named = " or ".join(f"`{one}`" for one in PRODUCERS)
         raise ArgumentError(
             f"{path}: was produced by `{command}`, which reports no repair set",
             at=AT_REPAIR,
             hint=(
-                f"pass a document from {named} -- an apply that exited 4, or a check that exited 3"
+                "pass a document from `creds.apply`, `creds.check` or `creds.rotate` -- "
+                "an apply or a rotate that exited 4, or a check that exited 3"
             ),
         )
     return document
@@ -241,6 +260,58 @@ def _refuse_foreign(document: dict[str, Any], *, path: Path, sources: Sequence[P
         )
 
 
+def _refuse_fenced(document: dict[str, Any], *, path: Path) -> None:
+    """Refuse a document from a run that lost its lock to another run.
+
+    UC-1 §8: such a run carries ``SOPULI-W011``, and the tool must not advise a
+    re-run while somebody else holds the estate's lock. Its document also
+    understates the work: the pairs the run never reached have no apply row, so
+    a repair set built from it would leave them out.
+    """
+    diagnostics = document.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        return
+    for one in diagnostics:
+        if isinstance(one, dict) and one.get("code") == LOCK_LOST:
+            raise ArgumentError(
+                f"{path}: the run lost its lock to another run ({LOCK_LOST}), "
+                f"so its document does not say what is left to repair",
+                at=AT_REPAIR,
+                hint=(
+                    "the run that holds the lock is the one that may fix it; "
+                    "`creds check` establishes what is true"
+                ),
+            )
+
+
+def _refuse_unapplied(document: dict[str, Any], *, path: Path) -> None:
+    """Refuse a document whose every row is a staging write.
+
+    That is a ``rotate`` whose staging write failed at UC-1 §8 step 4, before
+    any database was touched. (One that lost its lock there carries
+    ``SOPULI-W011`` and :func:`_refuse_fenced` refuses it first.) Every
+    row is skipped, so the repair set would be empty, and a run that reported
+    ``nothing to apply`` would read as "already repaired". The recovery is §8
+    row 4's, a new rotation.
+    """
+    rows = [row for row in document.get("results") or () if isinstance(row, dict)]
+    if rows and all(_is_staging(row) for row in rows):
+        raise ArgumentError(
+            f"{path}: the run stopped at staging, before any database was changed, "
+            f"so it left nothing to repair",
+            at=AT_REPAIR,
+            hint="run `creds rotate` again (UC-1 §8, a failure at step 4)",
+        )
+
+
+def _is_staging(row: dict[str, Any]) -> bool:
+    """Whether the row reports a staging write rather than a database's state."""
+    actions = row.get("actions")
+    if not isinstance(actions, list):
+        return False
+    return any(isinstance(one, dict) and one.get("kind") == STAGING for one in actions)
+
+
 def _absolute(path: str) -> str:
     """One path, made absolute and user-expanded, but still readable.
 
@@ -282,13 +353,14 @@ def _comparable(paths: Any) -> tuple[str, ...]:
 def _unconfirmed(document: dict[str, Any]) -> tuple[AccountTarget, ...]:
     """The (account, target) pairs whose state is not one of :data:`CONFIRMED`.
 
-    Rows missing an account or a target are skipped rather than refused: both
-    are required by the schema, so a document without them is malformed in a way
-    this flag has no better answer to than acting on the rows that are whole.
+    Staging rows are skipped (:data:`STAGING`). Rows missing an account or a
+    target are skipped rather than refused: both are required by the schema, so
+    a document without them is malformed in a way this flag has no better answer
+    to than acting on the rows that are whole.
     """
     found: list[AccountTarget] = []
     for row in document.get("results") or ():
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or _is_staging(row):
             continue
         account, target = row.get("account"), row.get("target")
         if account and target and row.get("state") not in CONFIRMED:

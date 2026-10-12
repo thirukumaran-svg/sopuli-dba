@@ -5608,8 +5608,8 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     default=None,
     help=(
         "Act only on what a previous run left unconfirmed. Takes a run document "
-        "-- an apply that exited 4, or a check that exited 3. Narrows the run; "
-        "it cannot extend it."
+        "-- an apply or a rotate that exited 4, or a check that exited 3. Narrows "
+        "the run; it cannot extend it."
     ),
 )
 @click.option(
@@ -5718,8 +5718,8 @@ def creds_apply(
     narrowing to finish.
 
     **`--repair FILE` narrows that re-run to what the last one left behind.**
-    It reads a previous run's document -- an apply that exited 4, or a check
-    that exited 3 -- and acts only on the (account, target) pairs it reported as
+    It reads a previous run's document -- an apply or a rotate that exited 4, or
+    a check that exited 3 -- and acts only on the (account, target) pairs it reported as
     not confirmed. What it buys is logins, not capability: an unnarrowed repair
     converges the estate correctly and expensively, at one login per account per
     target against the failed-login counter section 7 exists to protect.

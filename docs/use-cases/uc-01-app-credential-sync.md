@@ -953,9 +953,26 @@ sopuli creds apply --repair result.json
 ```
 
 **The list comes from an earlier run's document.** `--repair` takes the path to
-one, usually an `apply` that exited 4 or a `check` that exited 3. It narrows this
-run to the (account, target) pairs that the document reports as not confirmed.
-Reasons and rejected options: [#264](../decisions/log.md#264).
+one, usually an `apply` or a `rotate` that exited 4, or a `check` that exited 3.
+It narrows this run to the (account, target) pairs that the document reports as
+not confirmed. Reasons and rejected options: [#264](../decisions/log.md#264).
+
+**A `rotate` document's staging rows are skipped.** `rotate` lists a row for its
+staging write (§8 step 4) before its apply rows. The staging row's state is
+`PENDING_APPLY`, which is not confirmed, so counting it would put every target in
+the repair set, including the targets that took the password. The tool tells the
+staging row by its `vault_write_pending` action, not by its state: `apply` also
+reports `PENDING_APPLY`, for a rollback it refused, and that row is a pair to
+repair. A `rotate` document with only staging rows stopped at step 4, before any
+database was changed. The tool refuses it, because a repair set of nothing would
+report `nothing to apply` and read as "already repaired". §8 row 4's recovery is
+to run `rotate` again.
+
+**A document from a run that lost its lock is refused**, whichever verb wrote
+it. It carries `SOPULI-W011`, and §8 says the run that holds the lock is the one
+that may fix it. The document also leaves out the pairs that run never reached,
+so a repair set built from it would leave them out too. `check` establishes what
+is true.
 
 **The filter is each row's state, never the document's exit code.** Refusing by
 exit code would refuse an `apply` that exited 1, where every target failed and
@@ -1021,10 +1038,12 @@ resolve is an invocation that did not resolve. Exit 9 means *fix your
 configuration*, and the configuration here is fine.
 
 **A repair of a rotation applies the change; a later run promotes it.** Take a
-repair narrowed to one of a document's two accounts. It changes that account and
-then withholds the promotion, because the sibling that the earlier run already
-applied still has its `pending` staged, and this run did not check its database.
-That is §5's promotion gate. So a partial rotation takes two runs to finish:
+repair narrowed to the targets a rotation missed. It changes those targets and
+then withholds the promotion with `SOPULI-W027`, because the same credential is
+on a target that the earlier run already applied, and this run did not check
+that database. The same happens to a repair narrowed to one of a document's two
+accounts: the sibling still has its `pending` staged. That is §5's promotion
+gate. So a partial rotation takes two runs to finish:
 `--repair` for the pairs that failed, then `apply` without narrowing. The second
 run spends one login on each converged pair and promotes. A repair from
 `current`, which is drift with nothing staged, has nothing to promote and
@@ -1844,7 +1863,7 @@ invariant 5: the write lands under the store's `locks/` prefix, in a store that
 |---|---|---|
 | 1–3 | nothing changed | fix and run again |
 | 4 | nothing changed in the database; `pending` may exist | run `rotate` again, or `generate` then `apply` |
-| 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair`; with the rollover strategy there is no outage meanwhile |
+| 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair` with the run's document, then `apply` to promote (§5, *A repair of a rotation*); with the rollover strategy there is no outage meanwhile |
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` tells "wrong password" from "account locked/expired" |
 | 7 | database has new, vault `current` still old | **the most severe case**: `pending` still holds the right value, so `sopuli creds apply` completes it. It verifies every target again and promotes. `rotate` does not retry the promotion: a compare-and-set conflict means a writer outside the tool, and reading again to merge over it would rewrite fields of accounts nobody selected |
 | 8 | promoted, and the read-back disagreed | the databases are converged and the vault is not serving what it accepted. Exit 4 with `SOPULI-W012`, which names the accounts. Nothing needs undoing; the place to look is the vault (a replica behind its primary), not any database |
