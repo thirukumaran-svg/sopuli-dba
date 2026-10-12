@@ -1,22 +1,23 @@
 """The fault-injection harness for `04-testing.md` §5 *Fault injection*.
 
-Two parts, both used by the tests that kill a run part way through:
+Two parts:
 
 * :class:`CliRun` starts ``sopuli`` as a real process with ``--output jsonl``
   and reads its events as they arrive. A test waits for an event, then kills the
   process. ``Popen.kill`` is ``SIGKILL`` on POSIX and ``TerminateProcess`` on
   Windows, so neither gives the run a chance to clean up.
 * :class:`VaultGate` is an HTTP proxy between the run and Vault. It forwards
-  every request, except a write to one chosen path, which it holds and never
-  forwards.
+  every request, and injects one fault at one request to the secret's path:
+  it holds a write, drops it and goes down, or serves an old read.
 
-**Why the gate.** Killing at an event alone is a race. The run carries on after
-it prints ``password.applied``: it verifies, then promotes. A kill sent when the
-test reads the event lands before the promotion on most runs, not on all, and a
-fault test that passes on most runs measures nothing. With the gate, the run
-stops at the promotion write and waits there, so the kill always comes first.
-The gate holds only the secret's own path. Lock writes go to ``locks/``, so
-they pass.
+**Why the gate, and not a TCP proxy.** A fault sent when the test reads an
+event is a race. The run carries on after it prints ``password.applied``: it
+verifies, then promotes. A kill or a cut sent then lands before the promotion
+on most runs, not on all, and a fault test that passes on most runs measures
+nothing. A TCP proxy such as toxiproxy cannot tell one HTTP request from the
+next, so it has the same race. The gate acts on the request itself. It watches
+only the secret's own path. Lock records live under ``locks/``, so their reads
+and writes pass.
 
 **Popen's pid is not always the run's.** On Windows in a virtual environment,
 ``sys.executable`` is a launcher that starts the real interpreter as a child, so
@@ -30,13 +31,16 @@ base install must reach the fixture's skip, not an ImportError.
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import queue
 import subprocess
 import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -50,21 +54,66 @@ TIMEOUT = 60.0
 WRITES = ("POST", "PUT", "PATCH")
 
 
-class VaultGate:
-    """A proxy to Vault that holds every write to one path.
+class Fault(Enum):
+    """The faults :class:`VaultGate` injects at its path.
 
-    ``held`` is set when the first such write arrives. The held request is never
-    forwarded: Vault never sees it. :meth:`close` lets the handler thread finish,
-    and the run that sent the request gets no answer, because by then it is dead.
+    ``writes`` counts the writes to that path as they arrive, from 1, whatever
+    Vault answers them. Down means the listening
+    socket is closed, so the run's next connection is refused.
     """
 
-    def __init__(self, upstream: str, hold_path: str) -> None:
+    #: Hold write ``writes`` and never forward it. The run waits there until the
+    #: test kills it.
+    HOLD_WRITE = "hold write"
+    #: Drop write ``writes`` unanswered, and go down. Vault never sees it.
+    DOWN_AT_WRITE = "down at write"
+    #: Forward write ``writes``, then go down without answering it. Vault commits
+    #: the write, and the run cannot know that it did.
+    DOWN_AFTER_WRITE = "down after write"
+    #: Forward write ``writes``. After it, answer every read with the reply to
+    #: the last read before it, as a replica behind its primary would.
+    STALE_AFTER_WRITES = "stale after writes"
+
+
+class HarnessError(RuntimeError):
+    """The harness failed, not the run under test.
+
+    Not an ``AssertionError``, so a test marked ``xfail(raises=AssertionError)``
+    fails when its harness breaks instead of counting it as the expected
+    failure.
+    """
+
+
+#: One upstream reply, kept so that it can be sent again: status, headers, body.
+Answer = tuple[int, list[tuple[str, str]], bytes]
+
+
+class VaultGate:
+    """A proxy to Vault that injects one fault at one path.
+
+    ``tripped`` is set when the fault takes effect. ``seen`` lists every request
+    that reached the gate, as ``"METHOD path"``, so a test can show what Vault
+    was and was not asked.
+
+    The handlers run on threads of their own, so the counters change under
+    ``_lock``. A run sends one request at a time, but the fault must land on the
+    write it names even if that ever changes.
+    """
+
+    def __init__(self, upstream: str, path: str, fault: Fault, *, writes: int = 1) -> None:
         import httpx
 
         self.upstream = httpx.Client(base_url=upstream, timeout=TIMEOUT)
-        self.hold_path = hold_path
-        self.held = threading.Event()
+        self.path = path
+        self.fault = fault
+        self.writes = writes
+        self.tripped = threading.Event()
+        self.seen: list[str] = []
         self._release = threading.Event()
+        self._lock = threading.Lock()
+        self._arrived = 0
+        self._last_read: Answer | None = None
+        self._stale: Answer | None = None
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
@@ -76,9 +125,13 @@ class VaultGate:
 
     def close(self) -> None:
         self._release.set()
+        self._go_down()
+        self.upstream.close()
+
+    def _go_down(self) -> None:
+        """Stop accepting connections. Safe to call more than once."""
         self._server.shutdown()
         self._server.server_close()
-        self.upstream.close()
 
     def _handler(self) -> type[BaseHTTPRequestHandler]:
         gate = self
@@ -87,10 +140,41 @@ class VaultGate:
             def _forward(self) -> None:
                 length = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(length) if length else b""
-                if self.command in WRITES and self.path.split("?")[0] == gate.hold_path:
-                    gate.held.set()
+                ours = self.path.split("?")[0] == gate.path
+                read, write = self.command == "GET", self.command in WRITES
+                with gate._lock:
+                    gate.seen.append(f"{self.command} {self.path}")
+                    if ours and write:
+                        gate._arrived += 1
+                    faulted = ours and write and gate._arrived == gate.writes
+                    stale = gate._stale if ours and read else None
+
+                if faulted and gate.fault is Fault.HOLD_WRITE:
+                    gate.tripped.set()
                     gate._release.wait(TIMEOUT)
                     return
+                if faulted and gate.fault is Fault.DOWN_AT_WRITE:
+                    gate.tripped.set()
+                    gate._go_down()
+                    return
+                if stale is not None:
+                    gate.tripped.set()
+                    self._reply(stale)
+                    return
+
+                answer = self._upstream(body)
+                with gate._lock:
+                    if ours and read:
+                        gate._last_read = answer
+                    if faulted and gate.fault is Fault.STALE_AFTER_WRITES:
+                        gate._stale = gate._last_read
+                if faulted and gate.fault is Fault.DOWN_AFTER_WRITE:
+                    gate.tripped.set()
+                    gate._go_down()
+                    return
+                self._reply(answer)
+
+            def _upstream(self, body: bytes) -> Answer:
                 # No Accept-Encoding: ``reply.content`` is decoded, so the reply
                 # goes back uncompressed whatever Vault would have sent.
                 headers = {
@@ -102,18 +186,22 @@ class VaultGate:
                 reply = gate.upstream.request(
                     self.command, self.path, content=body, headers=headers
                 )
-                self.send_response(reply.status_code)
-                for name, value in reply.headers.items():
-                    if name.lower() not in (
-                        "content-length",
-                        "content-encoding",
-                        "transfer-encoding",
-                        "connection",
-                    ):
-                        self.send_header(name, value)
-                self.send_header("Content-Length", str(len(reply.content)))
+                kept = [
+                    (name, value)
+                    for name, value in reply.headers.items()
+                    if name.lower()
+                    not in ("content-length", "content-encoding", "transfer-encoding", "connection")
+                ]
+                return reply.status_code, kept, reply.content
+
+            def _reply(self, answer: Answer) -> None:
+                status, headers, content = answer
+                self.send_response(status)
+                for name, value in headers:
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(content)))
                 self.end_headers()
-                self.wfile.write(reply.content)
+                self.wfile.write(content)
 
             # http.server dispatches on these names, so they cannot be snake_case.
             do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_LIST = _forward  # noqa: N815
@@ -136,6 +224,113 @@ def sopuli_command(config: Path, output: str, args: list[str]) -> list[str]:
         output,
         *args,
     ]
+
+
+ACCOUNT = "acme_fault_user"
+OLD = "Old-Pa55word-Fault1"
+
+#: The secret path the template below produces, and the lock path beside it.
+SECRET = "acme/dev/acme"
+LOCK = f"locks/{SECRET}"
+
+CONFIG = """version: 1
+
+defaults:
+  policy: standard
+  vault: vault-dev
+{locking}
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: {addr}
+    mount: {mount}
+    kv_version: 2
+    auth: {{ method: token }}
+
+targets:
+  - name: free-pdb
+    type: oracle
+    environment: dev
+    vault: vault-dev
+    dsn: "{dsn}"
+    admin: {{ username: {user}, auth: {{ method: env }} }}
+
+policies:
+  standard:
+    password:
+      length: 24
+      charset: alnum_safe
+      first_char: alpha
+      require: {{ upper: 1, lower: 1, digit: 1, special: 1 }}
+
+applications:
+  - name: acme
+    accounts: [{account}]
+    secret_template: "vault-dev:acme/{{env}}/{{application}}#DB_CREDENTIALS/{{account}}"
+"""
+
+BREAK_EXPIRED = """  locking:
+    break_expired: true
+"""
+
+
+@dataclass
+class Estate:
+    """One account, one private mount, and the means to run sopuli against them."""
+
+    tmp_path: Path
+    vault: Any
+    mount: str
+    dsn: str
+    env: dict[str, str]
+    login: Callable[[str], bool]
+    #: The admin user the config names. Its password is in ``env``.
+    user: str
+    _configs: itertools.count[int] = field(default_factory=itertools.count)
+
+    def config(self, addr: str, *, break_expired: bool = False) -> Path:
+        """A config whose vault is at ``addr``: Vault itself, or a gate in front of it."""
+        path = self.tmp_path / f"sopuli-{next(self._configs)}.yaml"
+        path.write_text(
+            CONFIG.format(
+                locking=BREAK_EXPIRED if break_expired else "",
+                addr=addr,
+                mount=self.mount,
+                dsn=self.dsn,
+                user=self.user,
+                account=ACCOUNT,
+            ),
+            encoding="utf-8",
+        )
+        if sys.platform != "win32":
+            path.chmod(0o600)
+        return path
+
+    def sopuli(self, config: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        """Run sopuli to the end. ``--output json``, so stdout is one document."""
+        return subprocess.run(
+            sopuli_command(config, "json", list(args)),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env={**os.environ, **self.env},
+            timeout=TIMEOUT,
+            check=False,
+        )
+
+    def break_lock(self, config: Path) -> None:
+        """Break the secret's lock with ``--force``, as an operator would for a dead run."""
+        broken = self.sopuli(config, "lock", "break", f"vault-dev:{SECRET}", "--force", "--confirm")
+        assert broken.returncode == 0, broken.stderr
+
+    def read(self, path: str) -> tuple[dict[str, Any], int]:
+        """The data at ``path`` on the private mount, and its version."""
+        reply = self.vault.get(f"/v1/{self.mount}/data/{path}")
+        if reply.status_code != 200:
+            raise HarnessError(f"could not read {path}: HTTP {reply.status_code} {reply.text}")
+        body = reply.json()["data"]
+        return body["data"], body["metadata"]["version"]
 
 
 class CliRun:

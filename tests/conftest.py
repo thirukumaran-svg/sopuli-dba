@@ -9,6 +9,7 @@ Passing `--config` at an explicit path is what keeps the suite deterministic.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from collections.abc import Callable, Generator, Iterator
@@ -18,6 +19,7 @@ from typing import Any, NoReturn
 
 import pytest
 
+from fault_harness import ACCOUNT, OLD, Estate
 from oracle_harness import (
     Environment,
     decide_skip,
@@ -28,6 +30,7 @@ from oracle_harness import (
 )
 from repo_files import FROM_SDIST, reason, repo_relative
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
+from sopuli.config.targets import ADMIN_PASSWORD_ENV
 from sopuli.driver.protocol import Credential
 from sopuli.secrets import Secret
 from sopuli.store.registry import BACKENDS
@@ -639,3 +642,47 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
             environment_skips=_SKIPS["environment"],
         )
     )
+
+
+# ------------------------------------------------- tier 1: fault estate ---
+
+
+@pytest.fixture
+def fault_estate(
+    live_oracle: Environment, vault_stack: Any, private_mount: str, tmp_path: Path
+) -> Iterator[Estate]:
+    """A real account with a known password, and a vault mount of its own."""
+    oracledb = pytest.importorskip("oracledb")
+    connection = oracledb.connect(user=USER, password=PASSWORD, dsn=live_oracle.dsn)
+
+    def sql(statement: str) -> None:
+        with connection.cursor() as cursor:
+            cursor.execute(statement)
+
+    def login(candidate: str) -> bool:
+        try:
+            oracledb.connect(user=ACCOUNT, password=candidate, dsn=live_oracle.dsn).close()
+        except oracledb.DatabaseError:
+            return False
+        return True
+
+    try:
+        with contextlib.suppress(Exception):  # absent is the ordinary case
+            sql(f"drop user {ACCOUNT} cascade")
+        sql(f'create user {ACCOUNT} identified by "{OLD}"')
+        sql(f"grant create session to {ACCOUNT}")
+        yield Estate(
+            tmp_path=tmp_path,
+            vault=vault_stack.client,
+            mount=private_mount,
+            dsn=live_oracle.dsn,
+            env={"VAULT_TOKEN": vault_stack.token, ADMIN_PASSWORD_ENV: PASSWORD},
+            login=login,
+            user=USER,
+        )
+    finally:
+        try:
+            with contextlib.suppress(Exception):  # absent if create user failed
+                sql(f"drop user {ACCOUNT} cascade")
+        finally:
+            connection.close()

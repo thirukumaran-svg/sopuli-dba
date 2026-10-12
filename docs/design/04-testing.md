@@ -236,8 +236,8 @@ So there are two rules:
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
 | 0 | every commit of a pull request that changes code | public CI (`ci.yml`) | < 60 s | unit tests; config parsing and validation; target-set expansion; precedence resolution; SecretRef parsing; password generation and charset rules; redaction; the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`; `lock status` and `lock break` with the store passed in, including whether a lock is live, expired or absent; the install-shape checks in §3 |
-| 1 | every pull request that changes code | public CI (`tier1.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking |
-| 2 | by hand | a developer's machine, `docker compose --profile tier2` | < 30 min | 21c XE, 18c XE and 11g XE; fault injection (open: #660) |
+| 1 | every pull request that changes code | public CI (`tier1.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking; fault injection (§5) |
+| 2 | by hand | a developer's machine, `docker compose --profile tier2` | < 30 min | 21c XE, 18c XE and 11g XE |
 | 3 | before a release | maintainer | by hand | 19c and 12.2 EE, OCI DB systems and Autonomous Database, OCI Vault, the release gates in §6 |
 
 A pull request that changes only documentation runs the `docs` job in `ci.yml`
@@ -397,7 +397,7 @@ Two rules follow:
    `sopuli/driver/oracle/accounts.py` record several that were the opposite of
    the obvious guess.
 
-### Fault injection (tier 2) (open: #660)
+### Fault injection (open: #660)
 
 The failure table in UC-1 §8 is a test list. Each row asserts the documented
 recovery, not only that the tool did not crash:
@@ -405,26 +405,36 @@ recovery, not only that the tool did not crash:
 | Injection | Assert |
 |---|---|
 | kill the process between `password_set` and `vault_promote` | `pending` still holds the new value; `status` reports `PENDING_APPLY`; a second `creds apply` completes the promotion |
-| vault unreachable mid-run | nothing applied, or applied and not promoted; never promoted silently |
+| vault unreachable mid-run | lost at the staging write: nothing applied, exit 1. Lost at the promotion: applied and not promoted, and `creds apply` completes it. Never promoted silently |
 | close a PDB mid-run (several targets) | partial success, exit 4, other targets untouched; `creds apply --repair` with the run document fixes it |
 | revoke `ALTER USER` mid-run | a clean authorization error, and no half-written state |
 | two `rotate` runs on one account at once | one loses the lock and exits 7; the final state is consistent |
 | steal a held lock mid-run: let it expire, and let a second run take it over | the first run's next fence check fails, and it stops before its next `ALTER USER`. Nothing from a stale plan is half-applied |
 | kill a run that holds a lock, then start another | by default the second run refuses with exit 7, and reports the holder and that the lock has expired. Breaking a lock is not self-service. Under `locking.break_expired`, the second run takes the lock with a compare-and-set write that increases the version, which fences the killed run if it ever resumes |
-| the vault returns a stale read after a write | the post-verify step catches it and reports it, instead of promoting |
+| the vault returns a stale read after the promotion | the post-verify step catches it: exit 4 with `SOPULI-W012`, not success |
 
-The mechanics: `docker pause` or `docker stop` for the database, and a TCP proxy
-(the `toxiproxy` service) between the tool and both the database and the vault,
-for latency, truncation and dropped connections.
+The mechanics are in `tests/fault_harness.py`. Each test runs `sopuli` as
+its own process, with an HTTP proxy between it and the vault. The proxy acts on
+one request to the secret's path: it holds a write, drops it and stops
+listening, or forwards a write and stops listening before the reply, or
+answers a read with an older reply.
 
-Process kills are driven from the `jsonl` event stream: wait for
-`password.applied`, then kill the process. A kill alone is a race, because the
-run goes on to verify and promote while the test reads the event. So an HTTP
-proxy in front of the vault holds the write to the secret's path, and the kill
-comes while the run waits for it. `tests/fault_harness.py` has both parts.
+The fault is placed on a request, not on an event, because an event is a race.
+The run goes on to verify and promote while the test reads `password.applied`,
+so a kill or a cut sent then lands before the promotion on most runs, not all.
+A TCP proxy has the same race, because it cannot tell one HTTP request from the
+next. A process kill therefore waits for the proxy to hold the promotion write.
 
-The two kill rows are in `tests/test_fault_kill.py`. They need only the tier-1
-services, so the tier-1 lane runs them. The other rows are open in #660.
+The tests need only the tier-1 services, so the tier-1 lane runs them:
+
+| Rows | Tests |
+|---|---|
+| the two kill rows | `tests/test_fault_kill.py` |
+| vault unreachable at a write or after it, stale read | `tests/test_fault_vault.py`. The vault lost at the promotion exits 1 and drops the run's rows, which is #760; its test is marked `xfail` until that is fixed |
+
+The other rows are open in #660. The database rows need a database fault,
+which the gate cannot inject. The plan is for the test to make that change
+itself, as `SYSTEM`, while the gate holds the run at a vault request.
 
 ---
 

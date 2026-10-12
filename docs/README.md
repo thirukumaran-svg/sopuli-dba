@@ -65,7 +65,7 @@ on which Oracle release, and what it showed.
 | `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: a canary probe for password text kept anywhere queryable. Findings in `design/02-oracle-privileges.md` §4; what is still open in `design/04-testing.md` §6 gate 2 |
 | `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks: self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run it after the probe and **before** the probe's section 8, which turns the audit policies off |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
-| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE, and toxiproxy. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: LocalStack and lowkey-vault |
+| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: LocalStack and lowkey-vault |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 | `../test/k8s_eso_probe.py` | Applies [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md)'s own manifests to a throwaway Kubernetes cluster, and checks that ESO reads what sopuli wrote. Needs a cluster, not compose |
 

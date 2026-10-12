@@ -2092,8 +2092,9 @@ list.
   KV v1. `docs/measurements.md` says which releases
   have rollover. The buildable 19.3.0.0.0 image has none.
 - **Fault injection at every step of §8:** kill the process between apply and
-  promote; make the vault unreachable mid-run; close a PDB mid-run; revoke
-  `ALTER USER` mid-run (open: #660).
+  promote; make the vault unreachable mid-run; serve a stale read after the
+  promotion. These are built (`04-testing.md` §5). Closing a PDB mid-run and
+  revoking `ALTER USER` mid-run are open (#660).
 - **Charset fuzzing:** generated passwords through every path an operator uses.
   `tests/test_password_paths.py` covers a shell, a `.env` file, a connect
   string and a JDBC URL, and logs in through the connect string and the JDBC

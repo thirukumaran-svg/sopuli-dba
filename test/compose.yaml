@@ -336,17 +336,6 @@ services:
       retries: 60
       start_period: 120s
 
-  # ------------------------------------------------------------ fault net ---
-  # TCP proxy in front of the database and the vault, for the fault-injection
-  # cases in 04-testing.md §5: latency, truncation, connection drops.
-  toxiproxy:
-    image: ghcr.io/shopify/toxiproxy:latest
-    profiles: [tier2]
-    ports:
-      - "8474:8474"   # control API
-      - "21521:21521" # -> oracle-free:1521
-      - "18200:18200" # -> vault:8200
-
   # ------------------------------------------------- emulators (smoke only) --
   # Never authoritative. A green run here is "the code path executes", nothing
   # more; the real services are the release evidence.

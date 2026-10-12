@@ -45,7 +45,7 @@ Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testi
 ```bash
 docker compose --profile tier0 up -d      # Vault + PostgreSQL, seconds
 docker compose --profile tier1 up -d      # + Oracle Free, ~30-60 s to healthy
-docker compose --profile tier2 up -d      # + 21c/18c/11g XE + toxiproxy, minutes
+docker compose --profile tier2 up -d      # + 21c/18c/11g XE, minutes
 docker compose --profile nne   up -d      # Oracle requiring Native Network Encryption
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
 docker compose --profile oracle19c-ru up -d  # 19.19 EE, arm64 hosts only; fails under emulation on x86
@@ -105,7 +105,6 @@ without `-v`.
 | oracle-19c | 1526 | **19.3.0.0.0 EE, `--profile oracle19c` only**, maintainer-only (Oracle account + licence acceptance to pull, never in CI). CDB `ORCLCDB`, PDB `ORCLPDB1`; `SYSTEM` / `sopuli-test`. No rollover (19.12+). Named volume, so it survives `down` |
 | oracle-19c-ru | 1527 | **19.19.0.0.0 EE, `--profile oracle19c-ru` only**, same terms as oracle-19c. **The image is linux/arm64 only and needs an arm64 host**: under QEMU on x86 DBCA dies with `ORA-00443` / `ORA-01096` (#565). The one pullable 19c past 19.12, so the one that can open a rollover window. Untested on arm64 so far. Named volume, so it survives `down` |
 | oracle-12c | 1528 | **12.2.0.1.0 EE, `--profile oracle12c` only**, same terms as oracle-19c. CDB `ORCLCDB`, PDB service **`ORCLPDB1.localdomain`** (this image appends `DB_DOMAIN`; a bare `ORCLPDB1` is `ORA-12514`); `SYSTEM` / `sopuli-test`. **`WE8DEC`, not `AL32UTF8`**. No rollover. Run `test/oracle-init-12c/init.sh` once after the first start — the image has no user-script hook. Named volume, so it survives `down` |
-| toxiproxy | 8474 | fault injection in front of DB and vault |
 
 ## Before trusting any of this
 
