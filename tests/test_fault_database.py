@@ -412,6 +412,10 @@ def test_a_pdb_closed_mid_run_is_partial_and_promotes_nothing(closed_mid_run: Cl
     assert rows[PDB_TARGET]["changed"] is False
     assert rows[PDB_TARGET]["error"]["code"] in CLOSED_PDB
     assert rows[PDB_TARGET]["error"]["category"] == "connectivity"
+    # ORA-01109 may clear when the PDB opens; ORA-12514 is not classified so (#774).
+    assert rows[PDB_TARGET]["error"]["retryable"] is (
+        rows[PDB_TARGET]["error"]["code"] == "ORA-01109"
+    )
     assert "closed" in rows[PDB_TARGET]["error"].get("hint", ""), rows[PDB_TARGET]["error"]
     staged, _ = closed.estate.read(SECRET)
     assert staged["DB_CREDENTIALS"][ACCOUNT] == closed.old, "promoted with a target unconfirmed"

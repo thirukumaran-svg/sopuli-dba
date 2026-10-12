@@ -1104,6 +1104,7 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
             # for the field rather than this function's -- so it is read off the
             # exception that defines it rather than switched on `category`.
             target_capability=getattr(exc, "capability", None),
+            retryable=exc.retryable,
         )
     if isinstance(exc, click.ClickException):
         # click's own errors carry their exit code, and every one of them today

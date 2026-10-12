@@ -31,7 +31,8 @@ apart from everything else, and no row sets both it and ``retryable``.
 **``retryable`` is a report, not an instruction.** It is the run document's
 ``error.retryable``, and it says whether the same call could plausibly succeed
 later -- a listener that is down may come up. It is not permission for this tool
-to loop, and nothing in sopuli retries on it today.
+to loop, and nothing in sopuli retries on it today. Only a named row decides it;
+a code that reaches a family fallback has none, and the document omits it.
 
 **Exit codes come from P5's published table and are not invented here.** Two
 families have no number of their own and deliberately do not get one:
@@ -308,7 +309,10 @@ class Diagnosis:
     exit_code: ExitCode
     message: str
     hint: str | None = None
-    retryable: bool = False
+    #: Decided only by a named row in :data:`RULES`. ``None`` for a code that
+    #: reached a family fallback, and for no code at all: nobody looked at
+    #: whether that failure clears by itself, so the document says nothing.
+    retryable: bool | None = None
     #: The run-document state this code implies on its own, where it implies one.
     #: ``LOCKED`` and ``EXPIRED`` exist so that `check` reports them rather than
     #: folding them into ``DRIFT`` -- one ``ORA-01017`` otherwise hides an expired
@@ -335,7 +339,9 @@ class Diagnosis:
         :class:`MappedError` carrying this row's own category and exit code.
         """
         if self.category == AuthenticationError.category:
-            return AuthenticationError(self.message, hint=self.hint, code=self.code)
+            return AuthenticationError(
+                self.message, hint=self.hint, code=self.code, retryable=self.retryable
+            )
         return MappedError(self)
 
 
@@ -350,7 +356,12 @@ class MappedError(DriverError):
     """
 
     def __init__(self, diagnosis: Diagnosis) -> None:
-        super().__init__(diagnosis.message, hint=diagnosis.hint, code=diagnosis.code)
+        super().__init__(
+            diagnosis.message,
+            hint=diagnosis.hint,
+            code=diagnosis.code,
+            retryable=diagnosis.retryable,
+        )
         self.category = diagnosis.category
         self.exit_code = diagnosis.exit_code
         # The one thing above the driver that needs this answer cannot ask a
@@ -376,9 +387,8 @@ def classify(code: str, message: str) -> Diagnosis:
     password because of an error nobody understood would change the vault's
     state on the strength of a guess.
     """
-    rule = RULES.get(code)
-    if rule is None:
-        rule = _by_family(code)
+    named = RULES.get(code)
+    rule = named if named is not None else _by_family(code)
 
     return Diagnosis(
         code=code,
@@ -387,7 +397,8 @@ def classify(code: str, message: str) -> Diagnosis:
         exit_code=rule.exit_code,
         message=message,
         hint=rule.hint,
-        retryable=rule.retryable,
+        # A family places a code; it does not say whether the failure clears.
+        retryable=named.retryable if named is not None else None,
         state=rule.state,
     )
 

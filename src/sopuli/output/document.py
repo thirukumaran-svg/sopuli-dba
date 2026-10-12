@@ -27,7 +27,7 @@ from typing import Any, Literal
 # `sopuli.clock`, and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.34"
+SCHEMA_VERSION = "1.35"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -149,8 +149,14 @@ class Error:
     this object rather than the boundary's catch-all. It is set only for
     ``category: "capability"``, which is the schema's own rule for it, and is
     what a consumer branches on instead of parsing the capability's name back
-    out of the message. ``retryable`` is absent because nothing yet knows
-    whether it is true.
+    out of the message.
+
+    ``retryable`` is the driver's classification, carried from
+    :attr:`sopuli.driver.protocol.DriverError.retryable`: whether the same call
+    could plausibly succeed later. It is a report, not an instruction, and
+    nothing in sopuli retries on it. ``None`` means nobody classified the
+    failure, and the field is omitted rather than ``false``, which would claim
+    somebody had.
 
     ``message`` is documented as redacted (``03-json-output.md`` §4). What makes
     that true here is the same thing that makes it true everywhere: a
@@ -163,6 +169,7 @@ class Error:
     hint: str | None = None
     code: str | None = None
     target_capability: str | None = None
+    retryable: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"category": self.category, "message": self.message}
@@ -172,6 +179,8 @@ class Error:
             data["hint"] = self.hint
         if self.target_capability is not None:
             data["target_capability"] = self.target_capability
+        if self.retryable is not None:
+            data["retryable"] = self.retryable
         return data
 
 

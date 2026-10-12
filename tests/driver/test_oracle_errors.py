@@ -250,6 +250,17 @@ def test_only_a_plainly_transient_failure_is_marked_retryable() -> None:
     assert not classify("ORA-01017", SERVER).retryable
 
 
+@pytest.mark.parametrize("code", ["ORA-12170", "ORA-03113", "ORA-99999", "DPY-4011", ""])
+def test_retryable_is_none_where_no_row_decided_it(code: str) -> None:
+    """#774: a family fallback places a code but says nothing about whether it
+    clears, and an error with no code was not classified at all. `None` keeps
+    the field out of the document, where `False` would claim a decision."""
+    found = classify(code, "something failed")
+
+    assert found.retryable is None
+    assert found.as_error().retryable is None
+
+
 @pytest.mark.parametrize("code", ["ORA-01109", "ORA-12514"])
 def test_a_closed_pdb_is_connectivity_and_says_so(code: str) -> None:
     """#766: a PDB closed under a run fails with one of these two codes. Without

@@ -234,6 +234,7 @@ def read(cursor: Cursor, statement: str, **binds: Any) -> Any:
         raise ProbeError(
             f"a capability probe failed with {diagnosis.code or 'no code'}: {diagnosis.message}",
             code=diagnosis.code or None,
+            retryable=diagnosis.retryable,
             hint=(
                 "this is not the same as the capability being absent -- the probe itself "
                 "could not be answered. The statement was: " + statement

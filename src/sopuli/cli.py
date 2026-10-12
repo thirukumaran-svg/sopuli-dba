@@ -1085,6 +1085,7 @@ def _as_error(error: Exception) -> Error:
         message=lines[0] if lines else type(error).__name__,
         hint=getattr(error, "hint", None),
         code=getattr(error, "code", None),
+        retryable=getattr(error, "retryable", None),
     )
 
 

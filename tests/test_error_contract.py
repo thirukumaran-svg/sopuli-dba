@@ -33,6 +33,8 @@ from jsonschema import Draft202012Validator
 from sopuli import cli as cli_module
 from sopuli import invocation as invocation_module
 from sopuli.cli import cli
+from sopuli.driver.oracle.errors import classify
+from sopuli.driver.protocol import DriverError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock import LockDeniedError, LockKey, LockStolenError
 from sopuli.output.document import SCHEMA_VERSION
@@ -387,6 +389,48 @@ def test_an_unexpected_exception_still_emits_a_valid_document(
     assert document["summary"] == {"total": 0, "ok": 0, "changed": 0, "failed": 0}
     assert document["error"]["category"] == "internal"
     assert "something went wrong" in document["error"]["message"]
+
+
+@pytest.mark.parametrize(("code", "retryable"), [("ORA-12541", True), ("ORA-01017", False)])
+def test_a_driver_error_that_ends_the_run_reports_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    validator: Draft202012Validator,
+    config_file: Path,
+    code: str,
+    retryable: bool,
+) -> None:
+    """#774: the run-level `error` carries the driver's classification too."""
+    failure = classify(code, f"{code}: refused").as_error()
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(invocation_module, "load_layers", refuse)
+
+    run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
+    document = emitted(capsys)
+
+    assert list(validator.iter_errors(document)) == []
+    assert document["error"]["code"] == code
+    assert document["error"]["retryable"] is retryable
+
+
+def test_an_error_nobody_classified_has_no_retryable_field(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], config_file: Path
+) -> None:
+    """Absent, not `false`: `false` would claim that a driver looked and decided."""
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise DriverError("target is read-only")
+
+    monkeypatch.setattr(invocation_module, "load_layers", refuse)
+
+    run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
+    document = emitted(capsys)
+
+    assert document["error"]["message"] == "target is read-only"
+    assert "retryable" not in document["error"]
 
 
 def test_a_lock_denial_exits_seven_with_the_holder(

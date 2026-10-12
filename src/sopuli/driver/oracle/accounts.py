@@ -464,6 +464,7 @@ def _unreadable(error: Exception, view: str) -> DriverError:
         return DictionaryUnreadableError(
             f"could not read {view}: {diagnosis.message}",
             code=diagnosis.code,
+            retryable=diagnosis.retryable,
             hint=(
                 f"GRANT SELECT ON SYS.{view} to the service account -- "
                 f"02-oracle-privileges.md section 2, or {INSTALL_SCRIPT}"
@@ -824,6 +825,7 @@ def _roles(cursor: Cursor, name: str) -> frozenset[str]:
         raise RolesUnreadableError(
             f'could not read the roles held by "{name}": {diagnosis.message}',
             code=diagnosis.code,
+            retryable=diagnosis.retryable,
             hint=(
                 "guardrail 4 refuses an account holding DBA, PDB_DBA, CDB_DBA or "
                 "AUDIT_ADMIN, and cannot tell an account with none from a view it "

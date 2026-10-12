@@ -350,11 +350,24 @@ class DriverError(Exception):
     #: because only the driver knows which statement failed.
     password_sent = False
 
-    def __init__(self, message: str, *, hint: str | None = None, code: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        hint: str | None = None,
+        code: str | None = None,
+        retryable: bool | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.hint = hint
         self.code = code
+        #: Whether the same call could plausibly succeed later: the run
+        #: document's ``error.retryable``. A report, never acted on: nothing in
+        #: sopuli retries on it. ``None`` unless a driver decided it from a code
+        #: it has a row for, and the document then omits the field, because
+        #: ``false`` would claim that a driver looked and decided.
+        self.retryable = retryable
 
     def __str__(self) -> str:
         if self.hint:
@@ -859,12 +872,12 @@ class PartialAccountChangeError(DriverError):
 
     ``completed`` is the :class:`AccountChange` rows for the statements that
     ran, in order. ``cause`` is the failure itself, whose category, exit code,
-    vendor code and hint this error carries unchanged, so a caller that reports
-    it as an ordinary failure still reports the server's own words.
+    vendor code, hint and ``retryable`` this error carries unchanged, so a caller
+    that reports it as an ordinary failure still reports the server's own words.
     """
 
     def __init__(self, cause: DriverError, *, completed: tuple[AccountChange, ...]) -> None:
-        super().__init__(cause.message, hint=cause.hint, code=cause.code)
+        super().__init__(cause.message, hint=cause.hint, code=cause.code, retryable=cause.retryable)
         self.category = cause.category
         self.exit_code = cause.exit_code
         # Sent if the failing statement carried it, or if one that completed
