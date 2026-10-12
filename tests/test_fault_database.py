@@ -69,6 +69,10 @@ SERVICE_PASSWORD = "Fault-Service-Acct-7q"
 #: ``CREATE PLUGGABLE DATABASE`` requires an admin user. Nothing logs in as it.
 PDB_ADMIN_PASSWORD = "Fault-Pdb-Admin-4w"
 
+#: A directory object over the second PDB's datafile directory, for as long as
+#: :func:`_remove_orphans` needs it.
+ORPHANS = "ACME_FAULT_ORPHANS"
+
 
 #: What ``CLOSE`` and ``DROP`` say about a PDB that is already in the wanted
 #: state: ``ORA-65011``, it does not exist, and ``ORA-65020``, it is already
@@ -187,21 +191,63 @@ def _file_names(sysdba: Any) -> str:
 
     With ``db_create_file_dest`` set, Oracle names the files itself and a
     ``FILE_NAME_CONVERT`` clause is not needed. Without it, the clause maps the
-    seed's directory to a sibling named after the PDB.
+    seed's directory to a sibling named after the PDB. Any file already in the
+    sibling under one of the seed's file names is removed first. A run that dies
+    during the create leaves its files there with no PDB to own them, so the drop
+    does not remove them, and the next create would fail with ``ORA-27038``, file
+    already exists.
     """
     with sysdba.cursor() as cursor:
         cursor.execute("select value from v$parameter where name = 'db_create_file_dest'")
         if cursor.fetchone()[0]:
             return ""
-        cursor.execute("select name from v$datafile where con_id = 2 and rownum = 1")
-        seed = cursor.fetchone()[0]
-    separator = "\\" if "\\" in seed else "/"
-    directory = seed.rpartition(separator)[0]
-    parent = directory.rpartition(separator)[0]
-    return (
-        f" file_name_convert = ('{directory}{separator}', "
-        f"'{parent}{separator}{PDB.upper()}{separator}')"
-    )
+        cursor.execute(
+            "select name from v$datafile where con_id = 2"
+            " union all select name from v$tempfile where con_id = 2"
+        )
+        seed = [row[0] for row in cursor]
+    separator = "\\" if "\\" in seed[0] else "/"
+    directories = {name.rpartition(separator)[0] for name in seed}
+    if len(directories) > 1:
+        pytest.skip(
+            f"the seed's files are in {len(directories)} directories, "
+            f"and this fixture maps only one: {sorted(directories)}"
+        )
+    directory = directories.pop()
+    target = f"{directory.rpartition(separator)[0]}{separator}{PDB.upper()}"
+    _remove_orphans(sysdba, target, [name.rpartition(separator)[2] for name in seed])
+    return f" file_name_convert = ('{directory}{separator}', '{target}{separator}')"
+
+
+def _remove_orphans(sysdba: Any, directory: str, names: list[str]) -> None:
+    """Remove each named file in ``directory`` that is there.
+
+    ``UTL_FILE`` is the one way, from a database session, to delete a file that
+    no tablespace owns. For a directory that does not exist yet, ``FGETATTR``
+    says the file is not there.
+    """
+    _execute(sysdba, f"create or replace directory {ORPHANS} as '{directory}'")
+    try:
+        with sysdba.cursor() as cursor:
+            for name in names:
+                cursor.execute(
+                    """
+                    declare
+                        present boolean;
+                        file_length number;
+                        block_size binary_integer;
+                    begin
+                        utl_file.fgetattr(:directory, :name, present, file_length, block_size);
+                        if present then
+                            utl_file.fremove(:directory, :name);
+                        end if;
+                    end;
+                    """,
+                    directory=ORPHANS,
+                    name=name,
+                )
+    finally:
+        _execute(sysdba, f"drop directory {ORPHANS}")
 
 
 @pytest.fixture
