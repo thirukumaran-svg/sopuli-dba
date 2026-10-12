@@ -8,7 +8,8 @@ Two parts:
   Windows, so neither gives the run a chance to clean up.
 * :class:`VaultGate` is an HTTP proxy between the run and Vault. It forwards
   every request, and injects one fault at one request to the secret's path:
-  it holds a write, drops it and goes down, or serves an old read.
+  it holds a write, drops it and goes down, or serves an old read. It can also
+  pause a write while the test changes the database, then forward it.
 
 **Why the gate, and not a TCP proxy.** A fault sent when the test reads an
 event is a race. The run carries on after it prints ``password.applied``: it
@@ -73,6 +74,9 @@ class Fault(Enum):
     #: Forward write ``writes``. After it, answer every read with the reply to
     #: the last read before it, as a replica behind its primary would.
     STALE_AFTER_WRITES = "stale after writes"
+    #: Hold write ``writes`` until the test calls :meth:`VaultGate.release`,
+    #: then forward it. The test changes the database in between.
+    PAUSE_WRITE = "pause write"
 
 
 class HarnessError(RuntimeError):
@@ -110,6 +114,7 @@ class VaultGate:
         self.tripped = threading.Event()
         self.seen: list[str] = []
         self._release = threading.Event()
+        self._closing = False
         self._lock = threading.Lock()
         self._arrived = 0
         self._last_read: Answer | None = None
@@ -123,7 +128,14 @@ class VaultGate:
         host, port = self._server.server_address[:2]
         return f"http://{host!s}:{port}"
 
+    def release(self) -> None:
+        """Let a paused write through."""
+        self._release.set()
+
     def close(self) -> None:
+        # Wakes a held or paused write without forwarding it. A paused write
+        # released here belongs to a test that has already ended.
+        self._closing = True
         self._release.set()
         self._go_down()
         self.upstream.close()
@@ -153,6 +165,10 @@ class VaultGate:
                     gate.tripped.set()
                     gate._release.wait(TIMEOUT)
                     return
+                if faulted and gate.fault is Fault.PAUSE_WRITE:
+                    gate.tripped.set()
+                    if not gate._release.wait(TIMEOUT) or gate._closing:
+                        return
                 if faulted and gate.fault is Fault.DOWN_AT_WRITE:
                     gate.tripped.set()
                     gate._go_down()
@@ -248,13 +264,7 @@ vaults:
     auth: {{ method: token }}
 
 targets:
-  - name: free-pdb
-    type: oracle
-    environment: dev
-    vault: vault-dev
-    dsn: "{dsn}"
-    admin: {{ username: {user}, auth: {{ method: env }} }}
-
+{targets}
 policies:
   standard:
     password:
@@ -269,6 +279,14 @@ applications:
     secret_template: "vault-dev:acme/{{env}}/{{application}}#DB_CREDENTIALS/{{account}}"
 """
 
+TARGET = """  - name: {name}
+    type: oracle
+    environment: dev
+    vault: vault-dev
+    dsn: "{dsn}"
+    admin: {{ username: {user}, auth: {{ method: env }} }}
+"""
+
 BREAK_EXPIRED = """  locking:
     break_expired: true
 """
@@ -276,7 +294,12 @@ BREAK_EXPIRED = """  locking:
 
 @dataclass
 class Estate:
-    """One account, one private mount, and the means to run sopuli against them."""
+    """One account, one private mount, and the means to run sopuli against them.
+
+    The account is on one target, ``free-pdb`` at ``dsn``. A test that needs
+    more targets names them in ``more_targets``, as ``(name, dsn)``, and creates
+    the account on each.
+    """
 
     tmp_path: Path
     vault: Any
@@ -286,18 +309,22 @@ class Estate:
     login: Callable[[str], bool]
     #: The admin user the config names. Its password is in ``env``.
     user: str
+    more_targets: tuple[tuple[str, str], ...] = ()
     _configs: itertools.count[int] = field(default_factory=itertools.count)
 
     def config(self, addr: str, *, break_expired: bool = False) -> Path:
         """A config whose vault is at ``addr``: Vault itself, or a gate in front of it."""
         path = self.tmp_path / f"sopuli-{next(self._configs)}.yaml"
+        targets = "".join(
+            TARGET.format(name=name, dsn=dsn, user=self.user)
+            for name, dsn in (("free-pdb", self.dsn), *self.more_targets)
+        )
         path.write_text(
             CONFIG.format(
                 locking=BREAK_EXPIRED if break_expired else "",
                 addr=addr,
                 mount=self.mount,
-                dsn=self.dsn,
-                user=self.user,
+                targets=targets,
                 account=ACCOUNT,
             ),
             encoding="utf-8",

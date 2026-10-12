@@ -406,7 +406,7 @@ recovery, not only that the tool did not crash:
 |---|---|
 | kill the process between `password_set` and `vault_promote` | `pending` still holds the new value; `status` reports `PENDING_APPLY`; a second `creds apply` completes the promotion |
 | vault unreachable mid-run | lost at the staging write: nothing applied, exit 1. Lost at the promotion: applied and not promoted, and `creds apply` completes it. Never promoted silently |
-| close a PDB mid-run (several targets) | partial success, exit 4, other targets untouched; `creds apply --repair` with the run document fixes it |
+| close a PDB mid-run (several targets) | partial success, exit 4: the other targets take the new password, the closed one keeps the old one, and `current` is not promoted; `creds apply --repair` with the run document fixes it |
 | revoke `ALTER USER` mid-run | a clean authorization error, and no half-written state |
 | two `rotate` runs on one account at once | one loses the lock and exits 7; the final state is consistent |
 | steal a held lock mid-run: let it expire, and let a second run take it over | the first run's next fence check fails, and it stops before its next `ALTER USER`. Nothing from a stale plan is half-applied |
@@ -417,7 +417,9 @@ The mechanics are in `tests/fault_harness.py`. Each test runs `sopuli` as
 its own process, with an HTTP proxy between it and the vault. The proxy acts on
 one request to the secret's path: it holds a write, drops it and stops
 listening, or forwards a write and stops listening before the reply, or
-answers a read with an older reply.
+answers a read with an older reply. For a database fault, it pauses the staging
+write while the test changes the database as `SYS`, then forwards it. The
+pre-flight has passed by then, so the run meets the change at step 5.
 
 The fault is placed on a request, not on an event, because an event is a race.
 The run goes on to verify and promote while the test reads `password.applied`,
@@ -431,10 +433,9 @@ The tests need only the tier-1 services, so the tier-1 lane runs them:
 |---|---|
 | the two kill rows | `tests/test_fault_kill.py` |
 | vault unreachable at a write or after it, stale read | `tests/test_fault_vault.py`. The vault lost at the promotion exits 1 and drops the run's rows, which is #760; its test is marked `xfail` until that is fixed |
+| PDB closed, `ALTER USER` revoked | `tests/test_fault_database.py`. The PDB row creates a second PDB and drops it afterwards. `creds apply --repair` refuses a `rotate` document, which is #764; that test is marked `xfail` until it is fixed, and plain `creds apply` completes the rotation meanwhile |
 
-The other rows are open in #660. The database rows need a database fault,
-which the gate cannot inject. The plan is for the test to make that change
-itself, as `SYSTEM`, while the gate holds the run at a vault request.
+The two lock rows are open in #660.
 
 ---
 

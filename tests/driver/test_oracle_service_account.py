@@ -42,12 +42,11 @@ from typing import Any
 
 import pytest
 
-from oracle_harness import Environment
+from oracle_harness import Environment, service_account_grants
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.driver.oracle.privileges import (
     PASSWORD_FILE_PRIVILEGES,
-    PREDICATE_READS,
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     audit,
@@ -130,19 +129,13 @@ def _container(connection: Any) -> str:
 def _grants() -> tuple[str, ...]:
     """§2's grant set as `GRANT` statements, derived rather than restated.
 
-    The one transformation is the `SYS.` qualifier: a grant names the owner and
-    the tool names the synonym it reads through. Writing the list out again here
-    would make this fixture agree with `privileges.py` only until somebody edited
-    one of them -- and the account would then be right about the wrong thing,
-    which is the failure the whole module exists to catch.
+    Writing the list out again here would make this fixture agree with
+    `privileges.py` only until somebody edited one of them -- and the account
+    would then be right about the wrong thing, which is the failure the whole
+    module exists to catch. :func:`oracle_harness.service_account_grants` does
+    the derivation.
     """
-    return (
-        *(f"grant {privilege} to {ACCOUNT}" for privilege in REQUIRED_PRIVILEGES),
-        *(f"grant {grant.replace('ON ', 'ON SYS.')} to {ACCOUNT}" for grant in REQUIRED_READS),
-        # §2 grants these too (decision #531), though no pre-flight requires
-        # them.
-        *(f"grant {grant.replace('ON ', 'ON SYS.')} to {ACCOUNT}" for grant in PREDICATE_READS),
-    )
+    return service_account_grants(ACCOUNT)
 
 
 @pytest.fixture

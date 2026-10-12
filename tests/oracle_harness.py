@@ -29,6 +29,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from sopuli.driver.oracle.capabilities import PROBES, STRUCTURAL, probe
+from sopuli.driver.oracle.privileges import PREDICATE_READS, REQUIRED_PRIVILEGES, REQUIRED_READS
 from sopuli.driver.protocol import CAPABILITIES
 
 #: Re-exported deliberately. The questions belong to the driver and the
@@ -140,6 +141,24 @@ def dsn_host(dsn: str) -> str:
     """
     remainder = dsn.split("://", 1)[-1].lstrip("/")
     return remainder.split("/")[0].rsplit(":", 1)[0]
+
+
+def service_account_grants(account: str) -> tuple[str, ...]:
+    """`02-oracle-privileges.md` §2's grant set for ``account``, as ``GRANT`` statements.
+
+    Derived from :mod:`sopuli.driver.oracle.privileges` rather than restated, so a
+    test account is the one the tool asks for. The one change is the ``SYS.``
+    qualifier: a grant names the owner, and the tool names the synonym it reads
+    through. ``PREDICATE_READS`` are granted too (decision #531), though no
+    pre-flight requires them.
+    """
+    return (
+        *(f"grant {privilege} to {account}" for privilege in REQUIRED_PRIVILEGES),
+        *(
+            f"grant {grant.replace('ON ', 'ON SYS.')} to {account}"
+            for grant in (*REQUIRED_READS, *PREDICATE_READS)
+        ),
+    )
 
 
 def decide_skip(
