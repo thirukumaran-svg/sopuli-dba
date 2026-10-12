@@ -42,19 +42,17 @@ from fault_harness import (
     LOCK,
     OLD,
     SECRET,
+    STAGING,
     TIMEOUT,
     Estate,
     Fault,
-    HarnessError,
     VaultGate,
+    start_paused,
 )
 from oracle_harness import Environment, service_account_grants
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
 from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.exit_codes import ExitCode
-
-#: ``rotate``'s first write to the secret's path stages ``pending``.
-STAGING = 1
 
 #: The second PDB. Oracle Free has one, ``FREEPDB1``, and the test makes this one.
 PDB = "acme_fault_pdb"
@@ -330,23 +328,7 @@ def rotate(vault_stack: Any) -> Iterator[Rotate]:
                 writes=STAGING,
             )
             gates.append(gate)
-            run = pool.submit(
-                estate.sopuli, estate.config(gate.addr), "creds", "rotate", "--confirm"
-            )
-            # The run can end before it stages, such as on a pre-flight
-            # refusal. Then its own output says why, so report that.
-            deadline = time.monotonic() + TIMEOUT
-            while not gate.tripped.wait(0.5):
-                if run.done() or time.monotonic() > deadline:
-                    ended = run.result(timeout=TIMEOUT) if run.done() else None
-                    raise HarnessError(
-                        f"the run never staged; the gate saw {gate.seen}"
-                        + (
-                            f"; exit {ended.returncode}, stderr: {ended.stderr}"
-                            if ended is not None
-                            else ""
-                        )
-                    )
+            run = start_paused(pool, estate, gate, "creds", "rotate", "--confirm")
             try:
                 change()
             finally:

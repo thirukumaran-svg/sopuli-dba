@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -127,25 +126,6 @@ def test_a_second_apply_completes_the_promotion(
     assert fault_estate.login(killed.new)
 
 
-def _expire(estate: Estate) -> int:
-    """Move the dead run's lock past its expiry, as fifteen minutes would.
-
-    The lease is a fixed fifteen minutes (``DEFAULT_TTL``), too long to wait in
-    a test. The record is rewritten with ``expires_at`` beyond the clock-skew
-    margin, and everything else as the dead run left it. Returns the version
-    the rewrite produced.
-    """
-    record, version = estate.read(LOCK)
-    assert record["state"] == "held"
-    past = datetime.now(UTC) - timedelta(minutes=5)
-    record["expires_at"] = past.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    reply = estate.vault.post(
-        f"/v1/{estate.mount}/data/{LOCK}", json={"options": {"cas": version}, "data": record}
-    )
-    assert reply.status_code == 200, reply.text
-    return int(reply.json()["data"]["version"])
-
-
 def test_an_expired_lock_of_a_killed_run_is_refused_by_default(
     fault_estate: Estate, vault_stack: Any, killed: Killed
 ) -> None:
@@ -154,7 +134,7 @@ def test_an_expired_lock_of_a_killed_run_is_refused_by_default(
     The next run exits 7 and says who held the lock and that it has expired, so
     the person reading it knows what `lock break` would do.
     """
-    _expire(fault_estate)
+    fault_estate.expire_lock()
 
     result = fault_estate.sopuli(
         fault_estate.config(vault_stack.addr), "creds", "apply", "--confirm"
@@ -176,7 +156,7 @@ def test_break_expired_takes_over_the_lock_of_a_killed_run(
     version is the fence: had the killed run been only paused, its next check
     would find it and stop.
     """
-    expired_at = _expire(fault_estate)
+    expired_at = fault_estate.expire_lock()
 
     config = fault_estate.config(vault_stack.addr, break_expired=True)
     result = fault_estate.sopuli(config, "creds", "apply", "--confirm")

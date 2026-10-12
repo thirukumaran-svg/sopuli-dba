@@ -39,8 +39,11 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import Executor, Future
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -351,6 +354,26 @@ class Estate:
         broken = self.sopuli(config, "lock", "break", f"vault-dev:{SECRET}", "--force", "--confirm")
         assert broken.returncode == 0, broken.stderr
 
+    def expire_lock(self) -> int:
+        """Move the held lock past its expiry, as fifteen minutes would.
+
+        The lease is a fixed fifteen minutes (``DEFAULT_TTL``), too long to wait
+        in a test. The record is rewritten with ``expires_at`` beyond the
+        clock-skew margin, and everything else as its holder left it. Returns
+        the version the rewrite produced.
+        """
+        record, version = self.read(LOCK)
+        if record["state"] != "held":
+            raise HarnessError(f"no held lock to expire: the record is {record['state']!r}")
+        past = datetime.now(UTC) - timedelta(minutes=5)
+        record["expires_at"] = past.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        reply = self.vault.post(
+            f"/v1/{self.mount}/data/{LOCK}", json={"options": {"cas": version}, "data": record}
+        )
+        if reply.status_code != 200:
+            raise HarnessError(f"could not rewrite {LOCK}: HTTP {reply.status_code} {reply.text}")
+        return int(reply.json()["data"]["version"])
+
     def read(self, path: str) -> tuple[dict[str, Any], int]:
         """The data at ``path`` on the private mount, and its version."""
         reply = self.vault.get(f"/v1/{self.mount}/data/{path}")
@@ -420,3 +443,35 @@ class CliRun:
     def _read_stderr(self) -> None:
         assert self.process.stderr is not None
         self.stderr = self.process.stderr.read()
+
+
+#: ``rotate``'s first write to the secret's path stages ``pending``.
+STAGING = 1
+
+
+def start_paused(
+    pool: Executor, estate: Estate, gate: VaultGate, *args: str
+) -> Future[subprocess.CompletedProcess[str]]:
+    """Run sopuli through ``gate``, and return once the gate holds its write.
+
+    The run can end before the write, such as on a pre-flight refusal. Then its
+    own output says why, so the error reports it.
+    """
+    run = pool.submit(estate.sopuli, estate.config(gate.addr), *args)
+    deadline = time.monotonic() + TIMEOUT
+    while not gate.tripped.wait(0.5):
+        if run.done() or time.monotonic() > deadline:
+            raise HarnessError(
+                f"the run never reached the gate; the gate saw {gate.seen}{_ended(run)}"
+            )
+    return run
+
+
+def _ended(run: Future[subprocess.CompletedProcess[str]]) -> str:
+    if not run.done():
+        return ""
+    error = run.exception()
+    if error is not None:
+        return f"; the run raised {error!r}"
+    ended = run.result()
+    return f"; exit {ended.returncode}, stderr: {ended.stderr}"

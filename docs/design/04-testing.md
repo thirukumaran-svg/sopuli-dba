@@ -397,7 +397,7 @@ Two rules follow:
    `sopuli/driver/oracle/accounts.py` record several that were the opposite of
    the obvious guess.
 
-### Fault injection (open: #660)
+### Fault injection
 
 The failure table in UC-1 §8 is a test list. Each row asserts the documented
 recovery, not only that the tool did not crash:
@@ -409,7 +409,7 @@ recovery, not only that the tool did not crash:
 | close a PDB mid-run (several targets) | partial success, exit 4: the other targets take the new password, the closed one keeps the old one, and `current` is not promoted; `creds apply --repair` with the run document fixes it |
 | revoke `ALTER USER` mid-run | a clean authorization error, and no half-written state |
 | two `rotate` runs on one account at once | one loses the lock and exits 7; the final state is consistent |
-| steal a held lock mid-run: let it expire, and let a second run take it over | the first run's next fence check fails, and it stops before its next `ALTER USER`. Nothing from a stale plan is half-applied |
+| steal a held lock mid-run: let it expire, and let a second run take it over | the first run's next fence check fails, and it stops before its next `ALTER USER`: no database gets its password, and `current` is not promoted. A write that passed its fence check before the takeover still lands, so `pending` can hold the stale run's password. The run exits 4 with `SOPULI-W011`, and the next run to hold the lock applies that `pending` |
 | kill a run that holds a lock, then start another | by default the second run refuses with exit 7, and reports the holder and that the lock has expired. Breaking a lock is not self-service. Under `locking.break_expired`, the second run takes the lock with a compare-and-set write that increases the version, which fences the killed run if it ever resumes |
 | the vault returns a stale read after the promotion | the post-verify step catches it: exit 4 with `SOPULI-W012`, not success |
 
@@ -419,7 +419,10 @@ one request to the secret's path: it holds a write, drops it and stops
 listening, or forwards a write and stops listening before the reply, or
 answers a read with an older reply. For a database fault, it pauses the staging
 write while the test changes the database as `SYS`, then forwards it. The
-pre-flight has passed by then, so the run meets the change at step 5.
+pre-flight has passed by then, so the run meets the change at step 5. For a
+lock row, it pauses the same write while the run holds its lock, and a second
+run starts. Step 4 checks the fence before that write, so the paused run's next
+check is the one before its `ALTER USER`.
 
 The fault is placed on a request, not on an event, because an event is a race.
 The run goes on to verify and promote while the test reads `password.applied`,
@@ -434,8 +437,7 @@ The tests need only the tier-1 services, so the tier-1 lane runs them:
 | the two kill rows | `tests/test_fault_kill.py` |
 | vault unreachable at a write or after it, stale read | `tests/test_fault_vault.py`. The vault lost at the promotion exits 1 and drops the run's rows, which is #760; its test is marked `xfail` until that is fixed |
 | PDB closed, `ALTER USER` revoked | `tests/test_fault_database.py`. The PDB row creates a second PDB and drops it afterwards. `creds apply --repair` refuses a `rotate` document, which is #764; that test is marked `xfail` until it is fixed, and plain `creds apply` completes the rotation meanwhile |
-
-The two lock rows are open in #660.
+| two runs at once, a lock taken over | `tests/test_fault_lock.py`. The run that takes the lock over is a `creds apply` with nothing to do, because a second `rotate` would write the secret document, and the paused run's staging write would then lose its compare-and-set before it reached the fence |
 
 ---
 
