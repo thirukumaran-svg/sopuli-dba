@@ -208,6 +208,29 @@ RULES: dict[str, _Rule] = {
         retryable=True,
         hint="no listener at that address; it may be down rather than wrong",
     ),
+    # A closed PDB, from the client's side (#766). The listener still routes to
+    # the PDB's service for a while after a close, and the logon then fails with
+    # ORA-01109. Once the service has left the listener it is ORA-12514.
+    # ORA-01109 is retryable: the PDB may be opened again. ORA-12514 is not,
+    # because its usual cause is a wrong service name, as with ORA-12154.
+    "ORA-01109": _Rule(
+        UNREACHABLE,
+        "connectivity",
+        retryable=True,
+        hint=(
+            "the PDB or database is closed or only mounted; open it. "
+            "V$PDBS.OPEN_MODE shows a PDB's state"
+        ),
+    ),
+    "ORA-12514": _Rule(
+        UNREACHABLE,
+        "connectivity",
+        hint=(
+            "the listener does not know the service. Its PDB or instance may be closed, "
+            "or the service name in the dsn may be wrong; `lsnrctl services` lists the "
+            "ones it knows"
+        ),
+    ),
     # The client's wallet. Measured only over mutual TLS, against an Autonomous
     # Database (#472): a missing wallet, a WALLET_LOCATION that points elsewhere,
     # and an unreadable `cwallet.sso` all raise ORA-28759, so its hint lists every

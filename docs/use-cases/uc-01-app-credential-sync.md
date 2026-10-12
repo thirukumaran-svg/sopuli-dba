@@ -1329,6 +1329,7 @@ window answers "did the old password stop working just now".
 | ORA-01031 | insufficient privileges | fail early in pre-flight, naming the missing grant |
 | ORA-65040 / ORA-65048 | container-clause misuse, error while applying to a PDB | scope guardrail message |
 | ORA-12154 / ORA-12541 | naming/listener | connectivity, a separate category |
+| ORA-01109 / ORA-12514 | the database is not open, or the listener does not know the service. A PDB closed during a run gives one of the two | connectivity. The hint says the PDB may be closed, because neither message does |
 | ORA-28759 / ORA-28768 | the client's wallet could not be opened, or is damaged | connectivity. The hint names `TNS_ADMIN`, `WALLET_LOCATION` in `sqlnet.ora` and `cwallet.sso`, because the server message names none of them |
 | ORA-28040 / ORA-01017 with version mismatch | verifier / `ALLOWED_LOGON_VERSION` mismatch | explain the password-version implications |
 | DPI-1047 / DPY-3001 | the *client* library, not the server: Instant Client missing, or thin mode reached because thick-mode initialisation did not happen | `config` and exit 9, as ADR-006 does for a backend that is configured and not installed, because the person reading the message fixes it on this machine |

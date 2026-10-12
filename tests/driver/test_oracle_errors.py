@@ -94,6 +94,8 @@ def test_the_table_covers_every_row_uc1_names() -> None:
         "ORA-65066",
         "ORA-12154",
         "ORA-12541",
+        "ORA-01109",
+        "ORA-12514",
         "ORA-28040",
         "ORA-28759",
         "ORA-28768",
@@ -242,8 +244,25 @@ def test_only_a_plainly_transient_failure_is_marked_retryable() -> None:
     """`retryable` is the run document's field and a report, not an instruction:
     a listener that is down may come up, and nothing in sopuli loops on it."""
     assert classify("ORA-12541", "no listener").retryable
+    assert classify("ORA-01109", "database not open").retryable
+    assert not classify("ORA-12514", "listener does not know of service").retryable
     assert not classify("ORA-12154", "could not resolve").retryable
     assert not classify("ORA-01017", SERVER).retryable
+
+
+@pytest.mark.parametrize("code", ["ORA-01109", "ORA-12514"])
+def test_a_closed_pdb_is_connectivity_and_says_so(code: str) -> None:
+    """#766: a PDB closed under a run fails with one of these two codes. Without
+    a row, ORA-01109 fell to the `database` fallback with no hint, and neither
+    message says that the PDB is closed."""
+    found = classify(code, f"{code}: failure")
+
+    assert found.kind == UNREACHABLE
+    assert found.category == "connectivity"
+    assert found.exit_code == ExitCode.FAILURE
+    assert found.hint is not None
+    assert "closed" in found.hint
+    assert not found.regenerate
 
 
 @pytest.mark.parametrize("code", ["ORA-28759", "ORA-28768"])
@@ -307,12 +326,13 @@ def test_the_thin_mode_hint_gives_the_reasons_and_does_not_blame_oci() -> None:
 
 
 def test_an_unnamed_net_error_lands_with_its_family() -> None:
-    """ORA-12514 is not in the table and is unmistakably connectivity.
+    """ORA-12170 is not in the table and is unmistakably connectivity.
 
     The range is what stops it being reported as a database failure, which would
     send the operator to look at the wrong machine entirely.
     """
-    found = classify("ORA-12514", "listener does not currently know of service")
+    assert "ORA-12170" not in RULES
+    found = classify("ORA-12170", "TNS:Connect timeout occurred")
 
     assert found.kind == UNREACHABLE
     assert found.category == "connectivity"
