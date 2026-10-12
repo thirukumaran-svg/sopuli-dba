@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.72.0](https://github.com/villebase/sopuli-dba/compare/v0.71.0...v0.72.0) (2026-10-12)
+
+
+### Features
+
+* **output:** emit plan.confirmation_required ([#663](https://github.com/villebase/sopuli-dba/issues/663)) ([#754](https://github.com/villebase/sopuli-dba/issues/754)) ([ea04dfa](https://github.com/villebase/sopuli-dba/commit/ea04dfa5881c42e8c8eca1b47640b1b004e04964))
+
+
+### Bug Fixes
+
+* **account:** ask a reset's own refusals before a dry run returns ([#671](https://github.com/villebase/sopuli-dba/issues/671)) ([#751](https://github.com/villebase/sopuli-dba/issues/751)) ([773bbf6](https://github.com/villebase/sopuli-dba/commit/773bbf6974d06fb88b77b0041ce5747a4ea5a958))
+* **account:** show each seen-path password on its own target ([#741](https://github.com/villebase/sopuli-dba/issues/741)) ([#752](https://github.com/villebase/sopuli-dba/issues/752)) ([0d70a3c](https://github.com/villebase/sopuli-dba/commit/0d70a3c589813783c42482baf1cf34844d91f515))
+
 ## [0.71.0](https://github.com/villebase/sopuli-dba/compare/v0.70.0...v0.71.0) (2026-10-11)
 
 
