@@ -589,6 +589,43 @@ def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
         opened.close()
 
 
+@pytest.fixture
+def sysdba(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
+    """A `SYS AS SYSDBA` connection on the tier-1 database, closed afterwards.
+
+    For the statements an operator issues and `system` cannot. Each is
+    `ORA-01031` from `system`, measured:
+
+    * `GRANT SYSDBA TO <account>`. Only an administrative privilege can hand
+      one out;
+    * `GRANT SELECT ON SYS.…`, the dictionary reads in `02-oracle-privileges.md`
+      §2. The `CREATE USER` and the two system privileges succeed from `system`,
+      so a fixture that granted as `system` and swallowed the error would build
+      a half-granted account: one that rotates and cannot read the dictionary;
+    * `ALTER PLUGGABLE DATABASE … OPEN` and `CLOSE`.
+
+    Raw `oracledb` rather than the tool's driver. The driver's `connect` has no
+    `SYSDBA` mode and must not grow one: the tool has no operation that needs
+    `SYSDBA`, and `02-oracle-privileges.md` §3 puts it on the must-not-grant
+    list. These statements are an
+    operator's, so the fixture issues them the way an operator does.
+
+    The connection stands in the DSN's container, and fixtures read
+    :func:`oracle_harness.current_container` to learn the target's shape. So a
+    fixture that moves it with `ALTER SESSION SET CONTAINER` moves it back
+    before it returns.
+    """
+    oracledb = pytest.importorskip("oracledb")
+    session_module.initialise(env=os.environ)
+    connection = oracledb.connect(
+        user="sys", password=PASSWORD, dsn=live_oracle.dsn, mode=oracledb.AUTH_MODE_SYSDBA
+    )
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
 @pytest.fixture(autouse=True)
 def _capability_gate(request: pytest.FixtureRequest) -> None:
     """Apply `requires_capability` / `requires_no_capability`.

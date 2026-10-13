@@ -24,7 +24,6 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
-import os
 import re
 import subprocess
 import time
@@ -49,10 +48,9 @@ from fault_harness import (
     VaultGate,
     start_paused,
 )
-from oracle_harness import Environment, service_account_grants
+from oracle_harness import Environment, current_container, execute, service_account_grants
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
 from sopuli.diagnostics import PROMOTION_WITHHELD
-from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.exit_codes import ExitCode
 
 #: The second PDB. Oracle Free has one, ``FREEPDB1``, and the test makes this one.
@@ -89,50 +87,8 @@ CLOSED_PDB = ("ORA-01109", "ORA-12514")
 EASY_CONNECT = re.compile(r"(?P<address>[^/?\s]+)/(?P<service>[\w.$#]+)")
 
 
-def _execute(connection: Any, *statements: str) -> None:
-    with connection.cursor() as cursor:
-        for statement in statements:
-            cursor.execute(statement)
-
-
-def _current_container(connection: Any) -> str:
-    """Where the session stands, or ``NON-CDB`` on a release with no containers.
-
-    ``con_name`` raises ``ORA-02003`` on a non-CDB, rather than answering NULL.
-    """
-    with connection.cursor() as cursor:
-        try:
-            cursor.execute("select sys_context('userenv', 'con_name') from dual")
-        except Exception as error:  # noqa: BLE001 -- classified on the next line
-            if NO_CONTAINERS not in str(error):
-                raise
-            return "NON-CDB"
-        return str(cursor.fetchone()[0])
-
-
-@pytest.fixture
-def sysdba(live_oracle: Environment) -> Iterator[Any]:
-    """A ``SYS AS SYSDBA`` connection, standing in the estate's PDB.
-
-    Opening and closing a PDB needs ``SYSDBA``; ``system`` gets ``ORA-01031``.
-    :func:`_container` moves the session to the root for those.
-    Raw ``oracledb``, for the reason ``test_oracle_service_account.py`` gives:
-    this is an operator's statement, not one of the tool's.
-    """
-    oracledb = pytest.importorskip("oracledb")
-    session_module = pytest.importorskip("sopuli.driver.oracle.session")
-    session_module.initialise(env=os.environ)
-    connection = oracledb.connect(
-        user="sys", password=PASSWORD, dsn=live_oracle.dsn, mode=oracledb.AUTH_MODE_SYSDBA
-    )
-    try:
-        yield connection
-    finally:
-        connection.close()
-
-
 def _container(sysdba: Any, name: str) -> None:
-    _execute(sysdba, f"alter session set container = {name}")
+    execute(sysdba, f"alter session set container = {name}")
 
 
 def _connect(dsn: str, user: str, password: str) -> Any:
@@ -172,14 +128,26 @@ def _drop_pdb(sysdba: Any) -> None:
 
     Any other failure is raised. A drop that failed silently would surface at
     the next setup as "already exists", far from its cause.
+
+    The drop runs in the root, and the session goes back to the container it
+    started in. :func:`service_account` reads that container to decide whether
+    it can run.
     """
+    before = current_container(sysdba)
     _container(sysdba, "cdb$root")
+    try:
+        _close_and_drop(sysdba)
+    finally:
+        _container(sysdba, before)
+
+
+def _close_and_drop(sysdba: Any) -> None:
     for statement in (
         f"alter pluggable database {PDB} close immediate",
         f"drop pluggable database {PDB} including datafiles",
     ):
         try:
-            _execute(sysdba, statement)
+            execute(sysdba, statement)
         except Exception as error:  # noqa: BLE001 -- classified on the next line
             if not any(code in str(error) for code in ABSENT_OR_CLOSED):
                 raise
@@ -225,7 +193,7 @@ def _remove_orphans(sysdba: Any, directory: str, names: list[str]) -> None:
     no tablespace owns. For a directory that does not exist yet, ``FGETATTR``
     says the file is not there.
     """
-    _execute(sysdba, f"create or replace directory {ORPHANS} as '{directory}'")
+    execute(sysdba, f"create or replace directory {ORPHANS} as '{directory}'")
     try:
         with sysdba.cursor() as cursor:
             for name in names:
@@ -246,7 +214,7 @@ def _remove_orphans(sysdba: Any, directory: str, names: list[str]) -> None:
                     name=name,
                 )
     finally:
-        _execute(sysdba, f"drop directory {ORPHANS}")
+        execute(sysdba, f"drop directory {ORPHANS}")
 
 
 @pytest.fixture
@@ -256,7 +224,7 @@ def second_pdb(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
     The datafiles go beside the seed's. Dropped at the end, and before the
     start in case an earlier run died with one in place.
     """
-    if _current_container(sysdba) == "NON-CDB":
+    if current_container(sysdba) == "NON-CDB":
         pytest.skip("this database has no containers, so no second PDB")
     easy = EASY_CONNECT.fullmatch(live_oracle.dsn)
     if easy is None:
@@ -265,17 +233,22 @@ def second_pdb(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
             f"and {live_oracle.dsn} is not one"
         )
     dsn = f"{easy['address']}/{PDB}"
+    home = current_container(sysdba)
     _drop_pdb(sysdba)
     try:
-        _execute(
-            sysdba,
-            f"create pluggable database {PDB} admin user acme_pdb_admin "
-            f'identified by "{PDB_ADMIN_PASSWORD}"{_file_names(sysdba)}',
-            f"alter pluggable database {PDB} open",
-        )
+        _container(sysdba, "cdb$root")
+        try:
+            execute(
+                sysdba,
+                f"create pluggable database {PDB} admin user acme_pdb_admin "
+                f'identified by "{PDB_ADMIN_PASSWORD}"{_file_names(sysdba)}',
+                f"alter pluggable database {PDB} open",
+            )
+        finally:
+            _container(sysdba, home)
         _wait_for_service(dsn)
         with contextlib.closing(_connect(dsn, USER, PASSWORD)) as system:
-            _execute(
+            execute(
                 system,
                 f'create user {ACCOUNT} identified by "{OLD}"',
                 f"grant create session to {ACCOUNT}",
@@ -288,19 +261,19 @@ def second_pdb(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
 @pytest.fixture
 def service_account(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
     """§2's service account in the estate's PDB. Returns its name."""
-    if _current_container(sysdba) == "CDB$ROOT":
+    if current_container(sysdba) == "CDB$ROOT":
         pytest.skip("this DSN answers as CDB$ROOT; a local service account needs a PDB")
 
     def drop() -> None:
         try:
-            _execute(sysdba, f"drop user {SERVICE} cascade")
+            execute(sysdba, f"drop user {SERVICE} cascade")
         except Exception as error:  # noqa: BLE001 -- classified on the next line
             if "ORA-01918" not in str(error):  # absent is the ordinary case
                 raise
 
     drop()
     try:
-        _execute(
+        execute(
             sysdba,
             f'create user {SERVICE} identified by "{SERVICE_PASSWORD}"',
             *service_account_grants(SERVICE),
@@ -383,9 +356,9 @@ def closed_mid_run(
     before, _ = estate.read(SECRET)
 
     result = rotate(
-        estate, lambda: _execute(sysdba, f"alter pluggable database {PDB} close immediate")
+        estate, lambda: execute(sysdba, f"alter pluggable database {PDB} close immediate")
     )
-    _execute(sysdba, f"alter pluggable database {PDB} open")
+    execute(sysdba, f"alter pluggable database {PDB} open")
     _wait_for_service(second_pdb)
     return Closed(
         estate=estate,
@@ -505,7 +478,7 @@ def test_alter_user_revoked_mid_run_is_an_authorization_error(
     before, _ = estate.read(SECRET)
     old = before["DB_CREDENTIALS"][ACCOUNT]
 
-    result = rotate(estate, lambda: _execute(sysdba, f"revoke alter user from {service_account}"))
+    result = rotate(estate, lambda: execute(sysdba, f"revoke alter user from {service_account}"))
 
     assert result.returncode == ExitCode.FAILURE, result.stderr
     row = _rows(result)["free-pdb"]

@@ -16,9 +16,10 @@ is where the fixtures reach for them. P1's vocabulary is asserted against them i
 `tests/driver/test_capabilities.py`. What remains the harness's own work is which
 environment, what to skip, and how to report it.
 
-**Nothing here imports ``oracledb``.** The pure parts — what to ask, how to read
-an answer, what to skip, how to report — are testable in tier 0, and only the
-fixture in `conftest.py` opens a socket.
+**Nothing here imports ``oracledb``.** What to ask, how to read an answer, what
+to skip and how to report are testable in tier 0. Only the fixtures in
+`conftest.py` open a socket. :func:`execute` and :func:`current_container` use a
+connection a fixture opened, so a tier-0 test can hand them a fake one.
 """
 
 from __future__ import annotations
@@ -27,8 +28,9 @@ import ipaddress
 import urllib.parse
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
-from sopuli.driver.oracle.capabilities import PROBES, STRUCTURAL, probe
+from sopuli.driver.oracle.capabilities import NO_CONTAINERS, PROBES, STRUCTURAL, probe
 from sopuli.driver.oracle.privileges import PREDICATE_READS, REQUIRED_PRIVILEGES, REQUIRED_READS
 from sopuli.driver.protocol import CAPABILITIES
 
@@ -159,6 +161,40 @@ def service_account_grants(account: str) -> tuple[str, ...]:
             for grant in (*REQUIRED_READS, *PREDICATE_READS)
         ),
     )
+
+
+def execute(connection: Any, *statements: str) -> None:
+    """Statements on a raw `oracledb` connection, such as the `sysdba` fixture's."""
+    with connection.cursor() as cursor:
+        for statement in statements:
+            cursor.execute(statement)
+
+
+def current_container(connection: Any) -> str:
+    """Where this connection stands, or `NON-CDB` on a release with no containers.
+
+    `SYS_CONTEXT('USERENV','CON_NAME')` **raises** on a non-CDB rather than
+    answering NULL: `ORA-02003: invalid USERENV parameter`, measured on 11g XE
+    11.2.0.2.0. The driver names the code `capabilities.NO_CONTAINERS`, and this
+    reads it the same way, so on 11g it does not fail a fixture whose tests have
+    nothing to do with containers.
+
+    A string rather than `None`, because callers compare it to `CDB$ROOT` or
+    `NON-CDB`, and a `None` would make the first comparison quietly false. It is
+    the same choice `00_install.sql` makes, for the same reason.
+    """
+    with connection.cursor() as cursor:
+        try:
+            cursor.execute("select sys_context('userenv', 'con_name') from dual")
+        except Exception as error:  # noqa: BLE001 -- classified on the next line
+            # `ORA-02003` only. Any other failure would misclassify the target,
+            # and a caller installs a common account or a local one on the
+            # strength of this answer. A transient fault would then build the
+            # wrong account, and the tests would pass about it.
+            if NO_CONTAINERS not in str(error):
+                raise
+            return "NON-CDB"
+        return str(cursor.fetchone()[0])
 
 
 def decide_skip(

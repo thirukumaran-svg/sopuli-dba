@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from oracle_harness import Environment, decide_skip
+from oracle_harness import Environment, decide_skip, execute
 from sopuli.check import grace_warning
 from sopuli.driver.guardrails import ADMIN_ROLES
 from sopuli.driver.oracle.accounts import deliberately_locked
@@ -49,41 +49,7 @@ SECOND = "Second-Pass-2x"
 
 
 def _run(session: Any, *statements: str) -> None:
-    with session.connection.cursor() as cursor:
-        for statement in statements:
-            cursor.execute(statement)
-
-
-@pytest.fixture
-def sysdba(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
-    """A `SYS AS SYSDBA` connection, for the one statement `system` cannot issue.
-
-    Measured: `GRANT SYSDBA TO <account>` from `system` is `ORA-01031`, which is
-    Oracle refusing to let an administrative privilege be handed out by anything
-    short of one. Raw `oracledb` rather than the tool's driver, for the reason
-    `test_oracle_service_account.py` gives for the same fixture: `connect` has no
-    `SYSDBA` mode and must not grow one -- §3 puts `SYSDBA` on the must-not-grant
-    list, and this is an operator's statement rather than one of the tool's.
-    """
-    oracledb = pytest.importorskip("oracledb")
-    session_module.initialise(env=os.environ)
-    connection = oracledb.connect(
-        user="sys",
-        password=PASSWORD,
-        dsn=live_oracle.dsn,
-        mode=oracledb.AUTH_MODE_SYSDBA,
-    )
-    try:
-        yield connection
-    finally:
-        connection.close()
-
-
-def _execute(connection: Any, *statements: str) -> None:
-    """Statements on a raw `oracledb` connection, not a driver session."""
-    with connection.cursor() as cursor:
-        for statement in statements:
-            cursor.execute(statement)
+    execute(session.connection, *statements)
 
 
 @pytest.fixture
@@ -492,7 +458,7 @@ def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
     that holds `SYSDBA` takes its row out of `V$PWFILE_USERS` as well, which was
     measured rather than assumed.
     """
-    _execute(sysdba, f"grant sysdba to {PWFILE_ACCOUNT}")
+    execute(sysdba, f"grant sysdba to {PWFILE_ACCOUNT}")
     try:
         state = password_file_account.describe_user(PWFILE_ACCOUNT)
 
@@ -503,7 +469,7 @@ def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
         assert state.vendor_maintained is False
         assert not ADMIN_ROLES & state.roles
     finally:
-        _execute(sysdba, f"revoke sysdba from {PWFILE_ACCOUNT}")
+        execute(sysdba, f"revoke sysdba from {PWFILE_ACCOUNT}")
 
     after = password_file_account.describe_user(PWFILE_ACCOUNT)
     assert after is not None
@@ -557,7 +523,7 @@ def _grace_pool(oracle_target: Environment) -> Iterator[list[str]]:
     connection = oracledb.connect(user=USER, password=PASSWORD, dsn=oracle_target.dsn)
     try:
         _drop_grace(connection)
-        _execute(
+        execute(
             connection,
             f"create profile {GRACE_PROFILE} limit "
             f"password_life_time {ONE_MINUTE} password_grace_time 1 "
@@ -565,7 +531,7 @@ def _grace_pool(oracle_target: Environment) -> Iterator[list[str]]:
             f"password_reuse_time unlimited password_verify_function null",
         )
         for name in GRACE_ACCOUNTS:
-            _execute(
+            execute(
                 connection,
                 f'create user {name} identified by "{GRACE_PASSWORD}" profile {GRACE_PROFILE}',
                 f"grant create session to {name}",
@@ -593,7 +559,7 @@ def _drop_grace(connection: Any) -> None:
         f"drop profile {GRACE_PROFILE} cascade",
     ):
         with contextlib.suppress(Exception):
-            _execute(connection, statement)
+            execute(connection, statement)
 
 
 def _wait_past_expiry(connection: Any, *, limit: float = 180.0) -> None:

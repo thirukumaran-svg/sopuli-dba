@@ -42,9 +42,8 @@ from typing import Any
 
 import pytest
 
-from oracle_harness import Environment, service_account_grants
+from oracle_harness import Environment, current_container, execute, service_account_grants
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
-from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.driver.oracle.privileges import (
     PASSWORD_FILE_PRIVILEGES,
     REQUIRED_PRIVILEGES,
@@ -53,22 +52,6 @@ from sopuli.driver.oracle.privileges import (
 )
 from sopuli.driver.protocol import ROLE_LOOKUP, Credential, UnsupportedCapabilityError
 from sopuli.secrets import Secret
-
-ADMIN_PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
-#: **`SYS AS SYSDBA`, and not `SYSTEM`** -- which is §2's own instruction and was
-#: measured before it was written: "every `GRANT SELECT ON SYS.…` above fails with
-#: `ORA-01031: insufficient privileges` when the granting session is `SYSTEM`,
-#: while the `CREATE USER` and the two system privileges succeed."
-#:
-#: The first draft of this module granted as `SYSTEM`, because that is what every
-#: other tier-1 fixture connects as, and CI produced exactly that `ORA-01031`.
-#: Worth recording rather than quietly fixing: the documented warning is real,
-#: the failure it warns about is *partial* -- the account is created and can
-#: rotate, and only the dictionary reads are missing -- and a fixture that had
-#: swallowed the error would have built the half-granted account §2 describes as
-#: the trap, then asserted the tool was happy with it.
-ADMIN_USER = "sys"
 
 CORRELATION_ID = "9f1c4e02-77ab-4d51-9c6e-3b8a5d2f0e14"
 
@@ -88,42 +71,7 @@ PASSWORD_FILE_GRANT = f"grant SELECT ON SYS.V_$PWFILE_USERS to {ACCOUNT}"
 
 def _run(session: Any, *statements: str) -> None:
     """Statements through a driver session."""
-    _execute(session.connection, *statements)
-
-
-def _execute(connection: Any, *statements: str) -> None:
-    with connection.cursor() as cursor:
-        for statement in statements:
-            cursor.execute(statement)
-
-
-def _container(connection: Any) -> str:
-    """Where this connection is standing, or `NON-CDB` on a release with no
-    containers.
-
-    `SYS_CONTEXT('USERENV','CON_NAME')` **raises** on a non-CDB rather than
-    answering NULL -- `ORA-02003: invalid USERENV parameter`, measured on 11g XE
-    11.2.0.2.0. The driver enumerates the code as `capabilities.NO_CONTAINERS`,
-    and this helper reads it the same way, so on 11g it does not take the whole
-    fixture down for tests that have nothing to do with containers.
-
-    A string rather than `None`, because the only caller compares it to
-    `CDB$ROOT` and a `None` would make that comparison quietly false rather than
-    obviously not-the-root. It is the same choice `00_install.sql` makes, and for
-    the same reason.
-    """
-    with connection.cursor() as cursor:
-        try:
-            cursor.execute("select sys_context('userenv','con_name') from dual")
-        except Exception as error:  # noqa: BLE001 -- classified on the next line
-            # `ORA-02003` only. Any other failure misclassifies the target shape,
-            # and the caller installs a *common* account or a local one on the
-            # strength of this answer -- so a transient fault would silently
-            # build the wrong account and let the tests pass about it.
-            if NO_CONTAINERS not in str(error):
-                raise
-            return "NON-CDB"
-        return str(cursor.fetchone()[0])
+    execute(session.connection, *statements)
 
 
 def _grants() -> tuple[str, ...]:
@@ -138,36 +86,8 @@ def _grants() -> tuple[str, ...]:
     return service_account_grants(ACCOUNT)
 
 
-@pytest.fixture
-def admin(live_oracle: Environment) -> Iterator[Any]:
-    """A `SYS AS SYSDBA` connection, which is what can issue §2's grants.
-
-    Raw `oracledb` rather than the tool's own driver, and that is not a shortcut:
-    :meth:`~sopuli.driver.oracle.session.OracleDriver.connect` has no `SYSDBA` mode
-    and should not grow one. P2's bootstrap list is about the credential the *tool*
-    authenticates with, and the tool has no operation that requires `SYSDBA` -- §3
-    puts it on the must-not-grant list. Installing the account is an operator's job
-    that happens before the tool exists, so the fixture does it the way an operator
-    does.
-    """
-    oracledb = pytest.importorskip("oracledb")
-    session_module = pytest.importorskip("sopuli.driver.oracle.session")
-    session_module.initialise(env=os.environ)
-
-    connection = oracledb.connect(
-        user=ADMIN_USER,
-        password=ADMIN_PASSWORD,
-        dsn=live_oracle.dsn,
-        mode=oracledb.AUTH_MODE_SYSDBA,
-    )
-    try:
-        yield connection
-    finally:
-        connection.close()
-
-
 @contextlib.contextmanager
-def _installed(admin: Any, live_oracle: Environment, *extra: str) -> Iterator[Any]:
+def _installed(sysdba: Any, live_oracle: Environment, *extra: str) -> Iterator[Any]:
     """§2's account, created and connected **as itself**, then dropped.
 
     Connected as itself is the whole point: `USER_SYS_PRIVS`, `SESSION_PRIVS` and
@@ -182,7 +102,7 @@ def _installed(admin: Any, live_oracle: Environment, *extra: str) -> Iterator[An
     does not need to.
     """
     session_module = pytest.importorskip("sopuli.driver.oracle.session")
-    if _container(admin) == "CDB$ROOT":
+    if current_container(sysdba) == "CDB$ROOT":
         # A local account cannot be created in the root -- ORA-65096 -- and a
         # common one is the install script's COMMON mode, which grants
         # `CONTAINER=ALL` and adds `V_$PDBS`. That is a different account with a
@@ -190,7 +110,7 @@ def _installed(admin: Any, live_oracle: Environment, *extra: str) -> Iterator[An
         # prefix bolted on here: the two modes deserve separate coverage and
         # pretending one is the other would assert the wrong thing quietly.
         pytest.skip("this container answers as CDB$ROOT; a local service account needs a PDB")
-    _drop(admin)
+    _drop(sysdba)
     # Everything from here to `yield` can fail and leave an account behind, and
     # on this module's first CI run it did: `CREATE USER` succeeded and the
     # grants raised `ORA-01031`, so a half-granted `acme_svc_user` outlived the
@@ -199,8 +119,8 @@ def _installed(admin: Any, live_oracle: Environment, *extra: str) -> Iterator[An
     # next one will tidy up" leaves the database dirty at the end of the session,
     # which on a developer's own instance is litter and on a shared one is worse.
     try:
-        _execute(
-            admin,
+        execute(
+            sysdba,
             f'create user {ACCOUNT} identified by "{ACCOUNT_PASSWORD}"',
             *_grants(),
             *extra,
@@ -223,25 +143,25 @@ def _installed(admin: Any, live_oracle: Environment, *extra: str) -> Iterator[An
         # Dropped and re-raised, never swallowed: a setup failure here is the
         # finding -- a grant §2 documents that this release will not issue is
         # exactly what this module exists to notice.
-        _drop(admin)
+        _drop(sysdba)
         raise
 
     try:
         yield opened
     finally:
         opened.close()
-        _drop(admin)
+        _drop(sysdba)
 
 
 @pytest.fixture
-def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
+def service_account(sysdba: Any, live_oracle: Environment) -> Iterator[Any]:
     """The default install: §2's grants and neither of its optional ones."""
-    with _installed(admin, live_oracle) as opened:
+    with _installed(sysdba, live_oracle) as opened:
         yield opened
 
 
 @pytest.fixture
-def password_file_reader(admin: Any, live_oracle: Environment) -> Iterator[Any]:
+def password_file_reader(sysdba: Any, live_oracle: Environment) -> Iterator[Any]:
     """The same account with §2's optional `V$PWFILE_USERS` grant taken.
 
     The estate that opted in, and it is a *second* account rather than a flag on
@@ -249,14 +169,14 @@ def password_file_reader(admin: Any, live_oracle: Environment) -> Iterator[Any]:
     two of §3's rows as unaudited on one and audited on the other, and a test
     that only ever saw one of them would pass on a constant.
     """
-    with _installed(admin, live_oracle, PASSWORD_FILE_GRANT) as opened:
+    with _installed(sysdba, live_oracle, PASSWORD_FILE_GRANT) as opened:
         yield opened
 
 
-def _drop(admin: Any) -> None:
+def _drop(sysdba: Any) -> None:
     """Absent is the desired state, so "it was not there" is a success."""
     with contextlib.suppress(Exception):
-        _execute(admin, f"drop user {ACCOUNT} cascade")
+        execute(sysdba, f"drop user {ACCOUNT} cascade")
 
 
 def _audit(session: Any) -> Any:
@@ -271,9 +191,9 @@ WITHOUT_ROLE_LOOKUP = f"revoke SELECT ON SYS.DBA_ROLES from {ACCOUNT}"
 
 
 @pytest.fixture
-def installed_without_role_lookup(admin: Any, live_oracle: Environment) -> Iterator[Any]:
+def installed_without_role_lookup(sysdba: Any, live_oracle: Environment) -> Iterator[Any]:
     """§2's account without the `DBA_ROLES` grant."""
-    with _installed(admin, live_oracle, WITHOUT_ROLE_LOOKUP) as opened:
+    with _installed(sysdba, live_oracle, WITHOUT_ROLE_LOOKUP) as opened:
         yield opened
 
 
@@ -457,7 +377,7 @@ def test_the_optional_grant_makes_the_password_file_rows_auditable(
 
 
 def test_a_granted_sysdba_is_found_and_sysoper_is_not(
-    admin: Any, password_file_reader: Any
+    sysdba: Any, password_file_reader: Any
 ) -> None:
     """§3's row, reported for the first time -- and reported as one row.
 
@@ -472,11 +392,11 @@ def test_a_granted_sysdba_is_found_and_sysoper_is_not(
     all.
     """
     before = _audit(password_file_reader)
-    _execute(admin, f"grant sysdba to {ACCOUNT}")
+    execute(sysdba, f"grant sysdba to {ACCOUNT}")
     try:
         after = _audit(password_file_reader)
     finally:
-        _execute(admin, f"revoke sysdba from {ACCOUNT}")
+        execute(sysdba, f"revoke sysdba from {ACCOUNT}")
 
     assert before.over_granted == ()
     assert after.over_granted == ("SYSDBA",)

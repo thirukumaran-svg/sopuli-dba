@@ -19,10 +19,12 @@ import pytest
 from oracle_harness import (
     Environment,
     below,
+    current_container,
     decide_skip,
     dsn_host,
     render_matrix,
 )
+from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.driver.protocol import CAPABILITIES, PASSWORD_ROLLOVER
 
 
@@ -183,3 +185,53 @@ def test_the_host_comes_out_of_every_shape_a_dsn_is_written_in(dsn: str, host: s
     cannot see.
     """
     assert dsn_host(dsn) == host
+
+
+# ----------------------------------------------------------------- container ---
+
+
+class _Cursor:
+    """A cursor that answers `con_name` with ``answer``, or raises it."""
+
+    def __init__(self, answer: str | Exception) -> None:
+        self.answer = answer
+
+    def __enter__(self) -> _Cursor:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def execute(self, statement: str) -> None:
+        if isinstance(self.answer, Exception):
+            raise self.answer
+
+    def fetchone(self) -> tuple[str]:
+        assert isinstance(self.answer, str)
+        return (self.answer,)
+
+
+class _Connection:
+    def __init__(self, answer: str | Exception) -> None:
+        self.answer = answer
+
+    def cursor(self) -> _Cursor:
+        return _Cursor(self.answer)
+
+
+def test_the_container_is_what_the_database_answers() -> None:
+    assert current_container(_Connection("FREEPDB1")) == "FREEPDB1"
+
+
+def test_a_database_with_no_containers_answers_non_cdb() -> None:
+    """11g XE raises `ORA-02003` for `con_name` rather than answering NULL."""
+    error = Exception(f"{NO_CONTAINERS}: invalid USERENV parameter")
+    assert current_container(_Connection(error)) == "NON-CDB"
+
+
+def test_any_other_error_is_raised_rather_than_read_as_non_cdb() -> None:
+    """A caller installs a common or a local account on this answer. Reading a
+    transient fault as `NON-CDB` would build the wrong account."""
+    error = Exception("ORA-03113: end-of-file on communication channel")
+    with pytest.raises(Exception, match="ORA-03113"):
+        current_container(_Connection(error))
