@@ -71,7 +71,9 @@ from __future__ import annotations
 
 import functools
 import getpass
+import logging
 import os
+import platform
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -91,6 +93,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.material import TOKEN_FLAG, TOKEN_SOURCES
 from sopuli.output.color import ColorChoice
+from sopuli.output.debug import debugging, logger
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.explain_view import ratchet_notes
@@ -98,12 +101,15 @@ from sopuli.output.tty import is_a_terminal
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import config_contributions, env_contributions
 from sopuli.store.protocol import StoreError
+from sopuli.version import get_version
 
 if TYPE_CHECKING:  # a type only -- importing the registry here would widen the
     # boundary's import graph for a field that is otherwise just a dict.
     from sopuli.store.protocol import SecretStore
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+LOG = logger("run")
 
 #: The keyword every verb receives in place of the raw option values.
 INVOCATION_PARAM = "run"
@@ -126,6 +132,7 @@ GLOBAL_PARAMS = (
     "vault_token_file",
     "vault_token_given",
     "vault_addr",
+    "debug",
 )
 
 #: The settings every run consults, whether or not any layer mentioned them.
@@ -204,6 +211,10 @@ class GlobalOptions:
     #: parser callback throws the value away, so there is no field on this class,
     #: on :class:`Invocation`, or anywhere between them that a token could sit in.
     vault_token_given: bool = False
+    #: Whether ``--debug`` was written. A plain flag, like ``--color``: it has
+    #: no environment variable and no config key, so it never joins the
+    #: resolver (#629).
+    debug: bool = False
 
     @classmethod
     def from_params(cls, params: Mapping[str, Any]) -> GlobalOptions:
@@ -217,6 +228,7 @@ class GlobalOptions:
             vault_token_file=params.get("vault_token_file"),
             vault_addr=params.get("vault_addr"),
             vault_token_given=bool(params.get("vault_token_given", False)),
+            debug=bool(params.get("debug", False)),
         )
 
 
@@ -263,6 +275,9 @@ class Invocation:
     #: (:func:`sopuli.config.vault_layers.apply_vault_layers`), which is why
     #: :func:`load_config_layers` is the one place that reads it.
     vault_addr: str | None = None
+    #: Whether ``--debug`` was written in either position. It turns on
+    #: :mod:`sopuli.output.debug` and turns off the spinner.
+    debug: bool = False
     resolved: Mapping[str, Resolved] = field(default_factory=dict)
     #: How ``auth: prompt`` asks, or ``None`` when nobody is at a terminal.
     #: Built once per run by :func:`_pass_invocation`, because
@@ -396,7 +411,7 @@ class Invocation:
 
     def emitter(self) -> Emitter:
         """The one emitter for this run (see :class:`~sopuli.output.emit.Emitter`)."""
-        return Emitter(mode=self.output_mode, color_choice=self.color_choice)
+        return Emitter(mode=self.output_mode, color_choice=self.color_choice, debug=self.debug)
 
 
 def open_document(command: str, invocation: Invocation) -> RunDocument:
@@ -601,6 +616,16 @@ def check_vault_token(group: GlobalOptions, verb: GlobalOptions) -> None:
     )
 
 
+def wants_debug(group: GlobalOptions, verb: GlobalOptions) -> bool:
+    """Whether ``--debug`` was written in either position.
+
+    One function, because two places ask: the wrapper that attaches the debug
+    handler, and :func:`resolve_invocation`, whose answer turns the spinner off.
+    If they disagreed, a spinner could overwrite debug lines.
+    """
+    return group.debug or verb.debug
+
+
 def resolve_invocation(
     group: GlobalOptions,
     verb: GlobalOptions,
@@ -651,6 +676,7 @@ def resolve_invocation(
         color_choice=ColorChoice(_first_given(verb.color_choice, group.color_choice)),
         vault_token_file=_first_path(verb.vault_token_file, group.vault_token_file),
         vault_addr=_first_written(verb.vault_addr, group.vault_addr),
+        debug=wants_debug(group, verb),
         resolved=resolve_all(contributions),
         loaded=loaded,
     )
@@ -883,6 +909,13 @@ def _options(func: F, *, hidden: bool) -> F:
         hidden=True,
         callback=token_given,
     )
+    debug = click.option(
+        "--debug",
+        is_flag=True,
+        default=False,
+        hidden=hidden,
+        help="Write debug output to stderr. Not a stable format.",
+    )
     dry_run = (
         click.option(
             "--dry-run",
@@ -900,7 +933,9 @@ def _options(func: F, *, hidden: bool) -> F:
             help="Print the plan and make no changes.",
         )
     )
-    return color(profile(output(vault_addr(vault_token(vault_token_file(dry_run(config(func))))))))
+    return debug(
+        color(profile(output(vault_addr(vault_token(vault_token_file(dry_run(config(func))))))))
+    )
 
 
 def _pass_invocation(func: F) -> F:
@@ -918,6 +953,16 @@ def _pass_invocation(func: F) -> F:
             kwargs.pop(name, None)
         group = ctx.find_root().obj or GlobalOptions()
         command = command_path(ctx)
+        # Guarded, because the arguments are computed before `debug` checks the
+        # level, and `platform.platform()` takes about 100 ms on Windows.
+        if LOG.isEnabledFor(logging.DEBUG):
+            LOG.debug(
+                "sopuli %s, Python %s, %s",
+                get_version(),
+                platform.python_version(),
+                platform.platform(),
+            )
+            LOG.debug("command %s", command)
         invocation = resolve_invocation(group, verb, env=os.environ, command=command)
         check_output_mode(invocation)
 
@@ -951,6 +996,7 @@ def _pass_invocation(func: F) -> F:
             # `PasswordPrompt` -- the cache *is* the answer to "have we asked for
             # this one already" -- so it is attached once, after the last resolve.
             invocation = replace(invocation, prompt=terminal_prompter(sys.stdin))
+            _debug_settings(invocation)
             kwargs[INVOCATION_PARAM] = invocation
             text = ctx.invoke(func, **kwargs)
         except click.Abort as exc:
@@ -980,13 +1026,48 @@ def _pass_invocation(func: F) -> F:
             raise SystemExit(invocation.document.exit_code)
         return text
 
+    def debugged(ctx: click.Context, /, **kwargs: Any) -> Any:
+        # Around the whole run, so that a refusal while the command line
+        # resolves is in the debug output too. `debug` is read here and popped
+        # with the other global options inside `wrapper`.
+        group = ctx.find_root().obj or GlobalOptions()
+        with debugging(wants_debug(group, GlobalOptions.from_params(kwargs))):
+            try:
+                return wrapper(ctx, **kwargs)
+            except Exception as exc:
+                # The traceback, which the message on stderr leaves out.
+                # `debug.DebugFormatter` prints the chained causes by type
+                # only: an exception's own message carries no secret (P5),
+                # and a cause's may.
+                LOG.debug("the run raised %s", type(exc).__name__, exc_info=True)
+                raise
+
     # `update_wrapper` rather than the `@functools.wraps` decorator, so that mypy
-    # still sees `wrapper` as the plain function `click.pass_context` wants. The
+    # still sees `debugged` as the plain function `click.pass_context` wants. The
     # effect is the same, and it is what carries the verb's docstring into
     # `--help` and its signature into `inspect.signature` -- which is how
     # `tests/test_cli_precedence.py` can check that a verb really takes `run`.
-    functools.update_wrapper(wrapper, func)
-    return click.pass_context(wrapper)  # type: ignore[return-value]
+    functools.update_wrapper(debugged, func)
+    return click.pass_context(debugged)  # type: ignore[return-value]
+
+
+def _debug_settings(invocation: Invocation) -> None:
+    """Debug lines for what the run read before the verb started.
+
+    The config files, and each setting that a layer supplied, with where it came
+    from. A setting left to its built-in default is left out, as it is from
+    ``invocation.options``. No setting holds a secret: the vault token is a
+    location, and is not a setting.
+    """
+    if not LOG.isEnabledFor(logging.DEBUG):
+        return
+    loaded = invocation.loaded
+    paths = ", ".join(str(path) for path in loaded.paths) if loaded is not None else ""
+    LOG.debug("config %s", paths or "none")
+    for name, resolved in sorted(invocation.resolved.items()):
+        if resolved.layer is Layer.BUILTIN:
+            continue
+        LOG.debug("setting %s = %r from %s", name, resolved.value, resolved.location)
 
 
 def _fail(invocation: Invocation, exc: BaseException) -> None:

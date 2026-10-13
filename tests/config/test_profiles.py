@@ -135,7 +135,7 @@ def test_a_removed_log_key_is_refused_as_removed(key: str) -> None:
         build_profiles(document(scheduled={key: "debug"}))
 
     assert f"`{key}:` was removed from profiles" in str(caught.value)
-    assert "a config cannot turn on debug output" in str(caught.value)
+    assert "--debug" in str(caught.value)
 
 
 def test_a_profile_may_only_set_the_rotation_strategy() -> None:

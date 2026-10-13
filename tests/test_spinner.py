@@ -157,6 +157,13 @@ def test_json_shuts_the_gate_even_on_a_terminal() -> None:
     assert emitter.spinner("x")._enabled is False
 
 
+def test_debug_shuts_the_gate_even_on_a_terminal() -> None:
+    """Debug lines go to stderr, and a frame would overwrite them."""
+    emitter = Emitter(err_stream=Terminal(), debug=True)
+
+    assert emitter.spinner("x")._enabled is False
+
+
 def test_a_disabled_spinner_starts_no_thread_and_writes_nothing() -> None:
     stream = io.StringIO()
     before = threading.active_count()

@@ -900,10 +900,11 @@ tool safe to run from a scheduler.
   `../schemas/sopuli-event-1.7.schema.json`.
 - One structured audit record per mutation: who (OS user + vault identity), what
   (account, target, operation), when, correlation id, result. Never the secret.
-- The tool has no debug output yet. A `--debug` flag that writes it to stderr,
-  at one level, is the next step (open: #781). The tool writes no log file, and
-  a config file cannot turn debug output on, so a profile has no log keys. The
-  docs state that secrets are redacted from all output, including tracebacks.
+- `--debug` writes debug output to stderr, at one level. The tool writes no log
+  file: an operator who wants one redirects stderr. A config file cannot turn
+  debug output on, so a profile has no log keys. Debug output is not part of
+  the JSON contract. Secrets are redacted from all output, including debug
+  output and tracebacks. `03-json-output.md` §*Debug output* has the rules, and
   [#629](../decisions/log.md#629) has the reasons.
 
 **Secret hygiene**

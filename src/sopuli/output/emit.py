@@ -110,6 +110,9 @@ class Emitter:
     err_stream: TextIO | None = None
     color_choice: ColorChoice = ColorChoice.AUTO
     env: Mapping[str, str] | None = None
+    #: Whether ``--debug`` is on. Debug output goes to stderr, so the spinner
+    #: is off (:meth:`spinner`).
+    debug: bool = False
     _color: bool | None = field(default=None, init=False, repr=False)
 
     def _out(self) -> TextIO:
@@ -170,10 +173,14 @@ class Emitter:
         override, because no such flag exists; :mod:`sopuli.output.spinner` says
         why.
 
+        ``--debug`` turns the spinner off too. Debug lines go to stderr, and
+        :mod:`sopuli.output.spinner` says why nothing else may write there while
+        a spinner runs.
+
         Returns a working context manager either way: a disabled spinner starts
         no thread and writes nothing, so no call site needs a branch.
         """
-        if self.is_json:
+        if self.is_json or self.debug:
             return spinner_disabled(message)
         return make_spinner(message, stream=self.err_stream)
 

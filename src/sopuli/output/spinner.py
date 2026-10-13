@@ -32,6 +32,8 @@ on a ``readline`` for a question no longer on screen. ``render_plan`` and
 must wrap one slow call and stop. That is why this is a context manager used
 explicitly at a call site rather than a decorator on a verb: which operations
 are considered slow stays visible in the diff, and so does what each one spans.
+The same rule is why ``--debug`` turns the spinner off: debug lines go to stderr
+during the call it would wrap.
 """
 
 from __future__ import annotations

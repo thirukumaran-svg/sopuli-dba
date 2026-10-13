@@ -176,8 +176,14 @@ def test_the_description_appears_in_both_helps(runner: CliRunner, argv: list[str
 
 @pytest.mark.parametrize(
     "flag",
-    [["--output", "json"], ["--dry-run"], ["--config", "sopuli.yaml"], ["--color", "never"]],
-    ids=["output", "dry-run", "config", "color"],
+    [
+        ["--output", "json"],
+        ["--dry-run"],
+        ["--config", "sopuli.yaml"],
+        ["--color", "never"],
+        ["--debug"],
+    ],
+    ids=["output", "dry-run", "config", "color", "debug"],
 )
 def test_about_refuses_a_global_option_after_the_verb(runner: CliRunner, flag: list[str]) -> None:
     """Exit 2, because it is not an option this command has.
@@ -200,8 +206,9 @@ def test_about_refuses_a_global_option_after_the_verb(runner: CliRunner, flag: l
         ["--config", "sopuli.yaml"],
         ["--profile", "ci"],
         ["--vault-token-file", "token.txt"],
+        ["--debug"],
     ],
-    ids=["json", "text", "config", "profile", "token-file"],
+    ids=["json", "text", "config", "profile", "token-file", "debug"],
 )
 def test_about_refuses_a_global_option_before_the_verb(runner: CliRunner, flag: list[str]) -> None:
     """The group's parser accepts them, so they have to be refused rather than

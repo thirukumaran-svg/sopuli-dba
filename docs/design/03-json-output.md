@@ -89,7 +89,7 @@ avoid them. This is the same shape as redaction, for the same reason: a
 guarantee held in one place cannot be lost by a call site that forgot, and a
 vendor message can arrive with escapes already in it.
 
-### Progress, and the one thing on stderr that is not a message
+### Progress
 
 While a verb reads a document from a vault, a spinner turns on **stderr**. It is
 the tool's only progress indicator. One call site turns it on:
@@ -110,7 +110,8 @@ does for colour, so no call site works it out for itself:
 |---|---|---|
 | 1 | `--output json` or `--output jsonl` | never, whatever else says |
 | 2 | stderr is not a TTY | never |
-| 3 | otherwise | animate |
+| 3 | `--debug` | never |
+| 4 | otherwise | animate |
 
 These parts of the table are decisions:
 
@@ -133,6 +134,45 @@ These parts of the table are decisions:
   operator looking at a spinner while the process waits for an answer to a
   question that is no longer on screen. So a spinner wraps one call, not a whole
   verb, and that call is one the store layer serves without printing anything.
+  Rule 3 follows from this: debug lines go to stderr while the call runs.
+
+### Debug output
+
+`--debug` writes what happened inside a run to stderr. Each line starts with
+`sopuli: debug:`, then the seconds since the run started and the part of the
+tool that wrote it. This sample is from `sopuli config validate --debug
+--profile scheduled --config sopuli.yaml`, where the profile sets `output: json`:
+
+```
+sopuli: debug:   0.079s run: sopuli 0.63.0, Python 3.13.12, Windows-11-10.0.26300-SP0
+sopuli: debug:   0.079s run: command config.validate
+sopuli: debug:   0.088s run: config sopuli.yaml
+sopuli: debug:   0.088s run: setting output = 'json' from profiles.scheduled.output
+sopuli: debug:   0.088s run: setting profile = 'scheduled' from --profile (verb)
+```
+
+When an exception ends the run, debug output also writes its traceback, indented
+under the line that names it. The message on stderr has no traceback. Each
+cause in the chain is shown by its type and its frames, never its message,
+because a cause's message may hold a secret: an httpx error's message holds the
+request URL, and a webhook URL can hold a token. An error that a verb reports
+as a finding for one target does not end the run, so it has no traceback here.
+
+- **Debug output is not part of the contract.** Invariant 12 covers stdout. A
+  debug line may change in any release, and a script must not parse one, so a
+  new debug line is not a schema change.
+- **It goes to stderr in every output mode.** Under `--output json`, stdout still
+  carries one document. A consumer that captures `2>&1` and passes `--debug`
+  gets debug lines ahead of the document, because it asked for both.
+- **Redaction holds** (§4). The debug formatter is a serialiser like the JSON
+  one, so a secret renders as `***`.
+- **Only the tool's own records are printed.** The handler is on the `sopuli`
+  logger, which does not propagate, and never on the root logger. A library's
+  records are not printed: httpx logs each request URL at INFO, and a webhook
+  URL can hold a token.
+- **It is a flag and nothing else.** There is no environment variable and no
+  config key, so a config cannot turn it on for runs nobody watches.
+  [#629](../decisions/log.md#629) has the reasons.
 
 ### What colour is allowed to mean
 

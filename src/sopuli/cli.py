@@ -473,6 +473,7 @@ def cli(
     vault_token_file: Path | None,
     vault_token_given: bool,
     vault_addr: str | None,
+    debug: bool,
 ) -> None:
     """Manage database account credentials with a vault as the master record."""
     # The group's copies of the global options are hidden and do nothing on their
@@ -489,6 +490,7 @@ def cli(
         vault_token_file=vault_token_file,
         vault_token_given=vault_token_given,
         vault_addr=vault_addr,
+        debug=debug,
     )
 
 
@@ -520,6 +522,8 @@ def about_refusals(given: GlobalOptions) -> list[str]:
         written.append("--vault-token-file")
     if given.vault_addr is not None:
         written.append(ADDR_FLAG)
+    if given.debug:
+        written.append("--debug")
     return written
 
 
