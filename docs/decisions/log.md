@@ -1848,3 +1848,44 @@ the register.
 - **Rejected:** Drop `-` and `.` from `alnum_safe`, so that it needs no quoting
   in a JDBC URL either. That is a second breaking change to the alphabet after
   #742.
+
+## #629
+
+- **Decided:** 2026-10-13, #629
+- **Question:** Should the tool have debug output, and should it write it to a
+  file? The profile keys `log_level` and `log_file` were parsed and read by
+  nothing. Implement them or delete them?
+- **Decision:** A `--debug` flag writes debug output to stderr, at one level.
+  The tool writes no log file. The profile keys `log_level` and `log_file` are
+  deleted, and the config schema moves to 2.0.
+- **Why:** Errors already carry the vendor code, a category, a hint and the
+  server's message. The run document and the events, joined to the database
+  audit trail by `run_id`, are the audit record. What is missing is what
+  happened inside a run: the capabilities found, the statements sent, the vault
+  calls made, and why a unit was skipped. stderr is where most command-line
+  tools put this, and a shell or a scheduler already captures it. `2> file`
+  works in bash and PowerShell. A file the tool writes on every run would hold
+  host names, account names and vault paths in the user's home directory, and
+  it would need permissions, a location and retention on each platform. Debug
+  output is not part of the JSON contract, so a new debug line is not a schema
+  change. The cost accepted: a failure seen once, without `--debug`, has no
+  debug record, and a scheduled run that wants one adds the flag to its
+  command line.
+- **Rejected:**
+  - No debug output: a failure the error does not explain would need a code
+    reading or Oracle Net tracing, and Oracle Net tracing can record the
+    password.
+  - `-v` levels: every new debug line would need a level chosen, and one level
+    is enough for a run the operator repeats with the flag.
+  - `--log-file PATH`: possible later, and adding it breaks nothing. It saves a
+    redirect, and costs a file the tool must create with the right permissions
+    on POSIX and Windows.
+  - A log file on every run, as gcloud and npm write: see above.
+  - Keep `log_level` and `log_file` as profile defaults for the flag: a config
+    would then turn debug output on for every run of a profile, including
+    scheduled runs nobody watches. Keeping them unread leaves keys that look as
+    if they work. A profile's `verify.*` and `rotation.strategy` are also read
+    by nothing today, and they stay: each names a choice that a flag already
+    makes, so a profile default for it can have a reader later. The log keys
+    can never have one, because this decision says no config turns debug
+    output on.

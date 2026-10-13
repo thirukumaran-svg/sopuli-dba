@@ -672,7 +672,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-1.8.schema.json`. `sopuli/config/schema.py`
+The schema is `docs/schemas/sopuli-config-2.0.schema.json`. `sopuli/config/schema.py`
 generates it from the config layer, so it cannot drift from what the tool
 accepts. It is structural: an editor that uses it catches a typo, and the rules
 that span several keys stay in the validators, where an error can name the key.
@@ -900,11 +900,11 @@ tool safe to run from a scheduler.
   `../schemas/sopuli-event-1.7.schema.json`.
 - One structured audit record per mutation: who (OS user + vault identity), what
   (account, target, operation), when, correlation id, result. Never the secret.
-- A log level, an optional log file, and an explicit statement in the docs that
-  secrets are redacted from all output including tracebacks. There is no
-  `--log-level` flag. `profiles: log_level` is parsed and validated, and nothing
-  reads it: a level can be written, and it has no effect. Whether a flag is
-  added is a question for D2's grammar.
+- The tool has no debug output yet. A `--debug` flag that writes it to stderr,
+  at one level, is the next step (open: #781). The tool writes no log file, and
+  a config file cannot turn debug output on, so a profile has no log keys. The
+  docs state that secrets are redacted from all output, including tracebacks.
+  [#629](../decisions/log.md#629) has the reasons.
 
 **Secret hygiene**
 

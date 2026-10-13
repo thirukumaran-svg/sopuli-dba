@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-1.8.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-2.0.schema.json
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "1.8"
+SCHEMA_VERSION = "2.0"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -820,8 +820,6 @@ def _profile() -> Schema:
             "locking": _ref("locking"),
             "confirm": BOOLEAN,
             "output": _enum(profiles.OUTPUTS),
-            "log_level": _enum(profiles.LOG_LEVELS),
-            "log_file": STRING,
             "db": _ref("profile_db"),
         },
         description=(

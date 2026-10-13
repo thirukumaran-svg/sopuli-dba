@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.8.schema.json
+# yaml-language-server: $schema=./sopuli-config-2.0.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -381,7 +381,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.8.schema.json
+# yaml-language-server: $schema=./sopuli-config-2.0.schema.json
 version: 1
 
 runtime:
@@ -1784,7 +1784,6 @@ A closed list. Anything else is a validation error.
 | `locking.break_expired` | may an unattended run take over an expired lock? The profile is where this belongs: it is a property of running without anybody watching |
 | `confirm` | whether interactive confirmation is possible at all. `false` makes every gate that would prompt refuse with exit 8 instead, even at a terminal; `--confirm` still answers in advance, except for the seen reset, which then cannot run. Unset means "ask if stdin is a terminal" |
 | `output` | `text` \| `json` \| `jsonl` |
-| `log_level`, `log_file` | |
 | `db.connect_timeout_s`, `db.query_timeout_s` | slower budgets for unattended runs. `connect_timeout_s` defaults to 30 s — a connection that times out has applied nothing. `query_timeout_s` defaults to **no bound**, deliberately: a call timeout cancels the round trip without undoing what the server did with it, and `ALTER USER` is not transactional, so an imposed default turns a slow success into a run that cannot say whether the password changed. Invariant 7 has no answer for that state; an operator may still set one. **Both are consulted**: `_timeouts()` in `sopuli/cli.py` resolves the pair and passes it to every driver the tool builds, so a profile narrowing either changes what the connection does. `tests/settings/test_settings_are_wired.py` checks that each has a reader |
 | `rotation.strategy` | e.g. force `staged` where no human can watch a rollover. Only `strategy` — `rollover_hours` and the rest describe the credential's lifecycle, which belongs to the estate |
 
@@ -1880,8 +1879,8 @@ Rejected at validation, with a message naming the key:
    in `defaults.profile` is reported against that key; one typed on the command
    line has no line to point at, so it is reported against the file.
 
-**Not every key a profile may write is a setting.** `verify.*`, `log_level`,
-`log_file` and `rotation.strategy` are parsed and validated, and
+**Not every key a profile may write is a setting.** `verify.*` and
+`rotation.strategy` are parsed and validated, and
 reach nothing, because nothing consumes them. They join the resolver with their
 consumers, which is the rule `sopuli/settings/registry.py` states. Layer 3
 supplies `output`, `confirm`, `safety.*`, `locking.break_expired`,
@@ -2795,7 +2794,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-1.8.schema.json`](../schemas/sopuli-config-1.8.schema.json),
+[`docs/schemas/sopuli-config-2.0.schema.json`](../schemas/sopuli-config-2.0.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -2806,7 +2805,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-1.8.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-2.0.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -2814,9 +2813,16 @@ produces today, so a key cannot be added to a section without the schema moving
 with it. Two hand-written descriptions of one schema drift, and the one that
 drifts silently is the published one, because nothing runs it.
 
-The version in the filename is the schema contract's, not the config file's: a
-new optional key is a minor bump there and changes nothing about a file that says
-`version: 1`.
+The version in the filename is the schema contract's, not the config file's. A
+new optional key is a minor bump and changes nothing about a file that says
+`version: 1`. Removing a key, or a value of a closed set, is a major bump,
+because a file that used it no longer validates.
+
+**A removed key does not change `version:`.** The file's `version:` marks a
+format that needs migrating, and a file without the key needs no migration.
+The tool refuses a removed key by name and says why it was removed, so the
+refusal does not read as a typo. The changelog lists the removal as a breaking
+change.
 
 **What it says.** Key names, JSON types, the closed sets, which keys are
 required, and `additionalProperties: false` — P3's "exits non-zero on unknown
@@ -2872,7 +2878,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-1.8.schema.json
+# yaml-language-server: $schema=./sopuli-config-2.0.schema.json
 version: 1
 ```
 
@@ -2883,7 +2889,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.8.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-2.0.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

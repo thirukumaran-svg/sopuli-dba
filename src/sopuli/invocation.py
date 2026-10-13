@@ -136,8 +136,8 @@ GLOBAL_PARAMS = (
 #: this list is simply never asked, which is why it is short and explicit rather
 #: than "everything in the registry". A setting joins it when something reads it.
 #:
-#: `verify.method` and `log_level` are absent. A profile may write them: they
-#: are parsed and validated, but nothing reads them, which is the rule
+#: `verify.method` is absent. A profile may write it: it is parsed and
+#: validated, but nothing reads it, which is the rule
 #: `sopuli/settings/registry.py` states.
 #:
 #: **A setting with a reader must be listed here.** A name absent from this tuple

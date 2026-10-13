@@ -4047,7 +4047,7 @@ def config_validate(
 
     **Validated by the loader, not by the published schema.** The two are not
     equivalent, and the stricter one wins:
-    ``docs/schemas/sopuli-config-1.8.schema.json`` is structural, deliberately
+    ``docs/schemas/sopuli-config-2.0.schema.json`` is structural, deliberately
     leaves the cross-key rules out (``01-configuration.md`` section 9b), and
     ``jsonschema`` is a development dependency that must not become a runtime
     one. The schema is the editor's fast local check; this is the complete one.

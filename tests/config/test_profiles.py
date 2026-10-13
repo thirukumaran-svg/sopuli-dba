@@ -21,7 +21,6 @@ from sopuli.config.profiles import build_profiles, select_profile
 SCHEDULED: dict[str, Any] = {
     "verify": {"method": "hash"},
     "output": "jsonl",
-    "log_level": "warning",
 }
 
 
@@ -42,14 +41,11 @@ def test_a_profile_is_read_whole() -> None:
         db={"connect_timeout_s": 30, "query_timeout_s": 120},
         rotation={"strategy": "staged"},
         vault="vault-prod",
-        log_file="/var/log/sopuli.log",
     )
 
     assert profile.name == "scheduled"
     assert profile.verify.method == "hash"
     assert profile.output == "jsonl"
-    assert profile.log_level == "warning"
-    assert profile.log_file == "/var/log/sopuli.log"
     assert profile.confirm is False
     assert profile.safety is not None
     assert profile.safety.max_targets == 200
@@ -131,11 +127,15 @@ def test_an_unknown_output_format_is_refused() -> None:
     assert "unknown output format 'yaml'" in str(caught.value)
 
 
-def test_an_unknown_log_level_is_refused() -> None:
+@pytest.mark.parametrize("key", ["log_level", "log_file"])
+def test_a_removed_log_key_is_refused_as_removed(key: str) -> None:
+    """A config cannot turn on debug output (#629), and the refusal says the key
+    was removed, so it does not read as a typo."""
     with pytest.raises(ConfigError) as caught:
-        build_profiles(document(scheduled={"log_level": "verbose"}))
+        build_profiles(document(scheduled={key: "debug"}))
 
-    assert "unknown log level 'verbose'" in str(caught.value)
+    assert f"`{key}:` was removed from profiles" in str(caught.value)
+    assert "a config cannot turn on debug output" in str(caught.value)
 
 
 def test_a_profile_may_only_set_the_rotation_strategy() -> None:

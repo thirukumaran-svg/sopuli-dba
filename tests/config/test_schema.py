@@ -119,7 +119,6 @@ ENUMS: dict[str, tuple[Any, ...]] = {
     "$defs/profile_rotation/properties/strategy": policies.ROTATION_STRATEGIES,
     "$defs/verify_policy/properties/method": policies.VERIFY_METHODS,
     "$defs/profile/properties/output": profiles.OUTPUTS,
-    "$defs/profile/properties/log_level": profiles.LOG_LEVELS,
 }
 
 

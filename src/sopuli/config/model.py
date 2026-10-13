@@ -755,8 +755,6 @@ class Profile:
     locking: Locking | None = None
     confirm: bool | None = None
     output: str | None = None
-    log_level: str | None = None
-    log_file: str | None = None
     db: ProfileDb = field(default_factory=ProfileDb)
     #: Partial entries patching stores declared at the top level (C13).
     #:

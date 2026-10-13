@@ -502,9 +502,9 @@ def test_a_profile_block_no_command_consults_still_loads(
     more ordinary thing the guard can break: a key the file is allowed to
     contain.
 
-    `log_level` is the key that stands for "accepted and unread": parsed, closed
-    against `LOG_LEVELS`, and read by nothing. It is written *beside* the `db:`
-    block, which is read, so one config covers both.
+    `verify.method` is the key that stands for "accepted and unread": parsed,
+    closed against `VERIFY_METHODS`, and read by nothing. It is written *beside*
+    the `db:` block, which is read, so one config covers both.
     """
     # `write_config` rather than a hand-written file: it sets 0600, which P4's
     # permission check requires on POSIX. Writing it by hand passed on Windows
@@ -517,11 +517,16 @@ def test_a_profile_block_no_command_consults_still_loads(
         "    addr: https://vault.example.com:8200\n"
         "profiles:\n"
         "  ci:\n"
-        "    log_level: debug\n"
+        "    verify:\n"
+        "      method: hash\n"
         "    db:\n"
         "      connect_timeout_s: 90\n"
         "      query_timeout_s: 600\n"
     )
+
+    # The test is about an unread key, so it fails if `verify.method` gains a
+    # reader instead of passing without covering that case.
+    assert "verify.method" not in invocation.RESOLVED_SETTINGS
 
     result = runner.invoke(cli, ["--profile", "ci", "config", "validate", "--config", str(config)])
 

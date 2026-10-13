@@ -37,7 +37,6 @@ from sopuli.config.fields import (
     mapping,
     optional_bool,
     optional_int,
-    optional_string,
     reject_unknown_keys,
 )
 from sopuli.config.locking import build_locking
@@ -58,8 +57,6 @@ PROFILE_KEYS = (
     "locking",
     "confirm",
     "output",
-    "log_level",
-    "log_file",
     "db",
 )
 
@@ -78,13 +75,18 @@ FORBIDDEN_KEYS = {
     "effect of running from CI",
 }
 
+#: Keys a profile could once write, each with why it is gone. Refused by name,
+#: so that a file written for an older build is not told it has a typo.
+REMOVED_KEYS = {
+    "log_level": "a config cannot turn on debug output",
+    "log_file": "a config cannot turn on debug output, and the tool writes no log file",
+}
+
 ROTATION_KEYS = ("strategy",)
 
 DB_KEYS = ("connect_timeout_s", "query_timeout_s")
 
 OUTPUTS = ("text", "json", "jsonl")
-
-LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
 
 
 def build_profiles(document: dict[str, Any]) -> tuple[Profile, ...]:
@@ -100,6 +102,7 @@ def build_profiles(document: dict[str, Any]) -> tuple[Profile, ...]:
 def _build_profile(name: str, raw: Any, *, at: KeyPath) -> Profile:
     entry = mapping(raw, at=at)
     _reject_forbidden_keys(entry, at=at)
+    _reject_removed_keys(entry, at=at)
     reject_unknown_keys(entry, allowed=PROFILE_KEYS, at=at)
 
     return Profile(
@@ -111,8 +114,6 @@ def _build_profile(name: str, raw: Any, *, at: KeyPath) -> Profile:
         locking=build_locking(entry.get("locking"), at=at.key("locking")),
         confirm=optional_bool(entry, "confirm", at=at),
         output=_closed(entry, "output", allowed=OUTPUTS, noun="output format", at=at),
-        log_level=_closed(entry, "log_level", allowed=LOG_LEVELS, noun="log level", at=at),
-        log_file=optional_string(entry, "log_file", at=at),
         db=_build_db(entry.get("db"), at=at.key("db")),
         # Applied at layer 3 when this profile is the active one, by
         # `sopuli.config.vault_layers`. The refusals are useful either way: a
@@ -169,6 +170,17 @@ def _reject_forbidden_keys(entry: dict[str, Any], *, at: KeyPath) -> None:
                 f"a profile may not set `{key}:`",
                 at=at.key(key),
                 hint=f"{FORBIDDEN_KEYS[key]} (§5)",
+            )
+
+
+def _reject_removed_keys(entry: dict[str, Any], *, at: KeyPath) -> None:
+    """Refuse a key an older build accepted, and say why it is gone."""
+    for key in sorted(entry):
+        if key in REMOVED_KEYS:
+            raise ConfigError(
+                f"`{key}:` was removed from profiles",
+                at=at.key(key),
+                hint=f"delete it; {REMOVED_KEYS[key]}",
             )
 
 
