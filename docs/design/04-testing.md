@@ -435,7 +435,7 @@ The tests need only the tier-1 services, so the tier-1 lane runs them:
 | Rows | Tests |
 |---|---|
 | the two kill rows | `tests/test_fault_kill.py` |
-| vault unreachable at a write or after it, stale read | `tests/test_fault_vault.py`. The vault lost at the promotion exits 1 and drops the run's rows, which is #760; its test is marked `xfail` until that is fixed |
+| vault unreachable at a write or after it, stale read | `tests/test_fault_vault.py` |
 | PDB closed, `ALTER USER` revoked | `tests/test_fault_database.py`. The PDB row creates a second PDB and drops it afterwards. Both recoveries are tested: plain `creds apply`, and `creds apply --repair` with the `rotate` document followed by `creds apply` |
 | two runs at once, a lock taken over | `tests/test_fault_lock.py`. The run that takes the lock over is a `creds apply` with nothing to do, because a second `rotate` would write the secret document, and the paused run's staging write would then lose its compare-and-set before it reached the fence |
 

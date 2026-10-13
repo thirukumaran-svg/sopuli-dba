@@ -150,9 +150,9 @@ def _steps(
         # Named, and named last, because it is the one clause that describes
         # something still wrong after a run whose table above it may be entirely
         # green -- every target confirmed, the promotion acknowledged, and the
-        # vault serving something else back.
+        # vault serving something else back, or not answering the read.
         names = ", ".join(sorted(disagreed))
-        return f"{line}\nthe vault read back a different password for: {names}"
+        return f"{line}\nthe vault did not read back the new password for: {names}"
     return line
 
 

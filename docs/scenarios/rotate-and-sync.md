@@ -532,7 +532,7 @@ changes it. This one is a profile setting, and one `ALTER PROFILE` changes it.
 | `SKIPPED  the account holds DBA` | a guardrail refused an account a credential tool should not touch. The run did the rest of its job. A skipped account does not change the exit code |
 | exit 7 | somebody else holds the lock on this secret. `sopuli lock status` names them |
 | exit 8 | a confirmation was declined, or a `readonly` setting refused the command |
-| `the vault read back a different password for: ...`, exit 4 | every database has the new password and the promotion was written, but the vault serves a different value when read back. Nothing needs undoing on a database. Look at the vault, for example a replica behind its primary |
+| `the vault did not read back the new password for: ...`, exit 4 | every database has the new password and the promotion was written, but the vault serves a different value when read back, or does not answer the read. Nothing needs undoing on a database. Look at the vault, for example a replica behind its primary |
 
 Every command also takes `--output json` for a machine-readable version of the
 same run, with passwords redacted. The contract is in

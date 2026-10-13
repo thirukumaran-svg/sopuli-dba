@@ -91,7 +91,7 @@ class TestClosingLine:
         """It describes something still wrong after a table that may be entirely
         green, so it must not be buried mid-line."""
         text = render_rotate(rows(), staged=1, promoted=1, disagreed=["acme_web_user"])
-        assert text.index("promoted 1 document") < text.index("read back a different")
+        assert text.index("promoted 1 document") < text.index("did not read back")
 
 
 class TestDelegation:

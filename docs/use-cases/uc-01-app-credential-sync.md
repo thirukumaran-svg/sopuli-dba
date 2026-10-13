@@ -1867,7 +1867,7 @@ invariant 5: the write lands under the store's `locks/` prefix, in a store that
 | 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair` with the run's document, then `apply` to promote (§5, *A repair of a rotation*); with the rollover strategy there is no outage meanwhile |
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` tells "wrong password" from "account locked/expired" |
 | 7 | database has new, vault `current` still old | **the most severe case**: `pending` still holds the right value, so `sopuli creds apply` completes it. It verifies every target again and promotes. `rotate` does not retry the promotion: a compare-and-set conflict means a writer outside the tool, and reading again to merge over it would rewrite fields of accounts nobody selected |
-| 8 | promoted, and the read-back disagreed | the databases are converged and the vault is not serving what it accepted. Exit 4 with `SOPULI-W012`, which names the accounts. Nothing needs undoing; the place to look is the vault (a replica behind its primary), not any database |
+| 8 | promoted, and the read-back disagreed or failed | the databases are converged, and the run cannot confirm that the vault serves what it accepted. Exit 4 with `SOPULI-W012`, which names the accounts, and the store's message for a document it could not read. Nothing needs undoing; the place to look is the vault, not any database: a replica behind its primary, or a store that stopped answering |
 | any fence check, at 4–7 | another run took this run's lock; what this run already applied stands | abort at once, change nothing more, exit **7** if nothing had been applied and **4** if something had, with `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it |
 
 ### How `rotate` is built
@@ -1898,9 +1898,12 @@ looks for a store that acknowledged a write and then served something else, whic
 is what a read replica behind its primary does. Only reading the object back can
 find that. Only documents this run promoted are read back. A document nobody
 staged into was never written, and one whose targets did not all confirm was
-left alone on purpose. A document that no longer holds the stage counts as a
-disagreement: "the vault has not got it" and "the vault has the wrong one" are
-the same fact to the application about to fetch it.
+left alone on purpose, and one whose promotion failed is row 7, not row 8. A
+document that no longer holds the stage counts as a disagreement: "the vault has
+not got it" and "the vault has the wrong one" are the same fact to the
+application about to fetch it. A read-back that fails counts as one too, because
+the run cannot say what the vault serves. The run still reports every row, and
+`SOPULI-W012` carries the store's message.
 
 **`--max-age-days` selects nothing whose age is unknown.** That is
 `creds status`'s rule (Q9), and it decides what the tool does the first night it
@@ -1914,6 +1917,17 @@ something. `rotate` writes to the vault before it reaches a database. So a stage
 `pending` is a change that exists before any DDL. A run fenced out between two
 step-4 writes exits **4**, not 7, because 7 asserts that nothing happened, and a
 `pending` that somebody has to clean up is something.
+
+**`--finish-rollover` closes a window only where the vault serves the new
+password.** Closing a window removes the old password from the database. An
+account is left open where its target failed, where its document's promotion was
+withheld or failed (row 7), or where step 8 could not confirm the promotion
+(row 8). In each case `current` may still hold the old password, and
+applications that fetch it would be locked out. A document that owed no
+promotion, because the vault already held what was applied, is closed as usual.
+The run names each account and target it left open, in a note and as a warning
+diagnostic. `creds finish-rollover` closes them once `current` holds the new
+password. Where the promotion did not happen, `creds apply` promotes it first.
 
 **The fence also covers `--finish-rollover`.** Closing windows is the run's last
 change and the furthest from the acquisition at step 2, so it is the most likely

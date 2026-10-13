@@ -936,6 +936,100 @@ def test_a_read_back_disagreement_offers_no_repair(
     assert "acme_web_user" in result.output
 
 
+class LostAtPromotion(MemoryStore):
+    """Refuses the promotion write, and answers nothing after it (§8 row 7).
+
+    The promotion is the write that moves ``current`` into ``previous``. The
+    staging write before it has no ``previous`` to write.
+    """
+
+    down = False
+
+    def read(self, path: str, *, version: int | None = None) -> Stored | None:
+        if self.down:
+            raise StoreError("could not reach the store: connection refused")
+        return super().read(path, version=version)
+
+    def write(self, path: str, data: Any, *, cas: int | None) -> int:
+        if self.down or (path.startswith("apps/") and "previous" in data):
+            self.down = True
+            raise StoreError("could not reach the store: connection refused")
+        return super().write(path, data, cas=cas)
+
+
+class StaleAfterPromotion(MemoryStore):
+    """Accepts the promotion, and serves the old ``current`` when read back."""
+
+    def read(self, path: str, *, version: int | None = None) -> Stored | None:
+        found = super().read(path, version=version)
+        if found is None or "previous" not in found.data:
+            return found
+        stale = dict(found.data)
+        stale["DB_CREDENTIALS"] = {"acme_web_user": LIVE}
+        return replace(found, data=stale)
+
+
+class UnreadableAfterPromotion(MemoryStore):
+    """Accepts the promotion, and then cannot read the document back."""
+
+    def read(self, path: str, *, version: int | None = None) -> Stored | None:
+        found = super().read(path, version=version)
+        if found is not None and "previous" in found.data:
+            raise StoreError("could not reach the store: connection refused")
+        return found
+
+
+def test_a_vault_lost_at_the_promotion_keeps_the_rows_and_is_exit_four(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """§8 row 7: the database has the new password and `current` is still old.
+
+    Step 8 does not read a document whose promotion failed, so the lost vault
+    is not raised past the run. The row says the database changed, and the run
+    names the repair, because `creds apply` completes the promotion.
+    """
+    estate(store=LostAtPromotion())
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    body = document(result)
+    assert "error" not in body
+    assert body["summary"]["changed"] == 1
+    applied = [row for row in body["results"] if row["state"] != "PENDING_APPLY"]
+    assert [row["changed"] for row in applied] == [True]
+    assert "SOPULI-W012" not in [one.get("code") for one in body.get("diagnostics", [])]
+
+
+def test_a_vault_lost_at_the_promotion_names_the_repair(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate(store=LostAtPromotion())
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert "repair with:" in result.output
+
+
+def test_a_read_back_that_fails_is_exit_four_with_the_stores_message(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """§8 row 8: the promotion was acknowledged, and the run cannot read it back.
+
+    It cannot say what the vault serves, which is the same fact as a stale read
+    to the application about to fetch it.
+    """
+    estate(store=UnreadableAfterPromotion())
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    body = document(result)
+    assert "error" not in body
+    assert body["summary"]["changed"] == 1
+    (unconfirmed,) = [one for one in body["diagnostics"] if one.get("code") == "SOPULI-W012"]
+    assert "acme_web_user" in unconfirmed["message"]
+    assert "vault-prod:apps/acme/appdb-alpha" in unconfirmed["message"]
+    assert "connection refused" in unconfirmed["message"]
+
+
 # ---------------------------------------------- the fence, at 4 and at 5 ---
 
 
@@ -1143,6 +1237,121 @@ def test_a_failed_target_keeps_its_window(
 
     assert result.exit_code != ExitCode.SUCCESS
     assert finished(harness) == []
+
+
+@pytest.mark.parametrize(
+    "store",
+    [LostAtPromotion, StaleAfterPromotion, UnreadableAfterPromotion],
+    ids=["promotion-failed", "read-back-stale", "read-back-failed"],
+)
+def test_a_window_stays_open_where_the_vault_may_serve_the_old_password(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    store: type[MemoryStore],
+) -> None:
+    """Every target confirmed, and `current` may still be the old password.
+
+    Applications fetch `current`, so closing the window would lock them out.
+    """
+    harness = estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        store=store(),
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--finish-rollover")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert finished(harness) == []
+    assert "closed 0 rollover windows" in result.output
+    assert "left the rollover window open for acme_web_user on appdb-alpha" in result.output
+
+
+def test_a_window_left_open_is_a_warning_in_the_document(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A scheduler reads `--output json`, and the note is all it would have."""
+    estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        store=LostAtPromotion(),
+    )
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--finish-rollover",
+        "--output",
+        "json",
+    )
+
+    messages = [one["message"] for one in document(result)["diagnostics"]]
+    assert any("left the rollover window open" in one for one in messages)
+
+
+def test_one_documents_read_back_does_not_withhold_anothers_repair(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Alpha promotes and cannot be read back; beta's promotion fails (row 7).
+
+    W012 is about alpha. `creds apply` is still the remedy for beta, so the
+    repair line stays.
+    """
+
+    class Split(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            found = super().read(path, version=version)
+            if path.endswith("appdb-alpha") and found is not None and "previous" in found.data:
+                raise StoreError("could not reach the store: connection refused")
+            return found
+
+        def write(self, path: str, data: Any, *, cas: int | None) -> int:
+            if path.endswith("appdb-beta") and "previous" in data:
+                raise StoreError("could not reach the store: connection refused")
+            return super().write(path, data, cas=cas)
+
+    estate(store=Split())
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "did not read back the new password for: acme_web_user" in result.output
+    assert "repair with:" in result.output
+
+
+def test_a_read_back_failure_is_still_reported_after_a_takeover(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A takeover at `--finish-rollover` comes after step 8, and does not hide it.
+
+    Alpha's read-back fails, and somebody takes beta's lock at that moment. Beta's
+    read-back worked, so the run goes on to close its window, and the fence
+    check before that close finds the takeover.
+    """
+    take = steal("apps/acme/appdb-beta", at="read-back")
+    harness: dict[str, Any] = {}
+
+    class AlphaUnreadable(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            found = super().read(path, version=version)
+            if path.endswith("appdb-alpha") and found is not None and "previous" in found.data:
+                take(harness, "read-back")
+                raise StoreError("could not reach the store: connection refused")
+            return found
+
+    harness.update(
+        estate(
+            users={"ACME_WEB_USER": user(rollover_enabled=True)},
+            capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+            store=AlphaUnreadable(),
+        )
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert "SOPULI-W011" in codes
+    assert "SOPULI-W012" in codes
 
 
 # -------------------------------------------------------------- the report ---
