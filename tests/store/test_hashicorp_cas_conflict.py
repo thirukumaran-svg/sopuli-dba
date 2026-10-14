@@ -46,7 +46,10 @@ pytest.importorskip("httpx", reason="the hashicorp extra is not installed")
 
 from sopuli.store.hashicorp._errors import CAS_MESSAGE_FRAGMENT  # noqa: E402
 
-VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://127.0.0.1:8200")
+# The port follows `SOPULI_TEST_VAULT_PORT`, as in `tests/conftest.py`.
+VAULT_ADDR = os.environ.get(
+    "VAULT_ADDR", f"http://127.0.0.1:{os.environ.get('SOPULI_TEST_VAULT_PORT', '8200')}"
+)
 VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "sopuli-test-root")
 MOUNT = "kv"  # the v2 mount test/compose.yaml's vault-init creates
 

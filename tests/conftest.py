@@ -170,7 +170,12 @@ def backends_installed(monkeypatch: pytest.MonkeyPatch) -> None:
 # Vault dev mode is one of those images -- `docker compose --profile tier0 up -d`
 # from `test/` -- so these are ordinarily runnable by anyone.
 
-VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://127.0.0.1:8200")
+#: The default follows `SOPULI_TEST_VAULT_PORT`, the port `test/compose.yaml`
+#: publishes Vault on, so a second clone's stack is found by the variable that
+#: placed it there (`test/README.md`).
+VAULT_ADDR = os.environ.get(
+    "VAULT_ADDR", f"http://127.0.0.1:{os.environ.get('SOPULI_TEST_VAULT_PORT', '8200')}"
+)
 VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "sopuli-test-root")
 
 #: Opt in to running against a non-loopback `VAULT_ADDR`.
@@ -326,8 +331,12 @@ def private_mount(vault_stack: VaultStack, request: pytest.FixtureRequest) -> It
 
 #: Where the tier-1 database is. The default is `test/compose.yaml`'s
 #: `oracle-free` service, so a contributor who brought the stack up needs no
-#: environment variables at all.
-DSN = os.environ.get("SOPULI_TEST_ORACLE_DSN", "localhost:1521/FREEPDB1")
+#: environment variables at all. The port follows `SOPULI_TEST_ORACLE_PORT`, as
+#: `VAULT_ADDR`'s follows `SOPULI_TEST_VAULT_PORT`.
+DSN = os.environ.get(
+    "SOPULI_TEST_ORACLE_DSN",
+    f"localhost:{os.environ.get('SOPULI_TEST_ORACLE_PORT', '1521')}/FREEPDB1",
+)
 USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
 PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 

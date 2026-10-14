@@ -26,6 +26,12 @@
 # scratch. oracle-19c and oracle-19c-ru keep their datafiles in named volumes
 # because their first start takes tens of minutes, and oracle-12c because its
 # one-time init lives in them; `down -v` is the one form that discards them.
+#
+# A SECOND CLONE can run its own tier0/tier1 stack beside this one. Set
+# COMPOSE_PROJECT_NAME and the three SOPULI_TEST_*_PORT variables in that clone's
+# environment; the suite reads the same four. The project name overrides `name:`
+# below. Without a project name of its own, a second clone's `up` recreates the
+# first clone's containers. See README.md.
 
 name: sopuli-test
 
@@ -48,7 +54,7 @@ services:
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: sopuli-test-root
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
-    ports: ["8200:8200"]
+    ports: ["${SOPULI_TEST_VAULT_PORT:-8200}:8200"]
     healthcheck:
       test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
       interval: 5s
@@ -83,7 +89,7 @@ services:
     environment:
       POSTGRES_PASSWORD: sopuli-test
       POSTGRES_DB: sopuli
-    ports: ["5432:5432"]
+    ports: ["${SOPULI_TEST_POSTGRES_PORT:-5432}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -101,7 +107,7 @@ services:
       ORACLE_PASSWORD: sopuli-test
       APP_USER: sopuli_probe
       APP_USER_PASSWORD: sopuli-test
-    ports: ["1521:1521"]
+    ports: ["${SOPULI_TEST_ORACLE_PORT:-1521}:1521"]
     volumes:
       - ./oracle-init:/container-entrypoint-initdb.d:ro
     healthcheck:

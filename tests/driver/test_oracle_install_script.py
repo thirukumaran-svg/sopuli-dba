@@ -58,14 +58,19 @@ from sopuli.driver.oracle.privileges import (
 )
 
 #: Which container holds the database. The default is `test/compose.yaml`'s
-#: `oracle-free` under the `sopuli-test` project name, so a contributor who
-#: brought the stack up needs no environment variables.
+#: `oracle-free` under the project name, so a contributor who brought the stack
+#: up needs no environment variables. The project name is `COMPOSE_PROJECT_NAME`
+#: where one is set, as it is for a second clone's stack (`test/README.md`), and
+#: `sopuli-test` otherwise.
 #:
 #: A container rather than a DSN, and that is the whole difference from every
 #: other tier-1 module: SQL*Plus is a *client*, and the one this suite can rely
 #: on is inside the container rather than on the runner. CI installs Instant
 #: Client Basic **Lite**, which has no `sqlplus` in it at all.
-CONTAINER = os.environ.get("SOPULI_TEST_ORACLE_CONTAINER", "sopuli-test-oracle-free-1")
+CONTAINER = os.environ.get(
+    "SOPULI_TEST_ORACLE_CONTAINER",
+    f"{os.environ.get('COMPOSE_PROJECT_NAME', 'sopuli-test')}-oracle-free-1",
+)
 
 #: Same rule as the rest of tier 1 (`04-testing.md` §3): a missing environment is
 #: a skip with a reason on a laptop and a **failure** in a lane that exists to run
