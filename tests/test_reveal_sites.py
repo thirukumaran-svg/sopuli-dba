@@ -71,7 +71,10 @@ PERMITTED = {
         "`Secret`, and it is revealed where every credential is -- at the wire"
     ),
     "driver/oracle/statements.py": "building the DDL, which is the driver call's text",
-    "driver/oracle/session.py": "issuing that DDL -- the one cursor.execute it reaches",
+    "driver/oracle/trace.py": (
+        "issuing that DDL -- the one cursor.execute it reaches, beside the debug line "
+        "that logs its redacted form"
+    ),
 }
 
 

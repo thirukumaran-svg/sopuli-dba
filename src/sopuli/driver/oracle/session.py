@@ -30,7 +30,9 @@ than poisoning a session shared with others.
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -80,6 +82,7 @@ from sopuli.driver.oracle.statements import (
     lock_account,
     unlock_account,
 )
+from sopuli.driver.oracle.trace import traced_cursor
 from sopuli.driver.oracle.verification import (
     DEFAULT_MARGIN,
     is_verification_outcome,
@@ -131,8 +134,11 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
+from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
+
+LOG = logger("oracle")
 
 #: Guards :func:`initialise`. ``init_oracle_client`` mutates process-global
 #: state, and nothing in this codebase promises a connection is only ever opened
@@ -269,8 +275,17 @@ class OracleSession:
         capability (decision #195).
         """
         if self._scope is None:
-            with self.connection.cursor() as cursor:
+            with traced_cursor(self.connection) as cursor:
                 self._scope = observe(cursor)
+            scope = self._scope
+            if LOG.isEnabledFor(logging.DEBUG):
+                found = (scope.type, scope.container, scope.db_version, scope.open_mode)
+                LOG.debug(
+                    "%s is %s; capabilities %s",
+                    self.target.name,
+                    ", ".join(str(part) for part in found if part is not None),
+                    ", ".join(sorted(scope.capabilities)) or "none",
+                )
         return self._scope
 
     def privileges(self) -> PrivilegeAudit:
@@ -286,7 +301,7 @@ class OracleSession:
         Reporting is not enforcing, and this never refuses. P5 is decided
         — over-granting **warns**.
         """
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             # The scope decides whether `V_$PDBS` is expected: §2 grants it in
             # the root only, and calling a PDB half-installed for lacking a grant
             # it was never given would be wrong in the direction that costs the
@@ -305,7 +320,7 @@ class OracleSession:
         ``SYS.USER$.PTIME`` (decision #386). Asked of the capability probe, which is
         cached, so a session without the grant never issues the read at all.
         """
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             return describe(cursor, account, user_dollar=self.scope().supports(OFFLINE_VERIFY))
 
     def password_constraints(self, account: str) -> AccountConstraints | None:
@@ -322,7 +337,7 @@ class OracleSession:
         under it -- a cache keyed by account would save nothing and would be a
         second place for the answer to age.
         """
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             return password_constraints(cursor, account)
 
     def byte_limit(self) -> ByteLimit:
@@ -333,7 +348,7 @@ class OracleSession:
         out, and this is the finding out.
         """
         if self._limit is None:
-            with self.connection.cursor() as cursor:
+            with traced_cursor(self.connection) as cursor:
                 self._limit = resolve_limit(cursor, self.scope().db_version)
         return self._limit
 
@@ -370,7 +385,7 @@ class OracleSession:
         """
         require_read_write(self.scope(), target=self.target.name)
 
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             spelling = resolve_name(cursor, account)
             if spelling is None:
                 raise DriverError(
@@ -427,7 +442,7 @@ class OracleSession:
         """
         require_capability(self.scope(), PROFILE_MANAGEMENT, target=self.target.name)
 
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             return resolve_profile(cursor, profile)
 
     def resolve_role(self, role: str) -> str | None:
@@ -453,7 +468,7 @@ class OracleSession:
                 f"to it (02-oracle-privileges.md section 2, or {INSTALL_SCRIPT})"
             ),
         )
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             return resolve_role(cursor, role)
 
     def accounts_matching(
@@ -469,7 +484,7 @@ class OracleSession:
         if (profile is None) == (role is None):
             raise ValueError("accounts_matching takes exactly one of `profile` and `role`")
 
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             if profile is not None:
                 require_capability(self.scope(), PROFILE_MANAGEMENT, target=self.target.name)
                 return accounts_with_profile(cursor, profile)
@@ -526,9 +541,9 @@ class OracleSession:
         statement = alter_user_profile(
             Identifier(state.name), Identifier(spelling), scope=self.scope()
         )
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             try:
-                cursor.execute(statement.reveal())
+                cursor.execute(statement)
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
                 raise from_error(error).as_error() from error
 
@@ -582,9 +597,9 @@ class OracleSession:
 
         was = state.status.lower()
         statement = lock_account(Identifier(state.name), scope=self.scope())
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             try:
-                cursor.execute(statement.reveal())
+                cursor.execute(statement)
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
                 raise from_error(error).as_error() from error
 
@@ -907,8 +922,9 @@ class OracleSession:
     def _issue(self, statement: Statement, *, password: bool = False) -> None:
         """Execute one built statement, classifying whatever the server says.
 
-        The ``reveal()`` is invariant 2's permitted one: nothing between this
-        line and the wire may log it, and ``Statement.__str__`` is the redacted
+        The statement is revealed in :mod:`sopuli.driver.oracle.trace`, beside
+        the debug line that logs its redacted form. That ``reveal()`` is
+        invariant 2's permitted one, and ``Statement.__str__`` is the redacted
         form so an accidental interpolation elsewhere cannot leak it. A cursor
         per statement, because §4.1's three are separate statements rather than
         one script.
@@ -919,9 +935,9 @@ class OracleSession:
         connection cannot say whether its bytes left, and a warning that was
         not needed costs less than one that was missed (#697).
         """
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             try:
-                cursor.execute(statement.reveal())
+                cursor.execute(statement)
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
                 failure = from_error(error).as_error()
                 failure.password_sent = password
@@ -963,9 +979,9 @@ class OracleSession:
         # the vault had already stopped working somewhere.
         was = state.status.lower()
         statement = unlock_account(Identifier(state.name), scope=self.scope())
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             try:
-                cursor.execute(statement.reveal())
+                cursor.execute(statement)
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
                 raise from_error(error).as_error() from error
 
@@ -1033,7 +1049,7 @@ class OracleSession:
         ``method`` is only what the result is labelled with, so a ``both`` reports
         itself as ``both`` from either half.
         """
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             state = login_state(cursor, account)
             if state is None:
                 return VerifyResult(
@@ -1072,7 +1088,18 @@ class OracleSession:
                 detail=skipped_detail(reason),
             )
 
-        outcome, detail, warning = self._attempt(state.name, secret)
+        started = time.monotonic()
+        try:
+            outcome, detail, warning = self._attempt(state.name, secret)
+        except Exception as error:
+            LOG.debug(
+                "login as %s failed with %s in %.3fs",
+                state.name,
+                getattr(error, "code", None) or type(error).__name__,
+                time.monotonic() - started,
+            )
+            raise
+        LOG.debug("login as %s: %s in %.3fs", state.name, outcome, time.monotonic() - started)
         if not guarded:
             detail = "; ".join(
                 part
@@ -1202,7 +1229,7 @@ class OracleSession:
                 hint=self._unreadable_verifier_hint(),
             )
 
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             state = login_state(cursor, account)
             if state is None:
                 return None
@@ -1255,7 +1282,7 @@ class OracleSession:
         that does not exist. The capability probe cannot tell the two apart -- both
         answer ``ORA-00942`` -- so this asks ``CLOUD_SERVICE``, and only here.
         """
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             service = cloud_service_of(cursor)
         if service is not None:
             return (
@@ -1453,9 +1480,9 @@ class OracleSession:
             return ChangeResult(changed=False, detail="no rollover window is open")
 
         statement = finish_rollover(Identifier(state.name), scope=self.scope())
-        with self.connection.cursor() as cursor:
+        with traced_cursor(self.connection) as cursor:
             try:
-                cursor.execute(statement.reveal())
+                cursor.execute(statement)
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
                 raise from_error(error).as_error() from error
 
@@ -1532,10 +1559,25 @@ class OracleDriver:
         initialise(env=self.env, lib_dir=self.client_lib_dir)
         arguments = connect_arguments(target, credential, timeouts=self.timeouts)
 
+        started = time.monotonic()
         try:
             connection = oracledb.connect(**arguments)
         except oracledb.Error as error:
-            raise from_error(error).as_error() from error
+            failure = from_error(error)
+            LOG.debug(
+                "connect to %s as %s failed with %s in %.3fs",
+                target.name,
+                _who(credential),
+                failure.code or "no code",
+                time.monotonic() - started,
+            )
+            raise failure.as_error() from error
+        LOG.debug(
+            "connect to %s as %s in %.3fs",
+            target.name,
+            _who(credential),
+            time.monotonic() - started,
+        )
 
         try:
             # Set before anything else happens on this session, so there is no
@@ -1559,6 +1601,12 @@ class OracleDriver:
         )
 
 
+def _who(credential: Credential) -> str:
+    """The user a debug line names. ``auth: external`` has none: the wallet or
+    the Kerberos ticket supplies it."""
+    return credential.username or "the external credential"
+
+
 def set_identifier(connection: Any, correlation_id: str) -> None:
     """``DBMS_SESSION.SET_IDENTIFIER`` -- the join, in one call (§5).
 
@@ -1576,7 +1624,7 @@ def set_identifier(connection: Any, correlation_id: str) -> None:
     inverse mistake is the dangerous one: building this string by concatenation
     would be the habit that later writes a password into SQL text.
     """
-    with connection.cursor() as cursor:
+    with traced_cursor(connection) as cursor:
         cursor.callproc("dbms_session.set_identifier", [correlation_id])
 
 

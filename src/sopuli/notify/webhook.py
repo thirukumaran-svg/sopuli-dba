@@ -29,8 +29,11 @@ with a named service in it rather than a key.
 
 from __future__ import annotations
 
+import time
+
 import httpx
 
+from sopuli.output.debug import logger
 from sopuli.secrets import Secret
 from sopuli.store.protocol import StoreError
 
@@ -39,6 +42,8 @@ from sopuli.store.protocol import StoreError
 #: slow chat service must not hold a run open. UC-2 §3.3's lock is still held
 #: while this runs, so a hung request would also be a lock nobody else can take.
 TIMEOUT_S = 10
+
+LOG = logger("webhook")
 
 #: The key an incoming webhook reads. See this module's docstring for why it is not
 #: configurable.
@@ -68,9 +73,14 @@ def send(url: Secret, message: str) -> None:
     the message, because an exception carrying a chat webhook's token would put it
     wherever the exception goes.
     """
+    address = url.reveal()
+    # The host only: the path and the query of a chat webhook URL are its token.
+    host = httpx.URL(address).host or "an address with no host"
+    started = time.monotonic()
     try:
-        response = httpx.post(url.reveal(), json={BODY_KEY: message}, timeout=TIMEOUT_S)
+        response = httpx.post(address, json={BODY_KEY: message}, timeout=TIMEOUT_S)
     except httpx.HTTPError as error:
+        LOG.debug("POST to %s: %s in %.3fs", host, type(error).__name__, time.monotonic() - started)
         # `type(error).__name__` rather than `str(error)`: httpx puts the URL in
         # the message of several of its errors, and the URL is the credential.
         raise StoreError(
@@ -84,6 +94,7 @@ def send(url: Secret, message: str) -> None:
                 "credential. Check the value behind `delivery.notify.webhook.url`"
             ),
         ) from error
+    LOG.debug("POST to %s: %s in %.3fs", host, response.status_code, time.monotonic() - started)
     if not 200 <= response.status_code < 300:
         raise StoreError(
             f"the webhook refused it: HTTP {response.status_code}",

@@ -156,7 +156,42 @@ under the line that names it. The message on stderr has no traceback. Each
 cause in the chain is shown by its type and its frames, never its message,
 because a cause's message may hold a secret: an httpx error's message holds the
 request URL, and a webhook URL can hold a token. An error that a verb reports
-as a finding for one target does not end the run, so it has no traceback here.
+as a finding for one target does not end the run. Debug output writes its
+traceback where the finding is made, under the area `finding`.
+
+Each part of the tool writes these lines:
+
+- **`oracle`**: each connection, with the target and the user. Each statement
+  the driver sends, on one line, with the time it took. The capabilities the
+  probe found. Each verification login and its result. A statement that carries
+  a password is written in its redacted form, `IDENTIFIED BY ***`. A bind is
+  written by its name, never its value. A statement the server refuses is
+  written with the code it answered, such as `answered ORA-00942`. That is not
+  always a failure: a capability probe reads `ORA-00942` as an absent
+  capability, and the scope line after the probes says what it concluded. The
+  server's message reaches the operator in the error.
+- **`vault`**: each request, with its method, path, status and time. Never a
+  body, a header or the query string: a body can hold a password, and a header
+  holds the token. A path names where a secret is kept, as the config does.
+- **`webhook`**: the host only. The rest of a webhook URL can be its token.
+
+These lines are from `sopuli creds rotate --confirm --debug` against the tier-1
+stack, part way through the first account:
+
+```
+sopuli: debug:   1.028s oracle: connect to free-pdb as SYSTEM in 0.071s
+sopuli: debug:   1.031s oracle: call dbms_session.set_identifier in 0.003s
+sopuli: debug:   1.062s oracle: free-pdb is pdb FREEPDB1, version 23.0.0.0.0, READ WRITE; capabilities account_lock_state, expire_password, offline_verify, password_reuse_policy, password_rollover, profile_management, role_lookup
+sopuli: debug:   1.185s vault: PATCH /v1/kv/data/acme/dev/acme: 200 in 0.003s
+sopuli: debug:   2.373s oracle: login as ACME_APP_USER: fail in 1.056s
+sopuli: debug:   2.378s oracle: select username from dba_users where username = :name (binds :name) in 0.003s
+sopuli: debug:   2.399s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.019s
+sopuli: debug:   2.489s oracle: login as ACME_APP_USER: pass in 0.067s
+```
+
+The Oracle client has tracing of its own, which the tool does not control and
+which can record the password.
+[`02-oracle-privileges.md`](02-oracle-privileges.md) §4 has the warning.
 
 - **Debug output is not part of the contract.** Invariant 12 covers stdout. A
   debug line may change in any release, and a script must not parse one, so a

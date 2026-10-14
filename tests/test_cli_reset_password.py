@@ -314,6 +314,41 @@ def test_the_seen_path_prints_a_working_password_and_expires_the_account(
         oracledb.connect(user=ACCOUNT, password=password, dsn=live_oracle.dsn)
 
 
+def test_debug_output_holds_no_password_on_the_seen_path(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--debug` logs each statement, and the `ALTER USER` in its redacted form
+    (#782). The seen path is the one that also prints the password, so the test
+    has the value to look for: once on stdout, never on stderr."""
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
+    config = write_config(
+        MANUAL.format(
+            dsn=live_oracle.dsn,
+            user=os.environ.get("SOPULI_TEST_ORACLE_USER", "system"),
+            account=ACCOUNT,
+        )
+    )
+
+    result = run(runner, config, "--account", ACCOUNT, "--debug", input="y\n")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    shown = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.startswith("    ") and line.strip()
+    ]
+    assert len(shown) == 1, f"expected one indented password line, got {shown}"
+    password = shown[0]
+    assert password not in result.stderr
+    assert OLD not in result.stderr
+    assert "IDENTIFIED BY ***" in result.stderr
+    assert account() == "EXPIRED"
+
+
 # ---------------------------------------------------------- the reset record ---
 
 #: The same estate with a journal declared. The `vaults:` entry and the

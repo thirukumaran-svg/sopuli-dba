@@ -227,6 +227,7 @@ from sopuli.output.config_view import (
     render_validation,
 )
 from sopuli.output.constraints_view import build_constraints, render_constraints
+from sopuli.output.debug import logger
 from sopuli.output.delivery_view import render_handover
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
@@ -317,6 +318,9 @@ if TYPE_CHECKING:  # pragma: no cover -- annotations only
 F = TypeVar("F", bound=Callable[..., Any])
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+
+#: Where a per-target finding's traceback goes under `--debug`.
+FINDINGS = logger("finding")
 
 
 def help_with(**facts: str) -> Callable[[F], F]:
@@ -890,7 +894,7 @@ def _vault_error(report: VaultReport) -> Error | None:
     """
     if report.failure is None:
         return None
-    return _as_error(report.failure)
+    return _finding(report.failure)
 
 
 def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0) -> ExitCode:
@@ -966,6 +970,7 @@ def _client_report(config: Config) -> dict[str, Any]:
         module.initialise(env=os.environ, lib_dir=lib_dir)
         version = module.client_version()
     except Exception as error:  # noqa: BLE001 -- a broken client is the finding
+        FINDINGS.debug("finding from %s", type(error).__name__, exc_info=error)
         report["instant_client"] = "not loaded"
         report["detail"] = str(error).splitlines()[0]
         return report
@@ -990,7 +995,7 @@ def _examine(
             return build_target(
                 target,
                 connected=False,
-                error=_as_error(error),
+                error=_finding(error),
                 duration_ms=_elapsed(started),
                 warnings=_reach_warning(error),
             )
@@ -1017,7 +1022,7 @@ def _examine(
                 warnings = audit.caveats()
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
             return build_target(
-                target, connected=True, error=_as_error(error), duration_ms=_elapsed(started)
+                target, connected=True, error=_finding(error), duration_ms=_elapsed(started)
             )
     finally:
         if session is not None:
@@ -1091,6 +1096,20 @@ def _as_error(error: Exception) -> Error:
         code=getattr(error, "code", None),
         retryable=getattr(error, "retryable", None),
     )
+
+
+def _finding(error: Exception) -> Error:
+    """:func:`_as_error` for an error a verb reports and does not raise, with its traceback.
+
+    A finding, a pre-flight warning, a reset record that could not be written:
+    each is reported, and the run goes on. So the traceback the wrapper in
+    :mod:`sopuli.invocation` writes for an exception that ends the run never
+    covers it, and this writes one where the error is reported. An error
+    converted and then raised goes through :func:`_as_error`, so ``--debug``
+    does not write its traceback twice.
+    """
+    FINDINGS.debug("finding from %s", type(error).__name__, exc_info=error)
+    return _as_error(error)
 
 
 def _reach_warning(error: Exception) -> tuple[str, ...]:
@@ -1455,7 +1474,7 @@ def _suspend_one(
             session = _open_session(target, run, config)
             state = session.describe_user(account)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             return _Suspended(
                 account=account,
                 target=target.name,
@@ -1499,7 +1518,7 @@ def _suspend_one(
         try:
             change = session.suspend_account(account)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             return _Suspended(
                 account=account,
                 target=target.name,
@@ -1732,7 +1751,7 @@ def _expire_one(
             session = _open_session(target, run, config)
             state = session.describe_user(account)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             return _Expired(
                 account=account,
                 target=target.name,
@@ -1779,7 +1798,7 @@ def _expire_one(
             # The window closed and the expiry failed. Still an error, and
             # still exit 4, but the row says what did happen: `changed` is true
             # and the close is reported as applied.
-            reported = _as_error(error)
+            reported = _finding(error)
             done = tuple((one.action, one.changed, one.detail) for one in error.completed)
             return _Expired(
                 account=account,
@@ -1793,7 +1812,7 @@ def _expire_one(
                 error=reported,
             )
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             return _Expired(
                 account=account,
                 target=target.name,
@@ -2416,7 +2435,7 @@ def _write_reset_record(
         # the password has changed and the person still needs it.
         journal = _reset_journal(run, config)
     except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
-        return _RecordFailure(path=path, reason=_as_error(error).message)
+        return _RecordFailure(path=path, reason=_finding(error).message)
     if journal is None:
         # Unreachable while `path` comes from `_record_paths`, which derives
         # nothing without a block -- and cheaper to answer than to prove at every
@@ -2447,7 +2466,7 @@ def _write_reset_record(
         # version was deleted, which reads as `None` and is not version 0.
         journal.write(path, document, cas=None)
     except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
-        return _RecordFailure(path=path, reason=_as_error(error).message)
+        return _RecordFailure(path=path, reason=_finding(error).message)
     return None
 
 
@@ -2621,7 +2640,7 @@ def _partial_reset(
     reported as applied: the account is open on behalf of a reset that did not
     happen, and that is what somebody reading the row has to act on.
     """
-    reported = _as_error(error)
+    reported = _finding(error)
     return _Reset(
         account=account,
         target=target,
@@ -2675,7 +2694,7 @@ def _reset_one(
             session = _open_session(target, run, config)
             state = session.describe_user(account)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             return _Reset(
                 account=account,
                 target=target.name,
@@ -2722,7 +2741,7 @@ def _reset_one(
             limit = session.byte_limit()
             require_feasible(policy, limit=limit, target=target.name)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             return _Reset(
                 account=account,
                 target=target.name,
@@ -2807,7 +2826,7 @@ def _reset_one(
                     )
                 changes, partial = error.completed, error
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             return _Reset(
                 account=account,
                 target=target.name,
@@ -2837,7 +2856,7 @@ def _reset_one(
         # is now the account's, and on the unseen one the token already made would
         # be thrown away. The row is still `ERROR` at exit 4, and the record and
         # the notification follow, because both hold what happened.
-        unclosed = _as_error(partial) if partial is not None else None
+        unclosed = _finding(partial) if partial is not None else None
         row = _Reset(
             account=account,
             target=target.name,
@@ -3076,7 +3095,7 @@ def _notify(
         )
         channel.sender.send(channel.url, message)
     except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
-        return _as_error(error).message
+        return _finding(error).message
     return None
 
 
@@ -3322,7 +3341,7 @@ def _list_one(
         try:
             session = _open_session(target, run, config)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            return [_unreachable_row(target, _as_error(error))], 1
+            return [_unreachable_row(target, _finding(error))], 1
 
         names = _declared_names(session, config, target, wanted=wanted)
         journal = _reset_journal(run, config)
@@ -4484,7 +4503,7 @@ def _unreachable(
     duration: int,
 ) -> list[tuple[Binding, check_states.Outcome]]:
     """One target's worth of `ERROR` rows, all carrying the same reason."""
-    reported = _as_error(error)
+    reported = _finding(error)
     rows = []
     for binding in bindings:
         outcome = check_states.Outcome(check_states.ERROR, reported.message)
@@ -4570,7 +4589,7 @@ def _check_one(
                     method=method,
                 )
     except Exception as error:  # noqa: BLE001 -- a per-account finding
-        reported = _as_error(error)
+        reported = _finding(error)
         outcome = check_states.Outcome(check_states.ERROR, reported.message)
         # What the database said before the failure still stands. A login that
         # raised says nothing about the account's age or its grace period, and
@@ -5344,7 +5363,7 @@ def _promote_document(
             # nineteen it can. The plan-time read reached the same document and
             # said nothing for the same reason (`_holds_current`), which is what
             # makes this the place the disagreement is named.
-            reported = _as_error(error)
+            reported = _finding(error)
             return _reported(
                 write, FAILED, reported.message, out=out, stage=CURRENT, error=reported
             )
@@ -5382,7 +5401,7 @@ def _promote_document(
     try:
         written = write_credential(store, write.key.path, patch, cas=cas)
     except Exception as error:  # noqa: BLE001 -- a per-document finding
-        reported = _as_error(error)
+        reported = _finding(error)
         emitter.event(
             run.document,
             "vault.promote",
@@ -5453,7 +5472,7 @@ def _stage(
     try:
         written = write_credential(store, write.key.path, write.patch(stage=PENDING), cas=cas)
     except Exception as error:  # noqa: BLE001 -- a per-document finding
-        reported = _as_error(error)
+        reported = _finding(error)
         # A per-document finding rather than the end of the run, so the stream
         # says so here: `version: null` with the error, not a missing event.
         emitter.event(
@@ -6523,7 +6542,7 @@ def _apply_target(
             )
             session = driver.connect(target, credential.credential)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             elapsed = _elapsed(started)
             out.extend(
                 _Applied(
@@ -6941,7 +6960,7 @@ def _apply_one(
             ) from lost
         raise
     except Exception as error:  # noqa: BLE001 -- a per-account finding
-        reported = _as_error(error)
+        reported = _finding(error)
         refused = getattr(error, "regenerate", False)
         if refused and source is not None and source.stage == PREVIOUS:
             # The driver's hint for a refused value is "draw another", which a
@@ -7339,7 +7358,7 @@ def _preflight(
             session = _open_session(by_target[name], run, config)
         except Exception as error:  # noqa: BLE001 -- the run reports this per account
             if full:
-                reported = _as_error(error)
+                reported = _finding(error)
                 findings.append(
                     preflight.unreachable(name, message=reported.message, hint=reported.hint)
                 )
@@ -7398,7 +7417,7 @@ def _preflight_target(
             Finding(
                 target=target.name,
                 check=preflight.SCOPE,
-                message=_as_error(error).message,
+                message=_finding(error).message,
                 hint="the connection worked; this is what it could not read",
             ),
         )
@@ -7416,7 +7435,7 @@ def _preflight_target(
             Finding(
                 target=target.name,
                 check=preflight.PRIVILEGES,
-                message=f"the privilege audit could not be read: {_as_error(error).message}",
+                message=f"the privilege audit could not be read: {_finding(error).message}",
                 hint="nothing about this target's grants was established, either way",
                 category="authorization",
                 blocking=False,
@@ -7444,7 +7463,7 @@ def _preflight_target(
             # is the input guardrail 4 refuses on, and treating an unreadable
             # answer as "holds no admin role" is the silent success
             # `RolesUnreadableError` was raised to prevent.
-            reported = _as_error(error)
+            reported = _finding(error)
             unreadable.append(
                 Finding(
                     target=target.name,
@@ -7499,7 +7518,7 @@ def _preflight_target(
             # again before its own statement and refuses that account -- so what
             # is lost is the early warning, which is exactly what the finding
             # says.
-            reported = _as_error(error)
+            reported = _finding(error)
             unreadable.append(
                 Finding(
                     target=target.name,
@@ -8283,7 +8302,7 @@ def _write_promotion(
     try:
         written = write_credential(store, key.path, patch, cas=_version_of(stored))
     except Exception as error:  # noqa: BLE001 -- a per-document finding
-        reported = _as_error(error)
+        reported = _finding(error)
         return _Promotion(None, reported.message, promotable=True, error=reported)
     return _Promotion(
         written.version,
@@ -8619,7 +8638,7 @@ def _finish_target(
         try:
             session = _open_session(target, run, config)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             elapsed = _elapsed(started)
             return [
                 _Finished(
@@ -8734,7 +8753,7 @@ def _finish_one(
         # it does not report a takeover as one account's bad luck.
         raise
     except Exception as error:  # noqa: BLE001 -- a per-account finding
-        reported = _as_error(error)
+        reported = _finding(error)
         return _Finished(
             binding,
             check_states.Outcome(check_states.ERROR, reported.message),
@@ -9381,7 +9400,7 @@ def _read_promoted(
         try:
             documents.update(_read_documents([key], stores, run=run))
         except Exception as error:  # noqa: BLE001 -- a per-document finding, as at step 7
-            unread[key] = _as_error(error)
+            unread[key] = _finding(error)
     return documents, unread
 
 
@@ -9792,7 +9811,7 @@ def _survey_target(
         try:
             session = _open_session(target, run, config)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            reported = _as_error(error)
+            reported = _finding(error)
             elapsed = _elapsed(started)
             return [
                 _Surveyed(
@@ -9845,7 +9864,7 @@ def _survey_one(
     try:
         user = session.describe_user(binding.account)
     except Exception as error:  # noqa: BLE001 -- a per-account finding
-        reported = _as_error(error)
+        reported = _finding(error)
         return _Surveyed(
             _row(
                 binding,

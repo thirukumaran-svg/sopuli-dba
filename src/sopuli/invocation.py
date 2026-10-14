@@ -914,7 +914,10 @@ def _options(func: F, *, hidden: bool) -> F:
         is_flag=True,
         default=False,
         hidden=hidden,
-        help="Write debug output to stderr. Not a stable format.",
+        help=(
+            "Write debug output to stderr: each statement sent to a database and each "
+            "request sent to a vault, with the time it took. Not a stable format."
+        ),
     )
     dry_run = (
         click.option(

@@ -18,6 +18,7 @@ for the choice written as code:
 from __future__ import annotations
 
 import ssl
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -25,6 +26,7 @@ from typing import Any
 import httpx
 
 from sopuli.config.model import Vault, VaultTls
+from sopuli.output.debug import logger
 from sopuli.secrets import Secret
 from sopuli.store.protocol import StoreError
 
@@ -36,6 +38,8 @@ from sopuli.store.protocol import StoreError
 #: Long enough that a slow-but-working vault is not cut off mid-rotation, short
 #: enough that a black hole is not mistaken for one.
 DEFAULT_TIMEOUT_S = 30
+
+LOG = logger("vault")
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,7 @@ class Transport:
         # `tls.server_name` work for a store reached by an address that does not
         # match its certificate -- a tunnel, or a load balancer by IP.
         extensions = {"sni_hostname": self._sni_hostname} if self._sni_hostname else {}
+        started = time.monotonic()
         try:
             response = self._client.request(
                 method,
@@ -108,6 +113,7 @@ class Transport:
                 extensions=extensions,
             )
         except httpx.TimeoutException as error:
+            _log(started, method, path, "timed out")
             raise StoreError(
                 f"the store did not answer within the timeout: {error}",
                 hint="raise `timeout_s` on the store, or check that `addr` reaches it",
@@ -116,15 +122,33 @@ class Transport:
             # Includes the TLS failures, which is the one class of connectivity
             # error worth a hint of its own: it is what `tls:` exists to fix and
             # what `verify: false` exists to paper over.
+            _log(started, method, path, type(error).__name__)
             raise StoreError(
                 f"could not reach the store: {error}",
                 hint="check `addr`, and `tls.ca_file` if the certificate is your own CA",
             ) from error
+        except Exception as error:
+            # Anything else httpx raises, such as too many redirects or an
+            # address it cannot parse: logged so the failed request has a line,
+            # and raised as it was, as before.
+            _log(started, method, path, type(error).__name__)
+            raise
 
+        _log(started, method, path, str(response.status_code))
         return Response(status=response.status_code, body=_decode(response))
 
     def close(self) -> None:
         self._client.close()
+
+
+def _log(started: float, method: str, path: str, outcome: str) -> None:
+    """One debug line for a request: method, path, status and time.
+
+    Never a body, a header or the query string. A body holds a secret on a write
+    and on a login, and a header holds the token. A path names where a secret is
+    kept, which is not a secret: it is what the config says.
+    """
+    LOG.debug("%s /v1/%s: %s in %.3fs", method, path, outcome, time.monotonic() - started)
 
 
 def _decode(response: httpx.Response) -> Any:
