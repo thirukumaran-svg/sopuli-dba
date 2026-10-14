@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.73.0](https://github.com/villebase/sopuli-dba/compare/v0.72.0...v0.73.0) (2026-10-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** `profiles.<name>.log_level` and `log_file` are refused. Delete them from the profile.
+
+### Features
+
+* **cli:** --debug writes debug output to stderr ([#781](https://github.com/villebase/sopuli-dba/issues/781)) ([#784](https://github.com/villebase/sopuli-dba/issues/784)) ([406c620](https://github.com/villebase/sopuli-dba/commit/406c6202ee3ffcd8252518575c9c5cd3eb29e188))
+* **config:** delete the profile keys log_level and log_file ([#629](https://github.com/villebase/sopuli-dba/issues/629)) ([#783](https://github.com/villebase/sopuli-dba/issues/783)) ([92a38d9](https://github.com/villebase/sopuli-dba/commit/92a38d91f0aee1528cfb61a1774fb519192c57a9))
+* debug lines for why a unit was planned or left alone ([#788](https://github.com/villebase/sopuli-dba/issues/788)) ([#790](https://github.com/villebase/sopuli-dba/issues/790)) ([5cd4b3f](https://github.com/villebase/sopuli-dba/commit/5cd4b3fc6e5c5fdc6e0865ee3ceca20b05ba6778))
+* debug lines in the Oracle driver and the vault transport ([#782](https://github.com/villebase/sopuli-dba/issues/782)) ([#789](https://github.com/villebase/sopuli-dba/issues/789)) ([af45484](https://github.com/villebase/sopuli-dba/commit/af45484139872a68baae543fe1e5f846986385e4))
+
+
+### Bug Fixes
+
+* **oracle:** map ORA-01109 and ORA-12514, a closed PDB's codes ([#766](https://github.com/villebase/sopuli-dba/issues/766)) ([#773](https://github.com/villebase/sopuli-dba/issues/773)) ([fdd046c](https://github.com/villebase/sopuli-dba/commit/fdd046c44273b9fe6796a8b480c34c29e3756424))
+* **output:** carry error.retryable into the run document ([#774](https://github.com/villebase/sopuli-dba/issues/774)) ([#777](https://github.com/villebase/sopuli-dba/issues/777)) ([5e25d6d](https://github.com/villebase/sopuli-dba/commit/5e25d6d2054a4818b84d7185dda13517281edd4d))
+* **rotate:** report a vault lost at the promotion as exit 4 ([#760](https://github.com/villebase/sopuli-dba/issues/760)) ([#780](https://github.com/villebase/sopuli-dba/issues/780)) ([f8fe8f4](https://github.com/villebase/sopuli-dba/commit/f8fe8f4cad28cfaec4e8c0fe3109e2785fcb5125))
+
 ## [0.72.0](https://github.com/villebase/sopuli-dba/compare/v0.71.0...v0.72.0) (2026-10-12)
 
 
