@@ -749,6 +749,19 @@ def test_the_selection_table_shows_what_was_skipped_and_why(
     assert "--max-age-days 90" in result.output
 
 
+def test_debug_says_why_an_account_is_not_due(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#788: the reason `--max-age-days` left each account out, per target."""
+    estate(documents=_two_targets(days=3))
+    result = run(runner, write_config(CONFIG), "--max-age-days", "90", "--debug")
+
+    for target in ("appdb-alpha", "appdb-beta"):
+        assert f"plan: acme_web_user on {target} not due: rotated 3" in result.stderr
+    assert "inside --max-age-days 90" in result.stderr
+    assert LIVE not in result.stderr
+
+
 def test_no_age_filter_prints_no_selection_table(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

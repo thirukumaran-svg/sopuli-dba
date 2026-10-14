@@ -22,11 +22,19 @@ which is what makes plan output comparable between them.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 
 from sopuli.config.errors import ROOT, ArgumentError
-from sopuli.config.model import Config, ExpandedTarget, Pairs, Target, TargetSelector, as_dict
+from sopuli.config.model import (
+    Binding,
+    Config,
+    ExpandedTarget,
+    Pairs,
+    Target,
+    TargetSelector,
+    as_dict,
+)
 
 #: One (account, target) pair, which is the row :class:`Config.bindings` is keyed
 #: by and the unit a repair set is written in.
@@ -250,40 +258,158 @@ def filter_estate(config: Config, selection: Selection) -> Config:
     overwrite the ones the operator typed, and would turn two groups into one
     conjunction that can match nothing an operator asked for.
     """
+    return narrow(config, selection)[0]
+
+
+@dataclass(frozen=True)
+class LeftOut:
+    """One declared target, or one binding on a selected target, that a selector
+    left out of the run, and the flag that did.
+
+    What ``--debug`` reports about selection. :func:`filter_estate` returns only
+    what is left, so an operator whose run planned fewer units than expected
+    cannot see from the plan which flag removed the others.
+    """
+
+    target: str
+    #: The flag as the operator types it, such as ``--select``.
+    flag: str
+    #: ``None`` where the whole target was left out. Where a target flag did
+    #: that, its bindings are not listed one by one: the target's line already
+    #: says why they are gone.
+    account: str | None = None
+
+
+def narrow(config: Config, selection: Selection) -> tuple[Config, tuple[LeftOut, ...]]:
+    """:func:`filter_estate`, and each target and binding it left out, and why.
+
+    One walk gives both, so the reasons cannot disagree with what was removed.
+    Targets come first, then the bindings left out on the targets a target flag
+    kept. A target left with no bindings, which only a binding-level flag
+    drops, is named with the first flag that removed one of its bindings, or
+    with the first such flag given where it had none.
+    """
     if selection.is_everything:
-        return config
-
-    wanted = set(selection.targets)
-    accounts = {name.casefold() for name in selection.accounts}
-    applications = set(selection.applications)
-    groups = tuple(_group_match(config, name) for name in selection.groups)
-
-    targets = tuple(
-        expanded
-        for expanded in config.expanded_targets
-        if matches(expanded.target, selection.select)
-        and (not wanted or expanded.name in wanted)
-        and (not groups or any(matches(expanded.target, match) for match in groups))
-    )
-    selected = {expanded.name for expanded in targets}
-    bindings = tuple(
-        binding
-        for binding in config.bindings
-        if binding.target in selected
-        and (not accounts or binding.account.casefold() in accounts)
-        and (not applications or binding.application in applications)
-    )
-
-    if accounts or applications:
+        return config, ()
+    prune = None
+    if selection.accounts:
+        prune = "--account"
+    elif selection.applications:
         # Only where a binding-level selector was given. Without one, a target
         # with no bindings is an ordinary part of the estate -- a database
         # nothing is declared against yet -- and dropping it would make
         # `target list` and `doctor` stop reporting the targets most worth
         # noticing.
-        kept = {binding.target for binding in bindings}
-        targets = tuple(expanded for expanded in targets if expanded.name in kept)
+        prune = "--application"
+    tests = _Tests.of(config, selection)
+    return _walk(config, tests.target, tests.binding, prune=prune)
 
-    return replace(config, expanded_targets=targets, bindings=bindings)
+
+def narrow_to_pairs(
+    config: Config, pairs: Iterable[AccountTarget]
+) -> tuple[Config, tuple[LeftOut, ...]]:
+    """:func:`filter_to_pairs`, and each binding and target it left out.
+
+    Everything is left out by the flag that hands in a pair set, ``--repair``.
+    """
+    wanted = {(account.casefold(), target) for account, target in pairs}
+
+    def binding(one: Binding) -> str | None:
+        return None if (one.account.casefold(), one.target) in wanted else "--repair"
+
+    return _walk(config, lambda expanded: None, binding, prune="--repair")
+
+
+def _walk(
+    config: Config,
+    target_test: Callable[[ExpandedTarget], str | None],
+    binding_test: Callable[[Binding], str | None],
+    *,
+    prune: str | None,
+) -> tuple[Config, tuple[LeftOut, ...]]:
+    """Narrow targets, then the bindings on the targets left, then, where
+    ``prune`` is a flag, the targets left with no bindings.
+
+    Each test returns the flag that excludes its argument, or ``None``. This
+    only ever removes, so no test can introduce a target or a binding the file
+    does not declare (invariant 5).
+    """
+    targets: list[ExpandedTarget] = []
+    gone: list[LeftOut] = []
+    for expanded in config.expanded_targets:
+        flag = target_test(expanded)
+        if flag is None:
+            targets.append(expanded)
+        else:
+            gone.append(LeftOut(expanded.name, flag))
+
+    selected = {expanded.name for expanded in targets}
+    bindings: list[Binding] = []
+    dropped: list[LeftOut] = []
+    first: dict[str, str] = {}
+    for binding in config.bindings:
+        if binding.target not in selected:
+            continue
+        flag = binding_test(binding)
+        if flag is None:
+            bindings.append(binding)
+        else:
+            dropped.append(LeftOut(binding.target, flag, binding.account))
+            first.setdefault(binding.target, flag)
+
+    if prune is not None:
+        kept = {binding.target for binding in bindings}
+        gone.extend(
+            LeftOut(expanded.name, first.get(expanded.name, prune))
+            for expanded in targets
+            if expanded.name not in kept
+        )
+        targets = [expanded for expanded in targets if expanded.name in kept]
+
+    narrowed = replace(config, expanded_targets=tuple(targets), bindings=tuple(bindings))
+    return narrowed, (*gone, *dropped)
+
+
+@dataclass(frozen=True)
+class _Tests:
+    """Each selector flag as a test, built once per selection.
+
+    :func:`narrow` builds it and hands its two tests to :func:`_walk`.
+    """
+
+    selection: Selection
+    groups: tuple[Pairs, ...]
+    targets: frozenset[str]
+    #: ``--account``, case-folded for the reason :attr:`Selection.accounts` gives.
+    accounts: frozenset[str]
+
+    @classmethod
+    def of(cls, config: Config, selection: Selection) -> _Tests:
+        return cls(
+            selection,
+            tuple(_group_match(config, name) for name in selection.groups),
+            frozenset(selection.targets),
+            frozenset(name.casefold() for name in selection.accounts),
+        )
+
+    def target(self, expanded: ExpandedTarget) -> str | None:
+        """The first flag that excludes this target, or ``None`` if none does."""
+        if self.targets and expanded.name not in self.targets:
+            return "--target"
+        if not matches(expanded.target, self.selection.select):
+            return "--select"
+        if self.groups and not any(matches(expanded.target, match) for match in self.groups):
+            return "--group"
+        return None
+
+    def binding(self, binding: Binding) -> str | None:
+        """The first binding-level flag that excludes this binding, or ``None``."""
+        if self.accounts and binding.account.casefold() not in self.accounts:
+            return "--account"
+        applications = self.selection.applications
+        if applications and binding.application not in applications:
+            return "--application"
+        return None
 
 
 def filter_to_pairs(config: Config, pairs: Iterable[AccountTarget]) -> Config:
@@ -321,15 +447,7 @@ def filter_to_pairs(config: Config, pairs: Iterable[AccountTarget]) -> Config:
     ``max_targets`` and ``confirm_environments`` answer about work this run is
     not going to do.
     """
-    wanted = {(account.casefold(), target) for account, target in pairs}
-    bindings = tuple(
-        binding
-        for binding in config.bindings
-        if (binding.account.casefold(), binding.target) in wanted
-    )
-    kept = {binding.target for binding in bindings}
-    targets = tuple(expanded for expanded in config.expanded_targets if expanded.name in kept)
-    return replace(config, expanded_targets=targets, bindings=bindings)
+    return narrow_to_pairs(config, pairs)[0]
 
 
 def refuse_unknown(config: Config, selection: Selection) -> None:

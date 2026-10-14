@@ -771,6 +771,54 @@ def test_a_second_run_changes_nothing(
     assert document(result)["results"][0]["changed"] is False
 
 
+# ------------------------------------------------- --debug: planning (#788) ---
+
+
+def debug_lines(result: Result) -> list[str]:
+    """The `plan` area's debug lines on stderr."""
+    return [line for line in result.stderr.splitlines() if " plan: " in line]
+
+
+def test_debug_names_a_target_a_selector_left_out(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate()
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--debug")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    left = [line for line in debug_lines(result) if "left out" in line]
+    assert len(left) == 1
+    assert left[0].endswith("plan: target appdb-beta left out by --select")
+    assert STAGED not in result.stderr
+    assert LIVE not in result.stderr
+
+
+def test_debug_says_why_an_applied_password_was_left_alone(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The convergent case: the database already accepts the vault's `current`."""
+    estate(
+        documents={"apps/acme/appdb-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        answers={"ACME_WEB_USER": passes(1)},
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--debug")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert f"acme_web_user on appdb-alpha left alone: {check.IN_SYNC}, " in result.stderr
+    assert LIVE not in result.stderr
+
+
+def test_debug_says_why_a_locked_account_was_left_alone(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--debug")
+
+    assert f"acme_web_user on appdb-alpha left alone: {check.LOCKED}, " in result.stderr
+    assert STAGED not in result.stderr
+    assert LIVE not in result.stderr
+
+
 # ---------------------------------------------------- connection encryption ---
 
 CLEAR = Encryption(method="none", protocol="tcp", hint="require NNE or TLS on the server")
@@ -3746,6 +3794,34 @@ def test_repair_narrows_to_the_pairs_that_did_not_confirm(
     assert result.exit_code == ExitCode.PARTIAL
     changed = [name for session in harness["sessions"] for name, _ in session.changed]
     assert changed == ["ACME_BATCH_USER"]
+
+
+def test_debug_names_a_binding_the_repair_set_left_out(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
+) -> None:
+    estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+    config = write_config(SHARED_CONFIG)
+    previous = _repair_file(
+        tmp_path,
+        config,
+        [{"account": "acme_batch_user", "target": "appdb-alpha", "state": "DRIFT"}],
+    )
+
+    result = run(runner, config, "--repair", str(previous), "--debug")
+
+    assert "acme_web_user on appdb-alpha left out by --repair" in result.stderr
+    assert "acme_batch_user on appdb-alpha left out" not in result.stderr
+    assert STAGED not in result.stderr
+    assert LIVE not in result.stderr
 
 
 def test_repair_cannot_extend_the_declared_set(  # invariant 5

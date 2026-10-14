@@ -16,10 +16,13 @@ from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, TargetSelector
 from sopuli.config.selection import (
+    LeftOut,
     Selection,
     filter_estate,
     filter_to_pairs,
     matches,
+    narrow,
+    narrow_to_pairs,
     parse_selector,
     refuse_unknown,
     select,
@@ -527,3 +530,121 @@ class TestRefuseUnknown:
 
         assert "nope-one" in str(raised.value)
         assert "nope-two" in str(raised.value)
+
+
+# ------------------------------------------------------------------ left_out ---
+
+
+GROUPED: dict[str, Any] = {
+    **BOUND,
+    "groups": {"alpha-pdbs": {"match": {"tenant": "alpha"}}},
+    "applications": [
+        *BOUND["applications"],
+        {
+            "name": "acme-reports",
+            "accounts": ["acme_report_user"],
+            "secret_template": "acme-reports/{env}/{account}#password",
+            "targets": ["appdb-dev-alpha"],
+        },
+    ],
+}
+
+
+def left_out(config: Config, selection: Selection) -> tuple[LeftOut, ...]:
+    return narrow(config, selection)[1]
+
+
+def flags(selection: Selection) -> dict[tuple[str | None, str], str]:
+    found = left_out(build_config(GROUPED), selection)
+    return {(one.account, one.target): one.flag for one in found}
+
+
+@pytest.mark.parametrize(
+    ("selection", "flag"),
+    [
+        (Selection(targets=("appdb-dev-alpha",)), "--target"),
+        (Selection(select=(("tenant", "alpha"),)), "--select"),
+        (Selection(groups=("alpha-pdbs",)), "--group"),
+    ],
+)
+def test_a_target_left_out_is_named_once_with_the_flag_that_did_it(
+    selection: Selection, flag: str
+) -> None:
+    """#788: one line for the target, not one per binding on it."""
+    assert flags(selection) == {(None, "appdb-dev-beta"): flag}
+
+
+@pytest.mark.parametrize(
+    ("selection", "flag"),
+    [
+        (Selection(accounts=("ACME_WEB_USER",)), "--account"),
+        (Selection(applications=("acme",)), "--application"),
+    ],
+)
+def test_a_binding_left_out_is_named_with_the_flag_that_did_it(
+    selection: Selection, flag: str
+) -> None:
+    """Checked against what `filter_estate` removes, so the two agree. The
+    account in the first case is matched case-folded."""
+    config = build_config(GROUPED)
+    kept = pairs_of(filter_estate(config, selection))
+
+    found = flags(selection)
+
+    assert set(found) == pairs_of(config) - kept
+    assert found
+    assert set(found.values()) == {flag}
+
+
+def test_a_target_left_with_no_bindings_is_named_with_the_binding_flag() -> None:
+    """`filter_estate` drops a target that `--application` emptied, so
+    `left_out` says so. `acme-reports` is declared on one target only."""
+    selection = Selection(applications=("acme-reports",))
+
+    found = left_out(build_config(GROUPED), selection)
+
+    assert LeftOut("appdb-dev-beta", "--application") in found
+    narrowed = filter_estate(build_config(GROUPED), selection)
+    assert [t.name for t in narrowed.expanded_targets] == ["appdb-dev-alpha"]
+
+
+def test_a_target_with_no_bindings_is_reported() -> None:
+    """`target list` and `doctor` select targets nothing is declared against."""
+    found = left_out(estate(), Selection(select=(("env", "qa"),)))
+
+    assert LeftOut("legacy-box", "--select") in found
+    assert all(one.account is None for one in found)
+
+
+def test_saying_nothing_leaves_nothing_out() -> None:
+    assert left_out(build_config(GROUPED), Selection()) == ()
+
+
+def test_the_pairs_a_repair_set_leaves_out_are_named() -> None:
+    _, found = narrow_to_pairs(bound(), [("ACME_WEB_USER", "appdb-dev-alpha")])
+
+    accounts = {(one.account, one.target) for one in found if one.account is not None}
+    assert accounts == pairs_of(bound()) - {("acme_web_user", "appdb-dev-alpha")}
+    assert LeftOut("appdb-dev-beta", "--repair") in found
+    assert {one.flag for one in found} == {"--repair"}
+
+
+def test_an_emptied_target_is_named_with_the_flag_that_removed_its_bindings() -> None:
+    """Both binding flags given: the one that removed the target's first
+    binding is named, not the first flag the selection has. On beta,
+    `acme_web_user` passes `--account` and `--application` removes it."""
+    selection = Selection(
+        accounts=("acme_report_user", "acme_web_user"), applications=("acme-reports",)
+    )
+
+    found = left_out(build_config(GROUPED), selection)
+
+    assert LeftOut("appdb-dev-beta", "--application") in found
+    assert all(one.target != "appdb-dev-alpha" or one.account for one in found)
+
+
+def test_narrow_returns_what_filter_estate_returns() -> None:
+    config = build_config(GROUPED)
+    selection = Selection(select=(("tenant", "alpha"),), accounts=("acme_web_user",))
+
+    assert narrow(config, selection)[0] == filter_estate(config, selection)

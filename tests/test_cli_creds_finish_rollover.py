@@ -364,6 +364,20 @@ def test_nothing_open_is_no_change_and_no_statement(
     assert result.exit_code == ExitCode.SUCCESS
 
 
+def test_debug_says_why_an_account_with_nothing_open_was_left_alone(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#788."""
+    estate(users={"ACME_WEB_USER": quiet()})
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--debug")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "plan: acme_web_user on appdb-alpha left alone: IN_SYNC, " in result.stderr
+    assert "plan: target appdb-beta left out by --select" in result.stderr
+    assert LIVE not in result.stderr
+    assert STAGED not in result.stderr
+
+
 def test_a_staged_pending_leaves_the_window_open_and_spends_nothing(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

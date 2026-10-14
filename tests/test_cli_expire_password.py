@@ -29,6 +29,7 @@ from oracle_harness import Environment
 from sopuli.cli import cli
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK,
     PASSWORD_EXPIRE,
     ROLLOVER_FINISH,
     AccountChange,
@@ -209,6 +210,65 @@ def test_an_undeclared_account_never_reaches_the_driver(
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert fake[0].expired == []
     assert document(result)["results"][0]["state"] == "SKIPPED"
+
+
+@pytest.mark.parametrize("verb", ["expire-password", "suspend", "reset-password"])
+def test_debug_says_why_an_undeclared_account_was_left_alone(
+    runner: CliRunner, write_config: WriteConfig, fake: list[FakeSession], verb: str
+) -> None:
+    """#788: the guardrails' answer, with the account and the target."""
+    result = runner.invoke(
+        cli,
+        ["--config", str(write_config(OFFLINE + RESETTABLE)), "account", verb]
+        + ["--account", "acme_dev_bob", "--dry-run", "--debug"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "plan: acme_dev_bob on tier1-oracle left alone: SKIPPED, " in result.stderr
+
+
+class SettledSession(FakeSession):
+    """A database where the statement would change nothing: the password is
+    already expired, and the account already locked."""
+
+    def expire_password(self, account: str) -> tuple[AccountChange, ...]:
+        self.expired.append(account)
+        return (
+            AccountChange(ROLLOVER_FINISH, changed=False, status=self.status, detail="no window"),
+            AccountChange(
+                PASSWORD_EXPIRE, changed=False, status=self.status, detail="already expired"
+            ),
+        )
+
+    def suspend_account(self, account: str) -> AccountChange:
+        return AccountChange(
+            ACCOUNT_LOCK, changed=False, status=self.status, detail="already locked"
+        )
+
+
+@pytest.mark.parametrize(
+    ("verb", "said"), [("expire-password", "already expired"), ("suspend", "already locked")]
+)
+def test_debug_says_why_the_driver_left_an_account_alone(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    verb: str,
+    said: str,
+) -> None:
+    """#788: the driver, not the guardrails, found nothing to change."""
+    session = SettledSession("EXPIRED & LOCKED")
+    monkeypatch.setattr("sopuli.cli._open_session", lambda target, run, config: session)
+
+    result = runner.invoke(
+        cli,
+        ["--config", str(write_config(OFFLINE)), "account", verb]
+        + ["--account", ACCOUNT, "--confirm", "--debug"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert f"plan: {ACCOUNT} on tier1-oracle left alone: " in result.stderr
+    assert said in result.stderr
 
 
 def test_a_run_reports_both_statements(

@@ -569,6 +569,25 @@ def test_a_named_account_makes_the_run_fail(
     assert "ACME_WEB_USER" not in changed(harness)
 
 
+def test_debug_says_a_named_account_was_not_acted_on(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#788: the refusal fails the run, so its line does not read "left alone"."""
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--debug")
+
+    assert "plan: acme_web_user on " in result.stderr
+    assert " not acted on: ERROR, " in result.stderr
+    assert "left alone: ERROR" not in result.stderr
+    assert STAGED not in result.stderr
+    assert LIVE not in result.stderr
+
+
 def test_the_same_account_falling_inside_a_selection_does_not(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
