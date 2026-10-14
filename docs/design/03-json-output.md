@@ -1873,6 +1873,17 @@ These consequences show in the schema:
   the message of any error from a statement that carried one. It replaces the
   exact value only: a function that quotes part of the value, or the value
   changed, is not caught ([#786](../decisions/log.md#786)).
+- `error.message`, a `diagnostic.message` and the `sopuli:` line on stderr also
+  carry the message of an exception that a library raised, when the tool did
+  not convert it. Code that passes a `Secret`, or bytes read as one, to a
+  library converts every error that library raises into a tool error. The
+  tool error names the library's error by its type and leaves out its message,
+  because that message can quote the value. The webhook and the vault
+  transport do this for httpx: for the URL, the token header and the request
+  body. `--from-stdin` reads bytes and decodes them strictly, so a byte that is
+  not UTF-8 is refused and not carried on. Any other library error keeps its
+  message, because it is the only detail an unexpected failure has
+  ([#785](../decisions/log.md#785)).
 - `password.applied` events carry the vault version, never the value.
 - `results[].handover` carries the wrapping token's *accessor*, never the token.
 

@@ -10,6 +10,7 @@ wall.
 
 from __future__ import annotations
 
+import socket
 import ssl
 from pathlib import Path
 
@@ -19,7 +20,7 @@ import pytest
 # subject is the client `sopuli[hashicorp]` installs, so there is nothing to
 # assert without it. A skip rather than a collection error, so the rest of the
 # suite still runs on a base+dev install (`04-testing.md` §3).
-pytest.importorskip("httpx", reason="the hashicorp extra is not installed")
+httpx = pytest.importorskip("httpx", reason="the hashicorp extra is not installed")
 
 from sopuli.config.model import Vault, VaultTls  # noqa: E402
 from sopuli.secrets import Secret  # noqa: E402
@@ -31,6 +32,7 @@ from sopuli.store.hashicorp._errors import (  # noqa: E402
 )
 from sopuli.store.hashicorp._transport import (  # noqa: E402
     DEFAULT_TIMEOUT_S,
+    Transport,
     build_ssl_context,
     build_transport,
 )
@@ -172,6 +174,34 @@ def test_a_store_with_no_address_is_refused_before_any_request() -> None:
     assert "addr" in str(caught.value)
 
 
+def test_a_token_httpx_cannot_send_is_refused_without_quoting_it() -> None:
+    """httpx encodes a header as ASCII, and its error quotes the character it
+    could not encode, which is part of the token (#785)."""
+    with pytest.raises(StoreError) as caught:
+        build_transport(vault(), token=Secret("hvs.EXAMPLEéTOKEN"))
+
+    assert caught.value.message == (
+        "vault 'vault-prod': the client could not be built: UnicodeEncodeError"
+    )
+
+
+def test_a_body_httpx_cannot_encode_is_reported_by_its_error_type() -> None:
+    """A body holds a secret on a write and on a login, and an encoding error
+    quotes a character of it and its position (#785)."""
+    transport = Transport(
+        httpx.Client(
+            base_url="https://vault.example.com",
+            transport=httpx.MockTransport(lambda _: httpx.Response(204)),
+        )
+    )
+
+    with pytest.raises(StoreError) as caught:
+        transport.request("POST", "kv/data/acme", json={"password": "EXAMPLE\udce9SECRET"})
+
+    assert caught.value.message == "the request to the store failed: UnicodeEncodeError"
+    assert "EXAMPLE" not in str(caught.value)
+
+
 def test_redirects_are_not_followed() -> None:
     """Vault redirects to the active node, and following it silently would send
     this token somewhere the config never named."""
@@ -263,3 +293,35 @@ def test_a_client_certificate_that_does_not_exist_is_a_store_error(tmp_path: Pat
 
     assert "client_cert" in str(caught.value)
     assert "ca_file" not in str(caught.value)
+
+
+def test_a_token_with_a_line_break_is_refused_without_quoting_it() -> None:
+    """h11 refuses the header before anything is sent, and its message quotes
+    the whole value, which is the token (#785). It checks the header after it
+    connects, so a socket listens here and is never answered."""
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        port = listener.getsockname()[1]
+        transport = build_transport(
+            vault(addr=f"http://127.0.0.1:{port}"), token=Secret("hvs.EXAMPLETOKEN\r")
+        )
+
+        with pytest.raises(StoreError) as caught:
+            transport.request("GET", "sys/health")
+
+    assert caught.value.message == (
+        "the request to the store could not be sent: LocalProtocolError"
+    )
+    assert "EXAMPLETOKEN" not in str(caught.value)
+
+
+def test_a_fault_in_the_tool_is_not_reported_as_the_store() -> None:
+    """A value JSON cannot encode is a bug, not a store that is down."""
+    transport = Transport(
+        httpx.Client(
+            base_url="https://vault.example.com",
+            transport=httpx.MockTransport(lambda _: httpx.Response(204)),
+        )
+    )
+
+    with pytest.raises(TypeError):
+        transport.request("POST", "kv/data/acme", json={"value": object()})

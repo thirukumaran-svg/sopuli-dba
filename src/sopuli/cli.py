@@ -275,7 +275,7 @@ from sopuli.output.rotate_view import render_rotate, render_selection_table
 from sopuli.output.status_view import build_result as build_status_result
 from sopuli.output.status_view import render_status_table
 from sopuli.output.status_view import summarise as summarise_status
-from sopuli.output.stream import configure_streams
+from sopuli.output.stream import ENCODING, configure_streams
 from sopuli.output.suspend_view import build_result as build_suspend_result
 from sopuli.output.suspend_view import render as render_suspend
 from sopuli.output.suspend_view import summarise as summarise_suspend
@@ -5260,7 +5260,18 @@ def _password_from_stdin() -> Secret:
     local copy of the rule did not, and Windows is precisely where P4 asks for
     identical behaviour.
     """
-    text = strip_one_newline(sys.stdin.read())
+    try:
+        # Bytes, then a strict decode. The text stream decodes with
+        # `surrogateescape`, which turns a byte that is not UTF-8 into a
+        # surrogate character, and a later encoding error quotes it with its
+        # position. Python's decode error names the byte too, so it is not
+        # repeated (#785).
+        text = strip_one_newline(sys.stdin.buffer.read().decode(ENCODING))
+    except UnicodeDecodeError as error:
+        raise ArgumentError(
+            "--from-stdin was given and stdin is not UTF-8 text",
+            hint="pipe the password in as UTF-8 text",
+        ) from error
     if not text:
         raise ArgumentError(
             "--from-stdin was given and stdin was empty",

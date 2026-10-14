@@ -1925,3 +1925,43 @@ the register.
   - Replace the exact value, and also drop an `ORA-20xxx` line that still holds
     a long run of the value's characters: safer against a partial quote, but it
     is a heuristic in a credential path.
+
+## #785
+
+- **Decided:** 2026-10-14, #785
+- **Question:** The catch-all in `main()`, `_classify` and `_as_error` print the
+  message of an exception that a library raised and the tool did not convert.
+  Can that message hold a secret, and should these places print only its type?
+- **Decision:** They keep printing the message. Code that passes a `Secret`, or
+  bytes read as one, to a library converts every error that library raises into
+  a tool error. The tool error names the library's error by its type and leaves
+  out its message.
+- **Why:** The audit found these places where a library's message could quote
+  a secret:
+  - The webhook parsed its URL before its `try`, and `httpx.InvalidURL` is not
+    an `httpx.HTTPError`. Its message quotes part of the URL, such as
+    `Invalid port: 'abc'`, and the URL is the credential. A URL with a
+    character httpx cannot encode raises `UnicodeEncodeError`, which quotes it.
+  - httpx encodes a header as ASCII. A token with any other character raised
+    `UnicodeEncodeError` with that character and its position.
+  - A token with a line break, such as a `` left by a file saved on Windows,
+    raised `httpx.LocalProtocolError`, and its message quoted the whole token.
+  - The vault transport raised every httpx error other than a timeout or a
+    connection failure as it was. One is an encoding error for a body, and the
+    body of a write or a login holds a secret.
+  - `--from-stdin` read stdin as text with `surrogateescape`. A byte that is not
+    UTF-8 became a surrogate character inside the password, and the vault
+    write's encoding error then quoted it with its position.
+
+  Each now converts the error, and `--from-stdin` reads bytes and refuses a
+  byte that is not UTF-8. An Oracle error from a query passes through
+  unconverted and carries no secret: its statement holds no password
+  (invariants 13 and 14). This follows #786: the code that holds the value is
+  the code that knows to keep it out.
+- **Rejected:**
+  - Print only the type of any exception the tool did not raise: the rule would
+    hold by structure, not by each call site. But an Oracle error from a query,
+    such as an `ORA-01031` for a missing grant, would show only its class name
+    unless `traced_cursor` converted every error. A bug would show only
+    `KeyError`. And `--debug` prints the message of the exception at the top of
+    its traceback, so it would need the same change.

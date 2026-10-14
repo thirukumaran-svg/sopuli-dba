@@ -28,6 +28,7 @@ from sopuli.notify import webhook
 from sopuli.output.debug import PREFIX, debugging
 from sopuli.secrets import REDACTED, Secret
 from sopuli.store.hashicorp._transport import Transport
+from sopuli.store.protocol import StoreError
 
 PASSWORD = "Tr0ub4dor_3"
 TOKEN = "hvs.EXAMPLEEXAMPLEEXAMPLE"
@@ -208,7 +209,7 @@ def test_any_other_vault_request_error_is_logged(debug: io.StringIO) -> None:
         base_url="https://vault.example.com", transport=httpx.MockTransport(handle)
     )
 
-    with pytest.raises(httpx.TooManyRedirects):
+    with pytest.raises(StoreError, match="the request to the store failed: TooManyRedirects"):
         Transport(client).request("GET", "sys/health")
 
     assert "vault: GET /v1/sys/health: TooManyRedirects in " in debug.getvalue()
@@ -300,6 +301,21 @@ def test_a_webhook_that_cannot_be_reached_is_logged_by_its_host_and_error_type(
     written = debug.getvalue()
     assert "webhook: POST to chat.example.com: ConnectError in " in written
     assert "EXAMPLEEXAMPLEEXAMPLE" not in written
+
+
+def test_a_webhook_url_httpx_cannot_parse_is_reported_by_error_type(
+    debug: io.StringIO,
+) -> None:
+    """`httpx.InvalidURL` is not an `HTTPError`, and its message quotes part of the URL (#785)."""
+    url = "https://chat.example.com:EXAMPLEPORT/hooks/T00000/B00000/EXAMPLE"
+
+    with pytest.raises(StoreError) as raised:
+        webhook.send(Secret(url), "a password is waiting")
+
+    assert raised.value.message == "the webhook URL could not be used: InvalidURL"
+    written = debug.getvalue()
+    assert "webhook: POST to an address httpx could not parse: InvalidURL in " in written
+    assert "EXAMPLEPORT" not in written
 
 
 def test_a_vault_request_that_times_out_is_logged(debug: io.StringIO) -> None:

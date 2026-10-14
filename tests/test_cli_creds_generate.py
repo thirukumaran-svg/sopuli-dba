@@ -371,6 +371,24 @@ def test_from_stdin_uses_the_supplied_password(
     assert staged(store)["acme_web_user"] == "SuppliedPassword2026abcd"
 
 
+def test_from_stdin_that_is_not_text_is_refused_without_the_byte(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """Python's decode error names the byte it could not read, and the byte is
+    part of the password (#785). The verb reads stdin's bytes, so this does not
+    depend on the error handler of the runner's text stream."""
+    result = runner.invoke(
+        cli,
+        ["creds", "generate", "--config", str(write_config(CONFIG)), "--from-stdin"],
+        input=b"Supplied\xe9Password2026\n",
+    )
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert result.exception.message == "--from-stdin was given and stdin is not UTF-8 text"
+    assert "0xe9" not in str(result.exception)
+    assert store.read(PATH) is None
+
+
 def test_from_stdin_is_validated_against_the_same_policy(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

@@ -74,15 +74,30 @@ def send(url: Secret, message: str) -> None:
     wherever the exception goes.
     """
     address = url.reveal()
-    # The host only: the path and the query of a chat webhook URL are its token.
-    host = httpx.URL(address).host or "an address with no host"
+    host = "an address httpx could not parse"
     started = time.monotonic()
     try:
+        # The host only: the path and the query of a chat webhook URL are its token.
+        # Parsed inside the `try`, because a URL httpx cannot parse raises here.
+        host = httpx.URL(address).host or "an address with no host"
         response = httpx.post(address, json={BODY_KEY: message}, timeout=TIMEOUT_S)
+    except (httpx.InvalidURL, UnicodeError) as error:
+        LOG.debug("POST to %s: %s in %.3fs", host, type(error).__name__, time.monotonic() - started)
+        # `InvalidURL` is not an `HTTPError`, and a URL holding a character httpx
+        # cannot encode raises `UnicodeEncodeError`. Both quote a part of the URL
+        # (#785).
+        raise StoreError(
+            f"the webhook URL could not be used: {type(error).__name__}",
+            hint=(
+                "the webhook URL is not repeated here, because it carries its own "
+                "credential. Check the value behind `delivery.notify.webhook.url`"
+            ),
+        ) from error
     except httpx.HTTPError as error:
         LOG.debug("POST to %s: %s in %.3fs", host, type(error).__name__, time.monotonic() - started)
-        # `type(error).__name__` rather than `str(error)`: httpx puts the URL in
-        # the message of several of its errors, and the URL is the credential.
+        # `type(error).__name__` rather than `str(error)`: httpx puts the URL, or
+        # a part of it, in the message of several of its errors, and the URL is
+        # the credential.
         raise StoreError(
             # Phrased as a *cause* rather than as a sentence, because
             # `SOPULI-W026` already says what happened and appends this: running it
