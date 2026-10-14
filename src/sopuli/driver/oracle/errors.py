@@ -300,7 +300,9 @@ class Diagnosis:
     ``message`` is the server's own, preserved rather than replaced. A DBA
     reading a sopuli failure and a DBA reading the same failure in SQL\\*Plus
     should recognise it as the same event, and the hint is added *beside* it
-    rather than over it.
+    rather than over it. The one change is made by the session, not here: the
+    reply to a statement that carried a password has that password replaced by
+    ``***`` (#786).
     """
 
     code: str

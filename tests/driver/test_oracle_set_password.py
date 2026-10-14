@@ -179,6 +179,56 @@ def test_a_password_the_verify_function_refuses_arrives_as_policy(strict_account
     assert raised.value.password_sent is True
 
 
+#: A verify function that quotes the password it refuses. Oracle requires the
+#: function to be owned by SYS (`ORA-28229` otherwise, measured), so the
+#: `sysdba` fixture creates it.
+ECHO_FUNCTION = "acme_echo_verify"
+ECHO_PROFILE = "acme_echo_prof"
+
+
+@pytest.fixture
+def echoing_account(session: Any, sysdba: Any) -> Iterator[Any]:
+    """An account whose verify function puts the password in its refusal (#786)."""
+
+    def drop() -> None:
+        for statement in (
+            f"drop user {ACCOUNT} cascade",
+            f"drop profile {ECHO_PROFILE} cascade",
+            f"drop function {ECHO_FUNCTION}",
+        ):
+            with contextlib.suppress(Exception), sysdba.cursor() as cursor:
+                cursor.execute(statement)
+
+    drop()
+    with sysdba.cursor() as cursor:
+        cursor.execute(
+            f"create function {ECHO_FUNCTION}"
+            "(username varchar2, password varchar2, old_password varchar2) return boolean is "
+            "begin raise_application_error(-20000, 'Password ' || password || ' is too simple'); "
+            "end;"
+        )
+        cursor.execute(
+            f"create profile {ECHO_PROFILE} limit password_verify_function {ECHO_FUNCTION}"
+        )
+        cursor.execute(f'create user {ACCOUNT} identified by "{COMPLIANT}"')
+        cursor.execute(f"alter user {ACCOUNT} profile {ECHO_PROFILE}")
+    try:
+        yield session
+    finally:
+        drop()
+
+
+def test_a_verify_function_s_quote_of_the_password_is_scrubbed(echoing_account: Any) -> None:
+    """The server sends the password back inside its refusal, and the error the
+    driver raises keeps the refusal without the value (#786)."""
+    with pytest.raises(DriverError) as raised:
+        echoing_account.set_password(ACCOUNT, Secret(ROTATED))
+
+    assert raised.value.code == "ORA-28003"
+    assert "ORA-20000: Password *** is too simple" in raised.value.message
+    assert ROTATED not in str(raised.value)
+
+
 def test_reusing_the_current_password_arrives_as_policy(strict_account: Any) -> None:
     """`ORA-28007`. The same value must never be sent again — the error mapper's
     rule is that an unmapped code is terminal and never regenerates, and this
@@ -259,6 +309,26 @@ class _Cursor:
         return None
 
 
+class _Refusal:
+    """What `oracledb` puts in ``args[0]``: the code and the server's message."""
+
+    def __init__(self, full_code: str, message: str) -> None:
+        self.full_code = full_code
+        self.message = message
+
+
+class _RefusingCursor(_Cursor):
+    """A cursor whose every statement the server refuses with ``message``."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self.message = message
+
+    def execute(self, sql: str, parameters: Any = None, /) -> None:
+        super().execute(sql, parameters)
+        raise RuntimeError(_Refusal("ORA-28003", self.message))
+
+
 class _Connection:
     def __init__(self) -> None:
         self.opened = _Cursor()
@@ -303,6 +373,49 @@ def test_a_read_only_target_is_refused_before_any_statement(session_module: Any)
     assert "orders-dr" in str(raised.value)
     assert connection.opened.executed == [], "nothing may reach the wire"
     assert raised.value.password_sent is False
+
+
+def test_the_password_is_scrubbed_from_the_server_s_refusal(session_module: Any) -> None:
+    """A verify function may quote the password it refused (#786). The error the
+    driver raises keeps the rest of the server's message and loses the value,
+    whichever form of the error a caller reads."""
+    from sopuli.driver.oracle.errors import MappedError
+    from sopuli.driver.oracle.statements import Identifier, alter_user_password
+    from sopuli.driver.protocol import Scope
+    from sopuli.passwords import ByteLimit
+
+    connection = _Connection()
+    connection.opened = _RefusingCursor(
+        "ORA-28003: password verification for the specified password failed\n"
+        f"ORA-20000: Password {ROTATED} is too simple"
+    )
+    session = session_module.OracleSession(
+        connection=connection,
+        target=ExpandedTarget(
+            target=Target(name="orders", type="oracle", dsn="db.example.com:1521/orders"),
+            index=0,
+        ),
+        correlation_id=CORRELATION_ID,
+    )
+    statement = alter_user_password(
+        Identifier(ACCOUNT.upper()),
+        Secret(ROTATED),
+        scope=Scope(type="pdb", container="ORDERS"),
+        limit=ByteLimit(max_bytes=128, encoding="utf-8"),
+    )
+
+    with pytest.raises(MappedError) as raised:
+        session._issue(statement, password=True)
+
+    assert raised.value.code == "ORA-28003"
+    assert "ORA-20000: Password *** is too simple" in raised.value.message
+    assert ROTATED not in raised.value.message
+    assert ROTATED not in str(raised.value)
+    assert ROTATED not in raised.value.diagnosis.message
+    # The client's exception holds the message unscrubbed, so it is not chained:
+    # a handler that prints a cause's message would print the password.
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__ is True
 
 
 def test_finishing_a_rollover_on_a_read_only_target_is_refused_before_any_statement(

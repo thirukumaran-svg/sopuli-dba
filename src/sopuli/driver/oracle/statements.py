@@ -234,17 +234,37 @@ class Statement:
     :attr:`redacted` is the form a `--dry-run` plan prints, which is the other
     thing this type buys. A plan that showed the statement would be a plan
     nobody could paste into a ticket.
+
+    ``secret`` is the password the statement carries, if it carries one. It is
+    kept for :meth:`scrub` and for nothing else.
     """
 
-    __slots__ = ("_sql", "redacted")
+    __slots__ = ("_secret", "_sql", "redacted")
 
-    def __init__(self, sql: str, *, redacted: str) -> None:
+    def __init__(self, sql: str, *, redacted: str, secret: Secret | None = None) -> None:
         self._sql = sql
         self.redacted = redacted
+        self._secret = secret
 
     def reveal(self) -> str:
         """The statement as it goes on the wire. Callers are audited by review."""
         return self._sql
+
+    def scrub(self, message: str) -> str:
+        """``message`` with this statement's password replaced by ``***`` (#786).
+
+        For the server's reply to this statement. A password verify function is
+        site-written PL/SQL that receives the password, and the text it raises
+        comes back inside the ``ORA-28003``. A function may put the password in
+        that text. Measured on 26ai 23.26.2.0.0: an ``ORA-20000`` that quotes
+        the value arrives unchanged in the client's message.
+
+        Only the exact value is replaced. A function that quotes part of the
+        value, or the value changed, is not caught.
+        """
+        if self._secret is None:
+            return message
+        return message.replace(self._secret.reveal(), REDACTED)
 
     def __str__(self) -> str:
         return self.redacted
@@ -411,6 +431,7 @@ def alter_user_password(
     return Statement(
         f'ALTER USER {identifier} IDENTIFIED BY "{secret.reveal()}"{expiry}{clause}',
         redacted=f"ALTER USER {identifier} IDENTIFIED BY {REDACTED}{expiry}{clause}",
+        secret=secret,
     )
 
 

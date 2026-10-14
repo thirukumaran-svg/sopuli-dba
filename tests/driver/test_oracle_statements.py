@@ -201,6 +201,29 @@ def test_the_redacted_form_is_what_a_plan_can_print() -> None:
     assert build().redacted == str(build())
 
 
+def test_the_statement_scrubs_its_password_from_a_server_message() -> None:
+    """A verify function may quote the password in the `ORA-20000` it raises
+    (#786). The rest of the message is the operator's reason, so it stays."""
+    message = (
+        "ORA-28003: The password chosen did not meet the required complexity rules\n"
+        f"ORA-20000: Password {PASSWORD.reveal()} is too simple; {PASSWORD.reveal()} again"
+    )
+
+    scrubbed = build().scrub(message)
+
+    assert PASSWORD.reveal() not in scrubbed
+    assert scrubbed == (
+        "ORA-28003: The password chosen did not meet the required complexity rules\n"
+        f"ORA-20000: Password {REDACTED} is too simple; {REDACTED} again"
+    )
+
+
+def test_a_statement_without_a_password_leaves_a_message_alone() -> None:
+    message = "ORA-01031: insufficient privileges"
+
+    assert lock_account(ACCOUNT, scope=PDB).scrub(message) == message
+
+
 # --------------------------------------------------------- container clauses ---
 
 

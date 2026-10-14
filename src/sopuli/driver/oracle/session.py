@@ -934,13 +934,24 @@ class OracleSession:
         raised it: once the statement is handed to the client, a lost
         connection cannot say whether its bytes left, and a warning that was
         not needed costs less than one that was missed (#697).
+
+        The server's message has the statement's password replaced first, by
+        :meth:`~sopuli.driver.oracle.statements.Statement.scrub`. A verify
+        function can quote it (#786). The client's own exception holds the
+        message unscrubbed, so a failure of a statement that carried a password
+        is raised without it as a cause. A handler other than
+        ``sopuli.output.debug`` would print a cause's message.
         """
         with traced_cursor(self.connection) as cursor:
             try:
                 cursor.execute(statement)
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
-                failure = from_error(error).as_error()
+                diagnosis = from_error(error)
+                diagnosis = replace(diagnosis, message=statement.scrub(diagnosis.message))
+                failure = diagnosis.as_error()
                 failure.password_sent = password
+                if password:
+                    raise failure from None
                 raise failure from error
 
     def _unlock(self, account: str) -> AttributeChange:

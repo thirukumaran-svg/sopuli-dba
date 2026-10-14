@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.35.schema.json`](../schemas/sopuli-run-1.35.schema.json),
+Schemas: [`../schemas/sopuli-run-1.36.schema.json`](../schemas/sopuli-run-1.36.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -1866,8 +1866,13 @@ These consequences show in the schema:
   and a plan that named a secret without its store would make the reader work
   out precedence again.
 - A `sample` object has no value property either, for the same reason.
-- `error.message` and `diagnostic.message` are documented as redacted. Driver
-  exceptions pass through a scrubber before they reach either.
+- `error.message` and `diagnostic.message` carry the server's own message, and a
+  server message can hold the password. A password verify function is site-written
+  PL/SQL that receives the password, and the `ORA-20000` text it raises comes back
+  inside the `ORA-28003`. So the Oracle driver replaces the password with `***` in
+  the message of any error from a statement that carried one. It replaces the
+  exact value only: a function that quotes part of the value, or the value
+  changed, is not caught ([#786](../decisions/log.md#786)).
 - `password.applied` events carry the vault version, never the value.
 - `results[].handover` carries the wrapping token's *accessor*, never the token.
 
